@@ -222,7 +222,7 @@ Daniel: "if i go to route that does not exist, i want to go to home, not see a J
 
 ## SA-11: Team and member pages, with display names
 
-**Source.** Daniel's decision, 2026-11-15 (night): "I need to have a page where I as an admin / or programme manager can see who is a member of the team." Answers: both views; add a display name; overview with actions. **Status.** Decided. To be built by lane `m4/team-pages`.
+**Source.** Daniel's decision, 2026-11-15 (night): "I need to have a page where I as an admin / or programme manager can see who is a member of the team." Answers: both views; add a display name; overview with actions. **Status.** Decided. Built by lane `m4/team-pages` on 2026-11-15.
 
 ### Display name (new personal data)
 
@@ -245,3 +245,20 @@ Daniel: "if i go to route that does not exist, i want to go to home, not see a J
 - **Readers.** Tenant admins only.
 - **Rows.** Every member account of the organisation, with its display name, its email, and its roles across programmes with their status.
 - **Actions.** The same actions per role, each with a step-up.
+
+### Built by lane m4/team-pages
+
+- Operations: `team.list` (`GET /programmes/{programme}/team`, the programme's manager and the tenant admins), `admin.members` (`GET /admin/members`, tenant admins), `me.display_name` and `me.set_display_name` (`GET` and `POST /me/display-name`, the caller's own). All four are web only, with no tool (I-86). None needs a step-up. The role actions keep their own step-up.
+- Join: the roster gives the bindings, the creator draft gives the open invitations and their invitation email, and the accounts port gives the login email (`Accounts::login_email`). The text store keeps the display name as a confidential text owned by the account (`TextOwner::Account`). It releases the name only to the team, member and own reads.
+- Pages: `/app/programmes/{programme}/team` and `/app/admin/members`, both in `fstp_access::PAGES`. The account page `/auth/account` has a display name section.
+- Links: the tenant admin's home links the member page and the team page of each programme, and its navigation the member page. The programme manager's home links the team page of each programme it manages. The people page links the team page.
+
+Readings, pending Daniel:
+
+- The navigation links no team page. R-NF-03 and its web test say the navigation links only pages without an id, and the team page needs a programme. The home page and the people page link it instead.
+- A display name changes no domain fact, so no ledger record names it. The text store alone knows which text of an account is its display name. A replaced or cleared name is erased at once, logged as a person's erasure request (cause 2).
+- A voided binding shows as ended, with its rule. The roster keeps no ended Operations binding, so an ended Operations role is no longer listed.
+- The tenant-wide Financial and Legal signatories appear on the member page with no programme, and on no team page.
+- The team page offers the invitation while the programme has a creator draft. The member page offers the per-role actions only.
+- The page titles use the plain names "Team" and "Members" from the page catalogue. The vocabulary pack key `vocab.team` names the applicant team, so it is not reused.
+- `TODO(legal)`: the privacy notice line for this processing is still open.
