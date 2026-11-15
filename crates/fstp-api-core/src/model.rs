@@ -78,8 +78,9 @@ pub enum ReadModel {
     },
     /// `proposal.view`: one of the caller's own proposals.
     OwnProposal(ProposalSummary),
-    /// `stage2.view`: the questions under their P-11 handles, by day (TH-08).
-    Stage2Questions(Vec<crate::views::Question>),
+    /// `stage2.view`: the questions under their P-11 handles, by day (TH-08),
+    /// and the team's own answers, oldest first (lane m4/author-reads).
+    Stage2Questions(Vec<crate::views::Question>, Vec<crate::views::Stage2Answer>),
     /// `me.notices`: the caller's notices.
     Notices(Vec<crate::views::Notice>),
     /// `negotiation.view`: whether the caller acknowledged the notice (R-NG-06).
@@ -118,6 +119,9 @@ pub enum ReadModel {
     Members(crate::dispatch::team::MembersView),
     /// SA-11: the caller's own display name.
     DisplayName(crate::dispatch::team::DisplayNameView),
+    /// `proposal.get_plan`: the plan the team recorded, read back, or
+    /// `None` before the first plan (R-SB-01, lane m4/author-reads).
+    Plan(Option<crate::views::PlanView>),
     /// `proposal.journey`: a proposal's route position, its legs and the
     /// overlay (lane j2, `SPEC/12-journey-ui.md` section 10).
     Journey(crate::dispatch::journey::JourneyView),
@@ -284,9 +288,10 @@ impl ToJson for ReadModel {
                 let _ = o.insert("total", Value::from(total.as_str()));
                 Value::Object(o)
             }
-            ReadModel::Stage2Questions(qs) => {
+            ReadModel::Stage2Questions(qs, answers) => {
                 let mut o = Object::new();
                 let _ = o.insert("questions", array(qs));
+                let _ = o.insert("answers", array(answers));
                 Value::Object(o)
             }
             ReadModel::Notices(ns) => array(ns),
@@ -308,6 +313,11 @@ impl ToJson for ReadModel {
             ReadModel::Team(v) => v.to_json(),
             ReadModel::Members(v) => v.to_json(),
             ReadModel::DisplayName(v) => v.to_json(),
+            ReadModel::Plan(p) => {
+                let mut o = Object::new();
+                let _ = o.insert("plan", p.as_ref().map_or(Value::Null, ToJson::to_json));
+                Value::Object(o)
+            }
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
             ReadModel::Invitation(v) => v.to_json(),
@@ -1740,7 +1750,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Workspace(_) => &["proposal.get_workspace"],
             ReadModel::PlanSaved { .. } => &["proposal.record_plan", "stage2.revise"],
             ReadModel::OwnProposal(_) => &["proposal.view"],
-            ReadModel::Stage2Questions(_) => &["stage2.view"],
+            ReadModel::Stage2Questions(..) => &["stage2.view"],
             ReadModel::Notices(_) => &["me.notices"],
             ReadModel::Negotiation { .. } => &["negotiation.view"],
             ReadModel::RoundOpened(_) => &["committee.open_round"],
@@ -1769,6 +1779,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Team(_) => &["team.list"],
             ReadModel::Members(_) => &["admin.members"],
             ReadModel::DisplayName(_) => &["me.display_name"],
+            ReadModel::Plan(_) => &["proposal.get_plan"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
             ReadModel::Invitation(_) => &["people.get_invitation"],
@@ -1860,6 +1871,22 @@ pub(crate) mod reply_shape_tests {
                 .into_iter()
                 .collect(),
             }),
+        }
+    }
+
+    /// A `proposal.get_plan` reply (lane m4/author-reads): one task with
+    /// one milestone, with its total and text, or with neither.
+    fn plan_view(full: bool) -> crate::views::PlanView {
+        crate::views::PlanView {
+            plan: 31,
+            origin: if full { "submitted" } else { "stage2_revision" },
+            tasks: vec![vec![crate::views::PlanMilestoneView {
+                amount: "1500.50".to_owned(),
+                start: "2026-01-02".to_owned(),
+                due: "2026-06-30".to_owned(),
+            }]],
+            total: full.then(|| "1500.50".to_owned()),
+            text: full.then(|| "A synthetic work plan.".to_owned()),
         }
     }
 
@@ -2245,11 +2272,18 @@ pub(crate) mod reply_shape_tests {
                 total: "1500.50".to_owned(),
             },
             ReadModel::OwnProposal(own(Some("Synthetic proposal"))),
-            ReadModel::Stage2Questions(vec![crate::views::Question {
-                handle: "R-0a1b2c3d".to_owned(),
-                asked: "2026-10-30".to_owned(),
-                text: "Why this milestone?".to_owned(),
-            }]),
+            ReadModel::Stage2Questions(
+                vec![crate::views::Question {
+                    handle: "R-0a1b2c3d".to_owned(),
+                    asked: "2026-10-30".to_owned(),
+                    text: "Why this milestone?".to_owned(),
+                }],
+                vec![crate::views::Stage2Answer {
+                    after: 1,
+                    answered: "2026-10-31".to_owned(),
+                    text: "Because of the field trial.".to_owned(),
+                }],
+            ),
             ReadModel::Notices(vec![crate::views::Notice {
                 kind: "IrcConcern",
                 proposal: 1001,
@@ -2331,6 +2365,9 @@ pub(crate) mod reply_shape_tests {
                 "Synthetic Name".to_owned(),
             ))),
             ReadModel::DisplayName(crate::dispatch::team::DisplayNameView(None)),
+            ReadModel::Plan(None),
+            ReadModel::Plan(Some(plan_view(true))),
+            ReadModel::Plan(Some(plan_view(false))),
             ReadModel::Journey(journey_view(true)),
             ReadModel::Journey(journey_view(false)),
             ReadModel::Diary(diary_view(true)),
@@ -2517,7 +2554,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 55;
+    const VARIANTS: usize = 56;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2544,7 +2581,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Workspace(_) => 17,
             ReadModel::PlanSaved { .. } => 18,
             ReadModel::OwnProposal(_) => 19,
-            ReadModel::Stage2Questions(_) => 20,
+            ReadModel::Stage2Questions(..) => 20,
             ReadModel::Notices(_) => 21,
             ReadModel::Negotiation { .. } => 22,
             ReadModel::RoundOpened(_) => 23,
@@ -2579,6 +2616,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Team(_) => 52,
             ReadModel::Members(_) => 53,
             ReadModel::DisplayName(_) => 54,
+            ReadModel::Plan(_) => 55,
         }
     }
 
@@ -2724,8 +2762,9 @@ pub(crate) mod reply_shape_tests {
         assert_fits("proposal.get_workspace", &w);
     }
 
-    /// TH-08, R-AN-01: the team's stage 2 questions fit their shape, each
-    /// with a handle and a day, and the empty list fits too.
+    /// TH-08, R-AN-01, P-11, I-17 (lane m4/author-reads): the team's stage 2
+    /// questions and its own answers fit their shape, each with a day and
+    /// no reviewer named on an answer, and the empty lists fit too.
     #[test]
     fn th08_stage2_questions_fit_their_shape() {
         let q = crate::views::Question {
@@ -2733,8 +2772,28 @@ pub(crate) mod reply_shape_tests {
             asked: "2026-10-30".to_owned(),
             text: "Why this milestone?".to_owned(),
         };
-        assert_fits("stage2.view", &ReadModel::Stage2Questions(vec![q]));
-        assert_fits("stage2.view", &ReadModel::Stage2Questions(Vec::new()));
+        let a = crate::views::Stage2Answer {
+            after: 1,
+            answered: "2026-10-31".to_owned(),
+            text: "Because of the field trial.".to_owned(),
+        };
+        assert_fits(
+            "stage2.view",
+            &ReadModel::Stage2Questions(vec![q.clone()], vec![a.clone()]),
+        );
+        assert_fits(
+            "stage2.view",
+            &ReadModel::Stage2Questions(vec![q], Vec::new()),
+        );
+        assert_fits(
+            "stage2.view",
+            &ReadModel::Stage2Questions(Vec::new(), Vec::new()),
+        );
+        let body = ReadModel::Stage2Questions(Vec::new(), vec![a]).to_json();
+        assert_eq!(
+            fstp_json::to_canonical(&body).unwrap(),
+            r#"{"answers":[{"after":1,"answered":"2026-10-31","text":"Because of the field trial."}],"questions":[]}"#
+        );
     }
 
     /// R-EV-04, R-IR-02, TH-26: both notice kinds fit, with and without

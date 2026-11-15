@@ -121,6 +121,31 @@ const RUBRIC_ELEMENTS: &[&str] = &[
     "budget_justification",
 ];
 
+/// One recorded plan version as the team reads it back (`proposal.get_plan`,
+/// R-SB-01, ADR-006, lane m4/author-reads): its id, its origin, its tasks
+/// with each milestone's amount and days, the total the cell summed when
+/// the sum fits, and the work plan text when the cell holds it.
+const PLAN_VIEW: Shape = Shape::Object(&[
+    m("plan", Shape::Id),
+    m(
+        "origin",
+        Shape::Enum(&["submitted", "stage2_revision", "negotiated", "amendment"]),
+    ),
+    m(
+        "tasks",
+        Shape::Array(&Shape::Object(&[m(
+            "milestones",
+            Shape::Array(&Shape::Object(&[
+                m("amount", Shape::Amount),
+                m("start", Shape::String),
+                m("due", Shape::String),
+            ])),
+        )])),
+    ),
+    opt("total", Shape::Amount),
+    opt("text", Shape::String),
+]);
+
 /// The finding kinds, as the pre-check reply spells them.
 const KIND_NAMES: &[&str] = &["completeness", "quality", "accuracy", "integrity"];
 
@@ -1173,16 +1198,37 @@ pub const REPLIES: &[(&str, Shape)] = &[
         ]),
     ),
     // TH-08: each question under its P-11 handle, with its day only.
+    // Lane m4/author-reads (Daniel, 2026-11-15, night): the team reads back
+    // its own answers, oldest first, each with its day and `after`, the
+    // number of questions asked before it. An answer names no reviewer.
     (
         "stage2.view",
-        Shape::Object(&[m(
-            "questions",
-            Shape::Array(&Shape::Object(&[
-                m("handle", Shape::String),
-                m("asked", Shape::String),
-                m("text", Shape::String),
-            ])),
-        )]),
+        Shape::Object(&[
+            m(
+                "questions",
+                Shape::Array(&Shape::Object(&[
+                    m("handle", Shape::String),
+                    m("asked", Shape::String),
+                    m("text", Shape::String),
+                ])),
+            ),
+            m(
+                "answers",
+                Shape::Array(&Shape::Object(&[
+                    m("after", Shape::Int),
+                    m("answered", Shape::String),
+                    m("text", Shape::String),
+                ])),
+            ),
+        ]),
+    ),
+    // R-SB-01, ADR-006 (lane m4/author-reads): the head of the plan chain
+    // the team recorded, or `null` before the first plan. Each milestone
+    // has its amount and its start and due days. The total is the cell's
+    // sum. The work plan text is left out when the cell does not hold it.
+    (
+        "proposal.get_plan",
+        Shape::Object(&[m("plan", Shape::Nullable(&PLAN_VIEW))]),
     ),
     // R-EV-04, R-IR-02: the kind and the proposal, and the day once known.
     (

@@ -37,6 +37,7 @@ export type ApplicantOp =
   | "proposal.withdraw"
   | "me.notices"
   | "stage2.view"
+  | "proposal.get_plan"
   | "stage2.answer"
   | "stage2.revise"
   | "guardian.begin_consent"

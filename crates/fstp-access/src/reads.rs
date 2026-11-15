@@ -75,6 +75,10 @@
 //! Daniel, 2026-11-15 (night), "if i wrote it i should be able to read
 //! it": everyone who was on the team, the guardian included, keeps a
 //! read-only `GetOwnWorkspace` of that proposal (`ReadRule::FormerAuthor`).
+//! The same night the team, current and former, reads back its own stage 2
+//! answers (`GetOwnStage2Thread`) and the plan it recorded (`GetOwnPlan`,
+//! `ReadRule::FormerTeam`). The guardian writes neither, so a former
+//! guardian reads neither.
 
 use fstp_domain::Via;
 use fstp_domain::assignment::{Assignment, AssignmentKind, AssignmentStatus};
@@ -220,11 +224,14 @@ pub enum ReadKind {
     ListMembers,
     // SA-11: the caller's own display name, for the account page.
     GetMyDisplayName,
+    // Lane m4/author-reads (Daniel, 2026-11-15, night): the plan the team
+    // recorded, read back read-only by the team, current and former.
+    GetOwnPlan,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 76] = [
+    pub const ALL: [ReadKind; 77] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -301,6 +308,7 @@ impl ReadKind {
         ReadKind::ListTeam,
         ReadKind::ListMembers,
         ReadKind::GetMyDisplayName,
+        ReadKind::GetOwnPlan,
     ];
 }
 
@@ -513,6 +521,11 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         OPEN_ALWAYS,
     ),
     (ReadKind::GetOwnStage2Thread, TEAM_OR_FORMER, OPEN_ALWAYS),
+    // Daniel, 2026-11-15, night ("if i wrote it i should be able to read
+    // it"): the team reads back the plan it recorded, read-only, and the
+    // former lead and team member keep it. The guardian records no plan,
+    // so a former guardian does not, as for the stage 2 thread.
+    (ReadKind::GetOwnPlan, TEAM_OR_FORMER, OPEN_ALWAYS),
     (ReadKind::GetOwnNotices, ReadRule::Own, OPEN_ALWAYS),
     (
         ReadKind::GetNegotiationLanding,

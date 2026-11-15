@@ -16,7 +16,7 @@ import {
 } from "../src/applicant/application.js";
 import { APPLICANT_LABELS } from "../src/applicant/messages.en.js";
 import { PROPOSAL_STATES, type ProposalRole, type ProposalState, isTerminal } from "../src/applicant/rules.js";
-import type { ProposalInfo } from "../src/applicant/wire.js";
+import { type ProposalInfo, decodePlan, decodeStage2Thread } from "../src/applicant/wire.js";
 import { FakeElement, asFake, freshDom, sinkUses } from "./support/fakedom.js";
 import { assert, eq, test } from "./support/harness.js";
 
@@ -38,16 +38,17 @@ const STAGE2_ON: ReadonlySet<ProposalState> = new Set<ProposalState>([
 
 /**
  * Whether `role` may make `op` on a proposal in `state`, as `fstp-access`
- * admits it after lane m4/proposal-read. `proposal.get_workspace` admits
+ * admits it after lane m4/author-reads. `proposal.get_workspace` admits
  * the active team and, once X ended, the former lead, member and guardian
- * (`ReadRule::FormerAuthor`). `stage2.view` admits the active team and
- * the former lead and member only (`ReadRule::FormerTeam`).
+ * (`ReadRule::FormerAuthor`). `stage2.view` and `proposal.get_plan` admit
+ * the active team and the former lead and member only
+ * (`ReadRule::FormerTeam`).
  */
 function admitted(op: string, role: ProposalRole, state: ProposalState): boolean {
   if (op === "proposal.get_workspace") {
     return true;
   }
-  if (op === "stage2.view") {
+  if (op === "stage2.view" || op === "proposal.get_plan") {
     return !(role === "guardian" && isTerminal(state));
   }
   return false;
@@ -63,7 +64,44 @@ const QUESTIONS = Object.freeze([
     asked: Object.freeze({ text: "2026-10-01", year: 2026, month: 10, day: 1 }),
     text: "How does the sensor <b>calibrate</b>?",
   }),
+  Object.freeze({
+    handle: "R2",
+    asked: Object.freeze({ text: "2026-10-02", year: 2026, month: 10, day: 2 }),
+    text: "Who owns the data?",
+  }),
 ]);
+
+/** The team's answers as `stage2.view` sends them: two after the first question, none after the second. */
+const ANSWERS = Object.freeze([
+  Object.freeze({ after: 1, answered: "2026-10-03", text: "It calibrates against <script>x()</script> a reference." }),
+  Object.freeze({ after: 1, answered: "2026-10-04", text: "A second answer." }),
+]);
+
+const STAGE2_BODY = Object.freeze({
+  questions: QUESTIONS.map((q) => ({ handle: q.handle, asked: q.asked.text, text: q.text })),
+  answers: ANSWERS,
+});
+
+const PLAN_TEXT = 'Work package <b>one</b>\n<img src=x onerror="alert(1)">';
+
+/** The plan as `proposal.get_plan` sends it: two tasks, the total and the text. */
+const PLAN_BODY = Object.freeze({
+  plan: {
+    plan: "31",
+    origin: "stage2_revision",
+    tasks: [
+      { milestones: [{ amount: "1000.00", start: "2027-01-04", due: "2027-03-31" }] },
+      {
+        milestones: [
+          { amount: "250.50", start: "2027-04-01", due: "2027-06-30" },
+          { amount: "99.99", start: "2027-07-01", due: "2027-09-30" },
+        ],
+      },
+    ],
+    total: "1350.49",
+    text: PLAN_TEXT,
+  },
+});
 
 function info(state: ProposalState, role: ProposalRole | undefined): ProposalInfo {
   return Object.freeze({ proposal: "1003", call: "7", state, role, title: "Synthetic soil sensors", knockOutReason: "" });
@@ -77,7 +115,7 @@ function fakeCall(role: ProposalRole | undefined, state: ProposalState, calls: s
     if (role === undefined || !admitted(name, role, state)) {
       return Promise.resolve<Outcome<T>>({ ok: false, failure: { kind: "refused", code: "refused", rule: "R-AC-01" } });
     }
-    const body: unknown = name === "stage2.view" ? { questions: [{ handle: "R1", asked: "2026-10-01", text: QUESTIONS[0]?.text }] } : WORKSPACE;
+    const body: unknown = name === "stage2.view" ? STAGE2_BODY : name === "proposal.get_plan" ? PLAN_BODY : WORKSPACE;
     const v = decode(body);
     assert(v !== null, `${name} body decodes`);
     return Promise.resolve<Outcome<T>>({ ok: true, value: v });
@@ -98,11 +136,25 @@ async function render(state: ProposalState, role: ProposalRole | undefined): Pro
   return { root: el === null ? null : asFake(el), calls };
 }
 
+/** The reads a team role makes in `state`, in order. */
+function expectedReads(role: ProposalRole, state: ProposalState): string[] {
+  const former = role === "guardian" && isTerminal(state);
+  const reads = ["proposal.get_workspace"];
+  if (!former) {
+    reads.push("proposal.get_plan");
+  }
+  if (STAGE2_ON.has(state) && !former) {
+    reads.push("stage2.view");
+  }
+  return reads;
+}
+
 /**
  * SA-09 rule 7, I-21, R-AC-01: for every team role in every state the
  * section calls only reads its viewer may make, so the page never shows
- * a refusal. It always reads the workspace, and stage 2 from stage 2 on,
- * except for a guardian once the proposal ended.
+ * a refusal. It always reads the workspace, the plan in every state and
+ * stage 2 from stage 2 on, except for a guardian once the proposal ended
+ * (lane m4/author-reads).
  */
 test("r_ac_01_application_section_calls_only_admitted_reads_for_every_role_and_state", async () => {
   for (const state of PROPOSAL_STATES) {
@@ -111,10 +163,10 @@ test("r_ac_01_application_section_calls_only_admitted_reads_for_every_role_and_s
       for (const c of calls) {
         assert(admitted(c, role, state), `${role} in ${state} calls ${c}, which refuses`);
       }
-      const stage2 = STAGE2_ON.has(state) && !(role === "guardian" && isTerminal(state));
-      eq(calls, stage2 ? ["proposal.get_workspace", "stage2.view"] : ["proposal.get_workspace"], `${role} in ${state}`);
+      eq(calls, expectedReads(role, state), `${role} in ${state}`);
       assert(root !== null, `${role} in ${state} sees the section`);
       eq(byId(root, "application-error"), undefined, `${role} in ${state}: no error`);
+      eq(byId(root, "application-plan-error"), undefined, `${role} in ${state}: no plan error`);
       eq(byId(root, "application-stage2-error"), undefined, `${role} in ${state}: no stage 2 error`);
     }
   }
@@ -173,11 +225,74 @@ test("i21_application_section_in_stage1_shows_the_submitted_application_read_onl
 });
 
 /**
- * R-EV-05, TH-08, P-11: from stage 2 on, the stage 2 questions follow
- * under their own heading, by handle and day, and the section says that
- * the team's answers are not shown (no team read gives them).
+ * R-SB-01, ADR-006 (lane m4/author-reads): the team reads back the plan
+ * it recorded under its own heading in every state: each task with its
+ * milestones, their amounts and days, the total the cell sent and the
+ * work plan text. The page computes no money and shows no control.
  */
-test("r_ev_05_application_section_in_stage2_adds_the_stage2_part", async () => {
+test("r_sb_01_application_section_shows_the_plan_read_only", async () => {
+  for (const state of PROPOSAL_STATES) {
+    for (const role of ROLES) {
+      const { root } = await render(state, role);
+      assert(root !== null, `${role} in ${state}`);
+      const part = byId(root, "application-plan");
+      if (role === "guardian" && isTerminal(state)) {
+        eq(part, undefined, `the former guardian in ${state}: no plan part`);
+        continue;
+      }
+      assert(part !== undefined, `${role} in ${state}: a plan part`);
+      eq(byId(part, "application-plan-heading")?.localName, "h3", `${role} in ${state}: its heading`);
+      eq(byId(part, "application-plan-origin")?.textContent, APPLICANT_LABELS["application.plan.origin.stage2_revision"], "origin");
+      const tasks = byId(part, "application-plan-tasks");
+      assert(tasks !== undefined && tasks.localName === "ol", "an ordered list of tasks");
+      eq(tasks.children.length, 2, "two tasks");
+      const milestones = part.descendants().filter((e) => e.getAttribute("class") === "fstp-plan-milestone");
+      eq(milestones.length, 3, "three milestones");
+      assert(milestones[1]?.textContent.includes("250.50") === true, "the amount as the cell sent it");
+      assert(byId(part, "application-plan-total")?.textContent.includes("1350.49") === true, "the total the cell sent");
+      eq(byId(part, "application-plan-text")?.textContent, PLAN_TEXT, "the work plan text, unchanged");
+      eq(part.getElementsByTagName("input").length + part.getElementsByTagName("textarea").length, 0, "no control");
+    }
+  }
+});
+
+/**
+ * R-SB-01 (lane m4/author-reads): with no plan recorded the plan part
+ * says so. A plan whose text the cell does not hold says that the text
+ * cannot be shown, never an empty text. A plan with no total shows none.
+ */
+test("r_sb_01_plan_part_names_a_missing_plan_and_a_missing_text", async () => {
+  freshDom();
+  const p = info("DRAFT", "lead");
+  const plan = applicationPlan("lead", "DRAFT");
+  const workspace = { ok: true, value: WORKSPACE } as const;
+  const none = applicationSection(p, plan, { workspace, plan: { ok: true, value: { plan: null } }, stage2: null });
+  assert(none !== null, "the section");
+  eq(byId(asFake(none), "application-plan-none")?.textContent, APPLICANT_LABELS["application.plan.none"], "no plan yet");
+  freshDom();
+  const bare = {
+    plan: "31",
+    origin: "submitted" as const,
+    tasks: [[{ amount: "5.00", start: QUESTIONS[0]!.asked, due: QUESTIONS[0]!.asked }]],
+    total: undefined,
+    text: undefined,
+  };
+  const el = applicationSection(p, plan, { workspace, plan: { ok: true, value: { plan: bare } }, stage2: null });
+  assert(el !== null, "the section");
+  const root = asFake(el);
+  eq(byId(root, "application-plan-text"), undefined, "no text element");
+  eq(byId(root, "application-plan-text-missing")?.textContent, APPLICANT_LABELS["application.plan.text_missing"], "the text is named missing");
+  eq(byId(root, "application-plan-total"), undefined, "no total");
+  eq(byId(root, "application-plan-origin")?.textContent, APPLICANT_LABELS["application.plan.origin.submitted"], "origin");
+});
+
+/**
+ * R-EV-05, TH-08, P-11 (lane m4/author-reads): from stage 2 on, the stage
+ * 2 questions follow under their own heading, by handle and day, and
+ * under each question the team's own answers given after it, as text
+ * with their day. A question with no answer after it has none under it.
+ */
+test("r_ev_05_application_section_in_stage2_shows_each_answer_under_its_question", async () => {
   for (const role of ROLES) {
     const { root } = await render("STAGE2", role);
     assert(root !== null, role);
@@ -185,18 +300,41 @@ test("r_ev_05_application_section_in_stage2_adds_the_stage2_part", async () => {
     assert(part !== undefined, `${role}: a stage 2 part`);
     eq(byId(part, "application-stage2-heading")?.localName, "h3", `${role}: its heading`);
     eq(byId(part, "application-stage2-heading")?.textContent, APPLICANT_LABELS["application.stage2.heading"], `${role}: heading text`);
-    const items = byId(part, "application-stage2-questions")?.getElementsByTagName("li") ?? [];
-    eq(items.length, 1, `${role}: one question`);
+    const items = (byId(part, "application-stage2-questions")?.children ?? []).filter((c) => c.localName === "li");
+    eq(items.length, 2, `${role}: two questions`);
     assert(items[0]?.textContent.includes(QUESTIONS[0]?.text ?? "?") === true, `${role}: the question as text`);
-    eq(byId(part, "application-stage2-answers")?.textContent, APPLICANT_LABELS["application.stage2.answers"], `${role}: answers note`);
+    const answersOf = (li: FakeElement | undefined) =>
+      (li?.descendants() ?? []).filter((e) => e.getAttribute("class") === "fstp-stage2-answer");
+    const first = answersOf(items[0]);
+    eq(first.length, 2, `${role}: both answers under the first question`);
+    assert(first[0]?.textContent.includes(ANSWERS[0]?.text ?? "?") === true, `${role}: the first answer as text`);
+    assert(first[1]?.textContent.includes(ANSWERS[1]?.text ?? "?") === true, `${role}: the second answer, in order`);
+    eq(answersOf(items[1]).length, 0, `${role}: no answer under the second question`);
+    eq(byId(part, "application-stage2-answers"), undefined, `${role}: no "no answer" note`);
+    assert(!part.textContent.includes("R-0"), `${role}: no reviewer named on an answer`);
   }
+});
+
+/** R-EV-05 (lane m4/author-reads): with no answer yet, the stage 2 part says so. */
+test("r_ev_05_stage2_part_names_no_answer_yet", async () => {
+  freshDom();
+  const p = info("STAGE2", "member");
+  const plan = applicationPlan("member", "STAGE2");
+  const el = applicationSection(p, plan, {
+    workspace: { ok: true, value: WORKSPACE },
+    plan: null,
+    stage2: { ok: true, value: { questions: QUESTIONS, answers: [] } },
+  });
+  assert(el !== null, "the section");
+  eq(byId(asFake(el), "application-stage2-answers")?.textContent, APPLICANT_LABELS["application.stage2.answers"], "no answer yet");
 });
 
 /**
  * Daniel, 2026-11-15 (night), R-SB-04: in a terminal state everyone who
  * was on the team still reads the application, and the section points
- * to the copy request. The former guardian gets no stage 2 part, since
- * it has no stage 2 read.
+ * to the copy request. The former lead and member keep the plan and
+ * their stage 2 answers. The former guardian gets neither part, since it
+ * wrote neither and has no such read.
  */
 test("r_sb_04_application_section_stays_with_the_former_team_in_terminal_states", async () => {
   for (const state of PROPOSAL_STATES.filter(isTerminal)) {
@@ -210,14 +348,23 @@ test("r_sb_04_application_section_stays_with_the_former_team_in_terminal_states"
       eq(root.getElementsByTagName("dd").length, 3, `${role} in ${state}: three answers`);
       const stage2 = STAGE2_ON.has(state) && role !== "guardian";
       eq(byId(root, "application-stage2") !== undefined, stage2, `${role} in ${state}: stage 2 part`);
+      eq(byId(root, "application-plan") !== undefined, role !== "guardian", `${role} in ${state}: plan part`);
+      if (stage2) {
+        eq(
+          root.descendants().filter((e) => e.getAttribute("class") === "fstp-stage2-answer").length,
+          ANSWERS.length,
+          `${role} in ${state}: its stage 2 answers`,
+        );
+      }
     }
   }
 });
 
 /**
- * ADR-014, TH-01: submission content is untrusted. Markup in an answer
- * stays text: no element is built from it, and no HTML sink is reached.
- * Long answers keep their line breaks under `fstp-text`.
+ * ADR-014, TH-01: submission content is untrusted. Markup in an answer,
+ * in the plan text or in a stage 2 answer stays text: no element is
+ * built from it, and no HTML sink is reached. Long answers keep their
+ * line breaks under `fstp-text`.
  */
 test("adr014_application_answers_render_as_text_only", async () => {
   const { root } = await render("STAGE2", "lead");
@@ -231,6 +378,9 @@ test("adr014_application_answers_render_as_text_only", async () => {
   eq(dds[1]?.textContent, MARKUP, "the markup shows as typed");
   assert(dds[2]?.getAttribute("class")?.split(" ").includes("fstp-text") === true, "a long answer keeps its line breaks");
   eq(dds[2]?.textContent, LONG, "the long answer in full");
+  eq(byId(root, "application-plan-text")?.textContent, PLAN_TEXT, "the plan text shows as typed");
+  assert(byId(root, "application-plan-text")?.getAttribute("class") === "fstp-text", "the plan text keeps its line breaks");
+  assert(root.textContent.includes(ANSWERS[0]?.text ?? "?"), "the stage 2 answer shows as typed");
 });
 
 /** R-NF-03: an empty answer says so in words, under its question. */
@@ -240,6 +390,7 @@ test("r_nf_03_application_empty_answer_is_named", async () => {
   const plan = applicationPlan("lead", "DRAFT");
   const el = applicationSection(p, plan, {
     workspace: { ok: true, value: { title: "", summary: "  ", narrative: "Text" } },
+    plan: null,
     stage2: null,
   });
   assert(el !== null, "the section");
@@ -247,16 +398,35 @@ test("r_nf_03_application_empty_answer_is_named", async () => {
   eq(dds, [APPLICANT_LABELS["application.empty"], APPLICANT_LABELS["application.empty"], "Text"], "empty answers named");
 });
 
-/** R-AC-01: a failed workspace read shows its reason inside the section, so the page still loads. */
+/** R-AC-01: a failed read shows its reason inside the section, so the page still loads. */
 test("r_ac_01_application_read_failure_stays_inside_the_section", async () => {
   freshDom();
-  const p = info("STAGE1", "member");
-  const plan = applicationPlan("member", "STAGE1");
-  const el = applicationSection(p, plan, {
-    workspace: { ok: false, failure: { kind: "failed", reason: "network" } },
-    stage2: null,
-  });
+  const p = info("STAGE2", "member");
+  const plan = applicationPlan("member", "STAGE2");
+  const failed = { ok: false, failure: { kind: "failed", reason: "network" } } as const;
+  const el = applicationSection(p, plan, { workspace: failed, plan: failed, stage2: failed });
   assert(el !== null, "the section");
   assert(byId(asFake(el), "application-error") !== undefined, "the reason shows");
+  assert(byId(asFake(el), "application-plan-error") !== undefined, "the plan read's reason shows");
+  assert(byId(asFake(el), "application-stage2-error") !== undefined, "the stage 2 read's reason shows");
   eq(asFake(el).getElementsByTagName("dl").length, 0, "no answers");
+});
+
+/**
+ * R-SB-01, R-EV-05, TH-08 (lane m4/author-reads): the decoders refuse a
+ * stage 2 answer placed after a question that does not exist, an answer
+ * with a time of day, a plan with an unknown origin and a plan amount
+ * that is not an ADR-006 string. `{plan: null}` decodes as no plan.
+ */
+test("r_sb_01_r_ev_05_decoders_refuse_malformed_bodies", () => {
+  eq(decodeStage2Thread(STAGE2_BODY)?.answers.length, 2, "the body decodes");
+  eq(decodeStage2Thread({ ...STAGE2_BODY, answers: [{ after: 3, answered: "2026-10-03", text: "x" }] }), null, "after past the questions");
+  eq(decodeStage2Thread({ ...STAGE2_BODY, answers: [{ after: 1, answered: "2026-10-03T10:00:00Z", text: "x" }] }), null, "a time of day");
+  eq(decodeStage2Thread({ questions: STAGE2_BODY.questions }), null, "answers missing");
+  eq(decodePlan({ plan: null }), { plan: null }, "no plan yet");
+  eq(decodePlan({}), null, "plan member missing");
+  eq(decodePlan({ plan: { ...PLAN_BODY.plan, origin: "invented" } }), null, "unknown origin");
+  const bad = { ...PLAN_BODY.plan, tasks: [{ milestones: [{ amount: "1,000", start: "2027-01-04", due: "2027-03-31" }] }] };
+  eq(decodePlan({ plan: bad }), null, "a malformed amount");
+  eq(decodePlan({ plan: { ...PLAN_BODY.plan, text: 7 } }), null, "a text that is not a string");
 });

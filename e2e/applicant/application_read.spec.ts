@@ -8,7 +8,8 @@
  * admitted. Its lead signs in through the enrolment link, lands on the
  * home page, and reaches the proposal page by clicking only. The page
  * shows the "Application" section: each answer under its question, as
- * text, read without a refusal (SA-09 rule 7, I-21, R-AC-01).
+ * text, and the plan the lead recorded (R-SB-01, lane m4/author-reads),
+ * read without a refusal (SA-09 rule 7, I-21, R-AC-01).
  *
  * Without a stack manifest the spec fails at its first step with
  * `StackMissing`. Every person and text is synthetic.
@@ -80,6 +81,15 @@ test.describe('the application on the proposal page', () => {
     const answers = section.locator('#application-answers dd');
     await expect(answers).toHaveCount(3);
     await expect(answers.first(), 'the lead reads the submitted title').toHaveText(title);
+    // Lane m4/author-reads: the plan the lead recorded, read back. The seed
+    // records it through the ledger, so the cell holds no work plan text
+    // for it, and the page says so rather than show an empty text.
+    const plan = section.locator('#application-plan');
+    await expect(plan.getByRole('heading', { level: 3, name: 'Plan' })).toBeVisible();
+    await expect(plan.locator('#application-plan-tasks > li')).toHaveCount(1);
+    await expect(plan.locator('.fstp-plan-milestone')).toHaveCount(1);
+    await expect(plan.locator('#application-plan-total')).toContainText('EUR');
+    await expect(plan.locator('#application-plan-text-missing')).toBeVisible();
     await page.waitForLoadState('networkidle');
     expect(failed(), 'the proposal page reads without a refusal').toEqual([]);
     expect(await alerts(page), 'the proposal page shows no refusal').toEqual([]);

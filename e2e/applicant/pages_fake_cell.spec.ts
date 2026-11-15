@@ -77,7 +77,7 @@ function proposalIn(state: string, role: string | null): Reply {
       return role === null ? { proposal: '1', state, title: 'T' } : { proposal: '1', state, role, title: 'T' };
     }
     if (method === 'GET' && path === '/api/v1/proposals/1/stage2') {
-      return { questions: [] };
+      return { questions: [], answers: [] };
     }
     if (method === 'GET' && path === '/api/v1/proposals/1/negotiation') {
       return { acknowledged: false };

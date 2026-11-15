@@ -333,3 +333,93 @@ fn t_authz_matrix_r_jv_route_map_is_the_receiving_bindings() {
     );
     assert!(n > 1000, "{n}");
 }
+
+/// Runs `op` for the lead, the team member and the guardian of X in each
+/// terminal state, and returns the cells where the reference or the
+/// direct channel does not give `want(who)`: `true` for a completed read,
+/// `false` for a refusal.
+fn pin_former_team(op: &'static str, want: impl Fn(Who) -> bool) -> (usize, Vec<String>) {
+    let r: AuthzReference = authz_reference().unwrap();
+    let mut channel = matrix::direct_channel().unwrap();
+    let web = Session {
+        login: Some(Login::Passkey),
+        step_up: StepUp::Absent,
+        channel: Via::Web,
+    };
+    let mut pinned = 0usize;
+    let mut bad = Vec::new();
+    for tag in StateTag::ALL.into_iter().filter(|t| t.is_terminal()) {
+        for who in [Who::Lead, Who::TeamMember, Who::Guardian] {
+            let cell = CellKey {
+                op,
+                who,
+                state: StateProfile::Proposal(tag),
+                policy: Policy::SUPERSAFE,
+                session: web,
+            };
+            let admit = want(who);
+            let e = r.expected(&cell);
+            let o = channel.observe(&cell);
+            let reference_ok = if admit {
+                e == Some(Expected::Allow)
+            } else {
+                matches!(e, Some(Expected::Deny(_)))
+            };
+            let observed_ok = if admit {
+                matches!(o, Ok(Observed::Completed))
+            } else {
+                matches!(o, Ok(Observed::Refused(_)))
+            };
+            if !reference_ok || !observed_ok {
+                bad.push(format!(
+                    "{op} {who:?} {tag:?}: expected {e:?}, observed {o:?}"
+                ));
+            }
+            pinned = pinned.saturating_add(1);
+        }
+    }
+    (pinned, bad)
+}
+
+/// R-EV-05, P-11, I-17 (Daniel, 2026-11-15, night, "if i wrote it i
+/// should be able to read it"; lane m4/author-reads): `stage2.view` gives
+/// the team its own stage 2 answers beside the reviewers' questions. Its
+/// readers do not change: the active team, the guardian included, and
+/// once X ended the former lead and team member. The former guardian
+/// wrote no stage 2 answer and is refused. No Judging or Operations role
+/// reads it, so the answers reach no reviewer through it.
+#[test]
+fn t_authz_matrix_r_ev_05_stage2_view_with_answers_stays_with_the_team() {
+    let (n, bad) = run(&["stage2.view"], |_, _, _| false);
+    assert!(
+        bad.is_empty(),
+        "{} of {n} cells disagree:\n{}",
+        bad.len(),
+        report(&bad)
+    );
+    assert!(n > 1000, "{n}");
+    let (pinned, bad) = pin_former_team("stage2.view", |who| who != Who::Guardian);
+    assert!(bad.is_empty(), "{bad:#?}");
+    assert_eq!(pinned, 18);
+}
+
+/// R-SB-01, ADR-006 (Daniel, 2026-11-15, night, "if i wrote it i should
+/// be able to read it"; lane m4/author-reads): `proposal.get_plan` reads
+/// back the plan the team recorded, read-only. The active team reads it
+/// in every state, the guardian included. Once X ended the former lead
+/// and team member keep it. The former guardian, who records no plan, is
+/// refused, as for the stage 2 thread. Nobody else reads it.
+#[test]
+fn t_authz_matrix_r_sb_01_get_plan_stays_with_the_team() {
+    let (n, bad) = run(&["proposal.get_plan"], |_, _, _| false);
+    assert!(
+        bad.is_empty(),
+        "{} of {n} cells disagree:\n{}",
+        bad.len(),
+        report(&bad)
+    );
+    assert!(n > 1000, "{n}");
+    let (pinned, bad) = pin_former_team("proposal.get_plan", |who| who != Who::Guardian);
+    assert!(bad.is_empty(), "{bad:#?}");
+    assert_eq!(pinned, 18);
+}
