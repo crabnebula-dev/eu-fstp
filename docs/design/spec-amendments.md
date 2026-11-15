@@ -262,3 +262,21 @@ Readings, pending Daniel:
 - The team page offers the invitation while the programme has a creator draft. The member page offers the per-role actions only.
 - The page titles use the plain names "Team" and "Members" from the page catalogue. The vocabulary pack key `vocab.team` names the applicant team, so it is not reused.
 - `TODO(legal)`: the privacy notice line for this processing is still open.
+
+## SA-12: Tenant admins help set up programmes
+
+**Source.** Daniel, 2026-11-15 (night), on a refused creator start page ("refused under rule actor. Signed in as Tenant admin"): "I want the admin to be able to help set up everything." **Status.** Decided. To be built by lane `m4/admin-setup`.
+
+### Rule
+
+- A tenant admin may take every programme set-up action of the programme manager and the call drafter on any programme of the own tenant, without a Drafting binding. This covers:
+  - the creator start and steps, field and narrative saves, policy edits, imports, knock-out criteria and the Guide preview;
+  - the wizard stages, invitations and the activation request;
+  - drafting calls.
+- Each act names the admin as its actor, as for any editor.
+- **I-67 still holds.** An admin who edits a programme counts as one of its builders. Activation then needs a normal approval by a tenant admin who is not a builder, or the builder admin's override under ADR-022.
+- **Unchanged:**
+  - The tenant admin row's "No proposal content access by default" still holds, since set-up is no proposal content.
+  - SoD-07 and SoD-18.
+  - The approval and publication rules of calls (R-PC-03).
+- `SPEC/02-domain/roles-and-sod.md` gains a NOTE on the tenant admin row.

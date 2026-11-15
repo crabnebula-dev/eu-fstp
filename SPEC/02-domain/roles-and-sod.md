@@ -16,7 +16,7 @@ Roles bind a tenant account to a programme with a start date and an optional end
 | Applicant | Receiving | Lead of a proposal. |
 | Applicant team member | Receiving | Contributor on a proposal. |
 | Guardian | Receiving | Consents on behalf of a minor applicant. |
-| Tenant admin | Operations | Tenant configuration. No proposal content access by default. NOTE: Tenant admins and the FSTP coordinator of a programme read its audit log read-only (Daniel, 2026-11-15). The entries show text references only (ADR-007), so no proposal content is exposed. |
+| Tenant admin | Operations | Tenant configuration. No proposal content access by default. NOTE: A tenant admin may take every programme set-up action of the programme manager and the call drafter on the own tenant's programmes, without a Drafting binding, and then counts as a builder for I-67 (Daniel, 2026-11-15, SA-12). NOTE: Tenant admins and the FSTP coordinator of a programme read its audit log read-only (Daniel, 2026-11-15). The entries show text references only (ADR-007), so no proposal content is exposed. |
 | Finance approver | Operations | Accepts milestones for payment. |
 | Payment releaser | Operations | Releases approved payments. |
 | Contract signatory | Operations | Signs contracts for the funder side, with signing authority (`02-domain/contracts.md`). |
