@@ -71,6 +71,10 @@
 //! `GetJourney`, `GetDiary`, `GetRouteMap`, `GetOwnProposal`,
 //! `GetOwnStage2Thread` and `GetContent` of that proposal
 //! (`ReadRule::FormerTeam`). No command reads this rule.
+//!
+//! Daniel, 2026-11-15 (night), "if i wrote it i should be able to read
+//! it": everyone who was on the team, the guardian included, keeps a
+//! read-only `GetOwnWorkspace` of that proposal (`ReadRule::FormerAuthor`).
 
 use fstp_domain::Via;
 use fstp_domain::assignment::{Assignment, AssignmentKind, AssignmentStatus};
@@ -315,6 +319,12 @@ pub enum ReadRule {
     /// own proposal and of the outcome, as `proposal.list_own` gives it,
     /// which revives no binding (Daniel, 2026-11-06, O-59).
     FormerTeam,
+    /// A former lead, team member or guardian of the proposal, in a
+    /// terminal state, as for [`ReadRule::FormerTeam`] with the guardian
+    /// added. Everyone who was on the team keeps a read-only view of the
+    /// application they wrote (Daniel, 2026-11-15, night). It admits
+    /// `GetOwnWorkspace` only, and no command reads it.
+    FormerAuthor,
     /// The lead of the proposal.
     Lead,
     /// The assignee of the target assignment, declared free of conflict,
@@ -494,7 +504,14 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     (ReadKind::GetGuide, ReadRule::Public, OPEN_ALWAYS),
     (ReadKind::ListOwnProposals, ReadRule::Own, OPEN_ALWAYS),
     (ReadKind::GetOwnProposal, TEAM_OR_FORMER, OPEN_ALWAYS),
-    (ReadKind::GetOwnWorkspace, ReadRule::Team, OPEN_ALWAYS),
+    // Daniel, 2026-11-15, night: everyone who was on the team keeps a
+    // read-only view of the application once X ended. Saving stays the
+    // active team's (`proposal.save_workspace`).
+    (
+        ReadKind::GetOwnWorkspace,
+        ReadRule::AnyOf(&[ReadRule::Team, ReadRule::FormerAuthor]),
+        OPEN_ALWAYS,
+    ),
     (ReadKind::GetOwnStage2Thread, TEAM_OR_FORMER, OPEN_ALWAYS),
     (ReadKind::GetOwnNotices, ReadRule::Own, OPEN_ALWAYS),
     (
@@ -1159,6 +1176,10 @@ fn judge(
             (Some(x), Some(s)) if s.is_terminal() => open(former_team(state, account, x)),
             _ => deny(DenyRule::Rac01),
         },
+        ReadRule::FormerAuthor => match (ctx.proposal, ctx.state) {
+            (Some(x), Some(s)) if s.is_terminal() => open(former_author(state, account, x)),
+            _ => deny(DenyRule::Rac01),
+        },
         ReadRule::ChoiceMaker => match ctx.proposal {
             Some(x) => open(fstp_domain::publicity::is_choice_maker(
                 state, account, x, now,
@@ -1277,10 +1298,35 @@ fn team(state: &State, account: AccountId, proposal: ProposalId, now: Timestamp)
 /// or suspended binding gives no such read. The guardian gets none: the
 /// decision of 2026-11-06 names the lead and the team members.
 fn former_team(state: &State, account: AccountId, proposal: ProposalId) -> bool {
+    former_in(
+        state,
+        account,
+        proposal,
+        &[Role::Applicant, Role::ApplicantTeamMember],
+    )
+}
+
+/// Whether `account` held a Receiving binding of lead, team member or
+/// guardian on `proposal` that was active when it ended (Daniel,
+/// 2026-11-15, night: "if i wrote it i should be able to read it"). The
+/// caller checks that the proposal is terminal. A voided or suspended
+/// binding gives no such read.
+fn former_author(state: &State, account: AccountId, proposal: ProposalId) -> bool {
+    former_in(
+        state,
+        account,
+        proposal,
+        &[Role::Applicant, Role::ApplicantTeamMember, Role::Guardian],
+    )
+}
+
+/// Whether `account` held an ended binding of one of `roles` on
+/// `proposal` that was active when it ended.
+fn former_in(state: &State, account: AccountId, proposal: ProposalId, roles: &[Role]) -> bool {
     state.roster().ended().any(|(_, e)| {
         let b = e.binding;
         b.account == account
-            && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
+            && roles.contains(&b.role)
             && b.proposal() == Some(proposal)
             && matches!(b.status, BindingStatus::Active)
     })

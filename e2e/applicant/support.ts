@@ -279,6 +279,7 @@ export const WITHDRAWABLE: ReadonlySet<State> = new Set<State>([
  */
 export type ScenarioAt =
   | 'OPEN_CALL'
+  | 'STAGE1'
   | 'STAGE2'
   | 'IRC_REVIEW_MINOR'
   | 'NEGOTIATION'

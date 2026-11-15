@@ -1,6 +1,7 @@
 // One proposal (`proposal.view`): its state, what the applicant can do in
 // that state, withdrawal (`proposal.withdraw`, R-SB-03) and the copy
-// request (`proposal.request_copy`, R-SB-04).
+// request (`proposal.request_copy`, R-SB-04), and the application itself,
+// read-only (`application.ts`).
 //
 // An action the state or the caller's role does not allow has no control
 // on the page (design section 8.7 `roles/<role>`). The lead's actions are
@@ -11,6 +12,7 @@
 
 import { h } from "../core/dom.js";
 import { journeyNav } from "../journey/links.js";
+import { applicationPlan, applicationSection, loadApplication } from "./application.js";
 import { call } from "./client.js";
 import { isEmail } from "./email.js";
 import { loadProposal } from "./load.js";
@@ -279,6 +281,17 @@ export function mountProposal(id: string, done?: string): void {
     const next = actions(p);
     if (next !== null) {
       f.main.append(next);
+    }
+    // The application, read-only, for everyone who is or was on the team
+    // (`application.ts`). Its reads never refuse the page itself.
+    const plan = applicationPlan(p.role, p.state);
+    const section = applicationSection(
+      p,
+      plan,
+      await loadApplication(p, plan, (name, params, decode) => call(name, params, undefined, decode)),
+    );
+    if (section !== null) {
+      f.main.append(section);
     }
     if (leadActionsOffered(p.role)) {
       if (withdrawOffered(p.state)) {

@@ -16,7 +16,9 @@
 //! lane left open: the journey for staff and the guardian, the guardian's
 //! workspace save in DRAFT, the notice acknowledgement, and the former
 //! team's workspace read. No cell is left out. The follow-up answer of
-//! the same night gives the guardian the route map as well.
+//! the same night gives the guardian the route map as well. A later
+//! answer that night ("if i wrote it i should be able to read it") gives
+//! the former team, the guardian included, a read-only workspace read.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -267,12 +269,14 @@ fn t_authz_matrix_i93_diary_readers() {
     assert!(n > 1000, "{n}");
 }
 
-/// I-21, R-AC-01 (Daniel, 2026-11-15, night): the workspace is read by
-/// the team while its Receiving bindings are active. Once X ended, the
-/// former lead and team member keep the journey, map and diary only, so
-/// the workspace is closed to them.
+/// I-21, R-AC-01 (Daniel, 2026-11-15, night, "if i wrote it i should be
+/// able to read it"): the workspace is read by the team while its
+/// Receiving bindings are active. Once X ended, everyone who was on the
+/// team, the lead, a team member and the guardian, keeps a read-only
+/// view of the application. Nobody else reads it, and
+/// `proposal.save_workspace` stays closed to the former team.
 #[test]
-fn t_authz_matrix_i21_get_workspace_is_closed_to_the_former_team() {
+fn t_authz_matrix_i21_get_workspace_stays_with_the_former_team() {
     let (n, bad) = run(&["proposal.get_workspace"], |_, _, _| false);
     assert!(
         bad.is_empty(),
@@ -281,6 +285,35 @@ fn t_authz_matrix_i21_get_workspace_is_closed_to_the_former_team() {
         report(&bad)
     );
     assert!(n > 1000, "{n}");
+    // The former team's cells, pinned: the reference admits each one and
+    // the direct channel completes it.
+    let r: AuthzReference = authz_reference().unwrap();
+    let mut channel = matrix::direct_channel().unwrap();
+    let web = Session {
+        login: Some(Login::Passkey),
+        step_up: StepUp::Absent,
+        channel: Via::Web,
+    };
+    let mut pinned = 0usize;
+    for tag in StateTag::ALL.into_iter().filter(|t| t.is_terminal()) {
+        for who in [Who::Lead, Who::TeamMember, Who::Guardian] {
+            let cell = CellKey {
+                op: "proposal.get_workspace",
+                who,
+                state: StateProfile::Proposal(tag),
+                policy: Policy::SUPERSAFE,
+                session: web,
+            };
+            assert_eq!(r.expected(&cell), Some(Expected::Allow), "{who:?} {tag:?}");
+            let o = channel.observe(&cell);
+            assert!(
+                matches!(o, Ok(Observed::Completed)),
+                "{who:?} {tag:?}: observed {o:?}"
+            );
+            pinned = pinned.saturating_add(1);
+        }
+    }
+    assert_eq!(pinned, 18);
 }
 
 /// `SPEC/12-journey-ui.md` section 8.1, O-58, R-JV-01 (Daniel,
