@@ -761,6 +761,87 @@ impl CellHandle {
         Ok(self.runtime()?.custody.clone())
     }
 
+    /// Revokes the cell at its witness (R-SW-02, design section 3.7 step
+    /// 2, ADR-004 "Decided by Daniel, 2026-11-15 (late)", lane
+    /// m3/erase-prod). For the SaaS witness the world plays provisioning:
+    /// it appends the revocation as the witness migrator
+    /// (`fstp_witness::store::revocation_sql`), as it registered the cell,
+    /// and the witness refuses the cell from its next request on. A local
+    /// witness stores the revocation in its own file store.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no witness or the witness refuses.
+    pub(crate) fn revoke_at_witness(&self) -> Result<(), WorldError> {
+        let rt = self.runtime()?;
+        let w = &rt.witness;
+        let fail = |e: &dyn fmt::Display| WorldError::Store(format!("the witness revocation: {e}"));
+        match &w.cluster {
+            Some(cluster) => {
+                let at = i64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|e| fail(&e))?
+                        .as_micros(),
+                )
+                .map_err(|e| fail(&e))?;
+                sql_as(
+                    cluster,
+                    WITNESS_SET,
+                    &format!("{WITNESS_SET}_migrator"),
+                    &fstp_witness::store::revocation_sql(fstp_audit::CellId(self.id), at),
+                )?;
+                rt.services
+                    .rt
+                    .block_on(w.handle.reload_registry())
+                    .map_err(|e| fail(&e))
+            }
+            None => rt
+                .services
+                .rt
+                .block_on(w.handle.revoke_cell(fstp_audit::CellId(self.id)))
+                .map_err(|e| fail(&e)),
+        }
+    }
+
+    /// Whether the cell's witness holds a revocation of the cell
+    /// (R-SW-02, lane m3/erase-prod): a row of `witness.cell_revocation`
+    /// for the SaaS witness, or a revocation record in the registry file of
+    /// a local witness.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no witness or its registry cannot be read.
+    pub(crate) fn revoked_at_witness(&self) -> Result<bool, WorldError> {
+        let w = &self.runtime()?.witness;
+        let fail = |e: &dyn fmt::Display| WorldError::Store(format!("the witness registry: {e}"));
+        match (&w.cluster, &w.local) {
+            (Some(cluster), _) => {
+                let n = superuser_sql(
+                    cluster,
+                    WITNESS_SET,
+                    &format!(
+                        "SELECT count(*) FROM witness.cell_revocation WHERE cell_id = '\\x{}'::bytea",
+                        crate::canary::lower_hex(&self.id)
+                    ),
+                )
+                .map_err(|e| fail(&e))?;
+                Ok(n.trim() == "1")
+            }
+            (None, Some(local)) => {
+                let dir = local.dir.join(WITNESS_STORE_DIR);
+                let bytes = std::fs::read(dir.join(fstp_witness::file_store::REGISTRY_FILE))
+                    .map_err(|e| fail(&e))?;
+                let cells = fstp_witness::file_store::load_registry_file(&bytes)
+                    .map_err(|e| fail(&format!("{e:?}")))?;
+                Ok(cells
+                    .iter()
+                    .any(|c| c.cell.0 == self.id && c.revoked_at.is_some()))
+            }
+            (None, None) => Err(fail(&"the cell runs no witness")),
+        }
+    }
+
     /// Runs `f` on the cell's runtime to its end (lane F-ERASE).
     pub(crate) fn block_on<T>(
         &self,
@@ -2189,7 +2270,8 @@ fn provision_service(
                  GRANT SELECT ON fstp_meta.placement TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal \
                  TO {WITNESS_SERVICE_ROLE};\n\
-                 GRANT SELECT ON witness.cell_ca, witness.anchor_key TO {WITNESS_SERVICE_ROLE};",
+                 GRANT SELECT ON witness.cell_ca, witness.anchor_key TO {WITNESS_SERVICE_ROLE};\n\
+                 GRANT SELECT ON witness.cell_revocation TO {WITNESS_SERVICE_ROLE};",
                 crate::canary::lower_hex(&state.id.0)
             ),
         )?;
@@ -2772,6 +2854,9 @@ struct WorldWitness {
     /// The install of a self-hosted cell, whose local witness stops with
     /// the cell. `None` for the shared SaaS witness.
     local: Option<LocalInstall>,
+    /// The witness cluster of the shared SaaS witness, where provisioning
+    /// writes the registry as the migrator. `None` for a local witness.
+    cluster: Option<ClusterHandle>,
 }
 
 /// The install directory of a self-hosted cell: its local witness's file
@@ -2936,6 +3021,7 @@ fn start_local_witness(s: &Services, cell: &[u8; 16]) -> Result<WorldWitness, Wo
         name: LOCAL_WITNESS_NAME.to_owned(),
         relay_server,
         local: Some(LocalInstall { dir }),
+        cluster: None,
     })
 }
 
@@ -3479,6 +3565,11 @@ fn start_cell(
                 &[],
             )?,
             local: None,
+            cluster: Some(ClusterHandle {
+                kind: witness_cluster.kind(),
+                name: witness_cluster.name().to_owned(),
+                server: witness_cluster.server(),
+            }),
         }
     };
     let loopback = [IpAddr::V4(Ipv4Addr::LOCALHOST)];

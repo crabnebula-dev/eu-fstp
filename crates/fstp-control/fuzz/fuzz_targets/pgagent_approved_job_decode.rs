@@ -2,7 +2,9 @@
 //! H-05, ADR-011 "Two-operator approval"). Lane m3/erase-cell-2.
 //!
 //! Design checks: no panic; only a destructive job decodes; an accepted
-//! frame is the one encoding of its job and approvals.
+//! frame is the one encoding of its job and approvals. Version 3 carries
+//! each approval's batch of job digests (lane m3/erase-prod), which the
+//! decoder bounds and refuses with a repeated digest.
 //!
 //! On every input the decoder returns without a panic, its result
 //! formats, and a second decode gives the same result. A decoded job is

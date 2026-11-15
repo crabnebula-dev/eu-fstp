@@ -23,7 +23,10 @@
 //!    ([`crate::approval`]). Each approver calls
 //!    [`OperatorLogin::begin_approval`] and
 //!    [`OperatorLogin::finish_approval`] in their own session. The
-//!    requester then calls [`OperatorLogin::authorise_destructive`].
+//!    requester then calls [`OperatorLogin::authorise_destructive`]. For
+//!    an erasure each approver instead approves the batch of all its jobs
+//!    once ([`OperatorLogin::begin_batch_approval`], ADR-004, 2026-11-15
+//!    late), and the requester asks for each job in turn.
 //!
 //! Interim, pending Daniel: the three lifetimes. `SPEC/` and the ADRs fix
 //! none of them for staff. P-71 and P-72 are tenant parameters, and staff
@@ -43,7 +46,8 @@ use fstp_webauthn::{AssertionExpect, AssertionResponse, CoseKey, RelyingParty, S
 use crate::ControlError;
 use crate::api::CpApiRequest;
 use crate::approval::{
-    ApprovalBook, ApprovalEvidence, ApprovedJob, DestructiveJob, approval_challenge, job_digest,
+    ApprovalBatch, ApprovalBook, ApprovalEvidence, ApprovedJob, DestructiveJob, approval_challenge,
+    job_digest,
 };
 use crate::erase::ErasureStep;
 
@@ -133,9 +137,16 @@ struct Session {
 }
 
 /// An approval challenge that waits for its assertion (ADR-011).
+/// What an approval covers: one job, or a batch of jobs (ADR-004,
+/// 2026-11-15 late).
+enum Subject {
+    Job(DestructiveJob),
+    Batch(ApprovalBatch),
+}
+
 struct PendingApproval {
     session: [u8; 32],
-    job: DestructiveJob,
+    subject: Subject,
     issued_at: i64,
     nonce: [u8; 32],
 }
@@ -400,7 +411,7 @@ impl OperatorLogin {
             challenge,
             PendingApproval {
                 session: session.0,
-                job: job.clone(),
+                subject: Subject::Job(job.clone()),
                 issued_at: now,
                 nonce,
             },
@@ -439,14 +450,69 @@ impl OperatorLogin {
         if staff != owner {
             return Err(refuse(OperatorRefusal::OtherStaff));
         }
-        let evidence = ApprovalEvidence {
-            issued_at: pending.issued_at,
-            nonce: pending.nonce,
-            assertion: assertion.clone(),
-        };
-        self.book
-            .approve_with_evidence(staff, &pending.job, now, evidence)?;
+        match pending.subject {
+            Subject::Job(job) => {
+                let evidence = ApprovalEvidence {
+                    issued_at: pending.issued_at,
+                    nonce: pending.nonce,
+                    batch: None,
+                    assertion: assertion.clone(),
+                };
+                self.book
+                    .approve_with_evidence(staff, &job, now, evidence)?;
+            }
+            Subject::Batch(batch) => {
+                let evidence = ApprovalEvidence {
+                    issued_at: pending.issued_at,
+                    nonce: pending.nonce,
+                    batch: Some(batch.clone()),
+                    assertion: assertion.clone(),
+                };
+                self.book.approve_batch(staff, &batch, now, evidence)?;
+            }
+        }
         Ok(staff)
+    }
+
+    /// Draws the challenge of one batch approval of every job of `jobs`
+    /// inside `session` (ADR-004 "Decided by Daniel, 2026-11-15 (late)":
+    /// one batch approval per operator per erasure). The challenge binds
+    /// the list of the jobs' digests ([`crate::approval::batch_challenge`]),
+    /// so the passkey assertion over it signs the list. It is single use
+    /// and lives [`CHALLENGE_LIFETIME_SECS`]. [`Self::finish_approval`]
+    /// answers it. Each job of the batch then runs once on it, and the
+    /// two-operator rule is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`ControlError::Job`] for a batch that [`ApprovalBatch::of`]
+    /// refuses, the session refusals, [`OperatorRefusal::Capacity`] and
+    /// [`OperatorRefusal::Random`].
+    pub fn begin_batch_approval(
+        &mut self,
+        session: OperatorSession,
+        jobs: &[DestructiveJob],
+        now: i64,
+    ) -> Result<[u8; 32], ControlError> {
+        let batch = ApprovalBatch::of(jobs)?;
+        self.session(session, now)?;
+        self.prune(now);
+        if self.approvals.len() >= MAX_PENDING {
+            return Err(refuse(OperatorRefusal::Capacity));
+        }
+        let nonce: [u8; 32] =
+            fstp_crypto::random_array().map_err(|_| refuse(OperatorRefusal::Random))?;
+        let challenge = crate::approval::batch_challenge(&batch, now, &nonce);
+        self.approvals.insert(
+            challenge,
+            PendingApproval {
+                session: session.0,
+                subject: Subject::Batch(batch),
+                issued_at: now,
+                nonce,
+            },
+        );
+        Ok(challenge)
     }
 
     /// Admits the destructive `job` for the requester of `session`. The

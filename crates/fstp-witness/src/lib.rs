@@ -73,6 +73,9 @@ pub use crate::service::{LocalWitnessParts, WitnessHandle, WitnessParts, serve, 
 ///    `APPLY_GRANT_REVOKE_SQL`, the shared text of the application and
 ///    vault sets, byte for byte.
 /// 3. `witness`: the witness tables of [`CATALOGUE`].
+/// 4. `revocation`: `witness.cell_revocation`, the revocation record of a
+///    cell erasure (R-SW-02, ADR-004 "Decided by Daniel, 2026-11-15
+///    (late)"), and the triggers that refuse a revoked cell's records.
 pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
     fstp_migrate::Migration::new(
         1,
@@ -88,6 +91,11 @@ pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
         3,
         "witness",
         include_str!("../migrations/witness/0003_witness.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        4,
+        "revocation",
+        include_str!("../migrations/witness/0004_revocation.sql"),
     ),
 ];
 
@@ -237,6 +245,15 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("chain", ColumnClass::Enum),
             col("public_key", ColumnClass::PublicKeyMaterial),
             col("registered_at", ColumnClass::Time),
+        ],
+    },
+    TableSpec {
+        schema: "witness",
+        name: "cell_revocation",
+        class: TableClass::Operational,
+        columns: &[
+            col("cell_id", ColumnClass::RandomId),
+            col("revoked_at", ColumnClass::Time),
         ],
     },
 ];

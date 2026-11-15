@@ -56,6 +56,7 @@ fn encode_table(passphrase: &[u8], iterations: u32, entries: &[Entry]) -> Result
                 )
             })
             .collect(),
+        sign_keys: Vec::new(),
     };
     fstp_keyd::encode_key_table(&passphrase, iterations, &table).map_err(classify)
 }
@@ -224,4 +225,70 @@ fn adr004_key_table_damaged_slot_spares_the_others() {
         }
     }
     assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+/// R-SW-02, ADR-004 "Decided by Daniel, 2026-11-15 (late)": the key table
+/// holds sign-key slots beside the root slots. A table of both seals and
+/// opens back with each entry, live or destroyed. The plaintext body
+/// decoder reads a sign-key entry, and refuses an unknown class, two
+/// entries of one sign key, and a destroyed one that holds key bytes.
+#[test]
+fn r_sw_02_key_table_holds_sign_key_slots_beside_root_slots() {
+    let name = |n: u8| {
+        let mut h = vec![fstp_custody::keyd::SIGN_KEY_CLUSTER_CA];
+        h.extend_from_slice(&[n; 8]);
+        fstp_keyd::SignKeyName::from_handle(&h).unwrap()
+    };
+    assert!(fstp_keyd::SignKeyName::from_handle(&[0x03, 1, 2, 3, 4, 5, 6, 7, 8]).is_none());
+    assert!(fstp_keyd::SignKeyName::from_handle(&[0x02, 1]).is_none());
+    let passphrase = fstp_keyd::Passphrase::from_bytes(PASSPHRASE).unwrap();
+    let table = fstp_keyd::KeyTable {
+        entries: vec![fstp_keyd::KeyTableEntry::new(
+            Chain::App,
+            fstp_custody::Epoch(1),
+            Some(fstp_keyd::EpochKey::from_bytes([0xa1; 32])),
+        )],
+        sign_keys: vec![
+            fstp_keyd::SignKeyEntry::new(
+                name(1),
+                Some(fstp_keyd::EpochKey::from_bytes([0xc1; 32])),
+            ),
+            fstp_keyd::SignKeyEntry::new(name(2), None),
+        ],
+    };
+    let bytes = fstp_keyd::encode_key_table(&passphrase, MIN_ITERATIONS, &table).unwrap();
+    let back = decode_custody_file(&bytes)
+        .and_then(|f| f.open(&passphrase))
+        .unwrap();
+    assert_eq!(back.entries.len(), 1);
+    assert_eq!(back.sign_keys.len(), 2);
+    assert!(back.sign_key(name(1)).is_some_and(|e| e.is_live()));
+    assert!(back.sign_key(name(2)).is_some_and(|e| !e.is_live()));
+
+    let entry = |first: u8, rest: [u8; 8], state: u8, key: [u8; 32]| {
+        let mut e = vec![first];
+        e.extend_from_slice(&rest);
+        e.push(state);
+        e.extend_from_slice(&key);
+        e
+    };
+    let body = |entries: &[Vec<u8>]| {
+        let mut b = u32::try_from(entries.len()).unwrap().to_be_bytes().to_vec();
+        for e in entries {
+            b.extend_from_slice(e);
+        }
+        b
+    };
+    let sign = entry(0x82, [1; 8], 1, [0xc1; 32]);
+    let root = entry(1, 1u64.to_be_bytes(), 1, [0xa1; 32]);
+    let t = fstp_keyd::decode_key_table_body(&body(&[root.clone(), sign.clone()])).unwrap();
+    assert_eq!((t.entries.len(), t.sign_keys.len()), (1, 1));
+    for bad in [
+        body(&[entry(0x83, [1; 8], 1, [0xc1; 32])]),
+        body(&[entry(0x80, [1; 8], 1, [0xc1; 32])]),
+        body(&[sign.clone(), sign.clone()]),
+        body(&[entry(0x82, [1; 8], 2, [0xc1; 32])]),
+    ] {
+        assert!(fstp_keyd::decode_key_table_body(&bad).is_err());
+    }
 }

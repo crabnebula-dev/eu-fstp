@@ -18,6 +18,17 @@
 //! Interim, pending Daniel: the log stays in memory until `cp.job` rows
 //! are written (ADR-011 record of lane m3/erase-cell).
 //!
+//! # Batch approvals (ADR-004 "Decided by Daniel, 2026-11-15 (late)")
+//!
+//! An erasure runs one `erase-cell` job and four agent drops. Each of the
+//! two operators approves them once, with a passkey assertion over
+//! [`batch_challenge`], which binds the list of all their digests
+//! ([`ApprovalBatch`]). The book then admits each job of the batch once on
+//! that approval ([`ApprovalBook::approve_batch`]). The two-operator rule
+//! is unchanged: each job still needs approvals of two distinct staff
+//! members, the requester's among them. The evidence of a batch approval
+//! carries the batch, so the agent checks that the job's digest is in it.
+//!
 //! # The agent's own check (ADR-011, lane m3/erase-cell-2)
 //!
 //! `fstp-pgagent` checks both approvals of a destructive job again
@@ -150,19 +161,123 @@ pub fn approval_challenge(digest: JobDigest, issued_at: i64, nonce: &[u8; 32]) -
     fstp_crypto::sha256(&m)
 }
 
+// ---------------------------------------------------------------------------
+// Batch approvals (ADR-004 "Decided by Daniel, 2026-11-15 (late)": one
+// batch approval per operator per erasure). Lane m3/erase-prod.
+
+/// The most job digests one batch approval covers.
+pub const MAX_BATCH: usize = 16;
+
+/// The domain label of a batch digest.
+const BATCH_LABEL: &[u8] = b"fstp-cp-batch-v1";
+
+/// The domain label of a batch approval challenge.
+const BATCH_APPROVAL_LABEL: &[u8] = b"fstp-cp-batch-approval-v1";
+
+/// The list of job digests that one approval covers: every job of one
+/// erasure. Each of the two operators approves the list once, with a
+/// passkey, and the assertion signs the list through its challenge
+/// ([`batch_challenge`]). Only [`ApprovalBatch::new`] makes one, so a
+/// batch holds 1 to [`MAX_BATCH`] distinct digests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalBatch(Vec<JobDigest>);
+
+impl ApprovalBatch {
+    /// The batch of `digests`, in their order.
+    ///
+    /// # Errors
+    ///
+    /// [`ControlError::Job`] for no digest, more than [`MAX_BATCH`], or a
+    /// digest listed twice.
+    pub fn new(digests: Vec<JobDigest>) -> Result<ApprovalBatch, ControlError> {
+        if digests.is_empty() || digests.len() > MAX_BATCH {
+            return Err(ControlError::Job("batch size"));
+        }
+        for (i, d) in digests.iter().enumerate() {
+            if digests.iter().skip(i.saturating_add(1)).any(|e| e == d) {
+                return Err(ControlError::Job("a job listed twice in a batch"));
+            }
+        }
+        Ok(ApprovalBatch(digests))
+    }
+
+    /// The batch of `jobs`' digests, in their order.
+    ///
+    /// # Errors
+    ///
+    /// As [`ApprovalBatch::new`].
+    pub fn of(jobs: &[DestructiveJob]) -> Result<ApprovalBatch, ControlError> {
+        ApprovalBatch::new(jobs.iter().map(job_digest).collect())
+    }
+
+    /// The job digests, in their order.
+    pub fn digests(&self) -> &[JobDigest] {
+        &self.0
+    }
+
+    /// Whether the batch covers `digest`.
+    pub fn contains(&self, digest: JobDigest) -> bool {
+        self.0.contains(&digest)
+    }
+
+    /// Whether the batch covers exactly the digests of `other`, in any
+    /// order.
+    pub fn same_jobs(&self, other: &ApprovalBatch) -> bool {
+        self.0.len() == other.0.len() && self.0.iter().all(|d| other.contains(*d))
+    }
+
+    /// The batch digest: SHA-256 over the label, a zero octet, the count
+    /// as one octet and each job digest in order. One spelling per list.
+    pub fn digest(&self) -> [u8; 32] {
+        let mut m = BATCH_LABEL.to_vec();
+        m.push(0);
+        m.push(u8::try_from(self.0.len()).unwrap_or(u8::MAX));
+        for d in &self.0 {
+            m.extend_from_slice(&d.0);
+        }
+        fstp_crypto::sha256(&m)
+    }
+}
+
+/// The challenge of a batch approval: SHA-256 over its own label, the
+/// batch digest, the time the challenge was drawn as a big-endian `i64`,
+/// and 32 random octets. The assertion over it signs the whole list.
+pub fn batch_challenge(batch: &ApprovalBatch, issued_at: i64, nonce: &[u8; 32]) -> [u8; 32] {
+    let mut m = BATCH_APPROVAL_LABEL.to_vec();
+    m.extend_from_slice(&batch.digest());
+    m.extend_from_slice(&issued_at.to_be_bytes());
+    m.extend_from_slice(nonce);
+    fstp_crypto::sha256(&m)
+}
+
 /// What an approver signed: the time the challenge was drawn, its random
-/// octets and the passkey assertion over [`approval_challenge`]. The
-/// agent checks it again ([`AgentApprovals`]). It names no staff member:
-/// the agent finds the member from the credential id among its own
-/// pinned passkeys.
+/// octets and the passkey assertion over [`approval_challenge`], or over
+/// [`batch_challenge`] for a batch approval. The agent checks it again
+/// ([`AgentApprovals`]). It names no staff member: the agent finds the
+/// member from the credential id among its own pinned passkeys.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalEvidence {
     /// When the challenge was drawn, in seconds.
     pub issued_at: i64,
     /// The random octets of the challenge.
     pub nonce: [u8; 32],
+    /// The batch the approval covers, or `None` for an approval of one
+    /// job.
+    pub batch: Option<ApprovalBatch>,
     /// The passkey assertion with user verification.
     pub assertion: AssertionResponse,
+}
+
+impl ApprovalEvidence {
+    /// The challenge this evidence answers as an approval of the job
+    /// `digest`, or `None` when its batch does not cover that job.
+    pub fn challenge_for(&self, digest: JobDigest) -> Option<[u8; 32]> {
+        match &self.batch {
+            None => Some(approval_challenge(digest, self.issued_at, &self.nonce)),
+            Some(b) if b.contains(digest) => Some(batch_challenge(b, self.issued_at, &self.nonce)),
+            Some(_) => None,
+        }
+    }
 }
 
 /// One logged event of the book.
@@ -172,6 +287,18 @@ pub enum ApprovalEvent {
     Approved {
         /// The job.
         digest: JobDigest,
+        /// The approver.
+        staff: StaffRef,
+        /// When, in seconds.
+        at: i64,
+    },
+    /// A staff member approved a batch of jobs once (ADR-004, 2026-11-15
+    /// late).
+    ApprovedBatch {
+        /// The batch digest ([`ApprovalBatch::digest`]).
+        batch: [u8; 32],
+        /// How many jobs the batch covers.
+        jobs: u8,
         /// The approver.
         staff: StaffRef,
         /// When, in seconds.
@@ -260,7 +387,9 @@ impl ApprovedJob {
 
 #[derive(Clone, Debug)]
 struct Approval {
-    digest: JobDigest,
+    /// The jobs this approval still admits: one job, or the jobs of a
+    /// batch that have not run yet.
+    open: Vec<JobDigest>,
     staff: StaffRef,
     at: i64,
     evidence: Option<ApprovalEvidence>,
@@ -321,12 +450,47 @@ impl ApprovalBook {
             self.open.remove(0);
         }
         self.open.push(Approval {
-            digest,
+            open: vec![digest],
             staff,
             at,
             evidence,
         });
         self.log.push(ApprovalEvent::Approved { digest, staff, at });
+        Ok(())
+    }
+
+    /// Records that `staff` approved every job of `batch` at `at`, once,
+    /// with `evidence` over [`batch_challenge`] (ADR-004, 2026-11-15
+    /// late). Each job of the batch then runs on this approval once.
+    ///
+    /// # Errors
+    ///
+    /// [`ControlError::Job`] when `evidence` is not over `batch`.
+    pub fn approve_batch(
+        &mut self,
+        staff: StaffRef,
+        batch: &ApprovalBatch,
+        at: i64,
+        evidence: ApprovalEvidence,
+    ) -> Result<(), ControlError> {
+        if evidence.batch.as_ref() != Some(batch) {
+            return Err(ControlError::Job("evidence of another batch"));
+        }
+        if self.open.len() >= MAX_APPROVALS {
+            self.open.remove(0);
+        }
+        self.open.push(Approval {
+            open: batch.digests().to_vec(),
+            staff,
+            at,
+            evidence: Some(evidence),
+        });
+        self.log.push(ApprovalEvent::ApprovedBatch {
+            batch: batch.digest(),
+            jobs: u8::try_from(batch.digests().len()).unwrap_or(u8::MAX),
+            staff,
+            at,
+        });
         Ok(())
     }
 
@@ -348,7 +512,7 @@ impl ApprovalBook {
         let counted: Vec<&Approval> = self
             .open
             .iter()
-            .filter(|a| a.digest == digest && fresh(a.at, now))
+            .filter(|a| a.open.contains(&digest) && fresh(a.at, now))
             .collect();
         let own = counted.iter().any(|a| a.staff == requester);
         let second = counted
@@ -369,7 +533,12 @@ impl ApprovalBook {
                     (Some(a), Some(b)) => Some(Box::new([a, b])),
                     _ => None,
                 };
-                self.open.retain(|a| a.digest != digest);
+                // Each approval admits this job once. A batch approval
+                // stays for the batch's other jobs.
+                for a in &mut self.open {
+                    a.open.retain(|d| *d != digest);
+                }
+                self.open.retain(|a| !a.open.is_empty());
                 let approvers = [requester, other];
                 self.log.push(ApprovalEvent::Ran {
                     digest,
@@ -454,8 +623,11 @@ pub struct PinnedApprovers {
 /// [`AgentApprovals::verify`] recomputes the digest from the agent's own
 /// cluster and the job, the challenge from the digest and the evidence,
 /// and verifies each assertion with user verification against the pinned
-/// passkeys. Two distinct staff members must approve. A challenge counts
-/// once: the agent remembers it while it can still be fresh.
+/// passkeys. Two distinct staff members must approve. An approval admits
+/// each job once: the agent remembers the challenge and the job while
+/// the challenge can still be fresh. A batch approval (ADR-004,
+/// 2026-11-15 late) admits only a job its batch lists, so both drops of
+/// one erasure on this agent run on the same two approvals.
 ///
 /// Interim, pending Daniel: the agent keeps no sign counts, since one
 /// staff member's approvals of several jobs may arrive in any order.
@@ -468,7 +640,9 @@ pub struct AgentApprovals {
     cluster: ClusterId,
     rp: RelyingParty,
     staff: Vec<StaffCredential>,
-    spent: BTreeMap<[u8; 32], i64>,
+    /// Each spent approval as its challenge and the job it admitted. A
+    /// batch approval admits each job of its batch once.
+    spent: BTreeMap<([u8; 32], JobDigest), i64>,
 }
 
 impl AgentApprovals {
@@ -505,6 +679,7 @@ impl AgentApprovals {
 
     /// The staff member whose pinned passkey made `e` over `digest`.
     fn approver(&self, digest: JobDigest, e: &ApprovalEvidence) -> Option<StaffRef> {
+        let challenge = e.challenge_for(digest)?;
         let cred = self
             .staff
             .iter()
@@ -516,7 +691,7 @@ impl AgentApprovals {
         };
         let expect = AssertionExpect {
             rp: self.rp.clone(),
-            challenge: approval_challenge(digest, e.issued_at, &e.nonce),
+            challenge,
             user_verification: true,
         };
         fstp_webauthn::verify_assertion(&e.assertion, &stored, &expect)
@@ -546,12 +721,16 @@ impl AgentApprovals {
                 && now.saturating_sub(e.issued_at) <= AGENT_APPROVAL_WINDOW_SECS
         };
         let [a, b] = approvals;
-        let challenges = [a, b].map(|e| approval_challenge(digest, e.issued_at, &e.nonce));
-        let [ca, cb] = challenges;
+        let (Some(ca), Some(cb)) = (a.challenge_for(digest), b.challenge_for(digest)) else {
+            return Err(ControlError::ApprovalRequired);
+        };
         if !window(a) || !window(b) || ca == cb {
             return Err(ControlError::ApprovalRequired);
         }
-        if challenges.iter().any(|c| self.spent.contains_key(c)) {
+        if [ca, cb]
+            .iter()
+            .any(|c| self.spent.contains_key(&(*c, digest)))
+        {
             return Err(ControlError::ApprovalRequired);
         }
         let (Some(sa), Some(sb)) = (self.approver(digest, a), self.approver(digest, b)) else {
@@ -565,8 +744,8 @@ impl AgentApprovals {
         if self.spent.len().saturating_add(2) > AGENT_MAX_SPENT {
             return Err(ControlError::ApprovalRequired);
         }
-        self.spent.insert(ca, a.issued_at);
-        self.spent.insert(cb, b.issued_at);
+        self.spent.insert((ca, digest), a.issued_at);
+        self.spent.insert((cb, digest), b.issued_at);
         Ok(VerifiedJob::new(job.clone()))
     }
 }

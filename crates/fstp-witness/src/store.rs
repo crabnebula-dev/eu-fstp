@@ -29,6 +29,9 @@ pub enum StoreError {
     Corrupt(&'static str),
     /// A registration names another CA for a registered cell.
     Conflict,
+    /// The cell is revoked at the witness (R-SW-02): it gains no
+    /// registration, anchor key or record from then on.
+    Revoked,
 }
 
 fn db(step: &'static str) -> impl Fn(fstp_pgwire::Error) -> StoreError {
@@ -80,6 +83,9 @@ pub struct RegisteredCell {
     pub app_keys: Vec<Vec<u8>>,
     /// The anchor public keys of the Vault chain, encoded.
     pub vault_keys: Vec<Vec<u8>>,
+    /// When the cell was revoked, if it was (R-SW-02). A revoked cell is
+    /// pinned no more and every request of it is refused.
+    pub revoked_at: Option<i64>,
 }
 
 /// Every registered cell.
@@ -106,6 +112,7 @@ pub async fn load_registry<R: Runtime>(
             ca_cert,
             app_keys: Vec::new(),
             vault_keys: Vec::new(),
+            revoked_at: None,
         });
     }
     let keys = client
@@ -129,6 +136,22 @@ pub async fn load_registry<R: Runtime>(
             None => return Err(StoreError::Corrupt("chain")),
         }
     }
+    let revoked = client
+        .query(
+            "SELECT cell_id, revoked_at FROM witness.cell_revocation ORDER BY cell_id",
+            &[],
+        )
+        .await
+        .map_err(db("revocations"))?;
+    for row in &revoked {
+        let cell: Vec<u8> = row.get(0).map_err(|_| StoreError::Corrupt("cell id"))?;
+        let at: i64 = row.get(1).map_err(|_| StoreError::Corrupt("revocation"))?;
+        let cell = CellId(arr(&cell, "cell id")?);
+        let Some(entry) = out.iter_mut().find(|c| c.cell == cell) else {
+            return Err(StoreError::Corrupt("revocation of an unknown cell"));
+        };
+        entry.revoked_at = Some(at);
+    }
     Ok(out)
 }
 
@@ -138,6 +161,7 @@ pub async fn load_registry<R: Runtime>(
 /// # Errors
 ///
 /// [`StoreError::Conflict`] when the cell is registered with another CA.
+/// [`StoreError::Revoked`] when the cell is revoked.
 pub async fn register_cell<R: Runtime>(
     client: &mut Client<R>,
     cell: CellId,
@@ -146,6 +170,9 @@ pub async fn register_cell<R: Runtime>(
 ) -> Result<(), StoreError> {
     let id = cell.0.to_vec();
     let cert = ca_cert.to_vec();
+    if is_revoked(client, cell).await? {
+        return Err(StoreError::Revoked);
+    }
     let existing = client
         .query_opt(
             "SELECT ca_cert FROM witness.cell_ca WHERE cell_id = $1",
@@ -176,7 +203,8 @@ pub async fn register_cell<R: Runtime>(
 ///
 /// # Errors
 ///
-/// [`StoreError`] when the row cannot be written.
+/// [`StoreError`] when the row cannot be written. [`StoreError::Revoked`] when the
+/// cell is revoked.
 pub async fn register_anchor_key<R: Runtime>(
     client: &mut Client<R>,
     cell: CellId,
@@ -184,6 +212,9 @@ pub async fn register_anchor_key<R: Runtime>(
     key: &[u8],
     at: i64,
 ) -> Result<(), StoreError> {
+    if is_revoked(client, cell).await? {
+        return Err(StoreError::Revoked);
+    }
     let id = cell.0.to_vec();
     let key = key.to_vec();
     client
@@ -195,6 +226,57 @@ pub async fn register_anchor_key<R: Runtime>(
         .await
         .map(drop)
         .map_err(db("anchor key"))
+}
+
+/// Whether `cell` is revoked at the witness (R-SW-02).
+///
+/// # Errors
+///
+/// [`StoreError::Unavailable`] when the row cannot be read.
+pub async fn is_revoked<R: Runtime>(
+    client: &mut Client<R>,
+    cell: CellId,
+) -> Result<bool, StoreError> {
+    let id = cell.0.to_vec();
+    client
+        .query_opt(
+            "SELECT 1 FROM witness.cell_revocation WHERE cell_id = $1",
+            &[&id],
+        )
+        .await
+        .map(|r| r.is_some())
+        .map_err(db("revocation"))
+}
+
+/// Revokes `cell` at `at` (R-SW-02, design section 3.7 step 2, ADR-004
+/// "Decided by Daniel, 2026-11-15 (late)"). It appends one row to
+/// `witness.cell_revocation`. `witness.cell_ca` and every record of the
+/// cell stay as they are. A second revocation changes nothing.
+///
+/// The control plane runs it as `witness_migrator`, since
+/// `witness_service` only reads the registry. A running witness refuses
+/// the cell at its next request, and pins it no more at its next
+/// registry load.
+///
+/// # Errors
+///
+/// [`StoreError::Unavailable`] when the row cannot be written, as for a
+/// cell the witness never registered.
+pub async fn revoke_cell<R: Runtime>(
+    client: &mut Client<R>,
+    cell: CellId,
+    at: i64,
+) -> Result<(), StoreError> {
+    let id = cell.0.to_vec();
+    client
+        .execute(
+            "INSERT INTO witness.cell_revocation (cell_id, revoked_at) VALUES ($1, $2) \
+             ON CONFLICT (cell_id) DO NOTHING",
+            &[&id, &at],
+        )
+        .await
+        .map(drop)
+        .map_err(db("revocation"))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -218,7 +300,7 @@ fn hex(bytes: &[u8]) -> String {
 /// bytes rendered as a hex `bytea` literal, or an integer, so no input
 /// reaches the text unquoted. A second registration with the same CA
 /// changes nothing. One with another CA raises an error, and the
-/// transaction changes nothing.
+/// transaction changes nothing. So does one of a revoked cell.
 pub fn registration_sql(
     cell: CellId,
     ca_cert: &[u8],
@@ -229,6 +311,9 @@ pub fn registration_sql(
     let ca = hex(ca_cert);
     let mut sql = format!(
         "BEGIN;\n\
+         DO $v$ BEGIN IF EXISTS (SELECT 1 FROM witness.cell_revocation \
+         WHERE cell_id = '\\x{id}'::bytea) THEN \
+         RAISE EXCEPTION 'the cell is revoked'; END IF; END $v$;\n\
          INSERT INTO witness.cell_ca (cell_id, ca_cert, registered_at) \
          VALUES ('\\x{id}'::bytea, '\\x{ca}'::bytea, {at}) ON CONFLICT (cell_id) DO NOTHING;\n\
          DO $r$ BEGIN IF NOT EXISTS (SELECT 1 FROM witness.cell_ca \
@@ -245,6 +330,17 @@ pub fn registration_sql(
     }
     sql.push_str("COMMIT;\n");
     sql
+}
+
+/// The SQL text of [`revoke_cell`], for a path that runs SQL text as
+/// `witness_migrator`, as [`registration_sql`] does. A cell the witness
+/// never registered raises an error. A second revocation changes nothing.
+pub fn revocation_sql(cell: CellId, at: i64) -> String {
+    format!(
+        "INSERT INTO witness.cell_revocation (cell_id, revoked_at) \
+         VALUES ('\\x{}'::bytea, {at}) ON CONFLICT (cell_id) DO NOTHING;\n",
+        hex(&cell.0)
+    )
 }
 
 /// A chain as the store holds it.

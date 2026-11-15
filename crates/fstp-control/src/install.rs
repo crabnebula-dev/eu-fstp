@@ -109,6 +109,56 @@ pub fn decode_install_config(bytes: &[u8]) -> Result<InstallConfig, ControlError
     })
 }
 
+/// The domain label of a local cluster CA key name.
+const CLUSTER_CA_LABEL: &[u8] = b"fstp-install-cluster-ca-v1";
+
+/// The `fstp-keyd` handle of the local cluster CA key of `cluster`: the
+/// cluster CA class byte, then the first 8 bytes of SHA-256 over a label
+/// and the cluster id (ADR-004 "Decided by Daniel, 2026-11-15 (late)",
+/// lane m3/erase-prod). One cluster always names one key.
+pub fn cluster_ca_key(cluster: crate::placement::ClusterId) -> fstp_custody::SignKeyRef {
+    let mut m = CLUSTER_CA_LABEL.to_vec();
+    m.extend_from_slice(&cluster.0);
+    let digest = fstp_crypto::sha256(&m);
+    let mut handle = vec![fstp_custody::keyd::SIGN_KEY_CLUSTER_CA];
+    handle.extend_from_slice(
+        digest
+            .get(..fstp_custody::keyd::SIGN_KEY_NAME_LEN)
+            .unwrap_or_default(),
+    );
+    fstp_custody::SignKeyRef {
+        backend: fstp_custody::BackendId::Keyd,
+        handle: fstp_custody::CustodyHandle(handle),
+    }
+}
+
+/// The install step that creates one EC secp256r1 sign key per local
+/// cluster CA in `fstp-keyd` (ADR-004 "Self-hosted install (Q15)" and
+/// "Decided by Daniel, 2026-11-15 (late)": "Install creates the local
+/// cluster CA sign keys there"). `custody` is the console socket's
+/// client, since the install runs as root. A retried install finds the
+/// same keys. It returns each key with its public key, a DER
+/// SubjectPublicKeyInfo, which the cluster CA certificate names.
+///
+/// # Errors
+///
+/// [`ControlError::Custody`] when `fstp-keyd` refuses a create.
+pub async fn create_cluster_ca_keys(
+    custody: &fstp_custody::KeydCustody,
+    clusters: &[crate::placement::ClusterId],
+) -> Result<Vec<(fstp_custody::SignKeyRef, Vec<u8>)>, ControlError> {
+    let mut out = Vec::with_capacity(clusters.len());
+    for c in clusters {
+        let key = cluster_ca_key(*c);
+        let spki = custody
+            .create_sign_key(&key)
+            .await
+            .map_err(ControlError::Custody)?;
+        out.push((key, spki));
+    }
+    Ok(out)
+}
+
 /// Runs an install or a renewal.
 ///
 /// Not built yet. The install composes `fstp-keyd`, both cluster CAs, the

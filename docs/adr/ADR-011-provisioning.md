@@ -125,6 +125,14 @@ Recorded at first use by lane m3/erase-cell-2, 2026-11-13. Interim, pending Dani
 - **Limits of the check.** The agent keeps no sign counts, since one person's approvals of several jobs can arrive in any order. `fstp-control` keeps them. Spent challenges live in memory, so a restarted agent could run a job again within the 7 minutes. Every destructive job is idempotent, so that repeats the approved effect only.
 - **Destructive SQL.** `DropCellDatabase` is `DROP DATABASE IF EXISTS "<db>" WITH (FORCE)`, which ends the database's sessions first. `DropRoles` refuses while the database exists, then drops each planned role of that database that exists. `SetNoLogin` sets NOLOGIN, then ends the role's sessions through `pg_terminate_backend`. `WriteHba` after the drops leaves no line of the cell.
 
+Recorded at first use by lane m3/erase-prod, 2026-11-15, after Daniel's decision of 2026-11-15 (late) in ADR-004. Interim readings pending Daniel are marked.
+
+- **Batch approval.** Each of the two operators approves an erasure once, over the list of all its job digests: `erase-cell`, then the four drops. The batch digest is SHA-256 over `"fstp-cp-batch-v1"`, a zero octet, the count as one octet and each job digest in order. A batch holds 1 to 16 distinct digests. The challenge is SHA-256 over `"fstp-cp-batch-approval-v1"`, the batch digest, the challenge time as a big-endian `i64` and 32 random octets.
+- **Use.** A batch approval admits each job of its batch once. Each job still needs approvals of two distinct staff members, the requester's among them. An approval of one job keeps its version 2 challenge.
+- **Approved frame, version 3.** Each approval carries a batch count octet after its random octets, then that many job digests. A count of 0 marks an approval of one job. Version 3 replaces version 2, which the agent refuses. The decoder keeps its fuzz target `pgagent_approved_job_decode`.
+- **The agent's check.** The agent recomputes the job digest, requires it in each approval's batch, and verifies the assertion over the batch challenge. It remembers each spent approval with the job it admitted, so the two drops of one erasure on one cluster run on the same two approvals, each once.
+- **The erasure's check.** Before step 1, `erase_cell_steps` requires the `erase-cell` job and every drop to carry the same two approvals, each a batch approval over exactly the erasure's five jobs. Interim, pending Daniel: `erase_cell`, which runs steps 1 and 4 only, still admits an approval of its one job.
+
 ### Provisioning a cell in SaaS
 
 `fstp-control provision-cell --org <ref> --mode shared|dedicated` is run by an operator with a passkey and a step-up. Each step is idempotent and recorded in `cp.job`.

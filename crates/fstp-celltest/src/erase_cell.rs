@@ -7,7 +7,7 @@
 //!
 //! - **Operators.** Two staff members, each with a software passkey
 //!   pinned in an [`OperatorLogin`] for [`CONTROL_HOST`]. Each logs in and
-//!   approves the cell's `erase-cell` digest with a fresh passkey
+//!   approves the batch of the cell's erasure jobs once with a fresh passkey
 //!   assertion, in their own session. The first then asks for the job,
 //!   which [`OperatorLogin::authorise_destructive`] admits.
 //! - **The job.** [`fstp_control::erase::erase_cell`] destroys every live
@@ -20,8 +20,14 @@
 //! - **The confirmation** is kept with the cell, and
 //!   [`World::cell_erasure`] gives it with the control plane's public key.
 //!
+//! - **The witness.** After the keys are destroyed, the world revokes the
+//!   cell at its witness, as provisioning registered it
+//!   (`CellHandle::revoke_at_witness`, ADR-004 "Decided by Daniel,
+//!   2026-11-15 (late)", lane m3/erase-prod).
+//!
 //! Interim, pending Daniel: the world runs no `fstp-pgagent` and no edge,
-//! so it runs design steps 1 and 4 only, through `erase_cell`. Steps 1 to
+//! so it runs design steps 1 and 4 through `erase_cell`, and the witness
+//! revocation of step 2. Steps 1 to
 //! 3 in order run through `fstp_control::erase::erase_cell_steps` in the
 //! tests of `fstp-control`, over real agents of an application and a
 //! vault cluster (lane m3/erase-cell-2). The world's cell keeps running
@@ -143,8 +149,10 @@ impl StaffPasskey {
         job: &DestructiveJob,
         now: i64,
     ) -> Result<(), WorldError> {
+        // One batch approval per operator per erasure (ADR-004,
+        // 2026-11-15 late). The world's erasure has the one job.
         let c = login
-            .begin_approval(session, job, now)
+            .begin_batch_approval(session, std::slice::from_ref(job), now)
             .map_err(|e| err("an approval", &e))?;
         let a = self.assert(&c)?;
         login
@@ -194,6 +202,9 @@ pub(crate) fn erase(cell: &CellHandle) -> Result<(), WorldError> {
             login.log_custody_call(&approved, id, at);
         }))?
         .map_err(|e| err("the job", &e))?;
+    // Design section 3.7 step 2, ADR-004 (2026-11-15 late): the witness
+    // revokes the cell (lane m3/erase-prod).
+    cell.revoke_at_witness()?;
     cell.backups
         .erasure
         .set(confirmation)
@@ -201,6 +212,19 @@ pub(crate) fn erase(cell: &CellHandle) -> Result<(), WorldError> {
 }
 
 impl World {
+    /// Whether the witness of cell `index` holds its revocation (R-SW-02,
+    /// design section 3.7 step 2, lane m3/erase-prod).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell does not exist or its witness registry cannot
+    /// be read.
+    pub fn witness_revoked(&self, index: u8) -> Result<bool, WorldError> {
+        self.cell(index)
+            .ok_or_else(|| err("witness_revoked", &"names no cell of the world"))?
+            .revoked_at_witness()
+    }
+
     /// The erasure confirmation of cell `index`, once `erase-cell` ran,
     /// and the control plane's composite public key it verifies under
     /// (R-SW-02, design section 3.7 step 4, lane m3/erase-cell).

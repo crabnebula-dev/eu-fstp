@@ -21,6 +21,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "route_table_decode"
+path = "fuzz_targets/route_table_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "tunnel_header_decode"
 path = "fuzz_targets/tunnel_header_decode.rs"
 test = false

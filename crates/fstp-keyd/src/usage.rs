@@ -44,6 +44,7 @@ pub(crate) const OP_DESTROY: u8 = UsageOp::Destroy.code();
 pub(crate) const OP_SIGN: u8 = UsageOp::Sign.code();
 pub(crate) const OP_USAGE: u8 = UsageOp::Usage.code();
 pub(crate) const OP_DESTROY_SIGN_KEY: u8 = UsageOp::DestroySignKey.code();
+pub(crate) const OP_CREATE_SIGN_KEY: u8 = UsageOp::CreateSignKey.code();
 
 /// Outcome codes: 0 served, otherwise the refusal code.
 pub(crate) const OUTCOME_SERVED: u8 = 0;

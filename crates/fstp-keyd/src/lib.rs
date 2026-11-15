@@ -24,6 +24,9 @@
 //! - `usage.log`: the append-only usage log of request ids, operations,
 //!   chains, epochs, times, outcomes and client roles. It holds no key
 //!   bytes.
+//! - `sign-<class>-<name>.key`: one CA sign key, its PKCS#8 document
+//!   sealed under a key `K` of its own, which a sign-key slot of the key
+//!   table holds ([`sign_key`], lane m3/erase-prod).
 //!
 //! Destroy overwrites `K(e)` in its slot of the key table in place,
 //! fsyncs, unlinks the epoch file, fsyncs the directory and reads back.
@@ -49,6 +52,7 @@ pub mod access;
 pub mod epoch;
 pub mod receipt;
 pub mod request;
+pub mod sign_key;
 pub mod table;
 pub mod volume;
 
@@ -72,8 +76,8 @@ pub use receipt::{DestroyStep, Receipt, decode_receipt};
 pub use request::{decode_request, encode_response};
 pub use server::{PassphraseSource, VolumeOrigin, serve, serve_sockets, serve_sockets_from, stop};
 pub use table::{
-    EpochKey, KeyTable, KeyTableEntry, MIN_ITERATIONS, decode_key_table_body, encode_key_table,
-    open_key_table,
+    EpochKey, KeyTable, KeyTableEntry, MIN_ITERATIONS, SignKeyEntry, SignKeyName,
+    decode_key_table_body, encode_key_table, open_key_table,
 };
 pub use volume::{
     ACCEPTED_VOLUMES, EXT4_SUPER_MAGIC, MountEntry, XFS_SUPER_MAGIC, assurance_of_mount,

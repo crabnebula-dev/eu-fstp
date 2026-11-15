@@ -12,8 +12,9 @@
 //! 2. has `fstp-pgagent` drop both cell databases and their roles, each
 //!    drop approved by two operators and checked again by the agent, and
 //!    rewrite `pg_hba.conf` on both clusters ([`CellDatabases`]). Then it
-//!    deletes the cell's object storage prefix ([`CellObjects`]) and its
-//!    witness credentials ([`WitnessCredentials`]);
+//!    deletes the cell's object storage prefix ([`CellObjects`]) and
+//!    revokes the cell at the witness ([`WitnessCredentials`],
+//!    [`WitnessRegistry`]);
 //! 3. removes every route of the cell at the edge ([`EdgeRoutes`]);
 //! 4. issues the erasure confirmation, composite-signed by the control
 //!    plane, which lists every destroyed key with its receipt.
@@ -30,15 +31,15 @@
 //!
 //! - Destroying a CA sign key is [`SignKeyCustody`], outside the six
 //!   operations of the `Custody` trait (I-80). The test custody and the
-//!   file custody client implement it. `fstp-keyd` holds no sign key
-//!   yet, so it answers `NoSignKey`.
+//!   file custody client implement it. `fstp-keyd` holds sign keys in
+//!   sign-key slots of its key table, and a destroy overwrites the key
+//!   in place (lane m3/erase-prod). `OkmsCustody` does not implement it.
 //! - The key list is input. In production it comes from
 //!   `cp.custody_entry` and the backend's listing, which is not built.
-//! - Step 2 deletes the object storage prefix and the witness credentials
-//!   through traits that only tests implement. The S3 client has no list
-//!   or delete, and the witness has no operation that deletes a cell's
-//!   credentials. Step 3 reaches an edge in the same process only, since
-//!   the route feed to `fstp-edge` is not designed.
+//! - Step 2 deletes the object storage prefix through a trait that only
+//!   tests implement, since the S3 client has no list or delete.
+//! - Step 3 reaches remote edges through [`crate::routes::RemoteEdges`],
+//!   or an edge in the same process.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -51,7 +52,7 @@ use fstp_custody::{
 
 use crate::ControlError;
 use crate::agent::JobOutcome;
-use crate::approval::{ApprovedJob, DestructiveJob, JobDigest};
+use crate::approval::{ApprovalBatch, ApprovedJob, DestructiveJob, JobDigest};
 use crate::pg::CellDatabase;
 use crate::pgagent::{DbIdent, PgagentJob};
 use crate::placement::{ClusterId, Placement};
@@ -102,8 +103,8 @@ pub enum ErasureStep {
         /// The number of objects deleted.
         count: u32,
     },
-    /// Step 2: the cell's witness credentials are deleted.
-    WitnessCredentialsDeleted,
+    /// Step 2: the witness revoked the cell (ADR-004, 2026-11-15 late).
+    WitnessCellRevoked,
     /// Step 3: the edge removed every route of the cell.
     RoutesRemoved {
         /// The number of routes removed.
@@ -122,9 +123,9 @@ pub trait SignKeyCustody: Send + Sync + 'static {
 }
 
 /// The file custody client destroys a sign key through its own request
-/// (`fstp_custody::KeydCustody::destroy_sign_key`). Interim, pending
-/// Daniel: `fstp-keyd` holds no sign key yet, since no request creates
-/// one, so it answers `NoSignKey`.
+/// (`fstp_custody::KeydCustody::destroy_sign_key`). `fstp-keyd` keeps each
+/// sign key in a sign-key slot of its key table and overwrites it in place
+/// (ADR-004 "Decided by Daniel, 2026-11-15 (late)").
 impl SignKeyCustody for fstp_custody::KeydCustody {
     fn destroy_sign_key(
         &self,
@@ -375,10 +376,12 @@ pub trait CellDatabases {
     ) -> impl Future<Output = Result<JobOutcome, ControlError>>;
 }
 
-/// The edge's route feed (design section 3.7 step 3). Interim, pending
-/// Daniel: the feed from `fstp-control` to a remote `fstp-edge` is not
-/// designed, and `fstp_edge::run` refuses to start without it. An edge in
-/// the same process removes routes through `fstp_edge::LiveRoutes`.
+/// The edge's route feed (design section 3.7 step 3). Remote edges poll
+/// a signed, versioned route table, and [`crate::routes::RemoteEdges`]
+/// finishes removal once every edge reports a version without the cell
+/// (ADR-004 "Decided by Daniel, 2026-11-15 (late)"). An edge in the same
+/// process removes routes through `fstp_edge::LiveRoutes`, as the test
+/// world does.
 pub trait EdgeRoutes {
     /// Removes every route of `cell`, including `id.<cell host>`, and
     /// returns the number removed. A cell without routes removes none.
@@ -394,14 +397,64 @@ pub trait CellObjects {
     fn delete_prefix(&self, cell: CellId) -> impl Future<Output = Result<u32, ControlError>>;
 }
 
-/// The cell's credentials at the witness (design section 3.7 step 2).
-/// Interim, pending Daniel: no witness operation deletes them yet. The
-/// witness keeps `witness.cell_ca` append-only, under a trigger that
-/// refuses DELETE, and the anchor rows reference it.
+/// The cell's credentials at the witness (design section 3.7 step 2,
+/// ADR-004 "Decided by Daniel, 2026-11-15 (late)"). The witness appends a
+/// revocation record beside `witness.cell_ca` and refuses the revoked
+/// cell from then on. `witness.cell_ca` stays append-only, and the anchor
+/// rows keep their references. The cell's secret key material, its CA
+/// key and the anchor keys sealed under its App and Vault chains, is
+/// destroyed through custody in step 1.
 pub trait WitnessCredentials {
-    /// Deletes the witness credentials of `cell`, so the witness no
-    /// longer accepts the cell's client certificates.
-    fn delete_cell(&self, cell: CellId) -> impl Future<Output = Result<(), ControlError>>;
+    /// Revokes `cell` at the witness, so the witness no longer accepts
+    /// the cell's client certificates or any request of the cell. A
+    /// second revocation changes nothing.
+    fn revoke_cell(&self, cell: CellId) -> impl Future<Output = Result<(), ControlError>>;
+}
+
+/// The SaaS witness database, as `fstp-control` reaches it to revoke a
+/// cell (R-SW-02). It logs in as `witness_migrator`, as provisioning does
+/// to register a cell, since `witness_service` only reads the registry.
+/// The witness refuses the cell from its next request on
+/// (`fstp_witness::store::revoke_cell`).
+pub struct WitnessRegistry<R: fstp_rt::Runtime> {
+    rt: R,
+    login: fstp_pgwire::Config,
+}
+
+impl<R: fstp_rt::Runtime> WitnessRegistry<R> {
+    /// The registry of the witness database that `login` reaches, as
+    /// `witness_migrator`, on `rt`.
+    pub fn new(rt: R, login: fstp_pgwire::Config) -> WitnessRegistry<R> {
+        WitnessRegistry { rt, login }
+    }
+}
+
+impl<R: fstp_rt::Runtime> std::fmt::Debug for WitnessRegistry<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WitnessRegistry").finish_non_exhaustive()
+    }
+}
+
+/// UTC microseconds now, the time unit of the witness registry.
+fn now_us() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_micros()).ok())
+        .unwrap_or(0)
+}
+
+impl<R: fstp_rt::Runtime> WitnessCredentials for WitnessRegistry<R> {
+    async fn revoke_cell(&self, cell: CellId) -> Result<(), ControlError> {
+        let mut client = fstp_pgwire::Client::connect(&self.rt, &self.login)
+            .await
+            .map_err(|_| ControlError::Job("the witness database"))?;
+        let revoked =
+            fstp_witness::store::revoke_cell(&mut client, fstp_audit::CellId(cell.0), now_us())
+                .await;
+        let _ = client.close().await;
+        revoked.map_err(|_| ControlError::Job("the witness revocation"))
+    }
 }
 
 /// What a cell erasure reports while it runs: a custody call before it is
@@ -460,6 +513,70 @@ fn ordered_drop_jobs<'a>(
     Ok(out)
 }
 
+/// Every destructive job of the erasure of `cell` on `placement`: the
+/// `erase-cell` job, then the four drops of [`database_drop_jobs`] in
+/// their order (ADR-004 "Decided by Daniel, 2026-11-15 (late)").
+///
+/// # Errors
+///
+/// The errors of [`DestructiveJob::pgagent`].
+pub fn erasure_jobs(
+    cell: CellId,
+    placement: &Placement,
+) -> Result<Vec<DestructiveJob>, ControlError> {
+    let mut jobs = vec![DestructiveJob::EraseCell { cell }];
+    for (cluster, job) in database_drop_jobs(cell, placement) {
+        jobs.push(DestructiveJob::pgagent(cluster, job)?);
+    }
+    Ok(jobs)
+}
+
+/// The batch that each of the two operators approves once for the
+/// erasure of `cell` on `placement`: the digests of [`erasure_jobs`].
+///
+/// # Errors
+///
+/// The errors of [`erasure_jobs`] and [`ApprovalBatch::of`].
+pub fn erasure_batch(cell: CellId, placement: &Placement) -> Result<ApprovalBatch, ControlError> {
+    ApprovalBatch::of(&erasure_jobs(cell, placement)?)
+}
+
+/// Checks the approvals of an erasure before step 1 (ADR-004, 2026-11-15
+/// late): the `erase-cell` job and each drop carry the same two
+/// approvals, and each is a batch approval over exactly the jobs of
+/// [`erasure_batch`]. So every job digest of the erasure is in an
+/// approved batch, and each operator approved the erasure once.
+///
+/// # Errors
+///
+/// [`ControlError::ApprovalRequired`] for a job without evidence, an
+/// approval of one job, a batch of other jobs, or a job approved apart
+/// from the others.
+fn check_erasure_batch(
+    cell: CellId,
+    placement: &Placement,
+    approved: &ApprovedJob,
+    drops: &[&ApprovedJob],
+) -> Result<(), ControlError> {
+    let want = erasure_batch(cell, placement)?;
+    let pair = approved.evidence().ok_or(ControlError::ApprovalRequired)?;
+    for e in pair {
+        let batch = e.batch.as_ref().ok_or(ControlError::ApprovalRequired)?;
+        if !batch.same_jobs(&want) || !batch.contains(approved.digest()) {
+            return Err(ControlError::ApprovalRequired);
+        }
+    }
+    let [p0, p1] = pair;
+    for j in drops {
+        let [d0, d1] = j.evidence().ok_or(ControlError::ApprovalRequired)?;
+        let same = (d0 == p0 && d1 == p1) || (d0 == p1 && d1 == p0);
+        if !same {
+            return Err(ControlError::ApprovalRequired);
+        }
+    }
+    Ok(())
+}
+
 fn agent_done(outcome: JobOutcome) -> Result<(), ControlError> {
     match outcome {
         JobOutcome::Done => Ok(()),
@@ -482,13 +599,16 @@ fn count16(n: usize) -> u16 {
 ///    rewrite `pg_hba.conf`, through `databases`. Each drop is one of
 ///    `agent_jobs`, approved by two operators, which the agent checks
 ///    again itself. Then it deletes the cell's object storage prefix
-///    through `objects` and its witness credentials through `witness`;
+///    through `objects` and revokes the cell at the witness through
+///    `witness`;
 /// 3. removes every route of the cell through `edge`;
 /// 4. signs the confirmation with `signer` at `now`.
 ///
 /// Every check runs before step 1: the erasure job, the keys, and the
-/// four approved drops of [`database_drop_jobs`] with their evidence. So
-/// a job that would stop at step 2 for want of an approval destroys
+/// four approved drops of [`database_drop_jobs`] with their evidence, and
+/// that the erasure job and every drop carry the same two batch approvals
+/// over exactly the jobs of [`erasure_batch`] (ADR-004, 2026-11-15 late).
+/// So a job that would stop at step 2 for want of an approval destroys
 /// nothing. Interim, pending Daniel: a
 /// failure after step 1 stops the job with no confirmation, and the log
 /// shows the last finished step. Resuming it needs the job state in
@@ -526,6 +646,7 @@ where
     let cell = erased_cell(approved)?;
     check_cell_keys(cell, keys)?;
     let drops = ordered_drop_jobs(cell, placement, agent_jobs)?;
+    check_erasure_batch(cell, placement, approved, &drops)?;
 
     let erased = destroy_keys(custody, keys, |id| {
         report(ErasureEvent::CustodyCall(id));
@@ -563,8 +684,8 @@ where
 
     let count = objects.delete_prefix(cell).await?;
     report(ErasureEvent::Step(ErasureStep::ObjectsDeleted { count }));
-    witness.delete_cell(cell).await?;
-    report(ErasureEvent::Step(ErasureStep::WitnessCredentialsDeleted));
+    witness.revoke_cell(cell).await?;
+    report(ErasureEvent::Step(ErasureStep::WitnessCellRevoked));
 
     let removed = edge.remove_cell(cell).await?;
     report(ErasureEvent::Step(ErasureStep::RoutesRemoved {

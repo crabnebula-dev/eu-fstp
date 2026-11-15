@@ -228,6 +228,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-programme",
  "fstp-report",
  "fstp-webauthn",
 ]
@@ -307,9 +308,11 @@ dependencies = [
 name = "fstp-control"
 version = "0.1.0"
 dependencies = [
+ "fstp-audit",
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
+ "fstp-edge",
  "fstp-http",
  "fstp-json",
  "fstp-migrate",
@@ -319,6 +322,7 @@ dependencies = [
  "fstp-rt",
  "fstp-tls",
  "fstp-webauthn",
+ "fstp-witness",
 ]
 
 [[package]]
@@ -390,10 +394,12 @@ dependencies = [
  "fstp-domain",
  "fstp-engine",
  "fstp-findings",
+ "fstp-guide",
  "fstp-json",
  "fstp-ledger",
  "fstp-mc",
  "fstp-money",
+ "fstp-programme",
  "fstp-prop",
 ]
 
@@ -401,6 +407,7 @@ dependencies = [
 name = "fstp-edge"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-json",
  "fstp-obs",
  "fstp-rt",

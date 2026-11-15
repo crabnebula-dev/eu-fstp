@@ -209,7 +209,8 @@ fn witness_database() -> (
                  INSERT INTO fstp_meta.placement (cluster_id, kind) VALUES ('\\x{}'::bytea, 4);\n\
                  GRANT USAGE ON SCHEMA witness, fstp_meta TO {service};\n\
                  GRANT SELECT ON fstp_meta.placement TO {service};\n\
-                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, witness.cell_ca, witness.anchor_key TO {service};",
+                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, witness.cell_ca, witness.anchor_key TO {service};\n\
+                 GRANT SELECT ON witness.cell_revocation TO {service};",
                 "ab".repeat(16)
             ),
         )
@@ -781,4 +782,136 @@ fn adr010_provisioning_registers_cells_the_service_only_reads() {
         .psql(&s.dbname, "SELECT count(*) FROM witness.cell_ca")
         .unwrap();
     assert_eq!(cas, "1");
+}
+
+/// R-SW-02, design section 3.7 step 2, ADR-004 "Decided by Daniel,
+/// 2026-11-15 (late)": a cell erasure revokes the cell at the witness.
+/// Provisioning appends the revocation record as the migrator
+/// (`revocation_sql`). The witness refuses the cell's next request on an
+/// open connection, and a new connection of the cell does not get a
+/// reply. Another cell is served as before. `witness.cell_ca` and the
+/// revocation stay append-only, the cell's anchor rows stay, and the cell
+/// can neither register again nor gain a record.
+#[test]
+fn r_sw_02_witness_refuses_a_revoked_cell_and_keeps_its_records() {
+    let s = setup();
+    let gone = Cell::new(0x71);
+    let kept = Cell::new(0x72);
+    gone.register(&s);
+    kept.register(&s);
+    let mut c = Conn::open(&s, &gone.ca, "cell-witness").unwrap();
+    let p = prepare(&gone, (0, genesis(gone.id, ChainId::App)), [1; 32]);
+    let WireReply::Receipt(rc) = c
+        .ask(&s, &WireRequest::Message(WitnessMessage::Prepare(p)))
+        .unwrap()
+    else {
+        panic!("no receipt before the revocation");
+    };
+    s.server
+        .psql(&s.dbname, &fstp_witness::store::revocation_sql(gone.id, 1))
+        .unwrap();
+    // A second revocation changes nothing.
+    s.server
+        .psql(&s.dbname, &fstp_witness::store::revocation_sql(gone.id, 2))
+        .unwrap();
+    let next = prepare(&gone, (1, rc.fields.link), [2; 32]);
+    assert_eq!(
+        c.ask(&s, &WireRequest::Message(WitnessMessage::Prepare(next)))
+            .unwrap(),
+        WireReply::Refused,
+        "the revoked cell was served on its open connection"
+    );
+    assert_eq!(
+        c.ask(
+            &s,
+            &WireRequest::Outstanding {
+                cell: gone.id,
+                chain: ChainId::App
+            }
+        )
+        .unwrap(),
+        WireReply::Refused
+    );
+    s.rt.block_on(s.witness.reload_registry()).unwrap();
+    let reopened = Conn::open(&s, &gone.ca, "cell-witness").and_then(|mut c| {
+        c.ask(
+            &s,
+            &WireRequest::Outstanding {
+                cell: gone.id,
+                chain: ChainId::App,
+            },
+        )
+    });
+    assert!(
+        !matches!(reopened, Ok(WireReply::Outstanding(_))),
+        "a new connection of the revoked cell was served: {reopened:?}"
+    );
+    let mut k = Conn::open(&s, &kept.ca, "cell-witness").unwrap();
+    let pk = prepare(&kept, (0, genesis(kept.id, ChainId::App)), [3; 32]);
+    assert!(matches!(
+        k.ask(&s, &WireRequest::Message(WitnessMessage::Prepare(pk)))
+            .unwrap(),
+        WireReply::Receipt(_)
+    ));
+    let rows = s
+        .server
+        .psql(
+            &s.dbname,
+            &format!(
+                "SELECT (SELECT count(*) FROM witness.anchor WHERE cell_id = '\\x{h}'::bytea) \
+                 || '|' || (SELECT count(*) FROM witness.cell_ca WHERE cell_id = '\\x{h}'::bytea) \
+                 || '|' || (SELECT count(*) FROM witness.cell_revocation)",
+                h = "71".repeat(16)
+            ),
+        )
+        .unwrap();
+    assert_eq!(rows, "1|1|1", "a record of the revoked cell went away");
+    for sql in [
+        "DELETE FROM witness.cell_ca".to_owned(),
+        "DELETE FROM witness.cell_revocation".to_owned(),
+        "UPDATE witness.cell_revocation SET revoked_at = 0".to_owned(),
+        "TRUNCATE witness.cell_revocation".to_owned(),
+        fstp_witness::store::registration_sql(
+            gone.id,
+            &gone.ca.der,
+            &[(ChainId::App, gone.anchor.public_key().to_bytes().to_vec())],
+            3,
+        ),
+        format!(
+            "INSERT INTO witness.withdrawal (cell_id, chain, witness_seq, kind, n, link, received_at, witness_link) \
+             VALUES ('\\x{}'::bytea, 1, 2, 2, 2, '\\x{}'::bytea, 0, '\\x{}'::bytea)",
+            "71".repeat(16),
+            "00".repeat(32),
+            "00".repeat(32)
+        ),
+    ] {
+        assert!(
+            s.server.psql(&s.dbname, &sql).is_err(),
+            "{sql} was not refused"
+        );
+    }
+    assert!(
+        s.rt.block_on(s.witness.register_cell(
+            gone.id,
+            &gone.ca.der,
+            &[(ChainId::App, gone.anchor.public_key().to_bytes().to_vec())],
+        ))
+        .is_err(),
+        "the revoked cell registered again"
+    );
+}
+
+/// R-SW-02 teeth: a revocation of a cell the witness never registered is
+/// refused, so an erasure cannot report a revocation that pinned nothing.
+#[test]
+fn r_sw_02_witness_refuses_to_revoke_an_unknown_cell() {
+    let s = setup();
+    assert!(
+        s.server
+            .psql(
+                &s.dbname,
+                &fstp_witness::store::revocation_sql(CellId([0x73; 16]), 1),
+            )
+            .is_err()
+    );
 }

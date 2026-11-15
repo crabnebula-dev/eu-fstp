@@ -8,7 +8,8 @@
 //!   sequence is the record count, so no record is skipped.
 //! - the outstanding prepare of a loaded chain is the last record, and
 //!   only when that record is a prepare.
-//! - a loaded registry names each cell once.
+//! - a loaded registry names each cell once, and a revocation record
+//!   (R-SW-02) marks only a cell it registered.
 
 #![no_main]
 

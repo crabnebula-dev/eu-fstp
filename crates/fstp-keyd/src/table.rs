@@ -56,6 +56,7 @@ use std::path::{Path, PathBuf};
 use fstp_crypto::aead;
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
+use fstp_custody::keyd::SIGN_KEY_NAME_LEN;
 use fstp_custody::{Chain, Epoch};
 
 use crate::{KeydError, Passphrase};
@@ -172,14 +173,138 @@ impl KeyTableEntry {
     }
 }
 
+/// The high bit of the first slot byte marks a sign-key slot. Chain codes
+/// stay below it.
+const SIGN_SLOT_FLAG: u8 = 0x80;
+
+/// The name of a CA sign key in the key table: the class byte of its
+/// handle and its [`SIGN_KEY_NAME_LEN`] name bytes (ADR-004 "Decided by
+/// Daniel, 2026-11-15 (late)", lane m3/erase-prod).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SignKeyName {
+    /// The class byte: [`fstp_custody::keyd::SIGN_KEY_CELL_CA`] or
+    /// [`fstp_custody::keyd::SIGN_KEY_CLUSTER_CA`].
+    pub class: u8,
+    /// The name bytes.
+    pub name: [u8; SIGN_KEY_NAME_LEN],
+}
+
+impl SignKeyName {
+    /// The name of the sign key `handle`, or `None` for a handle that is
+    /// not a known class byte and exactly [`SIGN_KEY_NAME_LEN`] name bytes.
+    #[must_use]
+    pub fn from_handle(handle: &[u8]) -> Option<SignKeyName> {
+        let (class, name) = handle.split_first()?;
+        let name: [u8; SIGN_KEY_NAME_LEN] = name.try_into().ok()?;
+        SignKeyName::new(*class, name)
+    }
+
+    fn new(class: u8, name: [u8; SIGN_KEY_NAME_LEN]) -> Option<SignKeyName> {
+        matches!(
+            class,
+            fstp_custody::keyd::SIGN_KEY_CELL_CA | fstp_custody::keyd::SIGN_KEY_CLUSTER_CA
+        )
+        .then_some(SignKeyName { class, name })
+    }
+
+    /// The handle: the class byte, then the name bytes.
+    #[must_use]
+    pub fn handle(&self) -> [u8; fstp_custody::keyd::SIGN_KEY_HANDLE_LEN] {
+        let mut out = [0u8; fstp_custody::keyd::SIGN_KEY_HANDLE_LEN];
+        let (c, n) = out.split_at_mut(1);
+        c.copy_from_slice(&[self.class]);
+        n.copy_from_slice(&self.name);
+        out
+    }
+}
+
+/// One sign-key entry of the key table: the key `K` that seals the sign
+/// key's file, as `K(e)` seals an epoch file ([`crate::sign_key`]).
+pub struct SignKeyEntry {
+    /// The sign key.
+    pub name: SignKeyName,
+    /// `K`, or `None` once destroy has overwritten it.
+    pub(crate) key: Option<EpochKey>,
+}
+
+impl SignKeyEntry {
+    /// An entry of `name`, live with `key` or destroyed.
+    #[must_use]
+    pub fn new(name: SignKeyName, key: Option<EpochKey>) -> SignKeyEntry {
+        SignKeyEntry { name, key }
+    }
+
+    /// Whether the entry still holds its key.
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.key.is_some()
+    }
+}
+
+/// What one slot names: a root epoch, or a sign key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Slot {
+    /// The root of a chain and epoch.
+    Root(Chain, Epoch),
+    /// A CA sign key.
+    Sign(SignKeyName),
+}
+
+impl Slot {
+    /// The clear head of the slot: its first byte and 8 bytes.
+    fn head(self) -> (u8, [u8; 8]) {
+        match self {
+            Slot::Root(chain, epoch) => (chain.code(), epoch.0.to_be_bytes()),
+            Slot::Sign(n) => (SIGN_SLOT_FLAG | n.class, n.name),
+        }
+    }
+}
+
+/// One decoded entry: of a root, or of a sign key.
+enum Decoded {
+    Root(KeyTableEntry),
+    Sign(SignKeyEntry),
+}
+
+impl Decoded {
+    fn slot(&self) -> Slot {
+        match self {
+            Decoded::Root(e) => Slot::Root(e.chain, e.epoch),
+            Decoded::Sign(s) => Slot::Sign(s.name),
+        }
+    }
+
+    fn is_live(&self) -> bool {
+        match self {
+            Decoded::Root(e) => e.is_live(),
+            Decoded::Sign(s) => s.is_live(),
+        }
+    }
+}
+
 /// The opened key table. No `Clone` and no `Debug`.
 #[derive(Default)]
 pub struct KeyTable {
-    /// The entries, in slot order.
+    /// The root entries, in slot order.
     pub entries: Vec<KeyTableEntry>,
+    /// The sign-key entries, in slot order.
+    pub sign_keys: Vec<SignKeyEntry>,
 }
 
 impl KeyTable {
+    /// The sign-key entry of `name`, if any.
+    #[must_use]
+    pub fn sign_key(&self, name: SignKeyName) -> Option<&SignKeyEntry> {
+        self.sign_keys.iter().find(|s| s.name == name)
+    }
+
+    fn has(&self, slot: Slot) -> bool {
+        match slot {
+            Slot::Root(c, e) => self.get(c, e).is_some(),
+            Slot::Sign(n) => self.sign_key(n).is_some(),
+        }
+    }
+
     /// The entry of `chain` and `epoch`, if any.
     #[must_use]
     pub fn get(&self, chain: Chain, epoch: Epoch) -> Option<&KeyTableEntry> {
@@ -222,6 +347,7 @@ pub fn decode_key_table_body(bytes: &[u8]) -> Result<KeyTable, KeydError> {
     }
     let mut table = KeyTable {
         entries: Vec::with_capacity(count),
+        sign_keys: Vec::new(),
     };
     for raw in rest.chunks_exact(ENTRY_LEN) {
         push_unique(&mut table, decode_entry(raw)?)?;
@@ -230,29 +356,44 @@ pub fn decode_key_table_body(bytes: &[u8]) -> Result<KeyTable, KeydError> {
 }
 
 /// Adds `entry` to `table`, refusing a second entry of one chain and
-/// epoch.
-fn push_unique(table: &mut KeyTable, entry: KeyTableEntry) -> Result<(), KeydError> {
-    if table.get(entry.chain, entry.epoch).is_some() {
-        return Err(KeydError::Malformed("two key table entries name one epoch"));
+/// epoch, or of one sign key.
+fn push_unique(table: &mut KeyTable, entry: Decoded) -> Result<(), KeydError> {
+    if table.has(entry.slot()) {
+        return Err(KeydError::Malformed(
+            "two key table entries name one epoch or sign key",
+        ));
     }
-    table.entries.push(entry);
+    match entry {
+        Decoded::Root(e) => table.entries.push(e),
+        Decoded::Sign(s) => table.sign_keys.push(s),
+    }
     Ok(())
 }
 
 /// Decodes one plaintext entry: `chain u8 | epoch u64 | state u8 | key
-/// 32`.
-fn decode_entry(raw: &[u8]) -> Result<KeyTableEntry, KeydError> {
+/// 32` for a root, or `0x80 | class u8 | name 8 | state u8 | key 32` for
+/// a sign key (lane m3/erase-prod).
+fn decode_entry(raw: &[u8]) -> Result<Decoded, KeydError> {
     let (head, key) = raw
         .split_first_chunk::<10>()
         .ok_or(KeydError::Malformed("a key table entry is too short"))?;
-    let [chain, e0, e1, e2, e3, e4, e5, e6, e7, state] = *head;
-    let chain = Chain::from_code(chain).ok_or(KeydError::Malformed(
-        "a key table entry names an unknown chain",
-    ))?;
-    let epoch = Epoch(u64::from_be_bytes([e0, e1, e2, e3, e4, e5, e6, e7]));
-    if epoch.0 == 0 {
-        return Err(KeydError::Malformed("a key table entry names epoch 0"));
-    }
+    let [first, e0, e1, e2, e3, e4, e5, e6, e7, state] = *head;
+    let rest = [e0, e1, e2, e3, e4, e5, e6, e7];
+    let slot =
+        if first & SIGN_SLOT_FLAG == 0 {
+            let chain = Chain::from_code(first).ok_or(KeydError::Malformed(
+                "a key table entry names an unknown chain",
+            ))?;
+            let epoch = Epoch(u64::from_be_bytes(rest));
+            if epoch.0 == 0 {
+                return Err(KeydError::Malformed("a key table entry names epoch 0"));
+            }
+            Slot::Root(chain, epoch)
+        } else {
+            Slot::Sign(SignKeyName::new(first & !SIGN_SLOT_FLAG, rest).ok_or(
+                KeydError::Malformed("a key table entry names an unknown sign key class"),
+            )?)
+        };
     let key: [u8; 32] = key
         .try_into()
         .map_err(|_| KeydError::Malformed("a key table entry is too short"))?;
@@ -271,7 +412,10 @@ fn decode_entry(raw: &[u8]) -> Result<KeyTableEntry, KeydError> {
             ));
         }
     };
-    Ok(KeyTableEntry { chain, epoch, key })
+    Ok(match slot {
+        Slot::Root(chain, epoch) => Decoded::Root(KeyTableEntry { chain, epoch, key }),
+        Slot::Sign(name) => Decoded::Sign(SignKeyEntry { name, key }),
+    })
 }
 
 /// The header of a sealed table.
@@ -336,18 +480,17 @@ fn slot_aad(header: &[u8; HEADER_LEN], index: u32, chain: u8, epoch: [u8; 8]) ->
     out
 }
 
-/// The sealed bytes of slot `index` for `chain` and `epoch`, live with
-/// `key` or destroyed.
+/// The sealed bytes of slot `index` for `slot`, a root or a sign key,
+/// live with `key` or destroyed.
 fn seal_slot(
     table_key: &aead::Key,
     header: &[u8; HEADER_LEN],
     index: usize,
-    chain: Chain,
-    epoch: Epoch,
+    slot: Slot,
     key: Option<&EpochKey>,
 ) -> Result<[u8; SLOT_LEN], KeydError> {
     let index = u32::try_from(index).map_err(|_| KeydError::Malformed("the key table is full"))?;
-    let epoch_bytes = epoch.0.to_be_bytes();
+    let (first, epoch_bytes) = slot.head();
     let mut plain = Zeroizing::new([0u8; SEALED_LEN]);
     let (state, bytes) = plain.split_at_mut(1);
     match key {
@@ -357,12 +500,12 @@ fn seal_slot(
         }
         None => state.copy_from_slice(&[STATE_DESTROYED]),
     }
-    let aad = slot_aad(header, index, chain.code(), epoch_bytes);
+    let aad = slot_aad(header, index, first, epoch_bytes);
     let sealed = aead::seal(table_key, &aad, &plain[..]).map_err(KeydError::Crypto)?;
     let mut out = [0u8; SLOT_LEN];
     let (head, rest) = out.split_at_mut(SLOT_HEAD_LEN);
     let (c, e) = head.split_at_mut(1);
-    c.copy_from_slice(&[chain.code()]);
+    c.copy_from_slice(&[first]);
     e.copy_from_slice(&epoch_bytes);
     let (nonce, body) = rest.split_at_mut(aead::NONCE_LEN);
     nonce.copy_from_slice(&sealed.nonce);
@@ -393,7 +536,7 @@ fn seal_check(
 /// order, and the slots that did not open. Two slots may name one
 /// epoch here: [`TableStore::open_or_create`] resolves them.
 pub(crate) struct Opened {
-    pub(crate) entries: Vec<(usize, KeyTableEntry)>,
+    entries: Vec<(usize, Decoded)>,
     pub(crate) damaged: Vec<usize>,
     pub(crate) slots: usize,
 }
@@ -401,9 +544,7 @@ pub(crate) struct Opened {
 impl Opened {
     /// The entries as one table, refusing two entries of one epoch.
     fn into_strict_table(self) -> Result<KeyTable, KeydError> {
-        let mut table = KeyTable {
-            entries: Vec::with_capacity(self.entries.len()),
-        };
+        let mut table = KeyTable::default();
         for (_, entry) in self.entries {
             push_unique(&mut table, entry)?;
         }
@@ -579,18 +720,26 @@ pub fn encode_key_table(
     iterations: u32,
     table: &KeyTable,
 ) -> Result<Vec<u8>, KeydError> {
-    if table.entries.len() > MAX_ENTRIES {
+    let total = table.entries.len().saturating_add(table.sign_keys.len());
+    if total > MAX_ENTRIES {
         return Err(KeydError::Malformed("the key table has too many entries"));
     }
     let header = TableHeader::fresh(iterations)?;
     let key = header.derive(passphrase)?;
     let hb = header.encode();
-    let mut out =
-        Vec::with_capacity(PREFIX_LEN.saturating_add(SLOT_LEN.saturating_mul(table.entries.len())));
+    let mut out = Vec::with_capacity(PREFIX_LEN.saturating_add(SLOT_LEN.saturating_mul(total)));
     out.extend_from_slice(&hb);
     out.extend_from_slice(&seal_check(&key, &hb)?);
-    for (ix, e) in table.entries.iter().enumerate() {
-        out.extend_from_slice(&seal_slot(&key, &hb, ix, e.chain, e.epoch, e.key.as_ref())?);
+    let roots = table
+        .entries
+        .iter()
+        .map(|e| (Slot::Root(e.chain, e.epoch), e.key.as_ref()));
+    let signs = table
+        .sign_keys
+        .iter()
+        .map(|s| (Slot::Sign(s.name), s.key.as_ref()));
+    for (ix, (slot, k)) in roots.chain(signs).enumerate() {
+        out.extend_from_slice(&seal_slot(&key, &hb, ix, slot, k)?);
     }
     Ok(out)
 }
@@ -614,21 +763,20 @@ pub fn open_key_table(volume: &Path, passphrase: &Passphrase) -> Result<KeyTable
 enum SlotUse {
     /// Zero bytes, free for the next create.
     Free,
-    /// The entry of a chain and epoch.
-    Entry(Chain, Epoch),
+    /// The entry of a root, or of a sign key.
+    Entry(Slot),
     /// A write to it failed, so its bytes are unknown until it is
-    /// overwritten. It names the chain and epoch whose live entry it may
-    /// hold, if any. A retried create of that epoch overwrites it in
-    /// place, and a destroy of that epoch scrubs it.
-    Blocked(Option<(Chain, Epoch)>),
+    /// overwritten. It names the root or sign key whose live entry it may
+    /// hold, if any. A retried create of that root or key overwrites it
+    /// in place, and a destroy of it scrubs it.
+    Blocked(Option<Slot>),
 }
 
 impl SlotUse {
-    /// Whether the slot holds, or may hold, the entry of `chain` and
-    /// `epoch`.
-    fn names(self, chain: Chain, epoch: Epoch) -> bool {
+    /// Whether the slot holds, or may hold, the entry of `slot`.
+    fn names(self, slot: Slot) -> bool {
         match self {
-            SlotUse::Entry(c, e) | SlotUse::Blocked(Some((c, e))) => c == chain && e == epoch,
+            SlotUse::Entry(s) | SlotUse::Blocked(Some(s)) => s == slot,
             SlotUse::Free | SlotUse::Blocked(None) => false,
         }
     }
@@ -651,10 +799,10 @@ impl TableStore {
     /// The open repairs what a crash or a full volume can leave. A
     /// damaged slot, and a partial slot after the last whole one, are
     /// overwritten with zeros, so a torn write leaves no partial key
-    /// bytes behind. Two slots of one epoch, which a create that was
-    /// retried after a failed fsync can leave, are resolved: the slot
-    /// that is kept is a destroyed one if any, or else the live one
-    /// whose `K(e)` opens the epoch file. The other is scrubbed.
+    /// bytes behind. Two slots of one epoch or sign key, which a create
+    /// that was retried after a failed fsync can leave, are resolved: the
+    /// slot that is kept is a destroyed one if any, or else the live one
+    /// whose key opens the epoch or sign-key file. The other is scrubbed.
     pub(crate) fn open_or_create(
         volume: &Path,
         passphrase: &Passphrase,
@@ -672,13 +820,16 @@ impl TableStore {
                     table: KeyTable::default(),
                     slots: vec![SlotUse::Free; opened.slots],
                 };
-                let mut scrub: Vec<(usize, Option<(Chain, Epoch)>)> =
+                let mut scrub: Vec<(usize, Option<Slot>)> =
                     opened.damaged.iter().map(|ix| (*ix, None)).collect();
-                for (ix, entry) in keep_one_per_epoch(volume, opened.entries, &mut scrub) {
+                for (ix, entry) in keep_one_per_slot(volume, opened.entries, &mut scrub) {
                     if let Some(s) = store.slots.get_mut(ix) {
-                        *s = SlotUse::Entry(entry.chain, entry.epoch);
+                        *s = SlotUse::Entry(entry.slot());
                     }
-                    store.table.entries.push(entry);
+                    match entry {
+                        Decoded::Root(e) => store.table.entries.push(e),
+                        Decoded::Sign(s) => store.table.sign_keys.push(s),
+                    }
                 }
                 if sealed.partial_tail {
                     scrub.push((store.slots.len(), None));
@@ -713,10 +864,8 @@ impl TableStore {
         }
     }
 
-    fn slot_index(&self, chain: Chain, epoch: Epoch) -> Option<usize> {
-        self.slots
-            .iter()
-            .position(|s| *s == SlotUse::Entry(chain, epoch))
+    fn slot_index(&self, slot: Slot) -> Option<usize> {
+        self.slots.iter().position(|s| *s == SlotUse::Entry(slot))
     }
 
     /// Overwrites slot `ix` with zeros and frees it. A failed write
@@ -726,7 +875,7 @@ impl TableStore {
         if let Some(s) = self.slots.get_mut(ix) {
             *s = match *s {
                 _ if ok => SlotUse::Free,
-                SlotUse::Entry(c, e) => SlotUse::Blocked(Some((c, e))),
+                SlotUse::Entry(slot) => SlotUse::Blocked(Some(slot)),
                 SlotUse::Free => SlotUse::Blocked(None),
                 other => other,
             };
@@ -745,34 +894,7 @@ impl TableStore {
         epoch: Epoch,
         key: EpochKey,
     ) -> Result<(), KeydError> {
-        let ix = self
-            .slots
-            .iter()
-            .position(|s| s.names(chain, epoch))
-            .or_else(|| self.slots.iter().position(|s| *s == SlotUse::Free))
-            .unwrap_or(self.slots.len());
-        if ix >= MAX_ENTRIES {
-            return Err(KeydError::Malformed("the key table is full"));
-        }
-        let bytes = seal_slot(
-            &self.key,
-            &self.header.encode(),
-            ix,
-            chain,
-            epoch,
-            Some(&key),
-        )?;
-        let written = write_slot(&self.path, ix, &bytes);
-        let state = if written.is_ok() {
-            SlotUse::Entry(chain, epoch)
-        } else {
-            SlotUse::Blocked(Some((chain, epoch)))
-        };
-        match self.slots.get_mut(ix) {
-            Some(s) => *s = state,
-            None => self.slots.push(state),
-        }
-        written?;
+        self.write_live(Slot::Root(chain, epoch), &key)?;
         self.table
             .entries
             .retain(|e| !(e.chain == chain && e.epoch == epoch));
@@ -782,16 +904,55 @@ impl TableStore {
         Ok(())
     }
 
+    /// Adds the live sign-key entry of `name` with the key `key` of its
+    /// sign-key file, and fsyncs, as [`Self::insert`] does for a root
+    /// (ADR-004 "Decided by Daniel, 2026-11-15 (late)").
+    pub(crate) fn insert_sign_key(
+        &mut self,
+        name: SignKeyName,
+        key: EpochKey,
+    ) -> Result<(), KeydError> {
+        self.write_live(Slot::Sign(name), &key)?;
+        self.table.sign_keys.retain(|s| s.name != name);
+        self.table.sign_keys.push(SignKeyEntry {
+            name,
+            key: Some(key),
+        });
+        Ok(())
+    }
+
+    /// Writes the live entry of `slot` with `key` into the slot that
+    /// names it already, or a free slot, or a new one at the end.
+    fn write_live(&mut self, slot: Slot, key: &EpochKey) -> Result<(), KeydError> {
+        let ix = self
+            .slots
+            .iter()
+            .position(|s| s.names(slot))
+            .or_else(|| self.slots.iter().position(|s| *s == SlotUse::Free))
+            .unwrap_or(self.slots.len());
+        if ix >= MAX_ENTRIES {
+            return Err(KeydError::Malformed("the key table is full"));
+        }
+        let bytes = seal_slot(&self.key, &self.header.encode(), ix, slot, Some(key))?;
+        let written = write_slot(&self.path, ix, &bytes);
+        let state = if written.is_ok() {
+            SlotUse::Entry(slot)
+        } else {
+            SlotUse::Blocked(Some(slot))
+        };
+        match self.slots.get_mut(ix) {
+            Some(s) => *s = state,
+            None => self.slots.push(state),
+        }
+        written
+    }
+
     /// Overwrites the slot of `chain` and `epoch` in place with a
     /// destroyed entry, at the same offset and length, and fsyncs. Only
     /// then is `K(e)` dropped from memory, so a failed write can be
     /// retried.
     pub(crate) fn mark_destroyed(&mut self, chain: Chain, epoch: Epoch) -> Result<(), KeydError> {
-        let ix = self
-            .slot_index(chain, epoch)
-            .ok_or(KeydError::Io("the key table has no slot for the epoch"))?;
-        let bytes = seal_slot(&self.key, &self.header.encode(), ix, chain, epoch, None)?;
-        write_slot(&self.path, ix, &bytes)?;
+        self.write_destroyed(Slot::Root(chain, epoch))?;
         if let Some(e) = self
             .table
             .entries
@@ -803,6 +964,25 @@ impl TableStore {
         Ok(())
     }
 
+    /// Overwrites the slot of the sign key `name` in place with a
+    /// destroyed entry and fsyncs, as [`Self::mark_destroyed`] does for a
+    /// root. The sign key's `K` leaves the volume with it.
+    pub(crate) fn mark_sign_key_destroyed(&mut self, name: SignKeyName) -> Result<(), KeydError> {
+        self.write_destroyed(Slot::Sign(name))?;
+        if let Some(s) = self.table.sign_keys.iter_mut().find(|s| s.name == name) {
+            s.key = None;
+        }
+        Ok(())
+    }
+
+    fn write_destroyed(&mut self, slot: Slot) -> Result<(), KeydError> {
+        let ix = self
+            .slot_index(slot)
+            .ok_or(KeydError::Io("the key table has no slot for the key"))?;
+        let bytes = seal_slot(&self.key, &self.header.encode(), ix, slot, None)?;
+        write_slot(&self.path, ix, &bytes)
+    }
+
     /// Scrubs every blocked slot that may hold a live entry of `chain`
     /// and `epoch`, so a destroy leaves no copy of `K(e)` behind.
     ///
@@ -811,11 +991,16 @@ impl TableStore {
     /// Fails when any such slot cannot be overwritten. A retried
     /// destroy tries again.
     pub(crate) fn scrub_blocked(&mut self, chain: Chain, epoch: Epoch) -> Result<(), KeydError> {
+        self.scrub_blocked_slot(Slot::Root(chain, epoch))
+    }
+
+    /// Scrubs every blocked slot that may hold a live entry of `slot`.
+    pub(crate) fn scrub_blocked_slot(&mut self, slot: Slot) -> Result<(), KeydError> {
         let blocked: Vec<usize> = self
             .slots
             .iter()
             .enumerate()
-            .filter(|(_, s)| **s == SlotUse::Blocked(Some((chain, epoch))))
+            .filter(|(_, s)| **s == SlotUse::Blocked(Some(slot)))
             .map(|(ix, _)| ix)
             .collect();
         let mut all = true;
@@ -848,7 +1033,7 @@ impl TableStore {
             .map(|e| e.epoch)
             .collect();
         for epoch in older {
-            let Some(ix) = self.slot_index(chain, epoch) else {
+            let Some(ix) = self.slot_index(Slot::Root(chain, epoch)) else {
                 continue;
             };
             if write_slot(&self.path, ix, &[0u8; SLOT_LEN]).is_ok() {
@@ -867,6 +1052,11 @@ impl TableStore {
     /// slot of the entry must open, as a destroyed entry. A partial slot
     /// at the end, which a failed append leaves, does not fail the read.
     pub(crate) fn read_back_gone(&self, chain: Chain, epoch: Epoch) -> Result<bool, KeydError> {
+        self.read_back_slot_gone(Slot::Root(chain, epoch))
+    }
+
+    /// As [`Self::read_back_gone`], for a root or a sign key.
+    pub(crate) fn read_back_slot_gone(&self, slot: Slot) -> Result<bool, KeydError> {
         let bytes =
             std::fs::read(&self.path).map_err(|_| KeydError::Io("read the key table back"))?;
         let sealed = SealedTable::decode_lenient(&bytes)?;
@@ -875,44 +1065,49 @@ impl TableStore {
         }
         let opened = sealed.open_with(&self.key)?;
         let torn = self
-            .slot_index(chain, epoch)
+            .slot_index(slot)
             .is_some_and(|ix| opened.damaged.contains(&ix));
         let live = opened
             .entries
             .iter()
-            .any(|(_, e)| e.chain == chain && e.epoch == epoch && e.is_live());
+            .any(|(_, e)| e.slot() == slot && e.is_live());
         Ok(!torn && !live)
     }
 }
 
-/// Keeps one entry per chain and epoch of `entries`, and adds the slot
-/// of every other one to `scrub`. A destroyed entry is kept if there is
-/// one, so a destroy is never undone. Otherwise the live entry whose
-/// `K(e)` opens the epoch file on `volume` is kept, or else the first.
-fn keep_one_per_epoch(
+/// Keeps one entry per root epoch or sign key of `entries`, and adds the
+/// slot of every other one to `scrub`. A destroyed entry is kept if there
+/// is one, so a destroy is never undone. Otherwise the live entry whose
+/// key opens its epoch or sign-key file on `volume` is kept, or else the
+/// first.
+fn keep_one_per_slot(
     volume: &Path,
-    entries: Vec<(usize, KeyTableEntry)>,
-    scrub: &mut Vec<(usize, Option<(Chain, Epoch)>)>,
-) -> Vec<(usize, KeyTableEntry)> {
-    let mut groups: std::collections::BTreeMap<(Chain, Epoch), Vec<(usize, KeyTableEntry)>> =
+    entries: Vec<(usize, Decoded)>,
+    scrub: &mut Vec<(usize, Option<Slot>)>,
+) -> Vec<(usize, Decoded)> {
+    let mut groups: std::collections::BTreeMap<Slot, Vec<(usize, Decoded)>> =
         std::collections::BTreeMap::new();
     for (ix, entry) in entries {
-        groups
-            .entry((entry.chain, entry.epoch))
-            .or_default()
-            .push((ix, entry));
+        groups.entry(entry.slot()).or_default().push((ix, entry));
     }
     let mut kept = Vec::with_capacity(groups.len());
-    for ((chain, epoch), mut group) in groups {
+    for (slot, mut group) in groups {
         let pick = if group.len() == 1 {
             0
         } else {
-            let file = crate::epoch::read(volume, chain, epoch).ok().flatten();
-            let opens = |e: &KeyTableEntry| {
-                e.key.as_ref().is_some_and(|k| {
-                    file.as_ref()
-                        .is_some_and(|f| crate::epoch::open(k, chain, epoch, f).is_ok())
-                })
+            let opens = |e: &Decoded| match e {
+                Decoded::Root(e) => e.key.as_ref().is_some_and(|k| {
+                    crate::epoch::read(volume, e.chain, e.epoch)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|f| crate::epoch::open(k, e.chain, e.epoch, &f).is_ok())
+                }),
+                Decoded::Sign(s) => s.key.as_ref().is_some_and(|k| {
+                    crate::sign_key::read(volume, s.name)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|f| crate::sign_key::open(k, s.name, &f).is_ok())
+                }),
             };
             group
                 .iter()
@@ -926,7 +1121,7 @@ fn keep_one_per_epoch(
             if n == pick {
                 chosen = Some(item);
             } else {
-                rest.push((item.0, Some((chain, epoch))));
+                rest.push((item.0, Some(slot)));
             }
         }
         scrub.extend(rest);

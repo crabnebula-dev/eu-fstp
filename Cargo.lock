@@ -466,12 +466,14 @@ dependencies = [
 name = "fstp-control"
 version = "0.1.0"
 dependencies = [
+ "fstp-audit",
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
  "fstp-edge",
  "fstp-http",
  "fstp-json",
+ "fstp-keyd",
  "fstp-migrate",
  "fstp-obs",
  "fstp-pgtest",
@@ -481,6 +483,7 @@ dependencies = [
  "fstp-rt",
  "fstp-tls",
  "fstp-webauthn",
+ "fstp-witness",
 ]
 
 [[package]]
@@ -583,6 +586,7 @@ dependencies = [
 name = "fstp-edge"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-json",
  "fstp-obs",
  "fstp-prop",

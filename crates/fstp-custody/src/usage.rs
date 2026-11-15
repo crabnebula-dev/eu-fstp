@@ -61,11 +61,14 @@ pub enum UsageOp {
     /// The destroy of a CA sign key, outside the six `Custody` operations
     /// (ADR-004 "CA keys in custody", lane m3/erase-cell-2).
     DestroySignKey,
+    /// The create of a CA sign key in a sign-key slot (ADR-004, 2026-11-15
+    /// late, lane m3/erase-prod).
+    CreateSignKey,
 }
 
 impl UsageOp {
     /// Every operation, in code order.
-    pub const ALL: [UsageOp; 7] = [
+    pub const ALL: [UsageOp; 8] = [
         UsageOp::Create,
         UsageOp::Wrap,
         UsageOp::Unwrap,
@@ -73,6 +76,7 @@ impl UsageOp {
         UsageOp::Sign,
         UsageOp::Usage,
         UsageOp::DestroySignKey,
+        UsageOp::CreateSignKey,
     ];
 
     /// The one-byte code in a usage record.
@@ -86,6 +90,7 @@ impl UsageOp {
             UsageOp::Sign => 5,
             UsageOp::Usage => 6,
             UsageOp::DestroySignKey => 7,
+            UsageOp::CreateSignKey => 8,
         }
     }
 
@@ -106,6 +111,7 @@ impl UsageOp {
             UsageOp::Sign => "sign",
             UsageOp::Usage => "usage",
             UsageOp::DestroySignKey => "destroy-sign-key",
+            UsageOp::CreateSignKey => "create-sign-key",
         }
     }
 
