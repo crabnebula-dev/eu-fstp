@@ -65,7 +65,7 @@ async function hintOfM1(demo: DemoPage): Promise<string> {
  * every seed, so it must be linked.
  */
 const PAGES = [
-  { kind: 'creator', named: /set-up|creator/i, required: false },
+  { kind: 'creator', named: /programme editor|creator/i, required: false },
   { kind: 'people', named: /people/i, required: false },
   { kind: 'board', named: /board/i, required: true },
 ] as const;

@@ -1852,7 +1852,7 @@ mod tests {
                 .creator
                 .draft(PROGRAMME)
                 .is_some()
-                && pm.contains("set-up"),
+                && pm.contains("programme editor"),
             "{pm}"
         );
         let (irc, _) = block_on(build_review(&info(), ReviewAt::IrcReview)).unwrap();
