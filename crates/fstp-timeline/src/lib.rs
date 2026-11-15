@@ -719,12 +719,20 @@ fn receiving(s: &CellState, call: CallId, now: Timestamp) -> BTreeSet<AccountId>
 /// The most records one `Plan` command carries.
 pub const PLAN_CHUNK: usize = 256;
 
-/// The system command id of a timeline command. A firing is bound to its
-/// event, so every retry of one firing has one id and the store answers a
-/// repeat as a duplicate (I-23, ADR-007). A plan is bound to its records,
-/// which the state fixes, so a retried plan repeats its id too.
-pub fn command_id(c: &TimelineCommand) -> [u8; 16] {
-    let mut h = fstp_crypto::Sha256::new();
+/// The system command id of a timeline command in the cell `cell`. A
+/// firing is bound to its event, so every retry of one firing has one id
+/// and the store answers a repeat as a duplicate (I-23, ADR-007). A plan
+/// is bound to its records, which the state fixes, so a retried plan
+/// repeats its id too.
+///
+/// The id is an HMAC-SHA256 keyed by the cell id, as the vault-change
+/// reaction ids are (`fstp_cell_core::reaction_command_id`, Daniel,
+/// 2026-11-13). Two cells can hold the same command, such as the plan of
+/// the P-57 period events of a programme with the same id and dates. The
+/// id is stored in clear in each ledger, so an unkeyed id would link the
+/// two tenants (I-20, `t_iso_i20`).
+pub fn command_id(cell: [u8; 16], c: &TimelineCommand) -> [u8; 16] {
+    let mut h = fstp_crypto::HmacSha256::new(&cell);
     match c {
         TimelineCommand::Fire { event, .. } => {
             h.update(b"fstp-timeline-fire-v1");

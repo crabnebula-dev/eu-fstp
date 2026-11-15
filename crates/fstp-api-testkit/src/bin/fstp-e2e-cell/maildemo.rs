@@ -53,6 +53,9 @@ const SENDER: &str = "noreply@fstp.demo.test";
 const COPY_ADDRESS: &str = "requested-copy@e2e.invalid";
 /// Most steps one tick gives the worker.
 const MAX_STEPS: usize = 400;
+/// The cell id the mirror keys its timeline command ids by (I-20). The
+/// mirror is no store, so it names itself.
+const MIRROR_CELL: [u8; 16] = *b"fstp:demo:mirror";
 
 type Staged = <SmtpTransport<TokioRuntime> as Transport>::Staged;
 
@@ -231,7 +234,7 @@ impl Mail {
         bodies: Vec<fstp_cell_core::timeline::MessageBody>,
         now: Timestamp,
     ) -> Result<(), String> {
-        let id = fstp_timeline::command_id(&cmd);
+        let id = fstp_timeline::command_id(MIRROR_CELL, &cmd);
         let cmd = CellCommand::Timeline(cmd);
         let x = SystemCtx {
             task: SystemTask::Timeline,

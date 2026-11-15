@@ -464,6 +464,7 @@ struct Job {
 #[derive(Clone)]
 pub struct CellEngine {
     tx: Sender<Job>,
+    cell: [u8; 16],
     snapshot: Arc<Mutex<Arc<CellState>>>,
     shutdown: Shutdown,
     clock: CommitClock,
@@ -489,6 +490,12 @@ impl CellEngine {
     pub fn with_clock(mut self, clock: CommitClock) -> CellEngine {
         self.clock = clock;
         self
+    }
+
+    /// The cell whose ledger the engine writes ([`CellStore::cell`]). The
+    /// cell's tasks key their system command ids by it (I-20).
+    pub fn cell(&self) -> [u8; 16] {
+        self.cell
     }
 
     /// The current instant of the cell clock, in UTC microseconds. The
@@ -529,6 +536,7 @@ impl CellEngine {
         queue: usize,
     ) -> (CellEngine, JoinHandle<S>) {
         let (tx, rx) = chan::channel(queue);
+        let cell = store.cell();
         let snapshot = Arc::new(Mutex::new(Arc::new(state.clone())));
         let signal = shutdown.signal();
         let task = EngineTask {
@@ -542,6 +550,7 @@ impl CellEngine {
         (
             CellEngine {
                 tx,
+                cell,
                 snapshot,
                 shutdown: shutdown.clone(),
                 clock: system_commit_clock(),

@@ -191,7 +191,7 @@ fn i26_a_repeated_firing_is_refused_and_keeps_its_id() {
         .unwrap();
     let event = fstp_timeline::due_events(c.state.timeline(), now)[0];
     let f = fstp_timeline::firing(&c.state, &event, now).unwrap();
-    let id = fstp_timeline::command_id(&f.command);
+    let id = fstp_timeline::command_id(common::CELL, &f.command);
     c.run(f.command.clone(), f.bodies.clone(), now).unwrap();
     assert!(c.state.committed(id).is_some());
     assert!(fstp_timeline::firing(&c.state, &event, now).is_none());

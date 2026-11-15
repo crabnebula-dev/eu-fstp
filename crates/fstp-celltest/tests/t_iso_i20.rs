@@ -279,9 +279,13 @@ fn t_iso_i20_no_shared_identifier_across_tenants() {
         "the cycles wrote no identifier, so the comparison is vacuous"
     );
     let shared = shared_identifiers(&da, &db, &public).unwrap();
+    let hex: Vec<String> = shared
+        .iter()
+        .map(|id| id.iter().map(|b| format!("{b:02x}")).collect())
+        .collect();
     assert!(
         shared.is_empty(),
-        "{} identifiers link the two tenants",
+        "{} identifiers link the two tenants: {hex:?}",
         shared.len()
     );
 }

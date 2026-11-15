@@ -955,3 +955,29 @@ fn i39_shutdown_ends_a_release_call_in_flight() {
     );
     assert!(view.attempts().is_empty(), "{:?}", view.attempts());
 }
+
+/// I-20 (Daniel's per-cell keying of system ids, 2026-11-13, Q-ISO): a
+/// due command that is the same in two cells, such as a session end of
+/// the same account at the same instant, gets two command ids, each in
+/// the system task namespace. Within one cell its id is a function of the
+/// command, its instant and its occurrence (I-23, ADR-007).
+#[test]
+fn i20_due_command_ids_are_keyed_per_cell() {
+    let (a, b) = ([0xA1u8; 16], [0xB2u8; 16]);
+    let cmd = CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account: A });
+    let at = Some(Timestamp::from_micros(END_AT));
+    for (instant, occurrence) in [(at, 0), (None, 0), (None, 1)] {
+        let ia = timeline::command_id(a, &cmd, instant, occurrence);
+        let ib = timeline::command_id(b, &cmd, instant, occurrence);
+        assert_ne!(
+            ia, ib,
+            "one id in two cells at {instant:?}, occurrence {occurrence}"
+        );
+        assert!(is_system_command_id(ia) && is_system_command_id(ib));
+        assert_eq!(ia, timeline::command_id(a, &cmd, instant, occurrence));
+    }
+    assert_ne!(
+        timeline::command_id(a, &cmd, None, 0),
+        timeline::command_id(a, &cmd, None, 1)
+    );
+}

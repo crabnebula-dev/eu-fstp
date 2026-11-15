@@ -16,6 +16,9 @@ use fstp_domain_testkit::mc::lifecycle_model::lifecycle_config;
 use fstp_domain_testkit::scenario::Scenario;
 use fstp_ledger::{Entry, Seq};
 
+/// The cell id the test cells key their timeline command ids by (I-20).
+pub(crate) const CELL: [u8; 16] = [0x0C; 16];
+
 /// A cell: its ledger, its state and every outbox body it committed.
 #[derive(Clone)]
 pub(crate) struct Cell {
@@ -84,7 +87,7 @@ impl Cell {
         bodies: Vec<MessageBody>,
         now: Timestamp,
     ) -> Result<Ran, String> {
-        let id = fstp_timeline::command_id(&cmd);
+        let id = fstp_timeline::command_id(CELL, &cmd);
         let cmd = CellCommand::Timeline(cmd);
         let x = SystemCtx {
             task: SystemTask::Timeline,
