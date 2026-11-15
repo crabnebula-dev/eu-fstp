@@ -77,6 +77,9 @@ pub struct SeededParts {
     /// The vault chain writer's parts (`fstp_vault::chain`), or `None` to
     /// persist journals with no chain row.
     pub chain: Option<fstp_vault::chain::VaultChainParts>,
+    /// The loader pages its origin serves (`crate::vault_pages`), or
+    /// `None` to serve the shipped vault's routes only.
+    pub pages: Option<Arc<crate::vault_pages::VaultPages>>,
 }
 
 /// One call's answer.
@@ -103,6 +106,8 @@ struct Shared {
     log: Mutex<SeedLog>,
     /// The key of the identity match keys of seeded verifications.
     match_key: [u8; 32],
+    /// The loader pages of the origin, if any.
+    pages: Option<Arc<crate::vault_pages::VaultPages>>,
 }
 
 impl Shared {
@@ -197,6 +202,17 @@ impl fstp_http::Handler for Origin {
     async fn handle(&self, req: fstp_http::Request) -> fstp_http::Response {
         let method = req.method.as_str().to_owned();
         let path = req.target.path().to_owned();
+        // The loader pages of a world that serves pages, before the
+        // shipped vault's routes (`crate::vault_pages`).
+        if let Some((status, headers, body)) =
+            self.0.pages.as_ref().and_then(|p| p.serve(&method, &path))
+        {
+            return response(Answer {
+                status,
+                headers,
+                body,
+            });
+        }
         let body = req.body;
         let a = self
             .0
@@ -264,6 +280,7 @@ impl SeededVault {
             origin_host,
             clock,
             chain,
+            pages,
         } = parts;
         let db = db.server_check(fstp_vault::service::vault_server_check(&registered_servers));
         let mut client: fstp_pgwire::Client<Rt> =
@@ -296,6 +313,7 @@ impl SeededVault {
             log: Mutex::new(SeedLog::default()),
             match_key: fstp_crypto::random_array::<32>()
                 .map_err(|_| VaultError::Unavailable("randomness"))?,
+            pages,
         });
         let loopback = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
         let internal = fstp_http::Server::new(
@@ -521,6 +539,36 @@ impl SeededVault {
             .writes
             .push(SeededWrite { source, kind, at });
         Ok(events)
+    }
+
+    /// Sends the internal request `NegotiationOpened { proposal, accounts,
+    /// ledger_seq }` to the vault, as the cell pushes it when NEGOTIATION
+    /// opens (design sections 6.1, 6.2 and 6.5 "Second guard"). Lane
+    /// m3/devstack-scenarios: interim stand-in, since the cell pushes no
+    /// negotiation fact yet. Claims built on it say so.
+    ///
+    /// # Errors
+    ///
+    /// The vault's refusal, or a journal the database refused.
+    pub async fn negotiation_opened(
+        &self,
+        proposal: u128,
+        accounts: &[u128],
+        ledger_seq: u64,
+    ) -> Result<(), String> {
+        let req = fstp_vault_proto::VaultRequest::NegotiationOpened {
+            proposal: fstp_vault_proto::WireProposal(proposal),
+            accounts: accounts
+                .iter()
+                .map(|a| fstp_vault_proto::WireAccount(*a))
+                .collect(),
+            ledger_seq,
+        };
+        match self.shared.run(|v, now| v.internal(&req, now)).await {
+            Ok(fstp_vault_proto::VaultResponse::Acked) => Ok(()),
+            Ok(other) => Err(format!("the vault answered {other:?}")),
+            Err(()) => Err("the vault database refused the journal".to_owned()),
+        }
     }
 
     /// Every seeded write so far.

@@ -63,8 +63,17 @@ test.describe('R-LG-03 step-up for high-risk actions', () => {
     await signUp(reviewer, control, cell.origin, email);
     const account = await control.account(email);
 
+    // The test clock moves 2 x P-71 + 1 µs before the accepted send. The
+    // engine refuses a grant that starts before its instant (no
+    // backdating), so the grant starts then, and every refusal below
+    // comes from the step-up rule alone.
     const grant = (
-      await control.command('GrantRole', { programme, account, role: 'CommitteeMember' })
+      await control.command('GrantRole', {
+        programme,
+        account,
+        role: 'CommitteeMember',
+        starts_in: String(2 * P71_MICROS + 1),
+      })
     ).command;
     const other = (
       await control.command('GrantRole', { programme, account, role: 'CommitteeChair' })

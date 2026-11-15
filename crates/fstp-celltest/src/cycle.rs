@@ -450,6 +450,18 @@ impl<'w> Cycle<'w> {
         c
     }
 
+    /// The cycle's auth client (lane m3/devstack-scenarios).
+    pub fn client(&self) -> &AuthClient<'w> {
+        &self.client
+    }
+
+    /// The first admin's session, once `login` or `create-programme` ran
+    /// (lane m3/devstack-scenarios). The cycle renews it after each move
+    /// of the cell clock.
+    pub fn admin_session(&self) -> Option<Cookie> {
+        self.admin.clone()
+    }
+
     /// The client back, with what the cycle enrolled.
     pub fn into_client(self) -> AuthClient<'w> {
         self.client
@@ -2012,7 +2024,7 @@ pub(crate) fn synthetic_text(n: u8) -> TextRef {
 }
 
 /// The `GrantRole` of `role` on P1 to `account` from `start`.
-fn grant(binding: BindingId, account: AccountId, role: Role, start: i64) -> CellCommand {
+pub fn grant(binding: BindingId, account: AccountId, role: Role, start: i64) -> CellCommand {
     core(fstp_domain::Command::GrantRole {
         binding,
         account,
