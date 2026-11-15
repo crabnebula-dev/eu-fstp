@@ -178,3 +178,22 @@ The option read: "The FSTP coordinator may unmask any party of their own program
 
 1. The audit page shows the entries to all three readers.
 2. A tenant admin's home links to the audit log of each programme of the tenant, from `creator.list_programmes`. A coordinator's home links to the audit log of each programme it coordinates.
+
+## SA-09: A page the viewer may not open is never shown
+
+**Source.** Daniel's decision, 2026-11-15: "I should never be able to see a route that my user (or a non-logged in user) does not have permissions to see." His examples: `/app/grants` and `/app/proposals` showed "The platform refused this request (unauthenticated): actor". **Status.** Decided. To be built by lane `m4/page-gate`, with a line in `SPEC/12-journey-ui.md`.
+
+### Rule
+
+1. The server decides before it serves any `/app/` page. Today both cells serve the shell for every `/app/` path and leave the refusal to the page.
+2. **No session.** The server redirects (303) to sign-in with the page as the return path. After sign-in the gate runs again. A mailbox link therefore still reaches its page.
+3. **A session that may not open the page.** The server answers the same "Page not found" page, status 404, as for a path that does not exist. This covers a missing role, a resource outside the viewer's scope and an ADR-021 gate before activation. The answer never says that the page exists or why it is closed. ADR-021's "still being set up" notice stays on the home page only.
+4. **Login too weak** (a magic-link session on a page that needs a passkey). The server sends the viewer to sign in with a passkey, then runs the gate again.
+5. **One rule decides.** Each page row names the read the page cannot render without. The page is served only when the authorisation reference (`fstp-access`) admits that read for the session's principal and, on a page with an id, for that resource. So a page and its API never disagree.
+6. **Links.** Navigation, home pages and mailbox items list only pages the viewer may open.
+7. **No raw refusal text for a page.** If a page's own read is refused after it loaded, for example because the session ended, the page shows sign-in or "Page not found", never the refusal code.
+
+### Unchanged
+
+- A refused action inside a page the viewer may open still names the rule, never an account (R-CF-03, `overview.md`).
+- The API keeps its refusal classes. The gate concerns page routes only.
