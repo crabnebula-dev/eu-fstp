@@ -875,6 +875,46 @@ fn j2_grant_by_invitation_composes_the_accepting_account_and_role() {
     assert_eq!(grants, vec![(a, j.p, Role::ProgrammeManager)]);
 }
 
+/// J2, "Confidentiality on binding", T-AUTHZ-MATRIX: `roles.grant` by
+/// account, of an account that accepted the programme manager terms,
+/// asks for a step-up and then completes on the draft (change D3). The
+/// dry run judges the grant with the accepted terms, so it is not
+/// refused for lacking a confidentiality text.
+#[test]
+fn j2_grant_by_account_with_accepted_terms_completes() {
+    let j = draft().unwrap();
+    let a = fresh(1);
+    j.c.ports.vault.change(|truth| truth.verify(a));
+    let t = invite(&j, &email(1), "programme_manager").unwrap();
+    accept(&j.c, &login(&j.c, a), &t).unwrap();
+    assert_eq!(
+        reference::grant_verdict(Role::ProgrammeManager, true, true),
+        GrantVerdict::Composed
+    );
+    // The account form with no confidentiality text of its own: J2 binds
+    // the accepted terms.
+    let start = j.c.ports.clock.read().micros();
+    let body = format!(
+        r#"{{"account":"{}","role":"ProgrammeManager","start":"{start}"}}"#,
+        a.raw()
+    );
+    let path = format!("/programmes/{}/roles", j.p.raw());
+    let grant = || {
+        fstp_api_core::decode::decode_route(
+            fstp_api_core::decode::Method::Post,
+            &path,
+            body.as_bytes(),
+        )
+    };
+    let first = j.c.web(&j.admin, grant());
+    assert!(
+        matches!(first, Ok(OpResult::StepUpRequired(_))),
+        "I-78: the grant asks for a step-up after its dry run, got {first:?}"
+    );
+    done(&stepped(&j.c, &j.admin, grant), "roles.grant by account").unwrap();
+    assert!(held(&j.c, a, j.p, Role::ProgrammeManager));
+}
+
 // ---------------------------------------------------------------------------
 // I-86 and the bound placeholders
 // ---------------------------------------------------------------------------

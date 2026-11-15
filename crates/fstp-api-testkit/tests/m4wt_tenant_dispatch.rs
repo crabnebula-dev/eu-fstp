@@ -638,7 +638,14 @@ fn sod07_one_admin_neither_validates_administrators_nor_completes() {
     );
     assert_eq!(text(&v, "outcome"), "too_few_admins", "{v:?}");
     let before = appended(&c);
-    assert_refused(&c.web(&l, complete()), "SoD-07: completion with one admin");
+    let r = c.web(&l, complete());
+    assert_refused(&r, "SoD-07: completion with one admin");
+    // A sole admin is refused as the actor, before the step that cannot
+    // validate (T-AUTHZ-MATRIX: actor before state).
+    assert!(
+        matches!(&r, Err(ApiError::Refused { rule: "SoD-07", .. })),
+        "SoD-07: completion with one admin names its rule: {r:?}"
+    );
     assert_eq!(appended(&c), before);
 }
 
