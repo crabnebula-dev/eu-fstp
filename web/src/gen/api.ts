@@ -159,6 +159,7 @@ export type OpName =
   | "proposal.request_copy"
   | "me.notices"
   | "stage2.view"
+  | "proposal.get_plan"
   | "stage2.answer"
   | "stage2.revise"
   | "proposal.withdraw"
@@ -405,6 +406,7 @@ export interface OpParams {
   readonly "proposal.request_copy": { readonly "proposal": string };
   readonly "me.notices": Readonly<Record<never, string>>;
   readonly "stage2.view": { readonly "proposal": string };
+  readonly "proposal.get_plan": { readonly "proposal": string };
   readonly "stage2.answer": { readonly "proposal": string };
   readonly "stage2.revise": { readonly "proposal": string };
   readonly "proposal.withdraw": { readonly "proposal": string };
@@ -624,6 +626,7 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.request_copy",
   "me.notices",
   "stage2.view",
+  "proposal.get_plan",
   "stage2.answer",
   "stage2.revise",
   "proposal.withdraw",
@@ -2207,6 +2210,20 @@ export const OPERATIONS: readonly Operation[] = [
     session: "any",
     classification: "confidential",
     tool: { name: "fstp_get_stage2_questions", scope: "proposals:read", prepareOnly: false },
+  },
+  {
+    name: "proposal.get_plan",
+    method: "GET",
+    path: "/proposals/{proposal}/plan",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "plan" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
   },
   {
     name: "stage2.answer",
@@ -4502,6 +4519,41 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "handle": { schema: { kind: "string" }, optional: false },
           "asked": { schema: { kind: "string" }, optional: false },
           "text": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+      "answers": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "after": { schema: { kind: "int" }, optional: false },
+          "answered": { schema: { kind: "string" }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "proposal.get_plan": {
+    kind: "object",
+    fields: {
+      "plan": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "plan": { schema: { kind: "id" }, optional: false },
+          "origin": { schema: { kind: "enum", values: ["submitted", "stage2_revision", "negotiated", "amendment"] }, optional: false },
+          "tasks": { schema: { kind: "array", items: {
+            kind: "object",
+            fields: {
+              "milestones": { schema: { kind: "array", items: {
+                kind: "object",
+                fields: {
+                  "amount": { schema: { kind: "amount" }, optional: false },
+                  "start": { schema: { kind: "string" }, optional: false },
+                  "due": { schema: { kind: "string" }, optional: false },
+                },
+              } }, optional: false },
+            },
+          } }, optional: false },
+          "total": { schema: { kind: "amount" }, optional: true },
+          "text": { schema: { kind: "string" }, optional: true },
         },
       } }, optional: false },
     },

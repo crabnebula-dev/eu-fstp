@@ -1007,7 +1007,20 @@ async fn store_texts<P: Seams>(
             .await
             .map_err(|e| port_failed(e, "text"))?;
         let r = forms::text_ref(r.0, s);
-        lock(&call.st.content).remember(r, s);
+        {
+            let mut content = lock(&call.st.content);
+            content.remember(r, s);
+            // Lane m4/author-reads: the plan names this text by its digest
+            // only, so the team's plan read finds it here (R-SB-01).
+            if path == "description"
+                && matches!(
+                    form.derive,
+                    forms::Derive::PlanForm | forms::Derive::RevisionForm
+                )
+            {
+                content.remember_plan_text(r);
+            }
+        }
         out.insert(path, r);
     }
     Ok(out)
@@ -1757,7 +1770,12 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         ReadKind::GetOwnStage2Thread => {
             let p = proposal_param(call, op)?;
-            ReadModel::Stage2Questions(own_questions(call, p, &clearance).await?)
+            let (questions, answers) = own_thread(call, p, &clearance).await?;
+            ReadModel::Stage2Questions(questions, answers)
+        }
+        ReadKind::GetOwnPlan => {
+            let p = proposal_param(call, op)?;
+            ReadModel::Plan(own_plan(call, p, &clearance).await?)
         }
         ReadKind::GetOwnNotices => {
             let Some(a) = account else {
@@ -4060,38 +4078,121 @@ fn country_code(s: &str) -> Option<[u8; 2]> {
     }
 }
 
-/// The stage 2 questions of `p` under their P-11 handles, each with the
-/// day it was asked only (TH-08). The answers stay with the team's own
-/// form.
-async fn own_questions<P: Seams>(
+/// The stage 2 thread of `p` as its team reads it (`stage2.view`): the
+/// questions under their P-11 handles, each with the day it was asked
+/// only (TH-08), and the team's own answers, oldest first, each with its
+/// day and the number of questions asked before it (Daniel, 2026-11-15,
+/// night, "if i wrote it i should be able to read it"; lane
+/// m4/author-reads). An answer names no reviewer, and this read admits
+/// the team only, so no Judging role reads an answer through it (P-11,
+/// I-17). A text the store cannot give fails the read closed.
+async fn own_thread<P: Seams>(
     call: &Call<'_, P>,
     p: ProposalId,
     clearance: &fstp_access::ReadClearance,
-) -> Result<Vec<crate::views::Question>, ApiError> {
+) -> Result<(Vec<crate::views::Question>, Vec<crate::views::Stage2Answer>), ApiError> {
     let review = call.state.core.review();
     let entries: Vec<ThreadEntry> = journal(call)
         .thread(p)
         .map_err(|Unknown| call.refuse(history_unknown()))?
         .to_vec();
-    let mut out = Vec::new();
-    for e in entries {
-        if let ThreadEntry::Question {
-            assignment,
-            text,
-            at,
-        } = e
-        {
-            out.push(crate::views::Question {
+    let mut questions = Vec::new();
+    let mut answers = Vec::new();
+    for (after, e) in placed(&entries) {
+        match e {
+            ThreadEntry::Question {
+                assignment,
+                text,
+                at,
+            } => questions.push(crate::views::Question {
                 handle: review
                     .get(assignment)
                     .and_then(|x| x.handle)
                     .map_or_else(|| "R".to_owned(), handle_text),
                 asked: utc_day(at),
                 text: stored_text(call, text, clearance).await?,
-            });
+            }),
+            ThreadEntry::Answer { text, at } => answers.push(crate::views::Stage2Answer {
+                after,
+                answered: utc_day(at),
+                text: stored_text(call, text, clearance).await?,
+            }),
         }
     }
-    Ok(out)
+    Ok((questions, answers))
+}
+
+/// Each entry of a stage 2 thread with the number of questions asked
+/// before it, a question counting itself. An answer is placed under the
+/// last question asked before it (lane m4/author-reads).
+fn placed(entries: &[ThreadEntry]) -> Vec<(u32, ThreadEntry)> {
+    let mut n = 0u32;
+    entries
+        .iter()
+        .map(|e| {
+            if matches!(e, ThreadEntry::Question { .. }) {
+                n = n.saturating_add(1);
+            }
+            (n, *e)
+        })
+        .collect()
+}
+
+/// The plan the team recorded, read back (`proposal.get_plan`, R-SB-01,
+/// ADR-006; lane m4/author-reads): the head of the plan chain of `p`, or
+/// `None` before its first plan. The structure and the total come from
+/// the ledger. The work plan text comes from the text recorded with the
+/// plan in this cell process, read under the read's clearance and
+/// checked against the plan's digest. A plan this process did not record
+/// has no text in the reply, never an empty one. A proposal the journal
+/// does not know fails the read closed.
+async fn own_plan<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<Option<crate::views::PlanView>, ApiError> {
+    use fstp_domain::proposal::PlanOrigin;
+    let head = journal(call)
+        .latest_plan(p)
+        .map_err(|Unknown| call.refuse(history_unknown()))?;
+    let Some(plan) = head else {
+        return Ok(None);
+    };
+    let Some(v) = fstp_domain::view::plan_version(&call.state.core, p, plan) else {
+        return Err(call.refuse(history_unknown()));
+    };
+    let tasks = v
+        .tasks
+        .iter()
+        .map(|t| {
+            t.milestones
+                .iter()
+                .map(|m| crate::views::PlanMilestoneView {
+                    amount: m.amount.amount().to_string(),
+                    start: utc_day(m.start),
+                    due: utc_day(m.due),
+                })
+                .collect()
+        })
+        .collect();
+    let origin = match v.origin {
+        PlanOrigin::Submitted => "submitted",
+        PlanOrigin::Stage2Revision => "stage2_revision",
+        PlanOrigin::Negotiated => "negotiated",
+        PlanOrigin::Amendment => "amendment",
+    };
+    let held = lock(&call.st.content).plan_text(v.content);
+    let text = match held {
+        Some(r) => Some(stored_text(call, r, clearance).await?),
+        None => None,
+    };
+    Ok(Some(crate::views::PlanView {
+        plan: plan.raw(),
+        origin,
+        tasks,
+        total: v.total.map(|t| t.amount().to_string()),
+        text,
+    }))
 }
 
 /// The caller's notices (R-EV-04, R-IR-02): the outcome of each proposal
@@ -4199,6 +4300,31 @@ mod tests {
 
     use super::*;
     use fstp_json::ToJson;
+
+    /// R-EV-05, P-11 (lane m4/author-reads): each entry of a stage 2 thread
+    /// is placed after the questions asked before it. Two answers after
+    /// one question both sit under it, and a later question moves the
+    /// count on. An answer carries no assignment, so no reviewer is named.
+    #[test]
+    fn r_ev_05_stage2_answers_sit_under_the_last_question_before_them() {
+        let text = |n: u128| {
+            TextRef::new(
+                fstp_domain::id::TextId::from_raw(n),
+                fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+            )
+        };
+        let at = Timestamp::from_micros(0);
+        let q = |n| ThreadEntry::Question {
+            assignment: AssignmentId::from_raw(n),
+            text: text(n),
+            at,
+        };
+        let a = |n| ThreadEntry::Answer { text: text(n), at };
+        let entries = [q(1), q(2), a(3), a(4), q(5), a(6)];
+        let after: Vec<u32> = placed(&entries).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(after, [1, 2, 2, 2, 3, 3]);
+        assert_eq!(placed(&[]), Vec::new());
+    }
 
     /// I-50, R-PG-01 AC, M4 design section 15.0 (I-50 timing, Daniel,
     /// 2026-10-31): an engine refusal of a save with P-05 above P-58 reaches

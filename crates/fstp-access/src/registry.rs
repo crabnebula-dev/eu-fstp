@@ -1680,6 +1680,11 @@ pub const OPS: &[OpSpec] = &[
         &IN_PROPOSAL,
         Scope::ProposalsRead,
     ),
+    // Lane m4/author-reads (Daniel, 2026-11-15, night, "if i wrote it i
+    // should be able to read it"): the plan the team recorded, read back
+    // read-only by the team, current and former. Web only.
+    OpSpec::read("proposal.get_plan", RK::GetOwnPlan, "/proposals/{proposal}/plan")
+        .acting(TEAM),
     OpSpec::command(
         "stage2.answer",
         CK::AnswerQuestions,

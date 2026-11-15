@@ -7,6 +7,9 @@
 //! - [`proposal_state`] gives the state of a proposal. The release rule
 //!   of design section 6.5 issues a release ticket only for a proposal in
 //!   NEGOTIATION or later (I-17).
+//! - [`plan_version`] gives one recorded plan version of a proposal, so
+//!   the team reads back the plan it recorded (R-SB-01, lane
+//!   m4/author-reads).
 //!
 //! Each accessor reads the projection and changes nothing. No record and
 //! no rule changes.
@@ -45,6 +48,36 @@ pub fn determination_plan(
     Some((plan, crate::grant::plan_total(state, plan)))
 }
 
+/// One recorded plan version, read-only (lane m4/author-reads).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlanVersionView<'a> {
+    /// Where it comes from.
+    pub origin: crate::proposal::PlanOrigin,
+    /// Its tasks with their milestones.
+    pub tasks: &'a [crate::proposal::Task],
+    /// The digest of the plan text held outside the domain.
+    pub content: crate::id::ContentDigest,
+    /// The total of its milestone amounts, or `None` when the sum fails
+    /// (ADR-006).
+    pub total: Option<fstp_money::NonNegAmount>,
+}
+
+/// The plan version `plan` of `proposal`, or `None` for an unknown plan or
+/// a plan of another proposal (R-SB-01). It reads the projection only.
+pub fn plan_version(
+    state: &State,
+    proposal: ProposalId,
+    plan: crate::id::PlanVersionId,
+) -> Option<PlanVersionView<'_>> {
+    let p = crate::proposal::intake::plan(state, plan).filter(|p| p.proposal == proposal)?;
+    Some(PlanVersionView {
+        origin: p.origin,
+        tasks: &p.tasks,
+        content: p.content,
+        total: crate::proposal::intake::plan_total(p),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,5 +89,14 @@ mod tests {
     fn i42_unknown_proposal_reads_as_minor_flagged() {
         let state = State::genesis();
         assert!(proposal_minor_flagged(&state, ProposalId::from_raw(1)));
+    }
+
+    /// R-SB-01 (lane m4/author-reads): a plan the state does not know reads
+    /// as none, never as an empty plan.
+    #[test]
+    fn r_sb_01_unknown_plan_reads_as_none() {
+        let state = State::genesis();
+        let plan = crate::id::PlanVersionId::from_raw(70);
+        assert_eq!(plan_version(&state, ProposalId::from_raw(1), plan), None);
     }
 }

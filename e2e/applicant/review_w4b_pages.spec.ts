@@ -127,7 +127,7 @@ test('review_stage2_revision_sends_a_plan_with_tasks', async ({ page }) => {
       return { proposal: '1', state: 'STAGE2', role: 'lead', title: 'T' };
     }
     if (method === 'GET' && path === '/api/v1/proposals/1/stage2') {
-      return { questions: [] };
+      return { questions: [], answers: [] };
     }
     return { accepted: true };
   });

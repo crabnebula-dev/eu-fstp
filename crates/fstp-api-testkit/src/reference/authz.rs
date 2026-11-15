@@ -1573,7 +1573,13 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         .tool("fstp_submit_proposal"),
     RefOp::act("proposal.request_copy", T::Proposal, R::Lead),
     RefOp::read("me.notices", T::None, R::AnyAccount).tool("fstp_list_notices"),
+    // Lane m4/author-reads: the reply carries the team's own answers too.
+    // The readers do not change.
     RefOp::read("stage2.view", T::Proposal, R::Team).tool("fstp_get_stage2_questions"),
+    // Lane m4/author-reads (Daniel, 2026-11-15, night): the plan the team
+    // recorded, read back by the team and kept by the former lead and team
+    // member (`former_team_reads`). Web only.
+    RefOp::read("proposal.get_plan", T::Proposal, R::Team),
     RefOp::act("stage2.answer", T::Proposal, R::Lead)
         .binding()
         .tool("fstp_answer_stage2"),

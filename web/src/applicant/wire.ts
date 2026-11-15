@@ -718,6 +718,123 @@ export function decodeStage2(v: unknown): readonly Question[] | null {
   });
 }
 
+/**
+ * One of the team's own stage 2 answers (lane m4/author-reads). It names
+ * no reviewer. `after` is the number of questions asked before it, so
+ * the answer sits under question `after` (from 1).
+ */
+export interface Stage2Answer {
+  readonly after: number;
+  /** The day it was given. Never a time of day (TH-08). */
+  readonly answered: Day;
+  readonly text: string;
+}
+
+/** `stage2.view` as the team reads it back: the questions and its own answers. */
+export interface Stage2Thread {
+  readonly questions: readonly Question[];
+  readonly answers: readonly Stage2Answer[];
+}
+
+/**
+ * `stage2.view` with the team's answers: `{questions, answers: [{after,
+ * answered, text}]}`. `after` is a whole number from 0 to the number of
+ * questions, and `answered` a `YYYY-MM-DD` day. Anything else refuses the
+ * body.
+ */
+export function decodeStage2Thread(v: unknown): Stage2Thread | null {
+  const o = rec(v);
+  const questions = decodeStage2(v);
+  if (o === null || questions === null) {
+    return null;
+  }
+  const answers = list(member(o, "answers"), (x) => {
+    const a = rec(x);
+    if (a === null) {
+      return null;
+    }
+    const after = member(a, "after");
+    const answered = dayOf(member(a, "answered"));
+    const t = text(a, "text");
+    if (typeof after !== "number" || !Number.isInteger(after) || after < 0 || after > questions.length || answered === null || t === null) {
+      return null;
+    }
+    return Object.freeze({ after, answered, text: t });
+  });
+  return answers === null ? null : Object.freeze({ questions, answers });
+}
+
+/** One milestone of a plan read back: its amount and its days. */
+export interface PlanMilestone {
+  readonly amount: string;
+  readonly start: Day;
+  readonly due: Day;
+}
+
+/** Where a plan version comes from, as `proposal.get_plan` names it. */
+export type PlanOriginName = "submitted" | "stage2_revision" | "negotiated" | "amendment";
+
+const PLAN_ORIGINS: readonly PlanOriginName[] = ["submitted", "stage2_revision", "negotiated", "amendment"];
+
+/** The plan the team recorded, read back (`proposal.get_plan`, lane m4/author-reads). */
+export interface PlanRead {
+  readonly plan: string;
+  readonly origin: PlanOriginName;
+  /** The milestones of each task, in plan order. */
+  readonly tasks: readonly (readonly PlanMilestone[])[];
+  /** The total the cell summed, or `undefined` when it sent none. */
+  readonly total: string | undefined;
+  /** The work plan text, or `undefined` when the cell does not hold it. */
+  readonly text: string | undefined;
+}
+
+/**
+ * `proposal.get_plan`: `{plan: null}` before the first plan, else `{plan:
+ * {plan, origin, tasks: [{milestones: [{amount, start, due}]}], total?,
+ * text?}}`. The outer value is `null` for no plan yet, so a decoded
+ * `null` means a refused body: the result wraps it.
+ */
+export function decodePlan(v: unknown): { readonly plan: PlanRead | null } | null {
+  const o = rec(v);
+  if (o === null || !Object.hasOwn(o, "plan")) {
+    return null;
+  }
+  const raw = member(o, "plan");
+  if (raw === null) {
+    return Object.freeze({ plan: null });
+  }
+  const p = rec(raw);
+  if (p === null) {
+    return null;
+  }
+  const plan = id(p, "plan");
+  const origin = text(p, "origin");
+  const total = optAmount(p, "total");
+  const t = member(p, "text");
+  const tasks = list(member(p, "tasks"), (x) => {
+    const task = rec(x);
+    return task === null
+      ? null
+      : list(member(task, "milestones"), (y) => {
+          const m = rec(y);
+          if (m === null) {
+            return null;
+          }
+          const amt = amount(member(m, "amount"));
+          const start = dayOf(member(m, "start"));
+          const due = dayOf(member(m, "due"));
+          return amt === null || start === null || due === null ? null : Object.freeze({ amount: amt, start, due });
+        });
+  });
+  const known = PLAN_ORIGINS.find((x) => x === origin);
+  if (plan === null || known === undefined || tasks === null || total === null || (t !== undefined && typeof t !== "string")) {
+    return null;
+  }
+  return Object.freeze({
+    plan: Object.freeze({ plan, origin: known, tasks, total, text: typeof t === "string" ? t : undefined }),
+  });
+}
+
 /** One notice of the caller (`me.notices`). */
 export interface Notice {
   /** The outbox record kind, such as `ProposalOutcome` or `IrcConcern`. */

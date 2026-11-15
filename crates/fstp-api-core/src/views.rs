@@ -738,6 +738,99 @@ impl ToJson for Question {
 
 impl McpSafe for Question {}
 
+/// One of the team's own stage 2 answers, as the team reads it back
+/// (`stage2.view`; Daniel, 2026-11-15, night, "if i wrote it i should be
+/// able to read it"; lane m4/author-reads). It names no reviewer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage2Answer {
+    /// How many questions were asked before it. Interim reading: an
+    /// answer answers every question asked since the previous answer.
+    pub after: u32,
+    /// The day it was given, `YYYY-MM-DD` (TH-08: no time of day).
+    pub answered: String,
+    /// The answer.
+    pub text: String,
+}
+
+impl ToJson for Stage2Answer {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("after", Value::Number(fstp_json::Number::from(self.after))),
+            ("answered", Value::from(self.answered.as_str())),
+            ("text", Value::from(self.text.as_str())),
+        ])
+    }
+}
+
+impl McpSafe for Stage2Answer {}
+
+/// One milestone of a plan the team reads back (`proposal.get_plan`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanMilestoneView {
+    /// Its amount, an ADR-006 string.
+    pub amount: String,
+    /// Its start day, `YYYY-MM-DD` in UTC.
+    pub start: String,
+    /// Its due day, `YYYY-MM-DD` in UTC.
+    pub due: String,
+}
+
+/// The plan the team recorded, read back read-only (`proposal.get_plan`,
+/// R-SB-01, ADR-006; lane m4/author-reads): the head of its chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanView {
+    /// The plan version.
+    pub plan: u128,
+    /// `submitted`, `stage2_revision`, `negotiated` or `amendment`.
+    pub origin: &'static str,
+    /// The milestones of each task, in plan order.
+    pub tasks: Vec<Vec<PlanMilestoneView>>,
+    /// The total the cell summed, when the sum fits (ADR-006).
+    pub total: Option<String>,
+    /// The work plan text, when the cell holds the text recorded with
+    /// this plan. Never an empty text in place of it.
+    pub text: Option<String>,
+}
+
+impl ToJson for PlanView {
+    fn to_json(&self) -> Value {
+        let tasks: Vec<Value> = self
+            .tasks
+            .iter()
+            .map(|t| {
+                let milestones: Vec<Value> = t
+                    .iter()
+                    .map(|m| {
+                        object(vec![
+                            ("amount", Value::from(m.amount.as_str())),
+                            ("start", Value::from(m.start.as_str())),
+                            ("due", Value::from(m.due.as_str())),
+                        ])
+                    })
+                    .collect();
+                object(vec![(
+                    "milestones",
+                    Value::Array(milestones.into_iter().collect()),
+                )])
+            })
+            .collect();
+        let mut members = vec![
+            ("plan", Value::String(self.plan.to_string())),
+            ("origin", Value::from(self.origin)),
+            ("tasks", Value::Array(tasks.into_iter().collect())),
+        ];
+        if let Some(t) = &self.total {
+            members.push(("total", Value::from(t.as_str())));
+        }
+        if let Some(t) = &self.text {
+            members.push(("text", Value::from(t.as_str())));
+        }
+        object(members)
+    }
+}
+
+impl McpSafe for PlanView {}
+
 /// One notice of the caller (`me.notices`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Notice {
