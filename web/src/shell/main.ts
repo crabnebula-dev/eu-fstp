@@ -55,7 +55,8 @@ import { mailboxCount } from "../mailbox/pages.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
 import { SETUP_ROUTES } from "../setup/routes.js";
-import { browserEnv } from "../reviewer/kit.js";
+import { browserEnv, readOp } from "../reviewer/kit.js";
+import { decodeFunderProfile, type FunderProfileView } from "../operations/profile.js";
 import { mountJudging } from "../reviewer/judging.js";
 import { mountSite } from "../site/pages.js";
 import { installFooterGuard } from "./brand.js";
@@ -195,7 +196,12 @@ async function run(path: string): Promise<void> {
 }
 
 installTrustedTypesPolicy();
-installFooterGuard();
+// Daniel, 2026-11-15 (late): a page inside one programme shows the funder
+// visibility elements of that programme's pinned profile.
+installFooterGuard(async (programme) => {
+  const r = await readOp(browserEnv(root()), "programme.funder_profile.view", { programme }, (x): x is FunderProfileView => decodeFunderProfile(x) !== null);
+  return r.ok ? decodeFunderProfile(r.data) : null;
+});
 // SA-09 rule 7: a page whose own read is refused after it loaded, for
 // example because the session ended, shows sign-in or "Page not found"
 // once the gate says the page is closed now, never the refusal code. A
