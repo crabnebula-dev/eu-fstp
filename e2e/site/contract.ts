@@ -581,6 +581,16 @@ export async function watchProblems(context: BrowserContext): Promise<{ readonly
 // The crawl: every page a person reaches by clicking
 // ---------------------------------------------------------------------------
 
+/**
+ * Waits until the SA-09 shell has asked the page gate for every link of
+ * the page: a link stays hidden while its answer is pending
+ * (`web/src/shell/gate.ts` `PENDING`), and a closed page's link is then
+ * removed.
+ */
+export async function gatePending(page: Page): Promise<void> {
+  await expect(page.locator('a[data-page-gate]')).toHaveCount(0);
+}
+
 /** Whether a same-origin link path is a page the crawl follows. */
 export function crawlable(path: string): boolean {
   return (path.startsWith('/app/') || path === '/auth/account') && !path.startsWith('/app/assets/');
@@ -592,11 +602,22 @@ export const CRAWL_LIMIT = 24;
 /** The deepest a crawl clicks from the home page. */
 export const CRAWL_DEPTH = 3;
 
+/** The links the crawl follows: those of `main`, the sidebar and the top bar. */
+const CRAWL_LINKS = 'main a[href], aside a[href], header a[href]';
+
+/** The attribute that marks the one link the crawl clicks next. */
+const CRAWL_NEXT = 'data-crawl-next';
+
 /**
  * From the page shown now, clicks every visible link of `main`, the
  * sidebar and the top bar that leads to a [`crawlable`] page not seen
  * yet, depth first, and returns with Back after each. Calls `visit` on
  * every page, the first one included. Returns the paths visited.
+ *
+ * Each page is read once the SA-09 shell has asked the page gate for
+ * every link (`gatePending`). The link to click is marked in the same
+ * step that finds it, so a link the gate removes meanwhile cannot shift
+ * the click onto its neighbour, as an index into the link list could.
  */
 export async function crawl(page: Page, visit: (page: Page) => Promise<void>): Promise<string[]> {
   const origin = new URL(page.url()).origin;
@@ -604,13 +625,14 @@ export async function crawl(page: Page, visit: (page: Page) => Promise<void>): P
   const seenPaths = new Set<string>();
   const walk = async (depth: number): Promise<void> => {
     await settle(page);
+    await gatePending(page);
     const here = pathOf(page);
     seenPaths.add(here);
     visited.push(here);
     await visit(page);
     if (depth >= CRAWL_DEPTH) return;
     const hrefs = await page
-      .locator('main a[href], aside a[href], header a[href]')
+      .locator(CRAWL_LINKS)
       .evaluateAll((as) =>
         as
           .filter((a) => a instanceof HTMLAnchorElement && a.getClientRects().length > 0 && a.target === '')
@@ -621,18 +643,24 @@ export async function crawl(page: Page, visit: (page: Page) => Promise<void>): P
       const u = new URL(href);
       if (u.origin !== origin || !crawlable(u.pathname) || seenPaths.has(u.pathname)) continue;
       seenPaths.add(u.pathname);
-      const raw = await page.locator('main a[href], aside a[href], header a[href]').evaluateAll(
-        (as, want) => as.findIndex((a) => a instanceof HTMLAnchorElement && a.href === want && a.getClientRects().length > 0),
-        href,
+      const marked = await page.locator(CRAWL_LINKS).evaluateAll(
+        (as, [want, mark]) => {
+          for (const a of as) a.removeAttribute(mark);
+          const next = as.find((a) => a instanceof HTMLAnchorElement && a.href === want && a.getClientRects().length > 0);
+          next?.setAttribute(mark, '');
+          return next !== undefined;
+        },
+        [href, CRAWL_NEXT] as const,
       );
-      if (raw < 0) continue;
+      if (!marked) continue;
       const from = page.url();
-      await page.locator('main a[href], aside a[href], header a[href]').nth(raw).click();
+      await page.locator(`[${CRAWL_NEXT}]`).click();
       await page.waitForURL((x) => x.pathname === u.pathname);
       await walk(depth + 1);
       await page.goBack();
       await page.waitForURL((x) => x.href === from);
       await settle(page);
+      await gatePending(page);
     }
   };
   await walk(0);
