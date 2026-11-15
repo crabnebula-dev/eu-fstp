@@ -343,4 +343,4 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 ## Decided by Daniel, 2026-11-15 (late)
 
 - **Token lifetimes.** Accepted as ADR constants: magic link 15 minutes, recovery enrolment 24 hours, recovery case 72 hours, staff assertion 15 minutes, signup proof 15 minutes.
-- **Magic links (P-70).** `SetLoginPolicy` carries P-70, so a tenant admin turns magic links on or off, with step-up and an audit entry. The cell's start option becomes the default.
+- **Magic links (P-70).** `SetLoginPolicy` carries P-70, so a tenant admin turns magic links on or off, with step-up and an audit entry. The cell's start option becomes the default. Built by lane m5/retention: the policy form gains the optional member `p70_magic_links` (`true` or `false`), left out when the tenant made no choice, so every earlier policy keeps its bytes. The `LoginPolicySet` record holds it, and `SetLoginPolicy` stays high-risk under the login row. The cell routes apply it over the start option (`TenantLoginPolicy::enabled_methods`).

@@ -93,6 +93,7 @@ fn i78_commands_route_refuses_a_high_risk_command_without_a_step_up() {
         p71_us: Some(60_000_000),
         p72_idle_us: None,
         p72_absolute_us: None,
+        p70_magic_links: None,
     };
     let command = CellCommand::Tenant(TenantCommand::SetLoginPolicy {
         policy: policy.encode(),
@@ -542,4 +543,76 @@ fn r_lg_04_devices_name_the_callers_own_account() {
         account(&applicant),
         Some(fstp_cell::routes::memory::LOCAL_APPLICANT.raw().to_string())
     );
+}
+
+/// ADR-008, decided by Daniel on 2026-11-15 (late): a tenant admin turns
+/// magic links off through `SetLoginPolicy` (P-70), with a step-up. The
+/// policy record holds the choice (I-24). The cell's start option enables
+/// magic links, and the tenant's choice overrides it: a magic link request
+/// still answers 202, but no link is issued.
+#[test]
+fn adr008_p70_set_login_policy_turns_magic_links_off() {
+    let c = cell();
+    assert!(
+        c.applicant_session().is_ok(),
+        "the start option enables them"
+    );
+    let owner = c.admin_session().unwrap();
+    let off = TenantLoginPolicy {
+        p70_magic_links: Some(false),
+        ..TenantLoginPolicy::default()
+    };
+    let high = CellCommand::Tenant(TenantCommand::SetLoginPolicy {
+        policy: off.encode(),
+    });
+    let command_id = [8; 16];
+    let options = c.serve(request(
+        "POST",
+        "/auth/stepup/options",
+        Some(&owner),
+        Some(&command_body(&high, command_id)),
+    ));
+    assert_eq!(status(&options), 200, "a high-risk command asks a step-up");
+    let id = challenge_id_of(&options);
+    assert_eq!(
+        status(&c.serve(c.admin_stepup_request(&owner, id).unwrap())),
+        200
+    );
+    let mut body = String::from_utf8(command_body(&high, command_id)).unwrap();
+    body.pop();
+    body.push_str(&format!(",\"stepup\":\"{}\"}}", hex(&id)));
+    let resp = c.serve(request(
+        "POST",
+        "/api/v1/commands",
+        Some(&owner),
+        Some(body.as_bytes()),
+    ));
+    assert_eq!(
+        status(&resp),
+        200,
+        "{}",
+        String::from_utf8_lossy(&resp.body)
+    );
+    let recorded = c.backend().records().into_iter().any(|r| {
+        matches!(
+            r,
+            fstp_cell_core::CellRecord::Tenant(fstp_cell_core::tenant::TenantRecord::LoginPolicySet { ref policy })
+                if *policy == off.encode()
+        )
+    });
+    assert!(recorded, "the policy record holds P-70");
+    let state = fstp_rt::future::block_on(fstp_cell::routes::Backend::state(c.backend())).unwrap();
+    assert_eq!(state.tenant().policy().p70_magic_links, Some(false));
+
+    let sent = c.backend().outbox().len();
+    let email = format!("{{\"email\":\"{}\"}}", c.applicant_email());
+    let asked = c.serve(request(
+        "POST",
+        "/auth/magic/request",
+        None,
+        Some(email.as_bytes()),
+    ));
+    assert_eq!(status(&asked), 202, "the answer names no cause");
+    assert_eq!(c.backend().outbox().len(), sent, "no link was issued");
+    assert!(c.applicant_session().is_err());
 }
