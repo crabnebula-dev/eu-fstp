@@ -14,7 +14,7 @@ use fstp_cell_core::{
     encode_cell_record,
 };
 use fstp_domain::oracle::Answers;
-use fstp_domain_testkit::r#gen::roster::{ADMIN, T0};
+use fstp_domain_testkit::r#gen::roster::{A, ADMIN, T0};
 
 /// A text id from a number.
 fn text_id(n: u16) -> [u8; 16] {
@@ -57,13 +57,12 @@ fn review_i23_erasure_records_beyond_the_codec_limit_are_never_decided() {
     }
 }
 
-/// ADR-007 "Erasure-log entries", design section 5.6: the authoriser of a
-/// retention expiry is the system, with a reference to the P-41 rule. A
-/// tenant admin's command must not record an erasure-log entry whose cause
-/// is retention expiry under the admin's own name. Today any tenant admin
-/// erases any live text at once and labels it a routine retention expiry.
+/// ADR-007 "Erasure-log entries" as Daniel decided on 2026-11-15 ("Tenant
+/// admin for all"): a tenant admin requests every erasure cause, retention
+/// expiry (P-41) included, and the system only reminds. Any other account
+/// is still refused a retention-expiry erasure.
 #[test]
-fn review_adr007_account_cannot_record_a_retention_expiry_erasure() {
+fn review_adr007_only_a_tenant_admin_records_a_retention_expiry_erasure() {
     let entries = ledger(&[
         (T0, cid(1), vec![admin_granted(ADMIN)]),
         (
@@ -79,13 +78,22 @@ fn review_adr007_account_cannot_record_a_retention_expiry_erasure() {
         ids: vec![text_id(1)],
         cause: ERASURE_CAUSES[0],
     });
-    let x = CellCtx {
+    let admin = CellCtx {
         actor: ADMIN,
         at: T0.micros(),
     };
-    let r = decide(&s, &cmd, &x, &Answers::new());
+    let r = decide(&s, &cmd, &admin, &Answers::new());
+    assert!(
+        r.is_ok(),
+        "a tenant admin was refused a retention-expiry erasure: {r:?}"
+    );
+    let other = CellCtx {
+        actor: A,
+        at: T0.micros(),
+    };
+    let r = decide(&s, &cmd, &other, &Answers::new());
     assert!(
         r.is_err(),
-        "a tenant admin recorded a retention-expiry erasure as its own: {r:?}"
+        "an account that is no tenant admin recorded a retention-expiry erasure: {r:?}"
     );
 }
