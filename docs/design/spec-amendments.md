@@ -203,3 +203,12 @@ The option read: "The FSTP coordinator may unmask any party of their own program
 **Source.** Daniel's decision, 2026-11-15 (late), confirming the reading of lane m4/evening-answers. **Status.** Spec amendment applied. Code built in 8efed4b8.
 
 - `invariants.md` I-21 carries a NOTE. The FSTP coordinator's parties read and unmask (ADR-023 decision 4) work on a draft and show who the parties are, never draft content or pre-submission check runs. I-21 is otherwise unchanged.
+
+### SA-09 amendment, Daniel 2026-11-15 (night)
+
+Daniel: "if i go to route that does not exist, i want to go to home, not see a JSON response". The cell answered `{"code":"not_found","rule":"route"}` for an unknown path outside `/app/`.
+
+- **Browser page requests** (GET or HEAD that a browser navigates to, outside `/api/`) for a path that does not exist redirect (303) to home, `/app/`. The gate then sends a signed-out visitor to sign-in. This holds on every path of the cell's origin, inside and outside `/app/`. An unknown path under `/p/{slug}/` goes to that organisation's public home `/p/{slug}` when the organisation exists.
+- **Rule 3 changes accordingly.** A page the viewer may not open gets the same answer as an unknown path: the same 303 to home. The two stay indistinguishable, so the answer still never says that a page exists.
+- **API requests keep their JSON answers.** `/api/` and every other machine route answer as before.
+- The shell's link check must not follow the redirect. A redirect counts as "may not open".
