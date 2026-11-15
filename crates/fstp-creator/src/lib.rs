@@ -118,8 +118,8 @@ pub use theme::{
 };
 pub use validate::{ValidationReport, validate};
 pub use witness::{
-    AckSet, ActivationApproved, ActivationClearance, CleanReport, Uncleared, clean,
-    clear_activation,
+    AckSet, ActivationApproved, ActivationClearance, ActivationOverridden, CleanReport,
+    OverrideClearance, Uncleared, clean, clear_activation, clear_override,
 };
 
 // I-66 and I-67 compile-fail twins. Doc comments only, owned by the test

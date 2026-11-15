@@ -530,6 +530,7 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
             report: ReportDigest::from_bytes([b.u8(); 32]),
             revision: u32::from(b.u8()),
             creator_builders: (0..b.u8() % 3).map(|_| b.account()).collect(),
+            override_reason: None,
         },
         // M5: a run of the automated checks (I-32).
         57 => Core::RecordChecks {

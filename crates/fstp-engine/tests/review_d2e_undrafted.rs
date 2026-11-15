@@ -88,6 +88,7 @@ fn activate() -> fstp_domain::Command {
         report: fstp_domain::policy::activation::ReportDigest::from_bytes([6; 32]),
         revision: 1,
         creator_builders: BTreeSet::new(),
+        override_reason: None,
     }
 }
 

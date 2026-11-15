@@ -102,6 +102,7 @@ export type OpName =
   | "creator.impact"
   | "creator.request_activation"
   | "creator.approve_activation"
+  | "creator.override_activation"
   | "creator.save_as_template"
   | "import.upload"
   | "import.list"
@@ -333,6 +334,7 @@ export interface OpParams {
   readonly "creator.impact": { readonly "programme": string };
   readonly "creator.request_activation": { readonly "programme": string };
   readonly "creator.approve_activation": { readonly "programme": string };
+  readonly "creator.override_activation": { readonly "programme": string };
   readonly "creator.save_as_template": { readonly "programme": string };
   readonly "import.upload": { readonly "programme": string };
   readonly "import.list": { readonly "programme": string };
@@ -537,6 +539,7 @@ export const OP_NAMES: readonly OpName[] = [
   "creator.impact",
   "creator.request_activation",
   "creator.approve_activation",
+  "creator.override_activation",
   "creator.save_as_template",
   "import.upload",
   "import.list",
@@ -1357,6 +1360,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/programmes/{programme}/activation",
     base: "api",
     segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "activation" }],
+    params: ["programme"],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "creator.override_activation",
+    method: "POST",
+    path: "/programmes/{programme}/activation-override",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "activation-override" }],
     params: ["programme"],
     body: true,
     highRisk: true,
@@ -4660,6 +4677,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "programme": { schema: { kind: "id" }, optional: false },
           "revision": { schema: { kind: "string" }, optional: true },
           "approvable": { schema: { kind: "bool" }, optional: false },
+          "overridable": { schema: { kind: "bool" }, optional: true },
           "name": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
           "approval": { schema: { kind: "id" }, optional: true },
           "role": { schema: { kind: "string" }, optional: true },

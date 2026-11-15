@@ -738,6 +738,11 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             "revision",
             s(t.revision.as_deref().unwrap_or("1.1")),
         )]),
+        // ADR-022: a synthetic reason, never personal data.
+        "creator.override_activation" => obj(vec![
+            ("revision", s(t.revision.as_deref().unwrap_or("1.1"))),
+            ("reason", s("SYNTHETIC: the second admin is on leave.")),
+        ]),
         "import.upload" => obj(vec![
             ("media", s("text/plain")),
             (

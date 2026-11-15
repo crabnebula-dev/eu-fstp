@@ -217,6 +217,10 @@ pub enum CreatorKind {
     RequestActivation,
     /// `CreatorCommand::ApproveActivation`. It composes the core activation.
     ApproveActivation,
+    /// `CreatorCommand::OverrideActivation`: a tenant admin of the builder
+    /// set overrides I-67 with a reason (ADR-022). It composes the core
+    /// activation too.
+    OverrideActivation,
     /// `CreatorCommand::SaveAsTenantTemplate`.
     SaveAsTenantTemplate,
 }
@@ -1157,6 +1161,16 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Creator(CreatorKind::ApproveActivation),
         Post,
         "/programmes/{programme}/activation",
+    )
+    .hr()
+    .acting(ADMIN),
+    // ADR-022 (Daniel, 2026-11-15): a tenant admin of the builder set
+    // overrides I-67 with a written reason. High-risk, as the approval is.
+    OpSpec::new(
+        "creator.override_activation",
+        OpKind::Creator(CreatorKind::OverrideActivation),
+        Post,
+        "/programmes/{programme}/activation-override",
     )
     .hr()
     .acting(ADMIN),
@@ -2358,7 +2372,8 @@ pub const SYSTEM_ONLY_OTHER: &[OpKind] = &[
 
 /// Kinds only the engine composes from a creator decision: the core
 /// `ActivateProgramme` of change D2. No operation has it as its kind, so
-/// only `creator.approve_activation` reaches an activation (I-66).
+/// only `creator.approve_activation` and `creator.override_activation`
+/// (ADR-022) reach an activation (I-66).
 pub const COMPOSED_ONLY: &[CommandKind] = &[CK::ActivateProgramme];
 
 /// Kinds whose operations arrive in a later milestone: the calibration

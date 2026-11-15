@@ -557,6 +557,7 @@ fn r_mc_05_mcp_binding_action_reaches_the_governing_policy_lookup() {
             report: ReportDigest::from_bytes([7; 32]),
             revision: 1,
             creator_builders: BTreeSet::new(),
+            override_reason: None,
         };
         assert_eq!(
             run(&mut state, &activate, &approver),
@@ -914,6 +915,7 @@ fn sample(kind: CommandKind) -> Command {
             report: ReportDigest::from_bytes([7; 32]),
             revision: 1,
             creator_builders: BTreeSet::new(),
+            override_reason: None,
         },
         K::EditPolicy => Command::EditPolicy {
             base: PolicyVersionId::from_raw(9),

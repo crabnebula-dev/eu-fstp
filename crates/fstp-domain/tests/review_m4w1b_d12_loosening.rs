@@ -291,6 +291,7 @@ fn world(publish: bool) -> World {
             report: ReportDigest::from_bytes([5; 32]),
             revision: 1,
             creator_builders: BTreeSet::new(),
+            override_reason: None,
         },
     );
     w.grant(11, DRAFTER, Role::CallDrafter);

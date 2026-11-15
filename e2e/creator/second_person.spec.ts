@@ -96,6 +96,31 @@ test.describe('I-67 second approver', () => {
   });
 
   /**
+   * I-67 as amended by ADR-022 (Daniel, 2026-11-15): A1, a tenant admin
+   * who built the draft, is offered "Approve as override" with a reason
+   * field and no plain approval. A blank reason is not sent. With a
+   * written reason and a step-up, the programme activates.
+   */
+  test('i67_adr022_builder_admin_approves_as_override_with_a_reason', async ({ person, request }) => {
+    const { t, p } = await requested(person, request);
+    const origin = t.cell.origin;
+    const a1 = t.a1.page;
+    await a1.goto(`${origin}${APP.approvals}`);
+    const item = a1.locator(APPROVAL_UI.item(p));
+    await expect(item.locator('[data-action="approve"]')).toHaveCount(0);
+    await expect(item).toContainText('You built this programme. As a tenant admin you can approve it anyway. Your reason is recorded.');
+    const button = item.locator('[data-action="override"]');
+    await button.click();
+    await expect(a1.locator(APPROVAL_UI.error)).toContainText('Write your reason first.');
+    expect((await readDraft(a1, origin, p)).status).toBe('draft');
+    await item.locator('textarea[name="reason"]').fill('SYNTHETIC: the second admin is on leave.');
+    await button.click();
+    await confirmStepUp(a1);
+    await expect(item).toHaveAttribute('data-status', 'approved');
+    expect((await readDraft(a1, origin, p)).status).not.toBe('draft');
+  });
+
+  /**
    * I-67 Sybil case (Q2): M1's verified identity names the same person as
    * A2. A2 is outside the builder set by account, but not by person, so
    * the approval is refused and the draft stays a draft.

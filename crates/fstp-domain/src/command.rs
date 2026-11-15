@@ -137,8 +137,10 @@ pub enum Command {
         policy: Box<PolicyVersion>,
     },
     /// Activate a draft programme (I-66, I-67, M4 change D2). The approver
-    /// is the actor, a tenant admin outside the builder set. The engine
-    /// composes it from the creator's approval only (D2e).
+    /// is the actor, a tenant admin outside the builder set, or a tenant
+    /// admin of the builder set who overrides I-67 with a reason
+    /// (ADR-022). The engine composes it from the creator's approval or
+    /// override only (D2e).
     ActivateProgramme {
         /// The draft programme.
         programme: ProgrammeId,
@@ -151,6 +153,9 @@ pub enum Command {
         /// The builders the creator knows beyond the core's own: creator
         /// record authors, import resolvers and acknowledgers (Q1).
         creator_builders: BTreeSet<AccountId>,
+        /// The reason of a tenant admin override of I-67 (ADR-022), or
+        /// `None` for the normal approval by a non-builder.
+        override_reason: Option<TextRef>,
     },
     /// Append a new policy version on top of the current head (I-23).
     EditPolicy {

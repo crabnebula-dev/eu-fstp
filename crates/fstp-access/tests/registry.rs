@@ -334,7 +334,7 @@ fn ops_cover_every_finding_and_import_kind_once() {
 
 /// Every creator kind, one per `CreatorCommand` variant of design section
 /// 3.2.
-const CREATOR_KINDS: [CreatorKind; 10] = [
+const CREATOR_KINDS: [CreatorKind; 11] = [
     CreatorKind::OpenDraft,
     CreatorKind::ApplyStart,
     CreatorKind::SaveFields,
@@ -344,6 +344,7 @@ const CREATOR_KINDS: [CreatorKind; 10] = [
     CreatorKind::AcknowledgeWarning,
     CreatorKind::RequestActivation,
     CreatorKind::ApproveActivation,
+    CreatorKind::OverrideActivation,
     CreatorKind::SaveAsTenantTemplate,
 ];
 
@@ -369,6 +370,7 @@ fn creator_route(k: CreatorKind) -> (&'static str, &'static str) {
         }
         CreatorKind::RequestActivation => ("POST", "/programmes/{programme}/activation-request"),
         CreatorKind::ApproveActivation => ("POST", "/programmes/{programme}/activation"),
+        CreatorKind::OverrideActivation => ("POST", "/programmes/{programme}/activation-override"),
         CreatorKind::SaveAsTenantTemplate => ("POST", "/programmes/{programme}/templates"),
     }
 }
@@ -449,6 +451,20 @@ fn i66_no_route_or_tool_reaches_activate_programme() {
         vec!["creator.approve_activation"],
         "one approval op"
     );
+    // ADR-022: the override of I-67 is the one other composer. It has a
+    // web route, no tool, and is high-risk with a phishing-resistant
+    // session, as the approval is.
+    let over = require(&["creator.override_activation"]);
+    let over = over.first().copied().unwrap_or_else(|| unreachable!());
+    assert_eq!(
+        over.kind,
+        OpKind::Creator(CreatorKind::OverrideActivation),
+        "creator.override_activation kind"
+    );
+    assert!(over.route.is_some(), "the override has a web route");
+    assert!(over.tool.is_none(), "the override has no tool");
+    assert!(over.high_risk, "the override is high-risk");
+    assert_eq!(over.session, SessionNeed::PhishingResistant);
 }
 
 /// I-78, I-85, R-MC-05, design section 3.6
@@ -541,6 +557,7 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
         "Activating a programme or publishing a call",
         &[
             "creator.approve_activation",
+            "creator.override_activation",
             "creator.open_draft",
             "call.publish",
         ],

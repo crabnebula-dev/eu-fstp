@@ -73,6 +73,7 @@ fn activate_cmd() -> CoreCommand {
         report: fstp_domain::id::ReportDigest::from(ContentDigest::from_bytes([0x66; 32])),
         revision: fstp_domain::id::DraftRevisionRef::new(1, ContentDigest::from_bytes([0x67; 32])),
         creator_builders: BTreeSet::new(),
+        override_reason: None,
     }
 }
 

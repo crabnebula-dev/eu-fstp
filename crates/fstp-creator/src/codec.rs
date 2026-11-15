@@ -51,7 +51,7 @@ use crate::probe::{ProbeKind, ProbeOutcome, ProbeSet};
 use crate::state::CreatorState;
 use crate::theme::{MandatoryElement, TextRole, Theme, ThemeMode};
 use crate::validate::{ValidationReport, draft_facts, validate_at};
-use crate::witness::ActivationApproved;
+use crate::witness::{ActivationApproved, ActivationOverridden};
 
 type R<T> = Result<T, FromJsonError>;
 
@@ -914,6 +914,20 @@ impl ToJson for CreatorCommand {
                     ("decision", dec(decision.raw())),
                 ],
             ),
+            CreatorCommand::OverrideActivation {
+                programme,
+                revision,
+                decision,
+                reason,
+            } => tagged(
+                "OverrideActivation",
+                vec![
+                    p(*programme),
+                    ("revision", put_revision(*revision)),
+                    ("decision", dec(decision.raw())),
+                    ("reason", put_text_ref(*reason)),
+                ],
+            ),
             CreatorCommand::SaveAsTenantTemplate {
                 programme,
                 template,
@@ -1027,6 +1041,15 @@ impl FromJson for CreatorCommand {
                     programme: at(o, "programme", programme)?,
                     revision: at(o, "revision", revision)?,
                     decision: DecisionId::from_raw(at(o, "decision", take_dec)?),
+                })
+            }
+            "OverrideActivation" => {
+                let o = o(&["kind", "programme", "revision", "decision", "reason"])?;
+                Ok(CreatorCommand::OverrideActivation {
+                    programme: at(o, "programme", programme)?,
+                    revision: at(o, "revision", revision)?,
+                    decision: DecisionId::from_raw(at(o, "decision", take_dec)?),
+                    reason: at(o, "reason", text_ref)?,
                 })
             }
             "SaveAsTenantTemplate" => {
@@ -1214,6 +1237,19 @@ impl ToJson for CreatorRecord {
                     ("builders", put_accounts(a.builders())),
                 ],
             ),
+            CreatorRecord::ActivationOverridden(a) => tagged(
+                "ActivationOverridden",
+                vec![
+                    p(a.programme()),
+                    ("revision", put_revision(a.revision())),
+                    ("report", put_digest(a.report())),
+                    ("decision", dec(a.decision().raw())),
+                    ("by", dec(a.by().raw())),
+                    ("builders", put_accounts(a.builders())),
+                    ("reason", put_text_ref(a.reason())),
+                    ("at", put_i64(a.at().micros())),
+                ],
+            ),
             CreatorRecord::TemplateSaved {
                 template,
                 programme,
@@ -1350,6 +1386,31 @@ impl FromJson for CreatorRecord {
                         DecisionId::from_raw(at(o, "decision", take_dec)?),
                         at(o, "approver", account)?,
                         at(o, "builders", |x| take_set(x, account))?,
+                    ),
+                ))
+            }
+            "ActivationOverridden" => {
+                let o = o(&[
+                    "kind",
+                    "programme",
+                    "revision",
+                    "report",
+                    "decision",
+                    "by",
+                    "builders",
+                    "reason",
+                    "at",
+                ])?;
+                Ok(CreatorRecord::ActivationOverridden(
+                    ActivationOverridden::decoded(
+                        at(o, "programme", programme)?,
+                        at(o, "revision", revision)?,
+                        at(o, "report", report_digest)?,
+                        DecisionId::from_raw(at(o, "decision", take_dec)?),
+                        at(o, "by", account)?,
+                        at(o, "builders", |x| take_set(x, account))?,
+                        at(o, "reason", text_ref)?,
+                        Timestamp::from_micros(at(o, "at", take_i64)?),
                     ),
                 ))
             }

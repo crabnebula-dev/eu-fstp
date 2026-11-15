@@ -9,6 +9,12 @@
 //! draft binding. With the Sybil pair, A2 is M1's person (T-SOD-SYBIL):
 //! no activation happens, and A2's refusal is a witness.
 //!
+//! ADR-022 (Daniel, 2026-11-15) amends I-67: an activation is either an
+//! approval as above, or an override by a tenant admin of the builder set
+//! with a reason (reading R10). The model offers the override by A1, A2
+//! and M1. Its witness is an activation by the builder admin's override.
+//! With the Sybil pair no approval activates, while A1's override may.
+//!
 //! The production runs are red until lane W2a lands the creator. The
 //! `_on_the_reference` twins run the reference alone.
 

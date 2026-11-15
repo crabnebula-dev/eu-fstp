@@ -1433,6 +1433,9 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("programme", Shape::Id),
                     opt("revision", Shape::String),
                     m("approvable", Shape::Bool),
+                    // ADR-022: an activation row says whether the viewer,
+                    // a builder admin, may approve it as an override.
+                    opt("overridable", Shape::Bool),
                     opt("name", Shape::Nullable(&Shape::String)),
                     opt("approval", Shape::Id),
                     opt("role", Shape::String),

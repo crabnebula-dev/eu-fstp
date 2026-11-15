@@ -486,7 +486,10 @@ impl CreatorState {
             draft.edit();
         }
         if let Some(by) = record.author()
-            && !matches!(record, CreatorRecord::ActivationApproved(_))
+            && !matches!(
+                record,
+                CreatorRecord::ActivationApproved(_) | CreatorRecord::ActivationOverridden(_)
+            )
             && draft.active.is_none()
         {
             draft.builders.insert(by);
@@ -562,6 +565,7 @@ impl CreatorState {
                 });
             }
             CreatorRecord::ActivationApproved(a) => draft.active = Some(a.revision()),
+            CreatorRecord::ActivationOverridden(o) => draft.active = Some(o.revision()),
             CreatorRecord::TemplateSaved {
                 template, spec, by, ..
             } => {

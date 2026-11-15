@@ -626,7 +626,11 @@ fn i85_high_risk_creator_operations_have_no_running_tool() {
         assert!(
             matches!(
                 spec.kind,
-                OpKind::Creator(CreatorKind::OpenDraft | CreatorKind::ApproveActivation)
+                OpKind::Creator(
+                    CreatorKind::OpenDraft
+                        | CreatorKind::ApproveActivation
+                        | CreatorKind::OverrideActivation
+                )
             ),
             "{} is high-risk but is not a high-risk creator command",
             spec.name
@@ -638,7 +642,14 @@ fn i85_high_risk_creator_operations_have_no_running_tool() {
         );
     }
     high.sort_unstable();
-    assert_eq!(high, ["creator.approve_activation", "creator.open_draft"]);
+    assert_eq!(
+        high,
+        [
+            "creator.approve_activation",
+            "creator.open_draft",
+            "creator.override_activation"
+        ]
+    );
 }
 
 /// I-85, I-78, design sections 3.6 and 3.7 step 3: opening a draft
@@ -1834,4 +1845,227 @@ fn i78_approve_activation_needs_a_fresh_digest_bound_step_up() {
         programme_status(&c.ports.engine.state().core, d.p),
         Some(ProgrammeStatus::Active)
     );
+}
+
+// ---------------------------------------------------------------------------
+// ADR-022: the tenant admin override of I-67 (Daniel, 2026-11-15)
+// ---------------------------------------------------------------------------
+
+/// A synthetic override reason. No personal data.
+const REASON: &str = "SYNTHETIC: the second tenant admin is on leave until the call opens.";
+
+/// The override executions of `c`, appended or not.
+fn overrides_run(c: &FakeCell) -> usize {
+    creator_executions(c)
+        .iter()
+        .filter(|(cmd, ..)| matches!(cmd, CreatorCommand::OverrideActivation { .. }))
+        .count()
+}
+
+/// I-67 as amended by ADR-022, I-78, I-24, R-PG-03: A1, a tenant admin who
+/// built the draft, activates it only through the override. The call asks
+/// for a fresh step-up bound to its digest first and executes nothing.
+/// With the proof, the engine port appends `OverrideActivation` by A1
+/// through the web, with the operation name and the proof in its audit
+/// metadata. The reason is stored as a text, and the ledger entry holds
+/// `ActivationOverridden` by A1 with that reference and a core
+/// `ProgrammeActivated` carrying the same reason. The programme is active.
+#[test]
+fn i67_adr022_builder_admin_activates_only_through_the_override_with_a_reason() {
+    let c = cell();
+    let d = requested(&c).unwrap_or_else(|e| panic!("the requested draft: {e}"));
+    let rev = revision(&c, &d.admin, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let over = || rq::override_activation(d.p, &rev, REASON);
+    let digest = match c.web(&d.admin, over()) {
+        Ok(OpResult::StepUpRequired(ch)) => ch.action,
+        other => panic!("I-78: the override without a proof gave {other:?}"),
+    };
+    assert_eq!(overrides_run(&c), 0, "executed without a proof");
+    c.ports
+        .step_up
+        .approve(d.admin.session, digest)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    done(c.web(&d.admin, over()), "the override").unwrap_or_else(|e| panic!("{e}"));
+    let (cmd, ctx, meta) = last_creator(&c).unwrap_or_else(|e| panic!("{e}"));
+    let CreatorCommand::OverrideActivation {
+        programme, reason, ..
+    } = cmd
+    else {
+        panic!("the engine port appended {cmd:?}");
+    };
+    assert_eq!(programme, d.p);
+    assert_eq!(ctx.actor, Actor::Account(ADMIN));
+    assert_eq!(ctx.via, Via::Web);
+    assert_eq!(meta.op, OpName("creator.override_activation"), "I-24");
+    assert_eq!(meta.request, digest);
+    assert!(meta.step_up.is_some(), "I-78: the proof is audited");
+    let stored = c
+        .ports
+        .texts
+        .peek(fstp_api_core::port::TextRef(reason.id().raw()))
+        .unwrap_or_else(|| panic!("ADR-007: the reason is not stored"));
+    assert!(
+        stored.ends_with(REASON.as_bytes()),
+        "the stored reason is the text sent"
+    );
+    let entries = fstp_api_testkit_entries(&c);
+    let overridden =
+        entries
+            .iter()
+            .find_map(|r| match r {
+                fstp_engine::Record::Creator(
+                    fstp_creator::CreatorRecord::ActivationOverridden(o),
+                ) if o.programme() == d.p => Some(o.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("ADR-022: no ActivationOverridden record"));
+    assert_eq!(overridden.programme(), d.p);
+    assert_eq!(overridden.by(), ADMIN);
+    assert_eq!(overridden.reason(), reason);
+    assert!(overridden.builders().contains(&ADMIN));
+    let activated = entries
+        .iter()
+        .find_map(|r| match r {
+            fstp_engine::Record::Core(fstp_domain::Record::ProgrammeActivated(pa))
+                if pa.programme() == d.p =>
+            {
+                Some(pa.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no ProgrammeActivated"));
+    assert_eq!(activated.approver(), ADMIN);
+    assert_eq!(activated.override_reason(), Some(reason));
+    assert_eq!(
+        programme_status(&c.ports.engine.state().core, d.p),
+        Some(ProgrammeStatus::Active)
+    );
+}
+
+/// Every record of the fake engine's ledger, in order.
+fn fstp_api_testkit_entries(c: &FakeCell) -> Vec<fstp_engine::Record> {
+    use fstp_ledger::RecordStore;
+    let store = c.ports.engine.store_copy();
+    let mut out = Vec::new();
+    store
+        .read(Seq::from_raw(1), usize::MAX, &mut out)
+        .unwrap_or_else(|e| panic!("the store: {e:?}"));
+    out.into_iter().map(|e| e.record).collect()
+}
+
+/// I-67, ADR-022: an override with an empty reason, a reason of white
+/// space only, a reason past the free-text limit, or no reason member is
+/// a bad request. Nothing is stored, no step-up begins and nothing runs.
+#[test]
+fn i67_adr022_override_with_an_empty_reason_is_refused() {
+    let c = cell();
+    let d = requested(&c).unwrap_or_else(|e| panic!("the requested draft: {e}"));
+    let rev = revision(&c, &d.admin, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let texts = c.ports.texts.len();
+    let long = "x".repeat(64 * 1024 + 1);
+    for reason in ["", "   ", "\n\t ", long.as_str()] {
+        let op = rq::override_activation(d.p, &rev, reason);
+        assert!(bad_request(&op), "a blank or long reason decodes: {op:?}");
+    }
+    let missing = fstp_api_core::decode::decode_route(
+        Method::Post,
+        &format!("/programmes/{}/activation-override", d.p.raw()),
+        format!("{{\"revision\":\"{rev}\"}}").as_bytes(),
+    );
+    assert!(bad_request(&missing), "no reason member: {missing:?}");
+    assert_eq!(c.ports.texts.len(), texts, "a refused override stored text");
+    assert_eq!(overrides_run(&c), 0);
+    assert!(
+        !c.ports
+            .step_up
+            .begun()
+            .iter()
+            .any(|(s, _)| *s == d.admin.session),
+        "a step-up was begun"
+    );
+    assert_eq!(
+        programme_status(&c.ports.engine.state().core, d.p),
+        Some(ProgrammeStatus::Draft)
+    );
+}
+
+/// I-67 still holds for every builder but a tenant admin (ADR-022): M1,
+/// the programme manager who built the draft, is refused the override
+/// before any step-up. Nothing runs and the draft stays a draft.
+#[test]
+fn i67_adr022_non_admin_builder_override_is_refused() {
+    let c = cell();
+    let d = requested(&c).unwrap_or_else(|e| panic!("the requested draft: {e}"));
+    let rev = revision(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let r = c.web(&d.owner, rq::override_activation(d.p, &rev, REASON));
+    // The registry admits tenant admins only, so the actor rule refuses.
+    assert!(matches!(r, Err(ApiError::Refused { .. })), "{r:?}");
+    assert_eq!(rule(&r), Some("actor"), "{r:?}");
+    assert!(
+        !c.ports
+            .step_up
+            .begun()
+            .iter()
+            .any(|(s, _)| *s == d.owner.session),
+        "a step-up was begun for the manager"
+    );
+    assert!(
+        !creator_appended(&c)
+            .iter()
+            .any(|(cmd, ..)| matches!(cmd, CreatorCommand::OverrideActivation { .. })),
+        "the manager's override appended"
+    );
+    assert_eq!(
+        programme_status(&c.ports.engine.state().core, d.p),
+        Some(ProgrammeStatus::Draft)
+    );
+}
+
+/// ADR-022, interim reading 1: A2, a tenant admin outside the builder
+/// set, takes the normal approval. The override is refused with the rule
+/// text `I-67` by the dry run, before any step-up, and nothing appends.
+#[test]
+fn i67_adr022_non_builder_admin_override_is_refused_naming_i67() {
+    let c = cell();
+    let d = requested(&c).unwrap_or_else(|e| panic!("the requested draft: {e}"));
+    let rev = revision(&c, &d.admin2, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let r = c.web(&d.admin2, rq::override_activation(d.p, &rev, REASON));
+    assert_eq!(class(&r), Class::Refused(ErrorCode::Refused), "{r:?}");
+    assert_eq!(rule(&r), Some("I-67"), "{r:?}");
+    assert!(
+        !c.ports
+            .step_up
+            .begun()
+            .iter()
+            .any(|(s, _)| *s == d.admin2.session),
+        "a step-up was begun"
+    );
+    assert!(
+        !creator_appended(&c)
+            .iter()
+            .any(|(cmd, ..)| matches!(cmd, CreatorCommand::OverrideActivation { .. })),
+    );
+}
+
+/// ADR-022: the approval inbox offers the override to A1, a builder
+/// admin, and never the normal approval. A2 reads the row as approvable
+/// and not overridable.
+#[test]
+fn i67_adr022_approval_inbox_offers_the_override_to_a_builder_admin_only() {
+    let c = cell();
+    let d = requested(&c).unwrap_or_else(|e| panic!("the requested draft: {e}"));
+    let a1 = activation_row(
+        &approvals(&c, &d.admin).unwrap_or_else(|e| panic!("{e}")),
+        d.p,
+    )
+    .unwrap_or_else(|e| panic!("A1: {e}"));
+    assert_eq!(a1.get("approvable").and_then(Value::as_bool), Some(false));
+    assert_eq!(a1.get("overridable").and_then(Value::as_bool), Some(true));
+    let a2 = activation_row(
+        &approvals(&c, &d.admin2).unwrap_or_else(|e| panic!("{e}")),
+        d.p,
+    )
+    .unwrap_or_else(|e| panic!("A2: {e}"));
+    assert_eq!(a2.get("approvable").and_then(Value::as_bool), Some(true));
+    assert_eq!(a2.get("overridable").and_then(Value::as_bool), Some(false));
 }

@@ -11,6 +11,11 @@
 //   with step-up (`admin.approve_self_grant`, SoD-07). The requesting
 //   admin is never offered the approval, and the server refuses one
 //   anyway. The grant on the people admin page then names the approval.
+// - ADR-022 (Daniel, 2026-11-15): a tenant admin who built the draft is
+//   offered "Approve as override" instead, with a reason field, on rows
+//   the server marks `overridable`. The reason must not be blank. The
+//   call `creator.override_activation` is high-risk, so the server asks
+//   for a step-up, and it records the reason.
 // - A refusal shows in `#approval-error` with the rule it names.
 //
 // The recovery and break-glass approvals of J10 belong to lane W4d, so
@@ -25,8 +30,67 @@ import { roleLabel } from "../../people/i18n.js";
 import { busy, frame, hush, ready } from "../frame.js";
 import { t } from "../i18n.js";
 import { readApprovals, readUnlisted, type ApprovalRow } from "../model.js";
-import { anyObject, call, report } from "../ops.js";
+import { anyObject, call, report, type Outcome } from "../ops.js";
 import { PATHS, link, loadDraft } from "./common.js";
+
+/** The call the override form makes: `call` of `../ops.js` on the page. */
+export type OverrideSend = (
+  name: "creator.override_activation",
+  params: readonly string[],
+  body: { readonly revision: string; readonly reason: string },
+) => Promise<Outcome>;
+
+/** The largest reason, in UTF-8 bytes: the server's free-text limit. */
+export const MAX_REASON_BYTES = 64 * 1024;
+
+/**
+ * The "Approve as override" form of one activation row (ADR-022). It
+ * says in plain words what the override does, asks for a reason, and
+ * sends `creator.override_activation` with the revision and the reason.
+ * A blank reason is refused here, as the server refuses it. `done` runs
+ * once the call completed.
+ */
+export function overrideForm(
+  row: ApprovalRow,
+  revisionOf: () => Promise<string | null>,
+  alert: HTMLElement,
+  send: OverrideSend,
+  done: () => void,
+): HTMLElement {
+  const id = `override-reason-${row.programme}`;
+  const reason = h("textarea", { id, name: "reason", rows: "3", required: "", "aria-required": "true" });
+  const state = h("p", { role: "status", class: "fstp-status" });
+  const button = h("button", { type: "button", "data-action": "override", class: "fstp-primary" }, [
+    t.label("creator.approvals.override"),
+  ]);
+  const form = h("div", { class: "fstp-override", "data-override": row.programme }, [
+    h("p", {}, [t.label("creator.approvals.override_intro")]),
+    h("label", { for: id }, [t.label("creator.approvals.override_reason")]),
+    reason,
+    button,
+    state,
+  ]);
+  button.addEventListener(
+    "click",
+    busy(button, async () => {
+      hush(alert);
+      const text = (reason as HTMLTextAreaElement).value;
+      if (text.trim() === "" || new TextEncoder().encode(text).length > MAX_REASON_BYTES) {
+        alert.textContent = t.label("creator.approvals.override_empty");
+        return;
+      }
+      const revision = await revisionOf();
+      if (revision === null) return;
+      const o = await send("creator.override_activation", [row.programme], { revision, reason: text });
+      if (report(alert, o)) return;
+      button.remove();
+      form.setAttribute("data-status", "approved");
+      state.textContent = t.label("creator.approvals.overridden");
+      done();
+    }),
+  );
+  return form;
+}
 
 /** Mounts the approval inbox. */
 export function mount(): void {
@@ -43,6 +107,18 @@ export function mount(): void {
     ]);
     if (!row.approvable) {
       li.append(h("p", {}, [t.label("creator.approvals.builder")]));
+      if (row.overridable) {
+        const revisionOf = async (): Promise<string | null> => {
+          if (row.revision !== null) return row.revision;
+          const d = await loadDraft(row.programme, alert);
+          return d === null ? null : d.revision;
+        };
+        li.append(
+          overrideForm(row, revisionOf, alert, (n, p, b) => call(n, p, b, anyObject), () => {
+            li.setAttribute("data-status", "approved");
+          }),
+        );
+      }
       return li;
     }
     const approve = h("button", { type: "button", "data-action": "approve", class: "fstp-primary" }, [

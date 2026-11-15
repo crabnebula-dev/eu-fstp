@@ -13,7 +13,7 @@ use fstp_programme::{FieldId, FieldValue};
 use crate::check::WarningKey;
 use crate::ids::{ImportDocumentId, ImportProposalId, InvitationId, TemplateId};
 use crate::probe::{ProbeKind, ProbeOutcome};
-use crate::witness::ActivationApproved;
+use crate::witness::{ActivationApproved, ActivationOverridden};
 
 /// One revision of a draft. Monotone per draft.
 ///
@@ -328,6 +328,20 @@ pub enum CreatorCommand {
         /// The decision id the shell drew.
         decision: DecisionId,
     },
+    /// Approve activation as an override of I-67 by a tenant admin who
+    /// built the draft (ADR-022, Daniel 2026-11-15). High-risk, with
+    /// step-up (I-78). It needs a written reason, which the shell stores
+    /// as a text (ADR-007). I-66 holds as for an approval.
+    OverrideActivation {
+        /// The draft.
+        programme: ProgrammeId,
+        /// The revision the client saw.
+        revision: DraftRevision,
+        /// The decision id the shell drew.
+        decision: DecisionId,
+        /// The written reason, as a text reference.
+        reason: TextRef,
+    },
     /// Save the draft as a tenant-private template (Q17).
     SaveAsTenantTemplate {
         /// The draft.
@@ -369,18 +383,21 @@ impl CreatorCommand {
             | CreatorCommand::AcknowledgeWarning { programme, .. }
             | CreatorCommand::RequestActivation { programme, .. }
             | CreatorCommand::ApproveActivation { programme, .. }
+            | CreatorCommand::OverrideActivation { programme, .. }
             | CreatorCommand::SaveAsTenantTemplate { programme, .. }
             | CreatorCommand::AcceptInvitation { programme, .. } => *programme,
         }
     }
 
     /// Whether the command is high-risk and needs a fresh step-up (I-78):
-    /// opening a draft and approving activation (Q10, interim, pending
-    /// Daniel).
+    /// opening a draft, approving activation and overriding I-67 at
+    /// activation (Q10, interim, pending Daniel; ADR-022).
     pub fn high_risk(&self) -> bool {
         matches!(
             self,
-            CreatorCommand::OpenDraft { .. } | CreatorCommand::ApproveActivation { .. }
+            CreatorCommand::OpenDraft { .. }
+                | CreatorCommand::ApproveActivation { .. }
+                | CreatorCommand::OverrideActivation { .. }
         )
     }
 }
@@ -496,6 +513,10 @@ pub enum CreatorRecord {
     },
     /// Activation was approved. Built only from an `ActivationClearance`.
     ActivationApproved(ActivationApproved),
+    /// Activation was approved as an override of I-67 by a tenant admin
+    /// of the builder set, with a reason (ADR-022). Built only from an
+    /// `OverrideClearance`.
+    ActivationOverridden(ActivationOverridden),
     /// The draft was saved as a tenant-private template.
     ///
     /// Interim, pending Daniel: the record names its programme, which the
@@ -527,6 +548,7 @@ impl CreatorRecord {
             | CreatorRecord::ActivationRequested { programme, .. }
             | CreatorRecord::TemplateSaved { programme, .. } => *programme,
             CreatorRecord::ActivationApproved(a) => a.programme(),
+            CreatorRecord::ActivationOverridden(o) => o.programme(),
         }
     }
 
@@ -543,6 +565,7 @@ impl CreatorRecord {
             | CreatorRecord::ActivationRequested { by, .. }
             | CreatorRecord::TemplateSaved { by, .. } => Some(*by),
             CreatorRecord::ActivationApproved(a) => Some(a.approver()),
+            CreatorRecord::ActivationOverridden(o) => Some(o.by()),
             CreatorRecord::ProbeRecorded { .. } => None,
         }
     }

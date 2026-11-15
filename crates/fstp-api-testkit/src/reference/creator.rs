@@ -9,7 +9,10 @@
 //!   `SPEC/02-domain/programme-creator.md`: "A programme cannot be
 //!   activated while its validation report shows any failure. Warnings
 //!   need a recorded acknowledgement." and "Activating a programme needs
-//!   approval by a second person who did not build it."
+//!   approval by a second person who did not build it, or an override by
+//!   a tenant admin who built it. Every override is a separate step with
+//!   a fresh step-up and a written reason, and it leaves its own ledger
+//!   record." (amended by Daniel on 2026-11-15, ADR-022).
 //! - `SPEC/01-requirements/functional.md` R-PG-01 AC: "a programme with
 //!   P-05 above P-58 cannot be activated, and the report names both
 //!   values", and R-PG-03.
@@ -65,6 +68,13 @@
 //!   may make every edit. A tenant admin may also invite and withdraw an
 //!   invitation, since J1 has A1 invite M1 before any manager exists. A
 //!   tenant admin may end a programme manager binding on the draft.
+//!   Interim, pending Daniel.
+//! - **R10, override (ADR-022, Daniel 2026-11-15).** A tenant admin of
+//!   the builder set may activate as an override with a written reason.
+//!   A tenant admin outside the builder set, a programme manager and any
+//!   other builder are refused. The override checks what an approval
+//!   checks except the builder rule and the Sybil question: a verified
+//!   actor, the head revision, a live request and a clean report (I-66).
 //!   Interim, pending Daniel.
 //!
 //! # What the reference abstracts
@@ -594,6 +604,10 @@ pub enum RefEvent {
         /// The probe results recorded in the same entry and the import
         /// count the engine passed in.
         inputs: RefInputs,
+        /// Whether the entry is an override of I-67 (ADR-022): it holds
+        /// `ActivationOverridden` with a reason in place of
+        /// `ActivationApproved`, and the core record carries that reason.
+        override_reason: bool,
     },
 }
 
@@ -690,6 +704,15 @@ pub enum RefCommand {
         /// The revision named.
         base: Base,
     },
+    /// `OverrideActivation` with a written reason (ADR-022). The
+    /// reference abstracts the reason away: the API refuses a blank one
+    /// before the creator sees the command.
+    Override {
+        /// The actor.
+        by: AccountId,
+        /// The revision named.
+        base: Base,
+    },
     /// The environment changes: `probe` gives `outcome` from now on.
     SetProbe {
         /// The probe.
@@ -702,9 +725,13 @@ pub enum RefCommand {
 }
 
 impl RefCommand {
-    /// Whether the command is an approval.
+    /// Whether the command is an approval: the normal one or the override
+    /// of I-67 (ADR-022).
     pub fn is_approval(&self) -> bool {
-        matches!(self, RefCommand::Approve { .. })
+        matches!(
+            self,
+            RefCommand::Approve { .. } | RefCommand::Override { .. }
+        )
     }
 }
 
@@ -735,6 +762,9 @@ pub enum RefRefusal {
     NotContent,
     /// I-67: the approver built the draft.
     ApproverIsBuilder,
+    /// ADR-022: the override is for a tenant admin of the builder set
+    /// only.
+    NotABuilder,
     /// I-67 under Q2: the approver is unverified.
     ApproverUnverified,
     /// I-67 under Q2: the approver shares a verified identity with a
@@ -1186,6 +1216,39 @@ impl RefSystem {
                     by,
                     revision,
                     inputs: self.env.clone(),
+                    override_reason: false,
+                }])
+            }
+            RefCommand::Override { by, base } => {
+                // Reading R10 (ADR-022): a tenant admin of the builder set,
+                // verified, with a live request and a clean report. No
+                // Sybil question: the override lifts the second-person
+                // rule only.
+                if !s.admins.contains(&by) {
+                    return Err(RefRefusal::NotTenantAdmin);
+                }
+                if !d.opened {
+                    return Err(RefRefusal::Opening);
+                }
+                if !d.builders.contains(&by) {
+                    return Err(RefRefusal::NotABuilder);
+                }
+                draft_open(d)?;
+                let revision = at_head(base)?;
+                if !s.vault.is_verified(by) {
+                    return Err(RefRefusal::ApproverUnverified);
+                }
+                if !d.request_live() {
+                    return Err(RefRefusal::NoLiveRequest);
+                }
+                if let Some(r) = uncleared(&self.report(), d) {
+                    return Err(r);
+                }
+                Ok(vec![RefEvent::Activated {
+                    by,
+                    revision,
+                    inputs: self.env.clone(),
+                    override_reason: true,
                 }])
             }
             RefCommand::SetProbe { .. } | RefCommand::SetUnresolvedImports(_) => Ok(Vec::new()),

@@ -346,8 +346,11 @@ export const INVITATION_UI = {
  * `[data-action="approve"]`, a high-risk action. A tenant admin's grant
  * of a role to their own account (SoD-07) is
  * `li[data-approval="self_grant"][data-id="<approval>"]`, approved the
- * same way by a second admin. A refusal shows `#approval-error` with
- * `role="alert"` and `data-rule`.
+ * same way by a second admin. A tenant admin who built the draft sees no
+ * approve action. Its item holds the override form of ADR-022 instead:
+ * `textarea[name="reason"]` and `[data-action="override"]`, a high-risk
+ * action. A refusal shows `#approval-error` with `role="alert"` and
+ * `data-rule`.
  */
 export const APPROVAL_UI = {
   error: '#approval-error',

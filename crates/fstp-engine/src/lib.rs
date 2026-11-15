@@ -39,6 +39,10 @@
 //!   decision, revision, report reference and approver
 //!   (`compose::pairs_with`);
 //! - an `ActivationApproved` whose entry holds no such activation;
+//! - a `ProgrammeActivated` with an override reason, unless an
+//!   `ActivationOverridden` of the same entry names the same programme,
+//!   decision, revision, report reference, actor and reason
+//!   (`compose::pairs_with_override`, ADR-022), and the reverse;
 //! - a `DraftOpened` of a programme the core already holds, or whose entry
 //!   holds no `ProgrammeCreated` of it by the same account;
 //! - a `FieldsSaved` with import provenance, unless it saves one field and
@@ -192,6 +196,9 @@ struct OpenEntry {
     first: Seq,
     /// Approvals still waiting for their `ProgrammeActivated`.
     approvals: Vec<ActivationApproved>,
+    /// Overrides of I-67 still waiting for their `ProgrammeActivated`
+    /// (ADR-022).
+    overrides: Vec<fstp_creator::ActivationOverridden>,
     /// Draft openings still waiting for their `ProgrammeCreated`.
     openings: Vec<(ProgrammeId, AccountId)>,
     /// Confirming or editing resolutions still waiting for their
@@ -228,6 +235,7 @@ impl OpenEntry {
             command,
             first,
             approvals: Vec::new(),
+            overrides: Vec::new(),
             openings: Vec::new(),
             resolutions: Vec::new(),
             published: Vec::new(),
@@ -237,7 +245,10 @@ impl OpenEntry {
 
     /// Whether the entry owes nothing.
     fn settled(&self) -> bool {
-        self.approvals.is_empty() && self.openings.is_empty() && self.resolutions.is_empty()
+        self.approvals.is_empty()
+            && self.overrides.is_empty()
+            && self.openings.is_empty()
+            && self.resolutions.is_empty()
     }
 }
 
@@ -676,12 +687,23 @@ fn apply_core(
     match r {
         fstp_domain::Record::ProgrammeActivated(pa) => {
             let open = open_entry(state)?;
-            let i = open
-                .approvals
-                .iter()
-                .position(|a| compose::pairs_with(a, pa))
-                .ok_or(FoldError::Inconsistent)?;
-            open.approvals.remove(i);
+            if pa.override_reason().is_some() {
+                // ADR-022: an overriding activation pairs with its
+                // `ActivationOverridden` only.
+                let i = open
+                    .overrides
+                    .iter()
+                    .position(|o| compose::pairs_with_override(o, pa))
+                    .ok_or(FoldError::Inconsistent)?;
+                open.overrides.remove(i);
+            } else {
+                let i = open
+                    .approvals
+                    .iter()
+                    .position(|a| compose::pairs_with(a, pa))
+                    .ok_or(FoldError::Inconsistent)?;
+                open.approvals.remove(i);
+            }
         }
         fstp_domain::Record::CallPublished { call, .. } => {
             open_entry(state)?.published.push(*call);
@@ -723,6 +745,9 @@ fn apply_creator(state: &mut EngineState, entry: Seq, r: &CreatorRecord) -> Resu
         }
         CreatorRecord::ActivationApproved(a) => {
             open_entry(state)?.approvals.push(a.clone());
+        }
+        CreatorRecord::ActivationOverridden(o) => {
+            open_entry(state)?.overrides.push(o.clone());
         }
         CreatorRecord::FieldsSaved {
             programme,

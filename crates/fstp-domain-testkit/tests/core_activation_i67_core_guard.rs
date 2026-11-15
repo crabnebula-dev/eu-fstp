@@ -337,6 +337,7 @@ fn i67_activation_decision_id_is_fresh() {
             report: ReportDigest::from_bytes([3; 32]),
             revision: 1,
             creator_builders: BTreeSet::new(),
+            override_reason: None,
         },
     );
     assert_eq!(

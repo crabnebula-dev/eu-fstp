@@ -2107,6 +2107,42 @@ mod tests {
         );
     }
 
+    /// I-67 as amended by ADR-022 (Daniel, 2026-11-15): only a builder
+    /// admin may override, with a fresh step-up. A non-builder admin, a
+    /// programme manager and an outsider are refused as actors, and MCP
+    /// never reaches the override.
+    #[test]
+    fn i67_adr022_reference_only_a_builder_admin_overrides() {
+        let s = StateProfile::ProgrammeDraft;
+        let fresh = web(Login::Passkey, StepUp::Fresh);
+        let op = "creator.override_activation";
+        assert_eq!(
+            at(op, Who::TenantAdminBuilder, s, SS, fresh),
+            Expected::Allow
+        );
+        for who in [Who::TenantAdmin, Who::ProgrammeManager, Who::Unbound] {
+            assert_eq!(
+                at(op, who, s, SS, fresh),
+                Expected::Deny(AuthClass::Actor),
+                "{who:?}"
+            );
+        }
+        assert_eq!(
+            at(op, Who::TenantAdminBuilder, s, SS, mcp(true)),
+            Expected::Deny(AuthClass::NotExposed)
+        );
+        assert_eq!(
+            at(
+                op,
+                Who::TenantAdminBuilder,
+                s,
+                SS,
+                web(Login::Passkey, StepUp::Stale)
+            ),
+            Expected::Deny(AuthClass::StepUp)
+        );
+    }
+
     /// SoD-07, I-67, design section 8.3: a sole tenant admin walks every
     /// onboarding step and invites the second admin, but approves no
     /// self-grant and finishes no onboarding. With a second admin, each is

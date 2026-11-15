@@ -1306,6 +1306,7 @@ impl PolicyMachine {
                 report: fstp_domain::policy::activation::ReportDigest::from_bytes(digest),
                 revision: u32::from(g.u8_in(0..=3)),
                 creator_builders,
+                override_reason: None,
             },
         }
     }

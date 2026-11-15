@@ -17,7 +17,7 @@ tagged_enum! {
     Command;
     fields {
         CreateProgramme { policy },
-        ActivateProgramme { programme, decision, report, revision, creator_builders },
+        ActivateProgramme { programme, decision, report, revision, creator_builders, override_reason },
         EditPolicy { base, version },
         ApproveCallPublication { call, decision },
         PublishCall { call, config, config_model },

@@ -269,6 +269,22 @@ impl World {
         self.run(&cmd, by, inputs)
     }
 
+    /// ADR-022: the override of I-67 by `by` at the head, with a
+    /// synthetic stored reason.
+    fn override_activation(
+        &mut self,
+        by: AccountId,
+        inputs: &CreatorInputs,
+    ) -> Result<(), CreatorRefusal> {
+        let cmd = CreatorCommand::OverrideActivation {
+            programme: P,
+            revision: self.head(),
+            decision: DecisionId::from_raw(98),
+            reason: override_reason(),
+        };
+        self.run(&cmd, by, inputs)
+    }
+
     fn report(&self, inputs: &CreatorInputs) -> crate::ValidationReport {
         validate_at(&self.core, &self.creator, P, &clean_facts(), inputs)
     }
@@ -1516,4 +1532,158 @@ fn t_authz_i67_outsider_creator_command_is_an_actor_denial_in_every_state() {
     assert_eq!(r, Err(CreatorRefusal::AlreadyActive));
     let r = decide(&w, &draft_commands(head)[7], TA);
     assert_eq!(r, Err(CreatorRefusal::ApproverIsBuilder));
+}
+
+// ---------------------------------------------------------------------------
+// ADR-022: the tenant admin override of I-67 (Daniel, 2026-11-15)
+// ---------------------------------------------------------------------------
+
+/// A synthetic stored override reason.
+fn override_reason() -> TextRef {
+    TextRef::new(
+        TextId::from_raw(4242),
+        ContentDigest::from_bytes([0x52; 32]),
+    )
+}
+
+/// I-67 as amended by ADR-022, R-PG-03: A1, the opener and so a builder,
+/// is refused the normal approval and activates through the override.
+/// The entry records every probe and `ActivationOverridden` by A1 with the
+/// reason, the builder set holding A1, and the decision time.
+#[test]
+fn i67_adr022_builder_admin_activates_through_the_override_with_its_reason() {
+    let mut w = opened();
+    let inputs = passing();
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    assert_eq!(
+        w.approve(TA, &inputs),
+        Err(CreatorRefusal::ApproverIsBuilder),
+        "the normal path still refuses a builder"
+    );
+    let before = w.head();
+    let cmd = CreatorCommand::OverrideActivation {
+        programme: P,
+        revision: before,
+        decision: DecisionId::from_raw(98),
+        reason: override_reason(),
+    };
+    let d = decide_with(&w.core, &w.creator, &cmd, &ctx(TA), &inputs, &clean_facts()).unwrap();
+    assert!(d.core.is_empty(), "the engine composes the activation");
+    let probes = d
+        .records
+        .iter()
+        .filter(|r| matches!(r, CreatorRecord::ProbeRecorded { .. }))
+        .count();
+    assert_eq!(probes, ProbeKind::ALL.len());
+    let Some(CreatorRecord::ActivationOverridden(o)) = d.records.last() else {
+        panic!("no override record: {:?}", d.records);
+    };
+    assert_eq!(o.by(), TA);
+    assert_eq!(o.reason(), override_reason());
+    assert_eq!(o.revision(), before);
+    assert!(o.builders().contains(&TA));
+    assert_eq!(o.decision(), DecisionId::from_raw(98));
+    assert_eq!(o.at(), ctx(TA).now);
+    w.entry(d.records, Vec::new());
+    assert_eq!(w.creator.draft(P).unwrap().active(), Some(before));
+    assert_eq!(
+        w.override_activation(TA, &inputs),
+        Err(CreatorRefusal::AlreadyActive)
+    );
+}
+
+/// I-67 still holds for every builder but a tenant admin (ADR-022): M1,
+/// the programme manager who built the draft, is refused the override.
+#[test]
+fn i67_adr022_non_admin_builder_override_is_refused() {
+    let mut w = opened();
+    let inputs = passing();
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    assert_eq!(
+        w.override_activation(M1, &inputs),
+        Err(CreatorRefusal::NotTenantAdmin)
+    );
+    assert_eq!(w.creator.draft(P).unwrap().active(), None);
+}
+
+/// ADR-022, interim reading 1: A2, a tenant admin outside the builder
+/// set, takes the normal approval and is refused the override.
+#[test]
+fn i67_adr022_non_builder_admin_override_is_refused() {
+    let mut w = opened();
+    let inputs = passing();
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    assert_eq!(
+        w.override_activation(TB, &inputs),
+        Err(CreatorRefusal::NotABuilder)
+    );
+}
+
+/// ADR-022: the override lifts only the second-person rule. I-66 holds
+/// (an unacknowledged warning and a failing probe refuse it), a request
+/// must be live, and the vault must verify the overriding admin.
+#[test]
+fn i66_adr022_override_keeps_i66_the_request_and_a_verified_admin() {
+    let mut w = opened();
+    let inputs = passing();
+    assert_eq!(
+        w.override_activation(TA, &inputs),
+        Err(CreatorRefusal::NoLiveRequest)
+    );
+    w.request(M1, &inputs).unwrap();
+    assert_eq!(
+        w.override_activation(TA, &inputs),
+        Err(CreatorRefusal::Uncleared(Uncleared::Unacknowledged(
+            CheckId::RosterShort
+        )))
+    );
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    let mut failing = passing();
+    failing.probes = ProbeSet::passing().with(ProbeKind::Channel, ProbeOutcome::Fail);
+    assert_eq!(
+        w.override_activation(TA, &failing),
+        Err(CreatorRefusal::Uncleared(Uncleared::Failure(
+            CheckId::ChannelUnreachable
+        )))
+    );
+    let mut unverified = passing();
+    unverified.vault.is_verified.insert(TA, false);
+    assert_eq!(
+        w.override_activation(TA, &unverified),
+        Err(CreatorRefusal::ApproverUnverified)
+    );
+    assert_eq!(w.creator.draft(P).unwrap().active(), None);
+}
+
+/// ADR-022, ADR-007: the override command and its record survive the
+/// creator codec, the reason as a text reference only.
+#[test]
+fn adr022_override_command_and_record_round_trip() {
+    let cmd = CreatorCommand::OverrideActivation {
+        programme: P,
+        revision: DraftRevision::new(3, Seq::from_raw(9)),
+        decision: DecisionId::from_raw(98),
+        reason: override_reason(),
+    };
+    let back = CreatorCommand::from_json(&cmd.to_json()).unwrap();
+    assert_eq!(back, cmd);
+    assert!(cmd.high_risk(), "I-78: the override is high-risk");
+    let mut w = opened();
+    let inputs = passing();
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    let cmd = CreatorCommand::OverrideActivation {
+        programme: P,
+        revision: w.head(),
+        decision: DecisionId::from_raw(98),
+        reason: override_reason(),
+    };
+    let d = decide_with(&w.core, &w.creator, &cmd, &ctx(TA), &inputs, &clean_facts()).unwrap();
+    let rec = d.records.last().unwrap().clone();
+    let back = CreatorRecord::from_json(&rec.to_json()).unwrap();
+    assert_eq!(back, rec);
 }
