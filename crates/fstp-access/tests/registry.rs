@@ -335,11 +335,12 @@ fn ops_cover_every_finding_and_import_kind_once() {
 
 /// Every creator kind, one per `CreatorCommand` variant of design section
 /// 3.2.
-const CREATOR_KINDS: [CreatorKind; 11] = [
+const CREATOR_KINDS: [CreatorKind; 12] = [
     CreatorKind::OpenDraft,
     CreatorKind::ApplyStart,
     CreatorKind::SaveFields,
     CreatorKind::AcceptNarrative,
+    CreatorKind::EditNarrative,
     CreatorKind::Invite,
     CreatorKind::WithdrawInvitation,
     CreatorKind::AcknowledgeWarning,
@@ -362,6 +363,7 @@ fn creator_route(k: CreatorKind) -> (&'static str, &'static str) {
             "POST",
             "/programmes/{programme}/draft/narratives/{field}/acceptance",
         ),
+        CreatorKind::EditNarrative => ("PUT", "/programmes/{programme}/draft/narratives/{field}"),
         CreatorKind::Invite => ("POST", "/programmes/{programme}/invitations"),
         CreatorKind::WithdrawInvitation => {
             ("DELETE", "/programmes/{programme}/invitations/{invitation}")

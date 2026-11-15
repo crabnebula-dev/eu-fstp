@@ -364,6 +364,7 @@ test("i65_studio_names_imported_values_awaiting_confirmation", () => {
   const proposal = (id: string, field: string, resolution: ProposalRow["resolution"]): ProposalRow => ({
     id,
     field,
+    document: "9",
     value: "1.00",
     digest: "d",
     evidence: [],

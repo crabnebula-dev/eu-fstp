@@ -14,6 +14,7 @@ fn person_issued(k: CreatorKind) -> bool {
         | CreatorKind::ApplyStart
         | CreatorKind::SaveFields
         | CreatorKind::AcceptNarrative
+        | CreatorKind::EditNarrative
         | CreatorKind::Invite
         | CreatorKind::WithdrawInvitation
         | CreatorKind::AcknowledgeWarning
@@ -37,6 +38,7 @@ fn review_every_person_issued_creator_kind_is_routed() {
         CreatorKind::ApplyStart,
         CreatorKind::SaveFields,
         CreatorKind::AcceptNarrative,
+        CreatorKind::EditNarrative,
         CreatorKind::Invite,
         CreatorKind::WithdrawInvitation,
         CreatorKind::AcknowledgeWarning,

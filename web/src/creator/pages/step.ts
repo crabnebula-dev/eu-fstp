@@ -7,6 +7,8 @@
 //   with `[data-action="accept-narrative"]`. It is never applied
 //   silently: until a person accepts or edits it, the draft holds no
 //   value for the field (`programme-creator.md`, Template library).
+// - Narrative text the draft holds has `[data-action="edit-narrative"]`,
+//   which sends `creator.edit_narrative` (Daniel, 2026-11-15).
 // - `#creator-step-save` sends only the fields a person changed, as one
 //   `creator.save_fields` against the current revision. The step's check
 //   results then show in `#creator-step-checks`, and
@@ -40,6 +42,24 @@ import { anyObject, call, report } from "../ops.js";
 import { stepStates } from "../../studio/model.js";
 import { afterApprovalNote, frozenNote, kicker, nextControl, notOpenNote } from "../../studio/view.js";
 import { checkText, loadDraft, loadReport, queue, stepNav, stepTitle } from "./common.js";
+
+/**
+ * The narrative fields, which `creator.edit_narrative` edits once the
+ * draft holds them (`fstp_creator` `is_narrative`).
+ */
+const NARRATIVE_KEYS: readonly string[] = [
+  "funder.action_acronym",
+  "funder.coordinator_name",
+  "identity.name",
+  "identity.narrative",
+  "identity.scope",
+  "eligibility.persons_supported",
+  "eligibility.minors",
+  "money.amount_criteria",
+  "comms.message_templates",
+  "comms.faq",
+  "comms.contact",
+];
 
 /** One field on the page. */
 interface Shown {
@@ -114,6 +134,8 @@ export function mount(p: string, step: string): void {
       const item: Shown = { key: f.key, editor, pending: pendingText !== undefined };
       if (item.pending) {
         addAccept(item);
+      } else if (NARRATIVE_KEYS.includes(f.key) && draftValue(d, f.key) !== null && d.status !== "active") {
+        addEditNarrative(item);
       }
       return item;
     });
@@ -148,6 +170,42 @@ export function mount(p: string, step: string): void {
       });
     });
     item.editor.notes.append(note, accept);
+  };
+
+  /**
+   * The edit button of narrative text the draft holds (Daniel,
+   * 2026-11-15): it sends `creator.edit_narrative` with the editor's text.
+   * Like every edit it voids the acknowledgements and the activation
+   * request (I-66), which the note says.
+   */
+  const addEditNarrative = (item: Shown): void => {
+    const note = h("p", { class: "fstp-note", role: "status" });
+    const edit = h("button", { type: "button", "data-action": "edit-narrative" }, [t.label("creator.narrative.edit")]);
+    edit.addEventListener(
+      "click",
+      busy(edit, () =>
+        write(async () => {
+          const d = draft;
+          if (d === null) return;
+          hush(alert);
+          clearProblems(item.editor.root);
+          const r = item.editor.read();
+          if (!r.ok) {
+            warn(alert, t.label("creator.step.problems"));
+            showProblems(r.problems);
+            return;
+          }
+          const o = await call("creator.edit_narrative", [p, item.key], { base: d.revision, value: r.value }, anyObject);
+          if (report(alert, o)) return;
+          const fresh = await loadDraft(p, alert);
+          if (fresh !== null) {
+            draft = fresh;
+          }
+          note.textContent = t.label("creator.narrative.edited");
+        }),
+      ),
+    );
+    item.editor.notes.append(edit, note);
   };
 
   /** The fields a person changed, or the problems of what they entered. */

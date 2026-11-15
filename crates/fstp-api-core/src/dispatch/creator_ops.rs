@@ -1209,6 +1209,11 @@ async fn proposals<P: Seams>(
     let mut rows = Vec::new();
     for s in import.proposals_of(ProgrammeRef::from_raw(p.raw())) {
         let r = s.proposal();
+        // A removed document's proposals are no longer the draft's
+        // (Daniel, 2026-11-15).
+        if import.is_removed(r.document) {
+            continue;
+        }
         let value = match import.value_of(r.id) {
             Some(v) => v.clone(),
             None => stored_value(call, r.text, clearance).await?,
@@ -1226,6 +1231,7 @@ async fn proposals<P: Seams>(
             .collect();
         rows.push(ProposalView {
             id: r.id,
+            document: r.document,
             field: r.field.key(),
             value: value.data_value(),
             digest: r.text.digest().bytes(),

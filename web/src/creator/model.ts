@@ -431,6 +431,8 @@ export interface Evidence {
 export interface ProposalRow {
   readonly id: string;
   readonly field: string;
+  /** The imported document that proposed the value, which a removal names. */
+  readonly document: string;
   readonly value: unknown;
   /** The server's digest of the stored value, which a resolution names as shown. */
   readonly digest: string;
@@ -441,7 +443,7 @@ export interface ProposalRow {
 }
 
 /**
- * Reads `{proposals: [{id, field, value, digest, evidence: [{text}],
+ * Reads `{proposals: [{id, field, document, value, digest, evidence: [{text}],
  * flagged, resolution}]}`. Null otherwise. A proposal for a field the
  * schema does not know refuses the whole body.
  */
@@ -454,12 +456,14 @@ export function readProposals(body: unknown): ProposalRow[] | null {
     if (r === null) return null;
     const id = r["id"];
     const field = r["field"];
+    const doc = r["document"];
     const digest = r["digest"];
     const flagged = r["flagged"];
     const resolution = r["resolution"];
     const evidence = r["evidence"];
     if (typeof id !== "string" || !/^[0-9A-Za-z_-]{1,64}$/.test(id)) return null;
     if (typeof field !== "string" || fieldOf(field) === null) return null;
+    if (typeof doc !== "string" || !/^[0-9]{1,40}$/.test(doc)) return null;
     if (typeof digest !== "string" || typeof flagged !== "boolean" || !Object.hasOwn(r, "value")) return null;
     if (resolution !== null && resolution !== "confirmed" && resolution !== "edited" && resolution !== "dismissed") {
       return null;
@@ -471,7 +475,7 @@ export function readProposals(body: unknown): ProposalRow[] | null {
       if (typeof t !== "string") return null;
       spans.push({ text: t });
     }
-    out.push({ id, field, value: r["value"], digest, evidence: spans, flagged, resolution });
+    out.push({ id, field, document: doc, value: r["value"], digest, evidence: spans, flagged, resolution });
   }
   return out;
 }

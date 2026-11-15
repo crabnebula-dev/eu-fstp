@@ -1705,6 +1705,112 @@ fn i65_import_resolve_builds_resolve_import_with_the_shell_sha256() {
     );
 }
 
+/// I-66, I-65 (Daniel, 2026-11-15, the I-66 generator gaps): after an
+/// upload, M1 removes the document that proposed a value. The engine port
+/// appends one `BridgeCommand::RemoveImport` of the listed document at the
+/// head M1 read, and the import list no longer shows its proposals. An
+/// admin without the binding is refused with I-65 and appends nothing.
+#[test]
+fn i66_import_remove_builds_remove_import_and_drops_the_proposals() {
+    let c = cell();
+    let d = built(&c).unwrap_or_else(|e| panic!("{e}"));
+    done(
+        c.web(&d.owner, rq::import_upload(d.p, "text/markdown", ANNEX)),
+        "import.upload",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let v = done(c.web(&d.owner, rq::import_list(d.p)), "import.list")
+        .unwrap_or_else(|e| panic!("{e}"));
+    let rows = list_of(&v, "proposals").unwrap_or_else(|e| panic!("{e}"));
+    let row = rows
+        .first()
+        .cloned()
+        .unwrap_or_else(|| panic!("the cell's proposer proposed nothing: {}", v.to_compact()));
+    let document = str_of(&row, "document").unwrap_or_else(|e| panic!("{e}"));
+    let bridged = |c: &FakeCell| {
+        c.ports
+            .engine
+            .appended()
+            .into_iter()
+            .filter_map(|e| match e.cmd {
+                Command::Bridge(b) => Some(b),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let base = revision(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let r = c.web(&d.admin, rq::import_remove(d.p, &document, &base));
+    assert!(class(&r).refused(), "the admin's removal gave {r:?}");
+    assert_eq!(rule(&r), Some("I-65"), "{r:?}");
+    assert!(bridged(&c).is_empty(), "a refused removal appended");
+    let before = head(&c, d.p).unwrap_or_else(|| panic!("no draft head"));
+    done(
+        c.web(&d.owner, rq::import_remove(d.p, &document, &base)),
+        "import.remove",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        bridged(&c),
+        vec![fstp_engine::BridgeCommand::RemoveImport {
+            programme: d.p,
+            document: fstp_import::ImportDocumentId::from_raw(
+                document.parse::<u128>().unwrap_or_else(|e| panic!("{e}")),
+            ),
+            base: before,
+        }]
+    );
+    let v = done(c.web(&d.owner, rq::import_list(d.p)), "import.list")
+        .unwrap_or_else(|e| panic!("{e}"));
+    let rows = list_of(&v, "proposals").unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        rows.iter()
+            .all(|r| str_of(r, "document").ok().as_deref() != Some(document.as_str())),
+        "the removed document's proposals are still listed: {}",
+        v.to_compact()
+    );
+}
+
+/// I-66 (Daniel, 2026-11-15, the I-66 generator gaps): M1 edits the
+/// programme narrative the draft holds. The engine port appends
+/// `EditNarrative` at the head M1 read, with a manual edit whose digest
+/// is the SHA-256 of the value's canonical text, as a save's is.
+#[test]
+fn i66_edit_narrative_builds_edit_narrative_with_the_shell_sha256() {
+    let c = cell();
+    let d = built(&c).unwrap_or_else(|e| panic!("{e}"));
+    let key = fstp_programme::FieldId::ProgrammeNarrative.key();
+    let text = "Edited synthetic narrative.";
+    let base = revision(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let before = head(&c, d.p).unwrap_or_else(|| panic!("no draft head"));
+    done(
+        c.web(&d.owner, rq::edit_narrative(d.p, &key, &base, text)),
+        "creator.edit_narrative",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let (cmd, ..) = last_creator(&c).unwrap_or_else(|e| panic!("{e}"));
+    let canonical = format!("\"{text}\"");
+    let value = fstp_programme::decode_field_value(
+        fstp_programme::FieldId::ProgrammeNarrative,
+        canonical.as_bytes(),
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        cmd,
+        CreatorCommand::EditNarrative {
+            programme: d.p,
+            base: before,
+            edit: fstp_creator::FieldEdit {
+                field: fstp_programme::FieldId::ProgrammeNarrative,
+                value,
+                digest: fstp_creator::ValueDigest::new(fstp_domain::id::ContentDigest::from_bytes(
+                    fstp_crypto::sha256(canonical.as_bytes()),
+                )),
+                provenance: fstp_creator::Provenance::Manual,
+            },
+        }
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Approval (I-67, I-78, R-PG-03)
 // ---------------------------------------------------------------------------

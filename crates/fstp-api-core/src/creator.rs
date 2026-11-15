@@ -29,6 +29,9 @@
 //!   `value` the spec JSON. The server takes the value's canonical RFC
 //!   8785 text and its SHA-256 through `fstp-crypto` as the value digest.
 //! - `creator.accept_narrative`: `{base}`, with the field key in the route.
+//! - `creator.edit_narrative`: `{base, value}`, with the field key in the
+//!   route: a new text for narrative the draft holds (Daniel, 2026-11-15).
+//!   The value digest is computed as a save computes it.
 //! - `creator.invite`: `{email, role, organisation?, start?, end?}`. The
 //!   role is a wire name of `fstp_access::INVITED_ROLES`. The email is
 //!   stored in the text store, and the command carries its reference only
@@ -49,6 +52,9 @@
 //! - `import.resolve`: `{base, conflict_acknowledged, resolution, shown}`,
 //!   where `resolution` is `{kind: "confirm", value}`, `{kind: "edit",
 //!   value}` or `{kind: "dismiss"}`, and `shown` the listed digest.
+//! - `import.remove`: `{base}`, with the import document in the route. It
+//!   removes the document from its draft, a draft record that voids the
+//!   report (Daniel, 2026-11-15).
 //!
 //! A revision travels as the opaque string `"<seq>.<entry>"` of two
 //! canonical decimals: the draft's revision count and the ledger entry
@@ -118,6 +124,8 @@ pub(crate) enum Form {
     SaveFields,
     /// `creator.accept_narrative`.
     AcceptNarrative,
+    /// `creator.edit_narrative` (Daniel, 2026-11-15).
+    EditNarrative,
     /// `creator.invite`.
     Invite,
     /// `creator.withdraw_invitation`.
@@ -136,6 +144,8 @@ pub(crate) enum Form {
     Upload,
     /// `import.resolve`.
     Resolve,
+    /// `import.remove` (Daniel, 2026-11-15).
+    Remove,
 }
 
 /// The form of an operation, or `None` for an operation of another kind
@@ -147,6 +157,7 @@ pub(crate) fn form_of(spec: &OpSpec) -> Option<Form> {
             CreatorKind::ApplyStart => Form::ApplyStart,
             CreatorKind::SaveFields => Form::SaveFields,
             CreatorKind::AcceptNarrative => Form::AcceptNarrative,
+            CreatorKind::EditNarrative => Form::EditNarrative,
             CreatorKind::Invite => Form::Invite,
             CreatorKind::WithdrawInvitation => Form::Withdraw,
             CreatorKind::AcknowledgeWarning => Form::Acknowledge,
@@ -156,6 +167,7 @@ pub(crate) fn form_of(spec: &OpSpec) -> Option<Form> {
             CreatorKind::SaveAsTenantTemplate => Form::SaveAsTemplate,
         },
         OpKind::Bridge(BridgeKind::ResolveImport) => Form::Resolve,
+        OpKind::Bridge(BridgeKind::RemoveImport) => Form::Remove,
         OpKind::Import(ImportKind::RegisterDocument) => Form::Upload,
         _ => return None,
     };
@@ -170,7 +182,8 @@ impl Form {
             Form::Withdraw | Form::SaveAsTemplate => (&[], &[]),
             Form::ApplyStart => (&["base", "start"], &[]),
             Form::SaveFields => (&["base", "fields"], &[]),
-            Form::AcceptNarrative => (&["base"], &[]),
+            Form::AcceptNarrative | Form::Remove => (&["base"], &[]),
+            Form::EditNarrative => (&["base", "value"], &[]),
             Form::Invite => (&["email", "role"], &["organisation", "start", "end"]),
             Form::Acknowledge => (&["revision", "warning"], &[]),
             Form::RequestActivation | Form::ApproveActivation => (&["revision"], &[]),
@@ -496,6 +509,12 @@ pub(crate) fn build(
         }
         Form::Upload => upload(request, supplied, draw),
         Form::Resolve => resolve(request),
+        Form::Remove => Ok(Command::Bridge(BridgeCommand::RemoveImport {
+            programme: programme(request)?,
+            document: ImportDocumentId::from_raw(id_at(request, "import_document")?),
+            base: revision_at(request, "base")?,
+        })),
+        Form::EditNarrative => edit_narrative(request).and_then(creator),
     }
 }
 
@@ -600,6 +619,34 @@ fn save_fields(request: &Object) -> Result<CreatorCommand, ApiError> {
             ),
             ("base", put_revision(revision_at(request, "base")?)),
             ("fields", Value::Array(edits.into_iter().collect())),
+        ],
+    );
+    decode(&v)
+}
+
+/// The `EditNarrative` of `creator.edit_narrative`: a manual edit of the
+/// route's field with the value's canonical text and its SHA-256, as a
+/// save carries it (Daniel, 2026-11-15).
+fn edit_narrative(request: &Object) -> Result<CreatorCommand, ApiError> {
+    let key = request
+        .get("field")
+        .and_then(Value::as_str)
+        .ok_or_else(bad)?;
+    let (text, digest) = value_text(request.get("value").ok_or_else(bad)?)?;
+    let mut e = Object::new();
+    let _ = e.insert("field", Value::from(key));
+    let _ = e.insert("value", Value::String(text));
+    let _ = e.insert("digest", hex32(digest));
+    let _ = e.insert("provenance", tagged("Manual", Vec::new()));
+    let v = tagged(
+        "EditNarrative",
+        vec![
+            (
+                "programme",
+                Value::String(programme(request)?.raw().to_string()),
+            ),
+            ("base", put_revision(revision_at(request, "base")?)),
+            ("edit", Value::Object(e)),
         ],
     );
     decode(&v)
@@ -929,6 +976,9 @@ pub struct InvitationRow {
 pub struct ProposalView {
     /// The proposal.
     pub id: ImportProposalId,
+    /// The imported document that proposed it, which `import.remove`
+    /// names (Daniel, 2026-11-15).
+    pub document: fstp_import::ImportDocumentId,
     /// The field key.
     pub field: String,
     /// The proposed value, as data.
@@ -1165,6 +1215,7 @@ impl ToJson for CreatorModel {
                     obj(vec![
                         ("id", dec(r.id.raw())),
                         ("field", Value::from(r.field.as_str())),
+                        ("document", dec(r.document.raw())),
                         ("value", r.value.clone()),
                         ("digest", hex32(r.digest)),
                         (
