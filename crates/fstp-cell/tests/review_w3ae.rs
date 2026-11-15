@@ -62,7 +62,7 @@ fn cell_state(scn: &Scenario) -> CellState {
 }
 
 fn due(scn: &Scenario, now: Timestamp, want: fn(&Command) -> bool) -> Option<[u8; 16]> {
-    timeline::due_commands(&cell_state(scn), now)
+    timeline::due_commands(CELL, &cell_state(scn), now)
         .into_iter()
         .find(|(c, _)| matches!(c, CellCommand::Engine(fstp_engine::Command::Core(core)) if want(core)))
         .map(|(_, id)| id)
@@ -154,7 +154,7 @@ fn review_timeline_gives_a_recurring_due_command_a_fresh_id() {
 }
 
 fn due_command(scn: &Scenario, now: Timestamp, want: fn(&Command) -> bool) -> Command {
-    timeline::due_commands(&cell_state(scn), now)
+    timeline::due_commands(CELL, &cell_state(scn), now)
         .into_iter()
         .find_map(|(c, _)| match c {
             CellCommand::Engine(fstp_engine::Command::Core(core)) if want(&core) => Some(core),

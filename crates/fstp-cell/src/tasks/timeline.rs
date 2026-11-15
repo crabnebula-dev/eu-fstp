@@ -170,16 +170,27 @@ pub const ID_LABEL: &[u8] = b"fstp-timeline-v1";
 /// How often the timeline looks for due commands.
 pub const TICK: Duration = Duration::from_secs(1);
 
-/// The system command id of occurrence `occurrence` of `cmd`, bound to
-/// `instant` for a session end.
-pub fn command_id(cmd: &CellCommand, instant: Option<Timestamp>, occurrence: u64) -> [u8; 16] {
+/// The system command id of occurrence `occurrence` of `cmd` in the cell
+/// `cell`, bound to `instant` for a session end.
+///
+/// The id is an HMAC-SHA256 keyed by the cell id, as the vault-change
+/// reaction ids are (`fstp_cell_core::reaction_command_id`, Daniel,
+/// 2026-11-13). Two cells can hold the same due command, and the id is
+/// stored in clear in each ledger, so an unkeyed id would link the two
+/// tenants (I-20).
+pub fn command_id(
+    cell: [u8; 16],
+    cmd: &CellCommand,
+    instant: Option<Timestamp>,
+    occurrence: u64,
+) -> [u8; 16] {
     let mut msg = ID_LABEL.to_vec();
     msg.extend_from_slice(&fstp_ledger::Canonical::canonical(cmd));
     if let Some(t) = instant {
         msg.extend_from_slice(&t.micros().to_be_bytes());
     }
     msg.extend_from_slice(&occurrence.to_be_bytes());
-    let digest = fstp_crypto::sha256(&msg);
+    let digest = fstp_crypto::hmac_sha256(&cell, &msg);
     let mut suffix = [0u8; 8];
     for (d, s) in suffix.iter_mut().zip(digest.iter()) {
         *d = *s;
@@ -187,13 +198,13 @@ pub fn command_id(cmd: &CellCommand, instant: Option<Timestamp>, occurrence: u64
     system_command_id(suffix)
 }
 
-/// The id of the next occurrence of `cmd`: the first occurrence whose id
-/// `s` holds no commit under. Every committed occurrence holds one id, so
+/// The id of the next occurrence of `cmd` in the cell `cell`: the first
+/// occurrence whose id `s` holds no commit under. Every committed occurrence holds one id, so
 /// the search ends after at most as many steps as `s` has commits.
-pub fn next_occurrence_id(s: &CellState, cmd: &CellCommand) -> [u8; 16] {
+pub fn next_occurrence_id(cell: [u8; 16], s: &CellState, cmd: &CellCommand) -> [u8; 16] {
     let mut occurrence: u64 = 0;
     loop {
-        let id = command_id(cmd, None, occurrence);
+        let id = command_id(cell, cmd, None, occurrence);
         if s.committed(id).is_none() {
             return id;
         }
@@ -207,8 +218,9 @@ pub fn next_occurrence_id(s: &CellState, cmd: &CellCommand) -> [u8; 16] {
     }
 }
 
-/// The commands due at `now`, each with its id, in issue order.
-pub fn due_commands(s: &CellState, now: Timestamp) -> Vec<(CellCommand, [u8; 16])> {
+/// The commands due at `now` in the cell `cell`, each with its id, in
+/// issue order.
+pub fn due_commands(cell: [u8; 16], s: &CellState, now: Timestamp) -> Vec<(CellCommand, [u8; 16])> {
     let mut out = Vec::new();
     let mut seen: BTreeSet<(AccountId, Timestamp)> = BTreeSet::new();
     for (_, b) in s.engine().core.roster().bindings() {
@@ -217,13 +229,13 @@ pub fn due_commands(s: &CellState, now: Timestamp) -> Vec<(CellCommand, [u8; 16]
         };
         if end <= now && s.binding_end_due(b.account, now) && seen.insert((b.account, end)) {
             let cmd = CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account: b.account });
-            let id = command_id(&cmd, Some(end), 0);
+            let id = command_id(cell, &cmd, Some(end), 0);
             out.push((cmd, id));
         }
     }
     for core in fstp_domain::due(&s.engine().core, now) {
         let cmd = CellCommand::Engine(fstp_engine::Command::Core(core));
-        let id = next_occurrence_id(s, &cmd);
+        let id = next_occurrence_id(cell, s, &cmd);
         out.push((cmd, id));
     }
     out
@@ -261,7 +273,7 @@ pub async fn tick<S: SessionSource + ?Sized>(
     sessions: &S,
     now: Timestamp,
 ) -> Vec<TickItem> {
-    let due = due_commands(&engine.state(), now);
+    let due = due_commands(engine.cell(), &engine.state(), now);
     let mut out = Vec::with_capacity(due.len());
     for (command, id) in due {
         if is_sweep(&command) {
@@ -304,7 +316,7 @@ pub async fn timeline_step(engine: &CellEngine, now: Timestamp) -> Vec<TickItem>
         let cmd = TimelineCommand::Plan {
             records: chunk.to_vec(),
         };
-        let id = fstp_timeline::command_id(&cmd);
+        let id = fstp_timeline::command_id(engine.cell(), &cmd);
         let command = CellCommand::Timeline(cmd);
         let result = issue(engine, command.clone(), id, Vec::new(), now).await;
         out.push(TickItem {
@@ -318,7 +330,7 @@ pub async fn timeline_step(engine: &CellEngine, now: Timestamp) -> Vec<TickItem>
         let Some(f) = fstp_timeline::firing(&engine.state(), &event, now) else {
             continue;
         };
-        let id = fstp_timeline::command_id(&f.command);
+        let id = fstp_timeline::command_id(engine.cell(), &f.command);
         let command = CellCommand::Timeline(f.command);
         let result = issue(engine, command.clone(), id, f.bodies, now).await;
         out.push(TickItem {

@@ -20,7 +20,7 @@
 // answers, and the Mailbox link shows its open count once `me.mailbox`
 // answers. A failed read leaves the links every signed-in person has.
 
-import { get, ok, record } from './api.js';
+import { type Reply, get, ok, record } from './api.js';
 import { h } from './dom.js';
 import { PATHS, t } from './layout.js';
 import { AUTH_EN, type AuthMessageId } from './messages.en.js';
@@ -171,7 +171,28 @@ export function appShell(main: HTMLElement): void {
   // `main` (WCAG 2.2 SC 2.4.1).
   body.before(topBar(mailbox));
   body.after(footer());
-  void loadShell(list, chip, mailbox);
+  setup = loadShell(list, chip, mailbox);
+}
+
+/** Whether the organisation waits for its activation, as the shell read it. */
+let setup: Promise<boolean> = Promise.resolve(false);
+
+/**
+ * Whether the organisation waits for its activation (ADR-021), as the
+ * shell's read of `me.roles` found it: the setup gate refused the read,
+ * or the caller is a tenant admin of an organisation not yet active. A
+ * page then leaves out a read the setup gate refuses, which the browser
+ * would log as an error (ADR-014). False when the shell is not mounted
+ * or a read failed: the cell still refuses what the gate refuses.
+ */
+export function awaitsActivation(): Promise<boolean> {
+  return setup;
+}
+
+/** Whether `r` is the setup gate's refusal: `refused` under rule `ADR-021`. */
+export function isSetupRefusal(r: Reply): boolean {
+  const b = record(r.body);
+  return r.status === 403 && b?.['code'] === 'refused' && b['rule'] === 'ADR-021';
 }
 
 /**
@@ -180,20 +201,22 @@ export function appShell(main: HTMLElement): void {
  * the onboarding links alone and no Mailbox or Notifications link, since
  * the cell refuses those pages until then. Anyone else then reads
  * `me.mailbox` for the open count. A failed read changes nothing.
+ * Gives whether the organisation waits for its activation
+ * ([`awaitsActivation`]).
  */
-async function loadShell(list: HTMLElement, chip: HTMLElement, mailbox: HTMLElement): Promise<void> {
+async function loadShell(list: HTMLElement, chip: HTMLElement, mailbox: HTMLElement): Promise<boolean> {
   try {
     const r = await get(ME_ROLES);
-    if (!ok(r)) return;
+    if (!ok(r)) return isSetupRefusal(r);
     const roles = navRolesOf(r.body);
     chip.replaceChildren(chipText(chipRolesOf(r.body)));
-    if (roles === null) return;
+    if (roles === null) return false;
     if (roles.tenantAdmin && (await awaitingActivation())) {
       fillNav(list, { ...roles, setup: true });
       for (const a of Array.from(document.querySelectorAll('a[data-tool="mailbox"], a[data-tool="notices"]'))) {
         a.closest('li')?.remove();
       }
-      return;
+      return true;
     }
     fillNav(list, roles);
     const m = await get(ME_MAILBOX);
@@ -202,8 +225,9 @@ async function loadShell(list: HTMLElement, chip: HTMLElement, mailbox: HTMLElem
       mailbox.setAttribute('data-open', String(open));
       mailbox.replaceChildren(t('shell.mailbox_count', { count: String(open) }));
     }
+    return false;
   } catch {
-    return;
+    return false;
   }
 }
 

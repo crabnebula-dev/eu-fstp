@@ -9,7 +9,9 @@
 //   (`audit.entries`) and the vault answers its decisions used
 //   (`audit.vault_outcomes`), read-only (SA-08, Daniel 2026-11-15).
 // - The auditor and the tenant admins read the unmask records
-//   (`audit.unmasks`, ADR-023 reading 11). A reader the cell refuses the
+//   (`audit.unmasks`, ADR-023 reading 11). The page asks for them only
+//   when the caller's roles may read them (`readsUnmasks`), so the
+//   coordinator gets no refused read. A reader the cell refuses the
 //   entries sees a note saying whose they are.
 // - ADR-007: a text appears by its id only. Every server value is shown
 //   as text through `h`, so no string reaches an HTML parser (ADR-014).
@@ -23,10 +25,12 @@ import {
   pageI18n,
   readOp,
   selectEl,
+  type Answer,
   type Frame,
   type JudgingPage,
   type PageEnv,
 } from "../reviewer/kit.js";
+import { myRoles } from "../home/session.js";
 import { AUDIT_LABELS } from "./messages.en.js";
 import {
   KIND_LABELS,
@@ -35,6 +39,7 @@ import {
   isOutcomes,
   isUnmasks,
   kindsOf,
+  readsUnmasks,
   shortHash,
   utcMinute,
   type AuditLog,
@@ -42,6 +47,12 @@ import {
   type Outcomes,
   type Unmasks,
 } from "./model.js";
+
+/** The unmask records of a caller whose roles may not read them: never asked for. */
+const NOT_ASKED: Answer<Unmasks> = Object.freeze({
+  ok: false,
+  problem: Object.freeze({ kind: "refused", code: "not_asked", rule: null }),
+});
 
 /** The label of `id` when the catalogue holds it, else `fallback` as plain text. */
 function labelOr(t: I18n, id: string, fallback: string, args?: Readonly<Record<string, string>>): string {
@@ -220,9 +231,11 @@ async function mountAuditLog(env: PageEnv, params: Readonly<Record<string, strin
   const t = pageI18n(env, AUDIT_LABELS);
   const f: Frame = frame(env, t, t.label("audit.title", { programme }));
   await guarded(f, async () => {
+    const roles = await myRoles();
+    const asksUnmasks = readsUnmasks(roles.kind === "roles" ? roles.roles : null, programme);
     const [log, unmasks, outcomes] = await Promise.all([
       readOp(env, "audit.entries", { programme }, isAuditLog),
-      readOp(env, "audit.unmasks", { programme }, isUnmasks),
+      asksUnmasks ? readOp(env, "audit.unmasks", { programme }, isUnmasks) : Promise.resolve(NOT_ASKED),
       readOp(env, "audit.vault_outcomes", { programme }, isOutcomes),
     ]);
     const parts: Child[] = [h("p", { class: "fstp-hint", id: "audit-intro" }, [t.label("audit.intro")])];

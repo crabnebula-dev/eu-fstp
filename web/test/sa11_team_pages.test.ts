@@ -7,6 +7,7 @@
 import type { ApiClient, ApiOutcome, OperationRef } from "../src/core/api.js";
 import { NAME_TAKEN_RULE, nameBody, nameTaken } from "../src/auth/pages/account.js";
 import { AUTH_EN } from "../src/auth/messages.en.js";
+import { isSetupRefusal } from "../src/auth/appshell.js";
 import { navRolesOf, siteLinks } from "../src/auth/sitenav.js";
 import { TEAM_LABELS } from "../src/admin/team/messages.en.js";
 import {
@@ -391,4 +392,18 @@ test("r_cf_03_sa11_unique_taken_name_shows_the_plain_message", () => {
   const message: string = AUTH_EN.messages["account.name.taken"];
   eq(message, "This name is already used in your organisation.", "the plain message");
   assert(!/\d|@/.test(message), "the message names no account");
+});
+
+/**
+ * SA-11, ADR-021, ADR-014: before activation the setup gate refuses the
+ * display name read, so the account page does not ask for it: the
+ * browser would log the refusal as an error. The shell tells the setup
+ * gate's refusal of `me.roles` apart from any other answer.
+ */
+test("adr021_sa11_account_page_knows_the_setup_gate_refusal", () => {
+  assert(isSetupRefusal({ status: 403, body: { code: "refused", rule: "ADR-021" } }), "the setup gate");
+  assert(!isSetupRefusal({ status: 403, body: { code: "refused", rule: "R-AC-01" } }), "another rule");
+  assert(!isSetupRefusal({ status: 401, body: { code: "unauthenticated" } }), "no session");
+  assert(!isSetupRefusal({ status: 200, body: { code: "refused", rule: "ADR-021" } }), "an answer");
+  assert(!isSetupRefusal({ status: 0, body: undefined }), "no reply");
 });

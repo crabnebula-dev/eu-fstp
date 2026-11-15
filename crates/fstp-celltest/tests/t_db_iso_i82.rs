@@ -90,9 +90,13 @@ const ESCAPES: [(&str, &str); 14] = [
         "pg_read_file",
         "SELECT length(pg_read_file('postgresql.conf'))",
     ),
+    // The program reads its input. A program that exits without reading,
+    // such as `true`, races the server's write of the row: when it exits
+    // first, the COPY fails with a broken pipe and the open path printed
+    // nothing (CI run 43759607081).
     (
         "COPY PROGRAM",
-        "COPY (SELECT 1) TO PROGRAM 'true'; SELECT 'opened'",
+        "COPY (SELECT 1) TO PROGRAM 'cat >/dev/null'; SELECT 'opened'",
     ),
     ("lo_import", "SELECT lo_import('/etc/hosts')"),
     (

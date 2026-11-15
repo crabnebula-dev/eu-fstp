@@ -510,20 +510,48 @@ test.describe('demo sign-in with the flag', () => {
 // Without the flag
 // ---------------------------------------------------------------------------
 
-/**
- * The status of `GET` and of a same-origin `POST` on the demo sign-in
- * route of `origin`, from a browser page of that origin. The browser
- * resolves names under `localhost` (RFC 6761), and sends the `Origin`
- * and `X-FSTP-Request` fields a state-changing call needs.
- */
 /** The demo modules of `web/src/demo`, which the cell serves only with the flag. */
 const DEMO_MODULES = ['/assets/demo/notice.js', '/assets/demo/signin.js', '/assets/demo/people.js'] as const;
 
+/** The cell's own answer to a browser navigation, before any redirect. */
+interface FirstAnswer {
+  readonly status: number;
+  readonly location: string | null;
+  readonly cookie: string | null;
+}
+
+/**
+ * The first answer to the navigation that ended in `r`. Since the SA-09
+ * amendment, a browser page request for a path the cell does not serve
+ * is redirected (303) to home, so the final status of `page.goto` is
+ * that of home, not that of the path asked for.
+ */
+async function firstAnswer(r: Awaited<ReturnType<Page['goto']>>): Promise<FirstAnswer> {
+  if (r === null) return { status: 0, location: null, cookie: null };
+  let req = r.request();
+  for (let prev = req.redirectedFrom(); prev !== null; prev = req.redirectedFrom()) req = prev;
+  const first = await req.response();
+  if (first === null) return { status: 0, location: null, cookie: null };
+  return {
+    status: first.status(),
+    location: await first.headerValue('location'),
+    cookie: await first.headerValue('set-cookie'),
+  };
+}
+
+/**
+ * The answers on the demo sign-in route of `origin`, from a browser page
+ * of that origin: the first answer to a `GET` navigation and to one for
+ * a path that does not exist, and the status of a same-origin `POST`.
+ * The browser resolves names under `localhost` (RFC 6761), and sends the
+ * `Origin` and `X-FSTP-Request` fields a state-changing call needs.
+ */
 async function probeRoute(
   browser: Browser,
   origin: string,
 ): Promise<{
-  readonly get: number;
+  readonly get: FirstAnswer;
+  readonly unknown: FirstAnswer;
   readonly post: number;
   readonly people: number;
   readonly switched: number;
@@ -532,14 +560,15 @@ async function probeRoute(
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
-    const g = await page.goto(`${origin}${DEMO_SIGNIN_PATH}`);
+    const g = await firstAnswer(await page.goto(`${origin}${DEMO_SIGNIN_PATH}`));
+    const unknown = await firstAnswer(await page.goto(`${origin}${DEMO_SIGNIN_PATH}-no-such-route`));
     await page.goto(`${origin}/auth/login`);
     const p = await call(page, origin, 'POST', DEMO_SIGNIN_PATH, { token: '00' });
     const people = await call(page, origin, 'GET', DEMO_PEOPLE_PATH);
     const switched = await call(page, origin, 'POST', DEMO_SWITCH_PATH, { account: '1' });
     const assets: number[] = [];
     for (const m of DEMO_MODULES) assets.push((await page.request.get(`${origin}${m}`)).status());
-    return { get: g?.status() ?? 0, post: p.status, people: people.status, switched: switched.status, assets };
+    return { get: g, unknown, post: p.status, people: people.status, switched: switched.status, assets };
   } finally {
     await context.close();
   }
@@ -570,7 +599,11 @@ test.describe('demo sign-in without the flag', () => {
     if (plain === null) throw new Error('the cell without the flag did not start');
     const origin = plain.cell.origin;
     const probe = await probeRoute(browser, origin);
-    expect(probe.get, `GET ${DEMO_SIGNIN_PATH} without the flag`).toBe(404);
+    // SA-09 amendment: a page navigation to the route gets the answer of a
+    // path that does not exist, 404 or the 303 to home, and no cookie.
+    expect([404, 303], `GET ${DEMO_SIGNIN_PATH} without the flag`).toContain(probe.get.status);
+    expect(probe.get, `GET ${DEMO_SIGNIN_PATH} without the flag answers as an unknown path`).toEqual(probe.unknown);
+    expect(probe.get.cookie, `GET ${DEMO_SIGNIN_PATH} without the flag sets no cookie`).toBeNull();
     expect(probe.post, `POST ${DEMO_SIGNIN_PATH} without the flag`).toBe(404);
     expect(probe.people, `GET ${DEMO_PEOPLE_PATH} without the flag`).toBe(404);
     expect(probe.switched, `POST ${DEMO_SWITCH_PATH} without the flag`).toBe(404);
@@ -603,7 +636,8 @@ test.describe('demo sign-in without the flag', () => {
 
     flagged = await OwnCell.start([DEMO_SIGNIN_FLAG]);
     const served = await probeRoute(browser, flagged.cell.origin);
-    expect(served.get, `GET ${DEMO_SIGNIN_PATH} with the flag is served`).not.toBe(404);
+    expect(served.get.status, `GET ${DEMO_SIGNIN_PATH} with the flag is served`).toBe(200);
+    expect(served.get, `GET ${DEMO_SIGNIN_PATH} with the flag differs from an unknown path`).not.toEqual(served.unknown);
     expect(served.people, `GET ${DEMO_PEOPLE_PATH} with the flag asks for a demo session`).toBe(401);
     expect(served.switched, `POST ${DEMO_SWITCH_PATH} with the flag asks for a demo session`).toBe(401);
     expect(served.assets, `the demo modules ${DEMO_MODULES.join(", ")} with the flag`).toEqual(DEMO_MODULES.map(() => 200));

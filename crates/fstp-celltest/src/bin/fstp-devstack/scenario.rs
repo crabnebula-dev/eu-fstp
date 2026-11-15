@@ -38,6 +38,11 @@
 //! (`CellHandle::negotiation_opened`), through the vault's own internal
 //! request. The I-17 browser specs rest on that stand-in.
 
+#![allow(
+    clippy::disallowed_macros,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
+
 use std::collections::BTreeSet;
 
 use fstp_cell_core::CellCommand;

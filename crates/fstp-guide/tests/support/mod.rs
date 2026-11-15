@@ -636,10 +636,13 @@ pub(crate) const MUTATIONS: &[Mutation] = &[
         from: r#""name":"Placeholder activity type B, pending the closed list (O-23)""#,
         to: r#""name":"Synthetic activity type B""#,
     },
+    // The action end, located by its parameter path: the last reporting
+    // period ends on the same day (P-57 periods, m9 design AD6). The new
+    // end is later, so every period still lies within the action.
     Mutation {
         key: "P-57.end",
-        from: r#""end":"2028-12-31""#,
-        to: r#""end":"2028-06-30""#,
+        from: r#""p57_action_dates":{"end":"2028-12-31""#,
+        to: r#""p57_action_dates":{"end":"2029-06-30""#,
     },
     Mutation {
         key: "P-59",
