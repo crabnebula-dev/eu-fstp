@@ -238,7 +238,7 @@ Least invasive design: **no new record.** A planned row is an invitation of an O
 - After activation the people admin page offers the grant once the invitee has accepted (`people/model.ts` `grantOffered`). The server composes `GrantRole` as before, with no confidentiality text for Operations.
 - The progress page reads "Not needed" for identity on these rows.
 
-Interim, pending Daniel: the invitee of a planned row still gets the invitation email when the row is added, since accepting it is what binds the account. A row that sends nothing until activation would need the grant to name an account by exact email, which no read gives.
+Decided by Daniel on 2026-11-15: the invitee of a planned row gets the invitation email when the row is added, since accepting it is what binds the account. Operations invitees accept the role-only terms, as above. A row that sends nothing until activation would need the grant to name an account by exact email, which no read gives.
 
 ### 15.4 Dates on invitations (answer 3)
 

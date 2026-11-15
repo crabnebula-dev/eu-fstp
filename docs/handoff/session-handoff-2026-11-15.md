@@ -29,7 +29,14 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | r_nf_08 caller nonce | `approval_challenge` listed in NOT_SEALS (done) |
 | Audit log readers | Tenant admins and the programme's FSTP coordinator read it read-only, beside the auditor (lane `m4/audit-readers`, SA-08) |
 | R-PC-03 in the reference | Every publisher is refused while the call is unapproved (approved, merged) |
-| Matrix: guard refusal versus expected step-up | Not decided. Lane m4/audit-publish-import let a guard refusal agree with an expected step-up (design 3.7 step 5 runs the dry run first). Held out of main as it widens an invariant test; Daniel to decide |
+| Matrix: guard refusal versus expected step-up | Accepted (evening). A guard refusal agrees with an expected step-up, as design 3.7 step 5 runs the dry run first. Restore the change held in 5eaea99a |
+| Devstack and Node | ADR-003 amended: the `devstack` CI part may compile the auth pages with tsc before `cargo test` |
+| ADR-021 | Account security set open to all before activation; request_activation checks conditions, no `OnboardingCompleted` record; `/p` pages answer an HTML "not published yet" page |
+| ADR-022 | Readings accepted; a building tenant admin gets an "override available" mailbox item |
+| ADR-023 | No notice to the unmasked person; a declared conflict is allowed and flagged in the record and audit read; purpose stays 500 characters; unmask works on DRAFT proposals too |
+| Wizard | Planned rows email at once; Operations invitees accept role-only terms |
+| Cell routes | AddPasskey digest over the command id accepted; identity release stays lead-only |
+| P-41 reminder | A timeline event kind at the end of P-41 per action, and a mailbox message to tenant admins linking to the erasure request |
 
 ## Lanes at the time of handoff
 
@@ -53,9 +60,7 @@ Open points from the merged lanes: `Workspaces` and the R-NG-06 acknowledgement 
 
 ## Open questions for Daniel (not blocking)
 
-- ADR-021: sessions and passkeys open to everyone before activation (R-LG-04); `tenant.request_activation` without the `OnboardingCompleted` record; `/p` pages answer JSON before activation.
-- ADR-022: a non-builder admin cannot use the override; the override skips the Sybil check; a mailbox item for overridable activations.
-- ADR-023: telling the unmasked person (TODO(legal)); a coordinator with a conflict; 500-character purpose; purpose retention (TODO(legal)); DRAFT parties read closed.
-- Wizard: planned rows email at once; Operations invitees accept terms.
-- Cell routes: AddPasskey digest bound to the command id; release subject defaults to the lead; Ticket key not yet in the keystore.
+- ADR-021: the admin's own set and the fail-closed port default (not asked yet).
+- ADR-023: legal basis and retention of the purpose text (TODO(legal)); whether another FSTP coordinator of the programme counts as unmaskable staff (interim: yes).
+- ADR-023 notice: Daniel chose no notice; the GDPR transparency TODO(legal) stays.
 - Not finishable here: M7 live-model evaluation, M10 Mythos run, M11 pilot, M12 calibration.

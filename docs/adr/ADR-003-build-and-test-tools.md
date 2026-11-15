@@ -89,6 +89,7 @@ tsc and Playwright run on Node.js, and Playwright installs through npm. The Deci
 - With `--ignore-scripts`, no package lifecycle script runs. That also keeps native add-on builds, and the Python that node-gyp needs, out of the build.
 - Playwright browsers are fetched by the controlled CI step that the Rules above require, never during `npm ci`. Their versions and SHA-256 digests are recorded at first use.
 - `cargo test` never needs Node.js. Playwright runs in its own CI job, `e2e (Playwright)` (design section 14.8).
+  - Exception, decided by Daniel on 2026-11-15: the CI part `devstack` compiles the auth pages with tsc before it runs `cargo test -p fstp-celltest --test slice_devstack`, since `fstp-devstack` serves the compiled pages. Run locally, that one test needs Node.js too. Every other `cargo test` still runs without Node.js.
 
 ### Lockfile gate
 

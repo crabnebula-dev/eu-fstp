@@ -95,9 +95,14 @@ Every scene of the e2e cell starts from the tenant's provisioning and runs onboa
 - The authorisation matrices gain the `Setup` class and the `AwaitingActivation` state. Their onboarding cells now expect `Setup` wherever the gate refuses.
 - The interim fake port answer keeps the test worlds from before the tenant part working. Those worlds never run in production, where provisioning writes the tenant part first.
 
+## Decided by Daniel, 2026-11-15 (evening)
+
+1. **Account security set.** Accepted. Before activation every signed-in account manages its own sessions and passkeys (R-LG-04). Everything else stays gated.
+2. **Activation request.** Accepted. `tenant.request_activation` checks the completion conditions itself and does not ask for the `OnboardingCompleted` record.
+3. **Public pages.** A `/p` page of an organisation that is not yet activated answers with a plain HTML page saying its pages are not published yet. It keeps the refusal's status code. It replaces the JSON refusal.
+
 ## Open points for Daniel
 
-1. Accept the three readings: the admin's own set, the account security set under R-LG-04, and the fail-closed port default.
-2. `tenant.request_activation` checks the completion conditions itself: every step validated, two verified admins and both signatory roles held. It does not ask for the `OnboardingCompleted` record. Whether it should is not decided here.
-3. `SPEC/02-domain/roles-and-sod.md` lets a tenant admin record the manual identity check of another account. No API core operation does that yet. When one exists, it joins the onboarding set, since completion needs two verified admins.
-4. Public MCP tools (I-87, R-MC-04) are refused before activation. No programme exists then, so there is nothing for them to show.
+1. Accept the admin's own set and the fail-closed port default.
+2. `SPEC/02-domain/roles-and-sod.md` lets a tenant admin record the manual identity check of another account. No API core operation does that yet. When one exists, it joins the onboarding set, since completion needs two verified admins.
+3. Public MCP tools (I-87, R-MC-04) are refused before activation. No programme exists then, so there is nothing for them to show.

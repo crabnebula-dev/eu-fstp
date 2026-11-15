@@ -50,8 +50,11 @@ So every activation is either approved by a tenant admin outside the builder set
 - `SPEC/02-domain/roles-and-sod.md`, a NOTE under SoD-18 that the override does not apply there.
 - `docs/design/spec-amendments.md` SA-06 records the amendment.
 
+## Decided by Daniel, 2026-11-15 (evening)
+
+1. **Readings accepted.** Only a tenant admin of the builder set may override. A non-builder admin uses the normal approval and is refused on the override path. The Sybil check is not asked for an override.
+2. **Mailbox item.** A tenant admin of the builder set gets one mailbox item when activation is requested. It says an override is available and links to the approval inbox, where the "Approve as override" form is.
+
 ## Open points for Daniel
 
-1. Accept the readings above, in particular that a non-builder admin is refused on the override path and that the Sybil check is not asked for an override.
-2. The mailbox lists an activation item only for admins who may approve normally. Whether a building admin should also see an "override available" item there is not decided here.
-3. The audit read `audit.entries` is not built yet. Until it is, the override shows in the audit port's entries and in the ledger.
+1. The audit read `audit.entries` is not built yet. Until it is, the override shows in the audit port's entries and in the ledger.

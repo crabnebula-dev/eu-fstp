@@ -84,10 +84,14 @@ So every Judging role other than the FSTP coordinator stays masked as before. Co
 - Vault (`crates/fstp-vault/tests/i17_adr023_unmask_ticket.rs`): an unmask ticket releases without a negotiation fact, a release ticket still needs one, it is single use and no write ticket, and the use is journalled.
 - Web (`web/test/coordinator_unmask.test.ts`) and demo (`e2e/speedrun/adr023_coordinator_unmask.spec.ts`): the coordinator pages offer the control, and coordinator C1 unmasks an applicant and a reviewer handle while a committee member cannot.
 
+## Decided by Daniel, 2026-11-15 (evening)
+
+1. **Telling the unmasked person.** Nobody is told, and no message is sent. The unmask is logged in the ledger, the vault chain and the audit read. `TODO(legal)`: the GDPR transparency duties for this processing still need Daniel's legal review.
+2. **A conflicted coordinator.** A coordinator with a declared conflict on the proposal may still unmask. `PartyUnmasked` records that the conflict existed, and `audit.unmasks` shows it.
+3. **The purpose bound.** 500 characters, kept.
+4. **Drafts.** The unmask and the parties read work at any proposal stage, DRAFT included, as reading 3 says.
+
 ## Open points for Daniel
 
-1. **Telling the unmasked person.** Whether the person is told that the coordinator saw who they are, and when. `TODO(legal)`: the GDPR transparency duties for this processing need Daniel's legal review. Interim: nobody is told, and no message is sent.
-2. **A conflicted coordinator.** A coordinator with a declared or detected conflict on a proposal can still unmask its parties. I-03 covers content and reviewer acts, not identity. Whether a conflict should bar the unmask is open.
-3. **The purpose bound.** 500 characters is the lane's choice.
-4. **The legal basis and retention of the purpose text.** `TODO(legal)`: the purpose is personal data of the coordinator and may name the subject's case. Its retention follows the programme's confidential texts until Daniel decides.
-5. **Staff of the programme.** Whether another FSTP coordinator of the same programme counts as staff that may be unmasked. Interim: yes.
+1. **The legal basis and retention of the purpose text.** `TODO(legal)`: the purpose is personal data of the coordinator and may name the subject's case. Its retention follows the programme's confidential texts until Daniel decides.
+2. **Staff of the programme.** Whether another FSTP coordinator of the same programme counts as staff that may be unmasked. Interim: yes.
