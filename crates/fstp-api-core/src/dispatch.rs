@@ -291,20 +291,32 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The journal of `st`, caught up first with the ledger the engine of
+/// `ports` serves (`journal.rs`).
+fn journal_of<'a, P: Seams>(ports: &P, st: &'a State) -> MutexGuard<'a, Journal> {
+    let mut j = lock(&st.journal);
+    j.sync(|after| ports.engine().ledger_after(after));
+    j
+}
+
+/// The journal of a call, caught up with the ledger (`journal.rs`).
+fn journal<'a, P: Seams>(call: &'a Call<'_, P>) -> MutexGuard<'a, Journal> {
+    journal_of(call.ports, call.st)
+}
+
 /// What the journal knows of the latest plan of `p` (`journal.rs`).
-fn latest_plan(st: &State, p: ProposalId) -> forms::LatestPlan {
-    match lock(&st.journal).latest_plan(p) {
+fn latest_plan<P: Seams>(ports: &P, st: &State, p: ProposalId) -> forms::LatestPlan {
+    match journal_of(ports, st).latest_plan(p) {
         Ok(x) => forms::LatestPlan::Known(x),
         Err(Unknown) => forms::LatestPlan::Unknown,
     }
 }
 
 /// The refusal of a read model whose proposal history the journal does
-/// not hold (`journal.rs`, fail closed).
+/// not hold (`journal.rs`, fail closed): the engine serves no ledger, or
+/// a bound was passed.
 fn history_unknown() -> ApiError {
-    ApiError::NotImplemented(
-        "the history of a proposal recorded outside this API core: domain read accessors (lane W1b)",
-    )
+    ApiError::refused(ErrorCode::Unavailable, "history")
 }
 
 /// The refusal of a read of content this core does not hold
@@ -677,7 +689,7 @@ pub(crate) async fn run<P: Seams>(
         forms::request_form(spec, &op.request),
         forms::id_param(&op.request, "proposal"),
     ) {
-        let latest = latest_plan(st, ProposalId::from_raw(p));
+        let latest = latest_plan(ports, st, ProposalId::from_raw(p));
         forms::name_plans(&form, &mut op.request, latest);
     }
     let digest_for = |account: Option<AccountId>| {
@@ -950,7 +962,7 @@ fn build<P: Seams>(
     // members before the digest. The build only learns whether a missing
     // member is missing because the journal does not hold the history.
     cx.plan_unknown = forms::id_param(&op.request, "proposal").is_some_and(|p| {
-        latest_plan(call.st, ProposalId::from_raw(p)) == forms::LatestPlan::Unknown
+        latest_plan(call.ports, call.st, ProposalId::from_raw(p)) == forms::LatestPlan::Unknown
     });
     forms::build(form, &op.request, &refs, &cx, &mut draw)
 }
@@ -1241,7 +1253,7 @@ async fn command<P: Seams>(
 fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
     use fstp_domain::command::Command as Core;
     {
-        let mut journal = lock(&call.st.journal);
+        let mut journal = journal(call);
         journal.fold(cmd, &call.state, call.now);
         journal.fold_round(cmd, actor);
     }
@@ -1795,7 +1807,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let c = call_param(call, op)?;
             // Every submitted proposal of the call, each known to the
             // journal: an unknown one fails the read closed.
-            let journal = lock(&call.st.journal);
+            let journal = journal(call);
             let mut notifiable = Vec::new();
             for p in proposals_of_call(&call.state, c) {
                 if fstp_domain::view::proposal_state(&call.state.core, p)
@@ -2954,7 +2966,7 @@ fn score_sheet<P: Seams>(
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
     let p = assignment.proposal;
     let tag = fstp_domain::view::proposal_state(&call.state.core, p);
-    let journal = lock(&call.st.journal);
+    let journal = journal(call);
     let unknown = |Unknown| call.refuse(history_unknown());
     let submitted = journal.submitted_plan(p).map_err(unknown)?;
     let (stage, plan) = match tag {
@@ -3048,7 +3060,7 @@ fn stage2_thread<P: Seams>(
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
     let p = assignment.proposal;
     let tag = fstp_domain::view::proposal_state(&call.state.core, p);
-    let journal = lock(&call.st.journal);
+    let journal = journal(call);
     // The "no questions" marks are read only for a known proposal.
     let entries: Vec<ThreadEntry> = journal
         .thread(p)
@@ -3155,12 +3167,10 @@ fn ranking<P: Seams>(
     Ok(out)
 }
 
-/// The refusal of a read of a cut-off round this core did not see
-/// opened (`journal.rs`, fail closed).
+/// The refusal of a read of a cut-off round the journal does not hold
+/// (`journal.rs`, fail closed).
 fn round_unknown() -> ApiError {
-    ApiError::NotImplemented(
-        "a cut-off round opened outside this API core: a domain read accessor of the rounds (lane W1b)",
-    )
+    ApiError::refused(ErrorCode::Unavailable, "round")
 }
 
 /// The `round` path parameter of a read.
@@ -3183,7 +3193,7 @@ fn round_param<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<DecisionId, ApiE
 /// in the same way.
 fn round_target<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<ReadTarget, ApiError> {
     let r = round_param(call, op)?;
-    let known = lock(&call.st.journal).round(r).map(|x| x.call);
+    let known = journal(call).round(r).map(|x| x.call);
     Ok(ReadTarget::Call(
         known.unwrap_or_else(|| absent_call(&call.state)),
     ))
@@ -3465,7 +3475,7 @@ async fn round_view<P: Seams>(
     viewer: AccountId,
 ) -> Result<crate::model::RoundView, ApiError> {
     use crate::model::{CandidateRow, RoundRow, RoundView, RoundViewer};
-    let facts = lock(&call.st.journal).round(r).cloned();
+    let facts = journal(call).round(r).cloned();
     let facts = facts.ok_or_else(|| call.refuse(round_unknown()))?;
     let core = &call.state.core;
     let programme = forms::programme_of_call(&call.state, facts.call)
@@ -3664,7 +3674,7 @@ fn own_questions<P: Seams>(
     p: ProposalId,
 ) -> Result<Vec<crate::views::Question>, ApiError> {
     let review = call.state.core.review();
-    let entries: Vec<ThreadEntry> = lock(&call.st.journal)
+    let entries: Vec<ThreadEntry> = journal(call)
         .thread(p)
         .map_err(|Unknown| call.refuse(history_unknown()))?
         .to_vec();
@@ -3712,7 +3722,7 @@ fn notices<P: Seams>(
             mine.insert(proposal);
         }
     }
-    let journal = lock(&call.st.journal);
+    let journal = journal(call);
     let mut out = Vec::new();
     for p in mine {
         let tag = fstp_domain::view::proposal_state(&call.state.core, p);

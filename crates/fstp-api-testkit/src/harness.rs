@@ -1304,6 +1304,16 @@ impl fstp_api_core::port::AsyncEngine for WorldEngine {
         Some(out)
     }
 
+    /// The world's ledger after `after`, for the journal of the API core.
+    fn ledger_after(&self, after: fstp_ledger::Seq) -> Option<Vec<fstp_ledger::Entry<Record>>> {
+        use fstp_ledger::RecordStore;
+        let inner = lock_engine(&self.inner);
+        let mut out = Vec::new();
+        let from = fstp_ledger::Seq::from_raw(after.raw().saturating_add(1));
+        inner.engine.store().read(from, usize::MAX, &mut out).ok()?;
+        Some(out)
+    }
+
     fn creator_inputs(
         &self,
         state: &fstp_engine::EngineState,

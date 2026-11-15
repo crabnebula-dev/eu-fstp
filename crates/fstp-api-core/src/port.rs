@@ -878,6 +878,16 @@ pub trait AsyncEngine: Send + Sync {
     fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
         None
     }
+    /// The cell's ledger entries after `after`, in sequence order, which
+    /// the API core's journal folds before each read (`journal.rs`).
+    /// `None` when the engine serves no ledger. The default filters
+    /// [`AsyncEngine::ledger`]. An engine that reads its store from a
+    /// sequence number answers it directly.
+    fn ledger_after(&self, after: Seq) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
+        let mut all = self.ledger()?;
+        all.retain(|e| e.seq > after);
+        Some(all)
+    }
     /// The shell's creator facts for `cmd` by `ctx` (design section 3.2,
     /// `CreatorInputs`): the facts the engine port's
     /// `fstp_engine::CreatorEnvironment` answers for the same command. The

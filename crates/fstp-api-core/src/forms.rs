@@ -956,9 +956,7 @@ pub(crate) enum LatestPlan {
 
 /// The refusal of a plan member the journal cannot name.
 fn plan_unknown() -> ApiError {
-    ApiError::NotImplemented(
-        "the latest plan of a proposal recorded outside this API core: a domain read accessor (lane W1b)",
-    )
+    ApiError::refused(crate::ErrorCode::Unavailable, "history")
 }
 
 /// Names the plan members the server supplies, in `request`, before the

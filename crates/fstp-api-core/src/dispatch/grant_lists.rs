@@ -207,7 +207,7 @@ pub(super) fn line_review<P: Seams>(
     let content = super::lock(&call.st.content);
     let text =
         |t: Option<fstp_domain::id::TextRef>| t.and_then(|t| content.text(t).map(str::to_owned));
-    let journal = super::lock(&call.st.journal);
+    let journal = super::journal(call);
     let given = journal.line_evidence(r).unwrap_or(&[]);
     let texts = summary
         .lines
