@@ -288,6 +288,23 @@ const ROLE_NAMES: &[&str] = &[
     "auditor",
 ];
 
+/// Every MCP scope as the OAuth server spells it, in the order of
+/// [`crate::Scope::ALL`] ([`crate::Scope::as_str`]).
+const SCOPE_NAMES: &[&str] = &[
+    "calls:read",
+    "proposals:read",
+    "proposals:draft",
+    "proposals:binding",
+    "stage2:draft",
+    "review:read",
+    "review:draft",
+    "ranking:read",
+    "findings:read",
+    "creator:draft",
+    "calls:draft",
+    "audit:read",
+];
+
 /// The party kinds of an unmask (ADR-023), as
 /// `fstp_domain::unmask::PartyKind::wire` spells them.
 const PARTY_KINDS: &[&str] = &[
@@ -1168,6 +1185,48 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("started", Shape::String),
         ])),
     ),
+    // R-MC-03 (lane m4/ops-roles-agents): the caller's live agent
+    // clients, the scopes of their tokens and how the consenting session
+    // logged in. A client name is the client's own untrusted text.
+    (
+        "agents.list",
+        Shape::Array(&Shape::Object(&[
+            m("client", Shape::Id),
+            opt("name", Shape::String),
+            m("scopes", Shape::Array(&Shape::Enum(SCOPE_NAMES))),
+            m(
+                "method",
+                Shape::Enum(&["passkey", "magic_link", "opaque", "eudi_wallet"]),
+            ),
+            opt("since", Shape::String),
+            opt("until", Shape::String),
+        ])),
+    ),
+    // R-MC-03: the caller's own calls through one agent client, newest
+    // first. No request content.
+    (
+        "agents.activity",
+        Shape::Array(&Shape::Object(&[
+            m("op", Shape::String),
+            m("outcome", Shape::Enum(&["accepted", "pending", "refused"])),
+            opt("rule", Shape::String),
+            m("at", Shape::String),
+        ])),
+    ),
+    // J1 (lane m4/ops-roles-agents): the Drafting, Judging and Operations
+    // bindings of a programme, held or voided, by account id only.
+    (
+        "roles.list",
+        Shape::Array(&Shape::Object(&[
+            m("binding", Shape::Id),
+            m("account", Shape::Id),
+            m("role", Shape::Enum(ROLE_NAMES)),
+            m("start", Shape::String),
+            opt("end", Shape::String),
+            m("state", Shape::Enum(&["active", "suspended", "voided"])),
+            opt("rule", Shape::String),
+        ])),
+    ),
     (
         "me.begin_verification",
         Shape::Object(&[m("redirect", Shape::String)]),
@@ -1813,6 +1872,14 @@ mod tests {
     fn i86_me_roles_role_names_are_the_wire_names() {
         let want: Vec<&str> = Role::ALL.iter().map(|r| role_wire_name(*r)).collect();
         assert_eq!(ROLE_NAMES, want.as_slice());
+    }
+
+    /// R-MC-03: the scopes of `agents.list` are every scope as the OAuth
+    /// server spells it, in declaration order.
+    #[test]
+    fn r_mc_03_agent_scope_names_are_the_oauth_names() {
+        let want: Vec<&str> = crate::Scope::ALL.iter().map(|s| s.as_str()).collect();
+        assert_eq!(SCOPE_NAMES, want.as_slice());
     }
 
     /// SoD-09: each role has its own wire name, in snake case.

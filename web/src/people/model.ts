@@ -212,3 +212,78 @@ export function plausibleEmail(s: string): boolean {
   const at = t.indexOf("@");
   return t.length <= 254 && at > 0 && at === t.lastIndexOf("@") && at < t.length - 1 && !/\s/.test(t);
 }
+
+/** The state of a staff binding (`roles.list`, J1). */
+export type BindingState = "active" | "suspended" | "voided";
+
+const BINDING_STATES: ReadonlySet<string> = new Set(["active", "suspended", "voided"]);
+
+/** One staff binding of a programme, by account id only (I-17). */
+export interface BindingRow {
+  readonly binding: string;
+  readonly account: string;
+  readonly role: string;
+  /** When the binding starts, in microseconds as a decimal string. */
+  readonly start: string;
+  /** Its scheduled end, likewise. Null for an open end. */
+  readonly end: string | null;
+  readonly state: BindingState;
+  /** The rule of a suspension or a voiding, if the reply names one. */
+  readonly rule: string | null;
+}
+
+const DECIMAL_ID = /^(0|[1-9][0-9]{0,38})$/;
+
+/**
+ * Reads the `roles.list` reply, `[{binding, account, role, start, end?,
+ * state, rule?}]`. Null otherwise.
+ */
+export function readBindings(body: unknown): BindingRow[] | null {
+  if (!Array.isArray(body)) return null;
+  const out: BindingRow[] = [];
+  for (const x of body as unknown[]) {
+    const r = record(x);
+    if (r === null) return null;
+    const binding = r["binding"];
+    const account = r["account"];
+    const role = r["role"];
+    const state = r["state"];
+    const rule = r["rule"];
+    if (typeof binding !== "string" || !DECIMAL_ID.test(binding)) return null;
+    if (typeof account !== "string" || !DECIMAL_ID.test(account)) return null;
+    if (typeof role !== "string" || !/^[a-z_]{1,40}$/.test(role)) return null;
+    if (typeof state !== "string" || !BINDING_STATES.has(state)) return null;
+    if (rule !== undefined && typeof rule !== "string") return null;
+    const start = instant(r["start"]);
+    const end = instant(r["end"]);
+    if (typeof start !== "string" || end === undefined) return null;
+    out.push({
+      binding,
+      account,
+      role,
+      start,
+      end,
+      state: state as BindingState,
+      rule: typeof rule === "string" ? rule : null,
+    });
+  }
+  return out;
+}
+
+/** The actions the people admin page offers on a binding: end it, or reinstate a suspended one. */
+export function bindingActions(row: BindingRow): readonly ("end" | "reinstate")[] {
+  switch (row.state) {
+    case "active":
+      return ["end"];
+    case "suspended":
+      return ["reinstate", "end"];
+    case "voided":
+      return [];
+  }
+}
+
+/** The body of `roles.reinstate`: the reason, trimmed. Null when it is empty. */
+export function reinstateBody(reason: string): Record<string, string> | null {
+  const r = reason.trim();
+  return r === "" ? null : { reason: r };
+}

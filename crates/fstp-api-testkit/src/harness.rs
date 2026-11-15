@@ -130,6 +130,11 @@ const IRC_ASSIGNEE: AccountId = AccountId::from_raw(221);
 const IRC_UNDECLARED: AccountId = AccountId::from_raw(222);
 const IRC_CONFLICTED: AccountId = AccountId::from_raw(223);
 const IRC_2: AccountId = AccountId::from_raw(224);
+/// An IRC member whose conflict-of-interest suspension is over: the vault
+/// found it shared the identity of [`DRAFTER`], then no longer does, so
+/// `roles.reinstate` meets a binding it may reinstate (lane
+/// m4/ops-roles-agents).
+const IRC_REINSTATABLE: AccountId = AccountId::from_raw(225);
 /// The team of X.
 const LEAD: AccountId = AccountId::from_raw(301);
 const TEAM: AccountId = AccountId::from_raw(311);
@@ -162,7 +167,7 @@ const PM_INVITEE: AccountId = AccountId::from_raw(408);
 const PM_INVITEE_EMAIL: &str = "pm-invitee@matrix.invalid";
 
 /// Every account of the cast, each with its own verified identity.
-const CAST: [AccountId; 38] = [
+const CAST: [AccountId; 39] = [
     ADMIN_BUILDER,
     ADMIN_PLAIN,
     ADMIN_SOLE,
@@ -201,6 +206,7 @@ const CAST: [AccountId; 38] = [
     AccountId::from_raw(990),
     AccountId::from_raw(991),
     PM_INVITEE,
+    IRC_REINSTATABLE,
 ];
 
 /// The account that stands for `who`, or `None` for no credential.
@@ -417,6 +423,9 @@ pub struct Targets {
     invitation: Option<String>,
     revision: Option<String>,
     binding_end: Option<BindingId>,
+    /// The suspended binding `roles.reinstate` names (lane
+    /// m4/ops-roles-agents).
+    binding_suspended: Option<BindingId>,
     narrative: Option<String>,
     /// The key of a warning of the draft report of P.
     warning: Option<String>,
@@ -659,7 +668,6 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         | "me.end_session"
         | "me.add_passkey"
         | "pending.discard"
-        | "people.accept_invitation"
         | "people.begin_verification"
         | "creator.withdraw_invitation" => obj(vec![]),
         // ADR-023: the subject is the programme manager's binding of P,
@@ -692,6 +700,11 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
                 ("values", step_values(step, &w.admins)),
             ])
         }
+        // J2: an acceptance names the terms version the landing showed.
+        // The link token names no invitation, so the cell meets the
+        // `Input` refusal outside authorisation, as `people.get_invitation`
+        // does (lane m4/ops-roles-agents).
+        "people.accept_invitation" => obj(vec![("terms_version", int(1))]),
         "tenant.invite_admin" => obj(vec![("email", s("new-admin@matrix.invalid"))]),
         "proposal.request_copy" => obj(vec![("email", s("copy@matrix.invalid"))]),
         "tenant.grant_signatory" => obj(vec![
@@ -988,6 +1001,11 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
                     // the release the PAYMENT_APPROVED one.
                     ("request", "payment.approve") => w.targets.accepted.unwrap_or(1).to_string(),
                     ("request", "payment.release") => w.targets.approved.unwrap_or(1).to_string(),
+                    ("binding", "roles.reinstate") => w
+                        .targets
+                        .binding_suspended
+                        .map(|b| b.raw().to_string())
+                        .ok_or("no suspended binding")?,
                     _ => param(name, cell.who, &w.targets, session)?,
                 };
                 path.push_str(&v);
@@ -2244,6 +2262,7 @@ struct Reached {
     round: Option<DecisionId>,
     ranked: Vec<ProposalId>,
     binding_end: Option<BindingId>,
+    binding_suspended: Option<BindingId>,
     /// M5 lane L-API: the drafted contract, the proposed amendment and
     /// the generated report of a GRANTED world, and the payment request
     /// under review and its line of an IN_EXECUTION world.
@@ -2502,6 +2521,10 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         }
         if !activated {
             invite_programme_manager(&mut seed, p)?;
+            // T-AUTHZ-MATRIX: `roles.end` and `roles.reinstate` on the
+            // draft name the binding of its programme manager, the one
+            // held binding a draft has (lane m4/ops-roles-agents).
+            reached.binding_end = binding_of(&seed, p, PM);
         }
         if activated {
             self_grants = request_self_grants(&mut seed, p)?;
@@ -2574,6 +2597,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         invitation: None,
         revision,
         binding_end: reached.binding_end,
+        binding_suspended: reached.binding_suspended,
         narrative,
         warning,
         pending,
@@ -2642,6 +2666,17 @@ fn other_programme(seed: &mut Seeder) -> Result<(), String> {
     Ok(())
 }
 
+/// The held binding of `account` on `p`, if any.
+fn binding_of(seed: &Seeder, p: ProgrammeId, account: AccountId) -> Option<BindingId> {
+    let state = seed.ports.engine.state();
+    state
+        .core
+        .roster()
+        .bindings()
+        .find(|(_, b)| b.account == account && b.programme == p)
+        .map(|(id, _)| id)
+}
+
 /// Ends the binding of `account` on `p`, once every step of the world
 /// that needs it ran.
 fn end_binding_of(
@@ -2704,7 +2739,34 @@ fn staff(seed: &mut Seeder, p: ProgrammeId, reached: &mut Reached) -> Result<(),
     grant(seed, g, RELEASER, p, Role::PaymentReleaser)?;
     grant(seed, g, SIGNATORY, p, Role::ContractSignatory)?;
     grant(seed, g, AUDITOR, p, Role::Auditor)?;
+    reached.binding_suspended = Some(reinstatable(seed, g, p)?);
     Ok(())
+}
+
+/// The IRC binding of [`IRC_REINSTATABLE`], suspended as a conflict of
+/// interest and then cleared: the vault finds the account shares the
+/// identity of [`DRAFTER`] (I-06), then gives it its own identity back.
+/// The suspension stays until a tenant admin reinstates it, and the
+/// clash is over, so `roles.reinstate` may lift it (Identity discovery,
+/// decided 2026-10-25).
+fn reinstatable(seed: &mut Seeder, g: AccountId, p: ProgrammeId) -> Result<BindingId, String> {
+    let binding = grant(seed, g, IRC_REINSTATABLE, p, Role::IrcMember)?;
+    let own = seed
+        .ports
+        .vault
+        .truth()
+        .identity_of(IRC_REINSTATABLE)
+        .ok_or("no identity")?;
+    suspend(seed, IRC_REINSTATABLE)?;
+    seed.ports
+        .vault
+        .change(|t| t.set_identity(IRC_REINSTATABLE, own));
+    vault_changed(seed, IRC_REINSTATABLE)?;
+    let state = seed.ports.engine.state();
+    match state.core.roster().binding(binding).map(|b| b.status) {
+        Some(fstp_domain::roles::BindingStatus::Suspended(_)) => Ok(binding),
+        other => Err(format!("the reinstatable binding is {other:?}")),
+    }
 }
 
 /// Makes `author` the last author of P-01 and P-09 of `p` (R-PC-03 NOTE),
@@ -4988,3 +5050,8 @@ mod unmask_tests;
 
 #[cfg(test)]
 mod api_gaps_tests;
+
+/// Lane m4/ops-roles-agents: `agents.list`, `agents.activity`,
+/// `roles.list`, `roles.reinstate` and the `pending.*` input refusal.
+#[cfg(test)]
+mod ops_roles_agents_tests;

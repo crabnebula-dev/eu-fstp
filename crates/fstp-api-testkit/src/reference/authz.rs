@@ -596,6 +596,11 @@ pub enum Target {
     None,
     /// The programme P.
     Programme,
+    /// A suspended staff binding of the programme P. Only identity
+    /// discovery suspends a binding, and only a Judging one (I-06), so it
+    /// exists once P is active. A draft holds its programme manager's
+    /// Drafting binding only (change D1). Lane m4/ops-roles-agents.
+    SuspendedBinding,
     /// The call C, in any call state.
     Call,
     /// The published call C.
@@ -698,6 +703,7 @@ pub fn target_exists(target: Target, state: StateProfile) -> bool {
     match target {
         Target::None => true,
         Target::Programme => !state.before_activation(),
+        Target::SuspendedBinding => !state.before_activation() && state != S::ProgrammeDraft,
         Target::Call => {
             !state.before_activation() && !matches!(state, S::ProgrammeDraft | S::ProgrammeActive)
         }
@@ -1378,7 +1384,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("roles.list", T::Programme, R::TenantAdmin),
     RefOp::act("roles.grant", T::Programme, R::TenantAdmin).hr(),
     RefOp::act("roles.end", T::Programme, R::TenantAdmin).hr(),
-    RefOp::act("roles.reinstate", T::Programme, R::TenantAdmin).hr(),
+    RefOp::act("roles.reinstate", T::SuspendedBinding, R::TenantAdmin).hr(),
     // J3: calls.
     RefOp::act("call.draft", T::Programme, R::CallAuthor)
         .gated()
