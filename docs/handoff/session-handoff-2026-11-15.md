@@ -45,9 +45,10 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | (merged, pushed) | `m4/audit-publish-import`, `m3/cell-routes`, `m4/ops-roles-agents`, `m4/audit-readers`, `m4/internal-seams`, `m3/decisions-a` | On main at handoff: audit log and its readers; add passkey, vault tickets, applied self-grants; agents, roles and pending reads; the last API-core seams (journal folds the ledger, sealed workspace store, text reads under clearance); Q-I79, SoD-08 break-glass, ADR-007 causes, ADR-004 sealed layout. Known-red is down to 16 entries |
 | `.lanes/decB` | `m4/decisions-b` | Created, not started: I-52, ledger seams, I-66/I-67 creator commands |
 | `.lanes/finish` | `m3/finish-gaps` | Created, not started: `i24_system_tasks` seed, wizard name at stage 1 and approver count, cell erasure gaps, CellBackup scan, devstack specs |
-| `.lanes/pagegate` | `m4/page-gate` | Running: SA-09 page gate |
-| (queued) | `m5/retention` | P-41 reminder from the last payment confirmation, mailbox message, `/app/admin/erasures` page; P-70 in SetLoginPolicy; level 2 key records |
-| (queued) | `m3/erase-prod` | Witness revocation record, batch erasure approval, keyd sign-key slots, edge route table polling, S3 list and delete |
+| (merged, pushed dc606d38) | `m4/page-gate` | SA-09 page gate |
+| `.lanes/i66` (running) | `m4/i66-gaps` | I-66/I-67 generator gaps per m4-design last section |
+| `.lanes/retention` (running) | `m5/retention` | P-41 reminder from the last payment confirmation, mailbox message, `/app/admin/erasures` page; P-70 in SetLoginPolicy; level 2 key records |
+| `.lanes/eraseprod` (running) | `m3/erase-prod` | Witness revocation record, batch erasure approval, keyd sign-key slots, edge route table polling, S3 list and delete |
 | (queued) | `m9/answers` | Milestone publicity opt-in, P-57 periods, tenant copies of funder profiles, programme footer in /app, companion key rotation reminder, profile read for all programme staff |
 | (queued) | `m4/acme` | In-house fuzzed ACME client (ADR-009 Q30) |
 | (queued) | `m3/devstack-scenarios` | `/test/scenario/negotiation` and an active programme for the last 9 devstack specs |
