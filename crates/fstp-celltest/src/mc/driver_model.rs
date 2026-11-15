@@ -583,6 +583,16 @@ impl std::ops::Deref for GateState<'_> {
 }
 
 impl<'a> GateState<'a> {
+    /// The folded `state` and the ledger `ledger` it is the replay of, for
+    /// a harness that holds its own store, such as a `CellEngine` over a
+    /// `MemStore` stopped between steps.
+    pub fn with_ledger(state: &'a CellState, ledger: &'a MemStore<CellRecord>) -> GateState<'a> {
+        GateState {
+            state,
+            ledger: Some(ledger),
+        }
+    }
+
     /// The folded state.
     pub fn cell(&self) -> &'a CellState {
         self.state

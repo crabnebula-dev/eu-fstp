@@ -25,6 +25,7 @@ use fstp_domain::id::{AccountId, CommandId};
 use fstp_domain::oracle::QueryKind;
 use fstp_domain::rules::StateTag;
 use fstp_domain::time::Timestamp;
+use fstp_domain_testkit::activation::relative_positions;
 use fstp_domain_testkit::r#gen::review::run_records;
 use fstp_domain_testkit::r#gen::roster::{ADMIN, Step, T0};
 use fstp_domain_testkit::scenario::Scenario;
@@ -100,12 +101,17 @@ fn composed(cmd: &fstp_domain::Command) -> bool {
     )
 }
 
-/// The M2 core records of `entries`, in order.
+/// The M2 core records of `entries`, in order. A `GuidePublished` is an
+/// M4 record the generators' synthetic Guide adds (I-52), so it is left
+/// out, as `fstp_domain_testkit::r#gen::policy::core_records` leaves it.
 fn core_records(entries: &[ShellEntry]) -> Vec<fstp_domain::Record> {
     entries
         .iter()
         .flat_map(|e| e.batch.iter())
         .filter_map(|r| match r {
+            CellRecord::Engine(fstp_engine::Record::Core(
+                fstp_domain::Record::GuidePublished { .. },
+            )) => None,
             CellRecord::Engine(fstp_engine::Record::Core(c)) => Some(c.clone()),
             _ => None,
         })
@@ -125,7 +131,13 @@ fn core_records(entries: &[ShellEntry]) -> Vec<fstp_domain::Record> {
 ///
 /// Reading: the cell ledger also holds the tenant admin bootstrap and
 /// auth records, which the M2 engine has no member for, so the comparison
-/// is over the M2 core records of each step. The byte comparison of each
+/// is over the M2 core records of each step.
+///
+/// Daniel's decision of 2026-11-15 ("Compare after set-up"): each side's
+/// set-up is checked on its own, the cell's tenant admin bootstrap and the
+/// reference's vault change. The scenario comparison starts after them,
+/// and ledger positions are read relative to each side's head at that
+/// start (`fstp_domain_testkit::activation::relative_positions`). The byte comparison of each
 /// record waits on a `fstp-cell-core` encoder (the stubs hold decoders
 /// only).
 #[test]
@@ -151,6 +163,10 @@ fn seam_driver_core_matches_reference_engine() {
             engine
                 .change_vault(|_| {}, ctx)
                 .map_err(|e| format!("the reference vault change: {e:?}"))?;
+            // The scenario starts here on both sides.
+            let engine_start = engine.engine().head();
+            let cell_start = fstp_ledger::Seq::from_raw(cell.ledger().last().map_or(0, |e| e.seq));
+            let rel = |records: &[fstp_domain::Record], start| relative_positions(records, start);
             for (i, p) in path.iter().enumerate() {
                 let want = run_records(&mut engine, &p.step, p.at)?;
                 let before = cell.ledger().len();
@@ -163,8 +179,8 @@ fn seam_driver_core_matches_reference_engine() {
                     match (want, got) {
                         (Ok(records), Ok(())) => {
                             prop_assert_eq!(
-                                core_records(&cell.ledger()[before..]),
-                                records,
+                                rel(&core_records(&cell.ledger()[before..]), cell_start)?,
+                                rel(&records, engine_start)?,
                                 "step {i} {:?}",
                                 p.step.cmd.kind()
                             );
@@ -200,8 +216,8 @@ fn seam_driver_core_matches_reference_engine() {
                 match (want, got) {
                     (Ok(records), Ok(_)) => {
                         prop_assert_eq!(
-                            core_records(&cell.ledger()[before..]),
-                            records,
+                            rel(&core_records(&cell.ledger()[before..]), cell_start)?,
+                            rel(&records, engine_start)?,
                             "step {i} {:?}",
                             p.step.cmd.kind()
                         );

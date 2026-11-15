@@ -743,3 +743,49 @@ where
     };
     append_entry(engine, &ctx, records)
 }
+
+// ---------------------------------------------------------------------------
+// Ledger positions relative to a scenario start (Daniel's decision of
+// 2026-11-15, "Compare after set-up")
+// ---------------------------------------------------------------------------
+
+/// `records` with every ledger position they name made relative to
+/// `start`, the head of their ledger before the scenario.
+///
+/// Two ledgers that run the same scenario after set-ups of different
+/// lengths name different positions for the same draft revision. Each
+/// side's set-up is compared on its own, and the scenario comparison
+/// reads positions from its start. Today one M2 record names a position:
+/// `ProgrammeActivated`, whose report reference holds the draft
+/// revision's ledger entry (`fstp_engine::compose::report_ref`, bytes 20
+/// to 27, big-endian). A position before `start` is an error.
+pub fn relative_positions(records: &[Record], start: Seq) -> Result<Vec<Record>, String> {
+    records
+        .iter()
+        .map(|r| match r {
+            Record::ProgrammeActivated(a) => {
+                let mut report = a.report().bytes();
+                let slot = report
+                    .get_mut(20..28)
+                    .ok_or_else(|| "report reference too short".to_owned())?;
+                let mut entry = [0u8; 8];
+                entry.copy_from_slice(slot);
+                let relative = u64::from_be_bytes(entry)
+                    .checked_sub(start.raw())
+                    .ok_or_else(|| format!("{a:?} names a position before the start {start:?}"))?;
+                slot.copy_from_slice(&relative.to_be_bytes());
+                forge_activation(
+                    a.programme(),
+                    a.decision(),
+                    report,
+                    a.revision(),
+                    a.approver(),
+                    a.builders(),
+                    a.rules().0,
+                    a.override_reason(),
+                )
+            }
+            other => Ok(other.clone()),
+        })
+        .collect()
+}
