@@ -1322,6 +1322,10 @@ pub(crate) enum At {
     /// M7 lane L-DEMO: the open call with z drafted from the corpus, for
     /// the pre-check (R-LA-06).
     Draft,
+    /// Lane m4/proposal-read: x submitted and admitted, so its lead reads
+    /// the submitted application in STAGE1. Seeded through the control
+    /// route only: the demo page does not list it.
+    Stage1,
     Stage2,
     IrcReviewMinor,
     Negotiation,
@@ -1335,6 +1339,7 @@ impl At {
         Some(match s {
             "OPEN_CALL" => At::OpenCall,
             "DRAFT" => At::Draft,
+            "STAGE1" => At::Stage1,
             "STAGE2" => At::Stage2,
             "IRC_REVIEW_MINOR" => At::IrcReviewMinor,
             "NEGOTIATION" => At::Negotiation,
@@ -1349,6 +1354,7 @@ impl At {
         match self {
             At::OpenCall => "OPEN_CALL",
             At::Draft => "DRAFT",
+            At::Stage1 => "STAGE1",
             At::Stage2 => "STAGE2",
             At::IrcReviewMinor => "IRC_REVIEW_MINOR",
             At::Negotiation => "NEGOTIATION",
@@ -1532,6 +1538,11 @@ async fn seed_applicant(
                 false,
             ))?;
             seed.step(&knock_out(x.proposal, false))?;
+            Some(x)
+        }
+        At::Stage1 => {
+            submit(seed, &[x]).await?;
+            admit_with(seed, &x, &both, &both)?;
             Some(x)
         }
         At::NotSelected => {
@@ -1874,6 +1885,7 @@ mod tests {
     #[test]
     fn r_sb_02_applicant_seeds_reach_their_states() {
         let want = [
+            (At::Stage1, "STAGE1"),
             (At::Stage2, "STAGE2"),
             (At::IrcReviewMinor, "IRC_REVIEW"),
             (At::Negotiation, "NEGOTIATION"),
