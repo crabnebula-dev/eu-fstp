@@ -5,7 +5,8 @@
 // the fake DOM and send the role operations.
 
 import type { ApiClient, ApiOutcome, OperationRef } from "../src/core/api.js";
-import { nameBody } from "../src/auth/pages/account.js";
+import { NAME_TAKEN_RULE, nameBody, nameTaken } from "../src/auth/pages/account.js";
+import { AUTH_EN } from "../src/auth/messages.en.js";
 import { navRolesOf, siteLinks } from "../src/auth/sitenav.js";
 import { TEAM_LABELS } from "../src/admin/team/messages.en.js";
 import {
@@ -369,4 +370,25 @@ test("i86_sa11_refused_team_read_shows_no_rows", async () => {
   await tick();
   assert(!text().includes("manager@example.invalid"), text().slice(0, 300));
   eq(fakeDocument.getElementById("team-rows"), null, "no table");
+});
+
+/**
+ * SA-11 amendment: a display name another account of the organisation
+ * holds is refused under `SA-11-unique`. The account page shows "This name
+ * is already used in your organisation", which names no account. Other
+ * refusals and a saved name are not read as taken. Like R-CF-03, the
+ * outcome is a yes or no that discloses no identity.
+ */
+test("r_cf_03_sa11_unique_taken_name_shows_the_plain_message", () => {
+  eq(NAME_TAKEN_RULE, "SA-11-unique", "the rule of fstp_api_core::display_name::TAKEN_RULE");
+  const taken = { status: 403, body: { code: "refused", rule: "SA-11-unique" } };
+  assert(nameTaken(taken), "a taken name");
+  assert(!nameTaken({ status: 200, body: { rule: "SA-11-unique" } }), "a 2xx is never a refusal");
+  assert(!nameTaken({ status: 400, body: { code: "bad_request", rule: "SA-11" } }), "an invalid name");
+  assert(!nameTaken({ status: 403, body: { code: "refused", rule: "I-78" } }), "another rule");
+  assert(!nameTaken({ status: 0, body: undefined }), "no reply");
+  assert(!nameTaken({ status: 403, body: ["SA-11-unique"] }), "another shape");
+  const message: string = AUTH_EN.messages["account.name.taken"];
+  eq(message, "This name is already used in your organisation.", "the plain message");
+  assert(!/\d|@/.test(message), "the message names no account");
 });

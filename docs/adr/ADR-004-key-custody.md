@@ -271,6 +271,7 @@ Epoch seal keys and I-80 (decided by Daniel on 2026-10-28):
 - The `Ledger` group never takes part in an erasure, because the ledger holds no free text (ADR-007). Its data keys are replaced under the part 1 seal-count rule.
 - `Lookup`, `CredLookup` and `Match` hold no data keys. Each erasure that removes one of their subjects replaces them (below).
 - The delivery body digest key of `ops.delivery.body_digest` is derived from the App chain `Lookup` key through HKDF-SHA256 with the fixed label `fstp delivery body digest v1`, so a new `Lookup` key gives a new digest key (Daniel, 2026-11-07).
+- The display name fingerprint key (SA-11 amendment, lane m4/unique-names) is derived from the App chain `Lookup` key through HKDF-SHA256 with the fixed label `fstp display name fingerprint v1`. Each fingerprint is HMAC-SHA256 of the normalised name under it. A display name is a subject of `Lookup`, like a login email. An erasure that removes one replaces `Lookup`, and step 2 recomputes the fingerprint of every live display name from its sealed text. Interim, pending Daniel.
 
 ### Epochs
 

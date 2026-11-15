@@ -9,10 +9,11 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use fstp_api_core::display_name::{self, FINGERPRINT_LEN};
 use fstp_api_core::port::{
-    BlobOwner, BlobRef, BlobStore, ErasureCause, ErasureRow, PortError, PublicTextRef, SealOwner,
-    Sealed, Sealer, StepUpProof, TextClass, TextOwner, TextRef, TextStore, WorkspaceSlot,
-    Workspaces,
+    BlobOwner, BlobRef, BlobStore, DisplayNameSet, ErasureCause, ErasureRow, PortError,
+    PublicTextRef, SealOwner, Sealed, Sealer, StepUpProof, TextClass, TextOwner, TextRef,
+    TextStore, WorkspaceSlot, Workspaces,
 };
 use fstp_domain::id::AccountId;
 use fstp_domain::id::ProposalId;
@@ -26,14 +27,40 @@ use super::vault::fake_digest;
 /// The largest blob the fake stores: 1 MiB.
 pub const BLOB_LIMIT: usize = 1 << 20;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Texts {
     rows: BTreeMap<u128, (TextClass, TextOwner, Vec<u8>)>,
     next: u128,
     /// The erasure log (ADR-007, lane m5/retention), oldest first.
     erased: Vec<ErasureRow>,
-    /// The text that holds each account's display name (SA-11).
-    display: BTreeMap<AccountId, u128>,
+    /// The display name of each account (SA-11): its text and the keyed
+    /// fingerprint stored beside it (SA-11 amendment).
+    display: BTreeMap<AccountId, DisplayRow>,
+    /// The account of each display name fingerprint (SA-11 amendment).
+    /// The cell holds one tenant, so this index is the tenant's.
+    fingerprints: BTreeMap<[u8; FINGERPRINT_LEN], AccountId>,
+    /// The cell's App chain `Lookup` key, drawn at the first display name,
+    /// as the login email index draws its `Lookup` group at the first
+    /// login email (ADR-004).
+    lookup: Option<LookupKey>,
+}
+
+/// One account's display name: the text that holds it and its keyed
+/// fingerprint (SA-11 amendment).
+#[derive(Clone, Copy, Debug)]
+struct DisplayRow {
+    text: u128,
+    fingerprint: [u8; FINGERPRINT_LEN],
+}
+
+/// The fake cell's `Lookup` key. Its bytes never reach a `Debug` line.
+#[derive(Clone)]
+struct LookupKey([u8; 32]);
+
+impl std::fmt::Debug for LookupKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LookupKey(..)")
+    }
 }
 
 /// The text store. Cloning shares the texts.
@@ -71,16 +98,11 @@ impl FakeTexts {
     /// Replaces the texts with a copy of those of `from`, each under its
     /// reference, so a ledger copied from `from`'s cell resolves every
     /// text it names. Every clone of `self` sees the copy.
+    /// The display names, their fingerprints and the `Lookup` key are
+    /// copied too, as a restarted cell keeps its keystore.
     pub fn copy_from(&self, from: &FakeTexts) {
-        let (rows, next, erased, display) = {
-            let s = lock(&from.state);
-            (s.rows.clone(), s.next, s.erased.clone(), s.display.clone())
-        };
-        let mut s = lock(&self.state);
-        s.rows = rows;
-        s.next = next;
-        s.erased = erased;
-        s.display = display;
+        let copy = lock(&from.state).clone();
+        *lock(&self.state) = copy;
     }
 
     /// Every public text that is UTF-8, by id: what a published Guide may
@@ -113,13 +135,28 @@ impl FakeTexts {
         for id in &owned {
             erase(&mut s, *id, at);
         }
-        s.display.remove(&a);
+        // SA-11 amendment: the fingerprint goes with the name.
+        if let Some(row) = s.display.remove(&a) {
+            s.fingerprints.remove(&row.fingerprint);
+        }
         owned.len()
     }
 
     /// The text that holds the display name of `a`, if any (SA-11).
     pub fn display_text(&self, a: AccountId) -> Option<TextRef> {
-        lock(&self.state).display.get(&a).copied().map(TextRef)
+        lock(&self.state).display.get(&a).map(|r| TextRef(r.text))
+    }
+
+    /// The keyed fingerprint stored beside the display name of `a`, if
+    /// any (SA-11 amendment).
+    pub fn display_fingerprint(&self, a: AccountId) -> Option<[u8; FINGERPRINT_LEN]> {
+        lock(&self.state).display.get(&a).map(|r| r.fingerprint)
+    }
+
+    /// How many display name fingerprints the tenant's index holds (SA-11
+    /// amendment).
+    pub fn fingerprint_count(&self) -> usize {
+        lock(&self.state).fingerprints.len()
     }
 
     /// The owner of the text `r`, if it is stored.
@@ -184,15 +221,15 @@ fn clears(class: TextClass, owner: TextOwner, clearance: &ReadClearance) -> bool
 
 impl TextStore for FakeTexts {
     /// Replaces the account's display name text, erasing the old one
-    /// (SA-11, ADR-007).
+    /// (SA-11, ADR-007), unless another account of the tenant holds the
+    /// name (SA-11 amendment).
     async fn set_display_name(
         &self,
         a: AccountId,
         name: Option<String>,
         at: Timestamp,
-    ) -> Result<(), PortError> {
-        self.set_display_now(a, name, at);
-        Ok(())
+    ) -> Result<DisplayNameSet, PortError> {
+        self.set_display_now(a, name, at)
     }
 
     /// The display names under `clearance`, which must open each
@@ -271,12 +308,41 @@ impl TextStore for FakeTexts {
 
 /// SA-11: the display name methods of the text store.
 impl FakeTexts {
-    fn set_display_now(&self, a: AccountId, name: Option<String>, at: Timestamp) {
+    /// The uniqueness check and the write, under one lock, so two
+    /// accounts cannot take one name at once (SA-11 amendment).
+    fn set_display_now(
+        &self,
+        a: AccountId,
+        name: Option<String>,
+        at: Timestamp,
+    ) -> Result<DisplayNameSet, PortError> {
         let mut s = lock(&self.state);
+        let fingerprint = match &name {
+            Some(name) => {
+                let lookup = match &s.lookup {
+                    Some(k) => k.0,
+                    None => {
+                        let k = fstp_crypto::random_array::<32>()
+                            .map_err(|_| PortError::Unavailable)?;
+                        s.lookup = Some(LookupKey(k));
+                        k
+                    }
+                };
+                let key =
+                    display_name::fingerprint_key(&lookup).map_err(|_| PortError::Unavailable)?;
+                let fingerprint = display_name::fingerprint(&key, name);
+                if s.fingerprints.get(&fingerprint).is_some_and(|b| *b != a) {
+                    return Ok(DisplayNameSet::Taken);
+                }
+                Some(fingerprint)
+            }
+            None => None,
+        };
         if let Some(old) = s.display.remove(&a) {
-            erase(&mut s, old, at);
+            s.fingerprints.remove(&old.fingerprint);
+            erase(&mut s, old.text, at);
         }
-        if let Some(name) = name {
+        if let (Some(name), Some(fingerprint)) = (name, fingerprint) {
             let n = s.next;
             s.next = n.saturating_add(1);
             s.rows.insert(
@@ -287,8 +353,16 @@ impl FakeTexts {
                     name.into_bytes(),
                 ),
             );
-            s.display.insert(a, n);
+            s.display.insert(
+                a,
+                DisplayRow {
+                    text: n,
+                    fingerprint,
+                },
+            );
+            s.fingerprints.insert(fingerprint, a);
         }
+        Ok(DisplayNameSet::Set)
     }
 
     fn display_names_now(
@@ -302,7 +376,7 @@ impl FakeTexts {
             if !clears(TextClass::Confidential, TextOwner::Account(*a), clearance) {
                 return Err(PortError::Refused);
             }
-            let Some((_, _, b)) = s.display.get(a).and_then(|id| s.rows.get(id)) else {
+            let Some((_, _, b)) = s.display.get(a).and_then(|r| s.rows.get(&r.text)) else {
                 continue;
             };
             let name = String::from_utf8(b.clone()).map_err(|_| PortError::Refused)?;
@@ -475,5 +549,178 @@ impl Workspaces for FakeWorkspaces {
     ) -> Result<Option<Sealed>, PortError> {
         self.up()?;
         Ok(lock(&self.rows).get(&(proposal, slot)).cloned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use fstp_rt::future::block_on;
+
+    const ANNA: AccountId = AccountId::from_raw(9_101);
+    const BERG: AccountId = AccountId::from_raw(9_102);
+    const AT: Timestamp = Timestamp::from_micros(1_000);
+
+    fn set(t: &FakeTexts, a: AccountId, name: Option<&str>) -> DisplayNameSet {
+        block_on(t.set_display_name(a, name.map(str::to_owned), AT)).unwrap()
+    }
+
+    /// SA-11 amendment: a name another account of the tenant holds is
+    /// taken, also in another case or spacing, and nothing changes.
+    #[test]
+    fn sa11_unique_taken_name_is_refused_in_any_case_or_spacing() {
+        let t = FakeTexts::default();
+        assert_eq!(
+            set(&t, ANNA, Some("Synthetic Anna Berg")),
+            DisplayNameSet::Set
+        );
+        let held = t.display_text(ANNA).unwrap();
+        for other in [
+            "Synthetic Anna Berg",
+            "synthetic anna berg",
+            "  SYNTHETIC   anna\u{a0}Berg ",
+        ] {
+            assert_eq!(
+                set(&t, BERG, Some(other)),
+                DisplayNameSet::Taken,
+                "{other:?}"
+            );
+        }
+        assert!(t.display_text(BERG).is_none());
+        assert_eq!(t.display_text(ANNA), Some(held));
+        assert_eq!(t.fingerprint_count(), 1);
+        assert_eq!(
+            set(&t, BERG, Some("Synthetic Anna Bergh")),
+            DisplayNameSet::Set
+        );
+    }
+
+    /// SA-11 amendment: the own current name again, or in another case,
+    /// is no conflict. The old text is erased and the fingerprint kept.
+    #[test]
+    fn sa11_unique_own_name_again_is_set() {
+        let t = FakeTexts::default();
+        assert_eq!(set(&t, ANNA, Some("Synthetic Anna")), DisplayNameSet::Set);
+        let fp = t.display_fingerprint(ANNA).unwrap();
+        let first = t.display_text(ANNA).unwrap();
+        assert_eq!(set(&t, ANNA, Some("Synthetic Anna")), DisplayNameSet::Set);
+        assert_eq!(set(&t, ANNA, Some("SYNTHETIC  anna")), DisplayNameSet::Set);
+        assert_eq!(t.display_fingerprint(ANNA), Some(fp));
+        assert!(
+            t.peek(first).is_none(),
+            "ADR-007: the replaced text is erased"
+        );
+        assert_eq!(t.fingerprint_count(), 1);
+    }
+
+    /// SA-11 amendment, ADR-007: a replace, a clear and an account
+    /// erasure each erase the fingerprint with the name, so the name is
+    /// free again.
+    #[test]
+    fn sa11_unique_replace_clear_and_erasure_free_the_name() {
+        let t = FakeTexts::default();
+        set(&t, ANNA, Some("Synthetic One"));
+        set(&t, ANNA, Some("Synthetic Two"));
+        assert_eq!(t.fingerprint_count(), 1);
+        assert_eq!(set(&t, BERG, Some("Synthetic One")), DisplayNameSet::Set);
+        assert_eq!(set(&t, BERG, Some("Synthetic Two")), DisplayNameSet::Taken);
+        set(&t, ANNA, None);
+        assert!(t.display_fingerprint(ANNA).is_none());
+        assert_eq!(set(&t, BERG, Some("Synthetic Two")), DisplayNameSet::Set);
+        assert_eq!(t.fingerprint_count(), 1);
+        assert_eq!(t.erase_account(BERG, AT), 1);
+        assert_eq!(t.fingerprint_count(), 0);
+        assert_eq!(set(&t, ANNA, Some("synthetic two")), DisplayNameSet::Set);
+    }
+
+    /// SA-11 amendment, I-20: two tenants (two cells, two `Lookup` keys)
+    /// may use the same name, and their fingerprints differ, so none links
+    /// the two accounts.
+    #[test]
+    fn sa11_unique_i20_two_tenants_may_use_the_same_name() {
+        let one = FakeTexts::default();
+        let two = FakeTexts::default();
+        assert_eq!(
+            set(&one, ANNA, Some("Synthetic Shared")),
+            DisplayNameSet::Set
+        );
+        assert_eq!(
+            set(&two, BERG, Some("Synthetic Shared")),
+            DisplayNameSet::Set
+        );
+        assert_ne!(one.display_fingerprint(ANNA), two.display_fingerprint(BERG));
+    }
+
+    /// SA-11 amendment, "Simpler comparison": with no NFC, two encodings
+    /// of one accented name may both be accepted. Known and accepted.
+    #[test]
+    fn sa11_unique_names_differing_only_in_accent_encoding_may_both_be_set() {
+        let t = FakeTexts::default();
+        assert_eq!(
+            set(&t, ANNA, Some("Jos\u{e9} Synthetic")),
+            DisplayNameSet::Set
+        );
+        assert_eq!(
+            set(&t, BERG, Some("Jose\u{301} Synthetic")),
+            DisplayNameSet::Set
+        );
+    }
+
+    /// SA-11 amendment: a restarted cell keeps its `Lookup` key and its
+    /// index, so a copy still refuses a taken name.
+    #[test]
+    fn sa11_unique_copy_keeps_the_key_and_the_index() {
+        let t = FakeTexts::default();
+        set(&t, ANNA, Some("Synthetic Anna"));
+        let copy = FakeTexts::default();
+        copy.copy_from(&t);
+        assert_eq!(
+            set(&copy, BERG, Some("synthetic anna")),
+            DisplayNameSet::Taken
+        );
+        assert!(
+            format!("{t:?}").contains("LookupKey(..)"),
+            "the key bytes stay out"
+        );
+    }
+
+    /// SA-11 amendment: the check and the write are one atomic step. Many
+    /// accounts set one name at once, and exactly one wins.
+    #[test]
+    fn sa11_unique_concurrent_sets_of_one_name_have_exactly_one_winner() {
+        for round in 0..20u64 {
+            let t = FakeTexts::default();
+            let n = 8u64;
+            let gate = Arc::new(std::sync::Barrier::new(8));
+            let threads: Vec<_> = (0..n)
+                .map(|i| {
+                    let t = t.clone();
+                    let gate = Arc::clone(&gate);
+                    let a = AccountId::from_raw(u128::from(9_200 + i));
+                    let name = if i % 2 == 0 {
+                        "Synthetic Race".to_owned()
+                    } else {
+                        " synthetic  RACE ".to_owned()
+                    };
+                    std::thread::spawn(move || {
+                        gate.wait();
+                        block_on(t.set_display_name(a, Some(name), AT)).unwrap()
+                    })
+                })
+                .collect();
+            let got: Vec<DisplayNameSet> = threads.into_iter().map(|h| h.join().unwrap()).collect();
+            let won = got.iter().filter(|g| **g == DisplayNameSet::Set).count();
+            assert_eq!(won, 1, "round {round}: {got:?}");
+            assert_eq!(t.fingerprint_count(), 1, "round {round}");
+            let named = (0..n)
+                .filter(|i| {
+                    t.display_text(AccountId::from_raw(u128::from(9_200 + i)))
+                        .is_some()
+                })
+                .count();
+            assert_eq!(named, 1, "round {round}");
+        }
     }
 }

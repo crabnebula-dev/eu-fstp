@@ -158,6 +158,8 @@ const MESSAGES = {
   'account.name.saved': 'Your display name is saved.',
   'account.name.cleared': 'Your display name is removed.',
   'account.name.invalid': 'Use at most 100 characters of plain text, without < or >.',
+  // SA-11 amendment: the refusal names no other account.
+  'account.name.taken': 'This name is already used in your organisation.',
 
   'stepup.title': 'Confirm with your passkey',
   'stepup.intro': 'This action needs a fresh confirmation with your passkey.',

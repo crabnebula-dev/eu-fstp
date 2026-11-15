@@ -2673,14 +2673,22 @@ async fn m3_port<P: Seams>(
                 "ADR-007",
             )
         }
-        // SA-11: a confidential text of the caller's account (ADR-007).
-        PortCall::SetDisplayName(name) => done(
-            call.ports
-                .texts()
-                .set_display_name(account, name, call.now)
-                .await,
-            "SA-11",
-        ),
+        // SA-11: a confidential text of the caller's account (ADR-007),
+        // unique within the tenant. A taken name is refused under its own
+        // rule, which names no other account (SA-11 amendment).
+        PortCall::SetDisplayName(name) => match call
+            .ports
+            .texts()
+            .set_display_name(account, name, call.now)
+            .await
+        {
+            Ok(crate::port::DisplayNameSet::Set) => done(Ok(()), "SA-11"),
+            Ok(crate::port::DisplayNameSet::Taken) => Err(call.refuse(ApiError::refused(
+                ErrorCode::Refused,
+                crate::display_name::TAKEN_RULE,
+            ))),
+            Err(e) => done(Err(e), "SA-11"),
+        },
         PortCall::EndSession(s) => {
             done(call.ports.sessions_admin().end(account, s).await, "R-LG-04")
         }

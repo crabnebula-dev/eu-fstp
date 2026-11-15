@@ -1047,6 +1047,15 @@ pub trait TextStore: Send + Sync {
     /// erasure erases it. A text it replaces or clears is erased at once.
     /// The API core checked the name first. The default fails closed.
     ///
+    /// The name is unique within the tenant (SA-11 amendment). The store
+    /// keeps the keyed fingerprint of [`crate::display_name::fingerprint`]
+    /// beside the sealed name, under the fingerprint key of the cell's
+    /// `Lookup` key, and erases it with the name. The uniqueness check and
+    /// the write are one atomic step: a name whose fingerprint another
+    /// account of the tenant holds is [`DisplayNameSet::Taken`], and
+    /// nothing changes. The account's own current name again is
+    /// [`DisplayNameSet::Set`]. A clear is always `Set`.
+    ///
     /// Interim reading, pending Daniel: a display name changes no domain
     /// fact, so no ledger record names it. The store alone knows which of
     /// an account's texts is its display name.
@@ -1055,7 +1064,7 @@ pub trait TextStore: Send + Sync {
         a: AccountId,
         name: Option<String>,
         at: Timestamp,
-    ) -> impl Future<Output = Result<(), PortError>> + Send {
+    ) -> impl Future<Output = Result<DisplayNameSet, PortError>> + Send {
         let _ = (a, name, at);
         std::future::ready(Err(PortError::Unavailable))
     }
@@ -1073,6 +1082,15 @@ pub trait TextStore: Send + Sync {
         let _ = (accounts, clearance);
         std::future::ready(Err(PortError::Unavailable))
     }
+}
+
+/// What [`TextStore::set_display_name`] did (SA-11 amendment).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayNameSet {
+    /// The name is now the account's display name, or it was cleared.
+    Set,
+    /// Another account of the tenant holds the name. Nothing changed.
+    Taken,
 }
 
 /// An erasure cause of ADR-007, with the closed code of
