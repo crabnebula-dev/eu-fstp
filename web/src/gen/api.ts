@@ -5089,3 +5089,88 @@ export function fitsSchema(s: Schema, v: unknown): boolean {
 export const VALIDATORS: Readonly<Record<string, (v: unknown) => boolean>> = Object.freeze(
   Object.fromEntries(Object.entries(SCHEMAS).map(([name, s]) => [name, (v: unknown): boolean => fitsSchema(s, v)])),
 );
+
+/** What an `/app/` page needs before the server serves it (SA-09). */
+export type PageNeed =
+  | { readonly kind: "anyone" }
+  | { readonly kind: "account" }
+  | { readonly kind: "reads"; readonly reads: readonly OpName[] };
+
+/** One `/app/` page of the server's page table (SA-09). */
+export interface PageRow {
+  readonly pattern: string;
+  readonly need: PageNeed;
+  readonly values: Readonly<Record<string, readonly string[]>>;
+  readonly listed: string | null;
+}
+
+/** Every `/app/` page the server serves, in its match order (SA-09). */
+export const PAGES: readonly PageRow[] = [
+  { pattern: "/app/", need: { kind: "account" }, values: {}, listed: null },
+  { pattern: "/app/me", need: { kind: "account" }, values: {}, listed: null },
+  { pattern: "/app/me/identity", need: { kind: "reads", reads: ["me.get_verification"] }, values: {}, listed: null },
+  { pattern: "/app/mailbox", need: { kind: "reads", reads: ["me.mailbox"] }, values: {}, listed: null },
+  { pattern: "/app/pending/{pending}", need: { kind: "reads", reads: ["pending.list"] }, values: {}, listed: "pending" },
+  { pattern: "/app/notices", need: { kind: "reads", reads: ["me.notices"] }, values: {}, listed: null },
+  { pattern: "/app/invitation", need: { kind: "anyone" }, values: {}, listed: null },
+  { pattern: "/app/admin/approvals", need: { kind: "reads", reads: ["admin.approvals"] }, values: {}, listed: null },
+  { pattern: "/app/admin/onboarding/summary", need: { kind: "reads", reads: ["tenant.get_activation"] }, values: {}, listed: null },
+  { pattern: "/app/admin/onboarding/{step}", need: { kind: "reads", reads: ["tenant.get_step"] }, values: { step: ["organisation", "agreements", "branding", "domains_and_email", "identity", "inference", "payments", "channels", "administrators"] }, listed: null },
+  { pattern: "/app/admin/settings/{param}", need: { kind: "reads", reads: ["tenant.settings"] }, values: { param: ["p20", "p69", "p70", "p71", "p72", "p74"] }, listed: null },
+  { pattern: "/app/admin/branding", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
+  { pattern: "/app/admin/terminology", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
+  { pattern: "/app/creator/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
+  { pattern: "/app/setup/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/creator/start", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/creator/imports", need: { kind: "reads", reads: ["import.list"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/creator/{step}", need: { kind: "reads", reads: ["creator.get_draft"] }, values: { step: ["funder", "identity", "eligibility", "funding", "evaluation", "money", "contract", "support", "people", "comms", "review"] }, listed: null },
+  { pattern: "/app/programmes/{programme}/studio", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/studio/approval", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/studio/guide", need: { kind: "reads", reads: ["creator.get_report"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/studio/knock-outs", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/setup/progress", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/setup/{stage}", need: { kind: "reads", reads: ["creator.get_draft"] }, values: { stage: ["programme", "applicants", "evaluation", "team", "communications", "review"] }, listed: null },
+  { pattern: "/app/programmes/{programme}/people", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/audit", need: { kind: "reads", reads: ["audit.entries", "audit.unmasks"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/reports", need: { kind: "reads", reads: ["report.list"] }, values: {}, listed: null },
+  { pattern: "/app/calls", need: { kind: "reads", reads: ["calls.list_open"] }, values: {}, listed: null },
+  { pattern: "/app/calls/{call}", need: { kind: "reads", reads: ["calls.get"] }, values: {}, listed: null },
+  { pattern: "/app/calls/{call}/guide", need: { kind: "reads", reads: ["calls.guide"] }, values: {}, listed: null },
+  { pattern: "/app/proposals", need: { kind: "reads", reads: ["proposal.list_own"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/workspace", need: { kind: "reads", reads: ["proposal.get_workspace"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/precheck", need: { kind: "reads", reads: ["proposal.precheck_runs"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/plan", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/team", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/eligibility", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/submit", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/stage2", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/negotiation", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/guardian", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/progress", need: { kind: "reads", reads: ["proposal.journey"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/activity", need: { kind: "reads", reads: ["proposal.diary"] }, values: {}, listed: null },
+  { pattern: "/app/calls/{call}/intake", need: { kind: "reads", reads: ["intake.queue"] }, values: {}, listed: null },
+  { pattern: "/app/calls/{call}/board", need: { kind: "reads", reads: ["call.board"] }, values: {}, listed: null },
+  { pattern: "/app/calls/{call}/notifiable-conflicts", need: { kind: "reads", reads: ["review.notifiable_conflicts"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/declaration", need: { kind: "reads", reads: ["review.declaration_view"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/knock-out", need: { kind: "reads", reads: ["review.read_content"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/assignments", need: { kind: "reads", reads: ["review.assignments"] }, values: {}, listed: null },
+  { pattern: "/app/proposals/{proposal}/parties", need: { kind: "reads", reads: ["identity.parties"] }, values: {}, listed: null },
+  { pattern: "/app/me/assignments", need: { kind: "reads", reads: ["me.assignments"] }, values: {}, listed: null },
+  { pattern: "/app/assignments/{assignment}", need: { kind: "reads", reads: ["me.assignments"] }, values: {}, listed: "assignment" },
+  { pattern: "/app/assignments/{assignment}/summary", need: { kind: "reads", reads: ["me.assignments"] }, values: {}, listed: "assignment" },
+  { pattern: "/app/assignments/{assignment}/stage2", need: { kind: "reads", reads: ["review.stage2_thread"] }, values: {}, listed: null },
+  { pattern: "/app/calls/{call}/ranking", need: { kind: "reads", reads: ["committee.ranking"] }, values: {}, listed: null },
+  { pattern: "/app/cut-off-rounds/{round}", need: { kind: "reads", reads: ["committee.round"] }, values: {}, listed: null },
+  { pattern: "/app/me/irc-cases", need: { kind: "reads", reads: ["me.irc_cases"] }, values: {}, listed: null },
+  { pattern: "/app/irc-assignments/{irc_assignment}", need: { kind: "reads", reads: ["me.irc_cases"] }, values: {}, listed: "irc_assignment" },
+  { pattern: "/app/grants", need: { kind: "reads", reads: ["grant.list_mine"] }, values: {}, listed: null },
+  { pattern: "/app/grants/{proposal}", need: { kind: "reads", reads: ["grant.overview", "grant.determination_view"] }, values: {}, listed: null },
+  { pattern: "/app/grants/{proposal}/visibility", need: { kind: "reads", reads: ["grant.publicity.view"] }, values: {}, listed: null },
+  { pattern: "/app/grants/{proposal}/contract", need: { kind: "reads", reads: ["contract.view"] }, values: {}, listed: null },
+  { pattern: "/app/grants/{proposal}/payments", need: { kind: "reads", reads: ["payment.status"] }, values: {}, listed: null },
+  { pattern: "/app/grants/{proposal}/payments/new", need: { kind: "reads", reads: ["payment.status"] }, values: {}, listed: null },
+  { pattern: "/app/grants/{proposal}/payments/{request}", need: { kind: "reads", reads: ["payment.status", "payment.line_review_view"] }, values: {}, listed: "request" },
+  { pattern: "/app/grants/{proposal}/payments/{request}/resubmit", need: { kind: "reads", reads: ["payment.status"] }, values: {}, listed: "request" },
+  { pattern: "/app/operations", need: { kind: "reads", reads: ["payment.queue"] }, values: {}, listed: null },
+];

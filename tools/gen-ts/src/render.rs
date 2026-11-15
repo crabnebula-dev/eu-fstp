@@ -485,5 +485,67 @@ pub(crate) fn render(ops: &[OpSpec], replies: &[(&str, Shape)]) -> String {
     out.push_str(SCHEMA_TYPES);
     out.push_str(&schemas(replies));
     out.push_str(VALIDATOR_TAIL);
+    out.push_str(&pages(fstp_access::PAGES));
+    out
+}
+
+/// The `/app/` page table of SA-09 (`fstp_access::PAGES`): each page's
+/// route pattern, what it needs, its closed parameter values and the id
+/// its read lists. The web test `web/test/pages.test.ts` checks that the
+/// client router's routes are exactly these patterns.
+fn pages(rows: &[fstp_access::PageRow]) -> String {
+    use fstp_access::PageNeed;
+    let mut out = String::from(
+        "\n/** What an `/app/` page needs before the server serves it (SA-09). */\n\
+         export type PageNeed =\n\
+         \x20 | { readonly kind: \"anyone\" }\n\
+         \x20 | { readonly kind: \"account\" }\n\
+         \x20 | { readonly kind: \"reads\"; readonly reads: readonly OpName[] };\n\n\
+         /** One `/app/` page of the server's page table (SA-09). */\n\
+         export interface PageRow {\n\
+         \x20 readonly pattern: string;\n\
+         \x20 readonly need: PageNeed;\n\
+         \x20 readonly values: Readonly<Record<string, readonly string[]>>;\n\
+         \x20 readonly listed: string | null;\n\
+         }\n\n\
+         /** Every `/app/` page the server serves, in its match order (SA-09). */\n\
+         export const PAGES: readonly PageRow[] = [\n",
+    );
+    for row in rows {
+        let need = match row.need {
+            PageNeed::Anyone => "{ kind: \"anyone\" }".to_owned(),
+            PageNeed::Account => "{ kind: \"account\" }".to_owned(),
+            PageNeed::Reads(r) => format!(
+                "{{ kind: \"reads\", reads: [{}] }}",
+                r.iter().map(|n| ts_str(n)).collect::<Vec<_>>().join(", ")
+            ),
+        };
+        let values = if row.values.is_empty() {
+            "{}".to_owned()
+        } else {
+            let inner = row
+                .values
+                .iter()
+                .map(|(n, v)| {
+                    format!(
+                        "{}: [{}]",
+                        n,
+                        v.iter().map(|s| ts_str(s)).collect::<Vec<_>>().join(", ")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{ {inner} }}")
+        };
+        let listed = match row.listed {
+            Some((p, _)) => ts_str(p),
+            None => "null".to_owned(),
+        };
+        out.push_str(&format!(
+            "  {{ pattern: {}, need: {need}, values: {values}, listed: {listed} }},\n",
+            ts_str(row.pattern)
+        ));
+    }
+    out.push_str("];\n");
     out
 }

@@ -1317,7 +1317,7 @@ pub(crate) async fn build_review(
 
 /// Where `POST /test/scenario/applicant {at}` leaves the seeded proposal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum At {
+pub(crate) enum At {
     OpenCall,
     /// M7 lane L-DEMO: the open call with z drafted from the corpus, for
     /// the pre-check (R-LA-06).
@@ -1331,7 +1331,7 @@ enum At {
 }
 
 impl At {
-    fn parse(s: &str) -> Option<At> {
+    pub(crate) fn parse(s: &str) -> Option<At> {
         Some(match s {
             "OPEN_CALL" => At::OpenCall,
             "DRAFT" => At::Draft,
@@ -1620,7 +1620,7 @@ pub(crate) async fn applicant(site: &Site, req: &Request) -> Response {
     }
 }
 
-async fn build_applicant(info: &SiteInfo, at: At) -> Result<(Inner, Value), String> {
+pub(crate) async fn build_applicant(info: &SiteInfo, at: At) -> Result<(Inner, Value), String> {
     let (inner, people, _canaries) = fresh_review(info)?;
     let mut seed = Seeder {
         inner: &inner,

@@ -17,7 +17,7 @@ fn i68_csp_unchanged() {
     assert!(PUBLIC_CSP.contains("style-src 'self'"));
     let r = get("/p/supersafe/");
     header_is(&r, "content-security-policy", PUBLIC_CSP).unwrap();
-    let r = get("/app/");
+    let r = get("/app/invitation");
     header_is(&r, "content-security-policy", APP_CSP).unwrap();
     let path = format!("/brand/{}.css", "ab".repeat(32));
     let r = get(&path);

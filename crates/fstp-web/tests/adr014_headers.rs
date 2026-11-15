@@ -49,9 +49,14 @@ fn attr(tag: &str, name: &str) -> Option<String> {
     Some(rest[..end].to_owned())
 }
 
+/// A page the stub serves with no session: the invitation landing, open
+/// to anyone (SA-09). Every other page sends a visitor with no session
+/// to sign in.
+const OPEN_PAGE: &str = "/app/invitation";
+
 /// The entry module path that the shell's one script names.
 fn entry_of_shell() -> String {
-    let shell = get("/app/");
+    let shell = get(OPEN_PAGE);
     let html = String::from_utf8(shell.body).unwrap();
     let s = scripts(&html);
     assert_eq!(s.len(), 1, "{s:?}");
@@ -63,7 +68,12 @@ fn entry_of_shell() -> String {
 #[test]
 fn adr014_app_csp_is_exact() {
     let entry = entry_of_shell();
-    let paths = ["/app/".to_owned(), "/app/creator/drafts".to_owned(), entry];
+    let paths = [
+        OPEN_PAGE.to_owned(),
+        "/app/".to_owned(),
+        "/app/creator/drafts".to_owned(),
+        entry,
+    ];
     all(&paths, |p| {
         header_is(&get(p), "content-security-policy", APP_CSP)
     });
@@ -74,7 +84,7 @@ fn adr014_app_csp_is_exact() {
 /// style and no event handler attribute.
 #[test]
 fn adr014_shell_has_one_module_script_and_nothing_inline() {
-    let shell = get("/app/");
+    let shell = get(OPEN_PAGE);
     assert_eq!(shell.status.as_u16(), 200);
     let ct = one_header(&shell, "content-type").unwrap();
     assert_eq!(ct, "text/html; charset=utf-8");
@@ -104,22 +114,54 @@ fn adr014_shell_has_one_module_script_and_nothing_inline() {
     }
 }
 
-/// ADR-014: every `/app/` path outside the assets serves the same shell,
-/// so the client router can handle deep links.
+/// ADR-014 as SA-09 amends it: a deep link to a page open to anyone
+/// serves the shell, so the client router handles it. With no session,
+/// every other page of the table answers 303 to the login page with the
+/// page as its return path, and a path no page has answers the one
+/// "Page not found" reply, 404, whatever the path.
 #[test]
-fn adr014_app_deep_links_serve_the_shell() {
-    let shell = get("/app/").body;
-    let paths = ["/app/calls/c1", "/app/creator/p1/steps/3", "/app/reviewer"];
-    all(&paths, |p| {
+fn sa09_adr014_app_deep_links_pass_the_page_gate() {
+    let shell = get(OPEN_PAGE).body;
+    assert_eq!(get(OPEN_PAGE).status.as_u16(), 200);
+    let signin = [
+        ("/app/", "/auth/login"),
+        ("/app/grants", "/auth/login?next=%2Fapp%2Fgrants"),
+        ("/app/proposals", "/auth/login?next=%2Fapp%2Fproposals"),
+        (
+            "/app/proposals/7/workspace",
+            "/auth/login?next=%2Fapp%2Fproposals%2F7%2Fworkspace",
+        ),
+    ];
+    all(&signin, |(p, to)| {
         let r = get(p);
-        if r.status.as_u16() == 200 && r.body == shell {
+        let at = one_header(&r, "location")?;
+        if r.status.as_u16() == 303 && at == *to {
             Ok(())
         } else {
-            Err(format!(
-                "status {}, same body {}",
-                r.status.as_u16(),
-                r.body == shell
-            ))
+            Err(format!("status {}, location {at}", r.status.as_u16()))
+        }
+    });
+    let missing = get("/app/no-such-page");
+    assert_eq!(missing.status.as_u16(), 404);
+    assert_ne!(missing.body, shell);
+    let html = String::from_utf8(missing.body.clone()).unwrap();
+    assert!(
+        html.contains("<meta name=\"fstp-page\" content=\"not-found\">"),
+        "{html}"
+    );
+    let paths = [
+        "/app/calls/c1",
+        "/app/creator/p1/steps/3",
+        "/app/reviewer",
+        "/app/proposals/012",
+        "/app/programmes/3/creator/other",
+    ];
+    all(&paths, |p| {
+        let r = get(p);
+        if r.status.as_u16() == 404 && r.body == missing.body {
+            Ok(())
+        } else {
+            Err(format!("status {}", r.status.as_u16()))
         }
     });
 }

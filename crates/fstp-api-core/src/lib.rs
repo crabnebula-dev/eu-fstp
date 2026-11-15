@@ -434,6 +434,42 @@ pub trait McpSafe: fstp_json::ToJson {}
 /// The future that a dispatch returns.
 type DispatchFuture<'a> = Pin<Box<dyn Future<Output = Result<OpResult, ApiError>> + Send + 'a>>;
 
+/// The page gate of SA-09 for a request with no session and no core,
+/// as the stub dispatch of `fstp_web::handle_op_request` answers it: a
+/// page open to anyone is served, any other page of the table sends the
+/// visitor to sign in, and a path no page has is not found. It is the
+/// answer [`ApiCore::page`] gives a visitor with no session for every
+/// page whose read no anonymous principal may make.
+#[must_use]
+pub fn page_without_session(path: &str) -> PageAdmission {
+    match fstp_access::page_of(path) {
+        None => PageAdmission::NotFound,
+        Some((row, _)) if row.need == fstp_access::PageNeed::Anyone => PageAdmission::Open,
+        Some(_) => PageAdmission::SignIn,
+    }
+}
+
+/// The future that [`ApiCore::page`] returns.
+type PageFuture<'a> = Pin<Box<dyn Future<Output = PageAdmission> + Send + 'a>>;
+
+/// Whether the server may serve an `/app/` page (SA-09), as
+/// [`ApiCore::page`] judges it from the page table `fstp_access::PAGES`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageAdmission {
+    /// Serve the page.
+    Open,
+    /// No session: sign in, then the gate runs again.
+    SignIn,
+    /// The session's login method is too weak for the page's read (I-77):
+    /// sign in with a passkey, then the gate runs again.
+    PasskeySignIn,
+    /// No such page, or one the viewer may not open: the same answer for
+    /// both, which never says that the page exists or why it is closed.
+    NotFound,
+    /// The sessions port did not answer.
+    Unavailable,
+}
+
 /// The future that [`ApiCore::tool_rights`] returns.
 type RightsFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolRights, ApiError>> + Send + 'a>>;
 
@@ -514,6 +550,16 @@ impl ApiCore {
     /// runs.
     pub async fn tool_rights(&self, cred: Credential) -> Result<ToolRights, ApiError> {
         self.inner.tool_rights(cred).await
+    }
+
+    /// Whether the `/app/` page at `path` may be served to `cred` (SA-09).
+    /// The page row of `fstp_access::PAGES` names the read the page cannot
+    /// render without, and the read is judged as dispatch judges it: the
+    /// session strength (I-77), the web channel, the setup gate (ADR-021)
+    /// and the read rule. No read model runs and nothing is recorded.
+    /// `path` is the request path with no query.
+    pub async fn page(&self, cred: Credential, head: &RequestHead, path: &str) -> PageAdmission {
+        self.inner.page(cred, head, path).await
     }
 }
 

@@ -21,11 +21,29 @@ use fstp_web_assets::AssetSet;
 /// - `lang="en"` is the document default. The application sets the
 ///   language of the chosen locale (R-NF-04).
 pub(crate) fn render(assets: &AssetSet, brand: Option<&str>) -> Vec<u8> {
+    render_marked(assets, brand, None)
+}
+
+/// The marker of the "Page not found" answer (SA-09): the client mounts
+/// the not-found page when the shell carries it.
+pub(crate) const NOT_FOUND: &str = "not-found";
+
+/// [`render`] with the page marker `marker`: a
+/// `<meta name="fstp-page">` whose content is a constant, such as
+/// [`NOT_FOUND`].
+pub(crate) fn render_marked(
+    assets: &AssetSet,
+    brand: Option<&str>,
+    marker: Option<&str>,
+) -> Vec<u8> {
     let mut html = String::from(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>FSTP</title>\n",
     );
+    if let Some(m) = marker.filter(|m| *m == NOT_FOUND) {
+        html.push_str(&format!("<meta name=\"fstp-page\" content=\"{m}\">\n"));
+    }
     for href in assets.style_paths() {
         html.push_str(&format!("<link rel=\"stylesheet\" href=\"{href}\">\n"));
     }

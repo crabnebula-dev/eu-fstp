@@ -5,7 +5,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use fstp_api_core::decode::decode_public_page;
-use fstp_api_core::{ApiCore, Credential, OpResult, RequestHead};
+use fstp_api_core::{ApiCore, Credential, OpResult, PageAdmission, RequestHead};
 use fstp_http::{Handler, Limits, Method, Request, Response, Router, StatusCode, handler_fn};
 use fstp_json::ToJson;
 use fstp_web_assets::AssetSet;
@@ -82,8 +82,10 @@ struct Shared {
 /// `fstp_http::Server` serves it directly.
 ///
 /// - `/app` redirects to `/app/`. `/app/assets/{sha256}.js` and `.css`
-///   serve verified assets, immutable. Every other `/app/` path serves the
-///   shell, so the client router handles deep links.
+///   serve verified assets, immutable. Every other `/app/` path passes the
+///   page gate of SA-09: the shell when the page's read admits the viewer,
+///   so the client router handles deep links; 303 to sign in; or the one
+///   "Page not found" answer, 404.
 /// - `/api/v1/**` passes the body limit, the CSRF rule and the media type
 ///   check, then reaches `ApiCore::dispatch` and nothing else.
 /// - `/p/**` serves the public pages and the feed through the API core,
@@ -165,7 +167,7 @@ pub(crate) fn build(backend: Backend, config: WebConfig) -> Result<WebRouter, We
         .map_err(route)?
         .fallback(handler_fn(move |req: Request| {
             let s = Arc::clone(&to_shell);
-            async move { app_fallback(&s, &req) }
+            async move { app_fallback(&s, &req).await }
         }));
 
     let to_api = Arc::clone(&shared);
@@ -178,8 +180,9 @@ pub(crate) fn build(backend: Backend, config: WebConfig) -> Result<WebRouter, We
 }
 
 /// Every `/app` path the routes do not match: 404 under `/app/assets`,
-/// the shell for `GET` and `HEAD` elsewhere, and 405 otherwise.
-fn app_fallback(s: &Shared, req: &Request) -> Response {
+/// 405 for a method other than `GET` and `HEAD`, and otherwise the page
+/// gate of SA-09 before the shell ([`page`]).
+async fn app_fallback(s: &Shared, req: &Request) -> Response {
     let path = req.target.path();
     if path == "/app/assets" || path.starts_with("/app/assets/") {
         return reply::not_found();
@@ -187,12 +190,108 @@ fn app_fallback(s: &Shared, req: &Request) -> Response {
     if req.method != Method::GET && req.method != Method::HEAD {
         return reply::get_only();
     }
-    // M9 lane B2: a tenant that set a brand gets its stylesheet linked.
-    let body = match s.backend.brand() {
-        Some(b) => shell::render(&s.assets, Some(&b.digest)),
-        None => s.shell.clone(),
+    let admission = match &s.backend {
+        Backend::Core(core) => match api::credential(&req.headers) {
+            Ok(cred) => core.page(cred, &RequestHead::new(), path).await,
+            // A tossed cookie or a bearer field opens no page. The
+            // visitor signs in again, as with no session.
+            Err(_) => match fstp_api_core::page_without_session(path) {
+                PageAdmission::Open => PageAdmission::Open,
+                PageAdmission::NotFound => PageAdmission::NotFound,
+                _ => PageAdmission::SignIn,
+            },
+        },
+        Backend::Refusing => fstp_api_core::page_without_session(path),
     };
-    Response::with_body(StatusCode::OK, "text/html; charset=utf-8", body)
+    page(s, path, admission)
+}
+
+/// The answer to an `/app/` page request under the page gate of SA-09:
+///
+/// - admitted: the shell, 200;
+/// - no session: 303 to the login page, which returns to the page after
+///   sign-in, where the gate runs again;
+/// - a session too weak for the page's read (I-77): 303 to the login
+///   page with `method=passkey`, then the gate again;
+/// - any other refusal, and a path no page has: the one "Page not
+///   found" answer, 404. Its body is the same bytes in every case, so it
+///   never says that a page exists or why it is closed.
+fn page(s: &Shared, path: &str, admission: PageAdmission) -> Response {
+    match admission {
+        PageAdmission::Open => Response::with_body(
+            StatusCode::OK,
+            "text/html; charset=utf-8",
+            shell_now(s, None),
+        ),
+        PageAdmission::SignIn => see_other(&login_path(path, false)),
+        PageAdmission::PasskeySignIn => see_other(&login_path(path, true)),
+        PageAdmission::NotFound => not_found_page(s),
+        PageAdmission::Unavailable => reply::json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            br#"{"code":"unavailable"}"#,
+        ),
+    }
+}
+
+/// The "Page not found" answer of every `/app/` path the viewer may not
+/// open or no page has (SA-09): 404 with the shell marked
+/// [`shell::NOT_FOUND`], whose client renders the not-found page.
+fn not_found_page(s: &Shared) -> Response {
+    Response::with_body(
+        StatusCode::NOT_FOUND,
+        "text/html; charset=utf-8",
+        shell_now(s, Some(shell::NOT_FOUND)),
+    )
+}
+
+/// The shell with the tenant's brand sheet, if it set one (M9 lane B2),
+/// and the page marker `marker`, if any.
+fn shell_now(s: &Shared, marker: Option<&str>) -> Vec<u8> {
+    match (s.backend.brand(), marker) {
+        (None, None) => s.shell.clone(),
+        (b, m) => shell::render_marked(&s.assets, b.as_ref().map(|b| b.digest.as_str()), m),
+    }
+}
+
+/// A 303 to `location`, a constant path and a query this module encodes.
+fn see_other(location: &str) -> Response {
+    let mut r = Response::new(StatusCode::SEE_OTHER);
+    let _ = r.headers.try_insert("location", location);
+    r
+}
+
+/// The login page that returns to `path` after sign-in, as
+/// `web/src/auth/next.ts` `loginPathFor` writes it: `/auth/login` for
+/// the home page, else `/auth/login?next=<path>` with the path encoded
+/// as `encodeURIComponent` encodes it. With `passkey`, the query also
+/// asks for a passkey sign-in (`method=passkey`, I-77).
+pub(crate) fn login_path(path: &str, passkey: bool) -> String {
+    let mut q = Vec::new();
+    if passkey {
+        q.push("method=passkey".to_owned());
+    }
+    if path != "/app/" {
+        q.push(format!("next={}", encode_component(path)));
+    }
+    if q.is_empty() {
+        "/auth/login".to_owned()
+    } else {
+        format!("/auth/login?{}", q.join("&"))
+    }
+}
+
+/// `encodeURIComponent` of ECMAScript: every byte outside
+/// `A-Z a-z 0-9 - _ . ! ~ * ' ( )` as `%XX`, upper case.
+fn encode_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// The public pages (design section 3.10, R-PB-04, TH-37). Only `GET` and
@@ -286,5 +385,28 @@ impl WebRouter {
 impl Handler for WebRouter {
     fn handle(&self, req: Request) -> impl Future<Output = Response> + Send {
         self.serve(req)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SA-09 rules 2 and 4: the login page returns to the page asked for,
+    /// encoded as `web/src/auth/next.ts` `loginPathFor` encodes it, and
+    /// asks for a passkey when the session is too weak (I-77).
+    #[test]
+    fn sa09_login_path_returns_to_the_page() {
+        assert_eq!(login_path("/app/", false), "/auth/login");
+        assert_eq!(
+            login_path("/app/grants", false),
+            "/auth/login?next=%2Fapp%2Fgrants"
+        );
+        assert_eq!(
+            login_path("/app/admin/onboarding/domains_and_email", true),
+            "/auth/login?method=passkey&next=%2Fapp%2Fadmin%2Fonboarding%2Fdomains_and_email"
+        );
+        assert_eq!(login_path("/app/", true), "/auth/login?method=passkey");
+        assert_eq!(encode_component("a-b_c.d!~*'()é"), "a-b_c.d!~*'()%C3%A9");
     }
 }
