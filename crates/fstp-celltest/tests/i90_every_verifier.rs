@@ -72,7 +72,7 @@ struct Verifier {
 /// Every composite verifier of the platform. A shipped file with a
 /// `composite::verify*` call that no row names fails
 /// [`i90_every_composite_verify_call_site_is_in_the_table`].
-const VERIFIERS: [Verifier; 7] = [
+const VERIFIERS: [Verifier; 8] = [
     Verifier {
         name: "audit anchor (fstp_audit::anchor::anchor_signature_verifies)",
         site: "crates/fstp-audit/src/anchor.rs",
@@ -114,6 +114,12 @@ const VERIFIERS: [Verifier; 7] = [
         site: "crates/fstp-control/src/erase.rs",
         sign: erasure_sign,
         verify: erasure_verify,
+    },
+    Verifier {
+        name: "edge route table (fstp_edge::verify_route_table)",
+        site: "crates/fstp-edge/src/feed.rs",
+        sign: route_table_sign,
+        verify: route_table_verify,
     },
 ];
 
@@ -283,6 +289,34 @@ fn erasure_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
     let mut c = erasure(v);
     c.signature = sig.to_vec();
     verify_erasure_confirmation(pk, &c)
+}
+
+/// The body of a route table of variant `v`: one cell's routes, version
+/// `v` (ADR-004, 2026-11-15 late, lane m3/erase-prod).
+fn route_table_body(v: u8) -> Vec<u8> {
+    let ep = |port| fstp_edge::CellEndpoint {
+        cell: [v; 16],
+        address: std::net::SocketAddr::from(([10, 0, 9, v], port)),
+        tls_name: "tunnel.cell.internal".to_owned(),
+    };
+    let route = fstp_edge::RouteEntry {
+        host: fstp_edge::HostName::parse(format!("cell{v}.example").as_bytes()).unwrap(),
+        app: ep(8443),
+        vault: ep(9443),
+    };
+    fstp_edge::encode_route_table_body(u64::from(v), &[route]).unwrap()
+}
+
+fn route_table_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
+    key.sign_with_context(&route_table_body(v), fstp_edge::ROUTE_TABLE_CONTEXT)
+        .unwrap()
+        .to_bytes()
+        .to_vec()
+}
+
+fn route_table_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
+    fstp_edge::encode_signed_route_table(&route_table_body(v), sig)
+        .is_ok_and(|bytes| fstp_edge::verify_route_table(&[pk.to_vec()], &bytes).is_ok())
 }
 
 // ------------------------------------------------------------- the sweep
