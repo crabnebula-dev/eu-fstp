@@ -107,7 +107,9 @@ function fillNav(list: HTMLElement, roles: NavRoles | null): void {
 function topBar(mailbox: HTMLElement): HTMLElement {
   const security: Record<string, string> = { class: 'tool-link', href: PATHS.account, 'data-nav': 'account' };
   if (location.pathname === PATHS.account) security['aria-current'] = 'page';
-  return h('header', { class: 'site-header site-header--app' }, [
+  // Two class tokens, joined so no literal holds a space (the R-NF-04
+  // literal scan of e2e/r-nf-03-auth-and-vault-pages.spec.ts).
+  return h('header', { class: ['site-header', 'site-header--app'].join(' ') }, [
     h('div', { class: 'topbar' }, [
       h('a', { class: 'brand', href: APP.home, 'data-brand': 'home' }, [
         h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, ['F']),

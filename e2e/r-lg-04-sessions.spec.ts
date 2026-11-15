@@ -99,10 +99,11 @@ test.describe('R-LG-04 sessions and devices', () => {
     await expect(devices).toHaveCount(1);
 
     // Link a second device: a security key, added with a step-up.
-    const next = await keyForNextPasskey(page);
+    const next = await keyForNextPasskey(page, device);
     await page.locator(UI.account.addPasskey).click();
     await confirmStepUp(page);
     await expect(devices).toHaveCount(2);
+    await device.setPresence(true);
     const key = await next.key;
     const creds = [...(await device.credentials()), ...(await key.credentials())];
     expect(creds).toHaveLength(2);

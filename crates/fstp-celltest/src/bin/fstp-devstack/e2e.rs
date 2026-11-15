@@ -28,8 +28,8 @@
 //!   is fresh, and its link is handed out. Otherwise the stack starts the
 //!   whole world again, both cells, with the same hosts. Each spec resets
 //!   the cells it uses before it uses them, so a spec that uses both cells
-//!   resets both first. The M3 cell has no email for its first admin, so
-//!   `email` is empty.
+//!   resets both first. `email` is the first admin's login email, which
+//!   provisioning names and the enrolment binds.
 //! - `GET /test/mailbox?to=` lists the proof mails the cell handed to the
 //!   world's mail capture ([`fstp_celltest::world_mail`]). A
 //!   self-registration proof is kind `signup` with the link
@@ -262,6 +262,9 @@ fn reset(stack: &Shared, i: usize) -> Response {
     if let Some(h) = handed.get_mut(i) {
         *h = true;
     }
+    // The login email provisioning names for the first admin, which the
+    // enrolment binds (lane m3/login-m2http).
+    let email = cell.login_email(fstp_domain_testkit::r#gen::roster::ADMIN);
     let url = format!(
         "https://{}{ENROL_PAGE}#{}{}",
         cell.host(),
@@ -272,7 +275,10 @@ fn reset(stack: &Shared, i: usize) -> Response {
         StatusCode::OK,
         &obj(vec![(
             "first_admin",
-            obj(vec![("url", Value::from(url)), ("email", Value::from(""))]),
+            obj(vec![
+                ("url", Value::from(url)),
+                ("email", Value::from(email)),
+            ]),
         )]),
     )
 }
@@ -397,7 +403,7 @@ fn seam(path: &str) -> Option<&'static str> {
     }
     if path.starts_with("/test/commands/") {
         return Some(
-            "no command builder of the devstack: CreateProgramme, GrantRole and SetLoginPolicy in the cell's wire form",
+            "no command builder of the devstack: an Operations or Judging grant needs an active programme, since a draft admits only a programme manager grant (I-66), so CreateProgramme needs the whole creator path with a second tenant admin; no command carries P-70, so magic links are a start option",
         );
     }
     if path == "/test/scenario/negotiation" {

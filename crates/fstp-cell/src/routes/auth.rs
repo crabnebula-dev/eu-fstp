@@ -1667,7 +1667,13 @@ pub(crate) async fn devices<B: Backend>(ctx: &Ctx<B>, caller: &Caller) -> Reply 
             Value::Object(o)
         })
         .collect();
-    let mut o = Object::with_capacity(1);
+    // The caller's own account, which the account page names in the
+    // step-up of a removal (`RevokeCredential {account, credential}`).
+    let mut o = Object::with_capacity(2);
+    o.insert(
+        "account",
+        Value::String(caller.view.account.raw().to_string()),
+    );
     o.insert("devices", Value::Array(list));
     Reply::json(StatusCode::OK, &Value::Object(o))
 }
