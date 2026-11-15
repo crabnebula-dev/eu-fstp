@@ -589,6 +589,7 @@ const fn kind_name(kind: u16) -> &'static str {
         11 => "retention_end",
         12 => "reporting_period_end",
         13 => "report_deadline",
+        14 => "signer_rotation_due",
         _ => "immediate",
     }
 }

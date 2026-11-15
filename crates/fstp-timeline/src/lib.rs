@@ -29,6 +29,11 @@
 //!   the platform mailbox message the API core derives from the same
 //!   date (lane m5/retention, interim, pending Daniel: no email template
 //!   exists for it). Its fire entry records that retention ended.
+//! - [`kind::SIGNER_ROTATION_DUE`]: the notice companion key is a year old
+//!   (ADR-004; Daniel, 2026-11-15 late). Sourced by the key, due 365 days
+//!   after its latest `create_signer` or `rotate_signer` key record, and
+//!   moved by a rotation. It fires once per generation, with no email and
+//!   no command: it is the operator's reminder on the timeline.
 //! - [`kind::REPORTING_PERIOD_END`] and [`kind::REPORT_DEADLINE`]: the end
 //!   of each reporting period of an active programme and its report
 //!   deadline, from P-57 (`fstp_domain::reporting`, Daniel, 2026-11-15
@@ -98,6 +103,49 @@ pub mod kind {
     /// The report deadline of a reporting period (P-57): the midnight
     /// after its last day.
     pub const REPORT_DEADLINE: u16 = 13;
+    /// The notice companion key is a year old and due for rotation
+    /// (ADR-004; Daniel, 2026-11-15 late: the operator rotates it by hand,
+    /// and the platform reminds the operator when a year is up).
+    pub const SIGNER_ROTATION_DUE: u16 = 14;
+}
+
+/// A level 2 signing key is due for replacement this long after its
+/// generation was made: 365 days, as the cell keystore counts it
+/// (`fstp_cell::tasks::erasure::SIGNER_LIFETIME_US`, ADR-004).
+pub const SIGNER_LIFETIME_US: i64 = 365 * 24 * 60 * 60 * 1_000_000;
+
+/// The source of every `SIGNER_ROTATION_DUE` event: the notice companion
+/// key, the only level 2 signer purpose of the App chain.
+pub const NOTICE_COMPANION_SOURCE: &[u8] = b"notice_companion";
+
+/// The `SIGNER_ROTATION_DUE` event of the latest generation in
+/// `generations` (the instants of its `create_signer` and
+/// `rotate_signer` key records): due 365 days after it. The version is
+/// the generation's position, so a rotation cancels the scheduled event,
+/// superseded by one a year after the new generation. A fired event is
+/// not derived again for its generation. No generation, no event.
+pub fn signer_events(t: &TimelineState, generations: &[Timestamp]) -> Vec<Derived> {
+    let Some(last) = generations.last() else {
+        return Vec::new();
+    };
+    let version = u64::try_from(generations.len().saturating_sub(1)).unwrap_or(u64::MAX);
+    let fired = t.events().any(|(_, x)| {
+        x.kind == kind::SIGNER_ROTATION_DUE
+            && x.source == NOTICE_COMPANION_SOURCE
+            && x.source_version == version
+            && x.status == EventStatus::Fired
+    });
+    if fired {
+        return Vec::new();
+    }
+    vec![Derived {
+        kind: kind::SIGNER_ROTATION_DUE,
+        lead: 0,
+        source: NOTICE_COMPANION_SOURCE.to_vec(),
+        source_version: version,
+        due: last.micros().saturating_add(SIGNER_LIFETIME_US),
+        offset_minutes: 0,
+    }]
 }
 
 /// The event kind of a sweep kind.
@@ -233,6 +281,9 @@ pub fn derive(s: &CellState, now: Timestamp) -> BTreeMap<EventId, Derived> {
         put(d);
     }
     for d in period_events(t, &fstp_domain::reporting::active_reporting_periods(core)) {
+        put(d);
+    }
+    for d in signer_events(t, s.signer_generations()) {
         put(d);
     }
     out
@@ -484,6 +535,10 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
         // P-57: no email and no command, as for retention. The API core's
         // mailbox reminds the programme managers from the same dates.
         kind::REPORTING_PERIOD_END | kind::REPORT_DEADLINE => Vec::new(),
+        // ADR-004: the operator's reminder. No email and no command: the
+        // operator rotates the key by hand, with step-up, through the
+        // control plane (`fstp_control::api::CpApiRequest::RotateNoticeKey`).
+        kind::SIGNER_ROTATION_DUE => Vec::new(),
         k => {
             let cmd = sweep::due(s.engine(), now)
                 .unwrap_or_default()

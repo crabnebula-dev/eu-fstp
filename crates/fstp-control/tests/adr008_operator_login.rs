@@ -458,3 +458,30 @@ fn adr011_approval_expires() {
             .is_err()
     );
 }
+
+/// ADR-004, I-78 (Daniel, 2026-11-15 late: "An operator rotates it by
+/// hand"): rotating a cell's notice companion key needs a fresh step-up of
+/// the same staff member, and each step-up admits one rotation.
+#[test]
+fn i78_rotate_notice_key_needs_a_fresh_step_up() {
+    let rotate = CpApiRequest::RotateNoticeKey {
+        cell: fstp_cp_proto::CellId([5; 16]),
+    };
+    let mut a = Passkey::new(1, 0xa1);
+    let mut login = OperatorLogin::new(HOST, &[a.pinned()]).unwrap();
+    let c = login.begin(Purpose::Login, T0).unwrap();
+    let (session, _) = login.finish_login(c, &a.assert(&c), T0).unwrap();
+    assert_eq!(
+        refusal(login.authorise(session, &rotate, T0 + 1)),
+        OperatorRefusal::StepUpRequired
+    );
+    let s = login.begin(Purpose::StepUp, T0 + 2).unwrap();
+    login
+        .finish_step_up(session, s, &a.assert(&s), T0 + 3)
+        .unwrap();
+    assert_eq!(login.authorise(session, &rotate, T0 + 4).unwrap(), a.staff);
+    assert_eq!(
+        refusal(login.authorise(session, &rotate, T0 + 5)),
+        OperatorRefusal::StepUpRequired
+    );
+}

@@ -1642,6 +1642,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     "retention_end",
                     "reporting_period_end",
                     "report_deadline",
+                    "signer_rotation_due",
                 ]),
             ),
             m("due", Shape::Id),

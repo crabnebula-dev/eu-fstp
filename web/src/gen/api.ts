@@ -4886,7 +4886,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     kind: "object",
     fields: {
       "event": { schema: { kind: "string" }, optional: false },
-      ["kind"]: { schema: { kind: "enum", values: ["immediate", "stage2_expiry", "re_enter", "start_execution", "complete", "milestone_reminder", "milestone_overdue", "corrigendum", "notice_issued", "copy_requested", "retention_end", "reporting_period_end", "report_deadline"] }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["immediate", "stage2_expiry", "re_enter", "start_execution", "complete", "milestone_reminder", "milestone_overdue", "corrigendum", "notice_issued", "copy_requested", "retention_end", "reporting_period_end", "report_deadline", "signer_rotation_due"] }, optional: false },
       "due": { schema: { kind: "id" }, optional: false },
       "status": { schema: { kind: "enum", values: ["scheduled", "cancelled", "fired"] }, optional: false },
     },
