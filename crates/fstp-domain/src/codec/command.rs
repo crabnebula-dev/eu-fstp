@@ -84,6 +84,7 @@ tagged_enum! {
         RevokeCalibrationConsent { proposal },
         SetPublicChoice { proposal, phase, level, title, summary, grantee, deliverables },
         WithdrawPublicChoice { proposal, phase },
+        UnmaskParty { programme, subject, purpose },
     }
     money {
         DraftCall { call, programme, opens, deadline, deadline_zone, budget, text },

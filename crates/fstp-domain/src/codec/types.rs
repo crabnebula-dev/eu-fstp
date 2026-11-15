@@ -54,6 +54,7 @@ use crate::roles::{BindingScope, CoolingOff, Role};
 use crate::rules::{Row, StateTag};
 use crate::scoring::{Criteria, Criterion, ScoreKey, ScoreVector, Stage, VoidCause};
 use crate::time::{Days, Timestamp, ZoneName};
+use crate::unmask::{PartyKind, UnmaskSubject};
 
 // ---------------------------------------------------------------------------
 // Ids and other wide integers
@@ -441,6 +442,14 @@ unit_enum!(SystemCause {
 });
 unit_enum!(ContractEvent { Effective });
 unit_enum!(PublicPhase { Funded, Finished });
+unit_enum!(PartyKind {
+    Applicant,
+    TeamMember,
+    Guardian,
+    Reviewer,
+    Irc,
+    Staff
+});
 unit_enum!(PublicLevel {
     Hidden,
     Project,
@@ -877,6 +886,15 @@ tagged_enum! {
     fields { Reviewer {}, Irc {} }
     money {}
     tuple { Amendment(amendment) }
+    flat {}
+    flat_money {}
+}
+
+tagged_enum! {
+    UnmaskSubject;
+    fields {}
+    money {}
+    tuple { Binding(binding), Assignment(assignment) }
     flat {}
     flat_money {}
 }

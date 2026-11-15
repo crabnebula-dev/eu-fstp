@@ -215,6 +215,15 @@ fn m3_command(name: &str) -> Option<CellCommand> {
             request: [0x42; 16],
         }),
         "ApproveRecovery" => CellCommand::Auth(AuthCommand::ApproveRecovery { case: [0x7C; 16] }),
+        // ADR-023: the coordinator unmask of a binding of P1.
+        "UnmaskParty" => core(fstp_domain::Command::UnmaskParty {
+            programme: P1,
+            subject: fstp_domain::unmask::UnmaskSubject::Binding(BindingId::from_raw(11)),
+            purpose: fstp_domain::id::TextRef::new(
+                fstp_domain::id::TextId::from_raw(1),
+                fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+            ),
+        }),
         "IdentityDownload" => CellCommand::Release(
             fstp_cell_core::release::ReleaseCommand::IssueDownloadTicket { proposal: 1 },
         ),

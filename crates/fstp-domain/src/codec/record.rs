@@ -382,6 +382,7 @@ tagged_enum! {
         CalibrationConsentRevoked { proposal, by },
         PublicChoiceSet { proposal, phase, level, title, summary, grantee, deliverables, by },
         PublicChoiceWithdrawn { proposal, phase, by },
+        PartyUnmasked { programme, party, subject, purpose, by },
     }
     money {
         CallDrafted { call, programme, opens, deadline, deadline_zone, budget, text, author },

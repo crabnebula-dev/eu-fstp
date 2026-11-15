@@ -195,11 +195,17 @@ pub enum ReadKind {
     // M9 finish (R-RP-01, M9 design section 2.2): the funder profile a
     // programme pins through P-53, with its outputs and visibility elements.
     GetFunderProfile,
+    // ADR-023 (I-17 as amended 2026-11-15): the parties of one proposal
+    // and the staff of its programme, by id, for the coordinator's unmask.
+    ListUnmaskParties,
+    // ADR-023 reading 11 (R-AU-01): the unmask records of a programme, for
+    // its auditor and the tenant admins.
+    ListUnmasks,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 69] = [
+    pub const ALL: [ReadKind; 71] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -269,6 +275,8 @@ impl ReadKind {
         ReadKind::ListReportProgrammes,
         ReadKind::GetPublicity,
         ReadKind::GetFunderProfile,
+        ReadKind::ListUnmaskParties,
+        ReadKind::ListUnmasks,
     ];
 }
 
@@ -679,6 +687,41 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::AnyOf(&[ReadRule::Holder(Role::ProgrammeManager), ReadRule::Auditor]),
         OPEN_ALWAYS,
     ),
+    // ADR-023 (I-17 as amended 2026-11-15): the FSTP coordinator of the
+    // programme lists the parties of a proposal to unmask one. Interim,
+    // pending Daniel: a DRAFT is closed, since a draft is the team's alone
+    // (I-21). The unmask itself names any party at any stage.
+    (
+        ReadKind::ListUnmaskParties,
+        ReadRule::Holder(Role::FstpCoordinator),
+        NOT_DRAFT,
+    ),
+    // ADR-023 reading 11 (R-AU-01): the auditor of the programme and every
+    // tenant admin read its unmask records.
+    (
+        ReadKind::ListUnmasks,
+        ReadRule::AnyOf(&[ReadRule::Auditor, ReadRule::TenantAdmin]),
+        OPEN_ALWAYS,
+    ),
+];
+
+/// Every state but DRAFT (ADR-023, I-21).
+const NOT_DRAFT: &[StateTag] = &[
+    StateTag::Submitted,
+    StateTag::Ineligible,
+    StateTag::Stage1,
+    StateTag::NotSelected,
+    StateTag::Stage2,
+    StateTag::Ranked,
+    StateTag::IrcReview,
+    StateTag::Deferred,
+    StateTag::Declined,
+    StateTag::Negotiation,
+    StateTag::Withdrawn,
+    StateTag::Granted,
+    StateTag::InExecution,
+    StateTag::Completed,
+    StateTag::Terminated,
 ];
 
 /// The readers of a grant (M5 design section 5).

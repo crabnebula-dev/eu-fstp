@@ -1287,6 +1287,10 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     // (interim, pending Daniel).
     (K::SetPublicChoice, ActorRule::Lead),
     (K::WithdrawPublicChoice, ActorRule::Lead),
+    // ADR-023 (I-17 as amended 2026-11-15): the FSTP coordinator of the
+    // programme unmasks its parties. The unmask lane checks the active
+    // coordinator binding of the named programme.
+    (K::UnmaskParty, COORDINATOR),
 ];
 
 /// The actor rule of `kind`, from [`ACTOR_RULES`].

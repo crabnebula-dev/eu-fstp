@@ -249,12 +249,13 @@ fn ops_cover_every_command_kind_once() {
     let stray: Vec<&String> = routed.keys().filter(|k| !all.contains(*k)).collect();
     assert!(stray.is_empty(), "routed kinds outside ALL: {stray:?}");
     // M5 lane L-API routes the 15 M5 kinds and M6 lane L6-API one (RequestCopy): 37 plus 15 plus 1.
-    // M9 lane P1 routes the two public choice kinds: 55.
-    assert_eq!(routed.len(), 55, "routed command kinds");
+    // M9 lane P1 routes the two public choice kinds: 55. ADR-023 routes
+    // `UnmaskParty`: 56.
+    assert_eq!(routed.len(), 56, "routed command kinds");
     assert_eq!(
         all.len(),
-        69,
-        "CommandKind::ALL in M4, with RecordChecks of M5, the three consent kinds of M12, RequestCopy of M6 and the two public choice kinds of M9"
+        70,
+        "CommandKind::ALL in M4, with RecordChecks of M5, the three consent kinds of M12, RequestCopy of M6, the two public choice kinds of M9 and UnmaskParty of ADR-023"
     );
 }
 
@@ -504,14 +505,15 @@ fn ops_high_risk_and_binding_follow_the_domain() {
     // 37, which counted kinds, not operations.)
     // M5 lane L-API routes the 15 kinds of M5 that `LATER` held, so 49.
     // M9 lane P1 adds `SetPublicChoice` and `WithdrawPublicChoice`, so 51.
-    assert_eq!(kinds.len(), 51, "command kinds of command operations");
+    // ADR-023 adds `UnmaskParty`, so 52.
+    assert_eq!(kinds.len(), 52, "command kinds of command operations");
     assert!(checked >= 36, "only {checked} command operations");
 }
 
 /// The high-risk table of `authentication.md`, row by row, mapped to the
 /// M4 operations that perform each action. An empty row names the
 /// milestone that brings its operations.
-const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
+const HIGH_RISK_ROWS: [(&str, &[&str], &str); 11] = [
     (
         "Granting or changing a role in the Drafting, Judging or Operations groups, or tenant admin",
         &[
@@ -572,6 +574,12 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 10] = [
     (
         "Approving an account recovery",
         &["admin.approve_recovery"],
+        "",
+    ),
+    // ADR-023 (I-17 as amended 2026-11-15).
+    (
+        "Unmasking a party as FSTP coordinator",
+        &["identity.unmask"],
         "",
     ),
 ];
@@ -1011,7 +1019,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 69] = [
+const READ_NAMES: [&str; 71] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1095,6 +1103,9 @@ const READ_NAMES: [&str; 69] = [
     "GetPublicity",
     // M9 finish: the funder profile a programme pins (R-RP-01).
     "GetFunderProfile",
+    // ADR-023 (I-17): the coordinator's parties read and the unmask log.
+    "ListUnmaskParties",
+    "ListUnmasks",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

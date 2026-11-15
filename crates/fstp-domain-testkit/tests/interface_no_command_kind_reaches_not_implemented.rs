@@ -554,6 +554,7 @@ fn walk(backend: Backend) {
     scheduled_end(&mut walk, backend);
     calibration_consent(&mut walk, backend);
     public_choice(&mut walk, backend);
+    unmask(&mut walk, backend);
 
     walk.w
         .invariants()
@@ -644,6 +645,45 @@ fn public_choice(walk: &mut Walk, backend: Backend) {
             }
             Err(r) => panic!("production refuses a legal {kind:?} with {r}"),
         }
+    }
+}
+
+/// The coordinator unmask of ADR-023 (I-17 as amended 2026-11-15). The
+/// references model no unmask, so it runs through production `decide` on
+/// a copy of the walk's core state: the coordinator unmasks the lead of
+/// PA by its Applicant binding. The reference twin skips it.
+fn unmask(walk: &mut Walk, backend: Backend) {
+    use fstp_domain::id::{ContentDigest, TextId, TextRef};
+    use fstp_domain::unmask::UnmaskSubject;
+    use fstp_domain_testkit::publicity::ChoiceDriver;
+    let kind = CommandKind::UnmaskParty;
+    if backend == Backend::Reference {
+        walk.seen.insert(kind);
+        return;
+    }
+    let state = &walk.w.life.rev.sod.state;
+    let (binding, programme) = state
+        .roster()
+        .bindings()
+        .chain(state.roster().ended().map(|(id, e)| (id, &e.binding)))
+        .find(|(_, b)| b.account == LA && b.role == Role::Applicant)
+        .map(|(id, b)| (id, b.programme))
+        .unwrap_or_else(|| panic!("no Applicant binding of LA"));
+    let mut d = ChoiceDriver::new(state, walk.w.now());
+    let cmd = Command::UnmaskParty {
+        programme,
+        subject: UnmaskSubject::Binding(binding),
+        purpose: TextRef::new(
+            TextId::from_raw(923_001),
+            ContentDigest::from_bytes([7; 32]),
+        ),
+    };
+    match d.exec(COORDINATOR, &cmd).unwrap_or_else(|e| panic!("{e}")) {
+        Ok(_) => {
+            walk.seen.insert(kind);
+        }
+        Err(r) if is_not_implemented(&r) => panic!("{kind:?} reached a not-implemented refusal"),
+        Err(r) => panic!("production refuses a legal {kind:?} with {r}"),
     }
 }
 

@@ -77,11 +77,11 @@ The queries are the vault's only answers to the application (decided 2026-10-28)
 - **Writes** add a fact of a kind the vault holds. A person writes attributes, the P-17 country, affiliations, attestations, guardian consents and identity documents on the vault origin. The application writes only facts that carry no identity attributes, such as an I-54 relationship between two account ids.
 - **Releases** show identity attributes on the vault origin to an Operations role holder, only for a proposal in NEGOTIATION or later. Handles go only to the channel adapters.
 - **Acknowledgements** report that the application has recorded its reaction to a provisional fact. The vault then makes the fact effective (NOTE 4).
-- **Negotiation facts** tell the vault that a proposal has entered NEGOTIATION. The vault refuses a release for a subject that no negotiation fact lists.
+- **Negotiation facts** tell the vault that a proposal has entered NEGOTIATION. The vault refuses a release for a subject that no negotiation fact lists. The one exception is the coordinator unmask ticket of ADR-023 (I-17 as amended 2026-11-15): the cell records the unmask first, and the vault admits that ticket kind without a negotiation fact.
 
 From writes, the application learns only the resulting epoch change, through the change query.
 
-The vault origin is a web origin of the vault, separate from the application's origin and inside the cell (decided 2026-10-28, ADR-009). The browser sends attributes, the P-17 country and identity documents to it directly, and released attributes are shown there. So the application never receives them (I-17, NOTE 6). Each write or release by a person needs a signed, single-use ticket that the application issues. Issuing a ticket is recorded, so every read of identity attributes is logged (R-AU-01). The vault origin keeps no sessions.
+The vault origin is a web origin of the vault, separate from the application's origin and inside the cell (decided 2026-10-28, ADR-009). The browser sends attributes, the P-17 country and identity documents to it directly, and released attributes are shown there. So the application never receives them (I-17, NOTE 6). Each write or release by a person needs a signed, single-use ticket that the application issues. Issuing a ticket is recorded, so every read of identity attributes is logged (R-AU-01). A coordinator unmask (I-17, ADR-023) is recorded with its purpose before its ticket is issued. The vault origin keeps no sessions.
 
 ## Assessor
 

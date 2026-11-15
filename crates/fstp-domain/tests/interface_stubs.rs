@@ -179,6 +179,8 @@ fn high_risk_kinds(action: &str) -> Option<&'static [CommandKind]> {
         // command for it, and `fstp_cell_core::gate::HIGH_RISK_TABLE`
         // carries its step-up (decided 2026-10-28, Q15).
         "Approving an account recovery" => &[],
+        // ADR-023 (I-17 as amended 2026-11-15).
+        "Unmasking a party as FSTP coordinator" => &[CommandKind::UnmaskParty],
         _ => return None,
     };
     Some(kinds)
@@ -1197,6 +1199,11 @@ fn sample(kind: CommandKind) -> Command {
         K::WithdrawPublicChoice => Command::WithdrawPublicChoice {
             proposal,
             phase: fstp_domain::publicity::PublicPhase::Funded,
+        },
+        K::UnmaskParty => Command::UnmaskParty {
+            programme: ProgrammeId::from_raw(7),
+            subject: fstp_domain::unmask::UnmaskSubject::Binding(binding),
+            purpose: text_ref(27),
         },
     }
 }

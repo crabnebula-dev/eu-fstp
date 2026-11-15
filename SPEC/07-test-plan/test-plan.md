@@ -43,7 +43,7 @@
 | I-13, I-14 | Random grant sequences never exceed range or cap |
 | I-15 | A repeat grant or amendment for a lead whose verified identity, anywhere in the tenant, has an accepted deliverable without a public record under its own call's P-26 is rejected. Under the P-65 option "progress report", a partial claim keeps the record incomplete until the final claim |
 | I-16 | Static check: no code path stores funds or initiates transfers from platform-controlled accounts |
-| I-17, I-21 | Canary attributes never readable by Judging roles before NEGOTIATION |
+| I-17, I-21 | Canary attributes never readable by Judging roles before NEGOTIATION, except through the coordinator unmask of ADR-023. It needs the programme's coordinator, a purpose and a fresh step-up, and it appends one ledger record |
 | I-18 | No minor-flagged proposal reaches GRANTED without consent record |
 | I-22 | Export then import into an empty cell yields equal state |
 | I-23, I-24 | Any mutation of a past record or log entry is detected |

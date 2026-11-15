@@ -49,6 +49,7 @@ import {
   titleWithCall,
 } from "../reviewer/kit.js";
 import { readKnockOut, type KnockOutChoice } from "./forms.js";
+import { isParties, partiesTable, unmaskControl } from "./unmask.js";
 import { COORDINATOR_LABELS } from "./messages.en.js";
 import {
   isAssignmentView,
@@ -402,10 +403,18 @@ async function mountAssignments(env: PageEnv, params: Readonly<Record<string, st
     }
     const v = view.data;
     f.state(v.state);
+    // ADR-023: the coordinator may see who is behind each reviewer handle.
+    // The parties read names the programme the unmask goes to. A refused
+    // read offers no unmask control.
+    const parties = await readOp(env, "identity.parties", { proposal }, isParties);
+    const programme = parties.ok ? parties.data.programme : null;
     const parts: Child[] = [checksSection(t, v)];
     const open = ASSIGNABLE.has(v.state);
     const assigned = v.assigned.map((a) => {
       const item: Child[] = [a.label];
+      if (programme !== null) {
+        item.push(" ", unmaskControl(env, t, f, programme, "assignment", a.assignment, a.label));
+      }
       if (open) {
         const remove = buttonEl(`unassign-${a.assignment}`, "button", t.label("coord.assign.remove", { member: a.label }));
         remove.addEventListener("click", () => {
@@ -432,6 +441,15 @@ async function mountAssignments(env: PageEnv, params: Readonly<Record<string, st
         assigned.length === 0 ? h("p", {}, [t.label("coord.assign.none")]) : h("ul", { id: "assigned-list" }, assigned),
       ]),
     );
+    if (programme !== null) {
+      parts.push(
+        h("p", {}, [
+          h("a", { id: "unmask-parties-link", href: `/app/proposals/${proposal}/parties` }, [
+            t.label("coord.unmask.reviewer_link", { id: proposal }),
+          ]),
+        ]),
+      );
+    }
     if (!open) {
       parts.push(h("p", {}, [t.label("coord.assign.closed")]));
       f.show(parts);
@@ -552,6 +570,13 @@ async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>
         });
         action.push(close);
       }
+      // ADR-023: the people of the proposal, each with an Unmask control.
+      action.push(
+        " ",
+        h("a", { id: `unmask-link-${r.proposal}`, href: `/app/proposals/${r.proposal}/parties` }, [
+          t.label("coord.unmask.link", { id: r.proposal }),
+        ]),
+      );
       return h("tr", { "data-proposal": r.proposal, "data-state": r.state }, [
         h("th", { scope: "row" }, [proposalName(t, r.proposal)]),
         h("td", {}, [r.title]),
@@ -620,6 +645,25 @@ async function mountNotifiable(env: PageEnv, params: Readonly<Record<string, str
   });
 }
 
+// ---------------------------------------------------------------------------
+// Unmask (ADR-023, I-17 as amended 2026-11-15)
+// ---------------------------------------------------------------------------
+
+async function mountParties(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void> {
+  const t = pageI18n(env, COORDINATOR_LABELS);
+  const proposal = param(params, "proposal");
+  const f = frame(env, t, t.label("coord.unmask.title", { id: proposal }));
+  await guarded(f, async () => {
+    const parties = await readOp(env, "identity.parties", { proposal }, isParties);
+    if (!parties.ok) {
+      f.problem(parties.problem);
+      f.show([]);
+      return;
+    }
+    f.show(partiesTable(env, t, f, parties.data));
+  });
+}
+
 /** The FSTP coordinator's pages (J5). */
 export const COORDINATOR_PAGES: readonly JudgingPage[] = [
   { route: idRoute("coordinator.intake", "/app/calls/{call}/intake", ["call"]), mount: mountIntake },
@@ -637,4 +681,6 @@ export const COORDINATOR_PAGES: readonly JudgingPage[] = [
     route: idRoute("coordinator.notifiable", "/app/calls/{call}/notifiable-conflicts", ["call"]),
     mount: mountNotifiable,
   },
+  // ADR-023: the people of one proposal and the staff of its programme.
+  { route: idRoute("coordinator.parties", "/app/proposals/{proposal}/parties", ["proposal"]), mount: mountParties },
 ];

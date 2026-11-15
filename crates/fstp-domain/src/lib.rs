@@ -70,6 +70,9 @@ pub mod calibration;
 // M9 lane P1: grantee choices for the public pages.
 pub mod publicity;
 
+// ADR-023: the FSTP coordinator unmasks a party of their programme (I-17).
+pub mod unmask;
+
 // M3 lane W2c: read-only accessors for the cell (M3 design section 0.5).
 pub mod view;
 

@@ -39,13 +39,14 @@ const PUBLIC_ROW: &str = "Activating a programme or publishing a call";
 const TEMPLATE_ROW: &str = "Publishing a template to other tenants";
 const BREAK_GLASS_ROW: &str = "Approving break-glass access";
 const RECOVERY_ROW: &str = "Approving an account recovery";
+const UNMASK_ROW: &str = "Unmasking a party as FSTP coordinator";
 
 /// Design section 8.4 and ADR-008, transcribed: action variant, command,
 /// source row. `GrantTenantAdmin`, `EndTenantAdmin`, `ApproveSelfGrant` and
 /// `SetLoginPolicy` are cell commands (design section 5.1). The export,
 /// device, email, bank, template and break-glass entries name actions of
 /// later milestones or of `fstp-auth`, by their variant names.
-const DESIGN_TABLE: [(&str, &str, &str); 26] = [
+const DESIGN_TABLE: [(&str, &str, &str); 27] = [
     ("ManagementRoleChange", "GrantRole", ROLE_ROW),
     ("ManagementRoleChange", "EndRole", ROLE_ROW),
     ("ManagementRoleChange", "ReinstateBinding", ROLE_ROW),
@@ -73,6 +74,8 @@ const DESIGN_TABLE: [(&str, &str, &str); 26] = [
     ("PublishTemplate", "PublishTemplate", TEMPLATE_ROW),
     ("ApproveBreakGlass", "ApproveBreakGlass", BREAK_GLASS_ROW),
     ("ApproveRecovery", "ApproveRecovery", RECOVERY_ROW),
+    // ADR-023 (I-17 as amended 2026-11-15): its own spec row.
+    ("UnmaskParty", "UnmaskParty", UNMASK_ROW),
 ];
 
 /// The strict additions, interim pending Daniel (Q38), with their source
@@ -162,6 +165,7 @@ fn i78_spec_high_risk_table_matches_the_transcription() {
         TEMPLATE_ROW,
         BREAK_GLASS_ROW,
         RECOVERY_ROW,
+        UNMASK_ROW,
     ]
     .into_iter()
     .map(str::to_owned)
@@ -171,7 +175,8 @@ fn i78_spec_high_risk_table_matches_the_transcription() {
 
 /// The kinds M4 added to `CommandKind::high_risk()`: the activation step
 /// (D2, m4-design Q10). The table holds it as its own entry.
-const M4_HIGH_RISK_ADDITIONS: [&str; 1] = ["ActivateProgramme"];
+/// ADR-023 adds the coordinator unmask `UnmaskParty` (I-17, I-78).
+const M4_HIGH_RISK_ADDITIONS: [&str; 2] = ["ActivateProgramme", "UnmaskParty"];
 
 /// I-78, section 0.5: the domain's high-risk kinds are the seven the
 /// design re-derived at the M2 base commit, plus the M4 additions. A

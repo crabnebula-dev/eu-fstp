@@ -14,7 +14,7 @@ Proposal content, applicant identity, reviewer identity in anonymous mode, score
 | TH-04 | Undeclared reviewer conflicts or collusion | Conflict declaration before content, vault conflict checks, IRC review | T-SOD-CONFLICT |
 | TH-05 | Tenant admin self-escalation to read proposals | SoD-07, P-10 default, audit of every content read | T-AUTHZ-MATRIX |
 | TH-06 | Cross-tenant leakage via control plane, shared infrastructure, logs or caches | Cells, per-cell keys, R-NF-02 | T-ISO |
-| TH-07 | Identity leakage to reviewers through metadata or file properties | Metadata stripping, PII stripping, I-17 | T-PRIV-CANARY |
+| TH-07 | Identity leakage to reviewers through metadata or file properties | Metadata stripping, PII stripping, I-17. The coordinator unmask (ADR-023) is limited to the programme's coordinator, logged with its purpose, and shown on the vault origin only | T-PRIV-CANARY |
 | TH-08 | De-anonymisation of reviewers via message metadata or timing | Pseudonymous handles, relayed messages, batched delivery | T-PRIV-ANON |
 | TH-09 | Payment instruction tampering, such as bank detail swaps | Vault storage, re-verification on change, four-eyes (I-05) | T-PAY |
 | TH-10 | Malicious tenant export used to exploit the import parser | Sandboxed parser, schema validation, fuzzing | T-FUZZ-IMPORT |

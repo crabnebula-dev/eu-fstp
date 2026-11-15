@@ -136,6 +136,10 @@ fn i84_t_authz_matrix_mcp_equals_channel_policy_of_web() {
         m.missing_from_ops(),
         m.unknown_to_reference()
     );
+    // `FSTP_MATRIX_OPS` narrows a local run to some operations, as the
+    // direct and HTTP matrices do (lane m4/coordinator-unmask).
+    let ops = matrix::OpFilter::from_env().unwrap_or_else(|e| panic!("{e}"));
+    let m = m.narrowed(&ops).unwrap_or_else(|e| panic!("{e}"));
     let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let shared = std::sync::Arc::clone(&failures);
     let make = move || -> Result<Box<dyn Channel>, fstp_api_testkit::NotImplemented> {

@@ -39,9 +39,10 @@ fn d7_rule_refs_name_i65_i66_i67() {
 /// lane L12-I37 adds the three calibration consent commands (I-37), so 66.
 /// M6 lane L6-API adds `RequestCopy` (R-SB-04), so 67.
 /// M9 lane P1 adds the two public choice commands (I-43), so 69.
+/// ADR-023 adds the coordinator unmask `UnmaskParty` (I-17), so 70.
 #[test]
 fn d7_command_kinds_grow_by_the_m4_kinds() {
-    assert_eq!(CommandKind::ALL.len(), 69);
+    assert_eq!(CommandKind::ALL.len(), 70);
     assert!(CommandKind::ALL.contains(&CommandKind::RecordChecks));
     for k in [
         CommandKind::RequestCalibrationConsent,
@@ -49,6 +50,7 @@ fn d7_command_kinds_grow_by_the_m4_kinds() {
         CommandKind::RevokeCalibrationConsent,
         CommandKind::SetPublicChoice,
         CommandKind::WithdrawPublicChoice,
+        CommandKind::UnmaskParty,
     ] {
         assert!(CommandKind::ALL.contains(&k), "{k:?} is not in ALL");
     }

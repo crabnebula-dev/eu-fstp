@@ -583,6 +583,7 @@ const PROPOSAL_DECLARANT: &[RoleOrApplicant] =
 const COMMITTEE: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::CommitteeChair)];
 const IRC: &[RoleOrApplicant] = &[R(Role::IrcMember)];
 const AUDITOR: &[RoleOrApplicant] = &[R(Role::Auditor)];
+const AUDITOR_OR_ADMIN: &[RoleOrApplicant] = &[R(Role::Auditor), R(Role::TenantAdmin)];
 const FINANCE: &[RoleOrApplicant] = &[R(Role::FinanceApprover)];
 const RELEASER: &[RoleOrApplicant] = &[R(Role::PaymentReleaser)];
 const FIN_SIGNATORY: &[RoleOrApplicant] = &[R(Role::FinancialSignatory)];
@@ -1985,6 +1986,32 @@ pub const OPS: &[OpSpec] = &[
         "/programmes/{programme}/audit/vault-outcomes",
     )
     .acting(AUDITOR),
+    // ADR-023 (I-17 as amended 2026-11-15). The FSTP coordinator of the
+    // programme unmasks one party with a purpose and a step-up, and the
+    // vault shows the identity on its own origin. Web only: no tool, so
+    // MCP refuses both as not exposed (I-85, I-86).
+    OpSpec::command(
+        "identity.unmask",
+        CK::UnmaskParty,
+        Post,
+        "/programmes/{programme}/unmask",
+    )
+    .acting(COORDINATOR)
+    .class(Personal),
+    OpSpec::read(
+        "identity.parties",
+        RK::ListUnmaskParties,
+        "/proposals/{proposal}/parties",
+    )
+    .acting(COORDINATOR),
+    // ADR-023 reading 11 (R-AU-01): the unmask records, for the auditor of
+    // the programme and the tenant admins. Web only.
+    OpSpec::read(
+        "audit.unmasks",
+        RK::ListUnmasks,
+        "/programmes/{programme}/audit/unmasks",
+    )
+    .acting(AUDITOR_OR_ADMIN),
     // M5 lane L-API (M5 design section 5). Every M5 command is web only
     // and MCP refuses it as not exposed (reading 9, 12.1, I-85). The two
     // tools are the read-only contract and payment status of 12.1. A grant

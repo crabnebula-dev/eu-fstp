@@ -8,7 +8,7 @@ Roles bind a tenant account to a programme with a start date and an optional end
 | --- | --- | --- |
 | Programme manager | Drafting | Sets policy parameters, approves call publication. |
 | Call drafter | Drafting | Writes call text and knock-out criteria. |
-| FSTP coordinator | Judging | Runs the knock-out check (Annexe 5.b). |
+| FSTP coordinator | Judging | Runs the knock-out check (Annexe 5.b). May unmask any party of the own programme, with a purpose and a step-up (I-17 as amended 2026-11-15, ADR-023). |
 | Committee member | Judging | Votes on committee decisions. |
 | Committee chair | Judging | Casting vote on ties (Annexe 5.a). |
 | Assigned reviewer | Judging | Committee member assigned to a proposal for one call. |
@@ -162,7 +162,7 @@ Under P-10 "assigned reviewers only", committee members who are not assigned to 
 
 LLM findings are not part of the ranking view, since they quote submission content.
 
-NOTE: Assigned reviewers write summaries and rationale without identifying the applicant. The privacy canary tests cover these fields (I-17).
+NOTE: Assigned reviewers write summaries and rationale without identifying the applicant. The privacy canary tests cover these fields (I-17). The coordinator unmask of ADR-023 opens the vault origin only, so these fields stay free of identity attributes.
 
 ## Reviewer assignment
 
@@ -186,6 +186,8 @@ NOTE: Annexe 8.e allows proposals from the non-commercial constituencies around 
 ## Anonymous reviewer handles
 
 With P-11 anonymous, each reviewer gets a separate handle per proposal. Handles are never reused across proposals or calls, so applicants cannot correlate reviewers between submissions. Stage 2 messages travel through the platform under these handles.
+
+NOTE: Amended 2026-11-15 (I-17, ADR-023). The FSTP coordinator of the programme may unmask the person behind one handle, with a purpose and a step-up. The unmask is a ledger record, and the identity shows on the vault origin only. Applicants still see only handles.
 
 ## Confidentiality on binding
 
