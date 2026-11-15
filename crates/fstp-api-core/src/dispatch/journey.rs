@@ -84,9 +84,10 @@ pub struct JourneyView {
     /// Whether the caller's role gets the route strip (section 8.3, O-58).
     pub strip: bool,
     /// Whether the caller gets the full map, its list and its help panels:
-    /// an active Receiving binding on the proposal's team (section 8.1,
-    /// review J3-R2), or one that ended at its terminal state (Daniel,
-    /// 2026-11-06).
+    /// an active Receiving binding on the proposal's team, the guardian's
+    /// included (section 8.1, review J3-R2; Daniel, 2026-11-15, night), or
+    /// a lead or team member binding that ended at its terminal state
+    /// (Daniel, 2026-11-06).
     pub map: bool,
     /// Whether the caller sees the withdrawal control: the proposal's lead,
     /// in a state withdrawal is open from (NOTE 10).
@@ -522,15 +523,11 @@ pub(super) fn journey<P: Seams>(
         position,
         legs,
         strip: scene.roles.iter().any(|r| visibility::route_strip(*r)),
-        // Section 8.1: the full map is the team's, by the relation the
-        // visibility function reads (I-93). The page never decides it. The
-        // guardian reads the journey as a Receiving binding and gets no
-        // map (O-58 amendment of 2026-11-06).
-        map: scene.base.team
-            && scene
-                .roles
-                .iter()
-                .any(|r| matches!(r, Role::Applicant | Role::ApplicantTeamMember)),
+        // Section 8.1: the full map is the Receiving roles', by the
+        // relation the visibility function reads (I-93). The page never
+        // decides it. Daniel, 2026-11-15 (night): the guardian sees the
+        // route map too, as part of the full journey.
+        map: scene.base.team && scene.roles.iter().any(|r| visibility::route_map(*r)),
         // NOTE 10: only the lead withdraws (registry LEAD on
         // `proposal.withdraw`), and only from a non-terminal state before
         // GRANTED.
@@ -717,10 +714,10 @@ pub(crate) fn route_map_of(p: ProposalId, node: StateTag, legs: &[LegRow]) -> Op
 /// `proposal.route_map` (ADR-015 amendment of 2026-11-06): the map of
 /// the caller's own projection, the position and legs `proposal.journey`
 /// gives them. Only a caller whose journey `map` is set reads it: the
-/// team, by an active Receiving binding (section 8.1), or the former lead
-/// and team members of a terminal proposal (Daniel, 2026-11-06). Judging
-/// roles keep
-/// the strip, and IRC members get neither (O-58).
+/// team, by an active Receiving binding (section 8.1), the guardian
+/// included (Daniel, 2026-11-15, night), or the former lead and team
+/// members of a terminal proposal (Daniel, 2026-11-06). Judging roles
+/// keep the strip, and IRC members get neither (O-58).
 pub(super) fn route_map<P: Seams>(
     call: &Call<'_, P>,
     p: ProposalId,

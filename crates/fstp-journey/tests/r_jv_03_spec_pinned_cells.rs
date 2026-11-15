@@ -262,6 +262,79 @@ fn cases() -> Vec<Case> {
     out
 }
 
+/// The route map cells of section 8.1 and 8.3, O-58: the role, whether
+/// the role gets the full route map, and the cell. The Receiving roles of
+/// section 8.1 get it, the guardian included (Daniel, 2026-11-15, night:
+/// the guardian sees the route map as part of the full journey). Judging
+/// roles keep the strip of section 8.3, and IRC members get neither.
+const MAP_CELLS: [(Role, bool, &str); 7] = [
+    (Role::Applicant, true, "map, lead (section 8.1)"),
+    (
+        Role::ApplicantTeamMember,
+        true,
+        "map, team member (section 8.1)",
+    ),
+    (
+        Role::Guardian,
+        true,
+        "map, guardian (section 8.1, section 10)",
+    ),
+    (
+        Role::CommitteeMember,
+        false,
+        "map, committee member (section 8.3)",
+    ),
+    (
+        Role::CommitteeChair,
+        false,
+        "map, committee chair (section 8.3)",
+    ),
+    (
+        Role::FstpCoordinator,
+        false,
+        "map, coordinator (section 8.3)",
+    ),
+    (Role::IrcMember, false, "map, IRC member (O-58)"),
+];
+
+/// R-JV-03, R-JV-01, O-58, section 8.1: every spec-pinned route map cell
+/// gives the spec's verdict, in production and in the reference. The
+/// guardian's cell reads true.
+#[test]
+fn r_jv_03_spec_pinned_route_map_cells_give_the_spec_verdict() {
+    let mut wrong = Vec::new();
+    for (role, want, cell) in MAP_CELLS {
+        let prod = fstp_journey::visibility::route_map(role);
+        let reference = diary::route_map(role);
+        if prod != want || reference != Some(want) {
+            wrong.push(format!(
+                "{cell}: spec {want}, production {prod}, reference {reference:?}"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "R-JV-03: {wrong:#?}");
+}
+
+/// Section 8.1, O-58: wherever the reference states a route map verdict
+/// for a role, production gives it, and no role gets both the strip and
+/// the map.
+#[test]
+fn r_jv_03_route_map_agrees_with_the_reference_for_every_role() {
+    let mut wrong = Vec::new();
+    for role in Role::ALL {
+        let prod = fstp_journey::visibility::route_map(role);
+        if let Some(want) = diary::route_map(role)
+            && prod != want
+        {
+            wrong.push(format!("{role:?}: reference {want}, production {prod}"));
+        }
+        if prod && fstp_journey::visibility::route_strip(role) {
+            wrong.push(format!("{role:?}: both the strip and the map"));
+        }
+    }
+    assert!(wrong.is_empty(), "section 8.1: {wrong:#?}");
+}
+
 /// R-JV-03, I-93: every spec-pinned case gives the spec's verdict, in
 /// production and in the reference.
 #[test]

@@ -13,7 +13,9 @@
 //!   separate read keeps `proposal.journey` a reply of tokens only, so
 //!   its I-97 test (`r_jv_journey_reads.rs`) holds unchanged.
 //! - `proposal.journey` gains two flags. `map` is true only for a caller
-//!   who holds a Receiving binding on the proposal's team (section 8.1).
+//!   who holds a Receiving binding on the proposal's team (section 8.1):
+//!   the lead, a team member, or the guardian, who reads the full journey
+//!   with its route map (Daniel, 2026-11-15, night).
 //!   `withdraw` is true only for its lead, and only in a state NOTE 10
 //!   leaves open.
 //! - The route map read admits exactly the callers whose `map` is true.
@@ -21,8 +23,8 @@
 //!   and IRC members get neither (O-58).
 //!
 //! The world is built from genesis through production commands: PR1 of
-//! L1 with team member MEMBER, and PR2 of L2, both submitted in one
-//! published call. R1 is assigned to PR1 and has declared no conflict,
+//! L1 with team member MEMBER and guardian GUARDIAN, and PR2 of L2, both
+//! submitted in one published call. R1 is assigned to PR1 and has declared no conflict,
 //! the coordinator has declared on PR1, and R2 and the IRC member hold
 //! programme bindings only. Every account and text is synthetic.
 //!
@@ -48,8 +50,8 @@ use fstp_domain::id::{AccountId, AssignmentId, CommandId, ProposalId};
 use fstp_domain::policy::ReadAccess;
 use fstp_domain::roles::Role;
 use fstp_domain_testkit::r#gen::review::{
-    COORDINATOR, DraftSpec, IRC, L1, L2, MEMBER, O1, O2, PR1, PR2, R1, R2, ReviewSetup, assign,
-    attest_adult_leads, declare, handle, review_truth,
+    COORDINATOR, DraftSpec, IRC, L1, L2, L3, MEMBER, O1, O2, PR1, PR2, R1, R2, ReviewSetup, assign,
+    attest_adult_leads, declare, draft_binding, handle, review_truth,
 };
 use fstp_domain_testkit::r#gen::roster::{self, K1, SodSetup, T0};
 use fstp_engine::Engine;
@@ -64,6 +66,11 @@ const CALL: fstp_domain::id::CallId = roster::call(1);
 
 /// R1's assignment to PR1.
 const A1: AssignmentId = AssignmentId::from_raw(0x4a1);
+
+/// The guardian of PR1: a synthetic account the lead binds through
+/// `AddGuardian` while PR1 is SUBMITTED. No NEGOTIATION gate has run, so
+/// PR1 is still minor-flagged (state-machine NOTE 14).
+const GUARDIAN: AccountId = L3;
 
 /// The world of this file, built once per test.
 fn world() -> World {
@@ -102,7 +109,7 @@ fn world() -> World {
             },
         ],
     };
-    let mut truth = review_truth(setup.accounts());
+    let mut truth = review_truth(setup.accounts().into_iter().chain([GUARDIAN]));
     attest_adult_leads(&mut truth, setup.drafts.iter().map(|d| (d.lead, d.minor)));
     let vault = FakeVault::new(truth.clone());
     let mut engine = Engine::open(MemStore::new(), vault.oracle()).unwrap();
@@ -126,6 +133,13 @@ fn world() -> World {
         DeclarationSubject::Assignment(A1),
         false,
         false,
+    ));
+    steps.push(roster::add_member(
+        L1,
+        PR1,
+        GUARDIAN,
+        draft_binding(0, 9),
+        true,
     ));
     for (i, step) in steps.into_iter().enumerate() {
         let mut id = *b"fixture:j4map\0\0\0";
@@ -167,9 +181,10 @@ const fn caller(account: AccountId, what: &'static str, team: bool, lead: bool) 
 }
 
 /// Every caller of the world, with the section 8.1 and NOTE 10 facts.
-const CALLERS: [Caller; 9] = [
+const CALLERS: [Caller; 10] = [
     caller(L1, "the lead (Applicant)", true, true),
     caller(MEMBER, "a team member (ApplicantTeamMember)", true, false),
+    caller(GUARDIAN, "the guardian (Guardian)", true, false),
     caller(L2, "the lead of another proposal in the call", false, false),
     caller(COORDINATOR, "the declared FSTP coordinator", false, false),
     caller(R1, "the assigned, declared reviewer", false, false),
@@ -242,7 +257,7 @@ fn r_jv_01_route_map_read_is_registered() {
 /// Section 8.1, review J3-R2, I-93: over the callers of the world,
 /// `proposal.journey` either refuses, or gives `map` true exactly for a
 /// caller on PR1's team. The cell decides it, never the page. Each team
-/// member is admitted.
+/// member is admitted, the guardian included (Daniel, 2026-11-15, night).
 #[test]
 fn r_jv_01_j3r2_map_flag_is_set_only_for_the_team() {
     let c = cell_of(&world());
@@ -261,6 +276,41 @@ fn r_jv_01_j3r2_map_flag_is_set_only_for_the_team() {
         }
         Ok(())
     });
+}
+
+/// Section 8.1 (Voyager, Receiving roles), section 10, R-JV-01 (Daniel,
+/// 2026-11-15, night): the guardian sees the route map as part of the
+/// full journey. Their `proposal.journey` gives `map` true and `withdraw`
+/// false, and `proposal.route_map` answers them with a tree, so the
+/// journey and the map read agree.
+#[test]
+fn r_jv_01_guardian_reads_the_route_map_with_the_journey() {
+    let c = cell_of(&world());
+    route_map_exists(&c);
+    let j = done(&read(&c, GUARDIAN, &journey_path(PR1))).expect("the guardian reads the journey");
+    assert_eq!(
+        flag(&j, "map"),
+        Some(true),
+        "the guardian's map: {}",
+        j.to_compact()
+    );
+    assert_eq!(
+        flag(&j, "withdraw"),
+        Some(false),
+        "NOTE 10: only the lead withdraws: {}",
+        j.to_compact()
+    );
+    let r = read(&c, GUARDIAN, &map_path(PR1));
+    let reply = done(&r).unwrap_or_else(|| panic!("the guardian reads the route map: {r:?}"));
+    assert!(
+        member(&reply, "tree").is_some(),
+        "the guardian's reply holds a tree: {}",
+        reply.to_compact()
+    );
+    assert!(
+        class(&read(&c, GUARDIAN, &map_path(PR2))).refused(),
+        "the guardian of PR1 reads no map of PR2"
+    );
 }
 
 /// State-machine NOTE 10, R-SB-03, review J3-R2: over the callers of the

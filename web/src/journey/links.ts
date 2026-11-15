@@ -1,5 +1,7 @@
-// The "Progress" and "Activity" links of a proposal, which the home page
-// and the proposal page show (R-JV-01; lane j3).
+// The "Progress" and "Activity" links of a proposal, which the home page,
+// the proposal page and the guardian page show (R-JV-01; lane j3). The
+// guardian gets both, since the guardian sees the route map as part of the
+// full journey (Daniel, 2026-11-15, night).
 //
 // This module imports no generated operation table and no page, so a
 // page that shows the links loads nothing else of the voyager surface.
@@ -39,18 +41,6 @@ let catalogue: I18n | null = null;
 function text(key: string): Label {
   catalogue ??= createI18n({ catalogues: [{ locale: "en", labels: JOURNEY_LABELS, approved: {} }], locale: "en" });
   return catalogue.label(key);
-}
-
-/**
- * The "Activity" link of proposal `p` alone, for a guardian. The guardian
- * reads the activity log as a Receiving binding, with their own consent
- * steps (O-60; Daniel, 2026-11-15, night). `proposal.journey` gives the
- * guardian no map, so the progress page would show no route.
- */
-export function activityNav(p: string): HTMLElement {
-  return h("nav", { class: "journey-links", "aria-label": text("journey.link.activity_label") }, [
-    h("ul", { class: "fstp-list" }, [h("li", {}, [h("a", { href: JOURNEY_PATHS.activity(p) }, [text("journey.link.activity")])])]),
-  ]);
 }
 
 /** The "Progress" and "Activity" links of proposal `p` as a small navigation. */
