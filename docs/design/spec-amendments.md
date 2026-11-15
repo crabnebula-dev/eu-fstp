@@ -280,3 +280,12 @@ Readings, pending Daniel:
   - SoD-07 and SoD-18.
   - The approval and publication rules of calls (R-PC-03).
 - `SPEC/02-domain/roles-and-sod.md` gains a NOTE on the tenant admin row.
+
+## SA-13: Field help in the wizard and the Programme editor
+
+**Source.** Daniel, 2026-11-15 (night): "provide information about every field that the administrator / programme manager can fill out. Leave the text hidden by default, but if the user clicks an 'i' icon, then the information is shown. In the wizard and the editor, it is helpful because unless you have done this before you might not know what is intended." **Status.** Decided. To be built by lane `m4/field-help`.
+
+- Every field a tenant admin or programme manager can fill in has a help text. This covers the "Create a programme" wizard, the Programme editor and creator steps, knock-out criteria, imports and invitations.
+- The help text is hidden by default. An "i" button beside the field's label shows it and hides it again. The button follows the disclosure pattern: a real button, `aria-expanded`, `aria-controls`, keyboard operable, and an accessible name "About <field label>".
+- The text is plain language (docs/design/10). It says what the field means, what a typical value looks like, and what it affects, such as which check, which document or which applicants. Content comes from the SPEC descriptions (`policy-parameters.md`, `programme-creator.md`, the profile and Guide sections) with the P- id. It never invents legal claims; where a legal explanation would be needed it says `TODO(legal)`.
+- A completeness test fails when a field has no help text, as the label check already does.
