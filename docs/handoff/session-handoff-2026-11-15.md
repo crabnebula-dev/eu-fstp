@@ -63,4 +63,5 @@ Open points from the merged lanes: `Workspaces` and the R-NG-06 acknowledgement 
 - ADR-021: the admin's own set and the fail-closed port default (not asked yet).
 - ADR-023: legal basis and retention of the purpose text (TODO(legal)); whether another FSTP coordinator of the programme counts as unmaskable staff (interim: yes).
 - ADR-023 notice: Daniel chose no notice; the GDPR transparency TODO(legal) stays.
+- M10 Mythos run: Daniel can run it any time, and chose to wait until all phase 1 development is done (2026-11-15). Before it: record the model, update the threat model, freeze one commit.
 - Not finishable here: M7 live-model evaluation, M10 Mythos run, M11 pilot, M12 calibration.
