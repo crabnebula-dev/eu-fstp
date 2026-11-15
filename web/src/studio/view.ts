@@ -37,6 +37,8 @@ export const STUDIO_PATHS = {
   approval: (p: string): string => `/app/programmes/${p}/studio/approval`,
   guide: (p: string): string => `/app/programmes/${p}/studio/guide`,
   knockOuts: (p: string): string => `/app/programmes/${p}/studio/knock-outs`,
+  // SA-12: the "Create a programme" progress page, linked from the editor.
+  setupProgress: (p: string): string => `/app/programmes/${p}/setup/progress`,
 } as const;
 
 /** The creator step page of `step` (`creator/pages/common.ts` `PATHS.step`). */

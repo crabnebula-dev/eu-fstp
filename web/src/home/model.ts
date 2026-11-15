@@ -93,7 +93,8 @@ export interface MyRoles {
   /**
    * The programmes of the caller's programme manager bindings that hold
    * a creator draft. The creator and people pages read the draft, so the
-   * home page links them only for these (review finding U1).
+   * home page links them only for these (review finding U1). For a tenant
+   * admin, every programme of the tenant that holds one (SA-12).
    */
   readonly drafts: ReadonlySet<string>;
   /**
@@ -492,6 +493,22 @@ export function workOf(
     add("tenant_admin", "members", WORK_PATHS.members, text("home.work.members"));
     for (const p of [...new Set(adminProgrammes)].sort(byId)) {
       add("tenant_admin", "team", WORK_PATHS.team(p), text("home.work.team", { programme: p }));
+    }
+    // SA-12 (Daniel, 2026-11-15 night): a tenant admin takes every set-up
+    // act of the programme manager and the call drafter, so the home links
+    // the set-up pages of every programme that holds a creator draft.
+    // `me.roles` lists every such draft to a tenant admin. A programme the
+    // admin also manages keeps its links in the programme card below.
+    const managed = new Set(
+      r.roles.filter((b) => b.proposal === null && b.role === "programme_manager").map((b) => b.programme),
+    );
+    for (const p of [...r.drafts].filter((x) => !managed.has(x)).sort(byId)) {
+      add("tenant_admin", "studio", WORK_PATHS.studio(p), text("home.work.studio", { programme: p }));
+      add("tenant_admin", "setup-progress", WORK_PATHS.setupProgress(p), text("home.work.setup_progress", { programme: p }));
+      add("tenant_admin", "setup", WORK_PATHS.setup(p), text("home.work.setup", { programme: p }));
+      add("tenant_admin", "creator", WORK_PATHS.creator(p), text("home.work.creator", { programme: p }));
+      add("tenant_admin", "knock-outs", WORK_PATHS.knockOuts(p), text("home.work.knock_outs", { programme: p }));
+      add("tenant_admin", "people", WORK_PATHS.people(p), text("home.work.people", { programme: p }));
     }
   }
 

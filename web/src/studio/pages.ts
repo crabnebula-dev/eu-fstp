@@ -98,6 +98,17 @@ export function mountOverview(p: string): void {
         h("h2", { id: "studio-previews-title" }, [t.label("studio.overview.previews")]),
         h("p", {}, [link(STUDIO_PATHS.guide(p), t.label("studio.overview.guide_link"))]),
       ]),
+      // SA-12 (Daniel, 2026-11-15 night): every reader of this page may
+      // set the programme up, a tenant admin included, so the other set-up
+      // pages are one click away. The server decides each act again.
+      h("section", { id: "studio-more", "aria-labelledby": "studio-more-title" }, [
+        h("h2", { id: "studio-more-title" }, [t.label("studio.overview.more")]),
+        h("ul", { class: "fstp-list" }, [
+          h("li", {}, [link(STUDIO_PATHS.setupProgress(p), t.label("studio.overview.setup_link"), { id: "studio-setup-link" })]),
+          h("li", {}, [link(STUDIO_PATHS.knockOuts(p), t.label("studio.overview.knock_outs_link"), { id: "studio-knock-outs-link" })]),
+          h("li", {}, [link(PATHS.people(p), t.label("studio.overview.people_link"), { id: "studio-people-link" })]),
+        ]),
+      ]),
     );
     if (s === "active") {
       // The impact read runs when asked, since the cell cannot answer it
@@ -187,7 +198,11 @@ export function mountApproval(p: string): void {
       // Lane m4/fast-flow: the calls waiting for their approval or
       // publication, from `call.list`, so a programme manager reaches a
       // DRAFT call by clicking. The first one fills in the call number.
-      if (mayApproveCalls(roles, p)) {
+      // SA-12: a tenant admin drafts calls, so it sees the list too. Only
+      // a programme manager has the number filled in, since only a manager
+      // approves or publishes (R-PC-03).
+      const approves = mayApproveCalls(roles, p);
+      if (approves || roles.tenantAdmin) {
         const w = await call("call.list", [p], undefined, (v) => readWaitingCalls(v) !== null);
         const waiting = w.kind === "done" ? (readWaitingCalls(w.body) ?? []) : [];
         const list = panel.querySelector("#seal-call-list");
@@ -195,7 +210,7 @@ export function mountApproval(p: string): void {
           list?.append(h("li", { "data-call": c.call, "data-state": c.state }, [t.label("studio.calls.waiting", { call: callName(c.call), state: c.state })]));
         }
         const first = waiting[0];
-        if (first !== undefined && controls.number instanceof HTMLInputElement && controls.number.value === "") {
+        if (approves && first !== undefined && controls.number instanceof HTMLInputElement && controls.number.value === "") {
           controls.number.value = first.call;
           controls.root.prepend(h("p", { "data-note": "prefilled" }, [t.label("studio.calls.prefilled")]));
         }
