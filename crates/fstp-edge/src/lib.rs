@@ -13,18 +13,32 @@
 //!   fuzzed (`tunnel_header_decode`), and the cell and vault call it.
 //! - [`serve`] splices one client connection into one tunnel. Every byte
 //!   the client sends, the ClientHello included, passes unchanged.
+//! - [`RouteFeed`] polls the signed, versioned route table of
+//!   `fstp-control` over [`TlsFeed`], checks its composite signature
+//!   (I-90), and applies a newer version to [`LiveRoutes`]. Each poll
+//!   reports the version the edge serves, so an erasure can finish route
+//!   removal once every edge serves a table without the cell (design
+//!   section 3.7 step 3, ADR-004 "Decided by Daniel, 2026-11-15 (late)").
+//!   The table decoder is fuzzed (`route_table_decode`).
 //!
 //! The edge holds no tenant TLS server and no tenant TLS key (boundary
 //! rule B5). It reaches `fstp-tls` for its tunnel client only, and a
 //! source scan refuses any server configuration in this crate (layering
 //! rule 5).
 
+mod feed;
 mod header;
 mod host;
 mod route;
 mod sni;
 mod splice;
 
+pub use crate::feed::{
+    FeedError, FeedTransport, MAX_ROUTES, MAX_SIGNATURE_LEN, MAX_SIGNED_TABLE_LEN,
+    MAX_TLS_NAME_LEN, POLL_LEN, POLL_MAGIC, ROUTE_TABLE_CONTEXT, ROUTE_TABLE_MAGIC, RouteEntry,
+    RouteFeed, SignedRouteTable, TlsFeed, decode_poll, decode_signed_route_table, encode_poll,
+    encode_route_table_body, encode_signed_route_table, routes_of, verify_route_table,
+};
 pub use crate::header::{
     FAMILY_IPV4, FAMILY_IPV6, HeaderError, TUNNEL_HEADER_LEN, TUNNEL_HEADER_VERSION, TunnelHeader,
     decode_tunnel_header, encode_tunnel_header,
@@ -45,11 +59,12 @@ pub use crate::splice::{
 ///
 /// # Errors
 ///
-/// Returns [`EdgeError::NotImplemented`]: the route feed from the control
-/// plane and the listener configuration are not designed yet, so the
-/// binary refuses to start rather than route on a made-up table.
+/// Returns [`EdgeError::NotImplemented`]: the listener configuration and
+/// the edge credentials are not designed yet, so the binary refuses to
+/// start rather than route on a made-up table. The route feed itself is
+/// [`RouteFeed`] (lane m3/erase-prod).
 pub fn run() -> Result<(), EdgeError> {
     Err(EdgeError::NotImplemented(
-        "fstp_edge::run: route feed and listener configuration",
+        "fstp_edge::run: listener configuration",
     ))
 }

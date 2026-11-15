@@ -310,6 +310,7 @@ dependencies = [
 name = "fstp-edge"
 version = "0.1.0"
 dependencies = [
+ "fstp-crypto",
  "fstp-json",
  "fstp-obs",
  "fstp-rt",

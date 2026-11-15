@@ -55,6 +55,7 @@ pub mod pg;
 pub mod pgagent;
 pub mod placement;
 pub mod provision;
+pub mod routes;
 pub mod service;
 
 pub use catalogue::CATALOGUE;

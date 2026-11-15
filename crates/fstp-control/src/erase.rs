@@ -37,8 +37,9 @@
 //! - The key list is input. In production it comes from
 //!   `cp.custody_entry` and the backend's listing, which is not built.
 //! - Step 2 deletes the object storage prefix through a trait that only
-//!   tests implement, since the S3 client has no list or delete. Step 3 reaches an edge in the same process only, since
-//!   the route feed to `fstp-edge` is not designed.
+//!   tests implement, since the S3 client has no list or delete.
+//! - Step 3 reaches remote edges through [`crate::routes::RemoteEdges`],
+//!   or an edge in the same process.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -375,10 +376,12 @@ pub trait CellDatabases {
     ) -> impl Future<Output = Result<JobOutcome, ControlError>>;
 }
 
-/// The edge's route feed (design section 3.7 step 3). Interim, pending
-/// Daniel: the feed from `fstp-control` to a remote `fstp-edge` is not
-/// designed, and `fstp_edge::run` refuses to start without it. An edge in
-/// the same process removes routes through `fstp_edge::LiveRoutes`.
+/// The edge's route feed (design section 3.7 step 3). Remote edges poll
+/// a signed, versioned route table, and [`crate::routes::RemoteEdges`]
+/// finishes removal once every edge reports a version without the cell
+/// (ADR-004 "Decided by Daniel, 2026-11-15 (late)"). An edge in the same
+/// process removes routes through `fstp_edge::LiveRoutes`, as the test
+/// world does.
 pub trait EdgeRoutes {
     /// Removes every route of `cell`, including `id.<cell host>`, and
     /// returns the number removed. A cell without routes removes none.

@@ -85,6 +85,11 @@ impl RouteTable {
         self.by_host.is_empty()
     }
 
+    /// Every route, in ascending host order.
+    pub fn iter(&self) -> impl Iterator<Item = (&HostName, &(CellEndpoint, RouteKind))> {
+        self.by_host.iter()
+    }
+
     /// Adds the two routes of one cell: `host` to `app` and `id.<host>` to
     /// `vault`. Either both routes are added or neither is.
     ///
@@ -167,20 +172,37 @@ impl RouteTable {
 /// either end closes it.
 #[derive(Clone, Debug, Default)]
 pub struct LiveRoutes {
-    inner: Arc<RwLock<Arc<RouteTable>>>,
+    inner: Arc<RwLock<Live>>,
+}
+
+/// The table an edge serves, and the version of the route feed it came
+/// from (0 before the first table of the feed).
+#[derive(Debug, Default)]
+struct Live {
+    version: u64,
+    table: Arc<RouteTable>,
 }
 
 impl LiveRoutes {
     /// Live routes that start as `table`.
     pub fn new(table: RouteTable) -> LiveRoutes {
         LiveRoutes {
-            inner: Arc::new(RwLock::new(Arc::new(table))),
+            inner: Arc::new(RwLock::new(Live {
+                version: 0,
+                table: Arc::new(table),
+            })),
         }
     }
 
     /// The current table.
     pub fn current(&self) -> Arc<RouteTable> {
-        Arc::clone(&self.inner.read().unwrap_or_else(PoisonError::into_inner))
+        Arc::clone(
+            &self
+                .inner
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .table,
+        )
     }
 
     /// Adds the two routes of one cell, as [`RouteTable::add_cell`] does.
@@ -196,9 +218,9 @@ impl LiveRoutes {
         vault: CellEndpoint,
     ) -> Result<(), RouteError> {
         let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
-        let mut next = RouteTable::clone(&slot);
+        let mut next = RouteTable::clone(&slot.table);
         next.add_cell(host, app, vault)?;
-        *slot = Arc::new(next);
+        slot.table = Arc::new(next);
         Ok(())
     }
 
@@ -208,12 +230,37 @@ impl LiveRoutes {
     /// nothing and returns 0, so a retried removal is harmless.
     pub fn remove_cell_by_id(&self, cell: &[u8; CELL_ID_LEN]) -> usize {
         let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
-        let mut next = RouteTable::clone(&slot);
+        let mut next = RouteTable::clone(&slot.table);
         let removed = next.remove_cell_by_id(cell);
         if removed > 0 {
-            *slot = Arc::new(next);
+            slot.table = Arc::new(next);
         }
         removed
+    }
+
+    /// The version of the route feed the edge serves, 0 before the first
+    /// table of the feed (ADR-004 "Decided by Daniel, 2026-11-15 (late)").
+    pub fn version(&self) -> u64 {
+        self.inner
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .version
+    }
+
+    /// Serves `table` of the route feed's `version` from now on, when that
+    /// version is newer than the one served. An older or equal version
+    /// changes nothing, so a replayed table never brings back a removed
+    /// route. Returns whether the table was swapped in.
+    pub fn apply(&self, version: u64, table: RouteTable) -> bool {
+        let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        if version <= slot.version {
+            return false;
+        }
+        *slot = Live {
+            version,
+            table: Arc::new(table),
+        };
+        true
     }
 }
 
