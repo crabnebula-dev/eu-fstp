@@ -566,6 +566,22 @@ fn head_drafters(state: &State, view: &CallView) -> Option<BTreeSet<AccountId>> 
 /// The roles that may draft and edit calls.
 const WRITERS: [Role; 2] = [Role::CallDrafter, Role::ProgrammeManager];
 
+/// Refuses unless `actor` may draft and edit calls of `programme`: a
+/// holder of [`WRITERS`], or a tenant admin as the shell attests (SA-12,
+/// Daniel 2026-11-15 night). The author of a call is one of its
+/// drafters, so R-PC-03 bars the author from approving it either way.
+fn require_writer(
+    state: &State,
+    actor: AccountId,
+    programme: ProgrammeId,
+    ctx: &Ctx,
+) -> Result<(), Refusal> {
+    if ctx.tenant_admin {
+        return Ok(());
+    }
+    require_holder(state, actor, programme, &WRITERS, ctx.now)
+}
+
 /// The role that approves and publishes calls.
 const MANAGER: [Role; 1] = [Role::ProgrammeManager];
 
@@ -625,7 +641,7 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             if crate::policy::head(state, *programme).is_none() {
                 return Err(unknown());
             }
-            require_holder(state, actor, *programme, &WRITERS, ctx.now)?;
+            require_writer(state, actor, *programme, ctx)?;
             draft_gate(state, *programme, DraftGate::Enforce)?;
             if state.used_ids.contains(UsedId::Call(*call)) || state.calls.get(*call).is_some() {
                 return Err(Refusal::new(RuleRef::Ledger, RefusalReason::IdReused));
@@ -653,7 +669,7 @@ fn check(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Refusal
             // The actor before the call's state (test plan, authorisation
             // matrix row): a denied actor is denied in every state.
             let view = state.calls.get(*call).ok_or_else(unknown)?;
-            require_holder(state, actor, view.programme, &WRITERS, ctx.now)?;
+            require_writer(state, actor, view.programme, ctx)?;
             let view = unpublished(state, *call)?;
             draft_gate(state, view.programme, DraftGate::Enforce)?;
             check_call_fields(state, view.programme, *opens, *deadline, *budget)?;

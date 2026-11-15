@@ -846,7 +846,12 @@ fn check_edit<'a>(
     } else {
         &[Role::ProgrammeManager]
     };
-    require_holder(state, author, version.programme, editors, ctx.now)?;
+    // SA-12 (Daniel, 2026-11-15 night): a tenant admin, as the shell
+    // attests, takes every set-up act of both roles without a Drafting
+    // binding. As an author it joins the builder set (I-67).
+    if !ctx.tenant_admin {
+        require_holder(state, author, version.programme, editors, ctx.now)?;
+    }
     let head = programme.head().ok_or_else(unknown)?;
     if head.id != base || version.parent != Some(base) {
         return Err(Refusal::new(RuleRef::Input, RefusalReason::WrongState));

@@ -522,6 +522,8 @@ fn param(name: &str, who: Who, t: &Targets, session: Option<u128>) -> Result<Str
             .unwrap_or_else(|| "general.narrative".to_owned()),
         "preview" => "guide".to_owned(),
         "import_proposal" => "1".to_owned(),
+        // SA-12: an id no world registers, so the removal meets a guard.
+        "import_document" => "1".to_owned(),
         "client" => account
             .map(|a| other_agent_of(a).raw())
             .unwrap_or(1)
@@ -794,6 +796,13 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
                 ])])),
             ),
         ]),
+        // SA-12: a synthetic narrative edit, and the removal of a document
+        // no world registers, each judged at the head revision.
+        "creator.edit_narrative" => obj(vec![
+            ("base", s(t.revision.as_deref().unwrap_or("1.1"))),
+            ("value", s("SYNTHETIC narrative text, matrix cell.")),
+        ]),
+        "import.remove" => obj(vec![("base", s(t.revision.as_deref().unwrap_or("1.1")))]),
         "creator.accept_narrative" => {
             obj(vec![("base", s(t.revision.as_deref().unwrap_or("1.1")))])
         }

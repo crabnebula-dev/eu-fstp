@@ -55,9 +55,10 @@
 //!   and a warning that the current report shows. A programme manager on
 //!   the draft or a tenant admin may acknowledge. Interim, pending
 //!   Daniel.
-//! - **R6, request.** Approval needs a live activation request. Only a
+//! - **R6, request.** Approval needs a live activation request. A
 //!   programme manager on the draft may request (design section 15.0,
-//!   "Who requests activation", Daniel, 2026-11-06).
+//!   "Who requests activation", Daniel, 2026-11-06), and so may a tenant
+//!   admin (SA-12, Daniel, 2026-11-15 night).
 //! - **R7, fresh probes (design 3.2 "Fresh probes").** The report at
 //!   approval is recomputed over the probe results of the approval
 //!   request, never over the stored request-time report. An absent
@@ -69,7 +70,9 @@
 //!   may make every edit. A tenant admin may also invite and withdraw an
 //!   invitation, since J1 has A1 invite M1 before any manager exists. A
 //!   tenant admin may end a programme manager binding on the draft.
-//!   Interim, pending Daniel.
+//!   Interim, pending Daniel. SA-12 (Daniel, 2026-11-15 night): a tenant
+//!   admin makes every edit too, except an import resolution, which I-65
+//!   keeps for a named programme manager. Every author is a builder (R2).
 //! - **R10, override (ADR-022, Daniel 2026-11-15).** A tenant admin of
 //!   the builder set may activate as an override with a written reason.
 //!   A tenant admin outside the builder set, a programme manager and any
@@ -1203,8 +1206,9 @@ impl RefSystem {
                 // (design 3.2), so only the other edits can be stale.
                 let invitation =
                     matches!(kind, EditKind::Invitation | EditKind::InvitationWithdrawal);
-                // Reading R9: a tenant admin may invite and withdraw.
-                let admin_may = invitation && s.admins.contains(&by);
+                // Reading R9 and SA-12: a tenant admin makes every edit but
+                // an import resolution, which I-65 keeps for a manager.
+                let admin_may = kind != EditKind::ImportResolution && s.admins.contains(&by);
                 if !(d.managers.contains(&by) || admin_may) {
                     return Err(RefRefusal::NotProgrammeManager);
                 }
@@ -1243,7 +1247,8 @@ impl RefSystem {
                 }])
             }
             RefCommand::Request { by, base } => {
-                if !d.managers.contains(&by) {
+                // Reading R6 and SA-12: a manager or a tenant admin.
+                if !(d.managers.contains(&by) || s.admins.contains(&by)) {
                     return Err(RefRefusal::NotProgrammeManager);
                 }
                 draft_open(d)?;

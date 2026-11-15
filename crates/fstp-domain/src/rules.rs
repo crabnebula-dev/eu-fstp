@@ -1185,18 +1185,32 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     (K::ActivateProgramme, ActorRule::TenantAdmin),
     // The call drafter writes the knock-out criteria (roles table), so
     // the policy lane admits a call drafter for a version that changes
-    // P-09 alone, and the programme manager for any version.
+    // P-09 alone, and the programme manager for any version. SA-12
+    // (Daniel, 2026-11-15 night): a tenant admin takes every set-up act of
+    // both roles, policy edits and call drafts included.
     (
         K::EditPolicy,
-        ActorRule::AnyOf(&[PM, ActorRule::Holder(Role::CallDrafter)]),
+        ActorRule::AnyOf(&[
+            PM,
+            ActorRule::Holder(Role::CallDrafter),
+            ActorRule::TenantAdmin,
+        ]),
     ),
     (
         K::DraftCall,
-        ActorRule::AnyOf(&[ActorRule::Holder(Role::CallDrafter), PM]),
+        ActorRule::AnyOf(&[
+            ActorRule::Holder(Role::CallDrafter),
+            PM,
+            ActorRule::TenantAdmin,
+        ]),
     ),
     (
         K::EditCall,
-        ActorRule::AnyOf(&[ActorRule::Holder(Role::CallDrafter), PM]),
+        ActorRule::AnyOf(&[
+            ActorRule::Holder(Role::CallDrafter),
+            PM,
+            ActorRule::TenantAdmin,
+        ]),
     ),
     (K::ApproveCallPublication, PM),
     (K::PublishCall, PM),

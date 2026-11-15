@@ -965,7 +965,8 @@ impl RefSystem {
                 value,
                 base,
             } => {
-                if !d.manager(*by) {
+                // SA-12 (Daniel, 2026-11-15 night): a tenant admin saves too.
+                if !d.manager(*by) && !is_tenant_admin(*by) {
                     return Err(RefRefusal::NotManager);
                 }
                 if *base == Base::Stale {
@@ -984,7 +985,9 @@ impl RefSystem {
                 }])
             }
             RefCommand::Register { by, doc, media } => {
-                if !d.manager(*by) {
+                // SA-12: a tenant admin uploads too. The upload sets no value,
+                // so I-65 does not bear on it.
+                if !d.manager(*by) && !is_tenant_admin(*by) {
                     return Err(RefRefusal::NotManager);
                 }
                 if self.store.documents.contains_key(doc) {

@@ -630,12 +630,15 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         OPEN_ALWAYS,
     ),
     // Lane mcreator: the call staff of the programme, as for the board.
+    // SA-12 (Daniel, 2026-11-15 night): and a tenant admin, who drafts
+    // calls. The list holds no proposal content.
     (
         ReadKind::ListCalls,
         ReadRule::AnyOf(&[
             ReadRule::Holder(Role::ProgrammeManager),
             ReadRule::Holder(Role::CallDrafter),
             ReadRule::Holder(Role::FstpCoordinator),
+            ReadRule::TenantAdmin,
         ]),
         OPEN_ALWAYS,
     ),

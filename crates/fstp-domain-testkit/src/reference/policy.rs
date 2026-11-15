@@ -525,7 +525,9 @@ impl Ghost {
         };
         let v = match cmd {
             Command::CreateProgramme { policy } => self.create_verdict(tenant_admin, policy)?,
-            Command::EditPolicy { base, version } => self.edit_verdict(who, *base, version)?,
+            Command::EditPolicy { base, version } => {
+                self.edit_verdict(who, tenant_admin, *base, version)?
+            }
             Command::DraftCall {
                 call,
                 programme,
@@ -537,7 +539,9 @@ impl Ghost {
                 let Some(p) = self.programmes.get(programme) else {
                     return Ok(Verdict::Refuse);
                 };
-                if !self.may_write_calls(who, *programme)
+                // SA-12 (Daniel, 2026-11-15 night): a tenant admin drafts
+                // calls without a Drafting binding.
+                if !(tenant_admin || self.may_write_calls(who, *programme))
                     || self.calls.contains_key(call)
                     || budget.amount().currency() != p.currency
                 {
@@ -559,7 +563,7 @@ impl Ghost {
                     return Ok(Verdict::Refuse);
                 };
                 let currency = self.programmes.get(&c.programme).map(|p| p.currency);
-                if !self.may_write_calls(who, c.programme)
+                if !(tenant_admin || self.may_write_calls(who, c.programme))
                     || c.published.is_some()
                     || Some(budget.amount().currency()) != currency
                 {
@@ -696,6 +700,7 @@ impl Ghost {
     fn edit_verdict(
         &self,
         who: AccountId,
+        tenant_admin: bool,
         base: PolicyVersionId,
         v: &PolicyVersion,
     ) -> Result<Verdict, String> {
@@ -713,7 +718,10 @@ impl Ghost {
                 && v.live == h.live
                 && v.currency == h.currency
         });
-        let editor = self.holds(who, v.programme, Role::ProgrammeManager)
+        // SA-12 (Daniel, 2026-11-15 night): a tenant admin, as the shell
+        // attests, edits without a Drafting binding.
+        let editor = tenant_admin
+            || self.holds(who, v.programme, Role::ProgrammeManager)
             || (knock_outs_only && self.holds(who, v.programme, Role::CallDrafter));
         if !editor
             || p.head != base

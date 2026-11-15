@@ -238,18 +238,38 @@ fn i86_me_roles_needs_a_session_and_has_no_tool() {
 
 /// I-86 (review finding U1 of lane m4home): `drafts` names only
 /// programmes where the caller holds a programme manager binding, and
-/// only those that hold a creator draft in the cell's state.
+/// only those that hold a creator draft in the cell's state. SA-12
+/// (Daniel, 2026-11-15 night): a tenant admin sets up every programme of
+/// the tenant, so it lists exactly the programmes that hold a creator
+/// draft, and nothing else.
 #[test]
-fn i86_me_roles_drafts_are_the_callers_own_drafted_programmes() {
+fn i86_sa12_me_roles_drafts_are_the_drafted_programmes_the_caller_sets_up() {
     let c = cell();
     for who in [OWNER, LEAD, ADMIN, OTHER] {
         let v = roles_of(&c, who);
-        let managed: BTreeSet<String> = bindings_of(&c, who)
-            .into_iter()
-            .filter(|(role, _, proposal)| role == "programme_manager" && proposal.is_none())
-            .map(|(_, programme, _)| programme)
-            .collect();
         let state = c.ports.engine.state();
+        let managed: BTreeSet<String> = if who == ADMIN {
+            let all: BTreeSet<String> = state
+                .creator
+                .drafts()
+                .map(|(p, _)| p.raw().to_string())
+                .collect();
+            let listed: BTreeSet<String> = members(&v, "drafts")
+                .iter()
+                .filter_map(|d| d.as_str().map(str::to_owned))
+                .collect();
+            assert_eq!(
+                listed, all,
+                "SA-12: the admin lists every drafted programme"
+            );
+            all
+        } else {
+            bindings_of(&c, who)
+                .into_iter()
+                .filter(|(role, _, proposal)| role == "programme_manager" && proposal.is_none())
+                .map(|(_, programme, _)| programme)
+                .collect()
+        };
         for d in members(&v, "drafts") {
             let p = d
                 .as_str()
