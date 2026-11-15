@@ -138,6 +138,19 @@ sealed  = header | E 32 | ct_M 1088 | nonce 12 | wrapped 48         1210 bytes
 
 Sealed blobs (texts, ledger bodies, chain events, checkpoints, outbox rows, keystore secrets and backup chunks) use AES-256-GCM under their data key. Their AAD binds each blob to its owner and its position, so a blob moved to another cell, row or object fails to open. The exact AAD and layout belong to the ADR that owns the table: ADR-007 for ledger and chain rows, and ADR-012 for backup containers (M3 design, section 18).
 
+**Vault sealed values.** Decided (Daniel, 2026-11-15: "Record it in ADR-004"). The vault owns its tables, so this ADR records their layout.
+
+```
+sealed = nonce 12 | ciphertext | tag 16
+aad    = column name || "|" || row key
+```
+
+- `fstp_vault::AeadSealer` seals every such value with AES-256-GCM under the Vault chain data key, through `fstp_crypto::aead::seal` (nonce rule below).
+- The nonce sits at offset 0. The ciphertext has the plaintext's length, and the 16-byte tag follows it.
+- The column name in the AAD is the table and column, such as `vault.epoch.affected`. The row key is the row's epoch, fact, proposal or entry key.
+- Columns with this layout: `vault.epoch.affected`, `vault.fact.body`, `vault.negotiation.sealed_accounts` and `vault_audit.chain.body`. The chain body's row key is its entry sequence number as a big-endian `u64`.
+- A reader that checks the nonce rule, such as the R-NF-08 test, reads the nonce from offset 0 of these values.
+
 ### Purpose code table
 
 Status: Accepted by Daniel Thompson-Yvetot on 2026-11-07 (m3-finish Q-E). The table is frozen.
