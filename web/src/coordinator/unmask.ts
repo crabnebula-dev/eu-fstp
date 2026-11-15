@@ -11,12 +11,14 @@
 
 import { h, type Child } from "../core/dom.js";
 import type { I18n } from "../core/i18n.js";
-import { act, isVaultUrl } from "../grant/kit.js";
-import { decodeRedirect } from "../grant/models.js";
+import { ceremony } from "../creator/stepup.js";
+import type { ApiOutcome } from "../core/api.js";
+import { withStepUp } from "../core/stepup.js";
 import {
   buttonEl,
   formEl,
   guarded,
+  opRef,
   isId,
   isText,
   list,
@@ -27,6 +29,7 @@ import {
   type Frame,
   type Guard,
   type PageEnv,
+  type Problem,
 } from "../reviewer/kit.js";
 
 /** The longest purpose, in characters (ADR-023 reading 4). */
@@ -84,8 +87,81 @@ export function unmaskBody(kind: SubjectType, id: string, purpose: string): unkn
   if (!purposeOk(purpose)) {
     return null;
   }
-  const subject = kind === "binding" ? { type: "Binding", binding: id } : { type: "Assignment", assignment: id };
+  // Members in canonical (RFC 8785) order, as the cell's digest reads them.
+  const subject = kind === "binding" ? { binding: id, type: "Binding" } : { assignment: id, type: "Assignment" };
   return { purpose, subject };
+}
+
+/** Whether `to` is this cell's vault origin: `id.<cell host>` on the page's scheme and port, `/r` with a ticket. */
+export function isVaultUrl(to: string, here: { readonly protocol: string; readonly hostname: string; readonly port: string }): boolean {
+  let u: URL;
+  try {
+    u = new URL(to);
+  } catch {
+    return false;
+  }
+  return (
+    u.protocol === here.protocol &&
+    u.username === "" &&
+    u.password === "" &&
+    u.hostname === `id.${here.hostname}` &&
+    u.port === here.port &&
+    u.pathname === "/r" &&
+    u.search === "" &&
+    u.hash.length > 1
+  );
+}
+
+/** The `{redirect}` of `identity.unmask`, or null. */
+function redirectOf(v: unknown): string | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return null;
+  }
+  const r = (v as Readonly<Record<string, unknown>>)["redirect"];
+  return typeof r === "string" ? r : null;
+}
+
+/**
+ * Sends `identity.unmask` for `programme` with `body`. The cell asks for
+ * a step-up (I-78), which the M3 ceremony completes, and the call is sent
+ * once more. The answer is the vault origin's release page.
+ */
+async function sendUnmask(
+  env: PageEnv,
+  programme: string,
+  body: unknown,
+): Promise<{ readonly ok: true; readonly to: string } | { readonly ok: false; readonly problem: Problem }> {
+  const op = opRef("identity.unmask");
+  if (op === null) {
+    return { ok: false, problem: { kind: "unavailable" } };
+  }
+  const box: { to: string | null } = { to: null };
+  const validate = (v: unknown): boolean => {
+    box.to = redirectOf(v);
+    return box.to !== null;
+  };
+  let o: ApiOutcome;
+  try {
+    o = await withStepUp(() => env.api.call(op, { programme }, body, validate), {
+      ceremony,
+      addPasskey: () => env.navigate("/auth/account"),
+    });
+  } catch {
+    return { ok: false, problem: { kind: "failed", reason: "request" } };
+  }
+  if (o.kind === "done" && box.to !== null) {
+    return { ok: true, to: box.to };
+  }
+  if (o.kind === "done") {
+    return { ok: false, problem: { kind: "failed", reason: "invalid_response" } };
+  }
+  if (o.kind === "refused") {
+    return { ok: false, problem: { kind: "refused", code: o.code, rule: o.rule } };
+  }
+  if (o.kind === "failed") {
+    return { ok: false, problem: { kind: "failed", reason: o.reason } };
+  }
+  return { ok: false, problem: { kind: "unexpected" } };
 }
 
 /** The element id stem of the party `kind`/`id`. */
@@ -134,17 +210,17 @@ export function unmaskControl(
           }
           error.hidden = true;
           f.clearAlert();
-          const r = await act(env, "identity.unmask", { programme }, body, decodeRedirect);
+          const r = await sendUnmask(env, programme, body);
           if (!r.ok) {
             f.problem(r.problem);
             return;
           }
-          if (!isVaultUrl(r.data, location)) {
+          if (!isVaultUrl(r.to, location)) {
             f.alert(t.label("coord.unmask.bad_redirect"));
             return;
           }
           f.status(t.label("coord.unmask.opening"));
-          location.assign(r.data);
+          location.assign(r.to);
         }),
       );
     });

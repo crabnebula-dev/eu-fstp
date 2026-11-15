@@ -85,7 +85,7 @@ export const COORDINATOR_LABELS: Readonly<Record<string, string>> = {
   "coord.unmask.purpose": "Your purpose",
   "coord.unmask.submit": "Confirm with passkey and unmask",
   "coord.unmask.err_purpose": "Enter your purpose, in at most {limit} characters.",
-  "coord.unmask.bad_redirect": "The platform sent an address that is not this cell's vault, so this page did not open it.",
+  "coord.unmask.bad_redirect": "The platform sent a link that is not this cell's vault, so this page did not open it.",
   "coord.unmask.opening": "Opening the identity on the vault page.",
   "coord.unmask.link": "Unmask the people of proposal {id}",
   "coord.unmask.reviewer_link": "See who is behind each person of proposal {id}",

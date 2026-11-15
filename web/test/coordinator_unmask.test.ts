@@ -95,12 +95,12 @@ test("adr023_unmask_body_names_the_subject_and_the_purpose", () => {
   eq(unmaskBody("binding", "11", ""), null, "no purpose, no body");
   eq(
     JSON.stringify(unmaskBody("binding", "11", "Why")),
-    '{"purpose":"Why","subject":{"type":"Binding","binding":"11"}}',
+    '{"purpose":"Why","subject":{"binding":"11","type":"Binding"}}',
     "binding",
   );
   eq(
     JSON.stringify(unmaskBody("assignment", "21", "Why")),
-    '{"purpose":"Why","subject":{"type":"Assignment","assignment":"21"}}',
+    '{"purpose":"Why","subject":{"assignment":"21","type":"Assignment"}}',
     "assignment",
   );
   assert(isParties(PARTIES), "the parties guard admits the cell's reply");
