@@ -994,8 +994,8 @@ pub enum Rule {
     /// or guardian reads nothing.
     Publicity,
     /// ADR-023 (I-17 as amended 2026-11-15): the parties of X, for the
-    /// FSTP coordinator of P to unmask one. Reading: every state but
-    /// DRAFT, since a draft is the team's alone (I-21).
+    /// FSTP coordinator of P to unmask one, in every state, DRAFT
+    /// included (ADR-023 decision 4, Daniel, 2026-11-15).
     UnmaskParties,
     /// ADR-023 reading 11 (R-AU-01): the unmask log of P, for its auditor
     /// and every tenant admin.
@@ -1667,7 +1667,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // ADR-023 (I-17 as amended 2026-11-15, I-78, I-86). Reading: only the
     // FSTP coordinator of P unmasks, at any stage, with a fresh step-up,
     // and web only. A coordinator with a conflict on X still may (ADR-023
-    // open point 2). The world's subject is a staff binding of P.
+    // decision 2), and the record flags the conflict. The world's subject
+    // is a staff binding of P.
     RefOp::act("identity.unmask", T::Programme, R::Coordinator).hr(),
     RefOp::read("identity.parties", T::Proposal, R::UnmaskParties),
     RefOp::read("audit.unmasks", T::Programme, R::UnmaskLog),
@@ -1932,7 +1933,8 @@ fn admit(
             )?;
             open(x == Some(StateTag::InExecution))
         }
-        Rule::UnmaskParties => open(who.coordinator() && x.is_some_and(|s| s != StateTag::Draft)),
+        // ADR-023 decision 4 (Daniel, 2026-11-15): any stage, DRAFT included.
+        Rule::UnmaskParties => open(who.coordinator() && x.is_some()),
         Rule::UnmaskLog => open(who == Who::Auditor || who.tenant_admin()),
         Rule::AuditReader => open(who == Who::Auditor || who.tenant_admin() || who.coordinator()),
         Rule::Publicity => open(

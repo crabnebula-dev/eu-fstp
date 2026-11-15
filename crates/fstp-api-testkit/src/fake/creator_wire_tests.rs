@@ -2079,6 +2079,60 @@ fn i67_adr022_approval_inbox_offers_the_override_to_a_builder_admin_only() {
     assert_eq!(a2.get("overridable").and_then(Value::as_bool), Some(false));
 }
 
+/// The activation messages (`admin.*`) of `l` for programme `p`, as
+/// `(kind, href)`. Other kinds, such as the role grant of MB-Q3, are
+/// left out.
+fn mail_for(c: &FakeCell, l: &WebLogin, p: ProgrammeId) -> Vec<(String, String)> {
+    let op = fstp_api_core::decode::decode_route(Method::Get, "/me/mailbox", &[]);
+    let body = done(c.web(l, op), "me.mailbox").unwrap_or_else(|e| panic!("{e}"));
+    let want = p.raw().to_string();
+    list_of(&body, "messages")
+        .unwrap_or_else(|e| panic!("{e}"))
+        .iter()
+        .filter(|m| m.get("programme").and_then(Value::as_str) == Some(want.as_str()))
+        .filter(|m| {
+            m.get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|k| k.starts_with("admin."))
+        })
+        .map(|m| {
+            let s = |k: &str| m.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+            (s("kind"), s("href"))
+        })
+        .collect()
+}
+
+/// ADR-022 decision 2 (Daniel, 2026-11-15 evening), I-67, I-27: once
+/// activation is requested, A1, a tenant admin of the builder set, gets
+/// exactly one mailbox item saying an override is available. It links to
+/// the approval inbox and names the programme id only. A2, outside the
+/// builder set, gets the normal approval item and no override item. M1,
+/// a builder who is no tenant admin, gets neither. The item closes once
+/// the override activates the programme.
+#[test]
+fn i67_adr022_mailbox_offers_the_override_to_a_builder_admin_once() {
+    let c = cell();
+    let d = requested(&c).unwrap_or_else(|e| panic!("the requested draft: {e}"));
+    let over = (
+        "admin.override_activation".to_owned(),
+        "/app/admin/approvals".to_owned(),
+    );
+    let approve = (
+        "admin.approve_activation".to_owned(),
+        "/app/admin/approvals".to_owned(),
+    );
+    assert_eq!(mail_for(&c, &d.admin, d.p), vec![over.clone()], "A1");
+    assert_eq!(mail_for(&c, &d.admin2, d.p), vec![approve], "A2");
+    assert!(mail_for(&c, &d.owner, d.p).is_empty(), "M1");
+    let rev = revision(&c, &d.admin, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let r = stepped(&c, &d.admin, || rq::override_activation(d.p, &rev, REASON));
+    done_stepped(r, "the override").unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        mail_for(&c, &d.admin, d.p).is_empty(),
+        "the override item stayed after the override"
+    );
+}
+
 /// ADR-007, I-65, R-PG-01, `fstp_access::ReadClearance`: after a restart
 /// the engine holds no proposed value and the API core neither the
 /// uploaded document nor the invitee's email. The import list and the

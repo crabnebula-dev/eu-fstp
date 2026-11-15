@@ -308,20 +308,29 @@ fn staff<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailIte
 
 /// I-67: each live activation request a tenant admin who built nothing in
 /// the draft may approve, as the approval inbox marks it approvable.
+/// ADR-022 decision 2 (Daniel, 2026-11-15 evening): a tenant admin of the
+/// builder set gets one override item instead, as the inbox marks it
+/// overridable. Both name the programme id only (I-27).
 fn approvals<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailItem>) {
     if !call.caller.p.tenant_admin() {
         return;
     }
     for (programme, d) in call.state.creator.drafts() {
-        if d.active().is_none() && d.request_live() && !d.builders().contains(&account) {
-            out.push(MailItem::new(
-                MailKind::AdminApproveActivation,
-                MailRefs {
-                    programme: Some(programme.raw()),
-                    ..refs()
-                },
-            ));
+        if d.active().is_some() || !d.request_live() {
+            continue;
         }
+        let kind = if d.builders().contains(&account) {
+            MailKind::AdminOverrideActivation
+        } else {
+            MailKind::AdminApproveActivation
+        };
+        out.push(MailItem::new(
+            kind,
+            MailRefs {
+                programme: Some(programme.raw()),
+                ..refs()
+            },
+        ));
     }
 }
 

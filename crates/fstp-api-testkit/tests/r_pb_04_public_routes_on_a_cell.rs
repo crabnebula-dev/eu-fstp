@@ -226,3 +226,85 @@ fn i69_cell_public_page_footer_carries_the_pinned_profile_elements() {
         assert!(!body.contains("funder_visibility."), "{path}: {body}");
     }
 }
+
+/// The cell over the I-85 world, with its organisation not yet activated
+/// (ADR-021), and a platform stylesheet in its asset set.
+fn cell_before_activation() -> (Cell, String) {
+    let world = pending_world().unwrap_or_else(|e| panic!("the I-85 world: {e}"));
+    let seams = port_seams().unwrap_or_else(|e| panic!("{e}"));
+    let ports = FakePorts::new(&world, seams).unwrap_or_else(|e| panic!("{e}"));
+    ports.tenant.set_organisation_active(false);
+    let login = ports.sessions.login(LEAD, LoginMethod::Passkey);
+    let core = Arc::new(api_core(ports));
+    let origin = parse_origin_header(ORIGIN.as_bytes()).unwrap_or_else(|e| panic!("{e:?}"));
+    let assets = fstp_web::AssetSet::from_files(
+        "main.js",
+        &[
+            ("main.js", b"export {};\n".as_slice()),
+            ("site/ui.css", b"body{margin:0}".as_slice()),
+        ],
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    let sheet = assets
+        .style_paths()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no sheet"));
+    let router =
+        fstp_web::router(core, WebConfig::new(origin, assets)).unwrap_or_else(|e| panic!("{e:?}"));
+    (
+        Cell {
+            router,
+            cookie: login.cookie,
+        },
+        sheet,
+    )
+}
+
+/// ADR-021 decision 3 (Daniel, 2026-11-15 evening), R-PB-04: before
+/// activation a `/p` page answers a plain HTML page saying the
+/// organisation's pages are not published yet. It keeps the status of the
+/// setup gate's refusal (403), links the platform stylesheet, holds no
+/// script and no rule id, and keeps the public CSP. The feed is not a
+/// page, so it keeps the JSON refusal.
+#[test]
+fn adr021_public_pages_before_activation_answer_not_published_html() {
+    let (c, sheet) = cell_before_activation();
+    for path in PATHS {
+        for signed_in in [false, true] {
+            let r = get(&c, path, signed_in);
+            let body = String::from_utf8_lossy(&r.body);
+            assert_eq!(r.status, 403, "{path}: {body}");
+            assert_eq!(r.values("content-security-policy"), [PUBLIC_CSP], "{path}");
+            assert!(r.values("set-cookie").is_empty(), "{path}");
+            if path.ends_with("feed.json") {
+                assert_eq!(r.values("content-type"), ["application/json"], "{path}");
+                assert!(body.contains("\"ADR-021\""), "{path}: {body}");
+                continue;
+            }
+            assert_eq!(
+                r.values("content-type"),
+                ["text/html; charset=utf-8"],
+                "{path}"
+            );
+            assert!(body.contains("not published yet"), "{path}: {body}");
+            assert!(
+                body.contains(&format!("href=\"{sheet}\"")),
+                "{path}: {body}"
+            );
+            assert!(!body.contains("ADR-021"), "{path}: {body}");
+            assert!(!body.to_ascii_lowercase().contains("<script"), "{path}");
+        }
+    }
+}
+
+/// ADR-021 decision 3: an activated organisation's pages are unchanged.
+/// No answer of the active cell is the not-published page.
+#[test]
+fn adr021_public_pages_after_activation_are_not_the_notice() {
+    let c = cell();
+    for path in PATHS {
+        let body = String::from_utf8_lossy(&get(&c, path, false).body).into_owned();
+        assert!(!body.contains("not published yet"), "{path}: {body}");
+    }
+}

@@ -8,7 +8,10 @@
 //!   assignment is the anonymous handle of P-11.
 //! - The party kind is derived here from the binding's role or the
 //!   assignment's kind, never taken from the request.
-//! - No proposal state is required: the coordinator unmasks at any stage.
+//! - No proposal state is required: the coordinator unmasks at any stage,
+//!   DRAFT included (ADR-023 decision 4).
+//! - A conflict of the coordinator on the subject's proposal does not bar
+//!   the unmask. The record flags it (ADR-023 decision 2).
 //!
 //! The record names the subject by its id only. It holds no identity
 //! attribute, so the ledger never learns who the party is. The vault
@@ -19,7 +22,7 @@ use fstp_ledger::Seq;
 
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
-use crate::id::{AccountId, AssignmentId, BindingId, ProgrammeId, TextRef};
+use crate::id::{AccountId, AssignmentId, BindingId, ProgrammeId, ProposalId, TextRef};
 use crate::oracle::{Answers, Query};
 use crate::record::Record;
 use crate::refusal::{Refusal, RefusalReason, RuleRef};
@@ -111,6 +114,9 @@ pub struct Unmask {
     pub purpose: TextRef,
     /// The coordinator.
     pub by: AccountId,
+    /// Whether the coordinator held a conflict fact on the subject's
+    /// proposal when unmasking (ADR-023 decision 2).
+    pub conflict: bool,
     /// The ledger position.
     pub seq: Seq,
     /// The instant of the entry.
@@ -176,6 +182,16 @@ pub fn party_of(
     }
 }
 
+/// The proposal `subject` rests on: the proposal of a Receiving binding
+/// or of an assignment. `None` for a programme binding, such as staff,
+/// and for an unknown subject.
+pub fn proposal_of(state: &State, subject: UnmaskSubject) -> Option<ProposalId> {
+    match subject {
+        UnmaskSubject::Binding(id) => state.roster.held_or_ended(id)?.proposal(),
+        UnmaskSubject::Assignment(id) => state.review().get(id).map(|a| a.proposal),
+    }
+}
+
 /// Whether `account` may unmask the parties of `programme` at `now`: it
 /// holds an active FSTP coordinator binding there (ADR-023 reading 1).
 pub fn is_unmasker(
@@ -229,12 +245,17 @@ pub(crate) fn decide(
         return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
     }
     let (party, _) = party_of(state, *programme, *subject).ok_or_else(unknown)?;
+    // ADR-023 decision 2 (Daniel, 2026-11-15): a conflict does not bar
+    // the unmask. The record flags it, and the audit read shows it.
+    let conflict =
+        proposal_of(state, *subject).is_some_and(|x| state.review().conflict_fact(by, x));
     Ok(vec![Record::PartyUnmasked {
         programme: *programme,
         party,
         subject: *subject,
         purpose: *purpose,
         by,
+        conflict,
     }])
 }
 
@@ -252,6 +273,7 @@ pub(crate) fn apply(
             subject,
             purpose,
             by,
+            conflict,
         } => {
             if state.policy.programme(*programme).is_none() {
                 return Err(FoldError::UnknownEntity);
@@ -262,6 +284,7 @@ pub(crate) fn apply(
                 subject: *subject,
                 purpose: *purpose,
                 by: *by,
+                conflict: *conflict,
                 seq,
                 at,
             });

@@ -528,12 +528,24 @@ fn i17_only_the_coordinator_unmasks(
             let got = decide(state, &cmd, &ctx_of(*a, now, admins.contains(a)));
             match (coordinator, got) {
                 (true, Ok(records)) => {
+                    // ADR-023 decision 2: the record flags a conflict fact
+                    // of the coordinator on the subject's proposal.
+                    let x = match subject {
+                        UnmaskSubject::Binding(b) => state
+                            .roster()
+                            .held_or_ended(*b)
+                            .and_then(fstp_domain::roles::Binding::proposal),
+                        UnmaskSubject::Assignment(id) => {
+                            state.review().get(*id).map(|g| g.proposal)
+                        }
+                    };
                     let want = vec![fstp_domain::Record::PartyUnmasked {
                         programme,
                         party: *kind,
                         subject: *subject,
                         purpose: purpose_ref(),
                         by: *a,
+                        conflict: x.is_some_and(|x| state.review().conflict_fact(*a, x)),
                     }];
                     if records != want {
                         return Err(format!(
@@ -667,6 +679,7 @@ fn i17_teeth_committee_member_unmask_is_caught() {
             subject: *subject,
             purpose: *purpose,
             by: a,
+            conflict: false,
         }]),
         _ => production_decide(s, c, x),
     };
@@ -733,6 +746,7 @@ fn i17_teeth_forged_unmask_record_is_caught() {
             subject: lead,
             purpose: purpose_ref(),
             by: MEMBER,
+            conflict: false,
         },
     )
     .unwrap_or_else(|e| panic!("fold the forged record: {e}"));
@@ -742,8 +756,9 @@ fn i17_teeth_forged_unmask_record_is_caught() {
 }
 
 /// I-17, I-86 (ADR-023 reading 6): the record holds ids only. Its stored
-/// JSON has exactly the members programme, party, subject, purpose and
-/// by, and the purpose is a text reference, never the text.
+/// JSON has exactly the members programme, party, subject, purpose, by
+/// and the conflict flag of ADR-023 decision 2, and the purpose is a text
+/// reference, never the text.
 #[test]
 fn i17_adr023_record_names_ids_only() {
     let (w, mut seed) = irc_world();
@@ -904,4 +919,117 @@ fn r_au_01_adr023_audit_read_shows_the_unmask_to_auditor_and_admins() {
             who.raw()
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Daniel's decisions of 2026-11-15 (evening)
+// ---------------------------------------------------------------------------
+
+/// The `conflict` member of each row of `audit.unmasks`, oldest first.
+fn audit_conflicts(seed: &mut Seeder, p: ProgrammeId) -> Vec<Option<bool>> {
+    let path = format!("/programmes/{}/audit/unmasks", p.raw());
+    let v = seed
+        .api(AUDITOR, GET, &path, &Value::Null)
+        .unwrap_or_else(|e| panic!("audit.unmasks: {e}"));
+    v.get("unmasks")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("no unmasks: {v:?}"))
+        .iter()
+        .map(|row| row.get("conflict").and_then(Value::as_bool))
+        .collect()
+}
+
+/// I-17, I-03, R-AU-01 (ADR-023 decision 2, Daniel, 2026-11-15): a
+/// coordinator with a declared conflict on X may still unmask its lead.
+/// `PartyUnmasked` records that the conflict existed, and `audit.unmasks`
+/// shows it. The coordinator with no conflict, and the conflicted one
+/// naming staff of P, which rests on no proposal, record none.
+#[test]
+fn i17_adr023_conflicted_coordinator_unmasks_and_the_record_flags_the_conflict() {
+    let (w, mut seed) = irc_world();
+    let p = programme(&w);
+    let x = proposal(&w);
+    assert!(
+        seed.ports
+            .engine
+            .state()
+            .core
+            .review()
+            .conflict_fact(COORD_CONFLICTED, x),
+        "the world: COORD_CONFLICTED declared a conflict on X"
+    );
+    let lead = UnmaskSubject::Binding(binding_of(&seed, p, LEAD, Role::Applicant));
+    let staff = UnmaskSubject::Binding(binding_of(&seed, p, PM, Role::ProgrammeManager));
+    for (who, subject) in [
+        (COORD_CONFLICTED, lead),
+        (COORD, lead),
+        (COORD_CONFLICTED, staff),
+    ] {
+        seed.api(who, POST, &unmask_path(p), &body(subject, Some(PURPOSE)))
+            .unwrap_or_else(|e| {
+                panic!(
+                    "ADR-023 decision 2: {} unmasking {subject:?}: {e}",
+                    who.raw()
+                )
+            });
+    }
+    let flags: Vec<(AccountId, bool)> = records(&seed).iter().map(|r| (r.by, r.conflict)).collect();
+    assert_eq!(
+        flags,
+        vec![
+            (COORD_CONFLICTED, true),
+            (COORD, false),
+            (COORD_CONFLICTED, false)
+        ],
+        "ADR-023 decision 2: the records' conflict flags"
+    );
+    assert_eq!(
+        audit_conflicts(&mut seed, p),
+        vec![Some(true), Some(false), Some(false)],
+        "R-AU-01: audit.unmasks shows the conflict flag"
+    );
+}
+
+/// I-17 (ADR-023 decision 4, Daniel, 2026-11-15, reading 3: any stage):
+/// on a DRAFT proposal the coordinator of P reads its parties and
+/// unmasks its lead. The read lists ids and roles only, as in every
+/// other state.
+#[test]
+fn i17_adr023_parties_read_and_unmask_work_on_a_draft() {
+    let w = world(StateTag::Draft);
+    let mut seed = seeder(&w);
+    let p = programme(&w);
+    let x = proposal(&w);
+    let lead = binding_of(&seed, p, LEAD, Role::Applicant);
+    let v = seed
+        .api(
+            COORD,
+            GET,
+            &format!("/proposals/{}/parties", x.raw()),
+            &Value::Null,
+        )
+        .unwrap_or_else(|e| panic!("ADR-023 decision 4: identity.parties on a DRAFT: {e}"));
+    let text = v.to_compact();
+    let listed = v
+        .get("parties")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("no parties: {text}"))
+        .iter()
+        .any(|row| {
+            str_member(row, "subject_type").as_deref() == Some("binding")
+                && str_member(row, "subject") == Some(lead.raw().to_string())
+                && str_member(row, "party").as_deref() == Some("applicant")
+        });
+    assert!(listed, "ADR-023 decision 4: the lead is not listed: {text}");
+    seed.api(
+        COORD,
+        POST,
+        &unmask_path(p),
+        &body(UnmaskSubject::Binding(lead), Some(PURPOSE)),
+    )
+    .unwrap_or_else(|e| panic!("ADR-023 decision 4: the unmask on a DRAFT: {e}"));
+    let r = records(&seed);
+    assert_eq!(r.len(), 1, "one record");
+    assert_eq!(r[0].subject, UnmaskSubject::Binding(lead));
+    assert_eq!(r[0].party, PartyKind::Applicant);
 }

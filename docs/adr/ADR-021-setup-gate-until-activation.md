@@ -84,6 +84,7 @@ Every `tenant.*` operation, and `admin.approvals`, `admin.approve_self_grant` an
 - The open-calls page (`/app/calls`) shows the same notice, and no list.
 - A refusal under `ADR-021` on any other page says the same in words, not as a rule id.
 - The tenant admin's home page keeps its onboarding links.
+- A `/p` page answers a plain HTML page instead of the JSON refusal: "This organisation's pages are not published yet." It keeps the refusal's status, 403, and links the platform stylesheets (decision 3 below; `fstp_web::shell::not_published`). The feed `/p/{slug}/feed.json` is data, so it keeps the JSON refusal.
 
 ### The demo
 

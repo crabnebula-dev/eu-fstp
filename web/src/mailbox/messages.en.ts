@@ -35,6 +35,7 @@ export const MAILBOX_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "mailbox.kind.intake.knock_out": "Check the knock-out criteria of new proposals in call {call}",
   "mailbox.kind.round.vote": "Vote in the cut-off round of call {call}",
   "mailbox.kind.admin.approve_activation": "Approve or refuse the activation of programme {programme}",
+  "mailbox.kind.admin.override_activation": "An override is available for the activation of programme {programme}, which you built",
   "mailbox.kind.contract.sign": "Sign the contract of proposal {proposal}",
   "mailbox.kind.payment.review": "Review the lines of the payment request of proposal {proposal}",
   "mailbox.kind.payment.approve": "Approve the payment request of proposal {proposal}",

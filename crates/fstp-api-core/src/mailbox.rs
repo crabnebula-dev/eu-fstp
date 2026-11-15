@@ -42,6 +42,9 @@ pub enum MailKind {
     RoundVote,
     /// A programme activation the caller may approve (I-67).
     AdminApproveActivation,
+    /// A programme activation the caller built and may approve as an
+    /// override, being a tenant admin of its builder set (ADR-022).
+    AdminOverrideActivation,
     /// A contract version the caller signs next (R-CT-02).
     ContractSign,
     /// A payment request under the caller's line review.
@@ -65,7 +68,7 @@ pub enum MailKind {
 
 impl MailKind {
     /// Every kind, in the order the mailbox lists them.
-    pub const ALL: [MailKind; 20] = [
+    pub const ALL: [MailKind; 21] = [
         MailKind::PendingConfirm,
         MailKind::ContractSign,
         MailKind::PaymentReview,
@@ -73,6 +76,7 @@ impl MailKind {
         MailKind::PaymentRelease,
         MailKind::PaymentConfirm,
         MailKind::AdminApproveActivation,
+        MailKind::AdminOverrideActivation,
         MailKind::ProposalSubmit,
         MailKind::Stage2Respond,
         MailKind::NegotiationAcknowledge,
@@ -102,6 +106,7 @@ impl MailKind {
             MailKind::IntakeKnockOut => "intake.knock_out",
             MailKind::RoundVote => "round.vote",
             MailKind::AdminApproveActivation => "admin.approve_activation",
+            MailKind::AdminOverrideActivation => "admin.override_activation",
             MailKind::ContractSign => "contract.sign",
             MailKind::PaymentReview => "payment.review",
             MailKind::PaymentApprove => "payment.approve",
@@ -140,7 +145,9 @@ impl MailKind {
             MailKind::IrcReview => ReadKind::GetIrcCase,
             MailKind::IntakeKnockOut => ReadKind::GetIntakeQueue,
             MailKind::RoundVote => ReadKind::GetCutOffRound,
-            MailKind::AdminApproveActivation => ReadKind::ListApprovals,
+            MailKind::AdminApproveActivation | MailKind::AdminOverrideActivation => {
+                ReadKind::ListApprovals
+            }
             MailKind::ContractSign => ReadKind::GetContract,
             MailKind::PaymentReview
             | MailKind::PaymentApprove
@@ -179,6 +186,7 @@ pub const MAILBOX_ROUTES: &[(MailKind, &str)] = &[
     (MailKind::IntakeKnockOut, "/app/calls/{call}/intake"),
     (MailKind::RoundVote, "/app/cut-off-rounds/{round}"),
     (MailKind::AdminApproveActivation, "/app/admin/approvals"),
+    (MailKind::AdminOverrideActivation, "/app/admin/approvals"),
     (MailKind::ContractSign, "/app/grants/{proposal}/contract"),
     (MailKind::PaymentReview, "/app/operations"),
     (MailKind::PaymentApprove, "/app/operations"),

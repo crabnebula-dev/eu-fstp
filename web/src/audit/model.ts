@@ -44,6 +44,8 @@ export interface UnmaskRow {
   readonly subject: string;
   readonly by: string;
   readonly purpose: string;
+  /** Whether the coordinator held a conflict on the subject's proposal (ADR-023 decision 2). */
+  readonly conflict: boolean;
   readonly at: string;
 }
 
@@ -97,6 +99,7 @@ export const isUnmasks: Guard<Unmasks> = record<Unmasks>({
       subject: isId,
       by: isId,
       purpose: isText,
+      conflict: isBool,
       at: isId,
     }),
   ),

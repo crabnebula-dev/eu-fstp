@@ -67,6 +67,30 @@ pub(crate) fn public_page(html: &str, assets: &AssetSet) -> Vec<u8> {
     out.into_bytes()
 }
 
+/// The plain page a `/p` page answers before the organisation is
+/// activated (ADR-021 decision 3, Daniel, 2026-11-15): its pages are not
+/// published yet. It links the platform stylesheets of `assets`, as
+/// [`public_page`] does, and holds no script. Every text is a constant,
+/// so nothing needs escaping and no rule id is shown. No brand sheet is
+/// linked, since the page names no programme.
+pub(crate) fn not_published(assets: &AssetSet) -> Vec<u8> {
+    let mut html = String::from(
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+         <title>Not published yet</title>\n",
+    );
+    for href in assets.style_paths() {
+        html.push_str(&format!("<link rel=\"stylesheet\" href=\"{href}\">\n"));
+    }
+    html.push_str(
+        "</head>\n<body>\n<main>\n<h1>Not published yet</h1>\n\
+         <p>This organisation's pages are not published yet. \
+         They open once its activation has been approved.</p>\n\
+         </main>\n</body>\n</html>\n",
+    );
+    html.into_bytes()
+}
+
 #[cfg(test)]
 #[allow(clippy::panic, reason = "a test fails by panicking")]
 mod tests {
@@ -89,6 +113,30 @@ mod tests {
         assert!(!bad.contains("/brand/"));
         let none = String::from_utf8(render(&assets, None)).unwrap_or_default();
         assert!(!none.contains("/brand/"));
+    }
+
+    /// ADR-021 decision 3, R-PB-04: the not-published page links the
+    /// platform stylesheets, says the pages are not published yet and
+    /// holds no script.
+    #[test]
+    fn adr021_not_published_page_links_platform_sheets_and_holds_no_script() {
+        let Ok(assets) = fstp_web_assets::AssetSet::from_files(
+            "main.js",
+            &[
+                ("main.js", b"export {};" as &[u8]),
+                ("site/ui.css", b"body{margin:0}" as &[u8]),
+            ],
+        ) else {
+            panic!("assets");
+        };
+        let Some(sheet) = assets.style_paths().into_iter().next() else {
+            panic!("no sheet");
+        };
+        let html = String::from_utf8(not_published(&assets)).unwrap_or_default();
+        assert!(html.contains(&format!("href=\"{sheet}\"")), "{html}");
+        assert!(html.contains("not published yet"), "{html}");
+        assert!(!html.to_ascii_lowercase().contains("<script"), "{html}");
+        assert!(!html.contains("ADR-021"), "{html}");
     }
 
     /// R-NF-03, I-70: a public page links the platform stylesheets first

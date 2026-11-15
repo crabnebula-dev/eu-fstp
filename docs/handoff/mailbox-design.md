@@ -42,6 +42,7 @@ The mailbox is a read model derived from state that already exists. It adds no s
 | `intake.knock_out` | A published call of the caller's programme with a SUBMITTED proposal (R-EV-01) | The FSTP coordinator | No SUBMITTED proposal is left | `/app/calls/{call}/intake` |
 | `round.vote` | An open cut-off round of a call where the caller sits on the committee | Committee members and the chair | Cast, delegated, or the round closes | `/app/cut-off-rounds/{round}` |
 | `admin.approve_activation` | A programme draft with a live activation request | A tenant admin who built nothing in it (I-67) | Approved, or the request ends | `/app/admin/approvals` |
+| `admin.override_activation` | A programme draft with a live activation request | A tenant admin of its builder set (ADR-022 decision 2, 2026-11-15) | Activated, or the request ends | `/app/admin/approvals` |
 | `contract.sign` | Latest contract version SENT or SIGNED_BY_GRANTEE, caller is an unsigned party, the signatory only once the grantee side signed | That party | Signed, or the version moves on | `/app/grants/{proposal}/contract` |
 | `payment.review` | Payment request UNDER_REVIEW on a grant where the caller holds an active reviewer assignment | The assigned reviewer | The request leaves UNDER_REVIEW | `/app/operations` |
 | `payment.approve` | Request ACCEPTED, caller is finance approver of the programme | The finance approver | Approved | `/app/operations` |

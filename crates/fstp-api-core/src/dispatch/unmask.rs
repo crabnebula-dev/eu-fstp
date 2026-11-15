@@ -168,6 +168,7 @@ pub(super) async fn log<P: Seams>(
             subject: u.subject,
             by: u.by,
             purpose: purpose_of(call, u.purpose, clearance).await?,
+            conflict: u.conflict,
             at: u.at.micros(),
         });
     }

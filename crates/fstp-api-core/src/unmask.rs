@@ -55,6 +55,9 @@ pub struct UnmaskRow {
     pub by: AccountId,
     /// The purpose the coordinator gave.
     pub purpose: String,
+    /// Whether the coordinator held a conflict fact on the subject's
+    /// proposal when unmasking (ADR-023 decision 2).
+    pub conflict: bool,
     /// The instant of the entry, in UTC microseconds.
     pub at: i64,
 }
@@ -90,6 +93,7 @@ impl ToJson for UnmaskRow {
         subject_members(&mut o, self.subject);
         let _ = o.insert("by", dec(self.by.raw()));
         let _ = o.insert("purpose", Value::from(self.purpose.as_str()));
+        let _ = o.insert("conflict", Value::Bool(self.conflict));
         let _ = o.insert("at", Value::String(self.at.to_string()));
         Value::Object(o)
     }
@@ -142,6 +146,7 @@ pub(crate) fn samples() -> Vec<UnmaskModel> {
             subject: UnmaskSubject::Binding(BindingId::from_raw(5)),
             by: AccountId::from_raw(6),
             purpose: "Synthetic purpose".to_owned(),
+            conflict: true,
             at: 7,
         }]),
     ]

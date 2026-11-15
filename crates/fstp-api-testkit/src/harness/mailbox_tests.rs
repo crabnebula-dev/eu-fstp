@@ -200,7 +200,7 @@ fn target_read(m: &Value) -> String {
         "irc.review" => format!("/irc-assignments/{}/case", id("assignment")),
         "intake.knock_out" => format!("/calls/{}/intake", id("call")),
         "round.vote" => format!("/cut-off-rounds/{}", id("round")),
-        "admin.approve_activation" => "/admin/approvals".to_owned(),
+        "admin.approve_activation" | "admin.override_activation" => "/admin/approvals".to_owned(),
         "contract.sign" => format!("/grants/{}/contract", id("proposal")),
         "payment.review" | "payment.approve" | "payment.release" | "payment.confirm" => {
             "/me/payment-queue".to_owned()
