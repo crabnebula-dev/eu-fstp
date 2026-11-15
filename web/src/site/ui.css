@@ -74,6 +74,9 @@ details > summary { cursor: pointer; font-weight: var(--weight-bold); min-height
 .fstp-list > li { margin-bottom: var(--space-3); }
 .fstp-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin: var(--space-4) 0; }
 .fstp-items { padding-left: var(--space-6); }
+/* The application, read-only (`applicant/application.ts`): each answer under its question. */
+.fstp-answers dt { font-weight: var(--weight-bold); margin-top: var(--space-4); }
+.fstp-answers dd { margin: var(--space-2) 0 0; max-width: 72ch; overflow-wrap: anywhere; }
 
 /*
  * Field help (SA-13, R-NF-03): the "i" button beside a field's label and

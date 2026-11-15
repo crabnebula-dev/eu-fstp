@@ -85,6 +85,20 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "copy.request": "Request a copy",
   "copy.invalid": "Enter an email address in the form name@example.org.",
   "copy.done": "Your request for a copy is recorded.",
+  "application.heading": "Application",
+  "application.source.draft": "Your current draft, as last saved in the team workspace.",
+  "application.source.submitted":
+    "Your application as submitted. It is read from the team workspace, which closed for editing when the proposal was submitted.",
+  "application.source.withdrawn":
+    "Your application as last saved. It is read from the team workspace, which is closed for editing.",
+  "application.edit": "Edit the application",
+  "application.empty": "No answer.",
+  "application.q.title": "Proposal title",
+  "application.q.summary": "Neutral summary",
+  "application.q.narrative": "Narrative",
+  "application.stage2.heading": "Stage 2",
+  "application.stage2.answers": "The stage 2 answers are not shown on this page.",
+  "application.copy": "The applicant lead can request a copy of the application by email from this page.",
 
   "workspace.title": "Proposal workspace",
   "workspace.intro": "Only your team can read this workspace. It saves as you type.",

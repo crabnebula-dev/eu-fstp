@@ -952,9 +952,10 @@ pub enum Rule {
     /// The guardian reads the full journey as a Receiving binding.
     JourneyPosition,
     /// The workspace of X (`proposal.get_workspace`, I-21): the team while
-    /// its Receiving bindings are active. Daniel, 2026-11-15 (night): the
-    /// former lead and team member of an ended X keep the journey, map and
-    /// diary only, so the workspace is closed to them.
+    /// its Receiving bindings are active. Daniel, 2026-11-15 (night), "if
+    /// i wrote it i should be able to read it": once X ended, everyone who
+    /// was on the team, the lead, a team member and the guardian, keeps a
+    /// read-only view of the application. Saving stays the active team's.
     Workspace,
     /// The route map of X (ADR-015 amendment of 2026-11-06, section 8.1,
     /// O-58): the readers of [`Rule::Journey`] on the team side. The lead
@@ -1919,7 +1920,7 @@ fn admit(
                 || (journey_staff(who) && x.is_some_and(|s| s != StateTag::Draft)),
         ),
         Rule::JourneyPosition => journey_position(who, x, policy),
-        Rule::Workspace => open(who.team() && !x.is_some_and(StateTag::is_terminal)),
+        Rule::Workspace => open(who.team()),
         Rule::RouteMap => open(former_team_reads(who, x)),
         Rule::GrantReader => {
             let in_grant = x.is_some_and(|s| among(s, &GRANT_STATES));
