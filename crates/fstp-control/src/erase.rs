@@ -50,7 +50,7 @@ use fstp_custody::{
 
 use crate::ControlError;
 use crate::agent::JobOutcome;
-use crate::approval::{ApprovedJob, DestructiveJob, JobDigest};
+use crate::approval::{ApprovalBatch, ApprovedJob, DestructiveJob, JobDigest};
 use crate::pg::CellDatabase;
 use crate::pgagent::{DbIdent, PgagentJob};
 use crate::placement::{ClusterId, Placement};
@@ -509,6 +509,70 @@ fn ordered_drop_jobs<'a>(
     Ok(out)
 }
 
+/// Every destructive job of the erasure of `cell` on `placement`: the
+/// `erase-cell` job, then the four drops of [`database_drop_jobs`] in
+/// their order (ADR-004 "Decided by Daniel, 2026-11-15 (late)").
+///
+/// # Errors
+///
+/// The errors of [`DestructiveJob::pgagent`].
+pub fn erasure_jobs(
+    cell: CellId,
+    placement: &Placement,
+) -> Result<Vec<DestructiveJob>, ControlError> {
+    let mut jobs = vec![DestructiveJob::EraseCell { cell }];
+    for (cluster, job) in database_drop_jobs(cell, placement) {
+        jobs.push(DestructiveJob::pgagent(cluster, job)?);
+    }
+    Ok(jobs)
+}
+
+/// The batch that each of the two operators approves once for the
+/// erasure of `cell` on `placement`: the digests of [`erasure_jobs`].
+///
+/// # Errors
+///
+/// The errors of [`erasure_jobs`] and [`ApprovalBatch::of`].
+pub fn erasure_batch(cell: CellId, placement: &Placement) -> Result<ApprovalBatch, ControlError> {
+    ApprovalBatch::of(&erasure_jobs(cell, placement)?)
+}
+
+/// Checks the approvals of an erasure before step 1 (ADR-004, 2026-11-15
+/// late): the `erase-cell` job and each drop carry the same two
+/// approvals, and each is a batch approval over exactly the jobs of
+/// [`erasure_batch`]. So every job digest of the erasure is in an
+/// approved batch, and each operator approved the erasure once.
+///
+/// # Errors
+///
+/// [`ControlError::ApprovalRequired`] for a job without evidence, an
+/// approval of one job, a batch of other jobs, or a job approved apart
+/// from the others.
+fn check_erasure_batch(
+    cell: CellId,
+    placement: &Placement,
+    approved: &ApprovedJob,
+    drops: &[&ApprovedJob],
+) -> Result<(), ControlError> {
+    let want = erasure_batch(cell, placement)?;
+    let pair = approved.evidence().ok_or(ControlError::ApprovalRequired)?;
+    for e in pair {
+        let batch = e.batch.as_ref().ok_or(ControlError::ApprovalRequired)?;
+        if !batch.same_jobs(&want) || !batch.contains(approved.digest()) {
+            return Err(ControlError::ApprovalRequired);
+        }
+    }
+    let [p0, p1] = pair;
+    for j in drops {
+        let [d0, d1] = j.evidence().ok_or(ControlError::ApprovalRequired)?;
+        let same = (d0 == p0 && d1 == p1) || (d0 == p1 && d1 == p0);
+        if !same {
+            return Err(ControlError::ApprovalRequired);
+        }
+    }
+    Ok(())
+}
+
 fn agent_done(outcome: JobOutcome) -> Result<(), ControlError> {
     match outcome {
         JobOutcome::Done => Ok(()),
@@ -537,8 +601,10 @@ fn count16(n: usize) -> u16 {
 /// 4. signs the confirmation with `signer` at `now`.
 ///
 /// Every check runs before step 1: the erasure job, the keys, and the
-/// four approved drops of [`database_drop_jobs`] with their evidence. So
-/// a job that would stop at step 2 for want of an approval destroys
+/// four approved drops of [`database_drop_jobs`] with their evidence, and
+/// that the erasure job and every drop carry the same two batch approvals
+/// over exactly the jobs of [`erasure_batch`] (ADR-004, 2026-11-15 late).
+/// So a job that would stop at step 2 for want of an approval destroys
 /// nothing. Interim, pending Daniel: a
 /// failure after step 1 stops the job with no confirmation, and the log
 /// shows the last finished step. Resuming it needs the job state in
@@ -576,6 +642,7 @@ where
     let cell = erased_cell(approved)?;
     check_cell_keys(cell, keys)?;
     let drops = ordered_drop_jobs(cell, placement, agent_jobs)?;
+    check_erasure_batch(cell, placement, approved, &drops)?;
 
     let erased = destroy_keys(custody, keys, |id| {
         report(ErasureEvent::CustodyCall(id));

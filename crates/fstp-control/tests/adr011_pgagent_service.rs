@@ -540,6 +540,25 @@ mod approved {
                 .authorise_destructive(self.a.1, &job, now())
                 .unwrap()
         }
+
+        /// Each approves every job of `jobs` once, over one batch (ADR-004,
+        /// 2026-11-15 late), and the first asks for each job in turn.
+        fn approve_batch(&mut self, jobs: &[DestructiveJob]) -> Vec<ApprovedJob> {
+            for (p, s) in [&mut self.a, &mut self.b] {
+                let c = self.login.begin_batch_approval(*s, jobs, now()).unwrap();
+                let assertion = p.assert(&c);
+                self.login
+                    .finish_approval(*s, c, &assertion, now())
+                    .unwrap();
+            }
+            jobs.iter()
+                .map(|j| {
+                    self.login
+                        .authorise_destructive(self.a.1, j, now())
+                        .unwrap()
+                })
+                .collect()
+        }
     }
 
     fn send_approved(addr: SocketAddr, approved: &ApprovedJob) -> JobOutcome {
@@ -688,6 +707,7 @@ mod approved {
             ApprovalEvidence {
                 issued_at,
                 nonce,
+                batch: None,
                 assertion: ops.a.0.assert(&c),
             }
         };
@@ -896,7 +916,8 @@ mod approved {
 
     /// R-SW-02, design section 3.7 steps 1 to 4, ADR-011, TH-48: the whole
     /// erasure over real agents of an application and a vault cluster.
-    /// Two operators approve the erasure and the four drops. The job
+    /// Two operators each approve the erasure and its four drops once, over
+    /// one batch (ADR-004, 2026-11-15 late). The job
     /// destroys every key, then each agent checks its drops' approvals
     /// itself and drops the cell's database, roles and `pg_hba` lines,
     /// then the edge loses both routes of the cell. Each step is in the
@@ -929,11 +950,8 @@ mod approved {
             assert_ne!(h, "0");
         }
 
-        let erase = ops.approve(DestructiveJob::EraseCell { cell });
-        let drops: Vec<ApprovedJob> = fstp_control::erase::database_drop_jobs(cell, &p)
-            .into_iter()
-            .map(|(cluster, job)| ops.approve(DestructiveJob::pgagent(cluster, job).unwrap()))
-            .collect();
+        let mut drops = ops.approve_batch(&fstp_control::erase::erasure_jobs(cell, &p).unwrap());
+        let erase = drops.remove(0);
 
         let fcell = Some(fstp_custody::CellId(cell.0));
         let root = |chain, h: u8| fstp_custody::RootRef {

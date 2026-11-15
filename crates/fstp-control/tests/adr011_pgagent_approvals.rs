@@ -107,6 +107,7 @@ impl Passkey {
         ApprovalEvidence {
             issued_at,
             nonce,
+            batch: None,
             assertion: self.assert(&c),
         }
     }
@@ -341,6 +342,7 @@ fn adr011_pgagent_check_refuses_a_non_destructive_job() {
         ApprovalEvidence {
             issued_at: T0,
             nonce,
+            batch: None,
             assertion: p.assert(&c),
         }
     };

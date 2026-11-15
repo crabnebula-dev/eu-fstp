@@ -374,10 +374,10 @@ mod steps {
     use std::net::SocketAddr;
 
     use fstp_control::agent::JobOutcome;
-    use fstp_control::approval::{ApprovalEvent, ApprovalEvidence};
+    use fstp_control::approval::{ApprovalBatch, ApprovalEvent, ApprovalEvidence};
     use fstp_control::erase::{
         CellDatabases, CellObjects, EdgeRoutes, ErasureEvent, ErasureStep, WitnessCredentials,
-        database_drop_jobs, erase_cell_steps,
+        database_drop_jobs, erase_cell_steps, erasure_jobs,
     };
     use fstp_control::pg::CellDatabase;
     use fstp_control::placement::{Cluster, ClusterKind, Placement};
@@ -408,6 +408,7 @@ mod steps {
         ApprovalEvidence {
             issued_at: T0,
             nonce: [n; 32],
+            batch: None,
             assertion: AssertionResponse {
                 credential_id: vec![n],
                 client_data_json: Vec::new(),
@@ -417,8 +418,44 @@ mod steps {
         }
     }
 
-    /// The four approved drops of the cell, with evidence.
+    /// Evidence of a batch approval of `batch` that the fake agents never
+    /// check.
+    fn batch_evidence(n: u8, batch: &ApprovalBatch) -> ApprovalEvidence {
+        ApprovalEvidence {
+            batch: Some(batch.clone()),
+            ..evidence(n)
+        }
+    }
+
+    /// The approved jobs of the cell's erasure, `erase-cell` first and
+    /// then the four drops, each operator approving the batch of `jobs`
+    /// once with the nonce octets `nonces` (ADR-004, 2026-11-15 late).
+    fn erasure_over(cell: CellId, jobs: &[DestructiveJob], nonces: [u8; 2]) -> Vec<ApprovedJob> {
+        let batch = ApprovalBatch::of(jobs).unwrap();
+        let mut book = ApprovalBook::default();
+        for (staff, n) in [(1, nonces[0]), (2, nonces[1])] {
+            book.approve_batch(StaffRef([staff; 16]), &batch, T0, batch_evidence(n, &batch))
+                .unwrap();
+        }
+        erasure_jobs(cell, &placement())
+            .unwrap()
+            .iter()
+            .map(|j| book.take(StaffRef([1; 16]), j, T0 + 1).unwrap())
+            .collect()
+    }
+
+    /// The approved jobs of the cell's erasure, over its own batch.
+    fn erasure(cell: CellId) -> Vec<ApprovedJob> {
+        erasure_over(cell, &erasure_jobs(cell, &placement()).unwrap(), [1, 2])
+    }
+
+    /// The four approved drops of the cell, over the erasure's batch.
     fn drops(cell: CellId) -> Vec<ApprovedJob> {
+        erasure(cell).split_off(1)
+    }
+
+    /// The four drops of the cell, each approved apart from the others.
+    fn drops_apart(cell: CellId) -> Vec<ApprovedJob> {
         database_drop_jobs(cell, &placement())
             .into_iter()
             .map(|(cluster, job)| {
@@ -582,7 +619,7 @@ mod steps {
         agent_jobs: &[ApprovedJob],
         book: &mut ApprovalBook,
     ) -> (Result<ErasureConfirmation, ControlError>, Vec<ErasureEvent>) {
-        let job = approved(erase_job(CELL));
+        let job = erasure(CELL).remove(0);
         let signer = composite::generate().unwrap();
         let mut events = Vec::new();
         let r = block_on(erase_cell_steps(
@@ -722,7 +759,10 @@ mod steps {
     /// R-SW-02, ADR-011: the erasure checks its four approved drops before
     /// step 1. A missing, extra, repeated or evidence-less drop, or one
     /// approved for another cluster, stops it with nothing destroyed,
-    /// dropped or unrouted.
+    /// dropped or unrouted. ADR-004 (2026-11-15 late): so does a drop
+    /// outside the one batch each operator approved once: one approved
+    /// apart, a second batch, a batch of other jobs, or an operator's
+    /// second batch approval.
     #[test]
     fn r_sw_02_erase_cell_steps_check_every_drop_before_destroying() {
         let mut cases: Vec<(&str, Vec<ApprovedJob>)> = Vec::new();
@@ -751,6 +791,23 @@ mod steps {
         bare[1] = approved(plain);
         cases.push(("no evidence", bare));
         cases.push(("another cell", drops(OTHER_CELL)));
+        // ADR-004 (2026-11-15 late): every job digest must be in the one
+        // batch both operators approved once.
+        cases.push(("approved apart", drops_apart(CELL)));
+        let jobs = erasure_jobs(CELL, &placement()).unwrap();
+        cases.push((
+            "a second batch",
+            erasure_over(CELL, &jobs, [3, 4]).split_off(1),
+        ));
+        let mut wider = jobs.clone();
+        wider.push(erase_job(OTHER_CELL));
+        cases.push((
+            "a batch of other jobs",
+            erasure_over(CELL, &wider, [1, 2]).split_off(1),
+        ));
+        let mut mixed = drops(CELL);
+        mixed[3] = erasure_over(CELL, &jobs, [1, 5]).remove(4);
+        cases.push(("one operator approved twice", mixed));
         for (what, jobs) in cases {
             let keys = cell_keys();
             let custody = custody_holding(&keys, &[]);

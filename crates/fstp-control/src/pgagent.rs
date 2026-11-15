@@ -892,7 +892,9 @@ pub fn destructive_statements(v: &VerifiedJob) -> Result<Vec<Statement>, Control
 
 /// The version octet that opens an approved job frame. It differs from
 /// [`JOB_VERSION`], so a plain job frame never reads as an approved one.
-pub const APPROVED_VERSION: u8 = 2;
+/// Version 3 carries each approval's batch (ADR-004, 2026-11-15 late)
+/// and replaces version 2, which is refused.
+pub const APPROVED_VERSION: u8 = 3;
 
 /// The longest approved job frame, in octets.
 pub const MAX_APPROVED_LEN: usize = 12 * 1024;
@@ -930,12 +932,16 @@ fn push_field(out: &mut Vec<u8>, b: &[u8], max: usize) -> Result<(), ControlErro
 ///
 /// ```text
 /// frame    = APPROVED_VERSION | job len u16 | job frame | approval | approval
-/// approval = issued_at i64 | nonce 32 | credential id len u16 | credential id
+/// approval = issued_at i64 | nonce 32 | batch count u8 | batch digest 32 * count
+///          | credential id len u16 | credential id
 ///          | authenticator data len u16 | authenticator data
 ///          | client data len u16 | client data | signature len u16 | signature
 /// ```
 ///
-/// Integers are big-endian. The job frame is [`encode_pgagent_job`].
+/// Integers are big-endian. The job frame is [`encode_pgagent_job`]. A
+/// batch count of 0 marks an approval of the one job. Otherwise the
+/// approval covers the batch of those digests, 1 to
+/// [`crate::approval::MAX_BATCH`] distinct ones, which must list the job.
 ///
 /// # Errors
 ///
@@ -950,6 +956,17 @@ pub fn encode_approved_job(frame: &ApprovedFrame) -> Result<Vec<u8>, ControlErro
     for e in &frame.approvals {
         out.extend_from_slice(&e.issued_at.to_be_bytes());
         out.extend_from_slice(&e.nonce);
+        match &e.batch {
+            None => out.push(0),
+            Some(b) => {
+                out.push(
+                    u8::try_from(b.digests().len()).map_err(|_| ControlError::Job("batch size"))?,
+                );
+                for d in b.digests() {
+                    out.extend_from_slice(&d.0);
+                }
+            }
+        }
         let a = &e.assertion;
         if a.credential_id.is_empty() {
             return Err(ControlError::Job("empty credential id"));
@@ -991,6 +1008,23 @@ impl JobReader<'_> {
             .take(32)?
             .try_into()
             .map_err(|_| ControlError::Job("truncated"))?;
+        let count = usize::from(self.u8()?);
+        let batch = if count == 0 {
+            None
+        } else {
+            if count > crate::approval::MAX_BATCH {
+                return Err(ControlError::Job("batch size"));
+            }
+            let mut digests = Vec::with_capacity(count);
+            for _ in 0..count {
+                let d: [u8; 32] = self
+                    .take(32)?
+                    .try_into()
+                    .map_err(|_| ControlError::Job("truncated"))?;
+                digests.push(crate::approval::JobDigest(d));
+            }
+            Some(crate::approval::ApprovalBatch::new(digests)?)
+        };
         let credential_id = self.field(crate::config::MAX_CREDENTIAL_ID_LEN)?;
         let authenticator_data = self.field(MAX_AUTHENTICATOR_DATA_LEN)?;
         let client_data_json = self.field(MAX_CLIENT_DATA_LEN)?;
@@ -998,6 +1032,7 @@ impl JobReader<'_> {
         Ok(ApprovalEvidence {
             issued_at: i64::from_be_bytes(at),
             nonce,
+            batch,
             assertion: fstp_webauthn::AssertionResponse {
                 credential_id,
                 client_data_json,

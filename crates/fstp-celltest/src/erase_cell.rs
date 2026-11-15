@@ -7,7 +7,7 @@
 //!
 //! - **Operators.** Two staff members, each with a software passkey
 //!   pinned in an [`OperatorLogin`] for [`CONTROL_HOST`]. Each logs in and
-//!   approves the cell's `erase-cell` digest with a fresh passkey
+//!   approves the batch of the cell's erasure jobs once with a fresh passkey
 //!   assertion, in their own session. The first then asks for the job,
 //!   which [`OperatorLogin::authorise_destructive`] admits.
 //! - **The job.** [`fstp_control::erase::erase_cell`] destroys every live
@@ -149,8 +149,10 @@ impl StaffPasskey {
         job: &DestructiveJob,
         now: i64,
     ) -> Result<(), WorldError> {
+        // One batch approval per operator per erasure (ADR-004,
+        // 2026-11-15 late). The world's erasure has the one job.
         let c = login
-            .begin_approval(session, job, now)
+            .begin_batch_approval(session, std::slice::from_ref(job), now)
             .map_err(|e| err("an approval", &e))?;
         let a = self.assert(&c)?;
         login
