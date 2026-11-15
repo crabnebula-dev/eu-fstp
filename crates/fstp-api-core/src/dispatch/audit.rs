@@ -29,7 +29,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fstp_domain::id::{AccountId, AssignmentId, BindingId, CallId, ProgrammeId, ProposalId};
+use fstp_domain::id::{
+    AccountId, AssignmentId, BindingId, CallId, ProgrammeId, ProposalId, RequestId,
+};
 use fstp_engine::{EngineState, EnvelopeKind, Record};
 use fstp_json::{ToJson, Value};
 
@@ -39,10 +41,12 @@ use crate::port::{AsyncEngine as _, TenantConfig as _};
 use crate::{ApiError, ErrorCode, ReadModel};
 
 /// The members that name the acting account, in the order a row picks.
-const ACTOR_KEYS: [&str; 7] = [
+const ACTOR_KEYS: [&str; 8] = [
     "by",
     "granted_by",
     "author",
+    // A release names its approver too, but the releaser acts.
+    "releaser",
     "approver",
     "actor",
     "requested_by",
@@ -131,6 +135,13 @@ fn programme_named(state: &EngineState, name: &str, v: &Value) -> Option<Program
             .get(AssignmentId::from_raw(id))
             .and_then(|a| super::grant::programme_of(state, a.proposal)),
         "binding" => binding_programme(state, BindingId::from_raw(id)),
+        // A payment request names its grant, which is a proposal.
+        "request" => state
+            .core
+            .payments()
+            .grant_of(RequestId::from_raw(id))
+            .and_then(|g| super::grant::programme_of(state, g)),
+        "grant" => super::grant::programme_of(state, ProposalId::from_raw(id)),
         _ => None,
     }
 }
@@ -186,8 +197,18 @@ fn text_ids(v: &Value, depth: u8, out: &mut BTreeSet<u128>) {
     }
 }
 
-/// The record kind: the `type` or `kind` tag of the inner record.
-fn kind_of(v: &Value) -> String {
+/// The record kind: the `type` or `kind` tag of the inner record. A
+/// finding record names its kind in `record`, and its `type` is the
+/// finding's own kind, so it reads as `Finding.<record>`.
+fn kind_of(side: EnvelopeKind, v: &Value) -> String {
+    if side == EnvelopeKind::Finding {
+        let tag = v
+            .as_object()
+            .and_then(|o| o.get("record"))
+            .and_then(Value::as_str)
+            .unwrap_or("record");
+        return format!("Finding.{tag}");
+    }
     let o = v.as_object();
     o.and_then(|o| o.get("type"))
         .or_else(|| o.and_then(|o| o.get("kind")))
@@ -248,7 +269,7 @@ fn log(
             seq: e.seq.raw(),
             at: e.at,
             side: EnvelopeKind::of(&e.record).member(),
-            kind: kind_of(&v),
+            kind: kind_of(EnvelopeKind::of(&e.record), &v),
             actor,
             actor_role: actor.map_or("system", |a| {
                 role_of(state, programme, AccountId::from_raw(a), is_admin)
@@ -319,4 +340,40 @@ fn kind_of_query(v: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("query")
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// R-AU-01: a row names its record kind by the side's own tag. A
+    /// finding's `type` is the finding's kind, so a finding reads by its
+    /// `record` tag.
+    #[test]
+    fn r_au_01_row_kind_reads_each_side_tag() {
+        let core = fstp_json::parse(br#"{"type":"PartyUnmasked","by":"3"}"#).unwrap();
+        assert_eq!(kind_of(EnvelopeKind::Core, &core), "PartyUnmasked");
+        let creator = fstp_json::parse(br#"{"kind":"ActivationOverridden"}"#).unwrap();
+        assert_eq!(
+            kind_of(EnvelopeKind::Creator, &creator),
+            "ActivationOverridden"
+        );
+        let finding = fstp_json::parse(br#"{"record":"recorded","type":"completeness"}"#).unwrap();
+        assert_eq!(kind_of(EnvelopeKind::Finding, &finding), "Finding.recorded");
+    }
+
+    /// ADR-007: a text reference is named by its id at any depth, and an
+    /// object with more members is no reference.
+    #[test]
+    fn adr007_text_ids_find_references_only() {
+        let v = fstp_json::parse(
+            br#"{"purpose":{"id":"7","digest":"ab"},"x":{"y":[{"id":"9","digest":"cd"}]},"z":{"id":"5","digest":"ef","more":"1"}}"#,
+        )
+        .unwrap();
+        let mut out = BTreeSet::new();
+        text_ids(&v, 0, &mut out);
+        assert_eq!(out.into_iter().collect::<Vec<_>>(), vec![7, 9]);
+    }
 }

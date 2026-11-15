@@ -251,6 +251,7 @@ export type WorkKind =
   | "grant"
   | "grants"
   | "operations"
+  | "audit"
   | "open-calls";
 
 /** One own proposal, as `proposal.list_own` gives it. */
@@ -363,6 +364,7 @@ export const WORK_PATHS = Object.freeze({
   grants: "/app/grants",
   grant: (p: string): string => `/app/grants/${p}`,
   operations: "/app/operations",
+  audit: (p: string): string => `/app/programmes/${p}/audit`,
   assignments: "/app/me/assignments",
   ircCases: "/app/me/irc-cases",
 });
@@ -526,6 +528,10 @@ export function workOf(
   if (holdsOperations(r)) {
     add("operations", "operations", WORK_PATHS.operations, text("home.work.operations"));
     add("operations", "grants", WORK_PATHS.grants, text("home.work.grants_staff"));
+  }
+  // R-AU-01: the auditor reads the audit log of each programme it audits.
+  for (const p of programmes(holds("auditor"))) {
+    add("operations", "audit", WORK_PATHS.audit(p), text("home.work.audit", { programme: p }));
   }
 
   // J4: anyone may read the open calls.
