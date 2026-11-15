@@ -74,3 +74,60 @@ pub enum ReleaseRecord {
         by: AccountId,
     },
 }
+
+/// What an issue record admits, as the route signs it (lane
+/// m3/cell-routes, design section 6.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IssuedKind {
+    /// A release of identity attributes (`IdentityReleaseIssued`).
+    Release,
+    /// A release with the download scope (`IdentityDownloadIssued`).
+    Download,
+    /// One write of the write kind code (`TicketIssued`).
+    Write(u16),
+}
+
+/// A ticket the ledger issued, keyed by the command id that issued it.
+/// The route signs its claims from this record, never from the request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IssuedTicket {
+    /// The ticket id, which the signed ticket carries as its nonce.
+    pub id: [u8; 16],
+    /// What it admits.
+    pub kind: IssuedKind,
+    /// The proposal it names.
+    pub proposal: u128,
+    /// The account it was issued to.
+    pub holder: AccountId,
+}
+
+impl IssuedTicket {
+    /// The issued ticket of `r`.
+    pub fn of(r: &ReleaseRecord) -> IssuedTicket {
+        match r {
+            ReleaseRecord::TicketIssued {
+                id,
+                kind,
+                proposal,
+                holder,
+            } => IssuedTicket {
+                id: *id,
+                kind: IssuedKind::Write(*kind),
+                proposal: *proposal,
+                holder: *holder,
+            },
+            ReleaseRecord::IdentityReleaseIssued { id, proposal, by } => IssuedTicket {
+                id: *id,
+                kind: IssuedKind::Release,
+                proposal: *proposal,
+                holder: *by,
+            },
+            ReleaseRecord::IdentityDownloadIssued { id, proposal, by } => IssuedTicket {
+                id: *id,
+                kind: IssuedKind::Download,
+                proposal: *proposal,
+                holder: *by,
+            },
+        }
+    }
+}

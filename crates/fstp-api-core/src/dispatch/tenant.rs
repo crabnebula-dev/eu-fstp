@@ -58,10 +58,10 @@
 //!   grant awaiting approval with its grantee, programme, role and dates
 //!   ([`request_self_grant`]). `admin.approvals` lists it, and
 //!   `admin.approve_self_grant` approves it by id ([`approve_self_grant`]).
-//!   The role grant does not consume a ledger approval yet:
-//!   `second_admin` still reads M3's recorded approvals, and a grant with
-//!   `UseSelfGrantApproval` in one entry needs a composed engine command,
-//!   as `Stage2Revision` composes two core commands (seam of the lead).
+//!   The grantee's `roles.grant` that names the approval by its id then
+//!   consumes it in the grant's own entry, through the composed engine
+//!   command `ApprovedSelfGrant` ([`with_approval`], lane m3/cell-routes).
+//!   An id the ledger does not hold is read from M3's recorded approvals.
 //! - The port prober takes no domain and has no absent outcome. So the
 //!   sending-domain check cannot name the domain of this save, and a cell
 //!   with no prober shows `probe_failed`, not `prober_absent` (Q5). Both
@@ -786,6 +786,54 @@ pub(super) fn self_grant_of<P: Seams>(
         start: *start,
         end: *end,
     })
+}
+
+/// A SoD-07 approval the ledger recorded, named by a `roles.grant`
+/// request's `approval` (lane m3/cell-routes).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct LedgerApproval {
+    /// The approval, which took the id of its `SelfGrantRequested`.
+    pub(super) approval: ApprovalId,
+    /// The approving tenant admin, from `SelfGrantApproved`.
+    pub(super) approver: AccountId,
+}
+
+/// The ledger approval the request's `approval` names, if the tenant part
+/// recorded one under that id. Any other id is M3's.
+pub(super) fn ledger_approval<P: Seams>(
+    call: &Call<'_, P>,
+    request: &fstp_json::Object,
+) -> Option<LedgerApproval> {
+    let id = ApprovalId::from_raw(crate::forms::id_param(request, "approval")?);
+    let ts = call.state.tenant.state()?;
+    ts.approvals().get(&id).map(|a| LedgerApproval {
+        approval: id,
+        approver: a.approver,
+    })
+}
+
+/// `cmd` composed with its ledger approval, when the request names one:
+/// the `GrantRole` names the approver as its second admin, and
+/// `fstp_engine::ApprovedSelfGrant` consumes the approval in the grant's
+/// own entry (SoD-07, TH-05). The engine checks the approver, the
+/// grantee, the programme, the role and the requested dates against the
+/// ledger. An approval named for any other command is refused.
+pub(super) fn with_approval(
+    cmd: Command,
+    ledger: Option<LedgerApproval>,
+) -> Result<Command, ApiError> {
+    let Some(l) = ledger else {
+        return Ok(cmd);
+    };
+    let Command::Core(mut grant) = cmd else {
+        return Err(ApiError::refused(ErrorCode::Refused, "SoD-07"));
+    };
+    if let fstp_domain::Command::GrantRole { second_admin, .. } = &mut grant {
+        *second_admin = Some(l.approver);
+    }
+    fstp_engine::ApprovedSelfGrant::new(l.approval, grant)
+        .map(Command::ApprovedSelfGrant)
+        .ok_or(ApiError::refused(ErrorCode::Refused, "SoD-07"))
 }
 
 /// Takes the step-up of a high-risk call: `Ok(Some(proof))`, or the

@@ -236,6 +236,10 @@ fn route_queries(
             crate::ledger_clock(state, ctx)?;
             Ok(Vec::new())
         }
+        Command::ApprovedSelfGrant(g) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::approved_self_grant_queries(state, g, ctx)
+        }
     }
 }
 
@@ -282,6 +286,10 @@ fn route_decide(
         }
         Command::Contract(c) => crate::contract::decide_contract(state, c, ctx, answers),
         Command::Report(r) => crate::report::decide_report(state, r, ctx),
+        Command::ApprovedSelfGrant(g) => {
+            crate::ledger_clock(state, ctx)?;
+            crate::compose::decide_approved_self_grant(state, g, ctx, answers)
+        }
     }
 }
 

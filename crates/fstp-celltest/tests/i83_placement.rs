@@ -1074,6 +1074,7 @@ fn start_cell_over(t: Target, registered: RegisteredBy, writer_on: ClusterKind) 
             anchor: fstp_crypto::composite::generate().unwrap(),
             ledger: Arc::new(fstp_pgstore::LedgerKeys::new(ledger_key)),
             cred_lookup: fstp_crypto::random_array::<32>().unwrap(),
+            ticket: None,
         },
         witness: fstp_cell::witness::link::WitnessEndpoint {
             addr: loopback,

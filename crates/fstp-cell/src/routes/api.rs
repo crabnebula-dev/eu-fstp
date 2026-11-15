@@ -6,10 +6,15 @@
 //!   step-up, and the engine runs it.
 //! - `POST /api/v1/vault-tickets` and `POST /api/v1/verifications` issue
 //!   vault tickets through the engine, so the issue is a ledger record.
-//!   Signing and returning the ticket needs the issued ticket's claims and
-//!   the cell's `Ticket` key, which the route layer cannot reach yet. So
-//!   a request the gate admits answers 501 before the engine runs it. No
-//!   issue record commits, and no ticket exists.
+//!   The route then signs the ticket of that record with the cell's
+//!   `Ticket` key (ADR-004, design section 6.5) and answers its vault
+//!   origin link (lane m3/cell-routes, [`signed_reply`]). A cell with no
+//!   `Ticket` key, and a download, which the vault has no ticket kind
+//!   for, answer 501 before the engine runs, so no issue record commits
+//!   without its ticket.
+//! - An `UnmaskParty` through `POST /api/v1/commands` answers the vault
+//!   origin link of an `unmask` ticket for the party once its
+//!   `PartyUnmasked` record is in the ledger (ADR-023 reading 7).
 //! - The audit anchors and the erasure log are for Auditors and tenant
 //!   admins (ADR-007, G30). An Auditor reads the erasure entries of the
 //!   programmes its bindings name only (Q42, interim).
@@ -19,15 +24,22 @@ use std::collections::BTreeSet;
 use fstp_cell_core::CellCommand;
 use fstp_cell_core::gate::{Action, ReadAction};
 use fstp_cell_core::release::ReleaseCommand;
+use fstp_cell_core::release::{IssuedKind, IssuedTicket};
+use fstp_domain::id::{AccountId, ProgrammeId, ProposalId};
 use fstp_domain::roles::Role;
 use fstp_http::{Request, StatusCode};
 use fstp_json::{Array, Object, Value};
 use fstp_vault_proto::ticket::WriteKind;
+use fstp_vault_proto::{
+    TICKET_LIFETIME_MAX_US, TicketClaims, TicketKind, WireAccount, WireProgramme, WireProposal,
+    country_scope,
+};
 
 use crate::http::body::{self, BodyRefusal};
 use crate::http::decode_command_body;
 use crate::routes::handle::{
-    Caller, Ctx, Reply, admit, bad_body, decimal, hex_value, needs_route_input, run, unavailable,
+    Caller, Ctx, Reply, admit, bad_body, decimal, exec_failed, hex_value, needs_route_input, run,
+    unavailable,
 };
 use crate::routes::{AUTH_BODY_LIMIT, Backend};
 
@@ -53,6 +65,14 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
         (_, Some(_)) => return bad_body(BodyRefusal::Member("email")),
     };
     let blocked = needs_route_input(&command);
+    let unmask = match &command {
+        CellCommand::Engine(fstp_engine::Command::Core(
+            fstp_domain::command::Command::UnmaskParty {
+                programme, subject, ..
+            },
+        )) => Some((*programme, *subject)),
+        _ => None,
+    };
     let creator = match &command {
         CellCommand::Engine(fstp_engine::Command::Creator(c)) => Some(c.clone()),
         _ => None,
@@ -78,6 +98,14 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
         // (`fstp_cell_core::RouteInput`).
         return Reply::not_built();
     }
+    // ADR-023 reading 7: an unmask answers its ticket, so it never
+    // commits on a cell that cannot sign one.
+    if let Some(unmask) = unmask {
+        let Some(key) = ctx.backend.ticket_key() else {
+            return Reply::not_built();
+        };
+        return run_unmask(ctx, admitted, unmask, &key).await;
+    }
     // The address is kept for the enrolment once the gate admitted the
     // invitation. A refused invitation leaves a kept address no token
     // can reach.
@@ -89,18 +117,18 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
     run(ctx, admitted).await
 }
 
-/// Runs a ticket issue up to the gate, then answers 501 before the engine
-/// sees it (I-17, R-AU-01, design section 6.5).
+/// Issues a vault ticket (I-17, R-AU-01, design section 6.5).
 ///
-/// The issue record and the signed ticket belong in one reply. When the
-/// engine commits an issue, it appends `IdentityReleaseIssued` or
-/// `TicketIssued`, and that record logs the identity-attribute read. The
-/// route cannot sign the ticket yet. Committing now would log a release
-/// or a write ticket that never happened, once per retry. So a request
-/// the gate admits stops here and decides nothing, as a command that
-/// needs a route input does. A gate refusal answers as any command's.
-/// Once the issued claims and the `Ticket` key reach the route layer, the
-/// route commits the issue and returns the signed ticket in one reply.
+/// The gate admits the issue command first, so a refusal answers as any
+/// command's. The engine then commits the issue record
+/// (`IdentityReleaseIssued` or `TicketIssued`), which logs the read, and
+/// the route signs the ticket of that record ([`signed_reply`]). The
+/// record and the signed ticket belong in one reply, so a cell with no
+/// `Ticket` key answers 501 before the engine runs and commits nothing.
+/// So does a download: the vault has no ticket kind for the download
+/// scope yet. A retry under the same command id commits nothing again
+/// and signs the stored record's ticket anew, with the same nonce, so
+/// the vault still admits one use.
 async fn issue<B: Backend>(
     ctx: &Ctx<B>,
     caller: &Caller,
@@ -108,9 +136,188 @@ async fn issue<B: Backend>(
     id: [u8; 16],
     stepup: Option<[u8; 16]>,
 ) -> Reply {
-    match admit(ctx, caller, Action::Command(command), Some(id), stepup).await {
-        Ok(_) => Reply::not_built(),
-        Err(reply) => reply,
+    let download = matches!(
+        command,
+        CellCommand::Release(ReleaseCommand::IssueDownloadTicket { .. })
+    );
+    let admitted = match admit(ctx, caller, Action::Command(command), Some(id), stepup).await {
+        Ok((_, a)) => a,
+        Err(reply) => return reply,
+    };
+    let Some(key) = ctx.backend.ticket_key() else {
+        return Reply::not_built();
+    };
+    if download {
+        return Reply::not_built();
+    }
+    match ctx.backend.execute(admitted).await {
+        Err(f) => unavailable(f),
+        Ok(Err(e)) => exec_failed(&e),
+        Ok(Ok(_)) => {
+            let s = match ctx.backend.state().await {
+                Ok(s) => s,
+                Err(f) => return unavailable(f),
+            };
+            match s.issued_by(id).and_then(|t| claims_of(ctx, &s, &t)) {
+                Some((claims, page)) => signed_reply(ctx, &claims, page, &key),
+                None => Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal"),
+            }
+        }
+    }
+}
+
+/// The vault origin page a ticket opens: `/r` for a release, `/w` for a
+/// write (ADR-009 "Vault origin").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VaultPage {
+    Release,
+    Write,
+}
+
+impl VaultPage {
+    const fn path(self) -> &'static str {
+        match self {
+            VaultPage::Release => "/r",
+            VaultPage::Write => "/w",
+        }
+    }
+}
+
+/// The programme of proposal `p`, from its call.
+fn programme_of(s: &fstp_cell_core::CellState, p: ProposalId) -> Option<(ProgrammeId, AccountId)> {
+    let (call, lead) = s.proposal(p)?;
+    let programme = fstp_domain::programme::call(&s.engine().core, call)?.programme();
+    Some((programme, lead))
+}
+
+/// The claims of the ticket the ledger issued as `t`, and the page it
+/// opens (design section 6.5, ADR-009 "Format"):
+///
+/// - a release names the proposal's lead as its subject, which the
+///   vault's negotiation fact must list, and the proposal's programme as
+///   its scope. Interim, pending Daniel: the request names no subject, so
+///   the lead's identity is the one released;
+/// - a write names its holder as the writer, the proposal, and the
+///   programme scope.
+///
+/// The ticket id of the record is the nonce, and the ticket lives for the
+/// ADR-009 bound from now.
+fn claims_of<B: Backend>(
+    ctx: &Ctx<B>,
+    s: &fstp_cell_core::CellState,
+    t: &IssuedTicket,
+) -> Option<(TicketClaims, VaultPage)> {
+    let proposal = ProposalId::from_raw(t.proposal);
+    let (programme, lead) = programme_of(s, proposal)?;
+    let (kind, account, page) = match t.kind {
+        IssuedKind::Release => (TicketKind::Release, lead, VaultPage::Release),
+        IssuedKind::Write(code) => {
+            let w = WriteKind::ALL.iter().copied().find(|w| w.code() == code)?;
+            (TicketKind::Write(w), t.holder, VaultPage::Write)
+        }
+        IssuedKind::Download => return None,
+    };
+    let now = ctx.backend.now().micros();
+    Some((
+        TicketClaims {
+            kind,
+            cell: ctx.cfg.cell,
+            account: WireAccount(account.raw()),
+            proposal: Some(WireProposal(t.proposal)),
+            scope: country_scope(WireProgramme(programme.raw())),
+            issued_at: now,
+            expires_at: now.checked_add(TICKET_LIFETIME_MAX_US)?,
+            nonce: t.id,
+        },
+        page,
+    ))
+}
+
+/// The vault origin of the cell: `id.<cell host>` on the cell's scheme
+/// (ADR-009 "Vault origin").
+fn vault_origin<B>(ctx: &Ctx<B>) -> String {
+    match ctx.cfg.origin.split_once("://") {
+        Some((scheme, host)) => format!("{scheme}://id.{host}"),
+        None => format!("https://id.{}", ctx.cfg.origin),
+    }
+}
+
+/// The signed ticket of `claims`, the canonical body followed by the
+/// Ed25519 signature of the cell's `Ticket` key over it (the framing of
+/// `fstp_vault_proto::ticket`), as the reply
+/// `{expires_at, kind, ticket, url}`. `url` is the vault origin page
+/// with the ticket in its fragment, which the browser never sends to a
+/// server (design section 6.5).
+fn signed_reply<B>(
+    ctx: &Ctx<B>,
+    claims: &TicketClaims,
+    page: VaultPage,
+    key: &fstp_crypto::sig::Ed25519SigningKey,
+) -> Reply {
+    let Ok(mut bytes) = claims.canonical() else {
+        return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+    };
+    let Ok(signature) = key.sign(&bytes) else {
+        return unavailable(crate::routes::BackendFault::Unavailable);
+    };
+    bytes.extend_from_slice(&signature);
+    let ticket = crate::http::body::hex(&bytes);
+    let mut o = Object::with_capacity(4);
+    o.insert("expires_at", decimal(claims.expires_at));
+    o.insert("kind", Value::String(claims.kind.label()));
+    o.insert(
+        "url",
+        Value::String(format!("{}{}#{ticket}", vault_origin(ctx), page.path())),
+    );
+    o.insert("ticket", Value::String(ticket));
+    Reply::json(StatusCode::OK, &Value::Object(o))
+}
+
+/// Runs an admitted `UnmaskParty` and answers the `unmask` ticket of the
+/// party (ADR-023 readings 7 and 8). The ticket names the party's
+/// account and the programme scope, and no proposal. It is signed only
+/// once the `PartyUnmasked` record is in the ledger: a retry under the
+/// same command id finds it there and signs a fresh ticket.
+async fn run_unmask<B: Backend>(
+    ctx: &Ctx<B>,
+    admitted: fstp_cell_core::gate::Admitted,
+    unmask: (ProgrammeId, fstp_domain::unmask::UnmaskSubject),
+    key: &fstp_crypto::sig::Ed25519SigningKey,
+) -> Reply {
+    let (programme, subject) = unmask;
+    match ctx.backend.execute(admitted).await {
+        Err(f) => unavailable(f),
+        Ok(Err(e)) => exec_failed(&e),
+        Ok(Ok(_)) => {
+            let s = match ctx.backend.state().await {
+                Ok(s) => s,
+                Err(f) => return unavailable(f),
+            };
+            let Some((_, account)) =
+                fstp_domain::unmask::party_of(&s.engine().core, programme, subject)
+            else {
+                return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+            };
+            let nonce = match crate::routes::handle::random::<16>() {
+                Ok(n) => n,
+                Err(r) => return r,
+            };
+            let now = ctx.backend.now().micros();
+            let Some(expires_at) = now.checked_add(TICKET_LIFETIME_MAX_US) else {
+                return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+            };
+            let claims = TicketClaims {
+                kind: TicketKind::Unmask,
+                cell: ctx.cfg.cell,
+                account: WireAccount(account.raw()),
+                proposal: None,
+                scope: country_scope(WireProgramme(programme.raw())),
+                issued_at: now,
+                expires_at,
+                nonce,
+            };
+            signed_reply(ctx, &claims, VaultPage::Release, key)
+        }
     }
 }
 

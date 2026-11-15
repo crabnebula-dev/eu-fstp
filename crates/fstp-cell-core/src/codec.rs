@@ -927,6 +927,15 @@ impl ToJson for CellCommand {
             // L-API lane adds it with the contract routes.
             CellCommand::Engine(fstp_engine::Command::Contract(c)) => wrap("contract", c.to_json()),
             CellCommand::Engine(fstp_engine::Command::Report(r)) => wrap("report", r.to_json()),
+            // Lane m3/cell-routes (SoD-07): the approval and the core grant
+            // under their own member. The decoder does not read it back,
+            // so no step-up admits it through this codec (fail closed).
+            CellCommand::Engine(fstp_engine::Command::ApprovedSelfGrant(g)) => {
+                let mut o = Object::with_capacity(2);
+                o.insert("approval", dec_u128(g.approval().raw()));
+                o.insert("grant", g.grant().to_json());
+                wrap("approved_self_grant", Value::Object(o))
+            }
             CellCommand::Auth(c) => wrap("auth", auth_command_json(c)),
             CellCommand::Tenant(c) => wrap("tenant", tenant_command_json(c)),
             CellCommand::Text(c) => wrap("text", text_command_json(c)),

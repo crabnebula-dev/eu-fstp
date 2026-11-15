@@ -1152,9 +1152,16 @@ async fn command<P: Seams>(
         Some((rewritten, texts)) => (rewritten, texts.clone()),
         None => (op, BTreeMap::new()),
     };
-    let second = second_admin(call, &op.request)
-        .await
-        .map_err(|e| call.refuse(e))?;
+    // SoD-07 (lane m3/cell-routes): an approval the ledger recorded is
+    // consumed with the grant in one entry. Any other id is read from
+    // M3's recorded approvals.
+    let ledger = tenant::ledger_approval(call, &op.request);
+    let second = match ledger {
+        Some(a) => Some(a.approver),
+        None => second_admin(call, &op.request)
+            .await
+            .map_err(|e| call.refuse(e))?,
+    };
     let mut ids = Vec::new();
     let mut cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
     // J2: a Drafting or Judging grant is composed only from accepted terms,
@@ -1165,6 +1172,7 @@ async fn command<P: Seams>(
         preset.insert("confidentiality", terms);
         cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
     }
+    let cmd = tenant::with_approval(cmd, ledger).map_err(|e| call.refuse(e))?;
     // SoD-07 (Daniel, 2026-11-15): a tenant admin's grant to their own
     // account, naming no approval, awaits a second tenant admin.
     if verdict != ChannelVerdict::Prepare
@@ -1206,6 +1214,7 @@ async fn command<P: Seams>(
         .map_err(|e| call.refuse(e))?;
     texts.extend(preset);
     let cmd = build(call, &form, op, &texts, &mut ids).map_err(|e| call.refuse(e))?;
+    let cmd = tenant::with_approval(cmd, ledger).map_err(|e| call.refuse(e))?;
     let meta = ExecMeta {
         via: call.caller.via(),
         session: call.caller.session,

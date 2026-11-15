@@ -220,6 +220,11 @@ A write ticket admits one write of one kind. The cell receives only the resultin
 - `release::issue_ticket` issues a release ticket only to an Operations role holder of the programme, for a proposal in NEGOTIATION or later (I-17, `overview.md`). Issuing it appends `IdentityReleaseIssued`.
 - **Second guard.** The vault refuses a release unless its own negotiation fact lists the subject. The cell pushes that fact when NEGOTIATION opens.
 - A download is the high-risk action `IdentityDownload` (ADR-008).
+- Record, lane m3/cell-routes, 2026-11-15 (interim, pending Daniel): the cell's `POST /api/v1/vault-tickets` commits the issue record, then signs the ticket of that record with its `Ticket` key and answers `{expires_at, kind, ticket, url}`. `url` is `https://id.<cell host>/r#<ticket>` for a release and `.../w#<ticket>` for a write.
+  - The claims come from the ledger record, never from the request. The nonce is the record's ticket id, so a retry under the same command id signs a ticket the vault still admits once. A ticket lives for the five-minute bound.
+  - A release names the proposal's lead as its subject and the proposal's programme as its scope. The request names no subject, so only the lead's identity is released. Releasing a team member or a guardian needs a subject member and a rule for it.
+  - A write ticket names its holder as the writer, the proposal and the programme scope. `decide` issues only the guardian consent write today, so every other write kind and `/api/v1/verifications` are refused before any ticket exists.
+  - A download answers 501 after the gate and before the engine: the vault has no ticket kind for the download scope yet.
 
 ## Metadata register
 

@@ -325,9 +325,10 @@ pub struct CellHandle {
     runtime: Option<std::sync::Arc<CellRuntime>>,
     /// The cell's backups and stored texts (lane F-ERASE).
     pub(crate) backups: crate::backups::CellBackups,
-    /// The cell's `Ticket` key, whose public key the vault pins. The world
-    /// holds it for the cell, whose route layer cannot sign a ticket yet
-    /// (`crate::cycle::VERIFY_IDENTITY_SEAM`, lane m3/cycle-steps).
+    /// The cell's `Ticket` key, whose public key the vault pins. The cell
+    /// holds it too and signs the tickets its engine issues (lane
+    /// m3/cell-routes). The world signs the write tickets that `decide`
+    /// has no writer rule for yet (`crate::cycle::VERIFY_IDENTITY_SEAM`).
     ticket: TicketSigner,
     /// The replies the cell gave to sessions ([`crate::responses`]).
     responses: crate::responses::ResponseLog,
@@ -495,8 +496,7 @@ impl CellHandle {
     /// of `fstp_vault_proto::ticket` (design section 6.5).
     ///
     /// Interim, pending Daniel (lane m3/cycle-steps): the world signs for
-    /// the cell. The cell's ticket routes answer 501 before the engine
-    /// runs them, since the route layer holds no `Ticket` key
+    /// the cell the write tickets that `decide` issues none of yet
     /// (`crate::cycle::VERIFY_IDENTITY_SEAM`). Claims built on a ticket
     /// signed here say so.
     ///
@@ -3516,8 +3516,9 @@ fn start_cell(
             s.origin
                 .issue(CertKind::Server, &vault_host, None, &[&vault_host], &[])?,
         );
-    let ticket =
-        fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|e| fail("the ticket key", &e))?;
+    let ticket = std::sync::Arc::new(
+        fstp_crypto::sig::Ed25519SigningKey::generate().map_err(|e| fail("the ticket key", &e))?,
+    );
     let vault_witness = cell_ca.issue(
         CertKind::Client,
         "vault-witness",
@@ -3720,6 +3721,9 @@ fn start_cell(
             ledger: std::sync::Arc::new(fstp_pgstore::LedgerKeys::new(ledger_key)),
             cred_lookup: fstp_crypto::random_array::<32>()
                 .map_err(|e| fail("the CredLookup key", &e))?,
+            // The cell signs vault tickets with the key the vault pins
+            // (ADR-004 purpose `Ticket`, lane m3/cell-routes).
+            ticket: Some(std::sync::Arc::clone(&ticket)),
         },
         witness: witness_endpoint,
         witness_keys: vec![witness.handle.receipt_public_key()],
@@ -3870,7 +3874,7 @@ fn start_cell(
         operator,
         cycle: Mutex::new(None),
         backups,
-        ticket: TicketSigner(std::sync::Arc::new(ticket)),
+        ticket: TicketSigner(ticket),
         responses: crate::responses::ResponseLog::default(),
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
@@ -4726,6 +4730,7 @@ struct RestartParts {
     anchor: Vec<u8>,
     ledger: std::sync::Arc<fstp_pgstore::LedgerKeys>,
     cred_lookup: [u8; 32],
+    ticket: Option<std::sync::Arc<fstp_crypto::sig::Ed25519SigningKey>>,
     witness: fstp_cell::witness::link::WitnessEndpoint,
     witness_keys: Vec<Vec<u8>>,
     vault: SharedVault,
@@ -4760,6 +4765,7 @@ impl RestartParts {
             anchor: anchor.to_vec(),
             ledger: std::sync::Arc::clone(&parts.keys.ledger),
             cred_lookup: parts.keys.cred_lookup,
+            ticket: parts.keys.ticket.clone(),
             witness: parts.witness.clone(),
             witness_keys: parts.witness_keys.clone(),
             vault: parts.vault.clone(),
@@ -4792,6 +4798,7 @@ impl RestartParts {
                 anchor,
                 ledger: std::sync::Arc::clone(&self.ledger),
                 cred_lookup: self.cred_lookup,
+                ticket: self.ticket.clone(),
             },
             witness: self.witness.clone(),
             witness_keys: self.witness_keys.clone(),

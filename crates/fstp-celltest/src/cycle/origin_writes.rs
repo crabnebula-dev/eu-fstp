@@ -13,7 +13,7 @@
 //!
 //! - The ticket is signed by the world with the cell's `Ticket` key
 //!   (`crate::world::CellHandle::sign_ticket`). The cell's ticket routes
-//!   answer 501 before the engine runs them (`super::VERIFY_IDENTITY_SEAM`),
+//!   issue no ticket for this write kind yet (`super::VERIFY_IDENTITY_SEAM`),
 //!   so no `TicketIssued` record logs the issue yet. It lives one minute.
 //! - The writer is the applicant who signed up last and has not drafted,
 //!   else the lead of the proposal the cycle acts on, else the lead of the

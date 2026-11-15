@@ -505,6 +505,8 @@ pub struct CellState {
     pub(crate) key_ops: u64,
     pub(crate) destroyed_epochs: BTreeSet<u64>,
     pub(crate) tickets: BTreeSet<[u8; 16]>,
+    /// The ticket each command issued, by command id (lane m3/cell-routes).
+    issued: BTreeMap<[u8; 16], crate::release::IssuedTicket>,
     pub(crate) break_glass: BTreeMap<[u8; 16], bool>,
     pub(crate) timeline: crate::timeline::TimelineState,
     bindings: BTreeMap<BindingId, BindingFacts>,
@@ -529,6 +531,7 @@ impl CellState {
             key_ops: 0,
             destroyed_epochs: BTreeSet::new(),
             tickets: BTreeSet::new(),
+            issued: BTreeMap::new(),
             break_glass: BTreeMap::new(),
             timeline: crate::timeline::TimelineState::default(),
             bindings: BTreeMap::new(),
@@ -587,6 +590,13 @@ impl CellState {
     /// Whether ticket `id` was issued.
     pub fn ticket_issued(&self, id: [u8; 16]) -> bool {
         self.tickets.contains(&id)
+    }
+
+    /// The ticket the command `command` issued, if it committed one. The
+    /// cell's ticket routes sign their claims from it (design section
+    /// 6.5).
+    pub fn issued_by(&self, command: [u8; 16]) -> Option<crate::release::IssuedTicket> {
+        self.issued.get(&command).copied()
     }
 
     /// Whether break-glass grant `grant` was ever approved.
@@ -721,7 +731,11 @@ pub(crate) fn fold(
         CellRecord::Tenant(r) => fold_tenant(&mut s.tenant, at, r)?,
         CellRecord::Text(r) => fold_text(s, at, r)?,
         CellRecord::Key(r) => fold_key(s, r)?,
-        CellRecord::Release(r) => fold_release(&mut s.tickets, r)?,
+        CellRecord::Release(r) => {
+            fold_release(&mut s.tickets, r)?;
+            s.issued
+                .insert(command, crate::release::IssuedTicket::of(r));
+        }
         CellRecord::Ops(r) => fold_ops(&mut s.break_glass, r)?,
         CellRecord::Timeline(r) => s.timeline.fold(r)?,
     }

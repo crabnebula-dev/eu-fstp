@@ -69,6 +69,11 @@ pub enum ChallengePurpose {
     /// (design section 8.5), bound to the digest of the case and its
     /// enrolment token.
     Recovery,
+    /// The registration of a further passkey of the session's own account
+    /// (high risk `AddPasskey`, design section 8.3), bound to the session.
+    /// The `AddPasskey` step-up names its id
+    /// (`fstp_cell_core::add_passkey_digest`).
+    AddPasskey,
 }
 
 /// One row of `auth.challenge` (design section 4.2).
@@ -165,6 +170,14 @@ pub trait Backend: Send + Sync + 'static {
     ) -> fstp_cell_core::creator::CreatorFacts {
         let _ = (state, cmd);
         fstp_cell_core::creator::CreatorFacts::default()
+    }
+
+    /// The cell's vault ticket key: the Ed25519 key of purpose `Ticket`
+    /// on the App chain (ADR-004, design section 6.5), whose public key
+    /// the vault pins. `None` when the cell holds none, and then no ticket
+    /// route commits an issue (it answers 501).
+    fn ticket_key(&self) -> Option<Arc<fstp_crypto::sig::Ed25519SigningKey>> {
+        None
     }
 
     /// The state folded to the engine's head.

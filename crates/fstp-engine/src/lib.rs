@@ -369,6 +369,48 @@ pub enum Command {
     /// `report::decide_report` over the report store (M5 design section
     /// 4.3, R-RP-03).
     Report(fstp_report_core::ReportRecord),
+    /// A tenant admin's grant to their own account that consumes a
+    /// second tenant admin's ledger approval (SoD-07), decided by
+    /// `compose::decide_approved_self_grant` in one entry.
+    ApprovedSelfGrant(ApprovedSelfGrant),
+}
+
+/// A self-grant with its SoD-07 approval (lane m3/cell-routes): the
+/// tenant `UseSelfGrantApproval` of `approval` and the core `GrantRole`,
+/// decided in that order in one entry, as a stage 2 revision composes its
+/// two core commands. Only [`ApprovedSelfGrant::new`] builds it, so the
+/// grant is always a `GrantRole`.
+///
+/// The engine reads the approver from the ledger's `SelfGrantApproved`
+/// record, never from the shell. The grant must name the approved
+/// grantee, programme and role, and the dates of the `SelfGrantRequested`
+/// record the approval took its id from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ApprovedSelfGrant {
+    approval: fstp_tenant::ApprovalId,
+    grant: fstp_domain::Command,
+}
+
+impl ApprovedSelfGrant {
+    /// The self-grant `grant` with the approval `approval`, or `None`
+    /// unless `grant` is a `GrantRole`.
+    pub fn new(
+        approval: fstp_tenant::ApprovalId,
+        grant: fstp_domain::Command,
+    ) -> Option<ApprovedSelfGrant> {
+        matches!(grant, fstp_domain::Command::GrantRole { .. })
+            .then_some(ApprovedSelfGrant { approval, grant })
+    }
+
+    /// The approval.
+    pub fn approval(&self) -> fstp_tenant::ApprovalId {
+        self.approval
+    }
+
+    /// The core `GrantRole`.
+    pub fn grant(&self) -> &fstp_domain::Command {
+        &self.grant
+    }
 }
 
 /// A stage 2 revision (R-EV-05, NOTE 1, M4 design section 2.2 J4): the
@@ -454,6 +496,10 @@ impl core::hash::Hash for Command {
             Command::Report(r) => {
                 8u8.hash(state);
                 r.hash(state);
+            }
+            Command::ApprovedSelfGrant(g) => {
+                9u8.hash(state);
+                g.hash(state);
             }
         }
     }

@@ -174,6 +174,28 @@ pub fn try_action_digest(cmd: &CellCommand, command_id: [u8; 16]) -> Option<[u8;
     crate::codec::try_encode_cell_command(cmd).map(|bytes| digest_of(&bytes, command_id))
 }
 
+/// The domain separation prefix of the `AddPasskey` step-up digest.
+pub const ADD_PASSKEY_PREFIX: &[u8] = b"fstp-add-passkey-v1";
+
+/// `SHA-256("fstp-add-passkey-v1" || command_id)`: the action digest of
+/// `AddPasskey` (I-78, design section 8.3, ADR-008 interim reading of
+/// lane m3/cell-routes).
+///
+/// The step-up of `AddPasskey` names the command id of the addition, not
+/// the new credential id, which no options call can know. The options of
+/// `POST /auth/passkeys/options` admit only under a granted step-up for
+/// this digest, and they bind their single-use registration challenge to
+/// it. The registration must answer that challenge, and its batch
+/// consumes the step-up. So one step-up covers exactly one registration.
+/// The input has a fixed length and its prefix starts with no `{`, so it
+/// never equals the canonical form of a command.
+pub fn add_passkey_digest(command_id: [u8; 16]) -> [u8; 32] {
+    let mut h = fstp_crypto::Sha256::new();
+    h.update(ADD_PASSKEY_PREFIX);
+    h.update(&command_id);
+    h.finish()
+}
+
 fn digest_of(bytes: &[u8], command_id: [u8; 16]) -> [u8; 32] {
     let mut h = fstp_crypto::Sha256::new();
     h.update(bytes);
