@@ -16,6 +16,12 @@
 //   step-up (lane w3ar). The command needs the account id, which the
 //   devices reply must carry as `account`. Lane w3ar does not send it
 //   yet, so removal fails closed until it does.
+// - SA-11 (Daniel, 2026-11-15 night): the account sets or clears its own
+//   display name, `GET` and `POST /api/v1/me/display-name`
+//   (`me.display_name`, `me.set_display_name`). Plain text, at most 100
+//   characters. Only the team and member pages show it.
+//   TODO(legal): the privacy notice needs a line for this processing.
+//   Daniel supplies the wording.
 
 import { del, get, ok, post, record, type Reply } from '../api.js';
 import { clear, h } from '../dom.js';
@@ -38,6 +44,34 @@ interface SessionItem {
 interface DeviceItem {
   readonly id: string;
   readonly current: boolean;
+}
+
+/** The display name routes of the API (SA-11). */
+const DISPLAY_NAME = '/api/v1/me/display-name';
+
+/** The longest display name, in characters (SA-11). */
+const NAME_MAX = 100;
+
+/**
+ * The `me.set_display_name` body for `text`: the trimmed name, or null to
+ * clear a blank one. Null as a whole for a name the cell refuses: longer
+ * than 100 characters, or with markup or a control character. It restates
+ * `web/src/admin/team/model.ts` `displayNameBody`, since the auth pages
+ * are delivered on their own.
+ */
+export function nameBody(text: string): { display_name: string | null } | null {
+  const v = text.trim();
+  if (v === '') return { display_name: null };
+  if ([...v].length > NAME_MAX || /[<>\p{Cc}]/u.test(v)) return null;
+  return { display_name: v };
+}
+
+/** The own display name of a `me.display_name` reply, null for none, undefined for another shape. */
+function nameOf(body: unknown): string | null | undefined {
+  const o = record(body);
+  if (o === null || Object.keys(o).length !== 1) return undefined;
+  const n = o['display_name'];
+  return n === null || typeof n === 'string' ? n : undefined;
 }
 
 /** The longest credential id, in bytes (WebAuthn Level 2 section 5.8.3). */
@@ -240,8 +274,75 @@ export function mount(): void {
     });
   });
 
+  // SA-11: the display name form.
+  const nameInput = h('input', {
+    id: 'display-name',
+    type: 'text',
+    autocomplete: 'nickname',
+    'aria-describedby': 'display-name-hint',
+  }) as HTMLInputElement;
+  const nameNow = h('p', { id: 'display-name-now' });
+  const saveName = h('button', { id: 'display-name-save', type: 'submit' }, [t('account.name.save')]);
+  const clearName = h('button', { id: 'display-name-clear', type: 'button', class: 'secondary' }, [
+    t('account.name.clear'),
+  ]);
+  const nameForm = h('form', { id: 'display-name-form', novalidate: '' }, [
+    h('label', { for: 'display-name' }, [t('account.name.label')]),
+    nameInput,
+    h('p', { id: 'display-name-hint', class: 'hint' }, [t('account.name.hint')]),
+    saveName,
+    ' ',
+    clearName,
+  ]);
+  const showName = (n: string | null): void => {
+    nameInput.value = n ?? '';
+    nameNow.textContent = n === null ? t('account.name.none') : '';
+  };
+  const loadName = async (): Promise<void> => {
+    const r = await get(DISPLAY_NAME);
+    if (!ok(r)) throw failed(r);
+    const n = nameOf(r.body);
+    if (n === undefined) throw new Failure('malformed');
+    showName(n);
+  };
+  const sendName = (text: string): void => {
+    const body = nameBody(text);
+    hush(alert);
+    hush(status);
+    if (body === null) {
+      alert.textContent = t('account.name.invalid');
+      nameInput.setAttribute('aria-invalid', 'true');
+      nameInput.focus();
+      return;
+    }
+    nameInput.removeAttribute('aria-invalid');
+    show(
+      (async () => {
+        const r = await post(DISPLAY_NAME, body);
+        if (!ok(r)) throw failed(r);
+        await loadName();
+      })(),
+      body.display_name === null ? t('account.name.cleared') : t('account.name.saved'),
+    );
+  };
+  nameForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    sendName(nameInput.value);
+  });
+  clearName.addEventListener('click', () => sendName(''));
+
+  // The section shows once its read answered. Before activation the cell
+  // refuses the read (ADR-021), and the section then stays hidden, so the
+  // account page shows no error for it.
+  const nameSection = h('section', { id: 'display-name-section', 'aria-labelledby': 'display-name-heading', hidden: '' }, [
+    h('h2', { id: 'display-name-heading' }, [t('account.name.heading')]),
+    h('p', {}, [t('account.name.intro')]),
+    nameNow,
+    nameForm,
+  ]);
   main.append(
     status,
+    nameSection,
     h('section', { 'aria-labelledby': 'sessions-heading' }, [
       h('h2', { id: 'sessions-heading' }, [t('account.sessions')]),
       sessions,
@@ -257,5 +358,9 @@ export function mount(): void {
       await loadSessions();
       await loadDevices();
     })(),
+  );
+  loadName().then(
+    () => nameSection.removeAttribute('hidden'),
+    () => undefined,
   );
 }

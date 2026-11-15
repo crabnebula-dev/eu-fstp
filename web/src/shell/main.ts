@@ -39,6 +39,7 @@
 import { mountAdminBranding } from "../admin/branding/page.js";
 import { mountAdminErasures } from "../admin/erasures/page.js";
 import { mountAdminProfiles } from "../admin/profiles/page.js";
+import { mountTeamPages } from "../admin/team/page.js";
 import { mountApplicantPage, mountNotFound } from "../applicant/app.js";
 import { h, installTrustedTypesPolicy } from "../core/dom.js";
 import { VISUALLY_HIDDEN_CLASS } from "../core/a11y.js";
@@ -187,6 +188,10 @@ async function run(path: string): Promise<void> {
   }
   // Daniel, 2026-11-15 (late): the tenant admin's funder profiles page.
   if (await mountAdminProfiles(browserEnv(root()), path)) {
+    return;
+  }
+  // SA-11 (Daniel, 2026-11-15 night): the team and member pages.
+  if (await mountTeamPages(browserEnv(root()), path)) {
     return;
   }
   // The M5 post-grant pages: grants, contract, payment requests and operations.

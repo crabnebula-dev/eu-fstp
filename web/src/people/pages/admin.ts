@@ -73,6 +73,8 @@ export function mount(p: string): void {
 
   main.append(
     h("p", {}, [t.label("people.admin.intro")]),
+    // SA-11: the team page lists every role of the programme with names.
+    h("p", {}, [h("a", { href: `/app/programmes/${p}/team`, "data-work": "team" }, [t.label("people.admin.team_link")])]),
     h("h2", { id: "invitations-title" }, [t.label("people.invitations.title")]),
     list,
   );

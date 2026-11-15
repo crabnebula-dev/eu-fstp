@@ -450,10 +450,11 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
         ]),
         h("p", {}, [h("a", { href: ONBOARDING_STEP("administrators") }, [homeLabel("home.work.admins")])]),
       ],
-      items: [],
+      // SA-11: the member page of the organisation.
+      items: of((x) => x.kind === "members"),
     });
   }
-  const setup = of((x) => x.group === "tenant_admin" && x.kind !== "onboarding");
+  const setup = of((x) => x.group === "tenant_admin" && x.kind !== "onboarding" && x.kind !== "members");
   if (setup.length > 0) {
     out.push({ id: "home-programmes", title: homeLabel("home.admin.programmes"), body: [], items: setup });
   }
