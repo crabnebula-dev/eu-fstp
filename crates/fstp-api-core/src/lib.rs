@@ -116,6 +116,16 @@ impl ApiError {
         }
     }
 
+    /// Whether this is the setup gate's refusal (ADR-021): the
+    /// organisation is not yet activated. An adapter may answer it in
+    /// words, such as the not-published page of `/p` (ADR-021 decision 3).
+    pub fn is_setup_refusal(&self) -> bool {
+        matches!(
+            self,
+            ApiError::Refused { code: ErrorCode::Refused, rule, .. } if *rule == fstp_access::SETUP_RULE
+        )
+    }
+
     /// The HTTP status an adapter answers with (interim, pending Daniel).
     pub fn http_status(&self) -> u16 {
         match self {

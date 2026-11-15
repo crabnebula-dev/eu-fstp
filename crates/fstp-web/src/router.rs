@@ -200,7 +200,10 @@ fn app_fallback(s: &Shared, req: &Request) -> Response {
 /// `fstp-api-core`, then `ApiCore::dispatch` with no credential, so the
 /// session cookie is never read and changes nothing. A page answers as
 /// HTML and the feed as JSON. A refusal answers its status with the
-/// stable JSON body of every API refusal. The headers of the public
+/// stable JSON body of every API refusal, except the setup gate's refusal
+/// of a page: before activation a page answers the plain HTML page of
+/// [`shell::not_published`] with the refusal's status (ADR-021 decision
+/// 3, Daniel, 2026-11-15). The headers of the public
 /// surface are set by [`WebRouter::serve`], so no answer sets a cookie.
 async fn public(backend: &Backend, assets: &AssetSet, req: &Request) -> Response {
     if req.method != Method::GET && req.method != Method::HEAD {
@@ -214,6 +217,9 @@ async fn public(backend: &Backend, assets: &AssetSet, req: &Request) -> Response
         Ok(op) => op,
         Err(e) => return api::api_error(e),
     };
+    // ADR-021 decision 3: the feed is data, so only a page answers the
+    // setup gate's refusal in words.
+    let page = op.name() != "public.feed";
     match core
         .dispatch(Credential::None, &RequestHead::new(), op)
         .await
@@ -231,6 +237,15 @@ async fn public(backend: &Backend, assets: &AssetSet, req: &Request) -> Response
             ),
         },
         Ok(_) => reply::not_found(),
+        Err(e) if page && e.is_setup_refusal() => {
+            let status =
+                StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            Response::with_body(
+                status,
+                "text/html; charset=utf-8",
+                shell::not_published(assets),
+            )
+        }
         Err(e) => api::api_error(e),
     }
 }
