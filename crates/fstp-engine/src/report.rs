@@ -67,6 +67,16 @@ pub fn financial_signatory(state: &EngineState, account: AccountId) -> bool {
         .is_some_and(|ts| ts.holds_signatory(fstp_tenant::SignatoryRole::Financial, account))
 }
 
+/// Whether `account` holds a tenant-wide signatory role, Financial or
+/// Legal, in the tenant fold (NOTE 5). Both read the funder profile of
+/// every programme (Daniel, 2026-11-15 late).
+pub fn tenant_signatory(state: &EngineState, account: AccountId) -> bool {
+    state.tenant.state().is_some_and(|ts| {
+        ts.holds_signatory(fstp_tenant::SignatoryRole::Financial, account)
+            || ts.holds_signatory(fstp_tenant::SignatoryRole::Legal, account)
+    })
+}
+
 /// The records of a report command.
 pub(crate) fn decide_report(
     state: &EngineState,

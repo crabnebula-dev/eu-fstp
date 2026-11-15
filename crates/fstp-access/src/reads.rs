@@ -368,6 +368,25 @@ impl ReadRule {
         ReadRule::Holder(Role::FstpCoordinator),
     ]);
 
+    /// The readers of a programme's funder profile, read-only: every
+    /// Drafting, Judging and Operations role of the programme (Daniel,
+    /// 2026-11-15 late). The tenant-wide Financial and Legal signatories
+    /// hold no programme binding (NOTE 5), so dispatch admits them in the
+    /// tenant fold beside this rule.
+    pub const PROFILE_READER: ReadRule = ReadRule::AnyOf(&[
+        ReadRule::Holder(Role::ProgrammeManager),
+        ReadRule::Holder(Role::CallDrafter),
+        ReadRule::Holder(Role::FstpCoordinator),
+        ReadRule::Holder(Role::CommitteeMember),
+        ReadRule::Holder(Role::CommitteeChair),
+        ReadRule::Holder(Role::IrcMember),
+        ReadRule::TenantAdmin,
+        ReadRule::Holder(Role::FinanceApprover),
+        ReadRule::Holder(Role::PaymentReleaser),
+        ReadRule::Holder(Role::ContractSignatory),
+        ReadRule::Auditor,
+    ]);
+
     /// The states after NEGOTIATION in which [`ReadRule::GrantReviewer`]
     /// opens. Interim reading, pending Daniel: WITHDRAWN and DECLINED end
     /// the negotiation without a grant, so they are left out.
@@ -699,13 +718,14 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
             StateTag::Completed,
         ],
     ),
-    // M9 finish (R-RP-01): the funder profile of a programme, for the
-    // readers of its funder reports. The Financial signatory holds a
-    // tenant-wide role (NOTE 5), so dispatch admits it in the tenant fold
-    // beside this rule, as for `report.list`.
+    // M9 finish (R-RP-01), widened by Daniel on 2026-11-15 (late): the
+    // funder profile of a programme, read-only, for every Drafting,
+    // Judging and Operations role of the programme. The Financial and
+    // Legal signatories hold tenant-wide roles (NOTE 5), so dispatch
+    // admits them in the tenant fold beside this rule.
     (
         ReadKind::GetFunderProfile,
-        ReadRule::AnyOf(&[ReadRule::Holder(Role::ProgrammeManager), ReadRule::Auditor]),
+        ReadRule::PROFILE_READER,
         OPEN_ALWAYS,
     ),
     // ADR-023 (I-17 as amended 2026-11-15): the FSTP coordinator of the

@@ -252,6 +252,7 @@ export type WorkKind =
   | "grants"
   | "operations"
   | "audit"
+  | "funder-profile"
   | "open-calls";
 
 /** One own proposal, as `proposal.list_own` gives it. */
@@ -366,6 +367,7 @@ export const WORK_PATHS = Object.freeze({
   grant: (p: string): string => `/app/grants/${p}`,
   operations: "/app/operations",
   audit: (p: string): string => `/app/programmes/${p}/audit`,
+  funderProfile: (p: string): string => `/app/programmes/${p}/funder-profile`,
   assignments: "/app/me/assignments",
   ircCases: "/app/me/irc-cases",
 });
@@ -548,6 +550,14 @@ export function workOf(
   // R-AU-01: the auditor reads the audit log of each programme it audits.
   for (const p of programmes(holds("auditor"))) {
     add("operations", "audit", WORK_PATHS.audit(p), text("home.work.audit", { programme: p }));
+  }
+
+  // R-RP-01 (Daniel, 2026-11-15 late): every Drafting, Judging and
+  // Operations role reads the funder profile of its programme, and a
+  // tenant admin that of every programme of the tenant, read-only.
+  const profileProgrammes = [...programmes(staff), ...(r.tenantAdmin ? adminProgrammes : [])];
+  for (const p of [...new Set(profileProgrammes)].sort(byId)) {
+    add("programme", "funder-profile", WORK_PATHS.funderProfile(p), text("home.work.funder_profile", { programme: p }));
   }
 
   // J4: anyone may read the open calls.

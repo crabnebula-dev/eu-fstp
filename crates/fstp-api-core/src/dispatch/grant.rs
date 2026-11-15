@@ -470,10 +470,10 @@ pub(super) async fn list_reports<P: Seams>(
 
 /// `programme.funder_profile.view` (M9 finish, R-RP-01, M9 design 2.2):
 /// the shipped funder profile that the programme's head P-53 pins, with
-/// its outputs and visibility element keys. The readers are those of
-/// `report.list`: the programme manager and the auditor through
-/// `authorize_read`, and the tenant-fold Financial signatory beside it
-/// (NOTE 5). A P-53 that names no shipped profile answers `null`.
+/// its outputs and visibility element keys. The readers are every
+/// Drafting, Judging and Operations role of the programme through
+/// `authorize_read` (Daniel, 2026-11-15 late), and the tenant-fold
+/// Financial and Legal signatories beside it (NOTE 5). A P-53 that names no shipped profile answers `null`.
 pub(super) async fn funder_profile<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
@@ -483,7 +483,7 @@ pub(super) async fn funder_profile<P: Seams>(
         .ok_or_else(|| call.refuse(bad()))?;
     let signatory = call
         .account()
-        .is_some_and(|a| fstp_engine::report::financial_signatory(&call.state, a));
+        .is_some_and(|a| fstp_engine::report::tenant_signatory(&call.state, a));
     if !signatory {
         let rop = ReadOp {
             kind: ReadKind::GetFunderProfile,

@@ -71,4 +71,7 @@ export const OPERATIONS_LABELS: Readonly<Record<string, string>> = {
   "ops.profile.visibility": "Funder visibility elements on the public pages: {keys}. Their wording is pending approval.",
   "ops.profile.none": "The programme names no shipped funder profile (P-53), so no report can be generated.",
   "ops.profile.unread": "The funder profile could not be read.",
+  "ops.profile.title": "Funder profile of programme {id}",
+  "ops.profile.read_only": "This page is read-only. The programme pins its funder profile through P-53.",
+  "ops.profile.home": "Back to your work",
 };

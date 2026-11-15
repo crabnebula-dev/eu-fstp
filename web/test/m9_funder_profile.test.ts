@@ -7,6 +7,7 @@ import { VALIDATORS } from "../src/gen/api.js";
 import { mountPostGrant } from "../src/grant/routes.js";
 import { decodeFunderProfile } from "../src/operations/profile.js";
 import type { PageEnv } from "../src/reviewer/kit.js";
+import { readMyRoles, workOf } from "../src/home/model.js";
 import { fakeDocument, freshDom, FakeElement } from "./support/fakedom.js";
 import { assert, eq, test } from "./support/harness.js";
 
@@ -84,4 +85,38 @@ test("r_rp_01_reports_page_says_when_no_profile_is_pinned", async () => {
   await settle();
   assert(fakeDocument.getElementById("ops-profile-unread") !== null, "the unread line");
   assert(fakeDocument.getElementById("ops-reports-none") !== null, "the page still shows its reports");
+});
+
+/** R-RP-01 (Daniel, 2026-11-15 late): the read-only profile page of a programme shows the pinned profile and no action. */
+test("r_rp_01_profile_page_is_read_only", async () => {
+  prepare("/app/programmes/1/funder-profile");
+  const mounted = await mountPostGrant(env({ "GET /programmes/1/funder-profile": HE }), "/app/programmes/1/funder-profile");
+  await settle();
+  assert(mounted, "the page has a route");
+  assert(fakeDocument.getElementById("ops-profile-read-only") !== null, "the read-only note");
+  assert(fakeDocument.getElementById("ops-profile-pinned") !== null, "the pinned profile");
+  eq(fakeDocument.body.descendants().filter((e) => e.tagName === "BUTTON" || e.tagName === "FORM").length, 0, "nothing that changes it");
+});
+
+/** R-RP-01 (Daniel, 2026-11-15 late): every programme staff role, and a tenant admin, is linked to the profile page; a Receiving role is not. */
+test("r_rp_01_home_links_programme_staff_to_the_funder_profile", () => {
+  const staff = readMyRoles({
+    tenant_admin: false,
+    roles: [
+      { role: "irc_member", programme: "3", calls: [] },
+      { role: "applicant", programme: "4", proposal: "1001", calls: ["9"] },
+    ],
+    calls: [],
+    rounds: [],
+    drafts: [],
+    signatories: [],
+  });
+  assert(staff !== null, "the roles decode");
+  const hrefs = workOf(staff, [], (c) => c, (p) => p).items.map((i) => i.href);
+  assert(hrefs.includes("/app/programmes/3/funder-profile"), hrefs.join(" "));
+  assert(!hrefs.includes("/app/programmes/4/funder-profile"), "no link from a Receiving binding");
+  const admin = readMyRoles({ tenant_admin: true, roles: [], calls: [], rounds: [], drafts: [], signatories: [] });
+  assert(admin !== null, "the admin roles decode");
+  const adminHrefs = workOf(admin, [], (c) => c, (p) => p, ["2"]).items.map((i) => i.href);
+  assert(adminHrefs.includes("/app/programmes/2/funder-profile"), adminHrefs.join(" "));
 });

@@ -226,6 +226,12 @@ pub const PAGES: &[PageRow] = &[
         &["audit.entries", "audit.unmasks"],
     ),
     PageRow::read("/app/programmes/{programme}/reports", &["report.list"]),
+    // Daniel, 2026-11-15 (late): every programme staff role reads the
+    // programme's funder profile, read-only.
+    PageRow::read(
+        "/app/programmes/{programme}/funder-profile",
+        &["programme.funder_profile.view"],
+    ),
     // The calls and the applicant pages.
     PageRow::read("/app/calls", &["calls.list_open"]),
     PageRow::read("/app/calls/{call}", &["calls.get"]),

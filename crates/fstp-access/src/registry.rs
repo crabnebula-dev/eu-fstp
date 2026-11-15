@@ -637,6 +637,24 @@ const REPORT_READERS: &[RoleOrApplicant] = &[
     R(Role::Auditor),
     R(Role::FinancialSignatory),
 ];
+/// The readers of a programme's funder profile: every Drafting, Judging
+/// and Operations role (Daniel, 2026-11-15 late). The Financial and
+/// Legal signatories read it through the tenant fold (NOTE 5).
+const PROFILE_READERS: &[RoleOrApplicant] = &[
+    R(Role::ProgrammeManager),
+    R(Role::CallDrafter),
+    R(Role::FstpCoordinator),
+    R(Role::CommitteeMember),
+    R(Role::CommitteeChair),
+    R(Role::IrcMember),
+    R(Role::TenantAdmin),
+    R(Role::FinanceApprover),
+    R(Role::PaymentReleaser),
+    R(Role::ContractSignatory),
+    R(Role::FinancialSignatory),
+    R(Role::LegalSignatory),
+    R(Role::Auditor),
+];
 /// The roles of the section 7.2 matrix: every role but call drafter and
 /// tenant admin (lane j2).
 const JOURNEY: &[RoleOrApplicant] = &[
@@ -2365,14 +2383,15 @@ pub const OPS: &[OpSpec] = &[
     )
     .acting(LEAD),
     // M9 finish (R-RP-01, M9 design section 2.2): the funder profile the
-    // programme pins through P-53. Web only, for the readers of the
-    // programme's funder reports. Interim, pending Daniel: the route.
+    // programme pins through P-53. Web only, read-only, for every
+    // Drafting, Judging and Operations role of the programme (Daniel,
+    // 2026-11-15 late). Interim, pending Daniel: the route.
     OpSpec::read(
         "programme.funder_profile.view",
         RK::GetFunderProfile,
         "/programmes/{programme}/funder-profile",
     )
-    .acting(REPORT_READERS),
+    .acting(PROFILE_READERS),
 ];
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:

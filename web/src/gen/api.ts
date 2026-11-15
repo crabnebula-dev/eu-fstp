@@ -5193,6 +5193,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/programmes/{programme}/people", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/audit", need: { kind: "reads", reads: ["audit.entries", "audit.unmasks"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/reports", need: { kind: "reads", reads: ["report.list"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/funder-profile", need: { kind: "reads", reads: ["programme.funder_profile.view"] }, values: {}, listed: null },
   { pattern: "/app/calls", need: { kind: "reads", reads: ["calls.list_open"] }, values: {}, listed: null },
   { pattern: "/app/calls/{call}", need: { kind: "reads", reads: ["calls.get"] }, values: {}, listed: null },
   { pattern: "/app/calls/{call}/guide", need: { kind: "reads", reads: ["calls.guide"] }, values: {}, listed: null },

@@ -321,8 +321,28 @@ async function mountReports(env: PageEnv, params: Readonly<Record<string, string
   await guarded(f, render);
 }
 
+/**
+ * The funder profile of a programme, read-only (R-RP-01; Daniel,
+ * 2026-11-15 late): every Drafting, Judging and Operations role of the
+ * programme opens it. The page holds the profile panel and nothing that
+ * changes it.
+ */
+async function mountProfile(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void> {
+  const t = labels(env);
+  const programme = params["programme"] ?? "";
+  const f = frame(env, t, t.label("ops.profile.title", { id: programme }));
+  await guarded(f, async () => {
+    f.show([
+      h("p", {}, [link("/app/", t.label("ops.profile.home"))]),
+      h("p", { class: "text-sm", id: "ops-profile-read-only" }, [t.label("ops.profile.read_only")]),
+      await profilePanel(env, t, programme),
+    ]);
+  });
+}
+
 /** The operations pages, each with its route below `/app/`. */
 export const OPERATIONS_PAGES: readonly JudgingPage[] = [
   { route: idRoute("ops.home", "/app/operations", []), mount: (env) => mountOperations(env) },
   { route: idRoute("ops.reports", "/app/programmes/{programme}/reports", ["programme"]), mount: (env, p) => mountReports(env, p) },
+  { route: idRoute("ops.profile", "/app/programmes/{programme}/funder-profile", ["programme"]), mount: (env, p) => mountProfile(env, p) },
 ];

@@ -168,11 +168,31 @@ fn read_admits<P: Seams>(
             .map(|p| ReadTarget::Programme(ProgrammeId::from_raw(p)))
     };
     match kind {
-        ReadKind::ListReports | ReadKind::GetFunderProfile => {
+        ReadKind::ListReports => {
             let Some(target) = programme() else {
                 return false;
             };
             signatory() || authorize(target)
+        }
+        // Daniel, 2026-11-15 (late): both tenant-wide signatories read the
+        // funder profile, as `grant::funder_profile` judges it.
+        ReadKind::GetFunderProfile => {
+            let Some(target) = programme() else {
+                return false;
+            };
+            // The read answers not found for a programme with no head
+            // policy, whoever asks, so the page is closed there too.
+            let ReadTarget::Programme(p) = target else {
+                return false;
+            };
+            if fstp_engine::report::pinned_p53(state, fstp_report::Scope::Programme(p)).is_none() {
+                return false;
+            }
+            let tenant_signatory = caller
+                .p
+                .account()
+                .is_some_and(|a| fstp_engine::report::tenant_signatory(state, a));
+            tenant_signatory || authorize(target)
         }
         ReadKind::ListReportProgrammes => signatory() || authorize(ReadTarget::None),
         ReadKind::GetCutOffRound => {
