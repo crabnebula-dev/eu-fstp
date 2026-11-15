@@ -52,7 +52,9 @@ pub(crate) const DESIGN_PLACEMENT: &[(u8, &[ParamId])] = &[
     (9, &[P12]),
     (
         10,
-        &[P31, P32, P33, P35, P37, P38, P40, P50, P51, P52, P54, P76],
+        &[
+            P31, P32, P33, P35, P37, P38, P40, P50, P51, P52, P54, P76, P79,
+        ],
     ),
 ];
 
@@ -74,7 +76,7 @@ pub(crate) fn placement(p: ParamId) -> Option<u8> {
 /// set, so the design's list is a subset of it.
 pub(crate) const UNLISTED_IN_CREATOR_TABLE: &[ParamId] = &[
     P06, P07, P08, P12, P14, P18, P19, P21, P22, P23, P27, P28, P34, P35, P36, P37, P38, P39, P40,
-    P42, P43, P44, P45, P46, P47, P48, P49, P50, P51, P52, P54, P75, P76, P77,
+    P42, P43, P44, P45, P46, P47, P48, P49, P50, P51, P52, P54, P75, P76, P77, P79,
 ];
 
 /// How the SuperSAFE fixture must hold one parameter.
@@ -498,6 +500,7 @@ pub(crate) fn readings() -> Vec<SuperSafeReading> {
             Typed(|v| expect("P-77", v.frozen.p77, McpBindingActions::DraftOnly)),
         ),
         r(P78, "None", NotProgramme),
+        r(P79, "Off; programme opts in", Opaque("false")),
     ]
 }
 

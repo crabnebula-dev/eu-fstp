@@ -100,6 +100,7 @@ fn i41_i42_i43_p54_public_view_filters_hold_in_every_state() {
                 } else {
                     Param::Set(g.bool())
                 },
+                p79: Param::Set(false),
                 p54: if g.u8_in(0..=4) == 0 {
                     Param::Undecodable
                 } else {
@@ -263,6 +264,7 @@ fn r_pb_05_aggregate_appears_only_at_p54() {
         .enumerate()
     {
         let params = Params {
+            p79: Param::Set(false),
             p54: Param::Set(min),
             ..Params::supersafe()
         };
@@ -419,6 +421,7 @@ fn r_pb_05_i43_aggregate_never_reveals_a_hidden_amount() {
         let params = Params {
             p50: gen_level(g),
             p51: gen_level(g),
+            p79: Param::Set(false),
             p54: Param::Set(g.u16_in(1..=4)),
             ..Params::supersafe()
         };

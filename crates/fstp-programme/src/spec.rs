@@ -539,7 +539,7 @@ programme_fields! {
         p12_cooling_off: P12(CoolingOff), Policy, [P12], importable false, bound [Sod05];
     }
     /// Step 10, communications: P-31 to P-33, P-35, P-37, P-38, P-40,
-    /// P-50 to P-52, P-54, P-76, the message templates, the FAQ and the
+    /// P-50 to P-52, P-54, P-76, P-79, the message templates, the FAQ and the
     /// contact.
     comms: CommsStep = Comms(10) {
         #[doc = "The message templates, one per message kind. Interim, pending Daniel."]
@@ -572,6 +572,8 @@ programme_fields! {
         p54_aggregate_minimum: P54(NonZeroU16), Policy, [P54], importable false, bound [];
         #[doc = "P-76: listing in the platform-wide directory of open calls."]
         p76_directory_listing: P76(bool), Policy, [P76], importable false, bound [];
+        #[doc = "P-79: whether the public pages show milestone status (Daniel, 2026-11-15 late)."]
+        p79_public_milestones: P79(bool), Policy, [P79], importable false, bound [];
     }
 }
 

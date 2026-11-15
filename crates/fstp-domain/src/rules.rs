@@ -179,11 +179,13 @@ pub enum ParamId {
     P77,
     /// P-78.
     P78,
+    /// P-79 (decided by Daniel on 2026-11-15): public milestone status.
+    P79,
 }
 
 impl ParamId {
     /// Every parameter, in id order.
-    pub const ALL: [ParamId; 78] = [
+    pub const ALL: [ParamId; 79] = [
         ParamId::P01,
         ParamId::P02,
         ParamId::P03,
@@ -262,6 +264,7 @@ impl ParamId {
         ParamId::P76,
         ParamId::P77,
         ParamId::P78,
+        ParamId::P79,
     ];
 
     /// The spec identifier, such as `"P-12"`.
@@ -345,6 +348,7 @@ impl ParamId {
             ParamId::P76 => "P-76",
             ParamId::P77 => "P-77",
             ParamId::P78 => "P-78",
+            ParamId::P79 => "P-79",
         }
     }
 
@@ -392,7 +396,7 @@ const fn spec(id: ParamId, freeze: Freeze, level: Level) -> ParamSpec {
 /// Every parameter of `SPEC/02-domain/policy-parameters.md`, in id order.
 /// Transcribed from both tables there and checked against them by
 /// `spec_catalogue_matches_policy_parameters`.
-pub const CATALOGUE: [ParamSpec; 78] = [
+pub const CATALOGUE: [ParamSpec; 79] = [
     spec(ParamId::P01, Freeze::Frozen, Level::Programme),
     spec(ParamId::P02, Freeze::Frozen, Level::Programme),
     spec(ParamId::P03, Freeze::Frozen, Level::Programme),
@@ -471,6 +475,7 @@ pub const CATALOGUE: [ParamSpec; 78] = [
     spec(ParamId::P76, Freeze::Live, Level::Programme),
     spec(ParamId::P77, Freeze::Frozen, Level::Programme),
     spec(ParamId::P78, Freeze::Live, Level::Tenant),
+    spec(ParamId::P79, Freeze::Live, Level::Programme),
 ];
 
 // ---------------------------------------------------------------------------

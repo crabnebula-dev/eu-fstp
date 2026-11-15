@@ -254,6 +254,7 @@ const ROWS: readonly (readonly [FieldStep, string, Shape])[] = [
   ["comms", "p52_public_feed", BOOL],
   ["comms", "p54_aggregate_minimum", INT],
   ["comms", "p76_directory_listing", BOOL],
+  ["comms", "p79_public_milestones", BOOL],
 ];
 
 /** Every field of the spec, in step order. */

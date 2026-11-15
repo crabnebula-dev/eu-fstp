@@ -57,7 +57,7 @@ use fstp_mc::{Model, Property};
 use fstp_money::{Amount, Currency};
 use fstp_public::{
     GrantChoice, GrantChoices, GrantStatus, Level, ProgrammeIdentity, PublicAggregate, PublicGrant,
-    PublicTexts, PublicView,
+    PublicMilestone, PublicTexts, PublicView,
 };
 
 use crate::NotImplemented;
@@ -125,6 +125,11 @@ pub struct Facts {
     pub cents: i64,
     /// Its call's public identifier.
     pub call: String,
+    /// Its milestones as P-79 shows them: number, completed and month.
+    /// The setup gives each plan one milestone due 365 days after `T0`
+    /// (`milestone_of_amount`), in January 1971, and closes PA's before
+    /// it completes.
+    pub milestones: Vec<PublicMilestone>,
 }
 
 /// One world of the lifecycle.
@@ -148,7 +153,7 @@ pub enum Param<T> {
     Undecodable,
 }
 
-/// P-50, P-51, P-52 and P-54 of one world.
+/// P-50, P-51, P-52, P-54 and P-79 of one world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Params {
     /// P-50: the funded maximum.
@@ -159,15 +164,18 @@ pub struct Params {
     pub p52: Param<bool>,
     /// P-54: the aggregate minimum.
     pub p54: Param<u16>,
+    /// P-79: whether milestone status is public (Daniel, 2026-11-15 late).
+    pub p79: Param<bool>,
 }
 
 impl Params {
-    /// Every parameter at its SuperSAFE value: Full, Full, on, 3.
+    /// Every parameter at its SuperSAFE value: Full, Full, on, 3, off.
     pub fn supersafe() -> Params {
         Params {
             p50: Param::Set(Level::Full),
             p51: Param::Set(Level::Full),
             p52: Param::Set(true),
+            p79: Param::Set(false),
             p54: Param::Set(3),
         }
     }
@@ -209,6 +217,9 @@ impl Stage {
         }
         if let Param::Set(n) = params.p54 {
             values.push((ParamId::P54, opaque_json(&n.to_string())?));
+        }
+        if let Param::Set(b) = params.p79 {
+            values.push((ParamId::P79, opaque_json(if b { "true" } else { "false" })?));
         }
         let step = edit_policy(head, PolicyVersionId::from_raw(version), |v| {
             for (p, x) in values {
@@ -255,6 +266,11 @@ impl PublicWorld {
                             minor: *p == MINOR,
                             cents,
                             call: CALL.raw().to_string(),
+                            milestones: vec![PublicMilestone {
+                                number: 1,
+                                completed: name == "completed" && *p == PA,
+                                month: "1971-01".to_owned(),
+                            }],
                         },
                     )
                 })
@@ -436,6 +452,12 @@ pub fn reference(
             grantee,
             amount: shown_amount,
             deliverables: Vec::new(),
+            // P-79: at the Full level only, and only when it decodes as on.
+            milestones: if level == Level::Full && params.p79 == Param::Set(true) {
+                f.milestones.clone()
+            } else {
+                Vec::new()
+            },
         };
         let e = by_call.entry(f.call.clone()).or_insert((0, 0, 0));
         e.0 = e.0.saturating_add(1);
@@ -805,6 +827,7 @@ pub fn model_params(i: [u8; 3]) -> Params {
                 .unwrap_or(Level::Hidden),
         ),
         p52: Param::Set(true),
+        p79: Param::Set(false),
         p54: Param::Set(MODEL_P54.get(usize::from(c)).copied().unwrap_or(u16::MAX)),
     }
 }

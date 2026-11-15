@@ -136,3 +136,4 @@ NOTE 10: The frozen P-21 value is a primary model plus an ordered fallback list,
 | P-76 | Listing in the platform-wide directory of open calls | Off; programme opts in | No |
 | P-77 | Binding actions through MCP | Options: draft only, or allowed. SuperSAFE: draft only | Yes |
 | P-78 | Connected external MCP servers, purposes and declared fields | None | No (tenant-level) |
+| P-79 | Public milestone status: each milestone's title, whether it is completed, and the month, at the Full level only (decided 2026-11-15) | Off; programme opts in | No |

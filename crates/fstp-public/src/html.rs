@@ -181,6 +181,17 @@ const ENTRIES: &[EntrySource<'static>] = &[
     label("public.grant.deliverables", "Accepted deliverables"),
     label("public.grant.licence", "Licence"),
     label("public.grant.snapshot", "Evidence snapshot"),
+    // P-79 (Daniel, 2026-11-15 late): milestone status, when the
+    // programme publishes it.
+    label("public.grant.milestones", "Milestones"),
+    label(
+        "public.grant.milestone_completed",
+        "Milestone {number}: completed, due {month}",
+    ),
+    label(
+        "public.grant.milestone_open",
+        "Milestone {number}: not completed, due {month}",
+    ),
     label("public.status.granted", "Granted"),
     label("public.status.in_execution", "In execution"),
     label("public.status.completed", "Completed"),
@@ -684,6 +695,24 @@ fn grants_page(heading: &str, none: &str, grants: &[PublicGrant]) -> Element {
                 );
             }
             facts.push_child(el("dt", "public.grant.deliverables"));
+            facts.push_child(Element::new("dd").child(items));
+        }
+        // P-79: each milestone by number, completed or not, and the month
+        // of its due date.
+        if !g.milestones.is_empty() {
+            let mut items = Element::new("ul").attr("class", "milestones");
+            for m in &g.milestones {
+                let number = m.number.to_string();
+                let id = if m.completed {
+                    "public.grant.milestone_completed"
+                } else {
+                    "public.grant.milestone_open"
+                };
+                items.push_child(
+                    Element::new("li").label(&l(id), &[("number", &number), ("month", &m.month)]),
+                );
+            }
+            facts.push_child(el("dt", "public.grant.milestones"));
             facts.push_child(Element::new("dd").child(items));
         }
         list.push_child(

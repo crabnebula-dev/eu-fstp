@@ -254,6 +254,12 @@ fn gen_params(g: &mut Gen) -> Params {
         p50: gen_level(g),
         p51: gen_level(g),
         p52: Param::Set(g.bool()),
+        // P-79 (Daniel, 2026-11-15 late): on, off or undecodable.
+        p79: match g.u8_in(0..=4) {
+            0 => Param::Undecodable,
+            1 | 2 => Param::Set(true),
+            _ => Param::Set(false),
+        },
         p54: if g.u8_in(0..=5) == 0 {
             Param::Undecodable
         } else {
@@ -596,4 +602,71 @@ fn i41_choice_commands_on_a_draft_are_refused_in_every_stage() {
             }
         }
     }
+}
+
+/// P-79 (Daniel, 2026-11-15 late; `public-transparency.md` NOTE 4): no
+/// milestone fact is public by default. With P-79 on, a grant at the Full
+/// level shows each milestone's number, whether it is completed and the
+/// month, and never a milestone amount. Below Full, or with P-79 off or
+/// undecodable, the pages, the feed and the tools name no milestone.
+#[test]
+fn p79_milestone_status_only_when_the_programme_opts_in() {
+    check(
+        "p79_milestone_status_only_when_the_programme_opts_in",
+        |g| {
+            let s = stage("completed");
+            let p79 = *g.pick(&[Param::Set(true), Param::Set(false), Param::Undecodable]);
+            let level = *g.pick(&[
+                PublicLevel::Project,
+                PublicLevel::ProjectAndGrantee,
+                PublicLevel::Full,
+            ]);
+            g.note("p79", &p79);
+            g.note("level", &level);
+            let params = Params {
+                p79,
+                ..Params::supersafe()
+            };
+            let mut d = driver(s, &params, 6)?;
+            let mut model = Model::new();
+            run(
+                &mut d,
+                &s.facts,
+                &mut model,
+                &Action::Set(PA, PublicPhase::Finished, level),
+            )?;
+            let view = view_of(&d.state, d.now)?;
+            let grant = view
+                .finished
+                .first()
+                .ok_or_else(|| format!("PA is not shown: {view:?}"))?;
+            let open = p79 == Param::Set(true) && level == PublicLevel::Full;
+            if open {
+                let want = s.facts[&PA].milestones.clone();
+                if grant.milestones != want || !want.iter().all(|m| m.completed) {
+                    return Err(format!("P-79: {:?}, want {want:?}", grant.milestones));
+                }
+            } else if !grant.milestones.is_empty() {
+                return Err(format!("P-79: milestones shown: {grant:?}"));
+            }
+            let mut named_anywhere = false;
+            for out in outputs(&view)? {
+                let named = out.contains("milestone") || out.contains("Milestone");
+                named_anywhere |= named;
+                if named && !open {
+                    return Err(format!("P-79: a milestone is named while closed: {out}"));
+                }
+                // Never a milestone amount: the plan of PA holds 4.00 EUR in
+                // one milestone, which the Full level shows as the granted
+                // amount only, once.
+                if out.matches("4.00").count() > 1 {
+                    return Err(format!("P-79: an amount beyond the granted one: {out}"));
+                }
+            }
+            if open && !named_anywhere {
+                return Err("P-79: no page, feed or tool names the milestones".to_owned());
+            }
+            Ok(())
+        },
+    );
 }

@@ -303,6 +303,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.field.comms.p52_public_feed": "The machine-readable public feed is on (P-52)",
   "creator.field.comms.p54_aggregate_minimum": "Minimum grants behind a public aggregate (P-54)",
   "creator.field.comms.p76_directory_listing": "Listed in the directory of open calls (P-76)",
+  "creator.field.comms.p79_public_milestones": "Public milestone status at the Full level: titles, completion and month, never amounts (P-79)",
 
   // Members of structured values.
   "creator.member.account_cap_across_drafts_in_call": "Cap counts every draft of the account in the call",
