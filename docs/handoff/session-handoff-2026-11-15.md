@@ -49,10 +49,11 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | (merged, pushed 5e80441b) | `m4/i66-gaps` | I-66/I-67 generator gaps per m4-design last section |
 | (merged, pushed a77c0c65) | `m5/retention` | P-41 reminder from the last payment confirmation, mailbox message, `/app/admin/erasures` page; P-70 in SetLoginPolicy; level 2 key records |
 | (merged, pushed 782dc5ad) | `m3/erase-prod` | Witness revocation record, batch erasure approval, keyd sign-key slots, edge route table polling, S3 list and delete |
-| `.lanes/m9` (running) | `m9/answers` | Milestone publicity opt-in, P-57 periods, tenant copies of funder profiles, programme footer in /app, companion key rotation reminder, profile read for all programme staff |
+| (merged, pushed 8991814f) | `m9/answers` | Milestone publicity opt-in, P-57 periods, tenant copies of funder profiles, programme footer in /app, companion key rotation reminder, profile read for all programme staff |
 | (queued) | `m4/acme` | In-house fuzzed ACME client (ADR-009 Q30) |
-| (queued) | `m4/ci-fixes-2` | After the CI run on current main: remaining matrix ops, other reds it names, and `CellObjects` out of erasure step 2 (ADR-004 night decision), and a field clear in `SaveFields` (m4-design, follow-up answers) |
-| `.lanes/devstack` (running) | `m3/devstack-scenarios` | `/test/scenario/negotiation` and an active programme for the last 9 devstack specs |
+| `.lanes/mx` (running) | `m4/matrix-final` | After the CI run on current main: remaining matrix ops, other reds it names, and `CellObjects` out of erasure step 2 (ADR-004 night decision), and a field clear in `SaveFields` (m4-design, follow-up answers) |
+| `.lanes/pg2` (running) | `m4/page-gate-2` | SA-09 amendment (unknown and closed pages redirect home) and the 18 demo specs red at 782dc5ad |
+| (merged, pushed 8991814f) | `m3/devstack-scenarios` | `/test/scenario/negotiation` and an active programme for the last 9 devstack specs |
 
 The briefs for decB and finish are in the transcript of this session. In short, each item in the two tables above.
 
