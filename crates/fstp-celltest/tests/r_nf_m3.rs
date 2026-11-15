@@ -1139,9 +1139,24 @@ fn r_nf_08_teeth_caller_nonce_api_is_caught() {
 /// accepting `pg_hba` line requires `hostssl` and `clientcert=verify-full`,
 /// and every cell role is refused without a client certificate while its
 /// own certificate logs it in.
+///
+/// The clusters are shared by every world of this test binary, so the
+/// roles taken over are those of this world's cell databases. Taking over
+/// a role of a world that another test runs at the same time changes its
+/// password under it, and that world's store fails (CI run 43738172717).
+/// Each cell database of this world must have a login role checked.
 #[test]
 fn r_nf_09_every_internal_link_requires_a_client_certificate() {
     let w = world(1, false, false);
+    let own: BTreeSet<(String, String)> = w
+        .databases()
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.name.starts_with("c_") || d.name.starts_with("v_"))
+        .map(|d| (d.cluster, d.name))
+        .collect();
+    assert!(!own.is_empty(), "the world has cell databases");
+    let mut checked: BTreeSet<(String, String)> = BTreeSet::new();
     let mut found = Vec::new();
     for c in agent_clusters(&w) {
         for h in db::hba_rows(c.server()).unwrap() {
@@ -1154,8 +1169,13 @@ fn r_nf_09_every_internal_link_requires_a_client_certificate() {
         }
         let ca = ca_pem(c);
         for role in db::cell_login_roles(c.server()).unwrap() {
-            let cred = db::take_over(c.server(), &role).unwrap();
             let dbname = role.rsplit_once('_').map(|(d, _)| d.to_owned()).unwrap();
+            let key = (c.name().to_owned(), dbname.clone());
+            if !own.contains(&key) {
+                continue;
+            }
+            checked.insert(key);
+            let cred = db::take_over(c.server(), &role).unwrap();
             if db::run_as(c.server(), &ca, &cred, false, &dbname, "SELECT 1").is_ok() {
                 found.push(format!(
                     "{}: {role} logged in without a certificate",
@@ -1170,6 +1190,7 @@ fn r_nf_09_every_internal_link_requires_a_client_certificate() {
             }
         }
     }
+    assert_eq!(checked, own, "every cell database has a login role checked");
     assert!(found.is_empty(), "{found:#?}");
 }
 

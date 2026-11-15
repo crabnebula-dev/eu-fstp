@@ -205,6 +205,21 @@ fn cases() -> Vec<Case> {
     let mut f = base(Role::Guardian, Kind::GuardianStep, ASSIGNED, STAGE1);
     f.guardian_of = true;
     add(f, true, "guardian step, the named guardian (O-60)");
+    // Daniel, 2026-11-15 (night): the guardian reads the full journey as
+    // a Receiving binding (section 10), the voyager column of section 7.2.
+    let mut f = base(Role::Guardian, Kind::StateTransition, ASSIGNED, STAGE1);
+    f.team = true;
+    f.transition = Some((S::Submitted, S::Stage1));
+    add(f, true, "transition, guardian on X (section 10)");
+    let mut f = base(Role::Guardian, Kind::StateTransition, ASSIGNED, STAGE1);
+    f.transition = Some((S::Submitted, S::Stage1));
+    add(f, false, "transition, guardian of another proposal");
+    let mut f = base(Role::Guardian, Kind::ReviewerScore, ASSIGNED, STAGE1);
+    f.team = true;
+    add(f, false, "score, guardian before a final decision (O-54)");
+    let mut f = base(Role::Guardian, Kind::Conflict, ASSIGNED, STAGE1);
+    f.team = true;
+    add(f, false, "conflict, guardian");
     let mut f = base(Role::Applicant, Kind::GuardianStep, ASSIGNED, STAGE1);
     f.team = true;
     f.own = true;

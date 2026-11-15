@@ -70,7 +70,9 @@ impl EntryKind {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Relation {
     /// The viewer holds an active Receiving binding on the subject
-    /// proposal as its lead or a team member.
+    /// proposal: as its lead, a team member or its guardian (Daniel,
+    /// 2026-11-15, night), or the former lead or team member of an ended
+    /// one.
     pub team: bool,
     /// The viewer is the guardian the entry names.
     pub guardian_of: bool,
@@ -155,7 +157,9 @@ impl EntryFacts {
 /// Interim, pending Daniel (`docs/handoff/m4-design.md` section 15.0,
 /// lane j2): the guardian and the IRC member have classes of their own
 /// (O-60, O-58). The call drafter, the tenant admin and the financial
-/// and legal signatories read no diary.
+/// and legal signatories read no diary. Daniel, 2026-11-15 (night): the
+/// guardian reads every voyager entry as a Receiving binding, and its own
+/// consent steps, which no other column sees (O-60).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Column {
     /// Voyager: applicant and team member.
@@ -169,7 +173,8 @@ pub enum Column {
     Operations,
     /// Auditor.
     Auditor,
-    /// The guardian of a minor (O-60).
+    /// The guardian of a minor: the voyager entries, as a Receiving
+    /// binding, and the guardian steps that name them (O-60).
     Guardian,
     /// An IRC member: the nominated proposal and its outcome only
     /// (R-IR-03, O-58).
@@ -236,10 +241,12 @@ impl Column {
 
 /// The coarse `scope_mask` of an entry of `kind` (section 11): every
 /// column whose matrix cell can hold for some viewer. It is a pre-filter
-/// only. [`visible`] still decides per request (I-93).
+/// only. [`visible`] still decides per request (I-93). The guardian reads
+/// every voyager entry as a Receiving binding (Daniel, 2026-11-15, night),
+/// so its bit goes with the voyager bit.
 pub const fn scope_mask(kind: EntryKind) -> u32 {
     use EntryKind as K;
-    let v = Column::Voyager.bit();
+    let v = Column::Voyager.bit() | Column::Guardian.bit();
     let j = Column::Judging.bit();
     let p = Column::Programme.bit();
     let o = Column::Operations.bit();
@@ -334,8 +341,13 @@ fn cell(column: Column, role: Role, p10: ReadAccess, r: &Relation, e: &EntryFact
         // "Positive matches" and "with client identity" shape what the
         // entry shows, not whether it shows. O-60: never a guardian step.
         Column::Auditor => e.kind != K::GuardianStep,
-        // O-60: the guardian a step names, and nothing else.
-        Column::Guardian => e.kind == K::GuardianStep && r.guardian_of,
+        // O-60: the guardian a step names. Daniel, 2026-11-15 (night): the
+        // guardian reads the full journey as a Receiving binding (section
+        // 10), so every other entry shows as in the voyager column.
+        Column::Guardian => match e.kind {
+            K::GuardianStep => r.guardian_of,
+            _ => cell(Column::Voyager, role, p10, r, e),
+        },
         // R-IR-03, O-58: the outcome of a proposal the member is assigned.
         Column::Irc => e.kind == K::StateTransition && r.assigned,
         Column::None => false,

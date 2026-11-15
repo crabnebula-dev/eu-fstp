@@ -730,3 +730,35 @@ fn r_ev_05_mailbox_stage2_has_one_message_per_unanswered_question() {
     assert_eq!(later.len(), 1, "{later:?}");
     assert_eq!(later[0], (n + 3).to_string(), "the ordinal in the thread");
 }
+
+/// R-NG-06 (Daniel, 2026-11-15, night): only the lead acknowledges the
+/// negotiation notice, so in NEGOTIATION only the lead gets
+/// `negotiation.acknowledge`. The team member and the guardian get none,
+/// and the lead's acknowledgement closes the lead's message.
+#[test]
+fn r_ng_06_mailbox_acknowledge_goes_to_the_lead_only() {
+    let w = world(StateTag::Negotiation);
+    let x = w.targets.proposal.expect("X");
+    let mut seed = seeder(w);
+    assert_eq!(
+        of_kind(&mailbox(&mut seed, LEAD), "negotiation.acknowledge").len(),
+        1,
+        "the lead"
+    );
+    for who in [TEAM, GUARDIAN] {
+        let v = mailbox(&mut seed, who);
+        assert!(
+            of_kind(&v, "negotiation.acknowledge").is_empty(),
+            "{who:?}: {}",
+            v.to_compact()
+        );
+    }
+    seed.api(
+        LEAD,
+        POST,
+        &format!("/proposals/{}/negotiation/notice", x.raw()),
+        &obj(vec![("notice_version", s("1"))]),
+    )
+    .unwrap_or_else(|e| panic!("acknowledge: {e}"));
+    assert!(of_kind(&mailbox(&mut seed, LEAD), "negotiation.acknowledge").is_empty());
+}

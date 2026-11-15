@@ -143,7 +143,8 @@ export function mountGuardian(id: string): void {
     if (p === null) {
       return;
     }
-    // O-60: the guardian's own consent steps are in the activity log.
+    // The activity log holds the journey and the guardian's own consent
+    // steps (O-60).
     f.main.append(activityNav(id));
     // Only the guardian gives consent (registry GUARDIAN), and consent
     // opens at the last IRC validation and in NEGOTIATION (NOTE 14).

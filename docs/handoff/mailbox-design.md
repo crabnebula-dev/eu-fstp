@@ -34,7 +34,7 @@ The mailbox is a read model derived from state that already exists. It adds no s
 | `pending.confirm` | Open, unexpired pending action (I-85, `pending.rs`) | The account whose agent prepared it | Confirmed, discarded or expired | `/app/pending/{pending}` |
 | `proposal.submit` | Own draft in an open call | The lead | Submitted, or the call closes | `/app/proposals/{proposal}/submit` |
 | `stage2.respond` | Proposal in STAGE2 | The lead | The proposal leaves STAGE2 | `/app/proposals/{proposal}/stage2` |
-| `negotiation.acknowledge` | Proposal in NEGOTIATION, notice not acknowledged (R-NG-06) | Each team member | Acknowledged, or the state moves on | `/app/proposals/{proposal}/negotiation` |
+| `negotiation.acknowledge` | Proposal in NEGOTIATION, notice not acknowledged (R-NG-06) | The lead (Daniel, 2026-11-15, night: only the lead acknowledges, as the registry says) | Acknowledged, or the state moves on | `/app/proposals/{proposal}/negotiation` |
 | `review.declare` | Reviewer assignment awaiting declaration (R-CF-02) | The assignee | Declared | `/app/assignments/{assignment}` |
 | `review.score` | Active reviewer assignment, proposal in STAGE1 or STAGE2, no score for the current stage and plan | The assignee | Scored, or the stage ends | `/app/assignments/{assignment}` |
 | `irc.declare` | IRC assignment awaiting declaration | The IRC assignee | Declared | `/app/irc-assignments/{assignment}` |

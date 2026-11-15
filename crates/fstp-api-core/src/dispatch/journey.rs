@@ -331,12 +331,17 @@ fn p10_of<P: Seams>(call: &Call<'_, P>, c: Option<CallId>) -> ReadAccess {
 }
 
 /// The relation of `account` to `proposal` that holds for every entry.
+/// The guardian holds a Receiving binding and reads the full journey as
+/// one (Daniel, 2026-11-15, night, section 10).
 fn base_relation<P: Seams>(call: &Call<'_, P>, account: AccountId, p: ProposalId) -> Relation {
     let core = &call.state.core;
     let team = core.roster().bindings().any(|(_, b)| {
         b.account == account
             && b.proposal() == Some(p)
-            && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
+            && matches!(
+                b.role,
+                Role::Applicant | Role::ApplicantTeamMember | Role::Guardian
+            )
             && b.active_at(call.now)
     });
     let assigned = core
@@ -518,8 +523,14 @@ pub(super) fn journey<P: Seams>(
         legs,
         strip: scene.roles.iter().any(|r| visibility::route_strip(*r)),
         // Section 8.1: the full map is the team's, by the relation the
-        // visibility function reads (I-93). The page never decides it.
-        map: scene.base.team,
+        // visibility function reads (I-93). The page never decides it. The
+        // guardian reads the journey as a Receiving binding and gets no
+        // map (O-58 amendment of 2026-11-06).
+        map: scene.base.team
+            && scene
+                .roles
+                .iter()
+                .any(|r| matches!(r, Role::Applicant | Role::ApplicantTeamMember)),
         // NOTE 10: only the lead withdraws (registry LEAD on
         // `proposal.withdraw`), and only from a non-terminal state before
         // GRANTED.

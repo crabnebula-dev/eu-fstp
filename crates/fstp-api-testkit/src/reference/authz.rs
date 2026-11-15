@@ -934,6 +934,20 @@ pub enum Rule {
     /// The guardian's binding ends there too, and the decision names no
     /// guardian, so the guardian reads only while X is under way.
     Journey,
+    /// The route position of X (`proposal.journey`, section 10). Daniel,
+    /// 2026-11-15 (night): the readers of [`Rule::Journey`], and a staff
+    /// reader only where the visibility function shows them the state
+    /// transition that reached the position (section 7.2, I-93). Judging
+    /// roles read within P-10 and their assignment, Operations roles the
+    /// grant's legs only, and coordinators once declared free of conflict
+    /// (O-57, R-CF-02). A conflict on X refuses every staff reader (I-03).
+    /// The guardian reads the full journey as a Receiving binding.
+    JourneyPosition,
+    /// The workspace of X (`proposal.get_workspace`, I-21): the team while
+    /// its Receiving bindings are active. Daniel, 2026-11-15 (night): the
+    /// former lead and team member of an ended X keep the journey, map and
+    /// diary only, so the workspace is closed to them.
+    Workspace,
     /// The route map of X (ADR-015 amendment of 2026-11-06, section 8.1,
     /// O-58): the lead and the team member in every state, a terminal one
     /// included (Daniel, 2026-11-06). The guardian gets no map.
@@ -1076,7 +1090,11 @@ impl Rule {
             Rule::Lead => &[Some(Role::Applicant)],
             // The registry names the team for the route map. The guardian is
             // then refused by the rule itself (section 8.1).
-            Rule::Team | Rule::DraftingTeam | Rule::NegotiationTeam | Rule::RouteMap => &TEAM,
+            Rule::Team
+            | Rule::DraftingTeam
+            | Rule::NegotiationTeam
+            | Rule::RouteMap
+            | Rule::Workspace => &TEAM,
             Rule::Guardian => &[Some(Role::Guardian)],
             Rule::Assignee
             | Rule::ReviewerAct
@@ -1166,7 +1184,7 @@ impl Rule {
                 Some(Role::FstpCoordinator),
             ],
             // No signatory: the section 7.2 matrix names neither (NOTE 5).
-            Rule::Journey => &[
+            Rule::Journey | Rule::JourneyPosition => &[
                 Some(Role::Applicant),
                 Some(Role::ApplicantTeamMember),
                 Some(Role::Guardian),
@@ -1512,7 +1530,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("proposal.create", T::OpenCall, R::NewApplicant).gated(),
     RefOp::read("proposal.list_own", T::None, R::AnyAccount).tool("fstp_list_my_proposals"),
     RefOp::read("proposal.view", T::Proposal, R::Team).tool("fstp_get_my_proposal"),
-    RefOp::read("proposal.get_workspace", T::Proposal, R::Team),
+    RefOp::read("proposal.get_workspace", T::Proposal, R::Workspace),
     RefOp::act("proposal.save_workspace", T::Proposal, R::Team).tool("fstp_save_workspace"),
     // M7 design section 4 (lane L-DEMO's slice of L-PRE): web only, the
     // drafting team only (I-21).
@@ -1538,7 +1556,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         .tool("fstp_submit_revision"),
     RefOp::act("proposal.withdraw", T::Proposal, R::Lead).binding(),
     // Lane j2, `SPEC/12-journey-ui.md` section 10: web only.
-    RefOp::read("proposal.journey", T::Proposal, R::Journey),
+    RefOp::read("proposal.journey", T::Proposal, R::JourneyPosition),
     RefOp::read("proposal.diary", T::Proposal, R::Journey),
     // Lane j4, ADR-015 amendment of 2026-11-06: the map is the team's
     // (section 8.1, O-58), and stays the former team's (Daniel,
@@ -1863,27 +1881,12 @@ fn admit(
             open(x == Some(StateTag::IrcReview))
         }
         Rule::Auditor => open(who == Who::Auditor),
-        Rule::Journey => {
-            let staff = who.manager()
-                || who.coordinator()
-                || who.committee()
-                || matches!(
-                    who,
-                    Who::IrcMember
-                        | Who::IrcAssignee
-                        | Who::IrcAssigneeUndeclared
-                        | Who::IrcAssigneeConflicted
-                        | Who::FinanceApprover
-                        | Who::PaymentReleaser
-                        | Who::ContractSignatory
-                        | Who::Auditor
-                );
-            // The guardian's binding ends at a terminal state (Daniel,
-            // 2026-11-06), the lead's and the member's give a read-only view.
-            let team = matches!(who, Who::Lead | Who::TeamMember)
-                || (who == Who::Guardian && !x.is_some_and(StateTag::is_terminal));
-            open(team || (staff && x.is_some_and(|s| s != StateTag::Draft)))
-        }
+        Rule::Journey => open(
+            former_team_reads(who, x)
+                || (journey_staff(who) && x.is_some_and(|s| s != StateTag::Draft)),
+        ),
+        Rule::JourneyPosition => journey_position(who, x, policy),
+        Rule::Workspace => open(who.team() && !x.is_some_and(StateTag::is_terminal)),
         Rule::RouteMap => open(matches!(who, Who::Lead | Who::TeamMember)),
         Rule::GrantReader => {
             let in_grant = x.is_some_and(|s| among(s, &GRANT_STATES));
@@ -1997,6 +2000,82 @@ fn admit(
 fn former_team_reads(who: Who, x: Option<StateTag>) -> bool {
     matches!(who, Who::Lead | Who::TeamMember)
         || (who == Who::Guardian && !x.is_some_and(StateTag::is_terminal))
+}
+
+/// The holders of a role of the section 7.2 matrix in P whom the journey
+/// reads admit once X left DRAFT (`SPEC/12-journey-ui.md` section 10).
+const fn journey_staff(who: Who) -> bool {
+    who.manager()
+        || who.coordinator()
+        || who.committee()
+        || matches!(
+            who,
+            Who::IrcMember
+                | Who::IrcAssignee
+                | Who::IrcAssigneeUndeclared
+                | Who::IrcAssigneeConflicted
+                | Who::FinanceApprover
+                | Who::PaymentReleaser
+                | Who::ContractSignatory
+                | Who::Auditor
+        )
+}
+
+/// The legs of a grant: their target is GRANTED or a later state, so X
+/// sits in one of these states after one (section 7.2 "Grants only").
+const GRANT_LEGS: [StateTag; 4] = [
+    StateTag::Granted,
+    StateTag::InExecution,
+    StateTag::Completed,
+    StateTag::Terminated,
+];
+
+/// The route position of X (`proposal.journey`), as [`Rule::JourneyPosition`]
+/// documents it (Daniel, 2026-11-15, night).
+///
+/// The Receiving bindings read as for the diary: the lead and the team
+/// member in every state, the guardian while X is under way. A staff
+/// reader is admitted only after DRAFT (I-21), and then only where the
+/// visibility function shows them the transition that reached the
+/// position (section 7.2, I-93):
+///
+/// - a conflict on X refuses first (I-03), then an undeclared
+///   coordinator (O-57, R-CF-02);
+/// - the programme manager, the declared coordinator and the auditor read
+///   every position;
+/// - Operations roles read a position reached by a leg of the grant;
+/// - a committee member or chair reads within P-10: never under "operator
+///   staff only", with an active assignment otherwise, and under "all
+///   committee members" also as a committee member declared free of
+///   conflict on X (P-10 NOTE 1);
+/// - an IRC member reads only with a declared IRC assignment (O-58).
+fn journey_position(who: Who, x: Option<StateTag>, policy: &Policy) -> Result<(), AuthClass> {
+    use AuthClass::{Conflict, Visibility};
+    if former_team_reads(who, x) {
+        return Ok(());
+    }
+    let Some(s) = x.filter(|s| *s != StateTag::Draft) else {
+        return Err(Visibility);
+    };
+    if !journey_staff(who) {
+        return Err(Visibility);
+    }
+    if who.conflicted() || who == Who::CoordinatorUndeclared {
+        return Err(Conflict);
+    }
+    let shown = match who {
+        Who::FinanceApprover | Who::PaymentReleaser | Who::ContractSignatory => {
+            among(s, &GRANT_LEGS)
+        }
+        Who::IrcMember | Who::IrcAssigneeUndeclared => false,
+        Who::AssignedReviewer => policy.p10 != P10::OperatorStaffOnly,
+        Who::CommitteeMember | Who::ReleasedReviewer => policy.p10 == P10::AllCommittee,
+        // Undeclared, recused or delegating members and the chair hold no
+        // assignment and no declaration on X.
+        w if w.committee() => false,
+        _ => true,
+    };
+    if shown { Ok(()) } else { Err(Visibility) }
 }
 
 /// Full content of X (R-AC-01, P-10 NOTE 1, I-03, R-CF-02, I-21, D6, Q39).
