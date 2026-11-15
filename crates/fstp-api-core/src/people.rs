@@ -14,7 +14,8 @@
 //!   body `{}`): the acceptor starts the identity verification of SoD-09
 //!   through `VaultIntake::begin_verification`.
 //! - `roles.grant` by `{invitation, approval?}`: the grant composed from
-//!   the acceptance, of the accepting account in the invited role.
+//!   the acceptance, of the accepting account in the invited role, from
+//!   the later of the invitation start and now, until the invitation end.
 //!
 //! The link token is the only capability. It names its invitation through
 //! its digest (`creator::link_invitation`, ADR-007).
@@ -428,7 +429,14 @@ pub(super) fn grant_request(
     }
     let _ = request.insert("account", Value::String(account.raw().to_string()));
     let _ = request.insert("role", role_json(invitation.role).ok_or_else(bad)?);
-    let _ = request.insert("start", Value::String(now.micros().to_string()));
+    // Design doc 11, Q3 (Daniel, 2026-11-15): the grant reuses the
+    // invitation dates. A start the invitation set in the past starts the
+    // role now, since a grant is never backdated (design 2.6).
+    let start = invitation.start.max(now);
+    let _ = request.insert("start", Value::String(start.micros().to_string()));
+    if let Some(end) = invitation.end {
+        let _ = request.insert("end", Value::String(end.micros().to_string()));
+    }
     if let Some(o) = invitation.organisation {
         let _ = request.insert("organisation", Value::String(o.raw().to_string()));
     }
@@ -510,6 +518,8 @@ mod tests {
                     contact: forms::text_ref(3, "x@e2e.invalid"),
                 },
                 organisation: None,
+                start: Timestamp::from_micros(0),
+                end: None,
                 by: AccountId::from_raw(1),
                 withdrawn: false,
                 accepted: None,

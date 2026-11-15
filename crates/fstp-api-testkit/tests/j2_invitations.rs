@@ -875,6 +875,112 @@ fn j2_grant_by_invitation_composes_the_accepting_account_and_role() {
     assert_eq!(grants, vec![(a, j.p, Role::ProgrammeManager)]);
 }
 
+/// One day in microseconds.
+const DAY: i64 = 86_400_000_000;
+
+/// The start and end of each core `GrantRole` the engine port appended.
+fn grant_dates(c: &FakeCell) -> Vec<(i64, Option<i64>)> {
+    c.ports
+        .engine
+        .appended()
+        .into_iter()
+        .filter_map(|e| match e.cmd {
+            Command::Core(fstp_domain::Command::GrantRole { start, end, .. }) => {
+                Some((start.micros(), end.map(|x| x.micros())))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A1 invites `email` as `role` with the role dates `start` and `end`,
+/// and returns the link token M3 received.
+fn invite_dated(
+    j: &J2,
+    email: &str,
+    role: &str,
+    start: i64,
+    end: Option<i64>,
+) -> Result<String, String> {
+    done(
+        &j.c.web(&j.admin, rq::invite_dated(j.p, email, role, start, end)),
+        "creator.invite with dates",
+    )?;
+    j.c.ports
+        .accounts
+        .token_for(email)
+        .ok_or_else(|| format!("no link token for {email}"))
+}
+
+/// Design doc 11, Q3 (Daniel, 2026-11-15): an invitation names the role
+/// dates, the invitation list shows them, and the grant by invitation
+/// reuses them: the start the invitation names when it lies ahead, and
+/// its end.
+#[test]
+fn q3_grant_by_invitation_reuses_the_invitation_dates() {
+    let j = draft().unwrap();
+    let to = email(1);
+    let a = fresh(1);
+    let now = j.c.ports.clock.read().micros();
+    let (start, end) = (now + 7 * DAY, now + 400 * DAY);
+    let t = invite_dated(&j, &to, "programme_manager", start, Some(end)).unwrap();
+    let row = row_of(&j, &to).unwrap();
+    assert_eq!(str_of(&row, "start").unwrap(), start.to_string());
+    assert_eq!(str_of(&row, "end").unwrap(), end.to_string());
+    accept(&j.c, &login(&j.c, a), &t).unwrap();
+    j.c.ports.vault.change(|truth| truth.verify(a));
+    let id = str_of(&row, "id").unwrap();
+    done(
+        &stepped(&j.c, &j.admin, || people::grant_invitation(j.p, &id)),
+        "roles.grant by invitation",
+    )
+    .unwrap();
+    assert_eq!(grant_dates(&j.c), vec![(start, Some(end))]);
+}
+
+/// Design doc 11, Q3, design 2.6: a start that lies before the grant
+/// starts the role at the grant, never earlier, and an open end stays
+/// open. The invitation list shows the open end as `null`.
+#[test]
+fn q3_grant_by_invitation_never_starts_before_the_grant() {
+    let j = draft().unwrap();
+    let to = email(1);
+    let a = fresh(1);
+    let t = invite_dated(&j, &to, "programme_manager", 0, None).unwrap();
+    let row = row_of(&j, &to).unwrap();
+    assert_eq!(row.get("end"), Some(&Value::Null));
+    accept(&j.c, &login(&j.c, a), &t).unwrap();
+    j.c.ports.vault.change(|truth| truth.verify(a));
+    let id = str_of(&row, "id").unwrap();
+    done(
+        &stepped(&j.c, &j.admin, || people::grant_invitation(j.p, &id)),
+        "roles.grant by invitation",
+    )
+    .unwrap();
+    let now = j.c.ports.clock.read().micros();
+    assert_eq!(grant_dates(&j.c), vec![(now, None)]);
+}
+
+/// Design doc 11, Q3: an invitation whose end does not lie after its
+/// start is refused under `Input`, and records nothing.
+#[test]
+fn q3_invite_with_an_end_not_after_the_start_is_refused() {
+    let j = draft().unwrap();
+    let now = j.c.ports.clock.read().micros();
+    for end in [now + DAY, now] {
+        let r = j.c.web(
+            &j.admin,
+            rq::invite_dated(j.p, &email(1), "call_drafter", now + DAY, Some(end)),
+        );
+        assert!(
+            matches!(&r, Err(ApiError::Refused { rule: "Input", .. })),
+            "Q3: an end at {end} before a start at {} gave {r:?}",
+            now + DAY
+        );
+    }
+    assert!(rows_on(&j.c, &j.admin, j.p).unwrap().is_empty());
+}
+
 /// J2, "Confidentiality on binding", T-AUTHZ-MATRIX: `roles.grant` by
 /// account, of an account that accepted the programme manager terms,
 /// asks for a step-up and then completes on the draft (change D3). The

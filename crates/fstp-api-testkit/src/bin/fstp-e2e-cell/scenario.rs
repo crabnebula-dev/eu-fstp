@@ -1201,7 +1201,10 @@ fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
 /// The label of a review persona or of the programme manager, such as
 /// `Committee member R1`.
 pub(crate) fn persona_label(account: AccountId) -> Option<&'static str> {
-    if let Some(l) = postgrant::label(account).or_else(|| fastflow::label(account)) {
+    if let Some(l) = postgrant::label(account)
+        .or_else(|| fastflow::label(account))
+        .or_else(|| setup::label(account))
+    {
         return Some(l);
     }
     if account == PROGRAMME_MANAGER.1 {

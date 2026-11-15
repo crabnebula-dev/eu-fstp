@@ -425,6 +425,8 @@ fn i23_creator_invitation_is_one_entry_and_replays() {
                 role: Role::CallDrafter,
                 invitee: Invitee::Account(OUTSIDER),
                 organisation: None,
+                start: fstp_domain::time::Timestamp::from_micros(0),
+                end: None,
             }),
             ctx(Actor::Account(PM), 5, 3),
         )

@@ -242,6 +242,8 @@ export type WorkKind =
   | "guardian"
   | "onboarding"
   | "creator"
+  | "setup"
+  | "setup-progress"
   | "studio"
   | "knock-outs"
   | "approvals"
@@ -343,6 +345,9 @@ export const WORK_PATHS = Object.freeze({
   guardian: (p: string): string => `/app/proposals/${p}/guardian`,
   onboarding: "/app/admin/onboarding/summary",
   creatorNew: "/app/creator/new",
+  setupNew: "/app/setup/new",
+  setup: (p: string): string => `/app/programmes/${p}/setup/programme`,
+  setupProgress: (p: string): string => `/app/programmes/${p}/setup/progress`,
   approvals: "/app/admin/approvals",
   branding: "/app/admin/branding",
   terminology: "/app/admin/terminology",
@@ -457,6 +462,9 @@ export function workOf(
   // J0, J1, J2: the tenant admin.
   if (r.tenantAdmin) {
     add("tenant_admin", "onboarding", WORK_PATHS.onboarding, text("home.work.onboarding"));
+    // Design doc 11: the set-up wizard, the first-time path. Before
+    // activation the home lists the onboarding work alone (ADR-021).
+    add("tenant_admin", "setup", WORK_PATHS.setupNew, text("home.work.setup_new"));
     add("tenant_admin", "creator", WORK_PATHS.creatorNew, text("home.work.creator_new"));
     add("tenant_admin", "approvals", WORK_PATHS.approvals, text("home.work.approvals"));
   }
@@ -470,7 +478,10 @@ export function workOf(
   // the programme's creator draft, so they are linked only for a
   // programme that holds one (review finding U1).
   for (const p of programmes(holds("programme_manager")).filter((x) => r.drafts.has(x))) {
-    // The Planning Studio first: it groups the creator steps (section 8.2).
+    // The set-up wizard and its progress page (design doc 11), then the
+    // Planning Studio, which groups the creator steps (section 8.2).
+    add("programme", "setup", WORK_PATHS.setup(p), text("home.work.setup", { programme: p }));
+    add("programme", "setup-progress", WORK_PATHS.setupProgress(p), text("home.work.setup_progress", { programme: p }));
     add("programme", "studio", WORK_PATHS.studio(p), text("home.work.studio", { programme: p }));
     add("programme", "creator", WORK_PATHS.creator(p), text("home.work.creator", { programme: p }));
     add("programme", "people", WORK_PATHS.people(p), text("home.work.people", { programme: p }));
@@ -548,6 +559,7 @@ export type NavKind =
   | "assignments"
   | "irc-cases"
   | "onboarding"
+  | "setup"
   | "creator"
   | "approvals"
   | "operations"
@@ -602,6 +614,7 @@ export function navLinksOf(r: MyRoles, reviewWork = false): readonly NavLink[] {
   }
   if (r.tenantAdmin) {
     out.push({ kind: "onboarding", href: WORK_PATHS.onboarding, label: "nav.onboarding" });
+    out.push({ kind: "setup", href: WORK_PATHS.setupNew, label: "nav.setup_wizard" });
     out.push({ kind: "creator", href: WORK_PATHS.creatorNew, label: "nav.programme_setup" });
     out.push({ kind: "approvals", href: WORK_PATHS.approvals, label: "nav.approvals" });
   }

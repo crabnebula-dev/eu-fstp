@@ -4644,6 +4644,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "state": { schema: { kind: "enum", values: ["invited", "accepted", "verified", "granted"] }, optional: false },
           "sod": { schema: { kind: "enum", values: ["pass", "fail", "unchecked"] }, optional: false },
           "rule": { schema: { kind: "string" }, optional: true },
+          "start": { schema: { kind: "string" }, optional: false },
+          "end": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
         },
       } }, optional: false },
     },

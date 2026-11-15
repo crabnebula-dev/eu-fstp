@@ -172,6 +172,15 @@ fn take_i64(v: &Value) -> R<i64> {
     }
 }
 
+/// An instant as its microseconds, a canonical signed decimal string.
+fn put_time(t: Timestamp) -> Value {
+    put_i64(t.micros())
+}
+
+fn take_time(v: &Value) -> R<Timestamp> {
+    take_i64(v).map(Timestamp::from_micros)
+}
+
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 fn hex32(b: [u8; 32]) -> Value {
@@ -853,6 +862,8 @@ impl ToJson for CreatorCommand {
                 role,
                 invitee,
                 organisation,
+                start,
+                end,
             } => tagged(
                 "Invite",
                 vec![
@@ -861,6 +872,8 @@ impl ToJson for CreatorCommand {
                     ("role", s(role_name(*role))),
                     ("invitee", put_invitee(*invitee)),
                     ("organisation", put_option(*organisation, |o| dec(o.raw()))),
+                    ("start", put_time(*start)),
+                    ("end", put_option(*end, put_time)),
                 ],
             ),
             CreatorCommand::WithdrawInvitation {
@@ -971,6 +984,8 @@ impl FromJson for CreatorCommand {
                     "role",
                     "invitee",
                     "organisation",
+                    "start",
+                    "end",
                 ])?;
                 Ok(CreatorCommand::Invite {
                     programme: at(o, "programme", programme)?,
@@ -980,6 +995,8 @@ impl FromJson for CreatorCommand {
                     organisation: at(o, "organisation", |x| {
                         take_option(x, |y| take_dec(y).map(OrganisationId::from_raw))
                     })?,
+                    start: at(o, "start", take_time)?,
+                    end: at(o, "end", |x| take_option(x, take_time))?,
                 })
             }
             "WithdrawInvitation" => {
@@ -1120,6 +1137,8 @@ impl ToJson for CreatorRecord {
                 role,
                 invitee,
                 organisation,
+                start,
+                end,
                 by: b,
             } => tagged(
                 "InvitationRecorded",
@@ -1129,6 +1148,8 @@ impl ToJson for CreatorRecord {
                     ("role", s(role_name(*role))),
                     ("invitee", put_invitee(*invitee)),
                     ("organisation", put_option(*organisation, |o| dec(o.raw()))),
+                    ("start", put_time(*start)),
+                    ("end", put_option(*end, put_time)),
                     by(*b),
                 ],
             ),
@@ -1259,6 +1280,8 @@ impl FromJson for CreatorRecord {
                     "role",
                     "invitee",
                     "organisation",
+                    "start",
+                    "end",
                     "by",
                 ])?;
                 Ok(CreatorRecord::InvitationRecorded {
@@ -1269,6 +1292,8 @@ impl FromJson for CreatorRecord {
                     organisation: at(o, "organisation", |x| {
                         take_option(x, |y| take_dec(y).map(OrganisationId::from_raw))
                     })?,
+                    start: at(o, "start", take_time)?,
+                    end: at(o, "end", |x| take_option(x, take_time))?,
                     by: at(o, "by", account)?,
                 })
             }

@@ -48,13 +48,14 @@ import { holdsOperations } from "../home/model.js";
 import { mailboxCount } from "../mailbox/pages.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
+import { SETUP_ROUTES } from "../setup/routes.js";
 import { browserEnv } from "../reviewer/kit.js";
 import { mountJudging } from "../reviewer/judging.js";
 import { mountSite } from "../site/pages.js";
 import { installFooterGuard } from "./brand.js";
 
 /** The creator, onboarding and people routes, checked once when first used. */
-const STAFF_ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES];
+const STAFF_ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES, ...SETUP_ROUTES];
 
 let staff: ReturnType<typeof createRouter> | null = null;
 

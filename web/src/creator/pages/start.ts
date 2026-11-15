@@ -64,6 +64,16 @@ function strictUtf8(bytes: ArrayBuffer): string | null {
   }
 }
 
+/**
+ * Where a start leads: back to the set-up wizard's Programme stage when
+ * the wizard opened this page (`?then=setup`, design doc 11 section 5),
+ * else creator step 1.
+ */
+function afterStart(p: string): string {
+  const then = new URLSearchParams(location.search).get("then");
+  return then === "setup" ? `/app/programmes/${p}/setup/programme` : PATHS.step(p, "funder");
+}
+
 /** Mounts the starting point page of programme `p`. */
 export function mountStart(p: string): void {
   const { main, alert } = frame({ title: t.label("creator.start.title"), alertId: "creator-error" });
@@ -77,7 +87,7 @@ export function mountStart(p: string): void {
       if (d === null) return;
       const o = await call("creator.apply_start", [p], { base: d.revision, start }, anyObject);
       if (report(alert, o)) return;
-      go(PATHS.step(p, "funder"));
+      go(afterStart(p));
     });
 
   const blank = h("button", { type: "button", "data-start": "blank" }, [t.label("creator.start.blank")]);

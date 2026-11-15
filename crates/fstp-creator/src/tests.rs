@@ -499,6 +499,8 @@ fn i67_invitee_rows_follow_the_previews() {
             role: Role::CommitteeMember,
             invitee,
             organisation: Some(OrganisationId::from_raw(id)),
+            start: fstp_domain::time::Timestamp::from_micros(0),
+            end: None,
         };
         w.run(&cmd, M1, &inputs).unwrap();
     }
@@ -625,6 +627,8 @@ fn i66_edit_after_report_voids_acknowledgement_and_request() {
         role: Role::IrcMember,
         invitee: Invitee::Account(M2),
         organisation: None,
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     w.run(&invite, M1, &inputs).unwrap();
     let d = w.creator.draft(P).unwrap();
@@ -752,6 +756,8 @@ fn i66_witnesses_bind_to_the_revision() {
         role: Role::CommitteeChair,
         invitee: Invitee::Account(M2),
         organisation: None,
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     w.run(&invite, M1, &inputs).unwrap();
     assert_eq!(
@@ -870,6 +876,8 @@ fn invitations_are_checked() {
         role,
         invitee: Invitee::Account(M2),
         organisation: None,
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     assert_eq!(
         w.run(&invite(1, Role::Applicant), TA, &inputs),
@@ -893,6 +901,41 @@ fn invitations_are_checked() {
         w.run(&withdraw, M1, &inputs),
         Err(CreatorRefusal::UnknownInvitation)
     );
+}
+
+/// Design doc 11, Q3 (Daniel, 2026-11-15): an invitation carries the role
+/// dates the grant reuses. An end that does not lie after the start is
+/// refused, as a grant with such dates is (Cooling-off NOTE). A later end
+/// and an open end are recorded with the start.
+#[test]
+fn q3_invitation_dates_are_recorded_and_an_end_before_the_start_is_refused() {
+    use fstp_domain::time::Timestamp;
+    let mut w = opened();
+    let inputs = passing();
+    let start = Timestamp::from_micros(1_794_009_600_000_000);
+    let invite = |id, end| CreatorCommand::Invite {
+        programme: P,
+        invitation: InvitationId::from_raw(id),
+        role: Role::FinanceApprover,
+        invitee: Invitee::Account(M2),
+        organisation: None,
+        start,
+        end,
+    };
+    for end in [start, Timestamp::from_micros(start.micros() - 1)] {
+        assert_eq!(
+            w.run(&invite(1, Some(end)), TA, &inputs),
+            Err(CreatorRefusal::InvitationDates)
+        );
+    }
+    let end = Timestamp::from_micros(start.micros() + 1);
+    w.run(&invite(1, Some(end)), TA, &inputs).unwrap();
+    w.run(&invite(2, None), M1, &inputs).unwrap();
+    let d = w.creator.draft(P).unwrap();
+    let one = d.invitations().get(&InvitationId::from_raw(1)).unwrap();
+    assert_eq!((one.start, one.end), (start, Some(end)));
+    let two = d.invitations().get(&InvitationId::from_raw(2)).unwrap();
+    assert_eq!((two.start, two.end), (start, None));
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,6 +1154,8 @@ fn i66_r_pg_01_accepted_invitation_gets_its_sod_preview() {
             contact: TextRef::new(TextId::from_raw(5), ContentDigest::from_bytes([3; 32])),
         },
         organisation: None,
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     w.run(&invite, M1, &inputs).unwrap();
     assert!(preview_targets(&w.creator, P).is_empty());
@@ -1160,6 +1205,8 @@ fn i66_acceptance_refuses_the_wrong_account_or_invitation() {
         role: Role::IrcMember,
         invitee: Invitee::Account(M2),
         organisation: None,
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     w.run(&invite, M1, &inputs).unwrap();
     let c = &w.creator;
@@ -1252,6 +1299,10 @@ fn codec_round_trips_records_and_commands() {
             contact: TextRef::new(TextId::from_raw(5), ContentDigest::from_bytes([0xAB; 32])),
         },
         organisation: Some(OrganisationId::from_raw(4)),
+        start: fstp_domain::time::Timestamp::from_micros(1_794_009_600_000_000),
+        end: Some(fstp_domain::time::Timestamp::from_micros(
+            1_825_545_600_000_000,
+        )),
         by: M1,
     });
     records.push(CreatorRecord::TemplateSaved {
@@ -1300,6 +1351,10 @@ fn codec_round_trips_records_and_commands() {
             role: Role::IrcMember,
             invitee: Invitee::Account(M2),
             organisation: None,
+            start: fstp_domain::time::Timestamp::from_micros(1_794_009_600_000_000),
+            end: Some(fstp_domain::time::Timestamp::from_micros(
+                1_825_545_600_000_000,
+            )),
         },
         CreatorCommand::SaveAsTenantTemplate {
             programme: P,
@@ -1388,6 +1443,8 @@ fn draft_commands(revision: DraftRevision) -> Vec<CreatorCommand> {
             role: Role::Applicant,
             invitee: Invitee::Account(M2),
             organisation: None,
+            start: fstp_domain::time::Timestamp::from_micros(0),
+            end: None,
         },
         CreatorCommand::WithdrawInvitation {
             programme: P,

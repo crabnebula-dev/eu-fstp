@@ -10,6 +10,7 @@ use fstp_domain::id::{AccountId, BindingId, ContentDigest, OrganisationId, Progr
 use fstp_domain::policy::FunderProfileRef;
 use fstp_domain::record::Record;
 use fstp_domain::roles::Role;
+use fstp_domain::time::Timestamp;
 use fstp_ledger::Seq;
 use fstp_programme::{FieldId, FieldValue};
 
@@ -69,6 +70,11 @@ pub struct Invitation {
     pub invitee: Invitee,
     /// The committee organisation.
     pub organisation: Option<OrganisationId>,
+    /// When the role starts, as the invitation names it (design doc 11,
+    /// Q3). The grant takes the later of this and its own instant.
+    pub start: Timestamp,
+    /// When the role ends, if the invitation limits it.
+    pub end: Option<Timestamp>,
     /// The author.
     pub by: AccountId,
     /// Whether it was withdrawn.
@@ -509,6 +515,8 @@ impl CreatorState {
                 role,
                 invitee,
                 organisation,
+                start,
+                end,
                 by,
                 ..
             } => {
@@ -518,6 +526,8 @@ impl CreatorState {
                         role: *role,
                         invitee: *invitee,
                         organisation: *organisation,
+                        start: *start,
+                        end: *end,
                         by: *by,
                         withdrawn: false,
                         accepted: None,

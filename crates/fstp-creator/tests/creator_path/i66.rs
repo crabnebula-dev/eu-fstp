@@ -256,6 +256,8 @@ fn invite(cell: &mut Cell, invitee: Invitee) {
         role: Role::CommitteeMember,
         invitee,
         organisation: Some(OrganisationId::from_raw(1)),
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     cell.run(&cmd, M1)
         .unwrap_or_else(|f| panic!("the invitation is refused: {f:?}"));

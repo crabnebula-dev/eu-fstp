@@ -12,11 +12,16 @@
 // - `#request-activation` stays disabled until the report is clean
 //   (`activationGate`). The server checks again at the request, and the
 //   approval recomputes the report over fresh probes.
+//
+// The report, the previews and the request are built by `reviewParts`,
+// which the set-up wizard's Review and confirm stage uses too
+// (`docs/design/11-programme-setup-wizard.md` section 7), so both pages
+// run the same logic.
 
 import { h } from "../../core/dom.js";
 import { busy, frame, hush, ready } from "../frame.js";
 import { t } from "../i18n.js";
-import { CREATOR_STEPS, activationGate, readPreview, type Report, type ReportResult } from "../model.js";
+import { CREATOR_STEPS, activationGate, readPreview, type Draft, type Report, type ReportResult } from "../model.js";
 import { anyObject, call, report } from "../ops.js";
 import { stepStates } from "../../studio/model.js";
 import { STUDIO_PATHS, kicker, notOpenNote } from "../../studio/view.js";
@@ -28,37 +33,41 @@ const PREVIEWS = [
   ["contract", "preview-contract"],
 ] as const;
 
-/** Mounts the review page of programme `p`. */
-export function mount(p: string): void {
-  const s = CREATOR_STEPS.find((x) => x.id === "review");
-  if (s === undefined) return;
-  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error" });
-  document.title = stepTitle(s);
-  let nav = stepNav(p, "review", null);
-  const notOpen = h("div", {});
-  main.append(
-    h("p", { class: "voyage-label" }, [t.label("studio.spec_name")]),
-    nav,
-    notOpen,
-    h("p", { class: "card-kicker" }, [kicker("review")]),
-    h("h2", { id: "creator-step-heading" }, [stepTitle(s)]),
-    h("p", {}, [link(STUDIO_PATHS.approval(p), t.label("studio.overview.approval_link"))]),
-  );
-  /** Draws the step navigation from the report. */
-  const showSteps = (): void => {
-    const fresh = stepNav(p, "review", current);
-    nav.replaceWith(fresh);
-    nav = fresh;
-    const mine = stepStates(current).find((x) => x.id === "review");
-    notOpen.replaceChildren(...(mine !== undefined && !mine.open ? [notOpenNote()] : []));
-  };
+/** The parts of a review: the report, the previews and the activation request. */
+export interface ReviewParts {
+  /** `#report-summary`, the counts of failures and open warnings. */
+  readonly summary: HTMLElement;
+  /** `#report`, one item per result. */
+  readonly list: HTMLElement;
+  /** One titled region per preview. */
+  readonly previews: readonly HTMLElement[];
+  /** `#request-activation`. */
+  readonly request: HTMLElement;
+  /** `#activation-status`. */
+  readonly status: HTMLElement;
+  /** The report as last read, or null. */
+  current(): Report | null;
+  /** Reads the draft, the report and the previews. The draft is null when its read failed. */
+  load(): Promise<{ readonly draft: Draft | null; readonly report: Report | null }>;
+}
+
+/**
+ * The review parts of programme `p`. Refusals show in `alert`, and every
+ * write runs through `write`. `onRequested` runs once a request was
+ * accepted, and `onReport` each time the report is drawn.
+ */
+export function reviewParts(
+  p: string,
+  alert: HTMLElement,
+  write: (run: () => Promise<void>) => Promise<void>,
+  opts: { readonly onRequested?: () => void; readonly onReport?: (r: Report | null) => void } = {},
+): ReviewParts {
   const list = h("ul", { id: "report", "aria-labelledby": "report-title" });
   const summary = h("p", { id: "report-summary", role: "status" });
   const status = h("p", { id: "activation-status", role: "status" });
   const request = h("button", { id: "request-activation", type: "button", class: "fstp-primary", disabled: true }, [
     t.label("creator.review.request"),
   ]);
-  const write = queue();
   let current: Report | null = null;
   /** Acknowledgements sent or waiting. */
   let inflight = 0;
@@ -142,6 +151,7 @@ export function mount(p: string): void {
       list.append(h("li", {}, [t.label("creator.review.clean")]));
     }
     gate();
+    opts.onReport?.(current);
   };
 
   request.addEventListener(
@@ -155,39 +165,29 @@ export function mount(p: string): void {
         if (report(alert, o)) return;
         status.setAttribute("data-status", "requested");
         status.textContent = t.label("creator.review.requested");
+        opts.onRequested?.();
       }),
     ),
   );
 
-  const previews = PREVIEWS.map(([kind, id]) => {
+  const regions = PREVIEWS.map(([kind, id]) => {
     const region = h("section", { id, "aria-labelledby": `${id}-title`, class: "fstp-preview" });
     return { kind, id, region };
   });
-
-  main.append(
-    h("h2", { id: "report-title" }, [t.label("creator.review.report")]),
-    summary,
-    list,
-    h("h2", {}, [t.label("creator.review.previews")]),
-    ...previews.map((x) =>
-      h("div", {}, [
-        h("h3", { id: `${x.id}-title` }, [
-          x.kind === "guide"
-            ? t.label("creator.preview.guide")
-            : x.kind === "public"
-              ? t.label("creator.preview.public")
-              : t.label("creator.preview.contract"),
-        ]),
-        x.region,
+  const previews = regions.map((x) =>
+    h("div", {}, [
+      h("h3", { id: `${x.id}-title` }, [
+        x.kind === "guide"
+          ? t.label("creator.preview.guide")
+          : x.kind === "public"
+            ? t.label("creator.preview.public")
+            : t.label("creator.preview.contract"),
       ]),
-    ),
-    h("h2", {}, [t.label("creator.review.activation")]),
-    h("p", {}, [t.label("creator.review.activation_intro")]),
-    request,
-    status,
+      x.region,
+    ]),
   );
 
-  void write(async () => {
+  const load = async (): Promise<{ readonly draft: Draft | null; readonly report: Report | null }> => {
     const d = await loadDraft(p, alert);
     if (d !== null && d.activationRequested) {
       status.setAttribute("data-status", "requested");
@@ -199,9 +199,7 @@ export function mount(p: string): void {
     }
     current = await loadReport(p, alert);
     renderReport();
-    showSteps();
-    const loaded = d !== null && current !== null;
-    for (const x of previews) {
+    for (const x of regions) {
       const o = await call("creator.preview", [p, x.kind], undefined, (v) => readPreview(v) !== null);
       if (o.kind !== "done") {
         x.region.replaceChildren(h("p", {}, [t.label("creator.preview.unavailable")]));
@@ -214,6 +212,54 @@ export function mount(p: string): void {
         ),
       );
     }
-    if (loaded) ready(main);
+    return { draft: d, report: current };
+  };
+
+  return { summary, list, previews, request, status, current: () => current, load };
+}
+
+/** Mounts the review page of programme `p`. */
+export function mount(p: string): void {
+  const s = CREATOR_STEPS.find((x) => x.id === "review");
+  if (s === undefined) return;
+  const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error" });
+  document.title = stepTitle(s);
+  let nav = stepNav(p, "review", null);
+  const notOpen = h("div", {});
+  main.append(
+    h("p", { class: "voyage-label" }, [t.label("studio.spec_name")]),
+    nav,
+    notOpen,
+    h("p", { class: "card-kicker" }, [kicker("review")]),
+    h("h2", { id: "creator-step-heading" }, [stepTitle(s)]),
+    h("p", {}, [link(STUDIO_PATHS.approval(p), t.label("studio.overview.approval_link"))]),
+  );
+  /** Draws the step navigation from the report. */
+  const showSteps = (current: Report | null): void => {
+    const fresh = stepNav(p, "review", current);
+    nav.replaceWith(fresh);
+    nav = fresh;
+    const mine = stepStates(current).find((x) => x.id === "review");
+    notOpen.replaceChildren(...(mine !== undefined && !mine.open ? [notOpenNote()] : []));
+  };
+  const write = queue();
+  const parts = reviewParts(p, alert, write);
+
+  main.append(
+    h("h2", { id: "report-title" }, [t.label("creator.review.report")]),
+    parts.summary,
+    parts.list,
+    h("h2", {}, [t.label("creator.review.previews")]),
+    ...parts.previews,
+    h("h2", {}, [t.label("creator.review.activation")]),
+    h("p", {}, [t.label("creator.review.activation_intro")]),
+    parts.request,
+    parts.status,
+  );
+
+  void write(async () => {
+    const { draft, report: r } = await parts.load();
+    showSteps(r);
+    if (draft !== null && r !== null) ready(main);
   });
 }

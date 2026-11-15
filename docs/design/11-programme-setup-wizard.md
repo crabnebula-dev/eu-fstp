@@ -1,6 +1,6 @@
 # 11. Programme set-up wizard and set-up progress
 
-Status: draft for Daniel's review, 2026-11-15. Design note and clickable prototype only. No product code. The spec wins over this document.
+Status: Daniel answered section 14 on 2026-11-15, and lane m4/setup-wizard-build built the wizard. Section 15 records the build. The spec wins over this document.
 
 Sources: `SPEC/02-domain/programme-creator.md`, `SPEC/02-domain/roles-and-sod.md`, `SPEC/12-journey-ui.md` §8.2, `docs/handoff/m4-design.md` §2.2 (J1, J2), §3.2 and §15.0, ADR-021, and the design docs 01, 02, 05 and 09.
 
@@ -207,3 +207,57 @@ These are gaps between the prototype and the current API. They are listed for pl
 3. **Dates on invitations.** Should an invitation carry the start and optional end date, so the grant reuses them? Recommendation: yes.
 4. **Builders and the approver.** Inviting or granting on a draft makes an account a builder. With two tenant admins, one careless grant can leave nobody to approve activation. Should the wizard block a tenant admin's action that would leave no eligible approver, or only warn? Recommendation: warn on every such action, and block the last one.
 5. **Wizard and step editor.** Is the wizard the first-time path, with the step editor kept for later changes? Recommendation: yes, as with onboarding and the admin screens.
+
+## 15. Daniel's answers and the build (2026-11-15)
+
+Daniel's answers to section 14:
+
+1. **Name search.** Exact email only. No directory and no display name.
+2. **Operations roles.** Yes, as planned rows. A tenant admin grants them after activation, and the progress page tracks them.
+3. **Dates on invitations.** Yes. The grant after acceptance reuses them.
+4. **Builders and the approver.** Lane m4/i67-override adds a tenant admin override of I-67, with a reason and a ledger record. The wizard keeps the notice on who approves, and leaves a named place for the override form.
+5. **Wizard and step editor.** The wizard is the first-time path. The creator step editor stays for later changes.
+
+### 15.1 What lane m4/setup-wizard-build built
+
+- **Pages.** `web/src/setup/`: `/app/setup/new` (stage 1), `/app/programmes/{p}/setup/{stage}` (stages 2 to 7) and `/app/programmes/{p}/setup/progress`. They use the app shell, the creator's field editors, the draft and report reads, and the creator review's report, previews and request (`creator/pages/review.ts` `reviewParts`, shared with the creator review page).
+- **Entry.** The tenant admin home and navigation link "Set up a new programme with the wizard". The programme manager home links the wizard and the progress page of each draft. Before activation the home lists onboarding alone, so the wizard is not offered (ADR-021). A refusal under ADR-021 shows the creator's ADR-021 text.
+- **Stage 1.** A tenant admin opens the draft (`creator.open_draft`, step-up) and invites the programme manager with `creator.invite`. The progress page of the new draft follows. The programme name is set by the programme manager in stage 2, since `creator.save_fields` acts as programme manager only.
+- **Starting point.** Stage 2 links the creator start page with `?then=setup`. After a start, that page returns to the wizard.
+
+### 15.2 Exact email (answer 1)
+
+The Team stage and stage 1 take a full email address and call `creator.invite`. M3 binds the address to the account that already has exactly this address, or to a new account (`fstp-e2e-cell` `people.rs`, the existing flow). The page shows the same invitation either way, so it never says whether an address has an account. No other organisation's accounts are read (I-19, I-20).
+
+### 15.3 Planned Operations rows (answer 2)
+
+Least invasive design: **no new record.** A planned row is an invitation of an Operations role, recorded as today by `CreatorRecord::InvitationRecorded`. `creator.invite` already admits the four Operations roles (`fstp_access::invitable`).
+
+- The wizard shows an Operations invitation as "Planned, granted after activation" until its role is granted.
+- The invitee accepts the invitation, which binds their account and records the role-only terms, as for every role (J2). No identity check runs, since SoD-09 names Drafting and Judging only.
+- After activation the people admin page offers the grant once the invitee has accepted (`people/model.ts` `grantOffered`). The server composes `GrantRole` as before, with no confidentiality text for Operations.
+- The progress page reads "Not needed" for identity on these rows.
+
+Interim, pending Daniel: the invitee of a planned row still gets the invitation email when the row is added, since accepting it is what binds the account. A row that sends nothing until activation would need the grant to name an account by exact email, which no read gives.
+
+### 15.4 Dates on invitations (answer 3)
+
+- `CreatorCommand::Invite` and `CreatorRecord::InvitationRecorded` carry `start` and `end: Option`, instants in microseconds. The codec names both members, `end` as `null` when open.
+- `creator.invite` takes `start` and `end` as canonical decimal strings, as the `roles.grant` form does. Without `start`, the role starts at the invitation. An end that does not lie after the start is refused under `Input` (`CreatorRefusal::InvitationDates`).
+- The wizard sends a role start date as its UTC midnight, and an end date as the midnight after it, so the role holds through that day.
+- `creator.invitations` lists `start` and `end` (`fstp_access::REPLIES`, `web/src/gen/api.ts`).
+- The grant by invitation starts at the later of the invitation start and the grant, since a grant is never backdated (design 2.6), and ends at the invitation end.
+
+Interim, pending Daniel: the record codec stays strict, so a stored `InvitationRecorded` written before this change no longer decodes. The demo cells rebuild their ledger at each seed, and no production ledger holds one yet.
+
+### 15.5 Live checks
+
+The SoD lines of the Team stage are projections of the team the invitation list shows. A refusal names the rule and the role on this team that blocks it, never an account (R-CF-03). SoD-09 waits for the invitee and SoD-07 for the grant. After the invitation, the team table shows the server's live check of each row. The server checks every rule again at each command.
+
+### 15.6 Progress without a new read
+
+The progress page reads `creator.get_draft`, `creator.get_report`, `creator.invitations` and, once the programme is active, `call.list`. No combined read was needed, so the registry and the authorisation reference gain no operation.
+
+### 15.7 The approver (answer 4)
+
+Review and confirm and the progress page keep the notice on who approves activation (I-67). Each holds an empty, hidden `section#setup-approver-override[data-slot="i67-override"]` where lane m4/i67-override puts its form.

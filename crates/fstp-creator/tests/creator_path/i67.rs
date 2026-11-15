@@ -157,6 +157,8 @@ fn i67_approver_is_never_a_builder() {
                         role: Role::CallDrafter,
                         invitee: Invitee::Account(OUT),
                         organisation: None,
+                        start: fstp_domain::time::Timestamp::from_micros(0),
+                        end: None,
                     };
                     let _ = cell.run(&cmd, by);
                 }

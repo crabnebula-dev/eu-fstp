@@ -93,6 +93,9 @@ pub enum CreatorRefusal {
     /// The role cannot be invited from the creator: a Receiving role, or
     /// tenant admin, which onboarding invites.
     RoleNotInvitable,
+    /// The invitation's role would end before it starts: its end does
+    /// not lie after its start (design doc 11, Q3).
+    InvitationDates,
     /// The template id is taken.
     TemplateExists,
     /// J2: the invitation was accepted already. A second acceptance by
@@ -315,9 +318,15 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             role,
             invitee,
             organisation,
+            start,
+            end,
         } => {
             manager_or_admin(core, *programme, actor, ctx, ext)?;
             open_draft(creator, *programme)?;
+            // A scheduled end lies after the start, as a grant's does.
+            if end.is_some_and(|e| e <= *start) {
+                return Err(CreatorRefusal::InvitationDates);
+            }
             if creator.invitation_taken(*invitation) {
                 return Err(CreatorRefusal::InvitationExists);
             }
@@ -335,6 +344,8 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                 role: *role,
                 invitee: *invitee,
                 organisation: *organisation,
+                start: *start,
+                end: *end,
                 by: actor,
             }])
         }

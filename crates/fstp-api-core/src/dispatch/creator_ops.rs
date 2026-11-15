@@ -238,7 +238,10 @@ async fn store<P: Seams>(
     op: &Op,
     account: AccountId,
 ) -> Result<Stored, ApiError> {
-    let mut supplied = Supplied::placeholder(account);
+    let mut supplied = Supplied {
+        now: call.now,
+        ..Supplied::placeholder(account)
+    };
     let mut text = None;
     // Daniel's answer of 2026-11-07: each text of accepted P-09 wording
     // is stored as a public text (ADR-007), and the save names it by
@@ -390,6 +393,7 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
     let mut ids = Vec::new();
     let placeholder = Supplied {
         link,
+        now: call.now,
         ..Supplied::placeholder(account)
     };
     let cmd = build(call, form, op, &placeholder, None, &mut ids).map_err(|e| call.refuse(e))?;
@@ -1112,6 +1116,8 @@ async fn invitations<P: Seams>(
             state,
             sod,
             rule,
+            start: i.start,
+            end: i.end,
         });
     }
     Ok(CreatorModel::Invitations(rows))

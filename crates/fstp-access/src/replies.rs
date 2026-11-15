@@ -1411,6 +1411,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 ),
                 m("sod", Shape::Enum(&["pass", "fail", "unchecked"])),
                 opt("rule", Shape::String),
+                // Design doc 11, Q3: the role dates the grant reuses, in
+                // microseconds as canonical decimal strings.
+                m("start", Shape::String),
+                m("end", Shape::Nullable(&Shape::String)),
             ])),
         )]),
     ),

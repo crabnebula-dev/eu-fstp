@@ -1249,6 +1249,8 @@ fn r_pg_01_invite_builds_invite_with_a_drawn_id_and_a_stored_contact() {
         role,
         invitee,
         organisation,
+        start,
+        end,
     } = cmd
     else {
         panic!("the engine port appended {cmd:?}");
@@ -1256,6 +1258,9 @@ fn r_pg_01_invite_builds_invite_with_a_drawn_id_and_a_stored_contact() {
     assert_eq!(programme, d.p);
     assert_eq!(role, Role::ProgrammeManager);
     assert_eq!(organisation, None);
+    // Design doc 11, Q3: an invitation that names no start starts the
+    // role at the invitation, and names no end.
+    assert_eq!((start, end), (c.ports.clock.read(), None));
     let Invitee::Pending { contact } = invitee else {
         panic!("an email invitee is pending: {invitee:?}");
     };

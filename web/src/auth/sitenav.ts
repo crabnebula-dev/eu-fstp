@@ -25,6 +25,7 @@ export type NavKind =
   | 'assignments'
   | 'irc-cases'
   | 'onboarding'
+  | 'setup'
   | 'creator'
   | 'approvals'
   | 'operations'
@@ -92,6 +93,7 @@ export function siteLinks(roles: NavRoles | null): readonly SiteLink[] {
     }
     if (roles.tenantAdmin) {
       out.push({ kind: 'onboarding', href: '/app/admin/onboarding/summary' });
+      out.push({ kind: 'setup', href: '/app/setup/new' });
       out.push({ kind: 'creator', href: '/app/creator/new' });
       out.push({ kind: 'approvals', href: '/app/admin/approvals' });
     }
