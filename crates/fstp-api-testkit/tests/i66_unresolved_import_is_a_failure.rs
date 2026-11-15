@@ -6,7 +6,10 @@
 //! shows `ImportUnresolved` with severity Failure and blocks activation.
 //! A proposal that arrives after the request still blocks it, because
 //! the report is recomputed at approval. Q30 is answered with its
-//! recommendation as an interim reading, pending Daniel.
+//! recommendation as an interim reading, pending Daniel. Fewer proposals
+//! at approval than at the request are removals of imported documents,
+//! each a draft record that voids the clearance (Daniel, 2026-11-15), so
+//! the attempt acknowledges and requests again before the approval.
 //!
 //! The production test is red until lane W2a lands the creator.
 

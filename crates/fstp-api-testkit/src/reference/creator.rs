@@ -28,9 +28,10 @@
 //!
 //! - **R1, edits (design 3.2 "Bound to a revision").** Every record on the
 //!   draft bumps the revision. Only an edit changes the draft content. The
-//!   edits are an opening, a field save, a start, an accepted narrative,
-//!   an invitation, its withdrawal or its acceptance, and an import
-//!   resolution, a dismissal included. A grant on the draft is an edit,
+//!   edits are an opening, a field save, a start, an accepted or edited
+//!   narrative, an invitation, its withdrawal or its acceptance, an import
+//!   resolution, a dismissal included, and the removal of an imported
+//!   document (Daniel, 2026-11-15). A grant on the draft is an edit,
 //!   and so is each later record of that binding: its end, suspension,
 //!   void, reinstatement or scheduled end. Acknowledgements, probe
 //!   records, activation requests and template saves change no content.
@@ -76,6 +77,16 @@
 //!   checks except the builder rule and the Sybil question: a verified
 //!   actor, the head revision, a live request and a clean report (I-66).
 //!   Interim, pending Daniel.
+//! - **R11, the generator gaps (Daniel, 2026-11-15).** Only field saves
+//!   set or clear fields: every other edit takes the effect `Neutral`,
+//!   and a field effect on it is refused with `NoFieldEffect`. A restart
+//!   keeps the saved fields, and a narrative held by the draft can be
+//!   edited. The environment only adds import proposals; the removal of
+//!   an imported document is an edit of its own kind, which lowers the
+//!   count by one. A missing Guide section is a fact of the profile's
+//!   template, seeded like a theme fault. A grant and the end of a binding
+//!   are admitted after activation too, as production admits them (design
+//!   D3).
 //!
 //! # What the reference abstracts
 //!
@@ -171,6 +182,10 @@ pub enum CheckFeed {
     AdminSet,
     /// The vault's `IsVerified` answer for every builder (Q2).
     BuilderVault,
+    /// The funder profile's Guide template (I-52). No draft edit changes
+    /// it: the test environment seeds a template with a missing section,
+    /// as it seeds theme faults (Daniel, 2026-11-15).
+    GuideTemplate,
     /// The default theme tokens (I-69, I-70). Fixed in M4.
     Theme,
 }
@@ -331,6 +346,7 @@ impl RefCheck {
             RefCheck::InferenceUnreachable => CheckFeed::Probe(RefProbe::Inference),
             RefCheck::MandatoryElementMissing | RefCheck::ContrastFailure => CheckFeed::Theme,
             RefCheck::ImportUnresolved => CheckFeed::Imports,
+            RefCheck::GuideSectionMissing => CheckFeed::GuideTemplate,
             _ => CheckFeed::Content,
         }
     }
@@ -490,6 +506,9 @@ pub struct RefStatic {
     /// The theme checks the default theme fails. Empty for the shipped
     /// default theme.
     pub theme_faults: BTreeSet<RefCheck>,
+    /// The Guide checks the profile's template fails. Empty for the
+    /// shipped template (Daniel, 2026-11-15).
+    pub guide_faults: BTreeSet<RefCheck>,
 }
 
 // ---------------------------------------------------------------------------
@@ -514,16 +533,24 @@ pub enum EditKind {
     Policy,
     /// `SaveFields` touching artefact fields only.
     Artefact,
-    /// `ApplyStart`, which compiles the start into a core `EditPolicy`.
+    /// `ApplyStart`, which compiles the start into a core `EditPolicy`. A
+    /// restart keeps the saved fields (Daniel, 2026-11-15), so it sets or
+    /// clears no field in this vocabulary.
     Start,
-    /// `AcceptNarrative`.
+    /// `AcceptNarrative`, or `EditNarrative` of narrative text the draft
+    /// holds (Daniel, 2026-11-15).
     Narrative,
     /// `Invite`.
     Invitation,
     /// `WithdrawInvitation`.
     InvitationWithdrawal,
     /// An import resolution, which saves fields with import provenance.
+    /// It sets or clears no field in this vocabulary (Daniel, 2026-11-15).
     ImportResolution,
+    /// The removal of an imported document from the draft
+    /// (`BridgeCommand::RemoveImport`, Daniel, 2026-11-15). It lowers the
+    /// count of unresolved import proposals by one.
+    ImportRemoval,
 }
 
 impl EditKind {
@@ -531,6 +558,13 @@ impl EditKind {
     /// guard's `programme_builders` sees its author (D2).
     pub const fn has_core_record(self) -> bool {
         matches!(self, EditKind::Policy | EditKind::Start)
+    }
+
+    /// Whether the edit is a field save, the only kind that sets or clears
+    /// fields (Daniel, 2026-11-15, the I-66 generator gaps). Every other
+    /// kind takes the effect `Neutral` only.
+    pub const fn is_field_save(self) -> bool {
+        matches!(self, EditKind::Policy | EditKind::Artefact)
     }
 }
 
@@ -760,6 +794,16 @@ pub enum RefRefusal {
     NotAWarning,
     /// The edit seeds a check that no edit can seed.
     NotContent,
+    /// The edit seeds or fixes a check although it is no field save. Only
+    /// field saves set or clear fields (Daniel, 2026-11-15).
+    NoFieldEffect,
+    /// The removal of an imported document while no import proposal is
+    /// unresolved, so no document waits to be removed.
+    NoImportToRemove,
+    /// The environment lowers the count of unresolved import proposals.
+    /// Only a draft record removes an imported document (Daniel,
+    /// 2026-11-15), so the environment only adds proposals.
+    FewerImports,
     /// I-67: the approver built the draft.
     ApproverIsBuilder,
     /// ADR-022: the override is for a tenant admin of the builder set
@@ -972,6 +1016,11 @@ pub fn report(stat: &RefStatic, draft: &RefDraft, inputs: &RefInputs) -> RefRepo
             r.insert(*c, RefDetail::None);
         }
     }
+    for c in &stat.guide_faults {
+        if c.feed() == CheckFeed::GuideTemplate {
+            r.insert(*c, RefDetail::None);
+        }
+    }
     r
 }
 
@@ -1114,8 +1163,13 @@ impl RefSystem {
                 }
                 Ok(vec![RefEvent::Opened { by }])
             }
+            // Design D3 (Daniel, 2026-11-15): a grant and the end of a
+            // binding are core commands, which production accepts after
+            // activation too. Only an unopened draft refuses them here.
             RefCommand::Grant { by, to } => {
-                draft_open(d)?;
+                if !d.opened {
+                    return Err(RefRefusal::Opening);
+                }
                 if !s.admins.contains(&by) {
                     return Err(RefRefusal::NotTenantAdmin);
                 }
@@ -1128,7 +1182,9 @@ impl RefSystem {
                 Ok(vec![RefEvent::Granted { by, to }])
             }
             RefCommand::EndBinding { by, of } => {
-                draft_open(d)?;
+                if !d.opened {
+                    return Err(RefRefusal::Opening);
+                }
                 if !s.admins.contains(&by) {
                     return Err(RefRefusal::NotTenantAdmin);
                 }
@@ -1156,10 +1212,16 @@ impl RefSystem {
                 if !invitation {
                     at_head(base)?;
                 }
-                if let RefEdit::Seed(c) | RefEdit::Fix(c) = effect
-                    && c.feed() != CheckFeed::Content
-                {
-                    return Err(RefRefusal::NotContent);
+                if let RefEdit::Seed(c) | RefEdit::Fix(c) = effect {
+                    if !kind.is_field_save() {
+                        return Err(RefRefusal::NoFieldEffect);
+                    }
+                    if c.feed() != CheckFeed::Content {
+                        return Err(RefRefusal::NotContent);
+                    }
+                }
+                if kind == EditKind::ImportRemoval && self.env.unresolved_imports == 0 {
+                    return Err(RefRefusal::NoImportToRemove);
                 }
                 Ok(vec![RefEvent::Edited { by, kind, effect }])
             }
@@ -1251,6 +1313,9 @@ impl RefSystem {
                     override_reason: true,
                 }])
             }
+            RefCommand::SetUnresolvedImports(n) if n < self.env.unresolved_imports => {
+                Err(RefRefusal::FewerImports)
+            }
             RefCommand::SetProbe { .. } | RefCommand::SetUnresolvedImports(_) => Ok(Vec::new()),
         }
     }
@@ -1265,6 +1330,14 @@ impl RefSystem {
                         self.env.probes.insert(probe, outcome);
                     }
                     RefCommand::SetUnresolvedImports(n) => self.env.unresolved_imports = n,
+                    // The removal of an imported document drops its one
+                    // open proposal from the count (Daniel, 2026-11-15).
+                    RefCommand::Edit {
+                        kind: EditKind::ImportRemoval,
+                        ..
+                    } => {
+                        self.env.unresolved_imports = self.env.unresolved_imports.saturating_sub(1);
+                    }
                     _ => {}
                 }
                 for e in events {
@@ -1343,6 +1416,7 @@ pub fn clean_plan() -> DraftPlan {
             cap: RefCap::SUPERSAFE,
             wording_pending: false,
             theme_faults: BTreeSet::new(),
+            guide_faults: BTreeSet::new(),
         },
         managers: vec![M1],
         seeds: BTreeSet::new(),
@@ -1378,6 +1452,9 @@ pub fn seeded_plan(check: RefCheck) -> DraftPlan {
         }
         CheckFeed::BuilderVault => {
             p.stat.vault = p.stat.vault.clone().with(TA, PERSON_TA, false);
+        }
+        CheckFeed::GuideTemplate => {
+            p.stat.guide_faults.insert(check);
         }
         CheckFeed::Theme => {
             p.stat.theme_faults.insert(check);
@@ -1449,8 +1526,53 @@ pub struct SetupRefused {
     pub refusal: RefRefusal,
 }
 
+/// The commands of an attempt's clearance by `builder`: an acknowledgement
+/// of every warning `report` shows, when `acknowledge` holds, then the
+/// activation request.
+pub fn clearance(builder: AccountId, report: &RefReport, acknowledge: bool) -> Vec<RefCommand> {
+    let mut out: Vec<RefCommand> = Vec::new();
+    if acknowledge {
+        out.extend(
+            report
+                .keys()
+                .filter(|c| c.severity() == RefSeverity::Warning)
+                .map(|w| RefCommand::Acknowledge {
+                    by: builder,
+                    warning: *w,
+                    base: Base::Head,
+                }),
+        );
+    }
+    out.push(RefCommand::Request {
+        by: builder,
+        base: Base::Head,
+    });
+    out
+}
+
+/// The removals of imported documents by `builder` that lower the count
+/// of unresolved proposals from `now` to `then`, one document each
+/// (Daniel, 2026-11-15: only a draft record removes an imported
+/// document, and the environment only adds proposals).
+pub fn removals(builder: AccountId, now: u32, then: u32) -> Vec<RefCommand> {
+    (then..now)
+        .map(|_| RefCommand::Edit {
+            by: builder,
+            kind: EditKind::ImportRemoval,
+            effect: RefEdit::Neutral,
+            base: Base::Head,
+        })
+        .collect()
+}
+
 /// Runs `attempt` on the reference: open, grant and seed, acknowledge,
 /// request, switch to the approval environment, approve.
+///
+/// Fewer unresolved import proposals at approval than at the request are
+/// removals of imported documents by the builder. Each is a draft record
+/// that voids the acknowledgements and the request (I-66; Daniel,
+/// 2026-11-15), so the builder acknowledges and requests again before the
+/// approval.
 pub fn run_attempt(attempt: &Attempt) -> Result<AttemptOutcome, SetupRefused> {
     let mut s = RefSystem::open(&attempt.plan)
         .map_err(|(command, refusal)| SetupRefused { command, refusal })?;
@@ -1460,38 +1582,27 @@ pub fn run_attempt(attempt: &Attempt) -> Result<AttemptOutcome, SetupRefused> {
         .first()
         .copied()
         .unwrap_or(attempt.plan.opener);
-    if attempt.acknowledge {
-        let warnings: Vec<RefCheck> = s
-            .report()
-            .keys()
-            .copied()
-            .filter(|c| c.severity() == RefSeverity::Warning)
-            .collect();
-        for w in warnings {
-            let cmd = RefCommand::Acknowledge {
-                by: builder,
-                warning: w,
-                base: Base::Head,
-            };
-            if let StepVerdict::Refused(refusal) = s.apply(&cmd) {
-                return Err(SetupRefused {
-                    command: cmd,
-                    refusal,
-                });
+    let run = |s: &mut RefSystem, script: Vec<RefCommand>| {
+        for command in script {
+            if let StepVerdict::Refused(refusal) = s.apply(&command) {
+                return Err(SetupRefused { command, refusal });
             }
         }
-    }
-    let request = RefCommand::Request {
-        by: builder,
-        base: Base::Head,
+        Ok(())
     };
-    if let StepVerdict::Refused(refusal) = s.apply(&request) {
-        return Err(SetupRefused {
-            command: request,
-            refusal,
-        });
-    }
+    let report = s.report();
+    run(&mut s, clearance(builder, &report, attempt.acknowledge))?;
     let report_at_request = s.report();
+    let fewer = removals(
+        builder,
+        s.env.unresolved_imports,
+        attempt.approval_env.unresolved_imports,
+    );
+    if !fewer.is_empty() {
+        run(&mut s, fewer)?;
+        let report = s.report();
+        run(&mut s, clearance(builder, &report, attempt.acknowledge))?;
+    }
     s.env = attempt.approval_env.clone();
     let report_at_approval = s.report();
     let verdict = s.apply(&RefCommand::Approve {

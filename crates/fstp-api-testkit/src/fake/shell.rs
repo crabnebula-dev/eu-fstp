@@ -110,6 +110,10 @@ pub struct CellEnvironment {
     /// The ports the cell has: a pre-check provider and no score tools
     /// unless a test sets otherwise (I-66, design 3.2).
     ports: PortPresence,
+    /// Whether the funder profile's Guide template lacks a required
+    /// section, as a test seeds `GuideSectionMissing` (I-52, I-66; Daniel,
+    /// 2026-11-15).
+    guide_gap: bool,
     /// Whether the decisions are dry runs, which peek at the probes and
     /// never run them (design 3.2 "Fresh probes").
     dry: bool,
@@ -148,6 +152,7 @@ impl CellEnvironment {
                 precheck: true,
                 score_tools: false,
             },
+            guide_gap: false,
             dry: false,
             texts: None,
             guide_spec: None,
@@ -173,6 +178,7 @@ impl CellEnvironment {
                 precheck: true,
                 score_tools: false,
             },
+            guide_gap: false,
             dry: false,
             texts: None,
             guide_spec: None,
@@ -191,6 +197,15 @@ impl CellEnvironment {
     /// as a test seeds a theme fault (I-66, design 8.4).
     pub fn with_theme(mut self, theme: Theme) -> CellEnvironment {
         self.theme = theme;
+        self
+    }
+
+    /// The same environment over a Guide template that lacks a required
+    /// section, when `gap` holds, as a test seeds `GuideSectionMissing`
+    /// (I-52, I-66; Daniel, 2026-11-15: no command, a seeded template, as
+    /// theme faults are seeded).
+    pub fn with_guide_section_gap(mut self, gap: bool) -> CellEnvironment {
+        self.guide_gap = gap;
         self
     }
 
@@ -354,10 +369,17 @@ impl CellEnvironment {
     /// profiles or the synthetic ones.
     fn profile_of(&self, reference: &FunderProfileRef) -> Option<FunderProfile> {
         let name = profile_name(reference)?;
-        if self.shipped {
-            return fstp_guide::ShippedProfiles.profile(&name).ok();
+        let profile = if self.shipped {
+            fstp_guide::ShippedProfiles.profile(&name).ok()?
+        } else {
+            self.profiles.profile(&name).ok()?
+        };
+        if !self.guide_gap {
+            return Some(profile);
         }
-        self.profiles.profile(&name).ok()
+        crate::profiles::SectionGapProfiles::from_profile(&profile)?
+            .profile(&name)
+            .ok()
     }
 
     /// The tenant's own data protection summary, read from `texts`. A

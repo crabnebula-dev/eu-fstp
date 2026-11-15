@@ -12,8 +12,8 @@
 //!
 //! Reading R1 of the reference, interim pending Daniel: openings, grants,
 //! field saves, starts, narratives, invitations, withdrawals and import
-//! resolutions are edits. The production tests are red until lane W2a
-//! lands the creator.
+//! resolutions are edits, and so are narrative edits and the removal of an
+//! imported document (Daniel, 2026-11-15).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -23,7 +23,7 @@ use fstp_api_testkit::reference::creator::{
 };
 use fstp_prop::{Gen, check, check_machine, prop_assert, prop_assert_eq};
 
-const KINDS: [EditKind; 7] = [
+const KINDS: [EditKind; 8] = [
     EditKind::Policy,
     EditKind::Artefact,
     EditKind::Start,
@@ -31,6 +31,7 @@ const KINDS: [EditKind; 7] = [
     EditKind::Invitation,
     EditKind::InvitationWithdrawal,
     EditKind::ImportResolution,
+    EditKind::ImportRemoval,
 ];
 
 fn step(s: &mut System, cmd: RefCommand) -> Result<StepVerdict, String> {
@@ -47,7 +48,14 @@ fn edit_property(backend: Backend) -> impl Fn(&mut Gen) -> Result<(), String> {
         let kind = *g.pick(&KINDS);
         g.note("warning", &w);
         g.note("edit kind", &kind);
-        let mut s = System::open(backend, &seeded_plan(w))?;
+        // A removal needs an imported document with an open proposal
+        // (Daniel, 2026-11-15), so that plan holds one. The removal clears
+        // the `ImportUnresolved` failure it brings.
+        let mut plan = seeded_plan(w);
+        if kind == EditKind::ImportRemoval {
+            plan.env.unresolved_imports = 1;
+        }
+        let mut s = System::open(backend, &plan)?;
         let ack = RefCommand::Acknowledge {
             by: M1,
             warning: w,
