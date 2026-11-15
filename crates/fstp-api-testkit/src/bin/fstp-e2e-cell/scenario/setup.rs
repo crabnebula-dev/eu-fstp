@@ -455,7 +455,7 @@ mod tests {
         );
         drop(state);
         let line = crate::demo::what_they_can_do(&inner, STAFF_PM);
-        assert!(line.contains("set-up"), "{line}");
+        assert!(line.contains("programme editor"), "{line}");
         // Design doc 11: A2 signs in too, and is outside the builders.
         assert!(
             crate::lock(&inner.auth).email_of(ADMIN_2).is_some(),
