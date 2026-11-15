@@ -7,6 +7,7 @@
 // with the shell's root and the current path, and mounts another
 // feature's page when this returns false.
 
+import { AUDIT_PAGES } from "../audit/pages.js";
 import { createRouter, type Router } from "../core/router.js";
 import { COMMITTEE_PAGES } from "../committee/pages.js";
 import { COORDINATOR_PAGES } from "../coordinator/pages.js";
@@ -20,6 +21,7 @@ export const JUDGING_PAGES: readonly JudgingPage[] = [
   ...REVIEWER_PAGES,
   ...COMMITTEE_PAGES,
   ...IRC_PAGES,
+  ...AUDIT_PAGES,
 ];
 
 let router: Router | null = null;

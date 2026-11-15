@@ -204,11 +204,15 @@ fn programme_ref(p: ProgrammeId) -> ProgrammeRef {
 }
 
 /// Refuses unless `programme` has a creator draft that is not active.
+///
+/// An active programme is a state guard: the transition row, as the
+/// creator refuses a draft command there. I-65 names the actor rule (the
+/// manager binding), so it never refuses a state (T-AUTHZ-MATRIX).
 fn open_draft(state: &EngineState, programme: ProgrammeId) -> Result<(), Refusal> {
     match state.creator.draft(programme) {
         None => Err(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity)),
         Some(d) if d.active().is_some() => {
-            Err(Refusal::new(RuleRef::I65, RefusalReason::WrongState))
+            Err(Refusal::new(RuleRef::Row, RefusalReason::WrongState))
         }
         Some(_) => Ok(()),
     }
@@ -224,8 +228,11 @@ pub fn decide_import_command(
     let (cmd, actor) = match cmd {
         ImportCommand::RegisterDocument(doc) => {
             let programme = programme_of(doc.programme);
-            open_draft(state, programme)?;
+            // The actor before the draft's state, as the resolution and
+            // the creator check it: a denied actor is denied in every
+            // state (T-AUTHZ-MATRIX).
             let account = resolver(state, programme, ctx).map_err(BridgeError::refusal)?;
+            open_draft(state, programme)?;
             (
                 cmd.clone(),
                 ImportActor::Account(AccountRef::from_raw(account.raw())),

@@ -124,6 +124,7 @@ use crate::port::{
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
+mod audit;
 mod creator_ops;
 /// The M5 contract, report and vault ticket operations and the M5 reads
 /// (lane L-API).
@@ -1967,6 +1968,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 .map(ProposalId::from_raw)
                 .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
             unmask::parties(call, p).await?
+        }
+        // R-AU-01, I-24, NOTE 5: the audit reads of a programme.
+        ReadKind::GetAuditLog | ReadKind::GetVaultOutcomes => {
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+            audit::read(call, p, kind == ReadKind::GetAuditLog)?
         }
         ReadKind::ListUnmasks => {
             let p = forms::id_param(&op.request, "programme")

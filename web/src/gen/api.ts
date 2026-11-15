@@ -4027,6 +4027,44 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "audit.entries": {
+    kind: "object",
+    fields: {
+      "programme": { schema: { kind: "id" }, optional: false },
+      "entries": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "seq": { schema: { kind: "id" }, optional: false },
+          "at": { schema: { kind: "id" }, optional: false },
+          "side": { schema: { kind: "enum", values: ["core", "finding", "creator", "import", "onboarding", "contract", "report"] }, optional: false },
+          ["kind"]: { schema: { kind: "string" }, optional: false },
+          "actor": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "actor_role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "applicant", "applicant_team_member", "guardian", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "financial_signatory", "legal_signatory", "auditor", "system", "account"] }, optional: false },
+          "object_type": { schema: { kind: "nullable", inner: { kind: "enum", values: ["proposal", "call", "assignment", "binding", "request", "decision", "programme"] } }, optional: false },
+          "object": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "texts": { schema: { kind: "array", items: { kind: "id" } }, optional: false },
+          "hash": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "audit.vault_outcomes": {
+    kind: "object",
+    fields: {
+      "programme": { schema: { kind: "id" }, optional: false },
+      "outcomes": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "seq": { schema: { kind: "id" }, optional: false },
+          "at": { schema: { kind: "id" }, optional: false },
+          "query": { schema: { kind: "string" }, optional: false },
+          "digest": { schema: { kind: "string" }, optional: false },
+          "holds": { schema: { kind: "bool" }, optional: false },
+          "epoch": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "pending.list": { kind: "array", items: {
     kind: "object",
     fields: {

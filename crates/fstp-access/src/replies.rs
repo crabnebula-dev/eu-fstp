@@ -319,6 +319,53 @@ const PARTY_KINDS: &[&str] = &[
 /// How an unmask names its subject (ADR-023).
 const SUBJECT_TYPES: &[&str] = &["binding", "assignment"];
 
+/// The sides of a ledger entry, as `fstp_engine::EnvelopeKind::member`
+/// spells them.
+const LEDGER_SIDES: &[&str] = &[
+    "core",
+    "finding",
+    "creator",
+    "import",
+    "onboarding",
+    "contract",
+    "report",
+];
+
+/// The role an audit row names for its actor: a role of
+/// [`ROLE_NAMES`], `system` for a record no account made, and `account`
+/// for an account with no role in the programme.
+const ACTOR_ROLES: &[&str] = &[
+    "programme_manager",
+    "call_drafter",
+    "fstp_coordinator",
+    "committee_member",
+    "committee_chair",
+    "irc_member",
+    "applicant",
+    "applicant_team_member",
+    "guardian",
+    "tenant_admin",
+    "finance_approver",
+    "payment_releaser",
+    "contract_signatory",
+    "financial_signatory",
+    "legal_signatory",
+    "auditor",
+    "system",
+    "account",
+];
+
+/// What an audit row acts on, in the order a row picks it.
+const OBJECT_TYPES: &[&str] = &[
+    "proposal",
+    "call",
+    "assignment",
+    "binding",
+    "request",
+    "decision",
+    "programme",
+];
+
 /// The roles an invitation of creator step 9 names, as the wire spells
 /// them: the [`invitable`] roles in the order of [`Role::ALL`]. These are
 /// the Drafting and Judging roles and every Operations role but tenant
@@ -894,6 +941,55 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 m("at", Shape::Id),
             ])),
         )]),
+    ),
+    // R-AU-01, I-24: the ledger entries of a programme, newest first, for
+    // its auditor. Each row names its side, its record kind, the acting
+    // account and that account's role in the programme, the object it
+    // acts on and the ids of the texts it references. ADR-007: a text is
+    // named by its id, never shown. The hash is the SHA-256 of the
+    // entry's stored RFC 8785 text, so a row can be checked against the
+    // ledger (I-24).
+    (
+        "audit.entries",
+        Shape::Object(&[
+            m("programme", Shape::Id),
+            m(
+                "entries",
+                Shape::Array(&Shape::Object(&[
+                    m("seq", Shape::Id),
+                    m("at", Shape::Id),
+                    m("side", Shape::Enum(LEDGER_SIDES)),
+                    m("kind", Shape::String),
+                    m("actor", Shape::Nullable(&Shape::Id)),
+                    m("actor_role", Shape::Enum(ACTOR_ROLES)),
+                    m("object_type", Shape::Nullable(&Shape::Enum(OBJECT_TYPES))),
+                    m("object", Shape::Nullable(&Shape::Id)),
+                    m("texts", Shape::Array(&Shape::Id)),
+                    m("hash", Shape::String),
+                ])),
+            ),
+        ]),
+    ),
+    // `overview.md` NOTE 5, design section 3.6: the vault answers the
+    // decisions of a programme used, as the ledger records them: the
+    // query kind, its digest, the answer bit and the vault epoch. No
+    // query, candidate set or attribute. Web only (I-86).
+    (
+        "audit.vault_outcomes",
+        Shape::Object(&[
+            m("programme", Shape::Id),
+            m(
+                "outcomes",
+                Shape::Array(&Shape::Object(&[
+                    m("seq", Shape::Id),
+                    m("at", Shape::Id),
+                    m("query", Shape::String),
+                    m("digest", Shape::String),
+                    m("holds", Shape::Bool),
+                    m("epoch", Shape::Id),
+                ])),
+            ),
+        ]),
     ),
     // I-85: the caller's own pending actions.
     (

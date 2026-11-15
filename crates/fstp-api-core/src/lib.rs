@@ -29,6 +29,7 @@
 )]
 
 mod action;
+pub mod audit;
 mod content;
 mod creator;
 pub mod decode;

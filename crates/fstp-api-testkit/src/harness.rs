@@ -61,6 +61,7 @@ use fstp_api_core::decode::{Method as ApiMethod, decode_public_page, decode_rout
 use fstp_api_core::meta::Scope;
 use fstp_api_core::port::{AgentClientId, LoginMethod, PendingId, api_core};
 use fstp_api_core::{ApiCore, ApiError, Credential, OpResult, RequestHead};
+use fstp_creator::ValueDigest;
 use fstp_domain::StateTag;
 use fstp_domain::assignment::AssignmentKind;
 use fstp_domain::command::{Actor, Command as Core, Ctx, DeclarationSubject, SystemCause, Via};
@@ -73,6 +74,7 @@ use fstp_domain_testkit::vault::{GroundTruth, IdentityTag};
 use fstp_engine::{Command, Record, record_from_json_at};
 use fstp_json::{Array, Number, Object, ToJson, Value};
 use fstp_ledger::{MemStore, RecordStore};
+use fstp_programme::{FieldId, FieldValue};
 use fstp_rt::future::block_on;
 
 use crate::NotImplemented;
@@ -1193,6 +1195,20 @@ impl WorldEngine {
     /// A copy of the engine state.
     fn state(&self) -> fstp_engine::EngineState {
         lock_engine(&self.inner).engine.state().clone()
+    }
+
+    /// Holds a saved value again after a replay, as the shell does from
+    /// its value store (`fstp_engine` driver, "Held values").
+    fn hold_value(
+        &self,
+        p: ProgrammeId,
+        field: FieldId,
+        digest: ValueDigest,
+        value: FieldValue,
+    ) -> bool {
+        lock_engine(&self.inner)
+            .engine
+            .hold_value(p, field, digest, value)
     }
 
     /// A copy of the ledger.
@@ -2339,6 +2355,9 @@ struct Start {
     warning: Option<String>,
     /// The field of the draft's first template narrative.
     narrative: Option<String>,
+    /// The value of each saved field of P's draft, under the digest of
+    /// its latest save, as the shell's value store holds it.
+    held: Vec<(FieldId, ValueDigest, FieldValue)>,
 }
 
 /// The key of a [`Start`]: whether P is activated, and the policy row.
@@ -2429,6 +2448,7 @@ fn build_start(key: StartKey) -> Result<Start, String> {
     let store = seed.ports.engine.store_copy();
     let texts = crate::fake::FakeTexts::default();
     texts.copy_from(&seed.ports.texts);
+    let held = held_values(&seed.ports.engine.state(), p);
     Ok(Start {
         store,
         texts,
@@ -2440,7 +2460,28 @@ fn build_start(key: StartKey) -> Result<Start, String> {
         drawn: seed.ports.ids.drawn(),
         warning,
         narrative,
+        held,
     })
+}
+
+/// The value of each saved field of the draft of `p` that `state` holds,
+/// under the digest of the field's latest save.
+fn held_values(
+    state: &fstp_engine::EngineState,
+    p: ProgrammeId,
+) -> Vec<(FieldId, ValueDigest, FieldValue)> {
+    let Some(d) = state.creator.draft(p) else {
+        return Vec::new();
+    };
+    d.fields()
+        .iter()
+        .filter_map(|(f, (digest, _))| {
+            state
+                .creator
+                .held(p, *f, *digest)
+                .map(|v| (*f, *digest, v.clone()))
+        })
+        .collect()
 }
 
 /// Builds the world of `key`.
@@ -2498,6 +2539,16 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         let start = start_of((activated, key.policy))?;
         let (ports, core) = fresh_cell(start.store.clone(), &start.admins, start.now)?;
         ports.texts.copy_from(&start.texts);
+        // The engine of the new cell replays the ledger, which keeps only
+        // the digests of saved values. The shell holds each value again
+        // from its value store (`fstp_engine` driver, "Held values"), so
+        // the draft report of P reads what was saved and a request for
+        // activation can clear (design section 8.3, valid inputs).
+        for (field, digest, value) in &start.held {
+            ports
+                .engine
+                .hold_value(start.programme, *field, *digest, value.clone());
+        }
         for _ in 0..start.drawn {
             let _ = fstp_api_core::port::Ids::fresh(&ports.ids);
         }
@@ -5055,3 +5106,9 @@ mod api_gaps_tests;
 /// `roles.list`, `roles.reinstate` and the `pending.*` input refusal.
 #[cfg(test)]
 mod ops_roles_agents_tests;
+
+/// The audit reads of a programme on the matrix worlds (R-AU-01, I-24,
+/// ADR-007, ADR-022, ADR-023).
+#[cfg(test)]
+#[path = "harness_audit.rs"]
+mod audit_tests;

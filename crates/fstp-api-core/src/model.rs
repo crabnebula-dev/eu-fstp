@@ -156,6 +156,9 @@ pub enum ReadModel {
     Mailbox(crate::mailbox::MailboxView),
     /// `identity.parties` and `audit.unmasks` (ADR-023, I-17): ids only.
     Unmask(crate::unmask::UnmaskModel),
+    /// `audit.entries` and `audit.vault_outcomes` (R-AU-01, I-24,
+    /// ADR-007): ids, kinds and digests only.
+    Audit(crate::audit::AuditModel),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -301,6 +304,7 @@ impl ToJson for ReadModel {
             ReadModel::FindingsStatus(rows) => array(rows),
             ReadModel::Mailbox(v) => v.to_json(),
             ReadModel::Unmask(v) => v.to_json(),
+            ReadModel::Audit(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1752,6 +1756,10 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Mailbox(_) => &["me.mailbox"],
             ReadModel::Unmask(crate::unmask::UnmaskModel::Parties(_)) => &["identity.parties"],
             ReadModel::Unmask(crate::unmask::UnmaskModel::Log(_)) => &["audit.unmasks"],
+            ReadModel::Audit(crate::audit::AuditModel::Entries(_)) => &["audit.entries"],
+            ReadModel::Audit(crate::audit::AuditModel::VaultOutcomes(_)) => {
+                &["audit.vault_outcomes"]
+            }
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
@@ -2268,6 +2276,7 @@ pub(crate) mod reply_shape_tests {
         .into_iter()
         .chain(crate::grant::samples().into_iter().map(ReadModel::Grant))
         .chain(crate::unmask::samples().into_iter().map(ReadModel::Unmask))
+        .chain(crate::audit::samples().into_iter().map(ReadModel::Audit))
         .chain([
             ReadModel::Created(vec![("request", 7)]),
             ReadModel::Created(vec![("amendment", 7)]),
@@ -2346,7 +2355,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 49;
+    const VARIANTS: usize = 50;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2402,6 +2411,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyAgents(_) => 46,
             ReadModel::AgentActivity(_) => 47,
             ReadModel::Bindings(_) => 48,
+            ReadModel::Audit(_) => 49,
         }
     }
 

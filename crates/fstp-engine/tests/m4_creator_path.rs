@@ -456,6 +456,34 @@ fn r_pg_03_i66_i67_creator_path_activates_through_the_engine() {
     assert_eq!(&replay(&all).unwrap(), e.state());
 }
 
+/// I-65, T-AUTHZ-MATRIX: once the programme is active, an upload and a
+/// resolution by its programme manager are refused by the state guard,
+/// the transition row, never by I-65. I-65 names the actor rule (the
+/// manager binding), and the manager holds it. The creator refuses a
+/// draft command on an active programme the same way.
+#[test]
+fn i65_import_on_an_active_programme_is_a_state_guard() {
+    let mut e = requested(Vault::default());
+    approve(&mut e, TB, 7).unwrap_or_else(|r| panic!("the clean approval is refused: {r:?}"));
+    assert_eq!(status(&e), Some(ProgrammeStatus::Active));
+    let before = e.head();
+    let upload = e.execute(
+        Command::Import(ImportCommand::RegisterDocument(document())),
+        by(M1, 8),
+    );
+    assert_eq!(upload, refused(RuleRef::Row, RefusalReason::WrongState));
+    let resolution = resolve(&mut e, ClientResolution::Dismiss, 9);
+    assert_eq!(resolution, refused(RuleRef::Row, RefusalReason::WrongState));
+    // The actor before the state: a tenant admin, who holds no manager
+    // binding, is refused by I-65 in every state.
+    let admin = e.execute(
+        Command::Import(ImportCommand::RegisterDocument(document())),
+        by(TB, 10),
+    );
+    assert_eq!(admin, refused(RuleRef::I65, RefusalReason::BindingInactive));
+    assert_eq!(e.head(), before);
+}
+
 /// I-67 (Q2, T-SOD-SYBIL): through the engine, TB, who shares a verified
 /// identity with M1, a builder, is refused with I-67 and appends nothing.
 #[test]
