@@ -34,6 +34,7 @@ mod content;
 mod creator;
 pub mod decode;
 mod dispatch;
+pub mod display_name;
 pub mod erasure;
 mod forms;
 pub mod grant;

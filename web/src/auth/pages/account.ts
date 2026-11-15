@@ -66,6 +66,20 @@ export function nameBody(text: string): { display_name: string | null } | null {
   return { display_name: v };
 }
 
+/**
+ * The rule a display name another account of the organisation holds is
+ * refused under (SA-11 amendment, `fstp_api_core::display_name::TAKEN_RULE`).
+ */
+export const NAME_TAKEN_RULE = 'SA-11-unique';
+
+/**
+ * Whether `r` refuses a display name because another account of the
+ * organisation holds it (SA-11 amendment). The refusal names no account.
+ */
+export function nameTaken(r: Reply): boolean {
+  return !ok(r) && record(r.body)?.['rule'] === NAME_TAKEN_RULE;
+}
+
 /** The own display name of a `me.display_name` reply, null for none, undefined for another shape. */
 function nameOf(body: unknown): string | null | undefined {
   const o = record(body);
@@ -319,10 +333,20 @@ export function mount(): void {
     show(
       (async () => {
         const r = await post(DISPLAY_NAME, body);
+        if (nameTaken(r)) {
+          // SA-11 amendment: the name is in use. The field keeps the
+          // text so the person can change it.
+          alert.textContent = t('account.name.taken');
+          nameInput.setAttribute('aria-invalid', 'true');
+          nameInput.focus();
+          return;
+        }
         if (!ok(r)) throw failed(r);
         await loadName();
+        status.textContent =
+          body.display_name === null ? t('account.name.cleared') : t('account.name.saved');
+        status.focus();
       })(),
-      body.display_name === null ? t('account.name.cleared') : t('account.name.saved'),
     );
   };
   nameForm.addEventListener('submit', (e) => {

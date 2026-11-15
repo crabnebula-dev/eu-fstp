@@ -299,3 +299,18 @@ Daniel: "Display names should be unique."
 - Setting a name that another account of the tenant holds is refused with "This name is already used in your organisation". Setting your own current name again is not a conflict.
 - Names are stored sealed (ADR-007), so uniqueness uses a keyed fingerprint of the normalised name, made through `fstp-crypto`, kept per tenant and erased with the name. The check and the write are one atomic step, so two accounts cannot take the same name at once.
 - **Normalisation, Daniel 2026-11-15 (night):** "Simpler comparison". No workspace code does NFC or full case folding (also open in `fstp-import` text and `fstp-assess` extraction). Names are compared after trimming, collapsing inner white space to one space, and `to_lowercase`, with no NFC. Two names that differ only in how an accent is encoded may both be accepted. This replaces the NFC and case-folding sentence above.
+
+#### Built by lane m4/unique-names
+
+- Normalisation: `fstp_api_core::display_name::normalised`. It trims, collapses each run of Unicode white space to one space, then applies `to_lowercase`. It does no NFC and no full case folding. A test records that "José" with U+00E9 and "José" with `e` and U+0301 may both be set, and that "Straße" and "STRASSE" stay apart.
+- Fingerprint: HMAC-SHA256 of the normalised name, through `fstp-crypto` (`display_name::fingerprint`). Its key comes from the cell's App chain `Lookup` key through HKDF-SHA256 with the label `fstp display name fingerprint v1` (`display_name::fingerprint_key`). This follows the delivery body digest key (ADR-004 "Chains"). A cell holds one tenant, so the key and the index are per tenant, and equal names in two tenants give different fingerprints (I-20).
+- Port: `TextStore::set_display_name` returns `DisplayNameSet::Set` or `DisplayNameSet::Taken`. The store keeps the fingerprint beside the sealed name. The check and the write are one atomic step. A replace, a clear and an account erasure erase the fingerprint with the name. The own current name again, in any case or spacing, is `Set`.
+- Refusal: a taken name is refused with code `refused` and rule `SA-11-unique` (`display_name::TAKEN_RULE`). The reply holds the code and the rule only, so it never names the account that holds the name. The account page shows "This name is already used in your organisation." in its display name section and marks the field invalid.
+- Only the fake text store of `fstp-api-testkit` implements the text store port today. It draws its `Lookup` key at the first display name, as the cell's login email index does. The cell's real text store must keep the same index in its keystore. When an erasure replaces `Lookup`, that store recomputes every live fingerprint from its sealed name (ADR-004).
+- No fuzz target was added. The normaliser parses nothing: it only splits on white space and lowers case.
+
+Readings, pending Daniel:
+
+- The refusal rule id `SA-11-unique` is a new rule name, not a SPEC id. The authorisation matrix never meets it, since each matrix cell runs on a fresh world.
+- The stored name keeps its own spacing and case. Only the comparison uses the normalised form, so an account may change "anna berg" to "Anna Berg".
+- An erasure that removes a display name does not yet replace `Lookup` in the fake. The real store follows the ADR-004 rule for keyed digests.

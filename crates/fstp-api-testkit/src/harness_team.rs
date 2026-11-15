@@ -166,6 +166,83 @@ fn sa11_adr007_display_name_is_an_account_text_erased_with_the_account() {
     }
 }
 
+/// The refusal of a taken display name, exactly: the rule and nothing
+/// else, so it never names the account that holds the name (SA-11
+/// amendment, R-CF-03 style).
+const TAKEN: &str = "/me/display-name: {\"code\":\"refused\",\"rule\":\"SA-11-unique\"}";
+
+/// SA-11 amendment: a display name is unique within the organisation. A
+/// name another account holds is refused, also in another case or
+/// spacing, under `SA-11-unique`, naming nobody. The own name again is
+/// no conflict.
+#[test]
+fn sa11_unique_taken_name_is_refused_and_own_name_again_is_set() {
+    let w = world(StateTag::Stage1);
+    let mut seed = seeder(&w);
+    set_name(&mut seed, PM, s("Synthetic Anna Berg")).unwrap();
+    for other in [
+        "Synthetic Anna Berg",
+        "synthetic anna berg",
+        "  SYNTHETIC  Anna   berg ",
+    ] {
+        assert_eq!(
+            set_name(&mut seed, MEMBER, s(other)),
+            Err(TAKEN.to_owned()),
+            "SA-11 amendment: {other:?}"
+        );
+    }
+    assert_eq!(own_name(&mut seed, MEMBER), Value::Null);
+    assert_eq!(own_name(&mut seed, PM), s("Synthetic Anna Berg"));
+    set_name(&mut seed, PM, s("Synthetic Anna Berg")).unwrap();
+    set_name(&mut seed, PM, s("synthetic ANNA berg")).unwrap();
+    assert_eq!(own_name(&mut seed, PM), s("synthetic ANNA berg"));
+    set_name(&mut seed, MEMBER, s("Synthetic Anna Bergh")).unwrap();
+}
+
+/// SA-11 amendment, ADR-007: a replace, a clear and an account erasure
+/// each erase the fingerprint with the name, so another account may then
+/// take it.
+#[test]
+fn sa11_unique_replace_clear_and_account_erasure_free_the_name() {
+    let w = world(StateTag::Stage1);
+    let mut seed = seeder(&w);
+    set_name(&mut seed, PM, s("Synthetic First")).unwrap();
+    set_name(&mut seed, PM, s("Synthetic Second")).unwrap();
+    set_name(&mut seed, MEMBER, s("synthetic first")).unwrap();
+    assert_eq!(
+        set_name(&mut seed, MEMBER, s("Synthetic Second")),
+        Err(TAKEN.to_owned())
+    );
+    set_name(&mut seed, PM, Value::Null).unwrap();
+    set_name(&mut seed, MEMBER, s("Synthetic Second")).unwrap();
+    assert_eq!(
+        set_name(&mut seed, PM, s("SYNTHETIC SECOND")),
+        Err(TAKEN.to_owned())
+    );
+    seed.ports
+        .texts
+        .erase_account(MEMBER, Timestamp::from_micros(seed.now));
+    assert!(seed.ports.texts.display_fingerprint(MEMBER).is_none());
+    set_name(&mut seed, PM, s("SYNTHETIC SECOND")).unwrap();
+    assert_eq!(seed.ports.texts.fingerprint_count(), 1);
+}
+
+/// SA-11 amendment, I-20: names are never compared across tenants. Two
+/// tenant cells each give the same name to an account, and the stored
+/// fingerprints differ, so none links the two accounts.
+#[test]
+fn sa11_unique_i20_two_tenants_may_use_the_same_name() {
+    let one = world(StateTag::Stage1);
+    let two = world(StateTag::Stage1);
+    let mut a = seeder(&one);
+    let mut b = seeder(&two);
+    set_name(&mut a, PM, s("Synthetic Shared Name")).unwrap();
+    set_name(&mut b, MEMBER, s("Synthetic Shared Name")).unwrap();
+    let fa = a.ports.texts.display_fingerprint(PM).expect("one");
+    let fb = b.ports.texts.display_fingerprint(MEMBER).expect("two");
+    assert_ne!(fa, fb, "I-20: one fingerprint links two tenants");
+}
+
 /// SA-11: the team page lists every staff role of P with its display
 /// name and its login email, and no Receiving binding. A tenant admin may
 /// grant, end and reinstate. The manager may not.
