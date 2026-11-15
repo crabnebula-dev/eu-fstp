@@ -22,15 +22,17 @@ const HE = {
     outputs: ["call_publication_record", "open_call_package", "periodic_reporting_data", "audit_file", "deliverable_draft"],
     visibility_elements: ["acknowledgement", "emblem"],
   },
+  // 2026-01-01 to 2027-06-30, report due by 2027-08-31 (UTC microseconds).
+  reporting_periods: [{ period: "1", start: "1767225600000000", end: "1814400000000000", deadline: "1819756800000000" }],
 };
 
 /** R-RP-01: the generated validator and the decoder accept the cell's reply, and refuse other shapes. */
 test("r_rp_01_funder_profile_view_validates_and_decodes", () => {
   const check = VALIDATORS["programme.funder_profile.view"];
   assert(check?.(HE) === true, "the generated validator accepts the view");
-  assert(check?.({ programme: "1", profile: null }) === true, "and the view of no pinned profile");
+  assert(check?.({ programme: "1", profile: null, reporting_periods: [] }) === true, "and the view of no pinned profile");
   eq(decodeFunderProfile(HE)?.profile?.visibility, ["acknowledgement", "emblem"], "the keys");
-  eq(decodeFunderProfile({ programme: "1", profile: null })?.profile, null, "no profile");
+  eq(decodeFunderProfile({ programme: "1", profile: null, reporting_periods: [] })?.profile, null, "no profile");
   assert(decodeFunderProfile({ ...HE, profile: { ...HE.profile, outputs: ["portal_upload"] } }) === null, "an unknown output is refused");
   assert(decodeFunderProfile({ ...HE, profile: { ...HE.profile, digest: "AB" } }) === null, "a malformed digest is refused");
 });
@@ -77,7 +79,7 @@ test("r_rp_01_reports_page_shows_the_pinned_funder_profile", async () => {
 /** R-RP-01: a programme with no shipped profile says so, and a refused read leaves one line. */
 test("r_rp_01_reports_page_says_when_no_profile_is_pinned", async () => {
   prepare("/app/programmes/1/reports");
-  await mountPostGrant(env({ "GET /programmes/1/reports": [], "GET /programmes/1/funder-profile": { programme: "1", profile: null } }), "/app/programmes/1/reports");
+  await mountPostGrant(env({ "GET /programmes/1/reports": [], "GET /programmes/1/funder-profile": { programme: "1", profile: null, reporting_periods: [] } }), "/app/programmes/1/reports");
   await settle();
   assert(fakeDocument.getElementById("ops-profile-none") !== null, "the no-profile line");
   prepare("/app/programmes/1/reports");
@@ -119,4 +121,18 @@ test("r_rp_01_home_links_programme_staff_to_the_funder_profile", () => {
   assert(admin !== null, "the admin roles decode");
   const adminHrefs = workOf(admin, [], (c) => c, (p) => p, ["2"]).items.map((i) => i.href);
   assert(adminHrefs.includes("/app/programmes/2/funder-profile"), adminHrefs.join(" "));
+});
+
+/** P-57 (Daniel, 2026-11-15 late): the panel lists each reporting period with its last day and report deadline, and the decoder refuses a malformed period. */
+test("r_rp_01_p57_profile_panel_lists_the_reporting_periods", async () => {
+  eq(decodeFunderProfile(HE)?.periods.length, 1, "one period");
+  assert(decodeFunderProfile({ ...HE, reporting_periods: [{ period: "1", start: "-1", end: "1", deadline: "1" }] }) === null, "a negative instant is refused");
+  assert(decodeFunderProfile({ ...HE, reporting_periods: [{ period: "1", start: "1", end: "1", deadline: "1", extra: "1" }] }) === null, "an extra member is refused");
+  assert(decodeFunderProfile({ programme: "1", profile: null }) === null, "the periods are required");
+  prepare("/app/programmes/1/funder-profile");
+  await mountPostGrant(env({ "GET /programmes/1/funder-profile": HE }), "/app/programmes/1/funder-profile");
+  await settle();
+  const text = fakeDocument.body.textContent ?? "";
+  assert(text.includes("2027-06-30") && text.includes("2027-08-31"), text.slice(0, 900));
+  assert(fakeDocument.getElementById("ops-profile-periods") !== null, "the periods table");
 });

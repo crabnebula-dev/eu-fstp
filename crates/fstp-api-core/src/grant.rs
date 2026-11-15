@@ -58,8 +58,13 @@ pub enum GrantModel {
     /// `grant.publicity.view` (M9 lane P1, R-PB-02, I-43).
     Publicity(Box<crate::publicity::PublicityView>),
     /// `programme.funder_profile.view` (M9 finish, R-RP-01): the profile
-    /// the programme pins through P-53, if it names a shipped one.
-    FunderProfile(ProgrammeId, Option<FunderProfileView>),
+    /// the programme pins through P-53, if it names a shipped one, and
+    /// the reporting periods of its P-57 (Daniel, 2026-11-15 late).
+    FunderProfile(
+        ProgrammeId,
+        Option<FunderProfileView>,
+        Vec<fstp_domain::reporting::ReportingPeriod>,
+    ),
 }
 
 impl ToJson for GrantModel {
@@ -75,7 +80,7 @@ impl ToJson for GrantModel {
             GrantModel::Determination(v) => v.to_json(),
             GrantModel::LineReview(v) => v.to_json(),
             GrantModel::Publicity(v) => v.to_json(),
-            GrantModel::FunderProfile(p, view) => {
+            GrantModel::FunderProfile(p, view, periods) => {
                 let mut o = Object::new();
                 let _ = o.insert("programme", dec(p.raw()));
                 let _ = o.insert(
@@ -83,6 +88,19 @@ impl ToJson for GrantModel {
                     view.as_ref()
                         .map_or(Value::Null, FunderProfileView::to_json),
                 );
+                // P-57: each period by number, with its first instant, the
+                // instant after its last day and the instant after its
+                // report deadline, in UTC microseconds.
+                let mut list = Array::new();
+                for r in periods {
+                    let mut po = Object::new();
+                    let _ = po.insert("period", dec(u128::from(r.index)));
+                    let _ = po.insert("start", Value::String(r.start.micros().to_string()));
+                    let _ = po.insert("end", Value::String(r.end.micros().to_string()));
+                    let _ = po.insert("deadline", Value::String(r.deadline.micros().to_string()));
+                    list.push(Value::Object(po));
+                }
+                let _ = o.insert("reporting_periods", Value::Array(list));
                 Value::Object(o)
             }
             GrantModel::ReportProgrammes(ps) => {
@@ -476,7 +494,7 @@ pub(crate) fn samples() -> Vec<GrantModel> {
         GrantModel::Grants(Vec::new()),
         GrantModel::ReportProgrammes(vec![ProgrammeId::from_raw(1), ProgrammeId::from_raw(2)]),
         GrantModel::ReportProgrammes(Vec::new()),
-        GrantModel::FunderProfile(ProgrammeId::from_raw(1), None),
+        GrantModel::FunderProfile(ProgrammeId::from_raw(1), None, Vec::new()),
         GrantModel::FunderProfile(
             ProgrammeId::from_raw(1),
             Some(FunderProfileView {
@@ -486,6 +504,12 @@ pub(crate) fn samples() -> Vec<GrantModel> {
                 outputs: vec!["call_publication_record", "audit_file"],
                 visibility_elements: vec!["acknowledgement".to_owned()],
             }),
+            vec![fstp_domain::reporting::ReportingPeriod {
+                index: 1,
+                start: fstp_domain::time::Timestamp::from_micros(0),
+                end: fstp_domain::time::Timestamp::from_micros(86_400_000_000),
+                deadline: fstp_domain::time::Timestamp::from_micros(172_800_000_000),
+            }],
         ),
         GrantModel::ToSign(vec![SignRow {
             proposal: ProposalId::from_raw(3),

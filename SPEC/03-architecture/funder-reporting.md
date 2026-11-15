@@ -28,7 +28,7 @@ NOTE: Field lists and formats depend on current portal forms and the SuperSAFE g
 ## Horizon Europe rules applied by the profile
 
 - Periodic reporting data reports FSTP as amounts actually paid within each reporting period, kept separate from the indirect cost base. Committed amounts are shown as context, never as costs.
-- Reporting period ends and report deadlines from the Data Sheet become timeline events with reminders.
+- Reporting period ends and report deadlines from the Data Sheet become timeline events with reminders. P-57 holds them (decided 2026-11-15).
 - The open call package fails generation unless it contains the five elements in I-48.
 - The data protection notice in the package and at negotiation tells applicants that recipient data reaches the granting authority, and references the Portal Privacy Statement.
 - Retention under P-41 starts when an Operations role records the date of the action's final payment. Until then, everything is retained.

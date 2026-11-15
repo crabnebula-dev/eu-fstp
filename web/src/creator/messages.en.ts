@@ -397,7 +397,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.check.P04MaxAboveP05": "The largest grant (P-04) is above the per-recipient cap (P-05).",
   "creator.check.P39AboveP03": "More reviewer organisations are required (P-39) than reviewers per proposal (P-03).",
   "creator.check.FieldUnset": "A value is missing.",
-  "creator.check.ActionDatesInconsistent": "The action starts after it ends (P-57).",
+  "creator.check.ActionDatesInconsistent": "The action dates or reporting periods do not hold together (P-57): the action starts after it ends, a period ends outside the action or not after the previous one, or a report deadline comes before its period ends.",
   "creator.check.CallPackageIncomplete": "The call package is incomplete (I-48).",
   "creator.check.GuideSectionMissing": "A required section of the Guide for Applicants is missing (I-52).",
   "creator.check.GuideBindingUnresolved": "The Guide for Applicants names a value the draft does not hold (I-51).",

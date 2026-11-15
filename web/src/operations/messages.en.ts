@@ -54,10 +54,9 @@ export const OPERATIONS_LABELS: Readonly<Record<string, string>> = {
   "ops.reports.generate.heading": "Generate a report",
   "ops.reports.generate.kind": "Report",
   "ops.reports.generate.call": "Call number (for call reports)",
-  "ops.reports.generate.start": "Period start (periodic data)",
-  "ops.reports.generate.end": "Period end (periodic data)",
+  "ops.reports.generate.period": "Reporting period number (periodic data, P-57)",
   "ops.reports.generate.submit": "Generate the report",
-  "ops.reports.generate.err": "Write the call number as digits, or choose both period dates.",
+  "ops.reports.generate.err": "Write the call number, or the reporting period number, as digits.",
   "ops.reports.generate.done": "The report is generated. It stays a draft until another person approves it.",
   "ops.reports.failure.heading": "Generation failed",
   "ops.reports.failure.body":
@@ -74,4 +73,9 @@ export const OPERATIONS_LABELS: Readonly<Record<string, string>> = {
   "ops.profile.title": "Funder profile of programme {id}",
   "ops.profile.read_only": "This page is read-only. The programme pins its funder profile through P-53.",
   "ops.profile.home": "Back to your work",
+  "ops.profile.periods": "Reporting periods (P-57)",
+  "ops.profile.periods_none": "The programme names no reporting periods yet (P-57), so no periodic data can be generated.",
+  "ops.profile.period": "Period",
+  "ops.profile.period_end": "Last day",
+  "ops.profile.period_deadline": "Report deadline",
 };

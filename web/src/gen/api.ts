@@ -3936,6 +3936,15 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "visibility_elements": { schema: { kind: "array", items: { kind: "string" } }, optional: false },
         },
       } }, optional: false },
+      "reporting_periods": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "period": { schema: { kind: "id" }, optional: false },
+          "start": { schema: { kind: "id" }, optional: false },
+          "end": { schema: { kind: "id" }, optional: false },
+          "deadline": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
     },
   },
   "payment.submit": {
@@ -4589,7 +4598,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         kind: "object",
         fields: {
           "id": { schema: { kind: "string" }, optional: false },
-          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted", "admin.retention_ended"] }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted", "admin.retention_ended", "report.period_ended"] }, optional: false },
           "action": { schema: { kind: "bool" }, optional: false },
           "href": { schema: { kind: "string" }, optional: false },
           "read": { schema: { kind: "bool" }, optional: true },
@@ -4804,7 +4813,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     kind: "object",
     fields: {
       "event": { schema: { kind: "string" }, optional: false },
-      ["kind"]: { schema: { kind: "enum", values: ["immediate", "stage2_expiry", "re_enter", "start_execution", "complete", "milestone_reminder", "milestone_overdue", "corrigendum", "notice_issued", "copy_requested", "retention_end"] }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["immediate", "stage2_expiry", "re_enter", "start_execution", "complete", "milestone_reminder", "milestone_overdue", "corrigendum", "notice_issued", "copy_requested", "retention_end", "reporting_period_end", "report_deadline"] }, optional: false },
       "due": { schema: { kind: "id" }, optional: false },
       "status": { schema: { kind: "enum", values: ["scheduled", "cancelled", "fired"] }, optional: false },
     },

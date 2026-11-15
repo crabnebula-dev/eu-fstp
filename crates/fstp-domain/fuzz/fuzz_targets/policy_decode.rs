@@ -22,6 +22,17 @@ use libfuzzer_sys::fuzz_target;
 use common::{Outcome, codec_for, oracle};
 
 fuzz_target!(|data: &[u8]| {
+    // P-57 (lane m9/answers): the reporting periods of an opaque P-57
+    // text. Refused or ordered, never a panic.
+    if let Ok(text) = core::str::from_utf8(data)
+        && let Some(a) = fstp_domain::reporting::periods_of(text)
+    {
+        assert!(
+            a.periods
+                .windows(2)
+                .all(|w| matches!(w, [x, y] if x.end == y.start && x.end < y.end))
+        );
+    }
     let codec = codec_for!(PolicyVersion);
     if let Outcome::Accepted(p) = oracle(&codec, data) {
         let _ = format!("{p:?}");

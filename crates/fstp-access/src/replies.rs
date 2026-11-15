@@ -195,6 +195,9 @@ pub const MAILBOX_KINDS: &[&str] = &[
     "role.granted",
     // P-41 (Daniel, 2026-11-15 late): a grant's funder retention ended.
     "admin.retention_ended",
+    // P-57 (Daniel, 2026-11-15 late): a reporting period ended and its
+    // report is due.
+    "report.period_ended",
 ];
 
 /// The erasure causes of ADR-007, as the wire names them (lane
@@ -852,6 +855,18 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("digest", Shape::String),
                     m("outputs", Shape::Array(&Shape::Enum(REPORT_KINDS))),
                     m("visibility_elements", Shape::Array(&Shape::String)),
+                ])),
+            ),
+            // P-57 (Daniel, 2026-11-15 late): the reporting periods, each
+            // by number with its first instant, the instant after its last
+            // day and the instant after its report deadline.
+            m(
+                "reporting_periods",
+                Shape::Array(&Shape::Object(&[
+                    m("period", Shape::Id),
+                    m("start", Shape::Id),
+                    m("end", Shape::Id),
+                    m("deadline", Shape::Id),
                 ])),
             ),
         ]),
@@ -1602,6 +1617,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     "notice_issued",
                     "copy_requested",
                     "retention_end",
+                    "reporting_period_end",
+                    "report_deadline",
                 ]),
             ),
             m("due", Shape::Id),

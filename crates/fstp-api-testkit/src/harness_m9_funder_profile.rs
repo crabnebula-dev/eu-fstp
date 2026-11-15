@@ -136,3 +136,43 @@ fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_programme_staff() {
         assert!(e.contains("R-AC-01"), "{who:?}: {e}");
     }
 }
+
+/// P-57 (Daniel, 2026-11-15 late): the view lists the reporting periods of
+/// the programme's P-57, and the periodic data names one by its number. A
+/// number P-57 does not hold is refused under P-57, and a malformed one
+/// as a bad request.
+#[test]
+fn p57_profile_view_lists_periods_and_generation_names_one() {
+    let w = world();
+    let p = w.targets.programme.expect("P").raw().to_string();
+    let mut seed = seeder(w);
+    let v = seed
+        .api(
+            PM,
+            GET,
+            &format!("/programmes/{p}/funder-profile"),
+            &Value::Null,
+        )
+        .unwrap();
+    let periods = v
+        .as_object()
+        .and_then(|o| o.get("reporting_periods"))
+        .and_then(Value::as_array)
+        .map(|a| a.len());
+    assert_eq!(periods, Some(2), "the SuperSAFE fixture names two periods");
+    let path = format!("/programmes/{p}/reports");
+    let body = |n: &str| {
+        obj(vec![
+            ("kind", Value::from("periodic_reporting_data")),
+            ("period", Value::from(n)),
+        ])
+    };
+    let e = seed
+        .api(PM, ApiMethod::Post, &path, &body("3"))
+        .expect_err("no period 3");
+    assert!(e.contains("P-57"), "{e}");
+    let e = seed
+        .api(PM, ApiMethod::Post, &path, &body("01"))
+        .expect_err("not canonical");
+    assert!(!e.contains("P-57"), "{e}");
+}

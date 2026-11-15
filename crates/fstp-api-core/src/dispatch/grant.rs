@@ -509,7 +509,12 @@ pub(super) async fn funder_profile<P: Seams>(
                 .collect(),
         }
     });
-    call.accept(ReadModel::Grant(GrantModel::FunderProfile(programme, view)))
+    // P-57 (Daniel, 2026-11-15 late): the reporting periods the periodic
+    // data is generated for.
+    let periods = fstp_domain::reporting::reporting_periods(&call.state.core, programme);
+    call.accept(ReadModel::Grant(GrantModel::FunderProfile(
+        programme, view, periods,
+    )))
 }
 
 /// `report.programmes` (lane m5/report-programmes, R-RP-03): the
@@ -1080,15 +1085,6 @@ fn snapshot<P: Seams>(call: &Call<'_, P>) -> Result<fstp_report::Snapshot, ApiEr
     fstp_report::Snapshot::new(core).map_err(|_| ApiError::refused(ErrorCode::Refused, "R-RP-01"))
 }
 
-fn instant(op: &Op, name: &str) -> Result<Timestamp, ApiError> {
-    op.request
-        .get(name)
-        .and_then(Value::as_str)
-        .and_then(|s| s.parse::<i64>().ok())
-        .map(Timestamp::from_micros)
-        .ok_or_else(bad)
-}
-
 /// `report.generate` (R-RP-04, I-44): one output of the funder profile
 /// version P-53 pins for the call or programme, from a snapshot of the
 /// core ledger. A P-53 value that names no shipped profile refuses with
@@ -1140,10 +1136,22 @@ async fn generate<P: Seams>(
         fstp_report::ReportKind::DeliverableDraft => {
             fstp_report::Request::DeliverableDraft { call: call_id()? }
         }
+        // P-57 (Daniel, 2026-11-15 late): the request names a reporting
+        // period of the programme's P-57 by its number. A number P-57
+        // does not hold is refused under P-57.
         fstp_report::ReportKind::PeriodicReportingData => {
+            let n = str_member(op, "period")
+                .ok()
+                .and_then(forms::canonical_id)
+                .and_then(|n| u16::try_from(n).ok())
+                .ok_or_else(bad)?;
+            let p = fstp_domain::reporting::reporting_periods(&call.state.core, programme)
+                .into_iter()
+                .find(|r| r.index == n)
+                .ok_or_else(|| ApiError::refused(ErrorCode::Refused, "P-57"))?;
             periods = [fstp_report::Period {
-                start: instant(op, "start")?,
-                end: instant(op, "end")?,
+                start: p.start,
+                end: p.end,
             }];
             fstp_report::Request::PeriodicReportingData {
                 programme,

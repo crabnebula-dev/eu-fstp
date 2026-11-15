@@ -73,6 +73,9 @@ pub mod publicity;
 // ADR-023: the FSTP coordinator unmasks a party of their programme (I-17).
 pub mod unmask;
 
+// Lane m9/answers: the reporting periods of a programme (P-57).
+pub mod reporting;
+
 // Lane m5/retention: the end of the funder retention period (P-41).
 pub mod retention;
 

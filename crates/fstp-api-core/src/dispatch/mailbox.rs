@@ -35,6 +35,7 @@ pub(super) fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> MailboxV
     staff(call, account, &mut out);
     approvals(call, account, &mut out);
     retention(call, &mut out);
+    report_periods(call, account, &mut out);
     contracts(call, account, &mut out);
     payments(call, account, &mut out);
     notices(call, account, &mut out);
@@ -61,6 +62,9 @@ fn target(m: &MailItem) -> ReadTarget {
         | MailKind::NegotiationAcknowledge
         | MailKind::ContractSign => r.proposal.map_or(ReadTarget::None, |p| {
             ReadTarget::Proposal(ProposalId::from_raw(p))
+        }),
+        MailKind::ReportPeriodEnded => r.programme.map_or(ReadTarget::None, |p| {
+            ReadTarget::Programme(ProgrammeId::from_raw(p))
         }),
         _ => ReadTarget::None,
     }
@@ -332,6 +336,40 @@ fn approvals<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<Mai
                 ..refs()
             },
         ));
+    }
+}
+
+/// P-57 (`funder-reporting.md`, Daniel, 2026-11-15 late): each reporting
+/// period of a programme the caller manages that has ended and whose
+/// report deadline has not passed, as a notice that links to the funder
+/// reports page. It names the programme, the period end as `since` and
+/// the deadline as `due` (I-27). It appears the instant the timeline's
+/// `REPORTING_PERIOD_END` event falls due, and goes once the
+/// `REPORT_DEADLINE` event does.
+fn report_periods<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailItem>) {
+    let managed = programmes_of(call, account, &[Role::ProgrammeManager]);
+    // One notice per programme: the latest period in its window, so the
+    // message id (kind and programme) stays unique.
+    let mut seen = BTreeSet::new();
+    let periods = fstp_domain::reporting::active_reporting_periods(&call.state.core);
+    for (programme, p) in periods.into_iter().rev() {
+        if !managed.contains(&programme)
+            || call.now < p.end
+            || call.now >= p.deadline
+            || !seen.insert(programme)
+        {
+            continue;
+        }
+        let mut m = MailItem::new(
+            MailKind::ReportPeriodEnded,
+            MailRefs {
+                programme: Some(programme.raw()),
+                ..refs()
+            },
+        );
+        m.since = Some(p.end);
+        m.due = Some(p.deadline);
+        out.push(m);
     }
 }
 

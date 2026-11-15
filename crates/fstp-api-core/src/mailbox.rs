@@ -67,11 +67,16 @@ pub enum MailKind {
     /// A grant's funder retention period ended (P-41, Daniel, 2026-11-15
     /// late): a notice for every tenant admin, linking to the erasure page.
     AdminRetentionEnded,
+    /// A reporting period of the programme ended and its report deadline
+    /// has not passed (P-57, `funder-reporting.md`, Daniel, 2026-11-15
+    /// late): a notice for every programme manager, linking to the funder
+    /// reports page.
+    ReportPeriodEnded,
 }
 
 impl MailKind {
     /// Every kind, in the order the mailbox lists them.
-    pub const ALL: [MailKind; 22] = [
+    pub const ALL: [MailKind; 23] = [
         MailKind::PendingConfirm,
         MailKind::ContractSign,
         MailKind::PaymentReview,
@@ -94,6 +99,7 @@ impl MailKind {
         MailKind::InvitationOpen,
         MailKind::RoleGranted,
         MailKind::AdminRetentionEnded,
+        MailKind::ReportPeriodEnded,
     ];
 
     /// The kind as the wire spells it (`fstp_access::MAILBOX_KINDS`).
@@ -121,6 +127,7 @@ impl MailKind {
             MailKind::InvitationOpen => "invitation.open",
             MailKind::RoleGranted => "role.granted",
             MailKind::AdminRetentionEnded => "admin.retention_ended",
+            MailKind::ReportPeriodEnded => "report.period_ended",
         }
     }
 
@@ -134,6 +141,7 @@ impl MailKind {
                 | MailKind::InvitationOpen
                 | MailKind::RoleGranted
                 | MailKind::AdminRetentionEnded
+                | MailKind::ReportPeriodEnded
         )
     }
 
@@ -163,6 +171,7 @@ impl MailKind {
             // MB-Q3: the home page lists the caller's own roles.
             MailKind::InvitationOpen | MailKind::RoleGranted => ReadKind::ListMyRoles,
             MailKind::AdminRetentionEnded => ReadKind::ListErasures,
+            MailKind::ReportPeriodEnded => ReadKind::ListReports,
         }
     }
 
@@ -204,6 +213,10 @@ pub const MAILBOX_ROUTES: &[(MailKind, &str)] = &[
     (MailKind::InvitationOpen, "/app/"),
     (MailKind::RoleGranted, "/app/"),
     (MailKind::AdminRetentionEnded, "/app/admin/erasures"),
+    (
+        MailKind::ReportPeriodEnded,
+        "/app/programmes/{programme}/reports",
+    ),
 ];
 
 /// The ids a message names. Only those its page needs are set.

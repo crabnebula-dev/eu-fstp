@@ -274,3 +274,16 @@ Open questions for Daniel:
 - **Level 2 signing keys.** Creating or rotating one appends a key record (ADR-004).
 - **Notice companion key rotation.** An operator rotates it by hand, and the platform reminds the operator when a year is up.
 - **Funder profile read.** Every Drafting, Judging and Operations role of the programme reads its funder profile, read-only.
+
+## m9/answers: decisions taken
+
+Lane m9/answers, built 2026-11-15 on branch `m9/answers`, builds the decisions above. Each reading below is interim, pending Daniel. None weakens an invariant.
+
+| # | Reading | Reason |
+| --- | --- | --- |
+| AD1 | The profile readers are every programme binding of the Drafting, Judging and Operations groups, every tenant admin, and the tenant-wide Financial and Legal signatories. A Receiving role, an ended binding and another programme's manager read nothing. The page `/app/programmes/{programme}/funder-profile` shows the profile read-only, and home links it per programme | "Every Drafting, Judging and Operations role of the programme". The tenant admin and the signatories are Operations roles that bind no programme (NOTE 5) |
+| AD2 | P-57 is `{"end", "periods": [{"deadline", "end"}], "start"}`. `periods` may be absent and is written only when not empty, so older values keep their bytes. Period 1 starts on the action start, each later one the day after the previous end. A date is a whole UTC day, and its instant is the midnight after it | The Data Sheet names period ends and deadlines as dates. FD8 is replaced |
+| AD3 | The creator check `ActionDatesInconsistent` also covers periods: ends strictly ascending within the action, and no deadline before its period's end. The domain reads an inconsistent value as no periods | One rule for the creator and the readers. Fail closed: no reminder rather than a wrong one |
+| AD4 | `report.generate` of periodic data takes `period`, the number of a P-57 period. A number P-57 does not hold is refused under P-57. The profile view lists the periods, and the reports page asks for the number | The period comes from P-57, never from the request |
+| AD5 | Timeline kinds `REPORTING_PERIOD_END` (12) and `REPORT_DEADLINE` (13), sourced by programme and period number, for active programmes. They fire once, with no email and no command. The mailbox notice `report.period_ended` reminds each programme manager from the period end to the deadline, linking to the reports page | As the P-41 retention reminder. No email template exists for it |
+| AD6 | The SuperSAFE fixture gains two synthetic periods: ends 2027-06-30 and 2028-12-31, deadlines 2027-08-31 and 2029-02-28 | The Data Sheet dates are not in the spec. The fixture's P-57 was synthetic already |

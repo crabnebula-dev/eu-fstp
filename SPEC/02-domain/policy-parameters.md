@@ -114,7 +114,7 @@ NOTE 10: The frozen P-21 value is a primary model plus an ordered fallback list,
 | P-54 | Minimum number of grants behind any public aggregate | 3 | No |
 | P-55 | Closed list of eligible activity types | From Annexe section 3, as a closed list (O-23) | Yes |
 | P-56 | Action FSTP budget | From the SuperSAFE estimated budget | No |
-| P-57 | Action start and end dates | From the SuperSAFE Data Sheet | No |
+| P-57 | Action start and end dates, reporting period ends and report deadlines (decided 2026-11-15) | From the SuperSAFE Data Sheet | No |
 | P-58 | Funder per-recipient ceiling | From the SuperSAFE Data Sheet (L-10) | No |
 | P-59 | Target payment time after payment approval | 15 days | Yes |
 | P-60 | Support programme offered to grantees | Mentoring by consortium experts; presenting results to the consortium; promotion and visibility; CRA compliance guidance | Yes |

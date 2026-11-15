@@ -166,7 +166,7 @@ fn leap(y: i64) -> bool {
     clippy::arithmetic_side_effects,
     reason = "days is bounded, so no step can overflow or divide by zero"
 )]
-fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
+pub(crate) fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
     if !(-1_500_000..=3_000_000).contains(&days) {
         return None;
     }
@@ -189,7 +189,7 @@ fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
     clippy::arithmetic_side_effects,
     reason = "the year, month and day are bounded, so no step can overflow"
 )]
-fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
+pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
     if !(0..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
         return None;
     }
