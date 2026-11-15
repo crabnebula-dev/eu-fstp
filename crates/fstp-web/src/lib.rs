@@ -33,9 +33,12 @@
 //!   metadata (lane W3c). `/oauth/**`, and every one of these surfaces of
 //!   the stub dispatch, get 501 with
 //!   `{"code":"not_available","rule":"ADR-013"}`.
-//! - `/app/` and every `/app/` path outside `/app/assets/` serve the
-//!   shell. Every response but a served asset carries
-//!   `Cache-Control: no-store`.
+//! - Every `/app/` path outside `/app/assets/` passes the page gate of
+//!   SA-09 before the shell is served (`fstp_api_core::ApiCore::page`):
+//!   no session answers 303 to the login page, a session too weak for
+//!   the page 303 to a passkey sign-in, and any other refusal or a path
+//!   no page has the one "Page not found" shell, 404. Every response but
+//!   a served asset carries `Cache-Control: no-store`.
 //! - Every response carries `nosniff`, `no-referrer`, COOP and CORP
 //!   `same-origin`, HSTS of one year and exactly one CSP for its surface.
 //!   No response sets a cookie or an `Access-Control-*` field.

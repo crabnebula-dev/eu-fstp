@@ -312,6 +312,8 @@ Hard rules:
 
 ## 8. Surfaces by role
 
+Every surface below is a page the server serves only to a viewer who may open it (SA-09, `docs/design/spec-amendments.md`): no session leads to sign-in, and any other refusal answers the same "Page not found" page as a path that does not exist.
+
 ### 8.1 Voyager (Receiving roles)
 
 | Phase | Surface | Backed by |

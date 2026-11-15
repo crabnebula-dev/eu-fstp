@@ -1469,6 +1469,13 @@ pub(crate) trait Dispatch: Send + Sync {
     ) -> DispatchFuture<'a>;
     /// The rights of a bearer token, with no operation (TH-63).
     fn tool_rights(&self, cred: Credential) -> RightsFuture<'_>;
+    /// Whether the `/app/` page at `path` may be served (SA-09).
+    fn page<'a>(
+        &'a self,
+        cred: Credential,
+        head: &'a RequestHead,
+        path: &'a str,
+    ) -> crate::PageFuture<'a>;
     /// The tenant's current branding (M9 lane B2).
     fn brand(&self) -> Option<crate::Brand>;
 }
@@ -1502,6 +1509,17 @@ impl<P: CellPorts> Dispatch for Core<P> {
 
     fn brand(&self) -> Option<crate::Brand> {
         crate::dispatch::brand_of(&self.ports.engine().snapshot())
+    }
+
+    fn page<'a>(
+        &'a self,
+        cred: Credential,
+        head: &'a RequestHead,
+        path: &'a str,
+    ) -> crate::PageFuture<'a> {
+        Box::pin(async move {
+            crate::dispatch::page::admit(&self.ports, &self.state, &cred, head, path).await
+        })
     }
 }
 

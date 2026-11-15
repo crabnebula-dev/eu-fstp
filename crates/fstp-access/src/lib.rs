@@ -25,6 +25,7 @@
 )]
 
 mod channel;
+mod pages;
 mod principal;
 mod reads;
 mod registry;
@@ -36,6 +37,10 @@ mod setup;
 mod twins;
 
 pub use channel::{ChannelDenial, ChannelVerdict, McpSettings, channel_policy, session_admits};
+pub use pages::{
+    CREATOR_STEPS, Listed, ONBOARDING_STEPS, PAGES, PageNeed, PageRow, SETTINGS, SETUP_STAGES,
+    canonical_id, page_of, page_read, read_params,
+};
 pub use principal::{
     AccessError, AgentClientId, GrantFacts, LoginMethod, Principal, RoleSet, ScopeSet,
     SessionFacts, SessionId,

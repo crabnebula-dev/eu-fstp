@@ -181,7 +181,7 @@ The option read: "The FSTP coordinator may unmask any party of their own program
 
 ## SA-09: A page the viewer may not open is never shown
 
-**Source.** Daniel's decision, 2026-11-15: "I should never be able to see a route that my user (or a non-logged in user) does not have permissions to see." His examples: `/app/grants` and `/app/proposals` showed "The platform refused this request (unauthenticated): actor". **Status.** Decided. To be built by lane `m4/page-gate`, with a line in `SPEC/12-journey-ui.md`.
+**Source.** Daniel's decision, 2026-11-15: "I should never be able to see a route that my user (or a non-logged in user) does not have permissions to see." His examples: `/app/grants` and `/app/proposals` showed "The platform refused this request (unauthenticated): actor". **Status.** Decided. Built by lane `m4/page-gate` on 2026-11-15, with a line in `SPEC/12-journey-ui.md` section 8. The page table is `fstp_access::PAGES`.
 
 ### Rule
 
