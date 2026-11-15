@@ -841,6 +841,11 @@ pub enum Rule {
     CallAuthor,
     /// A programme manager of P who is no drafter of C (R-PC-03).
     CallApprover,
+    /// A programme manager of P, once C is approved (R-PC-03). Reading:
+    /// R-PC-03 requires an approval by a person other than a drafter
+    /// before publication. While C is a draft no such approval exists, so
+    /// R-PC-03, an actor rule of the matrix, refuses every publisher.
+    CallPublisher,
     /// A programme manager, call drafter or FSTP coordinator of P.
     CallStaff,
     /// The FSTP coordinator of P.
@@ -1024,7 +1029,9 @@ impl Rule {
             Rule::TenantAdmin | Rule::ApproverAdmin | Rule::BuilderAdmin | Rule::SecondAdmin => {
                 &[Some(Role::TenantAdmin)]
             }
-            Rule::ProgrammeManager | Rule::CallApprover => &[Some(Role::ProgrammeManager)],
+            Rule::ProgrammeManager | Rule::CallApprover | Rule::CallPublisher => {
+                &[Some(Role::ProgrammeManager)]
+            }
             Rule::DraftManager | Rule::Inviter | Rule::CreatorStart => {
                 &[Some(Role::ProgrammeManager), Some(Role::TenantAdmin)]
             }
@@ -1391,7 +1398,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("call.approve", T::Call, R::CallApprover)
         .gated()
         .binding(),
-    RefOp::act("call.publish", T::Call, R::ProgrammeManager)
+    RefOp::act("call.publish", T::Call, R::CallPublisher)
         .gated()
         .binding()
         .hr()
@@ -1693,6 +1700,7 @@ fn admit(
         }
         Rule::CallAuthor => open(who.manager() || who == Who::CallDrafter),
         Rule::CallApprover => open(who == Who::ProgrammeManager),
+        Rule::CallPublisher => open(who.manager() && state != StateProfile::CallDrafted),
         Rule::CallStaff => open(who.manager() || who == Who::CallDrafter || who.coordinator()),
         Rule::Coordinator => open(who.coordinator()),
         Rule::ProposalDeclarant => {

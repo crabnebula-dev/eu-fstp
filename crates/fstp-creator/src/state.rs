@@ -373,8 +373,10 @@ impl CreatorState {
             .is_some_and(|(digest, _)| self.held(programme, field, *digest).is_some())
     }
 
-    /// The held value of `field` on `programme` under `digest`.
-    pub(crate) fn held(
+    /// The held value of `field` on `programme` under `digest`. A shell
+    /// that opens a new engine over the same ledger reads it to hold the
+    /// value again there, as its value store would answer.
+    pub fn held(
         &self,
         programme: ProgrammeId,
         field: FieldId,

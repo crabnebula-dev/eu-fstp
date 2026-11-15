@@ -54,9 +54,9 @@
 //!   and a warning that the current report shows. A programme manager on
 //!   the draft or a tenant admin may acknowledge. Interim, pending
 //!   Daniel.
-//! - **R6, request.** Approval needs a live activation request. A
-//!   programme manager on the draft or a tenant admin may request.
-//!   Interim, pending Daniel.
+//! - **R6, request.** Approval needs a live activation request. Only a
+//!   programme manager on the draft may request (design section 15.0,
+//!   "Who requests activation", Daniel, 2026-11-06).
 //! - **R7, fresh probes (design 3.2 "Fresh probes").** The report at
 //!   approval is recomputed over the probe results of the approval
 //!   request, never over the stored request-time report. An absent
@@ -1181,7 +1181,7 @@ impl RefSystem {
                 }])
             }
             RefCommand::Request { by, base } => {
-                if !(d.managers.contains(&by) || s.admins.contains(&by)) {
+                if !d.managers.contains(&by) {
                     return Err(RefRefusal::NotProgrammeManager);
                 }
                 draft_open(d)?;

@@ -64,8 +64,9 @@ pub enum CreatorRefusal {
     /// interim, pending Daniel).
     NotTenantAdmin,
     /// The actor holds no active programme manager binding on the draft
-    /// and is not a tenant admin. Interim, pending Daniel: readings R5
-    /// and R6 let a tenant admin acknowledge and request too.
+    /// and is not a tenant admin. Interim, pending Daniel: reading R5
+    /// lets a tenant admin acknowledge too. A request for activation
+    /// admits a programme manager only (design section 15.0, 2026-11-06).
     NotProgrammeManager,
     /// A save named no field, or holds nothing that can be saved: an
     /// edit whose value is not of its field, a value that does not compile
@@ -427,7 +428,10 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             programme,
             revision,
         } => {
-            manager_or_admin(core, *programme, actor, ctx, ext)?;
+            // Design section 15.0 ("Who requests activation", Daniel,
+            // 2026-11-06): a programme manager only. Reading R6 is
+            // narrowed, and a tenant admin approves (I-67).
+            manager(core, *programme, actor, ctx.now)?;
             let d = open_draft(creator, *programme)?;
             let head = at_head(d, *revision)?;
             let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
@@ -837,9 +841,10 @@ fn manager_or_drafter(
 }
 
 /// A programme manager on the draft or a tenant admin. Interim, pending
-/// Daniel: readings R5 and R6 let either acknowledge a warning and
-/// request activation. J1 needs a tenant admin to invite the first
-/// programme manager, so either may invite and withdraw.
+/// Daniel: reading R5 lets either acknowledge a warning. A request for
+/// activation is a programme manager's only (design section 15.0). J1
+/// needs a tenant admin to invite the first programme manager, so either
+/// may invite and withdraw.
 fn manager_or_admin(
     core: &State,
     programme: ProgrammeId,

@@ -598,6 +598,35 @@ fn i66_i67_second_admin_activates_a_clean_draft() {
     assert_eq!(w.approve(TB, &inputs), Err(CreatorRefusal::AlreadyActive));
 }
 
+/// R-PG-03, T-AUTHZ-MATRIX, design section 15.0 ("Who requests
+/// activation", 2026-11-06): only a programme manager on the draft
+/// requests activation. A tenant admin, builder or not, is refused as an
+/// actor. The actor comes before the draft's state, so an admin is
+/// refused the same way once the programme is active.
+#[test]
+fn r_pg_03_only_a_programme_manager_requests_activation() {
+    let mut w = opened();
+    let inputs = passing();
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    for admin in [TA, TB] {
+        assert_eq!(
+            w.request(admin, &inputs),
+            Err(CreatorRefusal::NotProgrammeManager),
+            "{admin:?}"
+        );
+    }
+    w.request(M1, &inputs).unwrap();
+    w.approve(TB, &inputs).unwrap();
+    for admin in [TA, TB] {
+        assert_eq!(
+            w.request(admin, &inputs),
+            Err(CreatorRefusal::NotProgrammeManager),
+            "{admin:?} once active"
+        );
+    }
+    assert_eq!(w.request(M1, &inputs), Err(CreatorRefusal::AlreadyActive));
+}
+
 /// I-66: an unacknowledged warning blocks activation and names the check.
 #[test]
 fn i66_unacknowledged_warning_blocks() {
