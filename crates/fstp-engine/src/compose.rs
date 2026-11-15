@@ -168,6 +168,7 @@ pub(crate) fn creator_kind(cmd: &CreatorCommand) -> u8 {
         CreatorCommand::SaveAsTenantTemplate { .. } => 9,
         CreatorCommand::AcceptInvitation { .. } => 10,
         CreatorCommand::OverrideActivation { .. } => 11,
+        CreatorCommand::EditNarrative { .. } => 12,
     }
 }
 

@@ -17,9 +17,12 @@
 //!   platform, so they need no holding. Narrative waits for
 //!   `AcceptNarrative`: template text is never applied silently.
 //!
-//! Interim, pending Daniel: a start replaces the whole draft content, a
-//! clone copies the source's policy fields only, and an import start
-//! begins from the profile defaults while its values arrive as proposals.
+//! A restart applies the new starting point and keeps every field already
+//! saved, and each accepted narrative whose text the new start still
+//! offers (Daniel, 2026-11-15, the I-66 generator gaps). Interim, pending
+//! Daniel: a clone copies the source's policy fields only, and an import
+//! start begins from the profile defaults while its values arrive as
+//! proposals.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -85,22 +88,76 @@ pub(crate) fn is_shipped(template: TemplateId) -> bool {
 /// ledger body). Interim, pending Daniel.
 pub(crate) fn needs_acceptance(value: &FieldValue) -> bool {
     match value {
-        FieldValue::ActionAcronym(_)
-        | FieldValue::CoordinatorName(_)
-        | FieldValue::ProgrammeName(_)
-        | FieldValue::ProgrammeNarrative(_)
-        | FieldValue::ProgrammeScope(_)
-        | FieldValue::PersonsSupported(_)
-        | FieldValue::Minors(_)
-        | FieldValue::AmountCriteria(_)
-        | FieldValue::Faq(_)
-        | FieldValue::ProgrammeContact(_)
-        | FieldValue::MessageTemplates(_) => true,
         FieldValue::P09(k) => k
             .items()
             .iter()
             .any(|x| matches!(x.text, Narrative::Inline(_))),
-        _ => false,
+        other => is_narrative(other.field()),
+    }
+}
+
+/// Whether `field` is an artefact field of narrative text: the fields a
+/// template offers for acceptance and `EditNarrative` edits.
+pub(crate) fn is_narrative(field: FieldId) -> bool {
+    matches!(
+        field,
+        FieldId::ActionAcronym
+            | FieldId::CoordinatorName
+            | FieldId::ProgrammeName
+            | FieldId::ProgrammeNarrative
+            | FieldId::ProgrammeScope
+            | FieldId::PersonsSupported
+            | FieldId::Minors
+            | FieldId::AmountCriteria
+            | FieldId::Faq
+            | FieldId::ProgrammeContact
+            | FieldId::MessageTemplates
+    )
+}
+
+/// Whether the draft holds a value of `field` that a person can edit: a
+/// saved value, an accepted narrative or a value the latest start applied.
+pub(crate) fn holds_value(draft: &Draft, field: FieldId) -> bool {
+    draft.fields().contains_key(&field)
+        || draft.narratives().contains(&field)
+        || draft.start_fields().contains(&field)
+}
+
+/// The accepted narratives of `draft` that a restart from `start` keeps
+/// (Daniel, 2026-11-15): those whose text the new start offers unchanged.
+/// An accepted narrative reads its text from the latest start's template,
+/// so it still exists only when the new template offers the same text.
+pub(crate) fn kept_narratives(draft: &Draft, start: &StartingPoint) -> BTreeSet<FieldId> {
+    let text = |s: Option<&StartingPoint>, f: FieldId| match s {
+        Some(StartingPoint::Template { template, version }) => {
+            shipped_template(*template, *version)?
+                .spec
+                .get(f)
+                .as_set()
+                .cloned()
+        }
+        _ => None,
+    };
+    draft
+        .narratives()
+        .iter()
+        .copied()
+        .filter(|f| text(draft.start(), *f).is_some_and(|old| text(Some(start), *f) == Some(old)))
+        .collect()
+}
+
+/// `spec` with the value the head policy holds for each policy field the
+/// draft saved, so a restart keeps the saved policy values (Daniel,
+/// 2026-11-15). A saved policy value lives in the head policy, which every
+/// policy save and every restart writes.
+fn with_saved_policy(spec: &mut ProgrammeSpec, draft: &Draft, head: &PolicyVersion) {
+    let saved = fstp_programme::policy_spec(head);
+    for f in draft.fields().keys() {
+        if kind(*f) == Some(FieldKind::Policy)
+            && let Field::Set(v) = saved.get(*f)
+        {
+            spec.set(v);
+        }
     }
 }
 
@@ -240,14 +297,19 @@ pub(crate) fn start_policy(
     version: PolicyVersionId,
 ) -> Result<PolicyVersion, CreatorRefusal> {
     let profile = profile_of(draft)?;
+    // A restart keeps the saved policy values (Daniel, 2026-11-15).
+    let restart = |mut spec: ProgrammeSpec| {
+        with_saved_policy(&mut spec, draft, head);
+        next_version(&spec, &profile, head, version)
+    };
     match start {
         StartingPoint::Blank { profile: named } => {
             if named != draft.profile() {
                 return Err(CreatorRefusal::NothingToSave);
             }
-            next_version(&profile.blank(), &profile, head, version)
+            restart(profile.blank())
         }
-        StartingPoint::Import { .. } => next_version(&profile.blank(), &profile, head, version),
+        StartingPoint::Import { .. } => restart(profile.blank()),
         StartingPoint::Template {
             template,
             version: v,
@@ -261,13 +323,20 @@ pub(crate) fn start_policy(
             if t.profile != profile.reference() {
                 return Err(CreatorRefusal::NothingToSave);
             }
-            next_version(&applied(&t.spec), &profile, head, version)
+            restart(applied(&t.spec))
         }
         StartingPoint::Clone { source } => {
             let s =
                 fstp_domain::policy::head(core, *source).ok_or(CreatorRefusal::UnknownSource)?;
             if s.currency != head.currency || s.frozen.p53 != head.frozen.p53 {
                 return Err(CreatorRefusal::NothingToSave);
+            }
+            let saved_policy = draft
+                .fields()
+                .keys()
+                .any(|f| kind(*f) == Some(FieldKind::Policy));
+            if saved_policy {
+                return restart(fstp_programme::policy_spec(s));
             }
             Ok(PolicyVersion {
                 id: version,

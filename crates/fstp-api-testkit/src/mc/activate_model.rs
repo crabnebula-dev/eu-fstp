@@ -237,6 +237,12 @@ pub mod production {
     /// withdraws.
     const SPARES: u128 = 4;
 
+    /// The field the setup leaves unsaved when the plan seeds `FieldUnset`:
+    /// an artefact narrative that no other check reads and no Guide
+    /// placeholder binds. A restart keeps the saved fields (Daniel,
+    /// 2026-11-15), so the setup save itself is the seeding edit.
+    const UNSAVED: FieldId = FieldId::Minors;
+
     /// The first import document id of an import resolution edit.
     const DOCUMENTS: u128 = 0x4d41_d100;
 
@@ -613,7 +619,12 @@ pub mod production {
         fn complete(&mut self, builder: AccountId) -> Result<(), NotImplemented> {
             let all = self.setup_values()?;
             let base = self.head().ok_or(GAP_STEP)?;
-            if !matches!(self.save(builder, base, all, Tag::Setup)?, Run::Appended) {
+            let tag = if self.plan.seeds.contains(&RefCheck::FieldUnset) {
+                Tag::Edit(EditKind::Policy, RefEdit::Seed(RefCheck::FieldUnset))
+            } else {
+                Tag::Setup
+            };
+            if !matches!(self.save(builder, base, all, tag)?, Run::Appended) {
                 return Err(GAP_STEP);
             }
             // P-03 and P-39 are 2 and P-15 is 2 in the fixture. Three
@@ -663,7 +674,10 @@ pub mod production {
         fn setup_values(&self) -> Result<Vec<FieldValue>, NotImplemented> {
             let mut all: Vec<FieldValue> = FIELDS
                 .iter()
-                .filter(|f| f.id != FieldId::P53)
+                .filter(|f| {
+                    f.id != FieldId::P53
+                        && !(f.id == UNSAVED && self.plan.seeds.contains(&RefCheck::FieldUnset))
+                })
                 .filter_map(|f| self.target.get(f.id).as_set().cloned())
                 .collect();
             // Without a pre-check port the setup saves P-23 disabled, so
@@ -699,7 +713,13 @@ pub mod production {
                         .ok_or(GAP_STEP)?;
                     Step::Save(vec![enabled])
                 }
-                RefCheck::FieldUnset => Step::Blank,
+                RefCheck::FieldUnset => {
+                    return if self.report()?.contains_key(&check) {
+                        Ok(())
+                    } else {
+                        Err(GAP_STEP)
+                    };
+                }
                 RefCheck::P04MaxAboveP05 => {
                     let max = self.plan.stat.cap.p05_minor.saturating_add(1);
                     let p04 = format!("{{\"max\":{},\"min\":{}}}", eur(max), eur(0));
@@ -2086,7 +2106,9 @@ pub mod production {
                     },
                 )
             }
-            CreatorRecord::NarrativeAccepted { by, .. } => edited(*by, EditKind::Narrative),
+            CreatorRecord::NarrativeAccepted { by, .. }
+            | CreatorRecord::NarrativeEdited { by, .. } => edited(*by, EditKind::Narrative),
+            CreatorRecord::ImportRemoved { by, .. } => edited(*by, EditKind::ImportResolution),
             CreatorRecord::InvitationRecorded { by, .. } => edited(*by, EditKind::Invitation),
             CreatorRecord::InvitationWithdrawn { by, .. } => {
                 edited(*by, EditKind::InvitationWithdrawal)

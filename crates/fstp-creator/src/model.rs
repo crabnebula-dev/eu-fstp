@@ -281,6 +281,19 @@ pub enum CreatorCommand {
         /// The narrative field.
         field: FieldId,
     },
+    /// Edit narrative text that the draft already holds: a saved value, an
+    /// accepted template narrative or a value the start applied (Daniel,
+    /// 2026-11-15, the I-66 generator gaps). It never fills a gap, which
+    /// `SaveFields` does. Like every edit it voids the acknowledgements and
+    /// the activation request (I-66).
+    EditNarrative {
+        /// The draft.
+        programme: ProgrammeId,
+        /// The revision the client saw.
+        base: DraftRevision,
+        /// The new text: a manual edit of one narrative field.
+        edit: FieldEdit,
+    },
     /// Invite a person to a role (creator step 9).
     Invite {
         /// The draft.
@@ -382,6 +395,7 @@ impl CreatorCommand {
             | CreatorCommand::ApplyStart { programme, .. }
             | CreatorCommand::SaveFields { programme, .. }
             | CreatorCommand::AcceptNarrative { programme, .. }
+            | CreatorCommand::EditNarrative { programme, .. }
             | CreatorCommand::Invite { programme, .. }
             | CreatorCommand::WithdrawInvitation { programme, .. }
             | CreatorCommand::AcknowledgeWarning { programme, .. }
@@ -452,6 +466,34 @@ pub enum CreatorRecord {
         /// The field.
         field: FieldId,
         /// The author.
+        by: AccountId,
+    },
+    /// Narrative text the draft held was edited (`EditNarrative`). The
+    /// ledger body holds the new value's digest, never the text.
+    NarrativeEdited {
+        /// The draft.
+        programme: ProgrammeId,
+        /// The revision it was decided at.
+        revision: DraftRevision,
+        /// The narrative field.
+        field: FieldId,
+        /// The digest of the new value.
+        digest: ValueDigest,
+        /// The author.
+        by: AccountId,
+    },
+    /// An imported document was removed from the draft (Daniel,
+    /// 2026-11-15, the I-66 generator gaps). Its proposals that wait for a
+    /// resolution no longer count as unresolved. Only the engine bridge
+    /// emits it, after it checked the document in the import store.
+    ImportRemoved {
+        /// The draft.
+        programme: ProgrammeId,
+        /// The revision it was decided at.
+        revision: DraftRevision,
+        /// The removed document.
+        document: ImportDocumentId,
+        /// The programme manager who removed it.
         by: AccountId,
     },
     /// An invitation was recorded.
@@ -545,6 +587,8 @@ impl CreatorRecord {
             | CreatorRecord::StartApplied { programme, .. }
             | CreatorRecord::FieldsSaved { programme, .. }
             | CreatorRecord::NarrativeAccepted { programme, .. }
+            | CreatorRecord::NarrativeEdited { programme, .. }
+            | CreatorRecord::ImportRemoved { programme, .. }
             | CreatorRecord::InvitationRecorded { programme, .. }
             | CreatorRecord::InvitationWithdrawn { programme, .. }
             | CreatorRecord::ProbeRecorded { programme, .. }
@@ -563,6 +607,8 @@ impl CreatorRecord {
             | CreatorRecord::StartApplied { by, .. }
             | CreatorRecord::FieldsSaved { by, .. }
             | CreatorRecord::NarrativeAccepted { by, .. }
+            | CreatorRecord::NarrativeEdited { by, .. }
+            | CreatorRecord::ImportRemoved { by, .. }
             | CreatorRecord::InvitationRecorded { by, .. }
             | CreatorRecord::InvitationWithdrawn { by, .. }
             | CreatorRecord::WarningAcknowledged { by, .. }
@@ -584,6 +630,8 @@ impl CreatorRecord {
                 | CreatorRecord::StartApplied { .. }
                 | CreatorRecord::FieldsSaved { .. }
                 | CreatorRecord::NarrativeAccepted { .. }
+                | CreatorRecord::NarrativeEdited { .. }
+                | CreatorRecord::ImportRemoved { .. }
                 | CreatorRecord::InvitationRecorded { .. }
                 | CreatorRecord::InvitationWithdrawn { .. }
         )

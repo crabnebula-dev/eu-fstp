@@ -160,7 +160,7 @@ impl Draft {
         &self.builders
     }
 
-    /// Each field saved since the latest start, with its value digest and
+    /// Each field saved, by a save or a narrative edit, with its value digest and
     /// provenance.
     pub fn fields(&self) -> &BTreeMap<FieldId, (ValueDigest, Provenance)> {
         &self.fields
@@ -464,6 +464,14 @@ impl CreatorState {
             CreatorRecord::StartApplied { start, .. } => crate::draft::start_fields(self, start),
             _ => BTreeSet::new(),
         };
+        // A restart keeps each accepted narrative whose text the new start
+        // still offers (Daniel, 2026-11-15), computed before the borrow.
+        let kept_narratives = match (record, self.drafts.get(&programme)) {
+            (CreatorRecord::StartApplied { start, .. }, Some(d)) => {
+                crate::draft::kept_narratives(d, start)
+            }
+            _ => BTreeSet::new(),
+        };
         let draft = self
             .drafts
             .get_mut(&programme)
@@ -499,13 +507,15 @@ impl CreatorState {
         match record {
             CreatorRecord::DraftOpened { .. } => {}
             CreatorRecord::StartApplied { start, .. } => {
-                // A start replaces the draft content (interim, pending
-                // Daniel), so earlier saves and acceptances no longer
-                // hold a value.
+                // A restart applies the new starting point and keeps the
+                // fields already saved, and each accepted narrative whose
+                // text the new start still offers (Daniel, 2026-11-15, the
+                // I-66 generator gaps). Every field of the catalogue exists
+                // under every M4 start, so every saved field is kept. The
+                // values the old start applied and nobody saved go.
                 draft.start = Some(start.clone());
                 draft.start_fields = started;
-                draft.fields.clear();
-                draft.narratives.clear();
+                draft.narratives = kept_narratives;
             }
             CreatorRecord::FieldsSaved { fields, .. } => {
                 for (f, d, p) in fields {
@@ -515,6 +525,13 @@ impl CreatorState {
             CreatorRecord::NarrativeAccepted { field, .. } => {
                 draft.narratives.insert(*field);
             }
+            CreatorRecord::NarrativeEdited { field, digest, .. } => {
+                draft.fields.insert(*field, (*digest, Provenance::Manual));
+            }
+            // The draft side of a removal is the edit itself. The import
+            // store drops the document's open proposals in the same entry
+            // (`fstp-engine`).
+            CreatorRecord::ImportRemoved { .. } => {}
             CreatorRecord::InvitationRecorded {
                 invitation,
                 role,

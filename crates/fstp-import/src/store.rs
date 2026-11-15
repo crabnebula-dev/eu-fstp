@@ -90,6 +90,9 @@ impl StoredProposal {
 pub struct ImportStore {
     documents: BTreeMap<ImportDocumentId, ImportDocument>,
     proposals: BTreeMap<ImportProposalId, StoredProposal>,
+    /// The documents a draft record removed (Daniel, 2026-11-15). Their
+    /// open proposals no longer count and cannot be resolved.
+    removed: BTreeSet<ImportDocumentId>,
     /// The text of every recorded proposal, by text id. Derived from
     /// `proposals`.
     texts: BTreeMap<ValueTextId, ValueTextRef>,
@@ -98,7 +101,9 @@ pub struct ImportStore {
 
 impl PartialEq for ImportStore {
     fn eq(&self, other: &ImportStore) -> bool {
-        self.documents == other.documents && self.proposals == other.proposals
+        self.documents == other.documents
+            && self.proposals == other.proposals
+            && self.removed == other.removed
     }
 }
 
@@ -108,6 +113,7 @@ impl core::hash::Hash for ImportStore {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.documents.hash(state);
         self.proposals.hash(state);
+        self.removed.hash(state);
     }
 }
 
@@ -139,6 +145,8 @@ pub enum ImportFoldError {
     UnknownProposal,
     /// The proposal is already resolved.
     AlreadyResolved,
+    /// The document was removed from its draft (Daniel, 2026-11-15).
+    DocumentRemoved,
 }
 
 impl ImportStore {
@@ -193,9 +201,30 @@ impl ImportStore {
     pub fn unresolved(&self, programme: ProgrammeRef) -> u32 {
         let n = self
             .proposals_of(programme)
-            .filter(|p| !p.is_resolved())
+            .filter(|p| !p.is_resolved() && !self.removed.contains(&p.proposal.document))
             .count();
         u32::try_from(n).unwrap_or(u32::MAX)
+    }
+
+    /// Whether a draft record removed the document `id` (Daniel,
+    /// 2026-11-15).
+    pub fn is_removed(&self, id: ImportDocumentId) -> bool {
+        self.removed.contains(&id)
+    }
+
+    /// Folds the removal of the document `id`, which the creator records
+    /// on its draft (`ImportRemoved`, Daniel, 2026-11-15). Its open
+    /// proposals no longer count as unresolved and cannot be resolved. The
+    /// records of the document stay (I-23). On an error the store is
+    /// unchanged.
+    pub fn remove_document(&mut self, id: ImportDocumentId) -> Result<(), ImportFoldError> {
+        if !self.documents.contains_key(&id) {
+            return Err(ImportFoldError::UnknownDocument);
+        }
+        if !self.removed.insert(id) {
+            return Err(ImportFoldError::DocumentRemoved);
+        }
+        Ok(())
     }
 
     /// The held value of the proposal `id`, if it is recorded and its text
@@ -273,6 +302,9 @@ impl ImportStore {
             } => {
                 if !self.documents.contains_key(document) {
                     return Err(ImportFoldError::UnknownDocument);
+                }
+                if self.removed.contains(document) {
+                    return Err(ImportFoldError::DocumentRemoved);
                 }
                 let mut ids = BTreeSet::new();
                 let mut texts = BTreeSet::new();
@@ -366,6 +398,8 @@ pub enum ImportRefusal {
     ForeignProgramme,
     /// The proposal is already resolved.
     AlreadyResolved,
+    /// The document was removed from its draft (Daniel, 2026-11-15).
+    DocumentRemoved,
     /// `shown` is not the salted digest of the stored value (I-65).
     ShownMismatch,
     /// A confirmation or an edit of a value the store does not hold: its
@@ -415,6 +449,9 @@ pub fn decide_import(
                 .documents
                 .get(document)
                 .ok_or(ImportRefusal::UnknownDocument)?;
+            if store.removed.contains(document) {
+                return Err(ImportRefusal::DocumentRemoved);
+            }
             if proposals.is_empty() {
                 return Err(ImportRefusal::EmptyBatch);
             }
@@ -519,6 +556,9 @@ pub fn check_resolution(
         .ok_or(ImportRefusal::UnknownProposal)?;
     if store.programme_of(req.proposal) != Some(req.programme) {
         return Err(ImportRefusal::ForeignProgramme);
+    }
+    if store.removed.contains(&stored.proposal.document) {
+        return Err(ImportRefusal::DocumentRemoved);
     }
     if stored.is_resolved() {
         return Err(ImportRefusal::AlreadyResolved);

@@ -578,9 +578,9 @@ fn import_fold(e: ImportFoldError) -> FoldError {
         ImportFoldError::DuplicateDocument
         | ImportFoldError::DuplicateProposal
         | ImportFoldError::DuplicateText => FoldError::DuplicateId,
-        ImportFoldError::ForeignDocument | ImportFoldError::AlreadyResolved => {
-            FoldError::Inconsistent
-        }
+        ImportFoldError::ForeignDocument
+        | ImportFoldError::AlreadyResolved
+        | ImportFoldError::DocumentRemoved => FoldError::Inconsistent,
     }
 }
 
@@ -838,6 +838,26 @@ fn apply_creator(state: &mut EngineState, entry: Seq, r: &CreatorRecord) -> Resu
                     .ok_or(FoldError::Inconsistent)?;
                 open.resolutions.remove(i);
             }
+        }
+        CreatorRecord::ImportRemoved {
+            programme,
+            document,
+            ..
+        } => {
+            // Daniel, 2026-11-15: the removal of an imported document is a
+            // draft record. The import store drops the document's open
+            // proposals in the same fold. The document must be one of the
+            // programme's.
+            let id = fstp_import::ImportDocumentId::from_raw(document.raw());
+            let owned = state
+                .import
+                .document(id)
+                .is_some_and(|d| d.programme.raw() == programme.raw());
+            if !owned {
+                return Err(FoldError::Inconsistent);
+            }
+            state.creator.apply(entry, r).map_err(creator_fold)?;
+            return state.import.remove_document(id).map_err(import_fold);
         }
         _ => {}
     }

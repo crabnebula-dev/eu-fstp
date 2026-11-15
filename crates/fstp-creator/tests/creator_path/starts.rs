@@ -399,3 +399,106 @@ fn i49_i66_unheld_flow_down_list_fails_closed() {
     assert!(cell.creator.hold_saved(P, &fields));
     assert_eq!(flow_down(&cell), Vec::new());
 }
+
+/// The blank start of the draft's own funder profile.
+fn blank_start() -> StartingPoint {
+    StartingPoint::Blank {
+        profile: blank_policy().frozen.p53,
+    }
+}
+
+/// I-66, R-PG-02 (Daniel, 2026-11-15, the I-66 generator gaps): a restart
+/// applies the new starting point and keeps every field already saved, so
+/// the head policy keeps the saved policy values and no field becomes a
+/// gap. Like every edit it voids the acknowledgement and the activation
+/// request.
+#[test]
+fn i66_r_pg_02_restart_keeps_saved_fields_and_voids_the_report() {
+    let mut cell = crate::harness::valid_draft();
+    cell.request(M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let before = cell.policy().clone();
+    let saved: Vec<FieldId> = cell
+        .creator
+        .draft(P)
+        .unwrap()
+        .fields()
+        .keys()
+        .copied()
+        .collect();
+    let restart = CreatorCommand::ApplyStart {
+        programme: P,
+        base: cell.head(),
+        start: blank_start(),
+    };
+    cell.run(&restart, M1).unwrap_or_else(|f| panic!("{f:?}"));
+    assert_eq!(
+        cell.policy().live,
+        before.live,
+        "the saved live values stay"
+    );
+    assert_eq!(
+        cell.policy().frozen,
+        before.frozen,
+        "the saved frozen values stay"
+    );
+    let d = cell.creator.draft(P).unwrap();
+    let kept: Vec<FieldId> = d.fields().keys().copied().collect();
+    assert_eq!(kept, saved, "every saved field is kept");
+    assert!(
+        !cell
+            .report(None)
+            .failures()
+            .any(|r| r.check == CheckId::FieldUnset),
+        "a restart of a complete draft leaves no gap"
+    );
+    assert!(!d.request_live(), "I-66: the restart voids the request");
+    assert!(d.live_acks().is_empty(), "I-66: and the acknowledgement");
+}
+
+/// R-PG-02, TH-49 (Daniel, 2026-11-15): a restart keeps an accepted
+/// narrative only where the new start still offers its text, and keeps a
+/// saved field whatever the start. A value the old start applied and
+/// nobody saved goes with the old start.
+#[test]
+fn r_pg_02_restart_keeps_accepted_narrative_where_it_still_exists() {
+    let mut cell = forged();
+    let start = |cell: &Cell, s: StartingPoint| CreatorCommand::ApplyStart {
+        programme: P,
+        base: cell.head(),
+        start: s,
+    };
+    let template = start(&cell, supersafe_start());
+    cell.run(&template, M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let accept = CreatorCommand::AcceptNarrative {
+        programme: P,
+        base: cell.head(),
+        field: FieldId::ProgrammeNarrative,
+    };
+    cell.run(&accept, M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let scope = value_of(&synthetic_spec(), FieldId::ProgrammeScope);
+    cell.save(M1, vec![edit(scope, 1)])
+        .unwrap_or_else(|f| panic!("{f:?}"));
+    let unset = |cell: &Cell, f: FieldId| {
+        cell.report(None)
+            .failures()
+            .any(|r| r.check == CheckId::FieldUnset && r.subject == CheckSubject::Field(f))
+    };
+    assert!(!unset(&cell, FieldId::P01), "the template sets P-01");
+    let again = start(&cell, supersafe_start());
+    cell.run(&again, M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let d = cell.creator.draft(P).unwrap();
+    assert!(
+        d.narratives().contains(&FieldId::ProgrammeNarrative),
+        "the same template still offers the accepted text"
+    );
+    let blank = start(&cell, blank_start());
+    cell.run(&blank, M1).unwrap_or_else(|f| panic!("{f:?}"));
+    let d = cell.creator.draft(P).unwrap();
+    assert!(
+        d.narratives().is_empty(),
+        "a blank start offers no narrative"
+    );
+    assert!(unset(&cell, FieldId::ProgrammeNarrative));
+    assert!(!unset(&cell, FieldId::ProgrammeScope), "the save is kept");
+    assert!(unset(&cell, FieldId::P01), "the template's P-01 goes");
+}

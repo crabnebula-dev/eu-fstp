@@ -1154,6 +1154,192 @@ fn i67_import_dismissal_makes_the_resolver_a_builder() {
     );
 }
 
+/// I-66, I-67 (Daniel, 2026-11-15, the I-66 generator gaps): the removal
+/// of an imported document is a draft record. It voids the
+/// acknowledgement and the activation request, and its author joins the
+/// builder set. Only a programme manager at the head removes, and never
+/// after activation.
+#[test]
+fn i66_import_removal_voids_acknowledgement_and_request() {
+    let mut w = opened();
+    let inputs = passing();
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    let document = crate::ids::ImportDocumentId::from_raw(31);
+    let removal = |w: &World, by, base| {
+        crate::decide::decide_import_removal(&w.core, &w.creator, P, base, document, &ctx(by))
+    };
+    let stale = DraftRevision::new(1, Seq::from_raw(1));
+    assert_eq!(removal(&w, M1, stale), Err(CreatorRefusal::StaleRevision));
+    assert_eq!(
+        removal(&w, TB, w.head()),
+        Err(CreatorRefusal::NotProgrammeManager)
+    );
+    let d = removal(&w, M1, w.head()).unwrap();
+    assert!(d.core.is_empty());
+    assert_eq!(
+        d.records,
+        vec![CreatorRecord::ImportRemoved {
+            programme: P,
+            revision: w.head(),
+            document,
+            by: M1,
+        }]
+    );
+    let before = w.head();
+    w.entry(d.records, Vec::new());
+    let draft = w.creator.draft(P).unwrap();
+    assert_ne!(draft.head(), before);
+    assert!(!draft.request_live(), "I-66: the removal voids the request");
+    assert!(
+        draft.live_acks().is_empty(),
+        "I-66: and the acknowledgement"
+    );
+    assert!(draft.builders().contains(&M1));
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    w.approve(TB, &inputs).unwrap();
+    assert_eq!(
+        removal(&w, M1, w.head()),
+        Err(CreatorRefusal::AlreadyActive)
+    );
+}
+
+/// The programme narrative as a manual edit with digest tag `tag`.
+fn narrative_edit(text: &str, tag: u8) -> crate::model::FieldEdit {
+    let field = fstp_programme::FieldId::ProgrammeNarrative;
+    crate::model::FieldEdit {
+        field,
+        value: fstp_programme::decode_field_value(field, format!("\"{text}\"").as_bytes()).unwrap(),
+        digest: crate::model::ValueDigest::new(ContentDigest::from_bytes([tag; 32])),
+        provenance: crate::model::Provenance::Manual,
+    }
+}
+
+/// I-66 (Daniel, 2026-11-15, the I-66 generator gaps): `EditNarrative`
+/// edits narrative text the draft holds. A gap is refused, since a save
+/// fills it, and so is a field that is no narrative, another provenance
+/// and a stale revision. An edit records the new digest, voids the
+/// acknowledgement and the request, and the value is held like a save's.
+#[test]
+fn i66_edit_narrative_edits_held_text_and_voids_the_clearance() {
+    let mut w = opened();
+    let inputs = passing();
+    let edit = |w: &World, e: crate::model::FieldEdit| CreatorCommand::EditNarrative {
+        programme: P,
+        base: w.head(),
+        edit: e,
+    };
+    let gap = edit(&w, narrative_edit("Synthetic narrative", 1));
+    assert_eq!(
+        w.run(&gap, M1, &inputs),
+        Err(CreatorRefusal::NothingToSave),
+        "a gap is filled by a save, not edited"
+    );
+    let save = CreatorCommand::SaveFields {
+        programme: P,
+        base: w.head(),
+        fields: vec![narrative_edit("Synthetic narrative", 1)],
+    };
+    w.run(&save, M1, &inputs).unwrap();
+    let mut not_manual = narrative_edit("Synthetic text", 2);
+    not_manual.provenance = crate::model::Provenance::Template {
+        template: TemplateId::from_raw(1),
+        version: 1,
+    };
+    let refused = edit(&w, not_manual);
+    assert_eq!(
+        w.run(&refused, M1, &inputs),
+        Err(CreatorRefusal::ProvenanceNotManual)
+    );
+    let p02 = crate::model::FieldEdit {
+        field: fstp_programme::FieldId::P02,
+        value: fstp_programme::decode_field_value(fstp_programme::FieldId::P02, b"\"75.00\"")
+            .unwrap(),
+        digest: crate::model::ValueDigest::new(ContentDigest::from_bytes([3; 32])),
+        provenance: crate::model::Provenance::Manual,
+    };
+    let policy = edit(&w, p02);
+    assert_eq!(
+        w.run(&policy, M1, &inputs),
+        Err(CreatorRefusal::NothingToSave),
+        "P-02 is no narrative"
+    );
+    let stale = CreatorCommand::EditNarrative {
+        programme: P,
+        base: DraftRevision::new(1, Seq::from_raw(1)),
+        edit: narrative_edit("Synthetic text", 4),
+    };
+    assert_eq!(
+        w.run(&stale, M1, &inputs),
+        Err(CreatorRefusal::StaleRevision)
+    );
+    w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+    w.request(M1, &inputs).unwrap();
+    let text = narrative_edit("Edited synthetic narrative", 5);
+    let cmd = edit(&w, text.clone());
+    w.run(&cmd, M1, &inputs).unwrap();
+    let d = w.creator.draft(P).unwrap();
+    assert_eq!(
+        d.fields().get(&fstp_programme::FieldId::ProgrammeNarrative),
+        Some(&(text.digest, crate::model::Provenance::Manual))
+    );
+    assert!(!d.request_live(), "I-66: the edit voids the request");
+    assert!(d.live_acks().is_empty(), "I-66: and the acknowledgement");
+    assert!(w.creator.hold_saved(P, std::slice::from_ref(&text)));
+    assert_eq!(
+        w.creator
+            .held(P, fstp_programme::FieldId::ProgrammeNarrative, text.digest),
+        Some(&text.value)
+    );
+}
+
+/// The fuzz seeds of the narrative edit and the import removal decode, so
+/// the targets start from valid forms.
+#[test]
+fn codec_fuzz_seeds_of_the_narrative_edit_and_the_import_removal_decode() {
+    let command = include_str!("../fuzz/seeds/creator_command_decode/edit_narrative.json");
+    assert!(matches!(
+        crate::decode_command(command.as_bytes()),
+        Ok(CreatorCommand::EditNarrative { .. })
+    ));
+    let edited = include_str!("../fuzz/seeds/creator_record_decode/narrative_edited.json");
+    assert!(matches!(
+        crate::decode_record(edited.as_bytes()),
+        Ok(CreatorRecord::NarrativeEdited { .. })
+    ));
+    let removed = include_str!("../fuzz/seeds/creator_record_decode/import_removed.json");
+    assert!(matches!(
+        crate::decode_record(removed.as_bytes()),
+        Ok(CreatorRecord::ImportRemoved { .. })
+    ));
+}
+
+/// The codecs round-trip the narrative edit and the import removal.
+#[test]
+fn codec_round_trips_the_narrative_edit_and_the_import_removal() {
+    let base = DraftRevision::new(3, Seq::from_raw(41));
+    let text = narrative_edit("Synthetic narrative", 9);
+    round_trip_command(&CreatorCommand::EditNarrative {
+        programme: P,
+        base,
+        edit: text.clone(),
+    });
+    round_trip_record(&CreatorRecord::NarrativeEdited {
+        programme: P,
+        revision: base,
+        field: text.field,
+        digest: text.digest,
+        by: M1,
+    });
+    round_trip_record(&CreatorRecord::ImportRemoved {
+        programme: P,
+        revision: base,
+        document: crate::ids::ImportDocumentId::from_raw(12),
+        by: M1,
+    });
+}
+
 /// R-PG-05, Q17: a programme can be saved as a tenant-private template
 /// after activation, and the fold admits the record. The saver does not
 /// join the builder set after activation.
@@ -1518,6 +1704,11 @@ fn draft_commands(revision: DraftRevision) -> Vec<CreatorCommand> {
         CreatorCommand::SaveAsTenantTemplate {
             programme: P,
             template: TemplateId::from_raw(77),
+        },
+        CreatorCommand::EditNarrative {
+            programme: P,
+            base: revision,
+            edit: narrative_edit("Synthetic narrative", 6),
         },
     ]
 }

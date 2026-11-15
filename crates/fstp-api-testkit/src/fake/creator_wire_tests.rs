@@ -1679,7 +1679,10 @@ fn i65_import_resolve_builds_resolve_import_with_the_shell_sha256() {
         resolution,
         conflict_acknowledged,
         base: at,
-    } = &got[0];
+    } = &got[0]
+    else {
+        panic!("the bridge command is no resolution: {got:?}");
+    };
     assert_eq!(*programme, d.p);
     assert_eq!(proposal.raw().to_string(), id);
     let hex: String = shown_digest

@@ -862,6 +862,18 @@ impl ToJson for CreatorCommand {
                     ("field", put_field(*field)),
                 ],
             ),
+            CreatorCommand::EditNarrative {
+                programme,
+                base,
+                edit,
+            } => tagged(
+                "EditNarrative",
+                vec![
+                    p(*programme),
+                    ("base", put_revision(*base)),
+                    ("edit", put_edit(edit)),
+                ],
+            ),
             CreatorCommand::Invite {
                 programme,
                 invitation,
@@ -1004,6 +1016,14 @@ impl FromJson for CreatorCommand {
                     programme: at(o, "programme", programme)?,
                     base: at(o, "base", revision)?,
                     field: at(o, "field", field)?,
+                })
+            }
+            "EditNarrative" => {
+                let o = o(&["kind", "programme", "base", "edit"])?;
+                Ok(CreatorCommand::EditNarrative {
+                    programme: at(o, "programme", programme)?,
+                    base: at(o, "base", revision)?,
+                    edit: at(o, "edit", edit)?,
                 })
             }
             "Invite" => {
@@ -1170,6 +1190,36 @@ impl ToJson for CreatorRecord {
                     by(*b),
                 ],
             ),
+            CreatorRecord::NarrativeEdited {
+                programme,
+                revision,
+                field,
+                digest,
+                by: b,
+            } => tagged(
+                "NarrativeEdited",
+                vec![
+                    p(*programme),
+                    ("revision", put_revision(*revision)),
+                    ("field", put_field(*field)),
+                    ("digest", put_value_digest(*digest)),
+                    by(*b),
+                ],
+            ),
+            CreatorRecord::ImportRemoved {
+                programme,
+                revision,
+                document,
+                by: b,
+            } => tagged(
+                "ImportRemoved",
+                vec![
+                    p(*programme),
+                    ("revision", put_revision(*revision)),
+                    ("document", dec(document.raw())),
+                    by(*b),
+                ],
+            ),
             CreatorRecord::InvitationRecorded {
                 programme,
                 invitation,
@@ -1321,6 +1371,25 @@ impl FromJson for CreatorRecord {
                     programme: at(o, "programme", programme)?,
                     revision: at(o, "revision", revision)?,
                     field: at(o, "field", field)?,
+                    by: at(o, "by", account)?,
+                })
+            }
+            "NarrativeEdited" => {
+                let o = o(&["kind", "programme", "revision", "field", "digest", "by"])?;
+                Ok(CreatorRecord::NarrativeEdited {
+                    programme: at(o, "programme", programme)?,
+                    revision: at(o, "revision", revision)?,
+                    field: at(o, "field", field)?,
+                    digest: at(o, "digest", value_digest)?,
+                    by: at(o, "by", account)?,
+                })
+            }
+            "ImportRemoved" => {
+                let o = o(&["kind", "programme", "revision", "document", "by"])?;
+                Ok(CreatorRecord::ImportRemoved {
+                    programme: at(o, "programme", programme)?,
+                    revision: at(o, "revision", revision)?,
+                    document: ImportDocumentId::from_raw(at(o, "document", take_dec)?),
                     by: at(o, "by", account)?,
                 })
             }

@@ -67,8 +67,9 @@ use fstp_domain::roles::Role;
 use fstp_domain::state::State;
 use fstp_domain::time::Timestamp;
 use fstp_import::{
-    AccountRef, ClientResolution, ConflictRule, ImportActor, ImportCommand, ImportProposal,
-    ImportProposalId, ImportRefusal, ImportResolution, ProgrammeRef, ResolveRequest, SaltedDigest,
+    AccountRef, ClientResolution, ConflictRule, ImportActor, ImportCommand, ImportDocumentId,
+    ImportProposal, ImportProposalId, ImportRefusal, ImportResolution, ProgrammeRef,
+    ResolveRequest, SaltedDigest,
 };
 use fstp_json::{Object, ToJson, Value};
 use fstp_programme::{FieldId, FieldValue};
@@ -92,6 +93,20 @@ pub enum BridgeCommand {
         resolution: ClientResolution,
         /// Whether the client acknowledged the flagged profile conflicts.
         conflict_acknowledged: bool,
+        /// The draft revision the client saw.
+        base: DraftRevision,
+    },
+    /// Remove an imported document from its draft (Daniel, 2026-11-15,
+    /// the I-66 generator gaps). The entry holds one creator
+    /// `ImportRemoved`, a draft record that voids the acknowledgements and
+    /// the activation request (I-66). The fold of that record drops the
+    /// document's open proposals in the import store, so they no longer
+    /// count as unresolved.
+    RemoveImport {
+        /// The draft programme.
+        programme: ProgrammeId,
+        /// The document.
+        document: ImportDocumentId,
         /// The draft revision the client saw.
         base: DraftRevision,
     },
@@ -187,7 +202,9 @@ pub fn import_refusal(r: ImportRefusal) -> Refusal {
         I::ForeignProgramme | I::ShownMismatch | I::ConfirmDiffers | I::EditUnchanged => {
             (RuleRef::I65, Why::InvalidValue)
         }
-        I::AlreadyResolved | I::ValueUnavailable => (RuleRef::I65, Why::WrongState),
+        I::AlreadyResolved | I::ValueUnavailable | I::DocumentRemoved => {
+            (RuleRef::I65, Why::WrongState)
+        }
         I::ConflictNotAcknowledged => (RuleRef::I65, Why::GuardFailed),
     };
     Refusal::new(rule, why)
@@ -372,7 +389,11 @@ fn check(state: &EngineState, cmd: &BridgeCommand, ctx: &Ctx) -> Result<Checked,
         resolution,
         conflict_acknowledged,
         base,
-    } = cmd;
+    } = cmd
+    else {
+        // A removal resolves no proposal (`remove_import`).
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    };
     let account = resolver(state, *programme, ctx).map_err(BridgeError::refusal)?;
     open_draft(state, *programme)?;
     let checked = fstp_import::check_resolution(
@@ -503,15 +524,24 @@ pub fn bridge_queries(state: &EngineState, cmd: &BridgeCommand, ctx: &Ctx) -> Ve
     out
 }
 
-/// Resolves one import proposal of a draft programme in one entry
-/// (module documentation). A refusal appends nothing, so no proposal
-/// reaches a draft through another path (I-65).
+/// Decides one bridge command in one entry: the resolution of one import
+/// proposal of a draft programme (module documentation), or the removal
+/// of an imported document ([`remove_import`]). A refusal appends
+/// nothing, so no proposal reaches a draft through another path (I-65).
 pub fn resolve_import(
     state: &EngineState,
     cmd: &BridgeCommand,
     ctx: &Ctx,
     answers: &Answers,
 ) -> Result<Vec<Record>, Refusal> {
+    if let BridgeCommand::RemoveImport {
+        programme,
+        document,
+        base,
+    } = cmd
+    {
+        return remove_import(state, *programme, *document, *base, ctx);
+    }
     let Plan { record, save } = plan(state, cmd, ctx)?;
     let mut out = vec![Record::Import(record)];
     if let Some(CreatorDecision { records, core }) = save {
@@ -526,6 +556,46 @@ pub fn resolve_import(
         }
     }
     Ok(out)
+}
+
+/// Removes the imported document `document` from the draft of
+/// `programme` at `base` (Daniel, 2026-11-15, the I-66 generator gaps).
+///
+/// The actor holds an active programme manager binding on the draft
+/// ([`resolver`]), the draft is open, and the document is registered for
+/// that programme and not removed yet. The creator then decides the
+/// draft record with the guards of a save
+/// (`fstp_creator::decide_import_removal`). The entry holds that one
+/// `ImportRemoved`, whose fold drops the document's open proposals from
+/// the unresolved count. It composes no core command, so it asks the
+/// vault nothing.
+pub fn remove_import(
+    state: &EngineState,
+    programme: ProgrammeId,
+    document: ImportDocumentId,
+    base: DraftRevision,
+    ctx: &Ctx,
+) -> Result<Vec<Record>, Refusal> {
+    resolver(state, programme, ctx).map_err(BridgeError::refusal)?;
+    open_draft(state, programme)?;
+    let doc = state
+        .import
+        .document(document)
+        .filter(|d| d.programme == programme_ref(programme))
+        .ok_or(import_refusal(ImportRefusal::UnknownDocument))?;
+    if state.import.is_removed(doc.id) {
+        return Err(import_refusal(ImportRefusal::DocumentRemoved));
+    }
+    let decision = fstp_creator::decide_import_removal(
+        &state.core,
+        &state.creator,
+        programme,
+        base,
+        fstp_creator::ImportDocumentId::from_raw(document.raw()),
+        ctx,
+    )
+    .map_err(crate::compose::creator_refusal)?;
+    Ok(decision.records.into_iter().map(Record::Creator).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -566,14 +636,41 @@ fn object(members: Vec<(&str, Value)>) -> Value {
 /// reads it back yet (pending the cell codec, lead).
 impl ToJson for BridgeCommand {
     fn to_json(&self) -> Value {
-        let BridgeCommand::ResolveImport {
-            programme,
-            proposal,
-            shown,
-            resolution,
-            conflict_acknowledged,
-            base,
-        } = self;
+        let revision = |base: &DraftRevision| {
+            object(vec![
+                ("entry", dec(base.entry().raw())),
+                ("seq", dec(base.seq())),
+            ])
+        };
+        let (programme, proposal, shown, resolution, conflict_acknowledged, base) = match self {
+            BridgeCommand::ResolveImport {
+                programme,
+                proposal,
+                shown,
+                resolution,
+                conflict_acknowledged,
+                base,
+            } => (
+                programme,
+                proposal,
+                shown,
+                resolution,
+                conflict_acknowledged,
+                base,
+            ),
+            BridgeCommand::RemoveImport {
+                programme,
+                document,
+                base,
+            } => {
+                return object(vec![
+                    ("base", revision(base)),
+                    ("document", dec(document.raw())),
+                    ("programme", dec(programme.raw())),
+                    ("type", Value::String("RemoveImport".to_owned())),
+                ]);
+            }
+        };
         let resolution = match resolution {
             ClientResolution::Confirm { value, digest } => object(vec![
                 ("digest", hex(digest.bytes())),
@@ -590,13 +687,7 @@ impl ToJson for BridgeCommand {
             }
         };
         object(vec![
-            (
-                "base",
-                object(vec![
-                    ("entry", dec(base.entry().raw())),
-                    ("seq", dec(base.seq())),
-                ]),
-            ),
+            ("base", revision(base)),
             ("conflict_acknowledged", Value::Bool(*conflict_acknowledged)),
             ("programme", dec(programme.raw())),
             ("proposal", dec(proposal.raw())),

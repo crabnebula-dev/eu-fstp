@@ -17,6 +17,7 @@ use fstp_programme::{CompileIds, FieldId, FieldKind, FieldValue, FunderProfile, 
 
 use crate::check::{CheckId, Severity};
 use crate::draft;
+use crate::ids::ImportDocumentId;
 use crate::inputs::CreatorInputs;
 use crate::model::{
     CreatorCommand, CreatorRecord, DraftRevision, ImportFieldEdit, Invitee, Provenance,
@@ -342,6 +343,33 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                 by: actor,
             }])
         }
+        CreatorCommand::EditNarrative {
+            programme,
+            base,
+            edit,
+        } => {
+            // Daniel, 2026-11-15 (the I-66 generator gaps): narrative text
+            // the draft holds can be edited. A gap is filled by a save.
+            manager(core, *programme, actor, ctx.now)?;
+            let d = open_draft(creator, *programme)?;
+            at_head(d, *base)?;
+            if !draft::is_narrative(edit.field)
+                || edit.value.field() != edit.field
+                || !draft::holds_value(d, edit.field)
+            {
+                return Err(CreatorRefusal::NothingToSave);
+            }
+            if edit.provenance != Provenance::Manual {
+                return Err(CreatorRefusal::ProvenanceNotManual);
+            }
+            records(vec![CreatorRecord::NarrativeEdited {
+                programme: *programme,
+                revision: *base,
+                field: edit.field,
+                digest: edit.digest,
+                by: actor,
+            }])
+        }
         CreatorCommand::Invite {
             programme,
             invitation,
@@ -587,6 +615,38 @@ pub fn decide_import_save(
         provenance: edit.provenance(),
     }];
     save(core, d, programme, base, actor, ctx, &edits)
+}
+
+/// Decides the draft record of the removal of an imported document
+/// (Daniel, 2026-11-15, the I-66 generator gaps). Only the engine bridge
+/// calls it, after it checked in the import store that `document` is a
+/// document of `programme` that is not removed yet.
+///
+/// It applies the guards of a save: the actor holds an active programme
+/// manager binding on the draft, the draft is open and `base` is the head.
+/// The record is an edit, so it voids every acknowledgement and the
+/// activation request (I-66), and its author joins the builder set (Q1).
+pub fn decide_import_removal(
+    core: &State,
+    creator: &CreatorState,
+    programme: ProgrammeId,
+    base: DraftRevision,
+    document: ImportDocumentId,
+    ctx: &Ctx,
+) -> Result<CreatorDecision, CreatorRefusal> {
+    let actor = account(ctx)?;
+    manager(core, programme, actor, ctx.now)?;
+    let d = open_draft(creator, programme)?;
+    at_head(d, base)?;
+    Ok(CreatorDecision {
+        records: vec![CreatorRecord::ImportRemoved {
+            programme,
+            revision: base,
+            document,
+            by: actor,
+        }],
+        core: Vec::new(),
+    })
 }
 
 /// One field edit of a save, from a client or from the import bridge.
