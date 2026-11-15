@@ -6,48 +6,58 @@ CrabNebula Ltd operates the hosted service. The same codebase also builds a self
 
 ## Status
 
-Status on 2026-11-13. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. Several milestones were built in parallel so the whole process could be shown end to end. A milestone closes only when its exit criteria pass in CI. M0 to M2 are closed. The others below are built in part or in full, but none is closed yet.
+Status on 2026-11-15. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. Several milestones were built in parallel so the whole process could be shown end to end. A milestone closes only when its exit criteria pass in CI. M0 to M2 are closed. The others below are built, but none is closed yet. The next full CI run on `main` decides M3 to M6 and M9.
 
 | Milestone | Content | Built | Exit criteria |
 | --- | --- | --- | --- |
 | M0 | Specification freeze for v1 | Done | Closed |
 | M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done | Closed |
 | M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done | Closed at domain level |
-| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Built, including the licence and update tasks, backups, cell erasure with the two-operator check, process mode and ECH routing | Not closed. Locally every exit invariant is green except I-79, which waits on Daniel (Q-I79). I-80's Linux memory scan found a destroyed seal key in CI; the fix is merged and waits on the next CI run. See `docs/handoff/m3-exit-audit.md` |
-| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built | Not green. SuperSAFE is built through the creator and the cycle reaches NEGOTIATION in the demo. I-66 and I-67 tests and the authorisation matrix are on the known-red list, and the I-84 MCP matrix now runs in eight CI shards of its own. The M-ACTIVATE model checks now peak under 2 GB, down from about 20 GB, with the same states and verdicts |
-| M5 | Contracts and payment requests in record-only mode, grant completion, funder reports | Built | The cycle reaches PAID in the demo. The I-30 to I-33 tests exist. Not yet confirmed in CI |
-| M6 | Timeline engine, dispatcher, email, and the in-app mailbox | Built | The I-25 to I-27 tests exist. The crash-injection run is not yet confirmed in CI |
+| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Built, including backups, recovery with the I-79 evidence record, break-glass, and cell erasure for production: witness revocation, one batch approval per operator, sign keys in `fstp-keyd`, and route tables that remote edges poll. All 22 devstack browser specs pass | Not closed. Every exit invariant is decided and built. The last full CI run (3821f85c) failed `t_iso_i20` (one identifier shared across tenants), which a fix lane is on. See `docs/handoff/m3-exit-audit.md` |
+| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built. Since 2026-11-13, also built: the setup gate (ADR-021), "Create a programme" (the wizard) and the Programme editor, the I-67 override (ADR-022), the coordinator unmask (ADR-023), the audit log, the page gate (SA-09), team and member pages with display names (SA-11), set-up by tenant admins (SA-12) and field help (SA-13) | Not closed. I-66 and I-67 pass, including the M-ACTIVATE model checks in CI (3821f85c). The authorisation matrix is the last open criterion. In CI on 3821f85c, the HTTP and MCP channels failed about 0.55% of cells in seven operations. Fixes for all seven are merged and wait on the next CI run |
+| M5 | Contracts and payment requests in record-only mode, grant completion, funder reports | Built, plus the P-41 retention reminder and the erasures page | The cycle reaches PAID in the demo. The I-30 to I-33 tests pass in the workspace part. Waits on a green workspace part |
+| M6 | Timeline engine, dispatcher, email, and the in-app mailbox | Built | The I-25 to I-27 tests, including the crash-injection tests, run in the workspace part. Waits on a green workspace part |
 | M7 | Assessor, pre-check, evaluation harness, synthetic corpus | Built | The I-10, I-11 and I-21 tests exist. No evaluation run against a live model has been reported, so the thresholds are not yet met |
 | M8 | Matrix and WhatsApp | Deferred (B-03, B-05) | None while deferred |
-| M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | Built: publicity choices, versioned funder profiles with Horizon Europe v1, the notice companion signature, admin branding and terminology screens, the SBOM | Not yet confirmed in CI. `docs/handoff/m9-exit-audit.md` maps each invariant to its tests. I-74 stays open until the Mythos confirmation |
-| M10 | Hardening on a Mythos-tier model | Not started | Needs the Mythos-tier run. Design in `docs/handoff/m10-m12-design.md` |
+| M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | Built, plus P-57 reporting periods, the P-79 milestone opt-in, tenant copies of funder profiles, the programme footer in `/app/`, operator rotation of the notice key, and funder profile reads for all programme staff | Waits on a green workspace part. `docs/handoff/m9-exit-audit.md` maps each invariant to its tests. I-74 stays open until the Mythos confirmation |
+| M10 | Hardening on a Mythos-tier model | Not started | Daniel decided on 2026-11-15 to run it on Claude Mythos 5.2 once phase 1 development is done. Design in `docs/handoff/m10-m12-design.md` |
 | M11 | Pilot with SuperSAFE and a second programme | Not started | Waits on the parties' approval |
 | M12 | Calibration with consented real proposals | Consent records and per-corpus metrics (`fstp-calib`) only | Needs real consented proposals |
 
-CI on `main` (run of 2026-11-13 on d2038dc8) passes deps-check, fmt and clippy, fuzz smoke, the web tests, the SBOM job, the demo Playwright job, the devstack part, the domain testkit part and all 16 authorisation matrix shards. The known-red gate was fixed on 2026-11-13 and now judges every test part. Four parts were red. The workspace part had five unlisted failures: four are fixed (e0495faf and before), and `r_nf_08_no_api_takes_a_caller_nonce` waits on Daniel. The isolation part failed on the I-80 Linux seal key scan, now fixed. The M-ACTIVATE part ran out of memory (now fixed), and the api-testkit part ran out of time on the MCP matrix, which is now sharded. `ci/known-red.txt` lists 20 tests, down from 79 on the morning of 2026-11-13.
+The last full CI run on `main` (3821f85c, 2026-11-15) passed these parts: deps-check, fmt and clippy, fuzz smoke, the web tests, the SBOM job, the api-testkit, domain-testkit, devstack and M-ACTIVATE parts, and all 16 direct and HTTP matrix shards against the known-red list. Three parts were red:
+- **Workspace part.** 5,363 tests passed and 6 failed. Three of the failures are fixed on `main`. A fix lane is on the other three: two I-52 Guide-digest tests after the P-57 reporting periods, and the print ban in the devstack code.
+- **Isolation part.** `t_iso_i20`.
+- **Demo browser suite.** 470 specs passed and 3 failed.
+
+`ci/known-red.txt` now lists only the two authorisation matrix tests. It listed 16 on the morning of 2026-11-15, and 79 on 2026-11-13.
 
 ### M3: what is open
 
-Built: the cell runtime with its routes, engine, record store and signing; the control plane with its run loops, operator login and cell link; `fstp-pgagent`, which applies the role plan; signup, passkeys, magic links, step-up and recovery; the login email index; the identity vault with its audit chain; the witness with a local file store for self-hosted cells; key custody through `fstp-keyd`; backups sealed with the hybrid KEM; and a test world that runs the call cycle from signup to GRANTED over HTTP. ML-DSA-65 comes from moduletto and runs in CI with its ACVP vectors.
+Built: the cell runtime with its routes, engine, record store and signing; the control plane with its run loops, operator login and cell link; `fstp-pgagent`, which applies the role plan; signup, passkeys, magic links, step-up and recovery; the login email index; the identity vault with its audit chain; the witness with a local file store for self-hosted cells; key custody through `fstp-keyd`; backups sealed with the hybrid KEM; cell erasure; and a test world that runs the call cycle from signup to GRANTED over HTTP. ML-DSA-65 comes from moduletto and runs in CI with its ACVP vectors.
 
 Open:
 
-- I-79: a decision on whether an approval may be recorded on a recovery path that takes none (Q-I79).
-- I-80: confirm the Linux memory scans in CI.
-- `r_nf_08_no_api_takes_a_caller_nonce`: an entry for the two-operator approval challenge in the scan's `NOT_SEALS` list waits on Daniel.
-- Further decisions in `docs/handoff/m3-exit-audit.md` sections 3 and 8: the vault sealed-value layout, break-glass fields, the system erasure path, ledger positions and the I-66 and I-67 generators.
+- `t_iso_i20`: key the shared identifier per cell (fix lane).
+- I-80: the Linux memory scans run in the isolation part. They confirm once that part is green.
+- Production gaps recorded in `docs/handoff/m3-exit-audit.md` section 8. The production `fstp-cell` does not yet serve `/app/` or host the API core. The cell does not yet send `NegotiationOpened` to its vault. `Workspaces` has no PostgreSQL port yet.
 
 ### Demo
 
-`tools/demo/run.sh` runs one test cell with synthetic people and scenes from programme set-up to a paid grant, the AI assessment, the fast-flow knock-out decision and the mailbox. `docs/handoff/presentation-walkthrough.md` is the click-through script.
+`tools/demo/run.sh` runs one test cell with synthetic people and scenes from programme set-up to a paid grant, the AI assessment, the fast-flow knock-out decision and the mailbox. `docs/handoff/presentation-walkthrough.md` is the click-through script. A page the signed-in person may not open, or one that does not exist, sends the browser home (SA-09).
 
 ### Branches
 
-`main` holds all of M0 to M4 so far, and it is the only integration branch. Work runs in short-lived lane branches. Finished lanes merge in batches: CI runs the full suite against PostgreSQL 16, and the batch merges into `main` when it shows no new failure. Some tests are red on purpose: each waits on a seam that a named lane closes. `ci/known-red.txt` lists each one with its seam and lane, and CI fails on any other red test (`tools/test-gate`).
+`main` holds all work so far, and it is the only integration branch. Work runs in short-lived lane branches, each merged after its own checks pass, then confirmed by the full CI run. Some tests are red on purpose. `ci/known-red.txt` lists each one with its reason, and CI fails on any other red test (`tools/test-gate`).
 
 ### Decisions
 
-Daniel's answers are recorded in `docs/handoff/m3-design.md` section 21.0 and `docs/handoff/m4-design.md` section 15.0, and in the ADRs in `docs/adr/`. Every reading not yet decided is marked "Interim, pending Daniel" where it is built.
+Daniel's answers are recorded in these places:
+- `docs/handoff/m3-design.md` section 21.0 and `docs/handoff/m4-design.md` section 15.0, plus the decision tables at the end of `m4-design.md`;
+- the ADRs in `docs/adr/`;
+- the spec amendments SA-01 to SA-13 in `docs/design/spec-amendments.md`;
+- `docs/handoff/session-handoff-2026-11-15.md`.
+
+Every reading not yet decided is marked "Interim, pending Daniel" where it is built. Legal text is never written in: each place that needs it carries `TODO(legal)`.
 
 ## Running the demo
 
