@@ -1676,7 +1676,7 @@ pub const OPS: &[OpSpec] = &[
     .acting(TEAM)
     .tool(
         "fstp_get_stage2_questions",
-        "Read the stage 2 questions on one of the caller's own proposals.",
+        "Read the stage 2 questions on one of the caller's own proposals, with the team's own answers.",
         &IN_PROPOSAL,
         Scope::ProposalsRead,
     ),
