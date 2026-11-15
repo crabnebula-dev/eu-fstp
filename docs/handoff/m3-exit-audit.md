@@ -115,5 +115,5 @@ Lane m3/decisions-a built these four decisions.
 
 Open after these decisions:
 
-- **Retention reminder (P-41).** The system should remind tenant admins when a retention period ends. No place exists for it yet: the M6 timeline has no event kind or source for the end of P-41 per action, and no mailbox message covers it.
+- **Retention reminder (P-41).** Decided by Daniel on 2026-11-15 (late). Retention starts at the confirmation of the grant's last payment request, with no new act. A timeline event fires at that date plus P-41 years, and a mailbox message reminds the tenant admins. It links to a new page, `/app/admin/erasures`, where a tenant admin lists past erasures, sees grants whose retention ended and requests an erasure with its cause (ADR-007), with step-up. Not built yet.
 - **Staff read route.** No HTTP route serves a staff read yet. `gate::admit_break_glass` and `Admitted::break_glass_log` are the entry points for it, with the operator content views (M4). The cell pins only the operator ticket key (`operator_key`) today; design section 9 lists a staff assertion key beside it, which the route will pass as `pinned_key`.

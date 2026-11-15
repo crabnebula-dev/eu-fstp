@@ -197,3 +197,9 @@ The option read: "The FSTP coordinator may unmask any party of their own program
 
 - A refused action inside a page the viewer may open still names the rule, never an account (R-CF-03, `overview.md`).
 - The API keeps its refusal classes. The gate concerns page routes only.
+
+## SA-10: I-21 and the coordinator's parties read on a draft
+
+**Source.** Daniel's decision, 2026-11-15 (late), confirming the reading of lane m4/evening-answers. **Status.** Spec amendment applied. Code built in 8efed4b8.
+
+- `invariants.md` I-21 carries a NOTE. The FSTP coordinator's parties read and unmask (ADR-023 decision 4) work on a draft and show who the parties are, never draft content or pre-submission check runs. I-21 is otherwise unchanged.

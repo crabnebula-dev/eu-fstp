@@ -339,3 +339,8 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 | Third-party crates added by this ADR | None | 2026-10-28 |
 | `fstp-webauthn` fuzz targets in `deps/fuzz-required.txt` | Record at first use | Record at first use |
 | ADR-001 "Open points" line on authentication crates | Closed by the ADR-001 amendment, accepted 2026-10-28 | 2026-10-28 |
+
+## Decided by Daniel, 2026-11-15 (late)
+
+- **Token lifetimes.** Accepted as ADR constants: magic link 15 minutes, recovery enrolment 24 hours, recovery case 72 hours, staff assertion 15 minutes, signup proof 15 minutes.
+- **Magic links (P-70).** `SetLoginPolicy` carries P-70, so a tenant admin turns magic links on or off, with step-up and an audit entry. The cell's start option becomes the default.

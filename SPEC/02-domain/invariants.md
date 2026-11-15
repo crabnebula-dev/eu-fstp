@@ -35,6 +35,7 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 - **I-19** No tenant data crosses a cell boundary except through a tenant export, a user-held profile bundle or a template the tenant published (I-73).
 - **I-20** The platform stores no link between tenant accounts in different tenants.
 - **I-21** Pre-submission check runs and drafts are not readable by operator or Judging roles.
+  NOTE: Clarified by Daniel on 2026-11-15 (SA-10). The FSTP coordinator's parties read and unmask (ADR-023) work on a draft. They show who the parties are (ids, party kinds, roles, handles), never draft content or pre-submission check runs.
 - **I-22** Exporting a tenant and importing it into an empty cell yields an equivalent tenant state.
   NOTE: Export and import are deferred by Daniel on 2026-11-04 (B-07). I-22 binds again when they return.
 

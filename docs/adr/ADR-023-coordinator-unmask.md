@@ -96,4 +96,9 @@ Built by lane m4/evening-answers: the `conflict` member of `PartyUnmasked` and o
 ## Open points for Daniel
 
 1. **The legal basis and retention of the purpose text.** `TODO(legal)`: the purpose is personal data of the coordinator and may name the subject's case. Its retention follows the programme's confidential texts until Daniel decides.
-2. **Staff of the programme.** Whether another FSTP coordinator of the same programme counts as staff that may be unmasked. Interim: yes.
+
+## Decided by Daniel, 2026-11-15 (late)
+
+- **Other coordinators.** Another FSTP coordinator of the same programme counts as staff and may be unmasked.
+- **Conflict flag.** Declared and detected conflicts both set the one `conflict` flag.
+- **I-21.** Confirmed: on a draft the parties read and unmask show who the parties are, never draft content (SA-10).

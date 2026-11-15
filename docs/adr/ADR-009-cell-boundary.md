@@ -316,3 +316,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 | Third-party crates added by this ADR | None | 2026-10-28 |
 | Tunnel header layout and `TUNNEL_HEADER_LEN` | Version 1, 274 bytes, with the routed host ("Edge and tunnel") | Recorded 2026-10-29 (lane W2i); host field kept by Daniel |
 | `METADATA_REGISTER` entries as built | Record at first use | Record at first use |
+
+## Decided by Daniel, 2026-11-15 (late)
+
+These interim readings are accepted as decided: Q37 (vault ticket lifetime at most 5 minutes, an ADR constant), Q26 (an application host and a vault host per cell in SaaS, one node when self-hosted), Q30 (per-cell keys, production issuance through an in-house, fuzzed ACME client), Q34 (R-NF-09 claimed for links between platform components) and Q19 (client addresses in memory only, for rate limits). The `TODO(legal)` on the basis for Q19 stays.

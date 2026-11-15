@@ -542,3 +542,11 @@ W2f also checks these items on the host side.
 - Self-hosted physical cluster backups need a ClusterBackup chain entry, which M3 design section 9.5 does not list. Proposed: `fstp-install` creates one per local cluster, usable only through the root-only console socket.
 - The self-hosted witness needs custody for its receipt key, which section 9.5 also omits. Proposed: a `fstp-keyd` ControlPlane entry with its own socket for the `fstp-witness` OS user. Decided by Daniel on 2026-11-13 (m3-finish Q-D): a separate `fstp-keyd` entry with its own credential. Recorded under "Self-hosted witness receipt key".
 - ADR-001 lists the aws-lc-rs functions in use. The ADR-001 amendment of 2026-10-28 adds PBKDF2-HMAC-SHA-256 for the file custody key table and AES-256-GCM-SIV as a conditional fallback (ADR-001 A8). Daniel accepted A8 with that amendment on 2026-10-28, so the file custody KDF is no longer blocked on it.
+
+## Decided by Daniel, 2026-11-15 (late)
+
+- **Witness credentials on cell erasure.** The witness appends a revocation record beside `witness.cell_ca` and refuses the revoked cell from then on. `cell_ca` stays append-only, and the anchor rows keep their references. The cell's secret key material is destroyed through custody.
+- **Approvals per erasure.** One batch approval per operator per erasure. Each of the two operators approves once, with a passkey, over a signed list of all the erasure's job digests. The two-operator rule is unchanged.
+- **Sign keys in `fstp-keyd`.** The key table gains a sign-key slot form beside the root slots. Install creates the local cluster CA sign keys there, and a destroy overwrites the key in place.
+- **Route removal on a remote edge.** Each `fstp-edge` polls a signed route table from `fstp-control`. The erasure finishes route removal once every edge reports the table version without the cell's routes.
+- **Level 2 signing keys.** Creating or rotating a level 2 signing key appends a key record, although no custody call is made.

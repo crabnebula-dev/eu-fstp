@@ -264,3 +264,13 @@ Open questions for Daniel:
 - What triggers the yearly rotation of the notice companion key: the erasure task, an operator action or a release step?
 - Should branding and terminology each get a read of the values in force, so the screens start from them?
 - Should other programme staff, such as the coordinator or the call drafter, read the funder profile?
+
+## Decided by Daniel, 2026-11-15 (late)
+
+- **Milestones on public pages.** No milestone fact is public by default. A programme may opt in through a publicity choice, off by default, to publish milestone titles and whether each is completed, with the month. Never amounts or content.
+- **Reporting periods.** P-57 holds the reporting period ends and report deadlines.
+- **Funder profiles (D3).** The platform ships versioned profiles. A tenant may copy one into a tenant-owned profile and edit it. A programme pins one, as today.
+- **Footer in `/app/`.** Pages inside one programme show the funder visibility elements of that programme's pinned profile. Tenant-wide pages show none.
+- **Level 2 signing keys.** Creating or rotating one appends a key record (ADR-004).
+- **Notice companion key rotation.** An operator rotates it by hand, and the platform reminds the operator when a year is up.
+- **Funder profile read.** Every Drafting, Judging and Operations role of the programme reads its funder profile, read-only.
