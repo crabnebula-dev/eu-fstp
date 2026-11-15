@@ -2427,6 +2427,7 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             subject: unmask_subject(g, d),
             purpose: text(g, d),
             by: id(g, d, AccountId::from_raw),
+            conflict: g.bool(),
         },
         RecordTag::CutOffRoundOpened => Record::CutOffRoundOpened {
             round: id(g, d, DecisionId::from_raw),

@@ -979,5 +979,10 @@ pub enum Record {
         purpose: TextRef,
         /// The coordinator.
         by: AccountId,
+        /// Whether the coordinator held a conflict fact, declared or
+        /// detected, on the subject's proposal when unmasking. Always
+        /// `false` for a subject that rests on no proposal, such as staff
+        /// (ADR-023 decision 2, Daniel, 2026-11-15).
+        conflict: bool,
     },
 }

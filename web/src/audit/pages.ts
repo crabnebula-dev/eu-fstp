@@ -154,18 +154,20 @@ export function unmasksSection(t: I18n, u: Unmasks): HTMLElement {
             th(t.label("audit.unmasks.col.subject")),
             th(t.label("audit.unmasks.col.by")),
             th(t.label("audit.unmasks.col.purpose")),
+            th(t.label("audit.unmasks.col.conflict")),
           ]),
         ]),
         h(
           "tbody",
           {},
           u.unmasks.map((r) =>
-            h("tr", {}, [
+            h("tr", { "data-conflict": String(r.conflict) }, [
               h("td", {}, [time(t, r.at)]),
               h("td", {}, [labelOr(t, `audit.party.${r.party}`, r.party)]),
               h("td", { class: "pid" }, [`${r.subject_type} ${r.subject}`]),
               h("td", { class: "pid" }, [r.by]),
               h("td", {}, [r.purpose]),
+              h("td", {}, [t.label(r.conflict ? "audit.unmasks.conflict.yes" : "audit.unmasks.conflict.no")]),
             ]),
           ),
         ),

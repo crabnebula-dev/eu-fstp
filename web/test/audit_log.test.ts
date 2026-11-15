@@ -118,7 +118,17 @@ const UNMASKS = {
       subject: "11",
       by: "201",
       purpose: "SYNTHETIC PURPOSE: check the declared affiliation.",
+      conflict: false,
       at: "1793520720000000",
+    },
+    {
+      party: "reviewer",
+      subject_type: "assignment",
+      subject: "12",
+      by: "203",
+      purpose: "SYNTHETIC PURPOSE: confirm the reviewer behind a handle.",
+      conflict: true,
+      at: "1793520780000000",
     },
   ],
 };
@@ -316,4 +326,24 @@ test("r_au_01_sa08_other_roles_get_no_audit_link", () => {
     const w = workOf(rolesOf(false, roles), null, (c) => `Call ${c}`, (p) => `Proposal ${p}`, ["1"]);
     eq(auditLinks(w), [], `no audit link for ${JSON.stringify(roles)}`);
   }
+});
+
+/**
+ * R-AU-01, ADR-023 decision 2 (Daniel, 2026-11-15): the unmask table
+ * shows whether the coordinator held a conflict on the proposal, per row.
+ */
+test("r_au_01_adr023_unmask_table_shows_the_conflict_flag", async () => {
+  prepare();
+  await mount({ "GET /programmes/1/audit/unmasks": UNMASKS });
+  const rows = byId("audit-unmasks")
+    .getElementsByTagName("tr")
+    .filter((r) => r.getAttribute("data-conflict") !== null);
+  eq(
+    rows.map((r) => r.getAttribute("data-conflict")),
+    ["false", "true"],
+    "one flag per row, oldest first",
+  );
+  const shown = text();
+  assert(shown.includes("Conflict on the proposal"), "the column heading");
+  assert(shown.includes("Yes, a conflict was recorded"), "the flagged row");
 });

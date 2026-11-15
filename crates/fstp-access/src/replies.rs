@@ -930,7 +930,9 @@ pub const REPLIES: &[(&str, Shape)] = &[
     ),
     // ADR-023 reading 11 (R-AU-01): the unmask records of a programme,
     // oldest first. `by` is the coordinator's account id, `at` the
-    // instant in UTC microseconds. No identity attribute.
+    // instant in UTC microseconds. `conflict` says the coordinator held a
+    // conflict fact on the subject's proposal (ADR-023 decision 2). No
+    // identity attribute.
     (
         "audit.unmasks",
         Shape::Object(&[m(
@@ -941,6 +943,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 m("subject", Shape::Id),
                 m("by", Shape::Id),
                 m("purpose", Shape::String),
+                m("conflict", Shape::Bool),
                 m("at", Shape::Id),
             ])),
         )]),

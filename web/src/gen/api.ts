@@ -4022,6 +4022,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "subject": { schema: { kind: "id" }, optional: false },
           "by": { schema: { kind: "id" }, optional: false },
           "purpose": { schema: { kind: "string" }, optional: false },
+          "conflict": { schema: { kind: "bool" }, optional: false },
           "at": { schema: { kind: "id" }, optional: false },
         },
       } }, optional: false },
