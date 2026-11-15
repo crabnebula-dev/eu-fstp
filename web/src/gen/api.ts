@@ -3871,6 +3871,19 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "report": { schema: { kind: "id" }, optional: false },
     },
   },
+  "roles.grant": {
+    kind: "object",
+    fields: {
+      "accepted": { schema: { kind: "bool" }, optional: false },
+      "approval": { schema: { kind: "id" }, optional: true },
+    },
+  },
+  "agents.consent": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
   "vault.bank.set": {
     kind: "object",
     fields: {
@@ -4662,6 +4675,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "approval": { schema: { kind: "id" }, optional: true },
           "role": { schema: { kind: "string" }, optional: true },
           "grantee": { schema: { kind: "string" }, optional: true },
+          "start": { schema: { kind: "string" }, optional: true },
+          "end": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: true },
         },
       } }, optional: false },
       "unlisted": { schema: { kind: "array", items: { kind: "enum", values: ["self_grant"] } }, optional: true },

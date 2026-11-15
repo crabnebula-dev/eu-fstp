@@ -131,3 +131,14 @@ Lane W1e built `fstp-oauth` against this ADR and checked the authorisation text 
 | Metadata location | Every 401 challenge names `/.well-known/oauth-protected-resource` at the cell's origin, as the Metadata row says | This ADR |
 | Token storage | Each code, token and consent handle is 32 random bytes as 43 characters of base64url. The server keeps SHA-256 of a per-kind label and the bytes, indexed by its first 16 bytes and compared in full with `constant_time_eq` | This ADR, Token format row |
 | Records | The server holds its records in memory. A restart ends every grant, which fails closed. Storing them in the cell's `mcp` schema is a seam for the lead | Design section 4.1 |
+
+## Record of lane m4/api-gaps (2026-11-15)
+
+Daniel decided on 2026-11-15 to wire `agents.consent` to the real flow. This record states how. It changes no row above.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Consent operation | `agents.consent` is `POST /api/v1/oauth/consent` with the body `{consent}`, the handle of a consent the authorize flow left. It answers `{redirect}`: the client's redirect URI with the code, `state` and `iss` | Consent row; Daniel 2026-11-15 |
+| Step-up binding | The API core takes the step-up bound to its own request digest, which covers the handle (I-78). The token port then attests that step-up to `AuthorizationServer::approve`, bound to the consent's own digest, which `consent_step_up_digest` reads for a live handle. The server still checks the attested proof itself | Consent row; I-78 |
+| Order | A magic-link session is refused first (I-77), then the channel (web only, I-85), then the step-up. A handle the server does not hold is refused under `Input` after the step-up | Design section 3.7 |
+| Shell | The API core's `Tokens::approve_consent` port reaches the server. The test cells' fake port holds a real `fstp-oauth` server. `fstp-web` still answers `/oauth/**` with the typed refusal of this ADR, so the authorize, token and revocation endpoints wait for the lane that mounts the server with its token store | Consequences |

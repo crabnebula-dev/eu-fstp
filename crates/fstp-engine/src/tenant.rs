@@ -280,7 +280,8 @@ pub fn tenant_refusal(r: TenantRefusal) -> Refusal {
         | TenantRefusal::SelfApproval
         | TenantRefusal::GranteeNotAdmin
         | TenantRefusal::ApprovalExpired
-        | TenantRefusal::ApprovalNotOpen => (RuleRef::Sod07, Why::GuardFailed),
+        | TenantRefusal::ApprovalNotOpen
+        | TenantRefusal::NotSelfGrant => (RuleRef::Sod07, Why::GuardFailed),
         TenantRefusal::AnswerMissing => (RuleRef::FactsIncomplete, Why::AnswerMissing),
         TenantRefusal::InvitationTaken
         | TenantRefusal::ApprovalTaken

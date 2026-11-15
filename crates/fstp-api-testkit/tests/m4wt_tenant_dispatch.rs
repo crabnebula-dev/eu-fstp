@@ -808,15 +808,21 @@ fn i78_inviting_a_tenant_admin_needs_a_digest_bound_step_up() {
     );
 }
 
-/// SoD-07 (fix round 1): while no record lists pending self-grants, an
-/// approval id names no self-grant the cell knows of. It is refused as
-/// not found under `Input`, never as if a SoD-07 rule had been checked,
-/// and no step-up is begun.
+/// SoD-07 (fix round 1, then Daniel's pending-grant record of
+/// 2026-11-15): an approval id that names no self-grant awaiting approval
+/// is refused as not found under `Input`, never as if a SoD-07 rule had
+/// been checked, and nothing is appended. The step-up comes first, as the
+/// reference of design section 8.3 orders it, so the answer to an
+/// unknown id needs the same proof as an approval.
 #[test]
 fn sod07_approval_of_an_unknown_self_grant_is_not_found() {
     let c = fresh("self_hosted", Second::Added { verified: true });
     let l = login(&c, A1);
-    let r = c.web(&l, approve_self_grant(7));
+    let mut r = c.web(&l, approve_self_grant(7));
+    if let Ok(OpResult::StepUpRequired(ch)) = &r {
+        c.ports.step_up.approve(l.session, ch.action).unwrap();
+        r = c.web(&l, approve_self_grant(7));
+    }
     match &r {
         Err(ApiError::Refused { code, rule, .. }) => {
             assert_eq!(*code, ErrorCode::NotFound, "{r:?}");
@@ -824,7 +830,6 @@ fn sod07_approval_of_an_unknown_self_grant_is_not_found() {
         }
         other => panic!("SoD-07: an unknown approval gave {other:?}"),
     }
-    assert!(c.ports.step_up.begun().is_empty());
     assert_eq!(appended(&c), 0);
 }
 

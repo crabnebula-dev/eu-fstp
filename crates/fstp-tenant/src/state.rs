@@ -159,6 +159,24 @@ pub struct SelfGrantApproval {
     pub used: bool,
 }
 
+/// A self-grant awaiting a second tenant admin's approval (SoD-07, Daniel
+/// 2026-11-15): the `SelfGrantRequested` record of a tenant admin's grant
+/// to their own account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingSelfGrant {
+    /// The grant: grantee, programme and role. The grantee asked for it.
+    pub grant: GrantRef,
+    /// The first instant of the binding.
+    pub start: Timestamp,
+    /// The end of the binding, if any.
+    pub end: Option<Timestamp>,
+    /// The instant of the request.
+    pub requested_at: Timestamp,
+    /// Whether a second tenant admin approved it. Its approval carries
+    /// the same id.
+    pub approved: bool,
+}
+
 /// The latest inference configuration record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InferenceConfig {
@@ -178,6 +196,8 @@ pub struct TenantState {
     admins: BTreeSet<AccountId>,
     invitations: BTreeMap<InvitationId, AdminInvitation>,
     approvals: BTreeMap<ApprovalId, SelfGrantApproval>,
+    /// The self-grants awaiting approval, by the id their approval takes.
+    pending: BTreeMap<ApprovalId, PendingSelfGrant>,
     /// The latest save of each step, with its current outcome.
     saved: BTreeMap<OnboardingStep, (StepValues, StepOutcome)>,
     validated: BTreeSet<OnboardingStep>,
@@ -217,6 +237,7 @@ impl TenantState {
             admins: [first_admin].into_iter().collect(),
             invitations: BTreeMap::new(),
             approvals: BTreeMap::new(),
+            pending: BTreeMap::new(),
             saved: BTreeMap::new(),
             validated: BTreeSet::new(),
             settings: TenantSettings::spec_defaults(),
@@ -329,6 +350,28 @@ impl TenantState {
                 }
                 self.admins.insert(*account);
             }
+            TenantRecord::SelfGrantRequested {
+                request,
+                grant,
+                start,
+                end,
+                at,
+            } => {
+                self.need_admin(grant.grantee)?;
+                self.check_self_grant_request(*request, grant, grant.grantee, *start, *end)
+                    .map_err(FoldError)?;
+                let requested_at = instant(*at).map_err(FoldError)?;
+                self.pending.insert(
+                    *request,
+                    PendingSelfGrant {
+                        grant: *grant,
+                        start: *start,
+                        end: *end,
+                        requested_at,
+                        approved: false,
+                    },
+                );
+            }
             TenantRecord::SelfGrantApproved {
                 approval,
                 grant,
@@ -338,6 +381,9 @@ impl TenantState {
                 self.need_admin(*by)?;
                 self.check_approval(*approval, grant, *by)
                     .map_err(FoldError)?;
+                if let Some(p) = self.pending.get_mut(approval) {
+                    p.approved = true;
+                }
                 let expires_at = self.approval_expiry(*at).map_err(FoldError)?;
                 self.approvals.insert(
                     *approval,
@@ -558,6 +604,13 @@ impl TenantState {
     ) -> Result<(), TenantRefusal> {
         if self.approvals.contains_key(&approval) {
             Err(TenantRefusal::ApprovalTaken)
+        } else if self
+            .pending
+            .get(&approval)
+            .is_some_and(|p| p.grant != *grant)
+        {
+            // An approval of a pending record approves exactly its grant.
+            Err(TenantRefusal::ApprovalNotOpen)
         } else if !self.is_admin(grant.grantee) {
             Err(TenantRefusal::GranteeNotAdmin)
         } else if grant.grantee == approver {
@@ -565,6 +618,33 @@ impl TenantState {
         } else {
             Ok(())
         }
+    }
+
+    /// The rule of a self-grant request (SoD-07, Daniel 2026-11-15): the
+    /// id is new to both the pending records and the approvals, the
+    /// grantee is the asking admin, and the dates are ledger instants with
+    /// the end after the start.
+    pub(crate) fn check_self_grant_request(
+        &self,
+        request: ApprovalId,
+        grant: &GrantRef,
+        by: AccountId,
+        start: Timestamp,
+        end: Option<Timestamp>,
+    ) -> Result<(), TenantRefusal> {
+        if self.pending.contains_key(&request) || self.approvals.contains_key(&request) {
+            return Err(TenantRefusal::ApprovalTaken);
+        }
+        if grant.grantee != by {
+            return Err(TenantRefusal::NotSelfGrant);
+        }
+        let start = instant(start)?;
+        if let Some(end) = end
+            && instant(end)? <= start
+        {
+            return Err(TenantRefusal::InvalidInstant);
+        }
+        Ok(())
     }
 
     /// The last instant an approval given at `at` admits its self-grant:
@@ -844,6 +924,12 @@ impl TenantState {
     /// The recorded SoD-07 approvals.
     pub fn approvals(&self) -> &BTreeMap<ApprovalId, SelfGrantApproval> {
         &self.approvals
+    }
+
+    /// The self-grant requests by the id their approval takes, approved
+    /// ones included (SoD-07).
+    pub fn pending_self_grants(&self) -> &BTreeMap<ApprovalId, PendingSelfGrant> {
+        &self.pending
     }
 
     /// Whether every step before `step` is done, so `step` takes saves

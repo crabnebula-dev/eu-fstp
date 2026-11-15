@@ -199,6 +199,11 @@ fn token_digest(d: TokenDigest) -> Value {
     s(&hex(&d.bytes()))
 }
 
+/// An optional instant: `null` or its decimal micros.
+fn opt_instant(t: Option<Timestamp>) -> Value {
+    t.map_or(Value::Null, |t| dec(t.micros()))
+}
+
 fn grant(g: &GrantRef) -> Value {
     object(vec![
         ("grantee", dec(g.grantee.raw())),
@@ -355,6 +360,20 @@ fn command_value(cmd: &TenantCommand) -> Value {
                 ("token_digest", token_digest(*d)),
             ],
         ),
+        TenantCommand::RequestSelfGrant {
+            request,
+            grant: g,
+            start,
+            end,
+        } => tagged(
+            "RequestSelfGrant",
+            vec![
+                ("end", opt_instant(*end)),
+                ("grant", grant(g)),
+                ("request", dec(request.raw())),
+                ("start", dec(start.micros())),
+            ],
+        ),
         TenantCommand::ApproveSelfGrant { approval, grant: g } => tagged(
             "ApproveSelfGrant",
             vec![("approval", dec(approval.raw())), ("grant", grant(g))],
@@ -457,6 +476,22 @@ fn record_value(rec: &TenantRecord) -> Value {
             vec![
                 ("account", dec(account.raw())),
                 ("invitation", dec(invitation.raw())),
+            ],
+        ),
+        TenantRecord::SelfGrantRequested {
+            request,
+            grant: g,
+            start,
+            end,
+            at,
+        } => tagged(
+            "SelfGrantRequested",
+            vec![
+                ("at", dec(at.micros())),
+                ("end", opt_instant(*end)),
+                ("grant", grant(g)),
+                ("request", dec(request.raw())),
+                ("start", dec(start.micros())),
             ],
         ),
         TenantRecord::SelfGrantApproved {
@@ -782,6 +817,15 @@ fn take_instant(v: &Value) -> R<Timestamp> {
     take_i64(v).map(Timestamp::from_micros)
 }
 
+/// An optional instant: `null` or one decimal instant.
+fn take_opt_instant(v: &Value) -> R<Option<Timestamp>> {
+    if v.is_null() {
+        Ok(None)
+    } else {
+        take_instant(v).map(Some)
+    }
+}
+
 fn take_invitation(v: &Value) -> R<InvitationId> {
     take_u128(v).map(InvitationId::from_raw)
 }
@@ -1008,6 +1052,15 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 token_digest: take_token_digest(f.get("token_digest")?)?,
             }
         }
+        "RequestSelfGrant" => {
+            let f = Fields::of(v, &["end", "grant", "kind", "request", "start"])?;
+            TenantCommand::RequestSelfGrant {
+                request: take_approval(f.get("request")?)?,
+                grant: take_grant(f.get("grant")?)?,
+                start: take_instant(f.get("start")?)?,
+                end: take_opt_instant(f.get("end")?)?,
+            }
+        }
         "ApproveSelfGrant" => {
             let f = Fields::of(v, &["approval", "grant", "kind"])?;
             TenantCommand::ApproveSelfGrant {
@@ -1128,6 +1181,16 @@ fn take_record(v: &Value) -> R<TenantRecord> {
             TenantRecord::AdminAdded {
                 account: take_account(f.get("account")?)?,
                 invitation: take_invitation(f.get("invitation")?)?,
+            }
+        }
+        "SelfGrantRequested" => {
+            let f = Fields::of(v, &["at", "end", "grant", "kind", "request", "start"])?;
+            TenantRecord::SelfGrantRequested {
+                request: take_approval(f.get("request")?)?,
+                grant: take_grant(f.get("grant")?)?,
+                start: take_instant(f.get("start")?)?,
+                end: take_opt_instant(f.get("end")?)?,
+                at: take_instant(f.get("at")?)?,
             }
         }
         "SelfGrantApproved" => {
@@ -1261,7 +1324,7 @@ mod tests {
     #[test]
     fn adr007_command_seeds_round_trip() {
         let seeds = seeds!("tenant_command_decode": "save_identity", "save_organisation",
-            "save_payments", "invite_admin", "accept_admin_invitation", "approve_self_grant",
+            "save_payments", "invite_admin", "accept_admin_invitation", "request_self_grant", "approve_self_grant",
             "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete",
             "grant_signatory", "end_signatory", "request_activation", "approve_activation", "set_branding",
             "set_terminology", "set_mail_relay");
@@ -1277,7 +1340,7 @@ mod tests {
     fn adr007_record_seeds_round_trip() {
         let seeds = seeds!("tenant_record_decode": "step_saved_channels",
             "step_saved_payments", "step_saved_agreements", "step_validated", "admin_invited",
-            "admin_added", "self_grant_approved", "self_grant_approval_used", "setting_p70",
+            "admin_added", "self_grant_requested", "self_grant_approved", "self_grant_approval_used", "setting_p70",
             "inference_recorded", "completed", "signatory_granted", "signatory_ended",
             "activation_requested", "activation_approved", "branding_set",
             "terminology_set", "mail_relay_set");

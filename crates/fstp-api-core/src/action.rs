@@ -74,6 +74,22 @@ pub(crate) fn from_hex<const N: usize>(s: &str) -> Option<[u8; N]> {
     Some(out)
 }
 
+/// The bytes of 2 to `2 max` lowercase hexadecimal digits, an even
+/// count: the one spelling of a byte string in a request body, as the
+/// cell's `/auth` body forms take it (TH-26).
+pub(crate) fn hex_vec(s: &str, max: usize) -> Option<Vec<u8>> {
+    let b = s.as_bytes();
+    if b.is_empty() || !b.len().is_multiple_of(2) || b.len() > max.saturating_mul(2) {
+        return None;
+    }
+    b.chunks_exact(2)
+        .map(|pair| match pair {
+            [hi, lo] => Some(nibble(*hi)?.wrapping_shl(4) | nibble(*lo)?),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The digest of one action: `op` with its canonical `request`, `target`
 /// and the acting `account`, in the cell of `tenant`. `None` when the
 /// object has no canonical form, which a decoded request always has.

@@ -550,6 +550,10 @@ fn record_view(r: &TenantRecord) -> RecordView {
             by: *by,
         },
         TenantRecord::AdminAdded { account, .. } => RecordView::AdminAdded { account: *account },
+        TenantRecord::SelfGrantRequested { request, grant, .. } => RecordView::SelfGrantRequested {
+            request: request.raw(),
+            by: grant.grantee,
+        },
         TenantRecord::SelfGrantApproved { approval, by, .. } => RecordView::SelfGrantApproved {
             approval: approval.raw(),
             by: *by,

@@ -58,6 +58,21 @@ pub enum TenantCommand {
         /// presented.
         token_digest: TokenDigest,
     },
+    /// A tenant admin asks for a role in a programme for their own
+    /// account (SoD-07, Daniel 2026-11-15). It records the grant awaiting
+    /// a second tenant admin's approval, which names it by `request`.
+    /// The role grant that issues it is high-risk, so it is too.
+    RequestSelfGrant {
+        /// The pending record, drawn by the shell. The approval takes
+        /// this id.
+        request: ApprovalId,
+        /// The grant, whose grantee is the asking admin.
+        grant: GrantRef,
+        /// The first instant of the binding.
+        start: Timestamp,
+        /// The end of the binding, if any.
+        end: Option<Timestamp>,
+    },
     /// A second tenant admin approves another admin's self-grant (SoD-07).
     /// High-risk.
     ApproveSelfGrant {
@@ -165,6 +180,8 @@ pub enum TenantKind {
     InviteAdmin,
     /// `tenant.accept_admin_invitation`.
     AcceptAdminInvitation,
+    /// `tenant.request_self_grant`, issued by a self-grant (SoD-07).
+    RequestSelfGrant,
     /// `tenant.approve_self_grant`.
     ApproveSelfGrant,
     /// `tenant.use_self_grant_approval`.
@@ -195,10 +212,11 @@ pub enum TenantKind {
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 21] = [
+    pub const ALL: [TenantKind; 22] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
+        TenantKind::RequestSelfGrant,
         TenantKind::ApproveSelfGrant,
         TenantKind::UseSelfGrantApproval,
         TenantKind::SetSetting(TenantParam::P20),
@@ -239,6 +257,7 @@ impl TenantKind {
         matches!(
             self,
             TenantKind::InviteAdmin
+                | TenantKind::RequestSelfGrant
                 | TenantKind::ApproveSelfGrant
                 | TenantKind::SetSetting(_)
                 | TenantKind::SetGuideNotice
@@ -279,6 +298,7 @@ impl TenantCommand {
             TenantCommand::SaveStep { .. } => TenantKind::SaveStep,
             TenantCommand::InviteAdmin { .. } => TenantKind::InviteAdmin,
             TenantCommand::AcceptAdminInvitation { .. } => TenantKind::AcceptAdminInvitation,
+            TenantCommand::RequestSelfGrant { .. } => TenantKind::RequestSelfGrant,
             TenantCommand::ApproveSelfGrant { .. } => TenantKind::ApproveSelfGrant,
             TenantCommand::UseSelfGrantApproval { .. } => TenantKind::UseSelfGrantApproval,
             TenantCommand::SetSetting { value } => TenantKind::SetSetting(value.param()),
@@ -342,6 +362,21 @@ pub enum TenantRecord {
         account: AccountId,
         /// The invitation taken.
         invitation: InvitationId,
+    },
+    /// A tenant admin asked for a role for their own account: the grant
+    /// awaits a second tenant admin's approval (SoD-07, Daniel
+    /// 2026-11-15).
+    SelfGrantRequested {
+        /// The pending record, which the approval names.
+        request: ApprovalId,
+        /// The grant: grantee, programme and role. The grantee asked.
+        grant: GrantRef,
+        /// The first instant of the binding.
+        start: Timestamp,
+        /// The end of the binding, if any.
+        end: Option<Timestamp>,
+        /// The instant of the request.
+        at: Timestamp,
     },
     /// A second admin approved a self-grant (SoD-07). The approval lapses
     /// P-71 after `at`.

@@ -118,7 +118,7 @@ use crate::port::{
     Accounts, AgentClientId, AsyncEngine, AsyncIdentityOracle, AuditEntry, BreakGlass,
     BreakGlassId, CellPorts, Clock, ExecError, ExecMeta, Ids, LoginMethod, OpName, Outcome,
     PendingId, PortError, QueryDigest, Recovery, RecoveryId, SessionId, Sessions, SessionsAdmin,
-    StepUp, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore, Vault, VaultAudit,
+    StepUp, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore, Tokens, Vault, VaultAudit,
     VerificationPurpose,
 };
 use crate::rate::{self, Key, Rates};
@@ -1144,6 +1144,13 @@ async fn command<P: Seams>(
         preset.insert("confidentiality", terms);
         cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
     }
+    // SoD-07 (Daniel, 2026-11-15): a tenant admin's grant to their own
+    // account, naming no approval, awaits a second tenant admin.
+    if verdict != ChannelVerdict::Prepare
+        && let Some(g) = tenant::self_grant_of(call, account, &cmd, second)
+    {
+        return tenant::request_self_grant(call, account, cmd, g).await;
+    }
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = Ctx {
         second_tenant_admin: second,
@@ -2111,9 +2118,66 @@ async fn agent<P: Seams>(
                 Err(e) => Err(call.refuse(port_failed(e, "R-MC-03"))),
             }
         }
-        AgentKind::Consent => Err(call.refuse(ApiError::NotImplemented(
-            "agent consent: the OAuth profile of ADR-013, a draft",
-        ))),
+        AgentKind::Consent => consent(call, op, account).await,
+    }
+}
+
+/// `agents.consent` (ADR-013 "Consent", I-78): the user approves a
+/// consent of the authorize flow by its handle. Approving links a device,
+/// so the call is web only and needs a fresh step-up bound to this
+/// request, whose digest covers the handle. The token port then attests
+/// that step-up to the authorisation server of `fstp-oauth`, which checks
+/// it against the consent's own digest and issues the code. A handle the
+/// server does not hold is refused under `Input`, after the step-up.
+async fn consent<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+    account: AccountId,
+) -> Result<OpResult, ApiError> {
+    let handle = forms::consent_handle(&op.request)
+        .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+    if call.caller.via() != Via::Web {
+        return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
+    }
+    let Some(method) = call.caller.p.method().map(port_method) else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-78")));
+    };
+    let proof = match step_up(call, call.digest)
+        .await
+        .map_err(|e| call.refuse(e))?
+    {
+        Ok(p) => p,
+        Err(ask) => {
+            let _ = call.audit(Outcome::Refused("I-78"), None);
+            return Ok(ask);
+        }
+    };
+    let approval = crate::port::ConsentApproval {
+        account,
+        handle,
+        method,
+        step_up: proof,
+        at: call.now,
+    };
+    match call.ports.tokens().approve_consent(approval).await {
+        Ok(to) => {
+            call.accepted(Some(proof))?;
+            Ok(OpResult::Done {
+                body: ReadModel::Redirect(to),
+                seq: None,
+            })
+        }
+        Err(e) => Err(call.refuse(port_failed(e, "Input"))),
+    }
+}
+
+/// The port login method of an access crate method.
+const fn port_method(m: fstp_access::LoginMethod) -> LoginMethod {
+    match m {
+        fstp_access::LoginMethod::Passkey => LoginMethod::Passkey,
+        fstp_access::LoginMethod::MagicLink => LoginMethod::MagicLink,
+        fstp_access::LoginMethod::Opaque => LoginMethod::Opaque,
+        fstp_access::LoginMethod::EudiWallet => LoginMethod::EudiWallet,
     }
 }
 
@@ -2147,7 +2211,7 @@ enum PortCall {
     /// A team member acknowledges the negotiation notice (R-NG-06).
     AcknowledgeNotice(ProposalId),
     /// The user adds a passkey (`authentication.md`, high-risk).
-    AddPasskey,
+    AddPasskey(crate::port::PasskeyRegistration),
     /// The lead asks for a copy of the application at an address (R-SB-04).
     RequestCopy(ProposalId, String),
 }
@@ -2196,10 +2260,13 @@ async fn m3_port<P: Seams>(
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
             PortCall::ApproveBreakGlass(b, approve)
         }
-        // Adding a passkey is high-risk (`authentication.md`). Its channel
-        // and step-up checks run before the seam, as the cell's
-        // `/auth/passkeys` route runs them before its 501.
-        PortKind::AddPasskey if call.spec.high_risk => PortCall::AddPasskey,
+        // Adding a passkey is high-risk (`authentication.md`). The cell's
+        // own ceremony registers it after the step-up, through the
+        // sessions admin port (R-LG-04).
+        PortKind::AddPasskey if call.spec.high_risk => PortCall::AddPasskey(
+            forms::passkey_registration(&op.request)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?,
+        ),
         PortKind::EndSession => PortCall::EndSession(SessionId::from_raw(id("session")?)),
         PortKind::MarkMailboxRead => {
             let message = op
@@ -2353,9 +2420,18 @@ async fn m3_port<P: Seams>(
         Err(e) => Err(call.refuse(port_failed(e, rule))),
     };
     match port_call {
-        PortCall::AddPasskey => Err(call.refuse(ApiError::NotImplemented(
-            "adding a passkey: no port registers a credential yet, and the cell's /auth/passkeys route answers 501",
-        ))),
+        PortCall::AddPasskey(reg) => {
+            let Some(session) = call.caller.session else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-78")));
+            };
+            done(
+                call.ports
+                    .sessions_admin()
+                    .add_passkey(account, session, reg, proof_of(proof))
+                    .await,
+                "Input",
+            )
+        }
         PortCall::ApproveRecovery(r) => done(
             call.ports
                 .recovery()

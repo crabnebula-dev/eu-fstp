@@ -848,6 +848,27 @@ pub struct ApprovalRow {
     pub approvable: bool,
 }
 
+/// One self-grant awaiting a second tenant admin's approval (SoD-07,
+/// Daniel 2026-11-15), as its `SelfGrantRequested` record names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelfGrantRow {
+    /// The id `admin.approve_self_grant` names.
+    pub approval: u128,
+    /// The programme of the grant.
+    pub programme: ProgrammeId,
+    /// The role, in the spelling `roles.grant` takes.
+    pub role: String,
+    /// The pseudonymous handle of the asking admin, never an email.
+    pub grantee: String,
+    /// The first instant of the binding, in microseconds.
+    pub start: i64,
+    /// The end of the binding, if any, in microseconds.
+    pub end: Option<i64>,
+    /// Whether the viewer may approve it: a tenant admin other than the
+    /// grantee.
+    pub approvable: bool,
+}
+
 /// One impact row of R-PG-04: a call of the programme and what an edit
 /// does to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -892,8 +913,9 @@ pub enum CreatorModel {
     Programmes(Vec<ProgrammeId>),
     /// `creator.list_templates`.
     Templates(Vec<(u128, u32, String)>),
-    /// `admin.approvals`.
-    Approvals(Vec<ApprovalRow>),
+    /// `admin.approvals`: the activation requests, then the self-grants
+    /// awaiting approval (SoD-07).
+    Approvals(Vec<ApprovalRow>, Vec<SelfGrantRow>),
     /// `creator.impact`.
     Impact(Vec<ImpactRow>),
     /// `creator.preview`: one preview of a draft as text blocks, never
@@ -907,13 +929,10 @@ pub enum CreatorModel {
 }
 
 /// The kinds of approval `admin.approvals` cannot list, which its reply
-/// names as `unlisted` so the inbox never reads as complete.
-///
-/// Seam, for the lead and lane m4tenant: the pending SoD-07 self-grant
-/// approvals live in the tenant envelope, and no port of this crate
-/// lists them yet. Once one does, its rows join the reply and
-/// `self_grant` leaves this list.
-pub(crate) const UNLISTED_APPROVALS: &[&str] = &["self_grant"];
+/// names as `unlisted` so the inbox never reads as complete. Since the
+/// tenant part records self-grants awaiting approval (SoD-07, Daniel
+/// 2026-11-15), every kind is listed, and the reply names none.
+pub(crate) const UNLISTED_APPROVALS: &[&str] = &[];
 
 impl CreatorModel {
     /// Whether the model carries an email: the invitation list, whose
@@ -1056,23 +1075,42 @@ impl ToJson for CreatorModel {
                     ])
                 }),
             )]),
-            CreatorModel::Approvals(rows) => obj(vec![
-                (
-                    "approvals",
-                    list(rows, |r| {
+            CreatorModel::Approvals(rows, grants) => {
+                let mut items: Vec<Value> = rows
+                    .iter()
+                    .map(|r| {
                         obj(vec![
                             ("kind", Value::from("activation")),
                             ("programme", dec(r.programme.raw())),
                             ("revision", Value::String(revision_text(r.revision))),
                             ("approvable", Value::Bool(r.approvable)),
                         ])
-                    }),
-                ),
-                (
-                    "unlisted",
-                    Value::Array(UNLISTED_APPROVALS.iter().map(|k| Value::from(*k)).collect()),
-                ),
-            ]),
+                    })
+                    .collect();
+                items.extend(grants.iter().map(|g| {
+                    obj(vec![
+                        ("kind", Value::from("self_grant")),
+                        ("programme", dec(g.programme.raw())),
+                        ("approvable", Value::Bool(g.approvable)),
+                        ("approval", dec(g.approval)),
+                        ("role", Value::from(g.role.as_str())),
+                        ("grantee", Value::from(g.grantee.as_str())),
+                        ("start", Value::String(g.start.to_string())),
+                        (
+                            "end",
+                            g.end.map_or(Value::Null, |e| Value::String(e.to_string())),
+                        ),
+                    ])
+                }));
+                let mut members = vec![("approvals", Value::Array(items.into_iter().collect()))];
+                if !UNLISTED_APPROVALS.is_empty() {
+                    members.push((
+                        "unlisted",
+                        Value::Array(UNLISTED_APPROVALS.iter().map(|k| Value::from(*k)).collect()),
+                    ));
+                }
+                obj(members)
+            }
             CreatorModel::Impact(rows) => obj(vec![(
                 "calls",
                 list(rows, |r| obj(vec![("call", dec(r.call.raw()))])),

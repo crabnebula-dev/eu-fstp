@@ -50,7 +50,8 @@ pub use refusal::{DecodeError, FoldError, TenantError, TenantRefusal};
 pub use rules::ProbeKind;
 pub use state::{
     AdminInvitation, GuideNotice, InferenceConfig, PLATFORM_DATA_PROTECTION_SUMMARY,
-    PLATFORM_PRIVACY_STATEMENT_URL, SelfGrantApproval, TenantDefaults, TenantSettings, TenantState,
+    PLATFORM_PRIVACY_STATEMENT_URL, PendingSelfGrant, SelfGrantApproval, TenantDefaults,
+    TenantSettings, TenantState,
 };
 pub use types::{
     Activation, ActivationRequestId, AgreementVersions, ApprovalId, BankInterface, BrandingPackage,

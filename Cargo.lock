@@ -198,6 +198,7 @@ dependencies = [
  "fstp-api-core",
  "fstp-assess",
  "fstp-assessor",
+ "fstp-auth",
  "fstp-brand",
  "fstp-cell-core",
  "fstp-contract",
