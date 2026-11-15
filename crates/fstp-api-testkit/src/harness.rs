@@ -151,9 +151,16 @@ const SIGNATORY_GRANTEE: AccountId = AccountId::from_raw(406);
 const ORG_SIGNATORY_2: AccountId = AccountId::from_raw(407);
 /// An account with no binding.
 const UNBOUND: AccountId = AccountId::from_raw(499);
+/// The invitee of a programme manager invitation in the draft P, who
+/// accepted its confidentiality terms (J2) and holds no binding. The
+/// `roles.grant` cells of a draft grant it that role, the one grant a
+/// draft admits (change D3).
+const PM_INVITEE: AccountId = AccountId::from_raw(408);
+/// The address of [`PM_INVITEE`]'s invitation.
+const PM_INVITEE_EMAIL: &str = "pm-invitee@matrix.invalid";
 
 /// Every account of the cast, each with its own verified identity.
-const CAST: [AccountId; 37] = [
+const CAST: [AccountId; 38] = [
     ADMIN_BUILDER,
     ADMIN_PLAIN,
     ADMIN_SOLE,
@@ -191,6 +198,7 @@ const CAST: [AccountId; 37] = [
     UNBOUND,
     AccountId::from_raw(990),
     AccountId::from_raw(991),
+    PM_INVITEE,
 ];
 
 /// The account that stands for `who`, or `None` for no credential.
@@ -682,6 +690,14 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
                 s("Synthetic data protection summary, matrix cell."),
             ),
         ]),
+        // M9 lane B1: the platform brand family under a synthetic name,
+        // which passes the I-70 contrast check, so neither call ends in a
+        // guard of its input (design section 8.3, valid inputs per cell).
+        "tenant.branding.check" | "tenant.branding.set" => obj(vec![(
+            "tokens",
+            fstp_brand::BrandTokens::platform("Matrix Fund")
+                .map_or(Value::Null, |t| fstp_brand::to_value(&t)),
+        )]),
         // M9 lane T1: one tenant label and the Voyage switch (I-72).
         "tenant.terminology.set" => obj(vec![
             ("labels", obj(vec![("vocab.call", s("Subgrant call"))])),
@@ -734,6 +750,17 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ("conflict_acknowledged", Value::Bool(false)),
             ("resolution", obj(vec![("kind", s("dismiss"))])),
             ("shown", s(&"0".repeat(64))),
+        ]),
+        // A draft programme admits programme manager grants only (change
+        // D3, I-66). Such a Drafting grant needs the invitee's accepted
+        // terms (J2), so a draft grants the role to the invitee who
+        // accepted them, and every other state an Operations role with no
+        // terms to an account with no binding. Either way the grant is
+        // valid for the state (design section 8.3, valid inputs per cell).
+        "roles.grant" if state == StateProfile::ProgrammeDraft => obj(vec![
+            ("account", dec(PM_INVITEE.raw())),
+            ("role", s("ProgrammeManager")),
+            ("start", dec(u128::try_from(w.now).unwrap_or(0))),
         ]),
         "roles.grant" => obj(vec![
             ("account", dec(UNBOUND.raw())),
@@ -1966,6 +1993,47 @@ fn activate(seed: &mut Seeder, p: ProgrammeId, approver: AccountId) -> Result<()
     Ok(())
 }
 
+/// Invites [`PM_INVITEE`] to the draft P as a programme manager, and the
+/// invitee accepts the terms its landing shows (J2). A Drafting grant is
+/// composed only from such an acceptance, so the `roles.grant` cells of
+/// the draft have a valid grant to make (design section 8.3). The link
+/// token reaches the invitee only through the M3 accounts port, as mail
+/// carries it.
+fn invite_programme_manager(seed: &mut Seeder, p: ProgrammeId) -> Result<(), String> {
+    seed.api(
+        PM,
+        ApiMethod::Post,
+        &format!("/programmes/{}/invitations", p.raw()),
+        &obj(vec![
+            ("email", s(PM_INVITEE_EMAIL)),
+            ("role", s("programme_manager")),
+        ]),
+    )?;
+    let token = seed
+        .ports
+        .accounts
+        .token_for(PM_INVITEE_EMAIL)
+        .ok_or("no link token for the programme manager invitation")?;
+    let landing = seed.api(
+        PM_INVITEE,
+        ApiMethod::Get,
+        &format!("/invitations/{token}"),
+        &Value::Null,
+    )?;
+    let version = landing
+        .as_object()
+        .and_then(|o| o.get("terms_version"))
+        .cloned()
+        .ok_or("the invitation landing shows no terms version")?;
+    seed.api(
+        PM_INVITEE,
+        ApiMethod::Post,
+        &format!("/invitations/{token}/accept"),
+        &obj(vec![("terms_version", version)]),
+    )?;
+    Ok(())
+}
+
 /// Acknowledges every warning of the draft P that has no live
 /// acknowledgement, then requests its activation as its manager, so the
 /// request is live at the head revision. The clock moves with each call,
@@ -2338,6 +2406,9 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         if activated {
             staff(&mut seed, p, &mut reached)?;
             lifecycle(&mut seed, p, key, &mut reached)?;
+        }
+        if !activated {
+            invite_programme_manager(&mut seed, p)?;
         }
         end_binding_of(&mut seed, p, PM_ENDED, key)?;
         // The end of a binding on the draft is an edit, so the creator

@@ -626,15 +626,22 @@ impl TenantState {
     }
 
     /// The completion rules the state alone can show: not yet completed,
-    /// every step the cell requires validated and at least two tenant
-    /// admins (SoD-07).
+    /// at least two tenant admins (SoD-07) and every step the cell
+    /// requires validated.
+    ///
+    /// The admin count comes before the steps. A sole tenant admin is
+    /// refused as the actor (SoD-07) before any state refusal, as the
+    /// authorisation matrix reads it (M4 design section 8.3, "Tenant
+    /// admin with and without a second admin"; the test plan's actor
+    /// before state). Its Administrators step can never validate, so
+    /// the step order alone would always name R-TN-01 instead.
     pub(crate) fn check_completion(&self) -> Result<(), TenantRefusal> {
         if self.completed {
             Err(TenantRefusal::AlreadyCompleted)
-        } else if !self.all_steps_done() {
-            Err(TenantRefusal::StepsNotValidated)
         } else if self.admins.len() < 2 {
             Err(TenantRefusal::TooFewAdmins)
+        } else if !self.all_steps_done() {
+            Err(TenantRefusal::StepsNotValidated)
         } else {
             Ok(())
         }

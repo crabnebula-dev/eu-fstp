@@ -1135,11 +1135,14 @@ async fn command<P: Seams>(
         .await
         .map_err(|e| call.refuse(e))?;
     let mut ids = Vec::new();
-    let cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
+    let mut cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
     // J2: a Drafting or Judging grant is composed only from accepted terms,
-    // and binds exactly them.
+    // and binds exactly them. A grant by account learns its terms only
+    // here, so it is built again with them: the dry run judges the grant
+    // that executes, which carries its confidentiality text.
     if let Some(terms) = people::grant_terms(&call.state, op, &cmd).map_err(|e| call.refuse(e))? {
         preset.insert("confidentiality", terms);
+        cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
     }
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = Ctx {
