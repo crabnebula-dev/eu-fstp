@@ -211,6 +211,9 @@ pub struct TenantState {
     activation: Activation,
     branding: Option<(fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)>,
     terminology: Option<crate::types::Terminology>,
+    /// The tenant-owned funder profiles, by id and version (Daniel,
+    /// 2026-11-15 late).
+    profiles: std::collections::BTreeMap<(String, u16), crate::types::TenantProfile>,
     /// The mail submission relay (ADR-018, proposed).
     mail_relay: Option<MailRelay>,
 }
@@ -248,6 +251,7 @@ impl TenantState {
             activation: Activation::NotRequested,
             branding: None,
             terminology: None,
+            profiles: std::collections::BTreeMap::new(),
             mail_relay: None,
         }
     }
@@ -503,6 +507,13 @@ impl TenantState {
                 crate::decide::check_terminology(terminology).map_err(FoldError)?;
                 self.terminology = Some(terminology.clone());
             }
+            TenantRecord::FunderProfileSaved { profile, by } => {
+                self.need_admin(*by)?;
+                self.check_funder_profile(profile).map_err(FoldError)?;
+                let _ = self
+                    .profiles
+                    .insert((profile.id.clone(), profile.version), profile.clone());
+            }
             TenantRecord::MailRelaySet { relay, by } => {
                 self.need_admin(*by)?;
                 if relay.as_ref().is_some_and(|r| !mail_relay_valid(r)) {
@@ -513,6 +524,39 @@ impl TenantState {
         }
         self.revision = self.revision.next();
         Ok(())
+    }
+
+    /// Whether `p` may be saved next: it keeps the shape bounds and its
+    /// version is one more than the latest version of its id, or 1 for a
+    /// new id (Daniel, 2026-11-15 late).
+    pub(crate) fn check_funder_profile(
+        &self,
+        p: &crate::types::TenantProfile,
+    ) -> Result<(), TenantRefusal> {
+        let latest = self.latest_funder_profile(&p.id).map_or(0, |x| x.version);
+        if p.well_formed() && latest.checked_add(1) == Some(p.version) {
+            Ok(())
+        } else {
+            Err(TenantRefusal::FunderProfileInvalid)
+        }
+    }
+
+    /// The tenant funder profile `id` at `version`.
+    pub fn funder_profile(&self, id: &str, version: u16) -> Option<&crate::types::TenantProfile> {
+        self.profiles.get(&(id.to_owned(), version))
+    }
+
+    /// The latest version of the tenant funder profile `id`.
+    pub fn latest_funder_profile(&self, id: &str) -> Option<&crate::types::TenantProfile> {
+        self.profiles
+            .range((id.to_owned(), 0)..=(id.to_owned(), u16::MAX))
+            .next_back()
+            .map(|(_, p)| p)
+    }
+
+    /// Every tenant funder profile version, by id and version.
+    pub fn funder_profiles(&self) -> impl Iterator<Item = &crate::types::TenantProfile> {
+        self.profiles.values()
     }
 
     fn need_admin(&self, a: AccountId) -> Result<(), FoldError> {

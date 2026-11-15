@@ -29,6 +29,17 @@
 //!   the platform mailbox message the API core derives from the same
 //!   date (lane m5/retention, interim, pending Daniel: no email template
 //!   exists for it). Its fire entry records that retention ended.
+//! - [`kind::SIGNER_ROTATION_DUE`]: the notice companion key is a year old
+//!   (ADR-004; Daniel, 2026-11-15 late). Sourced by the key, due 365 days
+//!   after its latest `create_signer` or `rotate_signer` key record, and
+//!   moved by a rotation. It fires once per generation, with no email and
+//!   no command: it is the operator's reminder on the timeline.
+//! - [`kind::REPORTING_PERIOD_END`] and [`kind::REPORT_DEADLINE`]: the end
+//!   of each reporting period of an active programme and its report
+//!   deadline, from P-57 (`fstp_domain::reporting`, Daniel, 2026-11-15
+//!   late). Their source is the programme and the period number. They
+//!   carry no email and no command: the programme managers' reminder is
+//!   the mailbox message the API core derives from the same dates.
 //!
 //! The other kinds of design section 4 have their codes reserved here,
 //! but no source yet: milestone reminders need a milestone due date that
@@ -51,7 +62,7 @@ use fstp_cell_core::timeline::{
     CHANNEL_EMAIL, EventId, EventStatus, FiredMessage, Idem, MessageBody, Recipient,
     TimelineCommand, TimelineRecord, TimelineState, event_id, immediate_source, message_idem,
 };
-use fstp_domain::id::{AccountId, CallId, ProposalId};
+use fstp_domain::id::{AccountId, CallId, ProgrammeId, ProposalId};
 use fstp_domain::record::OutboxEvent;
 use fstp_domain::roles::{BindingScope, Role};
 use fstp_domain::time::Timestamp;
@@ -86,6 +97,55 @@ pub mod kind {
     /// 2026-11-15 late): the confirmation of its last payment request plus
     /// P-41 years.
     pub const RETENTION_END: u16 = 11;
+    /// The end of a programme's reporting period (P-57, Daniel,
+    /// 2026-11-15 late): the midnight after its last day.
+    pub const REPORTING_PERIOD_END: u16 = 12;
+    /// The report deadline of a reporting period (P-57): the midnight
+    /// after its last day.
+    pub const REPORT_DEADLINE: u16 = 13;
+    /// The notice companion key is a year old and due for rotation
+    /// (ADR-004; Daniel, 2026-11-15 late: the operator rotates it by hand,
+    /// and the platform reminds the operator when a year is up).
+    pub const SIGNER_ROTATION_DUE: u16 = 14;
+}
+
+/// A level 2 signing key is due for replacement this long after its
+/// generation was made: 365 days, as the cell keystore counts it
+/// (`fstp_cell::tasks::erasure::SIGNER_LIFETIME_US`, ADR-004).
+pub const SIGNER_LIFETIME_US: i64 = 365 * 24 * 60 * 60 * 1_000_000;
+
+/// The source of every `SIGNER_ROTATION_DUE` event: the notice companion
+/// key, the only level 2 signer purpose of the App chain.
+pub const NOTICE_COMPANION_SOURCE: &[u8] = b"notice_companion";
+
+/// The `SIGNER_ROTATION_DUE` event of the latest generation in
+/// `generations` (the instants of its `create_signer` and
+/// `rotate_signer` key records): due 365 days after it. The version is
+/// the generation's position, so a rotation cancels the scheduled event,
+/// superseded by one a year after the new generation. A fired event is
+/// not derived again for its generation. No generation, no event.
+pub fn signer_events(t: &TimelineState, generations: &[Timestamp]) -> Vec<Derived> {
+    let Some(last) = generations.last() else {
+        return Vec::new();
+    };
+    let version = u64::try_from(generations.len().saturating_sub(1)).unwrap_or(u64::MAX);
+    let fired = t.events().any(|(_, x)| {
+        x.kind == kind::SIGNER_ROTATION_DUE
+            && x.source == NOTICE_COMPANION_SOURCE
+            && x.source_version == version
+            && x.status == EventStatus::Fired
+    });
+    if fired {
+        return Vec::new();
+    }
+    vec![Derived {
+        kind: kind::SIGNER_ROTATION_DUE,
+        lead: 0,
+        source: NOTICE_COMPANION_SOURCE.to_vec(),
+        source_version: version,
+        due: last.micros().saturating_add(SIGNER_LIFETIME_US),
+        offset_minutes: 0,
+    }]
 }
 
 /// The event kind of a sweep kind.
@@ -220,6 +280,12 @@ pub fn derive(s: &CellState, now: Timestamp) -> BTreeMap<EventId, Derived> {
     for d in retention_events(t, &retention_ends(s)) {
         put(d);
     }
+    for d in period_events(t, &fstp_domain::reporting::active_reporting_periods(core)) {
+        put(d);
+    }
+    for d in signer_events(t, s.signer_generations()) {
+        put(d);
+    }
     out
 }
 
@@ -275,6 +341,67 @@ pub fn retention_events(
         });
     }
     out
+}
+
+/// The `REPORTING_PERIOD_END` and `REPORT_DEADLINE` events of `periods`
+/// (P-57, `funder-reporting.md`: "Reporting period ends and report
+/// deadlines from the Data Sheet become timeline events with reminders").
+///
+/// The source is the programme id (16 bytes) then the period number (2
+/// bytes, big-endian). Each event fires once. The version counts the
+/// cancelled events of its kind and source, so a moved date (a changed
+/// P-57) cancels the scheduled event, superseded by one at the new date,
+/// and a period that P-57 no longer holds is cancelled.
+pub fn period_events(
+    t: &TimelineState,
+    periods: &[(ProgrammeId, fstp_domain::reporting::ReportingPeriod)],
+) -> Vec<Derived> {
+    let mut out = Vec::new();
+    for (programme, p) in periods {
+        let mut source = programme.raw().to_be_bytes().to_vec();
+        source.extend_from_slice(&p.index.to_be_bytes());
+        for (kind, due) in [
+            (kind::REPORTING_PERIOD_END, p.end.micros()),
+            (kind::REPORT_DEADLINE, p.deadline.micros()),
+        ] {
+            if let Some(d) = once_event(t, kind, &source, due) {
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// The event of `kind` from `source` due at `due`, which fires once: none
+/// once one fired, else the version that `diff` schedules, one more than
+/// the cancelled ones when a scheduled event stands at another instant.
+fn once_event(t: &TimelineState, kind: u16, source: &[u8], due: i64) -> Option<Derived> {
+    let mine = || {
+        t.events()
+            .filter(move |(_, x)| x.kind == kind && x.source == source)
+            .map(|(_, x)| x)
+    };
+    if mine().any(|x| x.status == EventStatus::Fired) {
+        return None;
+    }
+    let cancelled = mine()
+        .filter(|x| matches!(x.status, EventStatus::Cancelled(_)))
+        .count();
+    let cancelled = u64::try_from(cancelled).unwrap_or(u64::MAX);
+    let moved = mine().any(|x| x.status == EventStatus::Scheduled && x.due != due);
+    let version = if moved {
+        cancelled.saturating_add(1)
+    } else {
+        cancelled
+    };
+    Some(Derived {
+        kind,
+        lead: 0,
+        source: source.to_vec(),
+        source_version: version,
+        due,
+        offset_minutes: 0,
+    })
 }
 
 /// The source reference of a sweep event: SHA-256 of the canonical core
@@ -405,6 +532,13 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
         // retention ended, and the API core's mailbox reminds the tenant
         // admins from the same date (module documentation).
         kind::RETENTION_END => Vec::new(),
+        // P-57: no email and no command, as for retention. The API core's
+        // mailbox reminds the programme managers from the same dates.
+        kind::REPORTING_PERIOD_END | kind::REPORT_DEADLINE => Vec::new(),
+        // ADR-004: the operator's reminder. No email and no command: the
+        // operator rotates the key by hand, with step-up, through the
+        // control plane (`fstp_control::api::CpApiRequest::RotateNoticeKey`).
+        kind::SIGNER_ROTATION_DUE => Vec::new(),
         k => {
             let cmd = sweep::due(s.engine(), now)
                 .unwrap_or_default()

@@ -103,7 +103,7 @@ pub struct SpecParam {
 const PARAMETER_FILE: &str = "../../SPEC/02-domain/policy-parameters.md";
 
 /// The number of parameters the spec defines, P-01 to P-78.
-const PARAMETER_COUNT: usize = 78;
+const PARAMETER_COUNT: usize = 79;
 
 /// Parses the parameter tables of the spec text.
 fn parse_parameters(text: &str) -> Result<Vec<SpecParam>, String> {

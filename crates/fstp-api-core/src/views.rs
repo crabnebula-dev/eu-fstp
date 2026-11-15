@@ -587,6 +587,9 @@ const fn kind_name(kind: u16) -> &'static str {
         9 => "notice_issued",
         10 => "copy_requested",
         11 => "retention_end",
+        12 => "reporting_period_end",
+        13 => "report_deadline",
+        14 => "signer_rotation_due",
         _ => "immediate",
     }
 }
@@ -629,6 +632,51 @@ impl ToJson for MailRelayView {
         };
         object(vec![("relay", relay)])
     }
+}
+
+/// One funder profile version of `tenant.funder_profiles` (Daniel,
+/// 2026-11-15 late).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileRow {
+    /// The profile id.
+    pub id: String,
+    /// The version.
+    pub version: u16,
+    /// Whether the tenant owns it, else the platform ships it.
+    pub tenant: bool,
+    /// The SHA-256 of the profile text, lowercase hex.
+    pub digest: String,
+    /// The profile and version a copy was made from.
+    pub source: Option<(String, u16)>,
+    /// The profile text.
+    pub text: String,
+}
+
+/// The reply of `tenant.funder_profiles`.
+pub fn profiles_json(rows: &[ProfileRow]) -> Value {
+    let list: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let source = r.source.as_ref().map_or(Value::Null, |(p, v)| {
+                object(vec![
+                    ("profile", Value::from(p.as_str())),
+                    ("version", Value::from(v.to_string().as_str())),
+                ])
+            });
+            object(vec![
+                ("id", Value::from(r.id.as_str())),
+                ("version", Value::from(r.version.to_string().as_str())),
+                (
+                    "owner",
+                    Value::from(if r.tenant { "tenant" } else { "shipped" }),
+                ),
+                ("digest", Value::from(r.digest.as_str())),
+                ("source", source),
+                ("text", Value::from(r.text.as_str())),
+            ])
+        })
+        .collect();
+    object(vec![("profiles", Value::from(list))])
 }
 
 #[cfg(test)]

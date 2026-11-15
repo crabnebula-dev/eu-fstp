@@ -347,6 +347,28 @@ pub struct PublicGrant {
     /// The accepted deliverables the grantee includes, finished grants
     /// only (`public-transparency.md`).
     pub deliverables: Vec<PublicDeliverable>,
+    /// The milestone status, at [`Level::Full`] only and only when the
+    /// programme opts in through P-79 (Daniel, 2026-11-15 late). Empty
+    /// otherwise.
+    pub milestones: Vec<PublicMilestone>,
+}
+
+/// One milestone of a grant, as P-79 lets a public page show it: its
+/// number in plan order, whether it is completed, and its month. Never an
+/// amount or any content (`public-transparency.md` NOTE 4).
+///
+/// Interim readings of lane m9/answers, pending Daniel: the domain holds
+/// no milestone title, so the page names each milestone by its number. A
+/// milestone is completed once the programme manager closed it (NOTE 12
+/// of `payment-requests.md`). The month is the month of its due date.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PublicMilestone {
+    /// Its number in the plan, from 1.
+    pub number: u32,
+    /// Whether the programme manager closed it.
+    pub completed: bool,
+    /// The month of its due date, `YYYY-MM` in UTC.
+    pub month: String,
 }
 
 /// One accepted deliverable of a finished grant, with its licence and
@@ -506,6 +528,9 @@ struct PublicParams {
     p51: Level,
     p52: bool,
     p54: Option<u32>,
+    /// P-79: whether milestone status is public. Off unless it decodes as
+    /// `true`.
+    p79: bool,
 }
 
 impl PublicParams {
@@ -525,11 +550,13 @@ impl PublicParams {
             Some(fstp_json::Value::Number(n)) => n.as_u64().and_then(|n| u32::try_from(n).ok()),
             _ => None,
         };
+        let p79 = matches!(value(ParamId::P79), Some(fstp_json::Value::Bool(true)));
         PublicParams {
             p50: level(ParamId::P50),
             p51: level(ParamId::P51),
             p52,
             p54,
+            p79,
         }
     }
 }
@@ -631,6 +658,13 @@ fn public_grant(
     } else {
         Vec::new()
     };
+    // P-79 (Daniel, 2026-11-15 late): milestone status at the Full level
+    // only, and only when the programme opts in.
+    let milestones = if level == Level::Full && params.p79 {
+        public_milestones(core, proposal)
+    } else {
+        Vec::new()
+    };
     Some(ShownGrant {
         grant: PublicGrant {
             call: call.raw().to_string(),
@@ -641,9 +675,30 @@ fn public_grant(
             grantee,
             amount,
             deliverables,
+            milestones,
         },
         granted,
     })
+}
+
+/// The milestones of `proposal` as P-79 shows them, in plan order. None
+/// while the grant names no plan, and none whose due date has no month.
+fn public_milestones(core: &State, proposal: ProposalId) -> Vec<PublicMilestone> {
+    let Some(g) = fstp_domain::payment::grant_milestones(core, proposal) else {
+        return Vec::new();
+    };
+    g.milestones
+        .iter()
+        .zip(1u32..)
+        .filter_map(|(m, number)| {
+            let month = rfc3339(m.due)?.get(..7)?.to_owned();
+            Some(PublicMilestone {
+                number,
+                completed: m.closed,
+                month,
+            })
+        })
+        .collect()
 }
 
 /// The public part of the open call `id`, or `None` when a text it needs

@@ -162,6 +162,9 @@ pub enum ReadModel {
     /// `admin.erasures`: the erasure log and the grants whose retention
     /// ended (P-41, ADR-007, lane m5/retention). Ids, causes and instants.
     Erasures(crate::erasure::ErasuresView),
+    /// `tenant.funder_profiles`: every shipped and tenant-owned funder
+    /// profile version (Daniel, 2026-11-15 late).
+    FunderProfiles(Vec<crate::views::ProfileRow>),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -309,6 +312,7 @@ impl ToJson for ReadModel {
             ReadModel::Unmask(v) => v.to_json(),
             ReadModel::Audit(v) => v.to_json(),
             ReadModel::Erasures(v) => v.to_json(),
+            ReadModel::FunderProfiles(rows) => crate::views::profiles_json(rows),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1754,6 +1758,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Invitation(_) => &["people.get_invitation"],
             ReadModel::Deliveries(_) => &["tenant.deliveries"],
             ReadModel::Erasures(_) => &["admin.erasures"],
+            ReadModel::FunderProfiles(_) => &["tenant.funder_profiles"],
             ReadModel::Timeline(_) => &["programme.timeline"],
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
             ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],
@@ -2041,6 +2046,24 @@ pub(crate) mod reply_shape_tests {
     fn one_of_each() -> Vec<ReadModel> {
         vec![
             ReadModel::Accepted,
+            ReadModel::FunderProfiles(vec![
+                crate::views::ProfileRow {
+                    id: "horizon-europe".to_owned(),
+                    version: 1,
+                    tenant: false,
+                    digest: "ab".repeat(32),
+                    source: None,
+                    text: "{}".to_owned(),
+                },
+                crate::views::ProfileRow {
+                    id: "tenant-he".to_owned(),
+                    version: 1,
+                    tenant: true,
+                    digest: "cd".repeat(32),
+                    source: Some(("horizon-europe".to_owned(), 1)),
+                    text: "{}".to_owned(),
+                },
+            ]),
             ReadModel::Erasures(crate::erasure::ErasuresView {
                 erasures: vec![
                     crate::port::ErasureRow {
@@ -2385,7 +2408,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 51;
+    const VARIANTS: usize = 52;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2443,6 +2466,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Bindings(_) => 48,
             ReadModel::Audit(_) => 49,
             ReadModel::Erasures(_) => 50,
+            ReadModel::FunderProfiles(_) => 51,
         }
     }
 

@@ -594,6 +594,11 @@ pub enum RecordView {
         /// The setting admin.
         by: AccountId,
     },
+    /// A tenant admin saved a funder profile version (Daniel, 2026-11-15 late).
+    FunderProfileSaved {
+        /// The setting admin.
+        by: AccountId,
+    },
 }
 
 /// The defaults of `SPEC/02-domain/policy-parameters.md` for the settable

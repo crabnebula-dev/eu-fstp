@@ -200,6 +200,8 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/admin/terminology", TENANT_ADMIN),
     // P-41, ADR-007 (lane m5/retention): the erasure page reads the log.
     PageRow::read("/app/admin/erasures", &["admin.erasures"]),
+    // Daniel, 2026-11-15 (late): tenant copies of funder profiles.
+    PageRow::read("/app/admin/funder-profiles", &["tenant.funder_profiles"]),
     // The creator, the Planning Studio, the wizard and the people page.
     PageRow::read("/app/creator/new", CREATOR_START),
     PageRow::read("/app/setup/new", CREATOR_START),
@@ -226,6 +228,12 @@ pub const PAGES: &[PageRow] = &[
         &["audit.entries", "audit.unmasks"],
     ),
     PageRow::read("/app/programmes/{programme}/reports", &["report.list"]),
+    // Daniel, 2026-11-15 (late): every programme staff role reads the
+    // programme's funder profile, read-only.
+    PageRow::read(
+        "/app/programmes/{programme}/funder-profile",
+        &["programme.funder_profile.view"],
+    ),
     // The calls and the applicant pages.
     PageRow::read("/app/calls", &["calls.list_open"]),
     PageRow::read("/app/calls/{call}", &["calls.get"]),

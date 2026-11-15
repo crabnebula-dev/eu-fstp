@@ -231,6 +231,7 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         // M9 lane B1: the failing pairs are listed by `tenant.branding.check`.
         TenantRefusal::BrandingContrast(_) => "I-70",
         TenantRefusal::TerminologyInvalid => "I-72",
+        TenantRefusal::FunderProfileInvalid => "R-RP-01",
         // ADR-018: a relay is a host name and never a CrabNebula host.
         TenantRefusal::InvalidMailRelay => "I-38",
     };
@@ -355,6 +356,14 @@ fn build<P: Seams>(
             let m = crate::tenant::mail_relay_request(&op.request)?;
             let ca = m.ca_pem.as_deref().map(|p| crate::forms::text_ref(0, p));
             Ok((m.command(ca), None))
+        }
+        // Daniel, 2026-11-15 (late): a copy or an edit of a tenant funder
+        // profile, as the next version of its id.
+        TenantKind::SaveFunderProfile => {
+            let (_, ts) = admin(call)?;
+            let profile = crate::tenant::funder_profile_request(call.spec, &op.request, ts)
+                .map_err(|e| call.refuse(e))?;
+            Ok((TenantCommand::SaveFunderProfile { profile }, None))
         }
         // Answered by [`command`] before any command is built.
         TenantKind::CheckBranding => Err(ApiError::refused(ErrorCode::NotFound, "route")),
@@ -653,6 +662,33 @@ const DELIVERY_PAGE: u32 = 200;
 /// shows its host and whether a CA is pinned, never the name of the
 /// credential's secret. A delivery row has no body and no address
 /// (I-27).
+/// `tenant.funder_profiles` (Daniel, 2026-11-15 late): every shipped
+/// profile version, then every tenant-owned version, by id and version.
+/// `authorize_read` admitted the caller as a tenant admin.
+pub(super) fn funder_profiles<P: Seams>(call: &Call<'_, P>) -> Result<ReadModel, ApiError> {
+    let (_, ts) = admin(call)?;
+    let hex = |b: &[u8]| crate::action::hex(b);
+    let mut rows: Vec<crate::views::ProfileRow> = fstp_report::profile::shipped_files()
+        .map(|(id, version, bytes)| crate::views::ProfileRow {
+            id: id.to_owned(),
+            version,
+            tenant: false,
+            digest: hex(&fstp_crypto::sha256(bytes)),
+            source: None,
+            text: String::from_utf8_lossy(bytes).into_owned(),
+        })
+        .collect();
+    rows.extend(ts.funder_profiles().map(|p| crate::views::ProfileRow {
+        id: p.id.clone(),
+        version: p.version,
+        tenant: true,
+        digest: hex(&p.digest.bytes()),
+        source: p.source.clone(),
+        text: p.text.clone(),
+    }));
+    Ok(ReadModel::FunderProfiles(rows))
+}
+
 pub(super) async fn mail_read<P: Seams>(
     call: &Call<'_, P>,
     kind: ReadKind,

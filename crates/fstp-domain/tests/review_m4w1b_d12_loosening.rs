@@ -83,7 +83,7 @@ const FROZEN_OPAQUE: [ParamId; 17] = [
 ];
 
 /// The live programme parameters without a typed field.
-const LIVE_OPAQUE: [ParamId; 27] = [
+const LIVE_OPAQUE: [ParamId; 28] = [
     ParamId::P06,
     ParamId::P18,
     ParamId::P19,
@@ -111,6 +111,7 @@ const LIVE_OPAQUE: [ParamId; 27] = [
     ParamId::P57,
     ParamId::P67,
     ParamId::P76,
+    ParamId::P79,
 ];
 
 /// A complete, valid first policy version of P1: P-05 400000.00 EUR, P-13 {K1}.

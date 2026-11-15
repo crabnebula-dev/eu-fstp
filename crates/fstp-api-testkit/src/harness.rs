@@ -757,6 +757,23 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ("credential", s("mail-relay")),
             ("host", s("smtp.relay.example")),
         ]),
+        // Daniel, 2026-11-15 (late): a copy of the shipped profile, and a
+        // profile written whole as version 1 of another id.
+        "tenant.funder_profile.copy" => obj(vec![
+            ("id", s("tenant-matrix")),
+            ("from_profile", s("horizon-europe")),
+            ("from_version", s("1")),
+        ]),
+        "tenant.funder_profile.save" => obj(vec![
+            ("id", s("tenant-written")),
+            (
+                "profile",
+                fstp_json::parse(include_bytes!(
+                    "../../fstp-report/profiles/horizon-europe/profile.v1.json"
+                ))
+                .unwrap_or(Value::Null),
+            ),
+        ]),
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
         "admin.request_erasure" => obj(vec![("cause", s("retention_expiry")), ("grant", s("41"))]),
         "creator.invite" => obj(vec![

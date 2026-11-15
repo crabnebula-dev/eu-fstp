@@ -203,6 +203,10 @@ pub fn compile(
     }
     if let Field::Set(p) = &spec.funder.p53_funder_profile
         && *p != profile.reference()
+        // Daniel, 2026-11-15 (late): a programme may pin a tenant-owned
+        // copy. Its id starts with `tenant-`, so it never names a shipped
+        // profile, and the readers resolve it in the tenant fold.
+        && !p.profile.as_str().starts_with("tenant-")
     {
         return Err(CompileError::ProfileMismatch);
     }

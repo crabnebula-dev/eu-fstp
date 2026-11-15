@@ -43,6 +43,15 @@ pub enum CpApiRequest {
         /// The cluster.
         cluster: ClusterId,
     },
+    /// `rotate-notice-key --cell <id>`: rotates the cell's notice
+    /// companion key, a level 2 signing key, by hand (ADR-004; Daniel,
+    /// 2026-11-15 late: "An operator rotates it by hand, and the platform
+    /// reminds the operator when a year is up"). It changes state, so it
+    /// needs a fresh step-up, and it destroys nothing, so one operator.
+    RotateNoticeKey {
+        /// The cell.
+        cell: CellId,
+    },
 }
 
 /// The version octet that opens every request frame.
@@ -51,6 +60,7 @@ pub const API_VERSION: u8 = 1;
 const OP_PROVISION_CELL: u8 = 1;
 const OP_ERASE_CELL: u8 = 2;
 const OP_PRIVILEGE_AUDIT: u8 = 3;
+const OP_ROTATE_NOTICE_KEY: u8 = 4;
 
 /// Encodes a request.
 pub fn encode_cp_api(req: &CpApiRequest) -> Vec<u8> {
@@ -71,6 +81,10 @@ pub fn encode_cp_api(req: &CpApiRequest) -> Vec<u8> {
         CpApiRequest::PrivilegeAudit { cluster } => {
             out.push(OP_PRIVILEGE_AUDIT);
             out.extend_from_slice(&cluster.0);
+        }
+        CpApiRequest::RotateNoticeKey { cell } => {
+            out.push(OP_ROTATE_NOTICE_KEY);
+            out.extend_from_slice(&cell.0);
         }
     }
     out
@@ -111,6 +125,9 @@ pub fn decode_cp_api(bytes: &[u8]) -> Result<CpApiRequest, ControlError> {
         OP_PRIVILEGE_AUDIT => CpApiRequest::PrivilegeAudit {
             cluster: ClusterId(id16(body)?),
         },
+        OP_ROTATE_NOTICE_KEY => CpApiRequest::RotateNoticeKey {
+            cell: CellId(id16(body)?),
+        },
         _ => return Err(ControlError::Request("operation")),
     };
     if encode_cp_api(&req) != bytes {
@@ -137,6 +154,9 @@ mod tests {
             },
             CpApiRequest::PrivilegeAudit {
                 cluster: ClusterId([9; 16]),
+            },
+            CpApiRequest::RotateNoticeKey {
+                cell: CellId([10; 16]),
             },
         ] {
             let b = encode_cp_api(&req);

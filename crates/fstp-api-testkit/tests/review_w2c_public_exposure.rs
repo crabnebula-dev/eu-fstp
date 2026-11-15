@@ -39,6 +39,7 @@ fn stage(name: &str) -> &'static Stage {
 fn review_r_pb_05_aggregate_never_reveals_one_hidden_amount() {
     let s = stage("executing");
     let params = Params {
+        p79: Param::Set(false),
         p54: Param::Set(2),
         ..Params::supersafe()
     };

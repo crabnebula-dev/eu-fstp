@@ -360,7 +360,8 @@ impl OperatorLogin {
     ///
     /// [`ControlError::ApprovalRequired`] for a destructive request
     /// (ADR-011). [`OperatorRefusal::StepUpRequired`] for
-    /// `provision-cell` without a step-up within [`STEP_UP_WINDOW_SECS`].
+    /// `provision-cell` or `rotate-notice-key` without a step-up within
+    /// [`STEP_UP_WINDOW_SECS`].
     /// The session refusals.
     pub fn authorise(
         &mut self,
@@ -371,7 +372,9 @@ impl OperatorLogin {
         let s = self.session(session, now)?;
         match request {
             CpApiRequest::EraseCell { .. } => Err(ControlError::ApprovalRequired),
-            CpApiRequest::ProvisionCell { .. } => {
+            // ADR-004 (Daniel, 2026-11-15 late): the notice companion key
+            // is rotated by hand, with a fresh step-up.
+            CpApiRequest::ProvisionCell { .. } | CpApiRequest::RotateNoticeKey { .. } => {
                 let ok = s
                     .step_up_at
                     .is_some_and(|at| fresh(at, now, STEP_UP_WINDOW_SECS));

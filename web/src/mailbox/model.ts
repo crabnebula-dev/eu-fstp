@@ -38,6 +38,8 @@ export const MAIL_KINDS = [
   "role.granted",
   // P-41 (Daniel, 2026-11-15 late): a grant's funder retention ended.
   "admin.retention_ended",
+  // P-57 (Daniel, 2026-11-15 late): a reporting period ended and its report is due.
+  "report.period_ended",
 ] as const;
 
 /** One kind. */
@@ -70,6 +72,7 @@ export const MAILBOX_ROUTES: Readonly<Record<MailKind, string>> = Object.freeze(
   "invitation.open": "/app/",
   "role.granted": "/app/",
   "admin.retention_ended": "/app/admin/erasures",
+  "report.period_ended": "/app/programmes/{programme}/reports",
 });
 
 /**

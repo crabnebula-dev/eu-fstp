@@ -837,6 +837,81 @@ impl Terminology {
     }
 }
 
+/// The prefix of every tenant-owned funder profile id, so that no tenant
+/// profile ever names a shipped one (Daniel, 2026-11-15 late).
+pub const TENANT_PROFILE_PREFIX: &str = "tenant-";
+
+/// The largest profile text a tenant profile version holds, in bytes: the
+/// bound of the funder profile parser (`fstp_report::profile`).
+pub const MAX_TENANT_PROFILE_BYTES: usize = 64 * 1024;
+
+/// One version of a tenant-owned funder profile (Daniel, 2026-11-15 late:
+/// "A tenant may copy one into a tenant-owned profile and edit it").
+///
+/// The shell parses the text with the fuzzed funder profile parser before
+/// it builds a command, and sets its `id` and `version` members to these.
+/// This crate keeps the shape bounds and the version order, so a ledger
+/// never holds markup or a gap in the versions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TenantProfile {
+    /// The profile id: [`TENANT_PROFILE_PREFIX`] then a lower-case token.
+    pub id: String,
+    /// The version, from 1, one more than the previous version of `id`.
+    pub version: u16,
+    /// The canonical profile text (I-JSON).
+    pub text: String,
+    /// The SHA-256 of `text`, computed by the shell.
+    pub digest: fstp_domain::id::ContentDigest,
+    /// The profile and version a copy was made from. Only version 1 may
+    /// name one: a later version is an edit. A version 1 without a source
+    /// is a profile the admin wrote whole.
+    pub source: Option<(String, u16)>,
+}
+
+impl TenantProfile {
+    /// Whether `id` may name a tenant profile: the prefix, then lower-case
+    /// ASCII letters, digits and hyphens, at most 40 bytes in all and not
+    /// ending in a hyphen, so it is a profile id of P-53
+    /// (`fstp_report_core::is_profile_id`).
+    pub fn is_tenant_id(id: &str) -> bool {
+        id.strip_prefix(TENANT_PROFILE_PREFIX).is_some_and(|rest| {
+            !rest.is_empty()
+                && id.len() <= 40
+                && !rest.ends_with('-')
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+    }
+
+    /// Whether the version keeps the shape bounds: a tenant id, a version
+    /// from 1, a text of 1 to [`MAX_TENANT_PROFILE_BYTES`] bytes with no
+    /// control character but tab and line breaks and no angle bracket,
+    /// and a source on version 1 only, naming a profile id of at most 40
+    /// bytes and a version from 1.
+    pub fn well_formed(&self) -> bool {
+        let source_ok = match &self.source {
+            Some((p, v)) => {
+                self.version == 1
+                    && !p.is_empty()
+                    && p.len() <= 40
+                    && p.bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                    && *v >= 1
+            }
+            None => true,
+        };
+        TenantProfile::is_tenant_id(&self.id)
+            && self.version >= 1
+            && !self.text.is_empty()
+            && self.text.len() <= MAX_TENANT_PROFILE_BYTES
+            && !self.text.chars().any(|c| {
+                (c.is_control() && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '<' | '>')
+            })
+            && source_ok
+    }
+}
+
 /// The tenant's mail submission relay (M6 lane L6-EGR, ADR-018 proposed).
 ///
 /// The cell submits mail to `host` on port 465 only, with implicit TLS

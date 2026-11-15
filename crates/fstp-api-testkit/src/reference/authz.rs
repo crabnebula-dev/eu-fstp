@@ -956,6 +956,13 @@ pub enum Rule {
     /// manager or an auditor of any programme, and the Financial
     /// signatory (lane m5/report-programmes, R-RP-03).
     ReportProgrammes,
+    /// Daniel, 2026-11-15 (late): the funder profile of P, read-only, for
+    /// every Drafting, Judging and Operations role of P: an active
+    /// binding of P outside the Receiving group, a tenant admin, and the
+    /// tenant-wide Financial and Legal signatories (NOTE 5). A programme
+    /// manager of another programme, an ended binding and a suspended one
+    /// read nothing.
+    ProfileReader,
     /// A finance approver of P.
     Finance,
     /// A payment releaser of P.
@@ -1120,6 +1127,21 @@ impl Rule {
                 Some(Role::ProgrammeManager),
                 Some(Role::Auditor),
                 Some(Role::FinancialSignatory),
+            ],
+            Rule::ProfileReader => &[
+                Some(Role::ProgrammeManager),
+                Some(Role::CallDrafter),
+                Some(Role::FstpCoordinator),
+                Some(Role::CommitteeMember),
+                Some(Role::CommitteeChair),
+                Some(Role::IrcMember),
+                Some(Role::TenantAdmin),
+                Some(Role::FinanceApprover),
+                Some(Role::PaymentReleaser),
+                Some(Role::ContractSignatory),
+                Some(Role::FinancialSignatory),
+                Some(Role::LegalSignatory),
+                Some(Role::Auditor),
             ],
             Rule::Finance => &[Some(Role::FinanceApprover)],
             Rule::Releaser => &[Some(Role::PaymentReleaser)],
@@ -1344,6 +1366,12 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("tenant.get_mail_relay", T::None, R::TenantAdmin),
     RefOp::act("tenant.clear_mail_relay", T::None, R::TenantAdmin).hr(),
     RefOp::read("tenant.deliveries", T::None, R::TenantAdmin),
+    // Daniel, 2026-11-15 (late): tenant copies of funder profiles. The
+    // copy and each save are high-risk by the strict reading, as the brand
+    // tokens are, and web only.
+    RefOp::read("tenant.funder_profiles", T::None, R::TenantAdmin),
+    RefOp::act("tenant.funder_profile.copy", T::None, R::TenantAdmin).hr(),
+    RefOp::act("tenant.funder_profile.save", T::None, R::TenantAdmin).hr(),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.
@@ -1666,12 +1694,13 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("grant.publicity.view", T::Proposal, R::Publicity),
     RefOp::act("grant.publicity.set", T::Proposal, R::Lead).binding(),
     RefOp::act("grant.publicity.withdraw", T::Proposal, R::Lead).binding(),
-    // M9 finish (R-RP-01): the pinned funder profile, for the readers
-    // of the programme's funder reports.
+    // M9 finish (R-RP-01), widened by Daniel on 2026-11-15 (late): the
+    // pinned funder profile, read-only, for every Drafting, Judging and
+    // Operations role of P.
     RefOp::read(
         "programme.funder_profile.view",
         T::Programme,
-        R::ReportReader,
+        R::ProfileReader,
     ),
     // ADR-023 (I-17 as amended 2026-11-15, I-78, I-86). Reading: only the
     // FSTP coordinator of P unmasks, at any stage, with a fresh step-up,
@@ -1912,6 +1941,10 @@ fn admit(
                     who,
                     Who::OtherProgrammeManager | Who::Auditor | Who::FinancialSignatory
                 ),
+        ),
+        Rule::ProfileReader => open(
+            (who.management() && who != Who::OtherProgrammeManager)
+                || who == Who::FinancialSignatory,
         ),
         Rule::Finance => open(who == Who::FinanceApprover),
         Rule::Releaser => open(who == Who::PaymentReleaser),

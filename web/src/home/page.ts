@@ -427,6 +427,8 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
         h("p", {}, [h("a", { href: WORK_PATHS.branding, "data-work": "branding" }, [homeLabel("home.work.branding")])]),
         h("p", {}, [h("a", { href: WORK_PATHS.terminology, "data-work": "terminology" }, [homeLabel("home.work.terminology")])]),
         h("p", {}, [h("a", { href: WORK_PATHS.erasures, "data-work": "erasures" }, [homeLabel("home.work.erasures")])]),
+        // Daniel, 2026-11-15 (late): tenant copies of funder profiles.
+        h("p", {}, [h("a", { href: WORK_PATHS.funderProfiles, "data-work": "funder-profiles" }, [homeLabel("home.work.funder_profiles")])]),
       ],
       items: [],
     });

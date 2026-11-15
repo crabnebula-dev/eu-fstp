@@ -173,7 +173,7 @@ pub const FROZEN_OPAQUE: [ParamId; 17] = [
 
 /// The live programme parameters without a typed `LiveValues` field, as
 /// `base_version` fills them.
-pub const LIVE_OPAQUE: [ParamId; 27] = [
+pub const LIVE_OPAQUE: [ParamId; 28] = [
     ParamId::P06,
     ParamId::P18,
     ParamId::P19,
@@ -201,6 +201,7 @@ pub const LIVE_OPAQUE: [ParamId; 27] = [
     ParamId::P57,
     ParamId::P67,
     ParamId::P76,
+    ParamId::P79,
 ];
 
 // ---------------------------------------------------------------------------

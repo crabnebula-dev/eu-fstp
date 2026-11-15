@@ -34,8 +34,8 @@ use crate::types::{
     ActivationRequestId, ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef,
     GuideNoticeOverride, InferenceDefault, InvitationId, LoginMethod, MailRelay, McpSettings,
     Milestone, ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue, SignatoryRole,
-    StepFailure, StepOutcome, StepValues, TenantParam, TenantRevision, Terminology, Token,
-    TokenDigest, VerifyMethod,
+    StepFailure, StepOutcome, StepValues, TenantParam, TenantProfile, TenantRevision, Terminology,
+    Token, TokenDigest, VerifyMethod,
 };
 
 /// The record schema versions this build decodes. Version 1 is the only
@@ -432,6 +432,9 @@ fn command_value(cmd: &TenantCommand) -> Value {
         TenantCommand::SetMailRelay { relay } => {
             tagged("SetMailRelay", vec![("relay", mail_relay(relay))])
         }
+        TenantCommand::SaveFunderProfile { profile } => {
+            tagged("SaveFunderProfile", profile_members(profile))
+        }
     }
 }
 
@@ -606,7 +609,46 @@ fn record_value(rec: &TenantRecord) -> Value {
             "MailRelaySet",
             vec![("by", dec(by.raw())), ("relay", mail_relay(relay))],
         ),
+        TenantRecord::FunderProfileSaved { profile, by } => {
+            let mut members = profile_members(profile);
+            members.insert(0, ("by", dec(by.raw())));
+            tagged("FunderProfileSaved", members)
+        }
     }
+}
+
+/// The members of a tenant funder profile version, in name order after
+/// `by` (Daniel, 2026-11-15 late).
+fn profile_members(p: &TenantProfile) -> Vec<(&'static str, Value)> {
+    let source = p.source.as_ref().map_or(Value::Null, |(id, v)| {
+        object(vec![("profile", s(id)), ("version", dec(v))])
+    });
+    vec![
+        ("digest", s(&hex(&p.digest.bytes()))),
+        ("id", s(&p.id)),
+        ("source", source),
+        ("text", s(&p.text)),
+        ("version", dec(p.version)),
+    ]
+}
+
+fn take_profile(f: &Fields<'_>) -> R<TenantProfile> {
+    let version = u16::try_from(take_u32(f.get("version")?)?).map_err(|_| err("version"))?;
+    let source = match f.get("source")? {
+        Value::Null => None,
+        v => {
+            let g = Fields::of(v, &["profile", "version"])?;
+            let sv = u16::try_from(take_u32(g.get("version")?)?).map_err(|_| err("version"))?;
+            Some((str_of(g.get("profile")?)?.to_owned(), sv))
+        }
+    };
+    Ok(TenantProfile {
+        id: str_of(f.get("id")?)?.to_owned(),
+        version,
+        text: str_of(f.get("text")?)?.to_owned(),
+        digest: ContentDigest::from_bytes(take_digest(f.get("digest")?)?),
+        source,
+    })
 }
 
 // ---------------------------------------------------------------- reading
@@ -1145,6 +1187,12 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 relay: take_mail_relay(f.get("relay")?)?,
             }
         }
+        "SaveFunderProfile" => {
+            let f = Fields::of(v, &["digest", "id", "kind", "source", "text", "version"])?;
+            TenantCommand::SaveFunderProfile {
+                profile: take_profile(&f)?,
+            }
+        }
         _ => return Err(err("unknown command kind")),
     })
 }
@@ -1296,6 +1344,16 @@ fn take_record(v: &Value) -> R<TenantRecord> {
                 by: take_account(f.get("by")?)?,
             }
         }
+        "FunderProfileSaved" => {
+            let f = Fields::of(
+                v,
+                &["by", "digest", "id", "kind", "source", "text", "version"],
+            )?;
+            TenantRecord::FunderProfileSaved {
+                profile: take_profile(&f)?,
+                by: take_account(f.get("by")?)?,
+            }
+        }
         _ => return Err(err("unknown record kind")),
     })
 }
@@ -1327,7 +1385,7 @@ mod tests {
             "save_payments", "invite_admin", "accept_admin_invitation", "request_self_grant", "approve_self_grant",
             "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete",
             "grant_signatory", "end_signatory", "request_activation", "approve_activation", "set_branding",
-            "set_terminology", "set_mail_relay");
+            "set_terminology", "set_mail_relay", "save_funder_profile");
         for (name, bytes) in seeds {
             let c = decode_command(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_command(&c).as_deref(), Ok(bytes), "{name}");
@@ -1343,7 +1401,7 @@ mod tests {
             "admin_added", "self_grant_requested", "self_grant_approved", "self_grant_approval_used", "setting_p70",
             "inference_recorded", "completed", "signatory_granted", "signatory_ended",
             "activation_requested", "activation_approved", "branding_set",
-            "terminology_set", "mail_relay_set");
+            "terminology_set", "mail_relay_set", "funder_profile_saved");
         for (name, bytes) in seeds {
             let r = decode_record(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_record(&r).as_deref(), Ok(bytes), "{name}");

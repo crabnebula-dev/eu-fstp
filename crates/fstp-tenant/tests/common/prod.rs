@@ -595,6 +595,7 @@ fn record_view(r: &TenantRecord) -> RecordView {
         TenantRecord::BrandingSet { by, .. } => RecordView::BrandingSet { by: *by },
         TenantRecord::TerminologySet { by, .. } => RecordView::TerminologySet { by: *by },
         TenantRecord::MailRelaySet { by, .. } => RecordView::MailRelaySet { by: *by },
+        TenantRecord::FunderProfileSaved { by, .. } => RecordView::FunderProfileSaved { by: *by },
     }
 }
 

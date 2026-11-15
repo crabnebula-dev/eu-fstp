@@ -291,6 +291,9 @@ pub enum TenantKind {
     SetTerminology,
     /// `TenantCommand::SetMailRelay` (M6 lane L6-EGR, ADR-018). High-risk.
     SetMailRelay,
+    /// `TenantCommand::SaveFunderProfile` (Daniel, 2026-11-15 late): a
+    /// copy or an edit of a tenant-owned funder profile. High-risk.
+    SaveFunderProfile,
 }
 
 /// A finding operation kind, one per `FindingCommand` variant.
@@ -643,6 +646,24 @@ const REPORT_READERS: &[RoleOrApplicant] = &[
     R(Role::Auditor),
     R(Role::FinancialSignatory),
 ];
+/// The readers of a programme's funder profile: every Drafting, Judging
+/// and Operations role (Daniel, 2026-11-15 late). The Financial and
+/// Legal signatories read it through the tenant fold (NOTE 5).
+const PROFILE_READERS: &[RoleOrApplicant] = &[
+    R(Role::ProgrammeManager),
+    R(Role::CallDrafter),
+    R(Role::FstpCoordinator),
+    R(Role::CommitteeMember),
+    R(Role::CommitteeChair),
+    R(Role::IrcMember),
+    R(Role::TenantAdmin),
+    R(Role::FinanceApprover),
+    R(Role::PaymentReleaser),
+    R(Role::ContractSignatory),
+    R(Role::FinancialSignatory),
+    R(Role::LegalSignatory),
+    R(Role::Auditor),
+];
 /// The roles of the section 7.2 matrix: every role but call drafter and
 /// tenant admin (lane j2).
 const JOURNEY: &[RoleOrApplicant] = &[
@@ -965,6 +986,34 @@ pub const OPS: &[OpSpec] = &[
     .hr()
     .acting(ADMIN),
     OpSpec::read("tenant.deliveries", RK::ListDeliveries, "/admin/deliveries").acting(ADMIN),
+    // Daniel, 2026-11-15 (late): the platform ships versioned funder
+    // profiles, and a tenant admin may copy one into a tenant-owned profile
+    // and edit it, each save a new version. A profile sets the funder
+    // reports and the funder visibility elements, so both commands are
+    // high-risk by the strict reading, as the brand tokens are (interim,
+    // pending Daniel). Web only.
+    OpSpec::read(
+        "tenant.funder_profiles",
+        RK::ListFunderProfiles,
+        "/admin/funder-profiles",
+    )
+    .acting(ADMIN),
+    OpSpec::new(
+        "tenant.funder_profile.copy",
+        OpKind::Tenant(TenantKind::SaveFunderProfile),
+        Post,
+        "/admin/funder-profiles/copies",
+    )
+    .hr()
+    .acting(ADMIN),
+    OpSpec::new(
+        "tenant.funder_profile.save",
+        OpKind::Tenant(TenantKind::SaveFunderProfile),
+        Put,
+        "/admin/funder-profiles",
+    )
+    .hr()
+    .acting(ADMIN),
     // I-86: the caller's own verification state, never through MCP.
     OpSpec::read(
         "me.get_verification",
@@ -2389,14 +2438,15 @@ pub const OPS: &[OpSpec] = &[
     )
     .acting(LEAD),
     // M9 finish (R-RP-01, M9 design section 2.2): the funder profile the
-    // programme pins through P-53. Web only, for the readers of the
-    // programme's funder reports. Interim, pending Daniel: the route.
+    // programme pins through P-53. Web only, read-only, for every
+    // Drafting, Judging and Operations role of the programme (Daniel,
+    // 2026-11-15 late). Interim, pending Daniel: the route.
     OpSpec::read(
         "programme.funder_profile.view",
         RK::GetFunderProfile,
         "/programmes/{programme}/funder-profile",
     )
-    .acting(REPORT_READERS),
+    .acting(PROFILE_READERS),
 ];
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:
@@ -2415,6 +2465,8 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetBranding),
     OpKind::Tenant(TenantKind::SetTerminology),
     OpKind::Tenant(TenantKind::SetMailRelay),
+    // Daniel, 2026-11-15 (late): a tenant funder profile version.
+    OpKind::Tenant(TenantKind::SaveFunderProfile),
     // Daniel, 2026-11-15 (late): an erasure request needs a step-up.
     OpKind::M3Port(PortKind::RequestErasure),
 ];

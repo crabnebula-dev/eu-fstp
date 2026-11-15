@@ -514,6 +514,10 @@ pub struct CellState {
     /// When each payment request was confirmed as paid: the entry time of
     /// its `PaymentConfirmed` record (P-41, lane m5/retention).
     payments_confirmed: BTreeMap<RequestId, Timestamp>,
+    /// The entry time of each `create_signer` and `rotate_signer` key
+    /// record, in ledger order: the level 2 notice companion key's
+    /// generations (ADR-004, Daniel, 2026-11-15 late).
+    signer_generations: Vec<Timestamp>,
     commands: BTreeMap<[u8; 16], Seq>,
     /// The command id of the engine entry being folded and the sequence
     /// number of its first engine record (`fstp_engine::apply_entry_record`).
@@ -540,6 +544,7 @@ impl CellState {
             bindings: BTreeMap::new(),
             proposals: BTreeMap::new(),
             payments_confirmed: BTreeMap::new(),
+            signer_generations: Vec::new(),
             commands: BTreeMap::new(),
             engine_entry: None,
         }
@@ -653,6 +658,14 @@ impl CellState {
         &self.payments_confirmed
     }
 
+    /// When each generation of the level 2 notice companion key was made,
+    /// from the entry times of its `create_signer` and `rotate_signer`
+    /// key records, oldest first (ADR-004; Daniel, 2026-11-15 late: the
+    /// operator rotates it by hand, reminded when a year is up).
+    pub fn signer_generations(&self) -> &[Timestamp] {
+        &self.signer_generations
+    }
+
     /// Whether any binding of `a` ended at an instant after `after` and at
     /// or before `upto`, by a recorded end, a scheduled one, a suspension
     /// or a voiding. A tenant admin grant of `a` that ended then counts too
@@ -752,7 +765,7 @@ pub(crate) fn fold(
         CellRecord::Auth(r) => fold_auth(&mut s.auth, &s.tenant, at, r)?,
         CellRecord::Tenant(r) => fold_tenant(&mut s.tenant, at, r)?,
         CellRecord::Text(r) => fold_text(s, at, r)?,
-        CellRecord::Key(r) => fold_key(s, r)?,
+        CellRecord::Key(r) => fold_key(s, at, r)?,
         CellRecord::Release(r) => {
             fold_release(&mut s.tickets, r)?;
             s.issued
@@ -1202,10 +1215,21 @@ fn fold_text(s: &mut CellState, at: Timestamp, r: &TextRecord) -> Result<(), Fol
     Ok(())
 }
 
-fn fold_key(s: &mut CellState, r: &KeyRecord) -> Result<(), FoldError> {
+fn fold_key(s: &mut CellState, at: Timestamp, r: &KeyRecord) -> Result<(), FoldError> {
     match r {
-        KeyRecord::KeyOpRecorded { .. } => {
+        KeyRecord::KeyOpRecorded { op } => {
             s.key_ops = s.key_ops.checked_add(1).ok_or_else(inconsistent)?;
+            // ADR-004: a level 2 signing key of the App chain is the
+            // notice companion key, its only signer purpose.
+            if let Ok(k) = fstp_keys::keyop::decode(op)
+                && matches!(
+                    k.call,
+                    fstp_keys::keyop::KeyCall::CreateSigner
+                        | fstp_keys::keyop::KeyCall::RotateSigner
+                )
+            {
+                s.signer_generations.push(at);
+            }
         }
         KeyRecord::EpochDestroyed { epoch, .. } => {
             if !s.destroyed_epochs.insert(*epoch) {

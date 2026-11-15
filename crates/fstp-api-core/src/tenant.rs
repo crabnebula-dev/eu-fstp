@@ -196,6 +196,16 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
                     Err(bad())
                 }
             }
+            // Daniel, 2026-11-15 (late): a copy or a save of a tenant
+            // funder profile. Its text is judged against the fold in
+            // dispatch, where the next version is known.
+            TenantKind::SaveFunderProfile => {
+                if profile_body_ok(spec, request) {
+                    Ok(())
+                } else {
+                    Err(bad())
+                }
+            }
             // No operation of the registry has this kind: the inference
             // record has no route (design 3.5).
             TenantKind::RecordInferenceConfig => Err(bad()),
@@ -958,6 +968,166 @@ pub(crate) fn samples() -> Vec<TenantView> {
             .fold(fstp_brand::PairSet::EMPTY, fstp_brand::PairSet::with),
     ));
     out
+}
+
+// ---------------------------------------------------------------------------
+// Tenant copies of funder profiles (Daniel, 2026-11-15 late)
+// ---------------------------------------------------------------------------
+
+/// The operation that copies a profile version into a tenant-owned
+/// profile. It shares its kind with `tenant.funder_profile.save`.
+pub(crate) const COPY_FUNDER_PROFILE: &str = "tenant.funder_profile.copy";
+
+/// The body check of a profile copy or save: `{from_profile,
+/// from_version, id}` for a copy, `{id, profile}` for a save, with a
+/// tenant id and a profile object.
+fn profile_body_ok(spec: &OpSpec, request: &Object) -> bool {
+    let id_ok = request
+        .get("id")
+        .and_then(Value::as_str)
+        .is_some_and(fstp_tenant::TenantProfile::is_tenant_id);
+    if spec.name == COPY_FUNDER_PROFILE {
+        exactly(spec, request, &["from_profile", "from_version", "id"])
+            && id_ok
+            && request
+                .get("from_profile")
+                .and_then(Value::as_str)
+                .is_some_and(|p| {
+                    !p.is_empty()
+                        && p.len() <= 40
+                        && p.bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                })
+            && request
+                .get("from_version")
+                .and_then(Value::as_str)
+                .and_then(crate::forms::canonical_id)
+                .is_some_and(|n| (1..=u128::from(u16::MAX)).contains(&n))
+    } else {
+        exactly(spec, request, &["id", "profile"])
+            && id_ok
+            && matches!(request.get("profile"), Some(Value::Object(_)))
+    }
+}
+
+/// The profile version a copy or save of `request` records, against the
+/// tenant fold `ts` (Daniel, 2026-11-15 late):
+///
+/// - a copy takes the text of a shipped version, or of a tenant version,
+///   and becomes version 1 of the new id, naming its source;
+/// - a save takes the edited profile object and becomes the next version
+///   of its id;
+/// - in both, the `id` and `version` members are set to the new id and
+///   version, the text is written canonically, and it must pass the
+///   fuzzed funder profile parser (R-RP-01, I-44: every field names a
+///   ledger fold).
+pub(crate) fn funder_profile_request(
+    spec: &OpSpec,
+    request: &Object,
+    ts: &fstp_tenant::TenantState,
+) -> Result<fstp_tenant::TenantProfile, ApiError> {
+    if !profile_body_ok(spec, request) {
+        return Err(bad());
+    }
+    let id = request.get("id").and_then(Value::as_str).ok_or_else(bad)?;
+    let next = ts
+        .latest_funder_profile(id)
+        .map_or(Some(1), |p| p.version.checked_add(1))
+        .ok_or_else(bad)?;
+    let (mut value, source) = if spec.name == COPY_FUNDER_PROFILE {
+        let from = request
+            .get("from_profile")
+            .and_then(Value::as_str)
+            .ok_or_else(bad)?;
+        let from_version = request
+            .get("from_version")
+            .and_then(Value::as_str)
+            .and_then(crate::forms::canonical_id)
+            .and_then(|n| u16::try_from(n).ok())
+            .ok_or_else(bad)?;
+        let text: Vec<u8> = match fstp_report::profile::shipped_text(from, from_version) {
+            Some(b) => b.to_vec(),
+            None => ts
+                .funder_profile(from, from_version)
+                .map(|p| p.text.as_bytes().to_vec())
+                .ok_or_else(|| ApiError::refused(crate::ErrorCode::NotFound, "R-RP-01"))?,
+        };
+        let v = fstp_json::parse(&text).map_err(|_| bad())?;
+        (v, Some((from.to_owned(), from_version)))
+    } else {
+        (request.get("profile").cloned().ok_or_else(bad)?, None)
+    };
+    let Value::Object(o) = &mut value else {
+        return Err(bad());
+    };
+    // A profile's template and wording refs live under its own id, so
+    // they move from the id the text named to the new one.
+    if let Some(from) = o.get("id").and_then(Value::as_str).map(str::to_owned) {
+        rebase_refs(o, &from, id);
+    }
+    let _ = o.insert("id", Value::from(id));
+    let _ = o.insert("version", Value::from(u64::from(next)));
+    let text = fstp_json::to_canonical(&value).map_err(|_| bad())?;
+    if text.len() > fstp_tenant::MAX_TENANT_PROFILE_BYTES {
+        return Err(bad());
+    }
+    fstp_report::profile::parse_profile(text.as_bytes())
+        .map_err(|_| ApiError::refused(crate::ErrorCode::Refused, "R-RP-01"))?;
+    let digest = fstp_domain::id::ContentDigest::from_bytes(fstp_crypto::sha256(text.as_bytes()));
+    Ok(fstp_tenant::TenantProfile {
+        id: id.to_owned(),
+        version: next,
+        text,
+        digest,
+        source,
+    })
+}
+
+/// Moves every template ref and wording ref of the profile object `o`
+/// from under `from/` to under `to/`. Other members are left as they are,
+/// and the parser judges the result.
+fn rebase_refs(o: &mut Object, from: &str, to: &str) {
+    let old = format!("{from}/");
+    let rebase = |v: &mut Value| {
+        if let Value::String(s) = v
+            && let Some(rest) = s.strip_prefix(&old)
+        {
+            *s = format!("{to}/{rest}");
+        }
+    };
+    if let Some(Value::Array(outputs)) = o.get_mut("outputs") {
+        for out in outputs.iter_mut() {
+            if let Value::Object(x) = out
+                && let Some(t) = x.get_mut("template")
+            {
+                rebase(t);
+            }
+        }
+    }
+    if let Some(Value::Array(elements)) = o.get_mut("visibility_elements") {
+        for e in elements.iter_mut() {
+            if let Value::Object(x) = e
+                && let Some(Value::Object(w)) = x.get_mut("wording")
+                && let Some(r) = w.get_mut("ref")
+            {
+                rebase(r);
+            }
+        }
+    }
+}
+
+/// The funder profile the P-53 value `p53` pins: a shipped version, else a
+/// version the tenant owns (Daniel, 2026-11-15 late: "A programme pins
+/// one, as today").
+pub(crate) fn profile_for_p53(
+    state: &fstp_engine::EngineState,
+    p53: &str,
+) -> Result<fstp_report::FunderProfile, fstp_report::ProfileError> {
+    let ts = state.tenant.state();
+    fstp_report::profile::for_p53_with(p53, |id, v| {
+        ts.and_then(|t| t.funder_profile(id, v))
+            .map(|p| p.text.as_str())
+    })
 }
 
 #[cfg(test)]

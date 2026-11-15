@@ -470,10 +470,10 @@ pub(super) async fn list_reports<P: Seams>(
 
 /// `programme.funder_profile.view` (M9 finish, R-RP-01, M9 design 2.2):
 /// the shipped funder profile that the programme's head P-53 pins, with
-/// its outputs and visibility element keys. The readers are those of
-/// `report.list`: the programme manager and the auditor through
-/// `authorize_read`, and the tenant-fold Financial signatory beside it
-/// (NOTE 5). A P-53 that names no shipped profile answers `null`.
+/// its outputs and visibility element keys. The readers are every
+/// Drafting, Judging and Operations role of the programme through
+/// `authorize_read` (Daniel, 2026-11-15 late), and the tenant-fold
+/// Financial and Legal signatories beside it (NOTE 5). A P-53 that names no shipped profile answers `null`.
 pub(super) async fn funder_profile<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
@@ -483,7 +483,7 @@ pub(super) async fn funder_profile<P: Seams>(
         .ok_or_else(|| call.refuse(bad()))?;
     let signatory = call
         .account()
-        .is_some_and(|a| fstp_engine::report::financial_signatory(&call.state, a));
+        .is_some_and(|a| fstp_engine::report::tenant_signatory(&call.state, a));
     if !signatory {
         let rop = ReadOp {
             kind: ReadKind::GetFunderProfile,
@@ -496,8 +496,9 @@ pub(super) async fn funder_profile<P: Seams>(
     let p53 =
         fstp_engine::report::pinned_p53(&call.state, fstp_report::Scope::Programme(programme))
             .ok_or_else(|| call.refuse(not_found()))?;
-    let view = fstp_report::profile::for_p53(p53.0.as_str()).ok().map(|p| {
-        crate::grant::FunderProfileView {
+    let view = crate::tenant::profile_for_p53(&call.state, p53.0.as_str())
+        .ok()
+        .map(|p| crate::grant::FunderProfileView {
             id: p.id().to_owned(),
             version: p.version(),
             digest: crate::action::hex(&p.digest().bytes()),
@@ -507,9 +508,13 @@ pub(super) async fn funder_profile<P: Seams>(
                 .iter()
                 .map(|e| e.key().to_owned())
                 .collect(),
-        }
-    });
-    call.accept(ReadModel::Grant(GrantModel::FunderProfile(programme, view)))
+        });
+    // P-57 (Daniel, 2026-11-15 late): the reporting periods the periodic
+    // data is generated for.
+    let periods = fstp_domain::reporting::reporting_periods(&call.state.core, programme);
+    call.accept(ReadModel::Grant(GrantModel::FunderProfile(
+        programme, view, periods,
+    )))
 }
 
 /// `report.programmes` (lane m5/report-programmes, R-RP-03): the
@@ -1080,15 +1085,6 @@ fn snapshot<P: Seams>(call: &Call<'_, P>) -> Result<fstp_report::Snapshot, ApiEr
     fstp_report::Snapshot::new(core).map_err(|_| ApiError::refused(ErrorCode::Refused, "R-RP-01"))
 }
 
-fn instant(op: &Op, name: &str) -> Result<Timestamp, ApiError> {
-    op.request
-        .get(name)
-        .and_then(Value::as_str)
-        .and_then(|s| s.parse::<i64>().ok())
-        .map(Timestamp::from_micros)
-        .ok_or_else(bad)
-}
-
 /// `report.generate` (R-RP-04, I-44): one output of the funder profile
 /// version P-53 pins for the call or programme, from a snapshot of the
 /// core ledger. A P-53 value that names no shipped profile refuses with
@@ -1140,10 +1136,22 @@ async fn generate<P: Seams>(
         fstp_report::ReportKind::DeliverableDraft => {
             fstp_report::Request::DeliverableDraft { call: call_id()? }
         }
+        // P-57 (Daniel, 2026-11-15 late): the request names a reporting
+        // period of the programme's P-57 by its number. A number P-57
+        // does not hold is refused under P-57.
         fstp_report::ReportKind::PeriodicReportingData => {
+            let n = str_member(op, "period")
+                .ok()
+                .and_then(forms::canonical_id)
+                .and_then(|n| u16::try_from(n).ok())
+                .ok_or_else(bad)?;
+            let p = fstp_domain::reporting::reporting_periods(&call.state.core, programme)
+                .into_iter()
+                .find(|r| r.index == n)
+                .ok_or_else(|| ApiError::refused(ErrorCode::Refused, "P-57"))?;
             periods = [fstp_report::Period {
-                start: instant(op, "start")?,
-                end: instant(op, "end")?,
+                start: p.start,
+                end: p.end,
             }];
             fstp_report::Request::PeriodicReportingData {
                 programme,
@@ -1179,7 +1187,7 @@ async fn generate<P: Seams>(
     let profile = fstp_engine::report::pinned_p53(&call.state, scope)
         .ok_or_else(not_found)
         .and_then(|p| {
-            fstp_report::profile::for_p53(p.0.as_str())
+            crate::tenant::profile_for_p53(&call.state, p.0.as_str())
                 .map_err(|_| ApiError::refused(ErrorCode::Refused, "P-53"))
         })?;
     let output = fstp_report::generate(&snap, &profile, &request).map_err(|e| match e {

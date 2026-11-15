@@ -180,7 +180,7 @@ pub(crate) fn content_facts(
     let policy = fstp_programme::policy_spec(head);
     let action_dates_reversed = if set.contains(&FieldId::P57) {
         match policy.get(FieldId::P57) {
-            Field::Set(FieldValue::P57(d)) => Ok(d.start > d.end),
+            Field::Set(FieldValue::P57(d)) => Ok(!d.consistent()),
             _ => Err(ACTION_DATES_UNREADABLE),
         }
     } else {

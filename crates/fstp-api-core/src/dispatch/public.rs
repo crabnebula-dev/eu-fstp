@@ -287,7 +287,7 @@ fn part_of(kind: PublicKind, call: Option<String>) -> Option<PublicPart> {
 /// funder element only.
 fn funder_footer(state: &EngineState, programme: ProgrammeId) -> Option<FunderFooter> {
     let p53 = fstp_engine::report::pinned_p53(state, fstp_report::Scope::Programme(programme))?;
-    let profile = fstp_report::profile::for_p53(p53.0.as_str()).ok()?;
+    let profile = crate::tenant::profile_for_p53(state, p53.0.as_str()).ok()?;
     Some(FunderFooter {
         profile: profile.id().to_owned(),
         version: profile.version(),

@@ -17,7 +17,7 @@ Each programme has a public section showing open calls, funded subgrants and fin
 | Hidden | Nothing about this grant. Default for every grant |
 | Project | Project title, public summary, call, status |
 | Project and grantee | Adds the grantee name |
-| Full | Adds the granted amount and milestone status |
+| Full | Adds the granted amount, and the milestone status when the programme publishes it (P-79) |
 
 Finished subgrants can also show accepted deliverables with their licences and evidence snapshots, if the grantee includes them.
 
@@ -42,3 +42,5 @@ NOTE 1: Public opt-in does not affect reporting to the funder. Periodic reportin
 NOTE 2: EU funding acknowledgement duties that the grant agreement passes on to recipients apply on the grantee's own channels, independent of this opt-in (L-08).
 
 NOTE 3: The granting authority may use non-sensitive materials it receives from the beneficiaries, such as summaries and deliverables, for its own publicity (MGA Article 16.3). The opt-in screen tells grantees that their choice governs this platform only.
+
+NOTE 4: Milestone status is public only when the programme opts in through P-79, off by default (decided 2026-11-15). It then shows, at the Full level only, each milestone's title, whether it is completed, and a month. It never shows a milestone amount or any content. With P-79 off, no milestone fact is public.

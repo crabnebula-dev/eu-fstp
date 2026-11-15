@@ -306,6 +306,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.field.comms.p52_public_feed": "The machine-readable public feed is on (P-52)",
   "creator.field.comms.p54_aggregate_minimum": "Minimum grants behind a public aggregate (P-54)",
   "creator.field.comms.p76_directory_listing": "Listed in the directory of open calls (P-76)",
+  "creator.field.comms.p79_public_milestones": "Public milestone status at the Full level: titles, completion and month, never amounts (P-79)",
 
   // Members of structured values.
   "creator.member.account_cap_across_drafts_in_call": "Cap counts every draft of the account in the call",
@@ -400,7 +401,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.check.P04MaxAboveP05": "The largest grant (P-04) is above the per-recipient cap (P-05).",
   "creator.check.P39AboveP03": "More reviewer organisations are required (P-39) than reviewers per proposal (P-03).",
   "creator.check.FieldUnset": "A value is missing.",
-  "creator.check.ActionDatesInconsistent": "The action starts after it ends (P-57).",
+  "creator.check.ActionDatesInconsistent": "The action dates or reporting periods do not hold together (P-57): the action starts after it ends, a period ends outside the action or not after the previous one, or a report deadline comes before its period ends.",
   "creator.check.CallPackageIncomplete": "The call package is incomplete (I-48).",
   "creator.check.GuideSectionMissing": "A required section of the Guide for Applicants is missing (I-52).",
   "creator.check.GuideBindingUnresolved": "The Guide for Applicants names a value the draft does not hold (I-51).",
@@ -534,6 +535,10 @@ const APPROVED: Readonly<Record<string, string>> = {
   "footer.platform_attribution": "Runs on the FSTP platform.",
   "footer.funder_visibility": "Funder visibility: the approved wording is pending.",
   "footer.ai_disclosure": "AI disclosure: the approved wording is pending.",
+  // TODO(legal): the wording of each funder visibility element of the
+  // pinned profile on a programme page (L-08, L-09). The placeholder names
+  // the element key only, as on the public pages.
+  "footer.funder_element": "Funder visibility element {element} of funder profile {profile} version {version}: the approved wording is pending.",
 };
 
 /** The English catalogue of the creator pages and the page frame. */

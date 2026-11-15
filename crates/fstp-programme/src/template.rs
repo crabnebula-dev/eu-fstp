@@ -229,6 +229,22 @@ mod tests {
         );
     }
 
+    /// R-RP-01 (Daniel, 2026-11-15 late): a programme pins a shipped or a
+    /// tenant-owned profile. A P-53 naming a tenant profile, whose id starts
+    /// with `tenant-`, compiles under the shipped profile the draft was made
+    /// with, and the readers resolve it in the tenant fold.
+    #[test]
+    fn r_rp_01_compile_accepts_a_tenant_profile_pin() {
+        let mut spec = FunderProfile::horizon_europe().blank();
+        let mut tenant = FunderProfile::horizon_europe().reference();
+        tenant.profile = crate::value::Token::trusted("tenant-he");
+        tenant.version = std::num::NonZeroU16::MAX;
+        spec.funder.p53_funder_profile = Field::Set(tenant.clone());
+        let compiled = compile(&spec, &FunderProfile::horizon_europe(), ids()).unwrap();
+        let p53 = compiled.policy.frozen.p53.0.as_str().to_owned();
+        assert!(p53.contains("tenant-he"), "{p53}");
+    }
+
     /// ADR-007: inline P-09 wording keeps the policy out of a ledger body
     /// until it is stored as a `TextRef`.
     #[test]

@@ -47,6 +47,8 @@ export const MAILBOX_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "mailbox.kind.role.granted": "You hold a new role in programme {programme}. Your home page lists your roles",
   "mailbox.kind.admin.retention_ended":
     "The funder retention period of grant {proposal} in programme {programme} has ended. You may now request the erasure of its texts",
+  "mailbox.kind.report.period_ended":
+    "A reporting period of programme {programme} has ended. Generate and approve its periodic reporting data before the report deadline",
 
   "pending.title": "Prepared action",
   "pending.intro": "An agent you connected prepared this action. It runs only if you confirm it here.",

@@ -1989,6 +1989,8 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,
         // P-41, ADR-007 (lane m5/retention): the erasure page.
         ReadKind::ListErasures => erasure::read(call).await?,
+        // Daniel, 2026-11-15 (late): the shipped and tenant funder profiles.
+        ReadKind::ListFunderProfiles => tenant::funder_profiles(call)?,
         // M6 lane L6-API: the programme manager's timeline of a programme.
         ReadKind::GetProgrammeTimeline => {
             use crate::port::Outbox as _;

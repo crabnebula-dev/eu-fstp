@@ -1092,34 +1092,106 @@ impl Codec for ProfileRef {
     }
 }
 
-/// The P-57 value: the action's start and end dates. A start after the
-/// end decodes, so that the creator reports it (`ActionDatesInconsistent`).
-/// JSON: `{"end": date, "start": date}`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The P-57 value: the action's start and end dates, and the reporting
+/// period ends and report deadlines of the Data Sheet (Daniel,
+/// 2026-11-15 late). Inconsistent dates decode, so that the creator
+/// reports them (`ActionDatesInconsistent`, [`ActionDates::consistent`]).
+/// JSON: `{"end": date, "periods": [{"deadline": date, "end": date}],
+/// "start": date}`. `periods` may be absent, which reads as none, and is
+/// written only when not empty, so a value written before the decision
+/// keeps its bytes.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ActionDates {
     /// The first day of the action.
     pub start: Date,
     /// The last day of the action.
     pub end: Date,
+    /// The reporting periods, in order. Period 1 starts on `start`, and
+    /// each later one the day after the previous end.
+    pub periods: Vec<PeriodEnd>,
+}
+
+impl ActionDates {
+    /// Whether the dates hold together: the start is not after the end,
+    /// the period ends are strictly ascending within the action, and no
+    /// deadline comes before its period's end. `fstp_domain::reporting`
+    /// reads only a consistent value.
+    pub fn consistent(&self) -> bool {
+        let mut last: Option<Date> = None;
+        self.start <= self.end
+            && self.periods.len() <= fstp_domain::reporting::MAX_PERIODS
+            && self.periods.iter().all(|p| {
+                let ok = p.end >= self.start
+                    && p.end <= self.end
+                    && p.deadline >= p.end
+                    && last.is_none_or(|l| p.end > l);
+                last = Some(p.end);
+                ok
+            })
+    }
 }
 
 impl Codec for ActionDates {
     fn decode(v: &Value, c: Currency) -> Result<ActionDates, FromJsonError> {
-        let o = object(v, &["end", "start"])?;
+        let o = object(v, &["end", "periods", "start"])?;
+        let periods = match o.get("periods") {
+            Some(p) => list(p, c).map_err(|e| e.at_field("periods"))?,
+            None => Vec::new(),
+        };
         Ok(ActionDates {
             start: member(o, "start", c)?,
             end: member(o, "end", c)?,
+            periods,
+        })
+    }
+    fn encode(&self) -> Value {
+        let mut members = vec![("end", self.end.encode())];
+        if !self.periods.is_empty() {
+            members.push(("periods", array(&self.periods)));
+        }
+        members.push(("start", self.start.encode()));
+        obj(members)
+    }
+    fn placeholder(c: Currency) -> Option<ActionDates> {
+        let d = Date::placeholder(c)?;
+        Some(ActionDates {
+            start: d,
+            end: d,
+            periods: Vec::new(),
+        })
+    }
+}
+
+/// One reporting period of P-57: the last day of the period and the last
+/// day of its report deadline. JSON: `{"deadline": date, "end": date}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PeriodEnd {
+    /// The last day of the period.
+    pub end: Date,
+    /// The last day to send its report.
+    pub deadline: Date,
+}
+
+impl Codec for PeriodEnd {
+    fn decode(v: &Value, c: Currency) -> Result<PeriodEnd, FromJsonError> {
+        let o = object(v, &["deadline", "end"])?;
+        Ok(PeriodEnd {
+            end: member(o, "end", c)?,
+            deadline: member(o, "deadline", c)?,
         })
     }
     fn encode(&self) -> Value {
         obj(vec![
+            ("deadline", self.deadline.encode()),
             ("end", self.end.encode()),
-            ("start", self.start.encode()),
         ])
     }
-    fn placeholder(c: Currency) -> Option<ActionDates> {
+    fn placeholder(c: Currency) -> Option<PeriodEnd> {
         let d = Date::placeholder(c)?;
-        Some(ActionDates { start: d, end: d })
+        Some(PeriodEnd {
+            end: d,
+            deadline: d,
+        })
     }
 }
 

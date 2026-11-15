@@ -179,43 +179,32 @@ async function mountOperations(env: PageEnv): Promise<void> {
 
 const KINDS = ["audit_file", "call_publication_record", "periodic_reporting_data", "deliverable_draft", "open_call_package"] as const;
 
-/** The microsecond instant of `YYYY-MM-DD` at 00:00 UTC, as a decimal string, or null. */
-export function dayMicros(day: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    return null;
-  }
-  const ms = Date.parse(`${day}T00:00:00Z`);
-  return Number.isNaN(ms) ? null : String(ms * 1000);
-}
-
 function generateSection(env: PageEnv, t: I18n, f: Frame, programme: string, reload: () => Promise<void>): HTMLElement {
   const kind = selectEl(
     { id: "ops-gen-kind", name: "kind" },
     KINDS.map((k) => h("option", { value: k }, [t.label(`ops.reports.kind.${k}`)])),
   );
   const call = textField("ops-gen-call", t.label("ops.reports.generate.call"), { inputmode: "numeric" });
-  const start = textField("ops-gen-start", t.label("ops.reports.generate.start"), { type: "date" });
-  const end = textField("ops-gen-end", t.label("ops.reports.generate.end"), { type: "date" });
+  // P-57 (Daniel, 2026-11-15 late): the periodic data names a reporting
+  // period of P-57 by its number, as the profile panel lists them.
+  const period = textField("ops-gen-period", t.label("ops.reports.generate.period"), { inputmode: "numeric" });
   const submit = buttonEl("ops-gen-submit", "submit", t.label("ops.reports.generate.submit"));
   const form = formEl("ops-gen-form", [
     h("div", { class: "fstp-field" }, [h("label", { for: "ops-gen-kind" }, [t.label("ops.reports.generate.kind")]), kind]),
     call.root,
-    start.root,
-    end.root,
+    period.root,
     submit,
   ]);
   onSubmit(f, form, submit, async () => {
     f.clearAlert();
     const body: Record<string, unknown> = { kind: kind.value };
     if (kind.value === "periodic_reporting_data") {
-      const s = dayMicros(start.control.value);
-      const e = dayMicros(end.control.value);
-      if (s === null || e === null) {
+      const p = period.control.value.trim();
+      if (!/^[1-9][0-9]{0,4}$/.test(p)) {
         f.alert(t.label("ops.reports.generate.err"));
         return;
       }
-      body["start"] = s;
-      body["end"] = e;
+      body["period"] = p;
     } else {
       const c = call.control.value.trim();
       if (!isIdText(c)) {
@@ -321,8 +310,28 @@ async function mountReports(env: PageEnv, params: Readonly<Record<string, string
   await guarded(f, render);
 }
 
+/**
+ * The funder profile of a programme, read-only (R-RP-01; Daniel,
+ * 2026-11-15 late): every Drafting, Judging and Operations role of the
+ * programme opens it. The page holds the profile panel and nothing that
+ * changes it.
+ */
+async function mountProfile(env: PageEnv, params: Readonly<Record<string, string>>): Promise<void> {
+  const t = labels(env);
+  const programme = params["programme"] ?? "";
+  const f = frame(env, t, t.label("ops.profile.title", { id: programme }));
+  await guarded(f, async () => {
+    f.show([
+      h("p", {}, [link("/app/", t.label("ops.profile.home"))]),
+      h("p", { class: "text-sm", id: "ops-profile-read-only" }, [t.label("ops.profile.read_only")]),
+      await profilePanel(env, t, programme),
+    ]);
+  });
+}
+
 /** The operations pages, each with its route below `/app/`. */
 export const OPERATIONS_PAGES: readonly JudgingPage[] = [
   { route: idRoute("ops.home", "/app/operations", []), mount: (env) => mountOperations(env) },
   { route: idRoute("ops.reports", "/app/programmes/{programme}/reports", ["programme"]), mount: (env, p) => mountReports(env, p) },
+  { route: idRoute("ops.profile", "/app/programmes/{programme}/funder-profile", ["programme"]), mount: (env, p) => mountProfile(env, p) },
 ];

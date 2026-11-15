@@ -22,10 +22,47 @@ export interface FunderProfile {
   readonly visibility: readonly string[];
 }
 
+/** One reporting period of P-57: instants in UTC microseconds, as decimals. */
+export interface ReportingPeriod {
+  readonly period: string;
+  readonly start: string;
+  readonly end: string;
+  readonly deadline: string;
+}
+
 /** The reply of `programme.funder_profile.view`. */
 export interface FunderProfileView {
   readonly programme: string;
   readonly profile: FunderProfile | null;
+  /** The reporting periods of P-57 (Daniel, 2026-11-15 late). */
+  readonly periods: readonly ReportingPeriod[];
+}
+
+const DECIMAL = /^(0|[1-9][0-9]{0,18})$/;
+
+function period(v: unknown): ReportingPeriod | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return null;
+  }
+  const o = v as Readonly<Record<string, unknown>>;
+  const { period: p, start, end, deadline } = o;
+  if (
+    Object.keys(o).length === 4 &&
+    typeof p === "string" &&
+    typeof start === "string" &&
+    typeof end === "string" &&
+    typeof deadline === "string" &&
+    [p, start, end, deadline].every((x) => DECIMAL.test(x))
+  ) {
+    return { period: p, start, end, deadline };
+  }
+  return null;
+}
+
+/** The UTC date `YYYY-MM-DD` of the last day before the instant `micros`: the end date of a period or a deadline. */
+export function lastDay(micros: string): string {
+  const ms = Number(BigInt(micros) / 1000n) - 86_400_000;
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 function strings(v: unknown): string[] | null {
@@ -42,9 +79,21 @@ export function decodeFunderProfile(v: unknown): FunderProfileView | null {
   if (typeof programme !== "string" || !/^(0|[1-9][0-9]{0,38})$/.test(programme)) {
     return null;
   }
+  const raw = o["reporting_periods"];
+  if (!Array.isArray(raw)) {
+    return null;
+  }
+  const read = (raw as unknown[]).map(period);
+  const periods: ReportingPeriod[] = [];
+  for (const r of read) {
+    if (r === null) {
+      return null;
+    }
+    periods.push(r);
+  }
   const p = o["profile"];
   if (p === null) {
-    return { programme, profile: null };
+    return { programme, profile: null, periods };
   }
   if (typeof p !== "object" || p === undefined || Array.isArray(p)) {
     return null;
@@ -64,14 +113,36 @@ export function decodeFunderProfile(v: unknown): FunderProfileView | null {
   ) {
     return null;
   }
-  return { programme, profile: { id, version, digest, outputs, visibility } };
+  return { programme, profile: { id, version, digest, outputs, visibility }, periods };
+}
+
+/** The P-57 reporting periods of `v`, or a line saying P-57 names none. */
+function periodsBody(t: I18n, v: FunderProfileView): HTMLElement {
+  if (v.periods.length === 0) {
+    return h("p", { id: "ops-profile-periods-none" }, [t.label("ops.profile.periods_none")]);
+  }
+  return h("table", { id: "ops-profile-periods" }, [
+    h("caption", {}, [t.label("ops.profile.periods")]),
+    h("thead", {}, [
+      h("tr", {}, [
+        h("th", { scope: "col" }, [t.label("ops.profile.period")]),
+        h("th", { scope: "col" }, [t.label("ops.profile.period_end")]),
+        h("th", { scope: "col" }, [t.label("ops.profile.period_deadline")]),
+      ]),
+    ]),
+    h(
+      "tbody",
+      {},
+      v.periods.map((r) => h("tr", { "data-period": r.period }, [h("th", { scope: "row" }, [r.period]), h("td", {}, [lastDay(r.end)]), h("td", {}, [lastDay(r.deadline)])])),
+    ),
+  ]);
 }
 
 /** The panel's content for `v`. */
 export function profileBody(t: I18n, v: FunderProfileView): Child[] {
   const p = v.profile;
   if (p === null) {
-    return [h("p", { id: "ops-profile-none" }, [t.label("ops.profile.none")])];
+    return [h("p", { id: "ops-profile-none" }, [t.label("ops.profile.none")]), periodsBody(t, v)];
   }
   const out: Child[] = [
     h("p", { id: "ops-profile-pinned", "data-profile": p.id, "data-version": p.version }, [
@@ -93,6 +164,7 @@ export function profileBody(t: I18n, v: FunderProfileView): Child[] {
   if (p.visibility.length > 0) {
     out.push(h("p", { id: "ops-profile-visibility" }, [t.label("ops.profile.visibility", { keys: p.visibility.join(", ") })]));
   }
+  out.push(periodsBody(t, v));
   return out;
 }
 

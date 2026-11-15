@@ -28,8 +28,8 @@ use fstp_html::{CatalogueSource, Catalogues, Document, Element, Node};
 use fstp_json::Value;
 use fstp_prop::Gen;
 use fstp_public::{
-    Chrome, GrantStatus, Level, PublicAggregate, PublicCall, PublicGrant, PublicGuide, PublicPage,
-    PublicProgramme, PublicView,
+    Chrome, GrantStatus, Level, PublicAggregate, PublicCall, PublicGrant, PublicGuide,
+    PublicMilestone, PublicPage, PublicProgramme, PublicView,
 };
 
 /// The chrome every test renders with.
@@ -96,6 +96,7 @@ pub(crate) fn grant(call: &str, tag: &str, level: Level, status: GrantStatus) ->
         grantee: (level >= Level::ProjectAndGrantee).then(|| format!("{tag} Synthetic Grantee")),
         amount: (level == Level::Full).then(|| "40000.00".to_owned()),
         deliverables: Vec::new(),
+        milestones: Vec::new(),
     }
 }
 
@@ -176,6 +177,11 @@ pub(crate) fn grant_leaves(g: &PublicGrant) -> Vec<String> {
     let mut out = vec![g.call.clone(), g.title.clone(), g.summary.clone()];
     out.extend(g.grantee.iter().cloned());
     out.extend(g.amount.iter().cloned());
+    // P-79: each milestone number and month.
+    for m in &g.milestones {
+        out.push(m.number.to_string());
+        out.push(m.month.clone());
+    }
     out
 }
 
@@ -372,6 +378,18 @@ pub(crate) fn gen_view(g: &mut Gen) -> PublicView {
                     grantee: (level >= Level::ProjectAndGrantee).then(|| canary(g, n, "who")),
                     amount: (level == Level::Full).then(|| canary(g, n, "amt")),
                     deliverables: Vec::new(),
+                    // P-79: milestone status at the Full level only.
+                    milestones: if level == Level::Full {
+                        (1..=u32::from(g.u8_in(0..=2)))
+                            .map(|number| PublicMilestone {
+                                number,
+                                completed: g.bool(),
+                                month: canary(g, n, "month"),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
                 }
             })
             .collect()

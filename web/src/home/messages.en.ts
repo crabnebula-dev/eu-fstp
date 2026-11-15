@@ -102,6 +102,7 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.work.branding": "Set the brand colours",
   "home.work.terminology": "Set the terminology",
   "home.work.erasures": "Erasures and retention",
+  "home.work.funder_profiles": "Funder profiles",
   "home.work.admins": "Open the administrators step",
 
   "home.group.applicant": "Your applications",
@@ -141,6 +142,7 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.work.grants_reviewer": "Grants you review: amount determination and payment requests",
   "home.work.grants_staff": "Open a grant",
   "home.work.audit": "Audit log of programme {programme}",
+  "home.work.funder_profile": "Funder profile of programme {programme}",
   "home.work.operations": "Your operations queues: payments, contracts and funder reports",
   "home.group.operations": "Operations",
   "home.operations.intro": "Payment requests to review, approve, release and confirm, contracts to countersign and funder reports.",

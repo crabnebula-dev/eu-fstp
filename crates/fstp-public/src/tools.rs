@@ -19,6 +19,10 @@
 //!   A finished grant whose grantee includes accepted deliverables also
 //!   has `deliverables: [{licence, snapshot}]` (M9 lane P2). With none,
 //!   the member is absent.
+//!   A grant at the Full level of a programme that publishes milestone
+//!   status (P-79) also has `milestones: [{milestone, completed, month}]`,
+//!   with the milestone number as a decimal string. With none, the member
+//!   is absent.
 //!
 //! A call the view does not hold is [`PublicError::NotFound`].
 
@@ -201,6 +205,22 @@ fn grant(g: &PublicGrant) -> Value {
             })
             .collect();
         let _ = o.insert("deliverables", Value::from(list));
+    }
+    // P-79: present only when the programme publishes milestone status
+    // and the grant shows at the Full level.
+    if !g.milestones.is_empty() {
+        let list: Vec<Value> = g
+            .milestones
+            .iter()
+            .map(|m| {
+                object(vec![
+                    ("milestone", Value::from(m.number.to_string().as_str())),
+                    ("completed", Value::Bool(m.completed)),
+                    ("month", Value::from(m.month.as_str())),
+                ])
+            })
+            .collect();
+        let _ = o.insert("milestones", Value::from(list));
     }
     Value::Object(o)
 }

@@ -1,12 +1,13 @@
 //! M9 finish: `programme.funder_profile.view` through the API (R-RP-01,
 //! R-AC-01, I-44, I-86; M9 design section 2.2).
 //!
-//! The SuperSAFE policy pins Horizon Europe version 1 through P-53. The
-//! programme manager, the auditor and the tenant-wide Financial signatory
-//! read the pinned profile: its id, version, file digest, the five output
-//! kinds and the visibility element keys. The reply equals the shipped
-//! profile. An applicant, a reviewer and the manager of another programme
-//! are refused (R-AC-01).
+//! The SuperSAFE policy pins Horizon Europe version 1 through P-53. Every
+//! Drafting, Judging and Operations role of the programme reads the
+//! pinned profile (Daniel, 2026-11-15 late), and so do the tenant admins
+//! and the tenant-wide signatories: its id, version, file digest, the
+//! five output kinds and the visibility element keys. The reply equals
+//! the shipped profile. The applicant team, an account with no binding
+//! and the manager of another programme are refused (R-AC-01).
 
 #![allow(
     clippy::unwrap_used,
@@ -42,10 +43,11 @@ fn seeder(w: Built) -> Seeder {
     }
 }
 
-/// R-RP-01, R-AC-01, I-86: the report readers read the pinned profile,
-/// which is the shipped Horizon Europe v1, and nobody else does.
+/// R-RP-01, R-AC-01, I-86: every programme staff role reads the pinned
+/// profile, which is the shipped Horizon Europe v1 (Daniel, 2026-11-15
+/// late), and nobody else does.
 #[test]
-fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_report_readers() {
+fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_programme_staff() {
     let w = world();
     let p = w.targets.programme.expect("P").raw().to_string();
     let mut seed = seeder(w);
@@ -68,7 +70,21 @@ fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_report_readers() {
     let kinds = list("outputs", "kind");
     let keys = list("visibility_elements", "key");
     assert_eq!(kinds.len(), 5, "HE v1 defines the five outputs");
-    for who in [PM, AUDITOR, ORG_SIGNATORY] {
+    for who in [
+        PM,
+        DRAFTER,
+        COORD,
+        CHAIR,
+        MEMBER,
+        REVIEWER,
+        IRC_MEMBER,
+        ADMIN_PLAIN,
+        FINANCE,
+        RELEASER,
+        SIGNATORY,
+        AUDITOR,
+        ORG_SIGNATORY,
+    ] {
         let v = seed
             .api(who, GET, &path, &Value::Null)
             .unwrap_or_else(|e| panic!("{who:?}: {e}"));
@@ -113,10 +129,50 @@ fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_report_readers() {
         assert_eq!(strings("outputs"), kinds, "{text}");
         assert_eq!(strings("visibility_elements"), keys, "{text}");
     }
-    for who in [LEAD, REVIEWER, PM_OTHER] {
+    for who in [LEAD, TEAM, GUARDIAN, UNBOUND, PM_OTHER, PM_ENDED] {
         let e = seed
             .api(who, GET, &path, &Value::Null)
             .expect_err("refused");
         assert!(e.contains("R-AC-01"), "{who:?}: {e}");
     }
+}
+
+/// P-57 (Daniel, 2026-11-15 late): the view lists the reporting periods of
+/// the programme's P-57, and the periodic data names one by its number. A
+/// number P-57 does not hold is refused under P-57, and a malformed one
+/// as a bad request.
+#[test]
+fn p57_profile_view_lists_periods_and_generation_names_one() {
+    let w = world();
+    let p = w.targets.programme.expect("P").raw().to_string();
+    let mut seed = seeder(w);
+    let v = seed
+        .api(
+            PM,
+            GET,
+            &format!("/programmes/{p}/funder-profile"),
+            &Value::Null,
+        )
+        .unwrap();
+    let periods = v
+        .as_object()
+        .and_then(|o| o.get("reporting_periods"))
+        .and_then(Value::as_array)
+        .map(|a| a.len());
+    assert_eq!(periods, Some(2), "the SuperSAFE fixture names two periods");
+    let path = format!("/programmes/{p}/reports");
+    let body = |n: &str| {
+        obj(vec![
+            ("kind", Value::from("periodic_reporting_data")),
+            ("period", Value::from(n)),
+        ])
+    };
+    let e = seed
+        .api(PM, ApiMethod::Post, &path, &body("3"))
+        .expect_err("no period 3");
+    assert!(e.contains("P-57"), "{e}");
+    let e = seed
+        .api(PM, ApiMethod::Post, &path, &body("01"))
+        .expect_err("not canonical");
+    assert!(!e.contains("P-57"), "{e}");
 }

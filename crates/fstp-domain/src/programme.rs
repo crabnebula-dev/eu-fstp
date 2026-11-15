@@ -386,6 +386,11 @@ pub fn programme_status(state: &State, programme: ProgrammeId) -> Option<Program
     state.calls.programmes.get(&programme).map(|p| p.status)
 }
 
+/// Every programme of the state with its status, in id order.
+pub fn programmes(state: &State) -> impl Iterator<Item = (ProgrammeId, ProgrammeStatus)> + '_ {
+    state.calls.programmes.iter().map(|(id, p)| (*id, p.status))
+}
+
 /// The core builder set of `programme` (I-67, Q1 A), or `None` for an
 /// unknown one. [`crate::policy::activation::programme_builders`] reads it.
 pub(crate) fn builders(state: &State, programme: ProgrammeId) -> Option<&BTreeSet<AccountId>> {

@@ -687,8 +687,6 @@ async fn seed_grant(seed: &mut Seeder<'_>, at: GrantAt) -> Result<Reached, Strin
 /// Generates the five funder outputs the API core builds, and has the
 /// Financial signatory approve each (R-RP-04, R-RP-03, I-44).
 async fn reports(seed: &mut Seeder<'_>) -> Result<Vec<(String, String)>, String> {
-    let from = T_SETUP;
-    let to = seed.now.saturating_add(DAY);
     let mut out = Vec::new();
     for kind in [
         "call_publication_record",
@@ -698,9 +696,10 @@ async fn reports(seed: &mut Seeder<'_>) -> Result<Vec<(String, String)>, String>
         "open_call_package",
     ] {
         let mut body = vec![("kind", Value::from(kind)), ("call", dec(CALL.raw()))];
+        // P-57 (Daniel, 2026-11-15 late): period 1 of the SuperSAFE
+        // fixture, 2026-01-01 to 2027-06-30, holds every scene instant.
         if kind == "periodic_reporting_data" {
-            body.push(("start", from.to_string().as_str().into()));
-            body.push(("end", to.to_string().as_str().into()));
+            body.push(("period", "1".into()));
         }
         let v = seed
             .api(
