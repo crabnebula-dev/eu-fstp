@@ -17,7 +17,9 @@
 // (`roles.list`, tenant admins only). An active role can be ended
 // (`roles.end`) and a suspended one reinstated with a reason
 // (`roles.reinstate`). Both are high-risk, so each asks for a step-up.
-// For anyone else the section stays hidden.
+// For anyone else the section stays hidden, and the page never asks the
+// read, so it causes no refusal (SA-09: a page shows only what the viewer
+// may see). The page reads the caller's own `me.roles` first.
 
 import { h } from "../../core/dom.js";
 import { busy, frame, hush, ready, warn } from "../../creator/frame.js";
@@ -34,6 +36,7 @@ import {
   type InvitationRow,
 } from "../model.js";
 import { roleLabel, t } from "../i18n.js";
+import { readMyRoles } from "../../home/model.js";
 
 /** Mounts the people admin page of programme `p`. */
 export function mount(p: string): void {
@@ -157,10 +160,12 @@ export function mount(p: string): void {
     return li;
   };
 
-  // Only a tenant admin reads the bindings. A refusal keeps the section
-  // hidden and shows no alert, so a programme manager sees the page as
-  // before.
+  // Only a tenant admin reads the bindings, so only a tenant admin asks.
+  // A refusal still keeps the section hidden and shows no alert, so a
+  // programme manager sees the page as before.
   async function loadBindings(): Promise<void> {
+    const me = await call("me.roles", [], undefined, (v) => readMyRoles(v) !== null);
+    if (me.kind !== "done" || readMyRoles(me.body)?.tenantAdmin !== true) return;
     const o = await call("roles.list", [p], undefined, (v) => readBindings(v) !== null);
     if (o.kind !== "done") return;
     const rows = readBindings(o.body) ?? [];
