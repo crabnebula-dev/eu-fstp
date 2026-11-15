@@ -87,7 +87,7 @@ function pendingValue(f: FieldDef, text: string): unknown {
 export function mount(p: string, step: string): void {
   const s = CREATOR_STEPS.find((x) => x.id === step);
   if (s === undefined) return;
-  // The `planning-studio` prototype: "Programme set-up" heads every step,
+  // The `planning-studio` prototype: "Programme editor" heads every step,
   // and the step names itself in its `h2` and the document title.
   const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "creator-error" });
   document.title = stepTitle(s);

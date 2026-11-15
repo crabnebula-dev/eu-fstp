@@ -1,4 +1,4 @@
-// The Planning Studio, "Programme set-up" in the plain pack (lane studio;
+// The Planning Studio, "Programme editor" in the plain pack (lane studio;
 // `SPEC/12-journey-ui.md` section 8.2; `docs/design/05-programme-staff-studio.md`).
 //
 // The studios only group the 11 creator steps. Every rule the pages show

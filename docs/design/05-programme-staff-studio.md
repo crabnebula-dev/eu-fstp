@@ -1,6 +1,6 @@
 # 05. Programme staff and programme set-up
 
-Status: draft, updated with Daniel's decisions of 2026-11-01. Prototypes: `coordinator-conflict.html`, `coordinator-conflicts-list.html`, `stage1-close.html`, `planning-studio.html` ("Programme set-up"), `seal-ceremony.html` ("Approval and publication"), plus `home-coordinator.html`.
+Status: draft, updated with Daniel's decisions of 2026-11-01. Prototypes: `coordinator-conflict.html`, `coordinator-conflicts-list.html`, `stage1-close.html`, `planning-studio.html` ("Programme editor"), `seal-ceremony.html` ("Approval and publication"), plus `home-coordinator.html`.
 
 ## Purpose and audience
 
@@ -34,7 +34,7 @@ Per-state counts and pseudonymous ids before conflict declaration. No titles and
 
 ## Programme set-up
 
-The spec name is Planning Studio (`12-journey-ui.md` §8.2). The page title is "Programme set-up" with "Spec name: Planning Studio" as a secondary line (`spec-questions.md` item 12).
+The spec name is Planning Studio (`12-journey-ui.md` §8.2). The page title is "Programme editor" with "Spec name: Planning Studio" as a secondary line (`spec-questions.md` item 12).
 
 Set-up is per programme, not per call. It holds the 11 creator steps in the order of `m4-design.md` §3.1 and `12-journey-ui.md` §8.2. The design groups them under five plain headings. Each heading carries the spec studio name as a `.voyage-label` line.
 
@@ -89,4 +89,4 @@ R-CF-02, R-CF-04, R-LA-03, R-PC-03, R-JV-08, R-JV-10, R-GA-01, I-07, I-08, I-12,
 
 ## Open points
 
-- Resolved on 2026-11-01: "Programme set-up" for Planning Studio and "Approval and publication" for the seal ceremony (item 12), and the queue count scope (item 6).
+- Resolved on 2026-11-01: "Programme editor" for Planning Studio and "Approval and publication" for the seal ceremony (item 12), and the queue count scope (item 6).

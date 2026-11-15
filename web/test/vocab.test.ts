@@ -156,9 +156,9 @@ test("i96_web_state_label_keeps_the_formal_name", () => {
 test("r_wl_05_web_label_shows_the_voyage_line_beside_the_plain_label", () => {
   freshDom();
   const off = asFake(labelWithVoyage(i18n(false), "nav.programme_setup"));
-  eq(off.textContent, "Programme set-up", "O-55: plain only");
+  eq(off.textContent, "Programme editor", "O-55: plain only");
   const on = asFake(labelWithVoyage(i18n(true), "nav.programme_setup"));
-  eq(on.children[0]?.textContent, "Programme set-up", "O-55: the plain label leads");
+  eq(on.children[0]?.textContent, "Programme editor", "O-55: the plain label leads");
   eq(on.children[on.children.length - 1]?.getAttribute("class"), "voyage-label", "the secondary line");
   eq(on.children[on.children.length - 1]?.textContent, "Planning Studio", "the Voyage label");
 });

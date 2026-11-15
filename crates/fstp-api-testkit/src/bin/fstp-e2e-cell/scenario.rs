@@ -1814,7 +1814,7 @@ mod tests {
         let pm = crate::demo::what_they_can_do(&inner, STAFF_PM);
         assert_eq!(
             pm,
-            "Programme manager: the programme set-up and people pages of the programme, and its call boards."
+            "Programme manager: the programme editor and people pages of the programme, and its call boards."
         );
         let r1 = crate::demo::what_they_can_do(&inner, R1);
         assert!(

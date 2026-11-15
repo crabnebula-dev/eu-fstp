@@ -61,7 +61,7 @@ test.describe('programme set-up scene', () => {
     const door = await FrontDoor.open(browser, cell);
     await door.chooseScene(SCENE);
     await expect(door.page.locator('#demo-scene')).toContainText('programme_setup');
-    await expect(door.item(DOOR.m1).locator('[data-demo-does]')).toContainText('programme set-up');
+    await expect(door.item(DOOR.m1).locator('[data-demo-does]')).toContainText('programme editor');
     const href = await door.signIn(DOOR.m1).getAttribute('href');
     await door.close();
     expect(href, 'the front door offers "Sign in as" for M1').not.toBeNull();
@@ -76,10 +76,10 @@ test.describe('programme set-up scene', () => {
       await settle(page);
 
       // Home, then "Programme set-up of programme N".
-      await page.locator('main').getByRole('link', { name: /^Programme set-up of programme \d+$/ }).first().click();
+      await page.locator('main').getByRole('link', { name: /^Programme editor of programme \d+$/ }).first().click();
       await page.waitForURL((u) => /^\/app\/programmes\/\d+\/studio$/.test(u.pathname));
       await settle(page);
-      await expect(page.locator('main h1')).toHaveText('Programme set-up');
+      await expect(page.locator('main h1')).toHaveText('Programme editor');
       await expect(page.locator('main[data-ready="true"]')).toHaveCount(1);
       await expect(page.locator('#studio-status')).toHaveAttribute('data-status', 'draft');
 

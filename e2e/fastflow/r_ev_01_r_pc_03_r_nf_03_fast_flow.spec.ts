@@ -7,7 +7,7 @@
  * - R-PC-03, roles table: "Call drafter D1" writes the knock-out criteria
  *   on "Knock-out criteria", reached from Home. Programme manager M1,
  *   another person, approves and publishes call 1 on "Approval and
- *   publication", reached from "Programme set-up".
+ *   publication", reached from "Programme editor".
  * - R-EV-01, R-CF-02: Coordinator C1 reaches the intake queue from the
  *   mailbox, declares no conflict, sees the criteria D1 wrote by their
  *   text, fails one proposal with a reason (INELIGIBLE) and passes

@@ -1,4 +1,4 @@
-// The parts of the Planning Studio pages, "Programme set-up" and
+// The parts of the Planning Studio pages, "Programme editor" and
 // "Approval and publication" (`SPEC/12-journey-ui.md` section 8.2;
 // `docs/design/05-programme-staff-studio.md`; the `planning-studio` and
 // `seal-ceremony` prototypes).

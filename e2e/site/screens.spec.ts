@@ -297,7 +297,7 @@ const SCREENS: readonly Screen[] = [
   // Programme staff and tenant admin pages.
   { screen: 'onboarding', prototype: 'onboarding', layout: 'app', h1: 'Set up your organisation', h2: ['Step 1: Organisation'], regions: [{ role: 'navigation', name: 'Onboarding steps' }], reach: admin(APP.onboarding('organisation')) },
   {
-    screen: 'planning-studio', prototype: 'planning-studio', layout: 'app', h1: 'Programme set-up', h2: [], regions: [{ role: 'navigation', name: 'Set-up steps' }],
+    screen: 'planning-studio', prototype: 'planning-studio', layout: 'app', h1: 'Programme editor', h2: [], regions: [{ role: 'navigation', name: 'Set-up steps' }],
     reach: async (c) => {
       // ADR-021: a draft opens only once the organisation is activated, so
       // the tenant onboards and activates first.

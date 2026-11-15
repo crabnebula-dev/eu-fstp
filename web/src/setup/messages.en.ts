@@ -6,10 +6,10 @@
 import type { CatalogueInput } from "../core/i18n.js";
 
 const LABELS: Readonly<Record<string, string>> = {
-  "setup.title": "Set up a programme",
+  "setup.title": "Create a programme",
   "setup.title.new": "Set up a new programme",
   "setup.title.progress": "Set-up progress",
-  "setup.document_title": "{stage}. Set up a programme",
+  "setup.document_title": "{stage}. Create a programme",
 
   // The stage bar.
   "setup.stages.nav": "Set-up stages",
@@ -82,7 +82,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "setup.narrative.accepted": "Accepted.",
 
   // Stage 1, Start.
-  "setup.start.active": "This organisation is active, so programme set-up is open (ADR-021).",
+  "setup.start.active": "This organisation is active, so creating a programme is open (ADR-021).",
   "setup.start.intro": "You open the draft and invite its programme manager. The programme manager then builds the programme stage by stage. Everyone can follow how far it has got on the set-up progress page.",
   "setup.start.profile_hint": "Sets the funder bounds every later stage is checked against, such as the per-recipient ceiling (P-58). This release has one profile.",
   "setup.start.name": "Programme name",

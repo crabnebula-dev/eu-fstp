@@ -107,7 +107,7 @@ Rust and database constraints from the spec apply:
 
 Both packs are terminology override sets (`white-labelling.md`, I-72). The plain pack is the platform default and leads in headings, buttons, status labels, navigation, empty states, errors and notifications. Voyage is optional: a tenant switches it on, and its labels then appear as a secondary line beside the plain label. Tenants can edit labels in either pack. Formal names always remain visible (I-96). The full catalogues are in `docs/design/07-vocabulary-pack.md`.
 
-The plain names of the layer's own surfaces (decided 2026-11-01): Activity log (the Passage Diary), Progress map (the voyager route), Programme set-up (the Planning Studio), Approval and publication (the seal ceremony) and Pre-submission check (the packing check). The metaphor names elsewhere in this document are the Voyage pack's labels.
+The plain names of the layer's own surfaces (decided 2026-11-01): Activity log (the Passage Diary), Progress map (the voyager route), Programme editor (the Planning Studio; renamed from "Programme set-up" by Daniel on 2026-11-15), Approval and publication (the seal ceremony) and Pre-submission check (the packing check). The metaphor names elsewhere in this document are the Voyage pack's labels.
 
 The Voyage pack:
 

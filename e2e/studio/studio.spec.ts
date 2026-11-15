@@ -6,7 +6,7 @@
  *
  * - r_pg_01_programme_manager_walks_the_studios_and_sees_the_report: the
  *   demo programme manager M1 signs in with one click and clicks
- *   "Programme set-up" on the home page. The page groups the 11 creator
+ *   "Programme editor" on the home page. The page groups the 11 creator
  *   steps under the five plain headings, each with its studio name
  *   (R-PG-01). M1 clicks through every step the report opens, each step
  *   page showing the same grouped navigation, and every locked step says
@@ -60,10 +60,10 @@ async function expectGrouping(page: Page, why: string): Promise<void> {
 
 /** Clicks "Programme set-up of programme ..." on the home page. */
 async function toStudio(page: Page): Promise<void> {
-  await page.locator('main').getByRole('link', { name: /^Programme set-up of programme / }).first().click();
+  await page.locator('main').getByRole('link', { name: /^Programme editor of programme / }).first().click();
   await page.waitForURL((u) => /^\/app\/programmes\/\d+\/studio$/.test(u.pathname));
   await settle(page);
-  await expect(page.locator('main h1')).toHaveText('Programme set-up');
+  await expect(page.locator('main h1')).toHaveText('Programme editor');
   await expect(page.locator('main[data-ready="true"]')).toHaveCount(1);
 }
 
@@ -107,7 +107,7 @@ test.describe('planning studio', () => {
         await stepsNav(page).locator(`a[href="${path}"]`).click();
         await page.waitForURL((u) => u.pathname === path);
         await settle(page);
-        await expect(page.locator('main h1')).toHaveText('Programme set-up');
+        await expect(page.locator('main h1')).toHaveText('Programme editor');
         await expect(page.locator('main[data-ready="true"]')).toHaveCount(1);
         await expectGrouping(page, path);
         await expect(stepsNav(page).locator('[aria-current="step"]')).toHaveCount(1);

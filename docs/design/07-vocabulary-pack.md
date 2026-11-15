@@ -72,14 +72,14 @@ The spec fixes the Voyage labels. It does not name keys for these concepts. The 
 
 ## Catalogue 3: surface names the spec gives as metaphors
 
-12-journey-ui and ADR-015 name some surfaces with metaphor names. The design keeps each spec name in documentation and pairs it with a plain primary label in the UI. Daniel confirmed all five pairings on 2026-11-01 (`spec-questions.md` item 12): Activity log (Passage Diary), Progress map (Voyager route), Programme set-up (Planning Studio), Approval and publication (seal ceremony), Pre-submission check (packing check).
+12-journey-ui and ADR-015 name some surfaces with metaphor names. The design keeps each spec name in documentation and pairs it with a plain primary label in the UI. Daniel confirmed all five pairings on 2026-11-01 (`spec-questions.md` item 12): Activity log (Passage Diary), Progress map (Voyager route), Programme editor (Planning Studio; renamed from "Programme set-up" on 2026-11-15), Approval and publication (seal ceremony), Pre-submission check (packing check).
 
 | Proposed key | Spec name | Plain primary label | Source |
 | --- | --- | --- | --- |
 | `place.diary` | Passage Diary | Activity log | 12-journey-ui §7, ADR-015 |
 | `place.route_map` | route map | Application progress (progress map) | 12-journey-ui §1, §8.1 |
 | `place.strip` | "where is this proposal" strip | Proposal status | 12-journey-ui §8.3 |
-| `place.studio` | Planning Studio | Programme set-up | 12-journey-ui §8.2 |
+| `place.studio` | Planning Studio | Programme editor | 12-journey-ui §8.2 |
 | `place.studio.group1` | Surveying the territory | Funder and identity | §8.2 |
 | `place.studio.group2` | Border rules | Eligibility and scope | §8.2 |
 | `place.studio.group3` | Instruments | Evaluation, money and contract | §8.2 |
@@ -118,7 +118,7 @@ The 11 creator step names (`programme-creator.md`, m4-design §3.1) are already 
 | Key | Plain label (platform default) | Voyage label | Notes |
 | --- | --- | --- | --- |
 | `nav.my_applications` | My applications | My voyages | |
-| `nav.programme_setup` | Programme set-up | Planning Studio | |
+| `nav.programme_setup` | Programme editor | Planning Studio | |
 | `nav.audit_trail` | Audit trail | Logbook | |
 | `nav.history_export` | History export | Chronicle | |
 | `nav.tenant_settings` | Tenant settings | Tenant settings | |

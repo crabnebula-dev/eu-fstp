@@ -1,7 +1,7 @@
 // The Planning Studio pages (`SPEC/12-journey-ui.md` section 8.2;
 // `docs/design/05-programme-staff-studio.md`):
 //
-// - `/app/programmes/{p}/studio`, "Programme set-up": the five studios
+// - `/app/programmes/{p}/studio`, "Programme editor": the five studios
 //   with each step's validation state, the starting point, the imported
 //   values awaiting confirmation (I-65), the final report, the previews
 //   and, once active, the calls a change affects (R-PG-04, I-12).
@@ -56,7 +56,7 @@ function specName(key: string): HTMLElement {
   return h("p", { class: "voyage-label" }, [t.label(key)]);
 }
 
-/** Mounts "Programme set-up" of programme `p`. */
+/** Mounts "Programme editor" of programme `p`. */
 export function mountOverview(p: string): void {
   const { main, alert } = frame({ title: t.label("creator.studio.title"), alertId: "studio-error" });
   const status = h("p", { id: "studio-status" });

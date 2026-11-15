@@ -38,7 +38,7 @@ const LABELS: Readonly<Record<string, string>> = {
 
   // Steps.
   "creator.steps.nav": "Set-up steps",
-  "creator.studio.title": "Programme set-up",
+  "creator.studio.title": "Programme editor",
   "creator.step.title": "Step {n}: {name}",
   "creator.step.unnamed": "Step",
   "creator.step.funder": "Funder and instrument",
@@ -171,7 +171,7 @@ const LABELS: Readonly<Record<string, string>> = {
     "Parameters frozen at a call's publication stay as they were for that call. A change applies from the next call (I-12).",
   "studio.guide.title": "Guide for Applicants preview",
   "studio.guide.intro": "This preview is built from the draft values. Placeholders without a value are marked (R-GA-01).",
-  "studio.back": "Back to programme set-up",
+  "studio.back": "Back to the programme editor",
   // Lane m4/fast-flow: the knock-out criteria, written by the call drafter.
   "studio.knock_outs.title": "Knock-out criteria",
   "studio.knock_outs.programme": "Programme {programme}",

@@ -85,7 +85,7 @@ A person with roles in several groups sees the union of items, de-duplicated, wi
 | Role group | Items after Home |
 | --- | --- |
 | Applicant (applicant, team member, grantee) | My applications, Open calls, Support |
-| Programme manager and call drafter | Programmes, Calls, Programme set-up |
+| Programme manager and call drafter | Programmes, Calls, Programme editor |
 | FSTP coordinator | Proposals, Calls, Programmes, People |
 | Assigned reviewer | My assignments, Conflicts |
 | Committee member | Rankings, My assignments |
@@ -128,7 +128,7 @@ Each role reaches its primary task in at most three clicks from sign-in. Sign-in
 | --- | --- | --- |
 | Applicant in STAGE2 | Sign in, Home, "Answer reviewer questions" | 1 |
 | Applicant starting | Home, "See open calls", call card "Read the call", "Start a proposal" | 3 |
-| Programme manager | Home, "Programme set-up", step | 2 |
+| Programme manager | Home, "Programme editor", step | 2 |
 | Coordinator | Home, "Start conflict check" | 1 |
 | Reviewer | Home, "Score this proposal" | 1 |
 | Committee | Home, "Review rankings" | 1 |

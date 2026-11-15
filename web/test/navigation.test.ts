@@ -175,8 +175,8 @@ test("i21_leave_hold_keeps_the_page_until_its_check_lets_it_go", async () => {
 test("i70_navigation_speaks_the_step_the_title_names", () => {
   eq(router.spokenTitle("Your work", "Your work | FSTP"), "Your work", "a title that holds the heading adds nothing");
   eq(
-    router.spokenTitle("Programme set-up", "Step 2: Budget"),
-    "Programme set-up, Step 2: Budget",
+    router.spokenTitle("Programme editor", "Step 2: Budget"),
+    "Programme editor, Step 2: Budget",
     "a step title is spoken beside the shared heading",
   );
   eq(router.spokenTitle("  Proposals ", ""), "Proposals", "no title: the heading alone");

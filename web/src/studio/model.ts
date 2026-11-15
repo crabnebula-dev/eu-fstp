@@ -1,4 +1,4 @@
-// The page logic of the Planning Studio, "Programme set-up" in the plain
+// The page logic of the Planning Studio, "Programme editor" in the plain
 // pack (`SPEC/12-journey-ui.md` section 8.2, R-PG-01 to R-PG-04, R-PC-03,
 // I-12, I-65 to I-67; `docs/design/05-programme-staff-studio.md`).
 //
