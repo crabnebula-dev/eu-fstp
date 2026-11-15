@@ -60,6 +60,7 @@ A later Operations role, "identity verifier", replaces the tenant admin as recor
 - **SoD-16** One account may hold both Financial signatory and Legal signatory (decided by Daniel 2026-11-01).
 - **SoD-17** Removing the last holder of Financial signatory or Legal signatory is refused while the organisation is active (decided by Daniel 2026-11-01).
 - **SoD-18** Organisation activation needs approval by a tenant admin other than the one who requested it, by analogy with I-67 (decided by Daniel 2026-11-01).
+  NOTE: The tenant admin override of I-67 (ADR-022, 2026-11-15) covers programme activation only. It does not apply to SoD-18.
 - **SoD-09** Drafting and Judging bindings require a verified identity at binding time. At negotiation, the vault checks the applicant's verified identity against those bindings.
 
 NOTE 5: Financial signatory and Legal signatory act for the whole organisation. They differ from the programme-bound Contract signatory, who signs each grant contract. Granting either to one's own account falls under SoD-07. They need no verified identity at binding time, since SoD-09 covers Drafting and Judging only (decided by Daniel 2026-11-01).

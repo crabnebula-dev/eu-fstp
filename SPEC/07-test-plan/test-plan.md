@@ -74,7 +74,7 @@
 | I-61 | Random amendments never lower a milestone below paid plus pending |
 | I-62 | No milestone reaches fully claimed without public deliverables under P-26, under both P-65 options |
 | I-63 | Random reallocation sequences preserve every task total and never strand paid or pending amounts |
-| I-65, I-66, I-67 | No imported value, failing programme or single-person activation reaches an active programme |
+| I-65, I-66, I-67 | No imported value or failing programme reaches an active programme. No single-person activation does either, except a tenant admin override with its reason recorded (ADR-022) |
 | I-68, I-69, I-70 | Fuzzed branding packages never execute code, never hide mandatory elements and never pass with failing contrast |
 | I-71 | Unverified or foreign domains never route to a cell |
 | I-72 | Overrides never appear in generated contracts, notices, Guides, funder documents or emails |

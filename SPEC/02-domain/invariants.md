@@ -127,7 +127,8 @@ Invariants hold in every reachable state. Each one has at least one property-bas
 
 - **I-65** Every value proposed by document import is confirmed or edited by a named programme manager before it takes effect.
 - **I-66** A programme cannot be activated while its validation report shows any failure.
-- **I-67** Activating a programme needs approval by a second person who did not build it.
+- **I-67** Activating a programme needs approval by a second person who did not build it, or an override by a tenant admin who built it. Every override is a separate step with a fresh step-up and a written reason, and it leaves its own ledger record.
+  NOTE: Amended by Daniel on 2026-11-15, option "Override I-67 itself" (`docs/adr/ADR-022-tenant-admin-activation-override.md`). Only a tenant admin of the builder set may override. A programme manager or any other builder never may. I-66 is unchanged.
 - **I-68** Branding is data only. No tenant-supplied script, style rule or markup executes.
 - **I-69** Branding cannot remove mandatory elements required by the funder profile, the AI disclosure, the privacy notice, the accessibility statement, the Data Act tenant information or the platform attribution.
 - **I-70** Every colour pair used for text meets WCAG 2.2 level AA contrast in light and dark themes.

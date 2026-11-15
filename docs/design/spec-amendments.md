@@ -117,3 +117,22 @@ Applied by the implementing agent on 2026-11-04, after Daniel confirmed all four
 **Source.** Daniel's decision, 2026-11-01. **Status.** Spec amendment applied on 2026-11-04 as `SPEC/12-journey-ui.md` section 8.6.
 
 The preview shows synthetic sample data only, never real records, and changes no access rule. Real content still needs SoD-08 break-glass approval.
+
+## SA-06: Tenant admin override of I-67
+
+**Source.** Daniel's decision, 2026-11-15, option "Override I-67 itself". **Status.** Spec amendment applied on 2026-11-15 under ADR-022. Backend work applied by lane `m4/i67-override`.
+
+The option read: "A tenant admin may approve activation of a programme they built, as an override. This changes invariant I-67 in SPEC, so it needs a spec amendment and an ADR recording that you chose it, plus an audit record on every override."
+
+### Spec amendment applied
+
+- I-67 in `SPEC/02-domain/invariants.md` and `SPEC/02-domain/programme-creator.md` now reads: "Activating a programme needs approval by a second person who did not build it, or an override by a tenant admin who built it. Every override is a separate step with a fresh step-up and a written reason, and it leaves its own ledger record." A NOTE cites ADR-022.
+- R-PG-03, the Template library line of `programme-creator.md`, the seal ceremony lines of `12-journey-ui.md` and the I-65 to I-67 row of the test plan restate the override.
+- A NOTE under SoD-18 says the override does not apply to organisation activation.
+
+### Backend work
+
+1. A distinct operation, `creator.override_activation`, high-risk with step-up, for a tenant admin of the builder set only.
+2. A written reason, not blank, within the free-text limit, stored as a `TextRef` (ADR-007).
+3. The creator record `ActivationOverridden` and the core `ProgrammeActivated` with its `override_reason`, paired in one entry by the engine fold.
+4. I-66 unchanged. The normal approval unchanged.
