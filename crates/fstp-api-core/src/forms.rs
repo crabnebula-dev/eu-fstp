@@ -665,6 +665,13 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::Pending(PendingKind::Confirm) => BodyRule::Exactly(&["shown"]),
         OpKind::Pending(PendingKind::Discard) | OpKind::Agent(AgentKind::Revoke) => BodyRule::Empty,
         OpKind::M3Port(PortKind::ApproveBreakGlass) => BodyRule::Exactly(&["approve"]),
+        // R-LG-04: the registration, in the body form of the cell's
+        // `POST /auth/passkeys` route (lowercase hexadecimal).
+        OpKind::M3Port(PortKind::AddPasskey) => {
+            BodyRule::Exactly(&["attestation_object", "challenge_id", "client_data_json"])
+        }
+        // ADR-013: the handle of the consent the user approves.
+        OpKind::Agent(AgentKind::Consent) => BodyRule::Exactly(&["consent"]),
         OpKind::M3Port(PortKind::SaveWorkspace) => {
             BodyRule::Exactly(&["narrative", "summary", "title"])
         }
@@ -765,6 +772,39 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
     }
 }
 
+/// The longest client data JSON of a passkey registration, as the cell's
+/// `/auth` routes take it.
+const MAX_CLIENT_DATA: usize = 4096;
+/// The longest attestation object of a passkey registration, as the
+/// cell's `/auth` routes take it.
+const MAX_ATTESTATION: usize = 64 * 1024;
+/// The longest consent handle. `fstp-oauth` issues 43 characters.
+const MAX_CONSENT_HANDLE: usize = 128;
+
+/// The passkey registration of a `me.add_passkey` body (R-LG-04): the
+/// challenge id and the two byte strings of the browser's response, each
+/// in lowercase hexadecimal, as the cell's `POST /auth/passkeys` takes
+/// them. `None` for any other spelling.
+pub(crate) fn passkey_registration(request: &Object) -> Option<crate::port::PasskeyRegistration> {
+    let text = |name: &str| request.get(name).and_then(Value::as_str);
+    Some(crate::port::PasskeyRegistration {
+        challenge_id: crate::action::from_hex::<16>(text("challenge_id")?)?,
+        client_data_json: crate::action::hex_vec(text("client_data_json")?, MAX_CLIENT_DATA)?,
+        attestation_object: crate::action::hex_vec(text("attestation_object")?, MAX_ATTESTATION)?,
+    })
+}
+
+/// The consent handle of an `agents.consent` body (ADR-013): 1 to 128
+/// base64url characters, the alphabet `fstp-oauth` issues handles in.
+pub(crate) fn consent_handle(request: &Object) -> Option<String> {
+    let h = request.get("consent").and_then(Value::as_str)?;
+    let ok = !h.is_empty()
+        && h.len() <= MAX_CONSENT_HANDLE
+        && h.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    ok.then(|| h.to_owned())
+}
+
 /// The value checks of the non-command bodies.
 fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
     let ok = match spec.kind {
@@ -781,6 +821,10 @@ fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
         OpKind::M3Port(fstp_access::PortKind::ApproveBreakGlass) => {
             request.get("approve").and_then(Value::as_bool).is_some()
         }
+        OpKind::M3Port(fstp_access::PortKind::AddPasskey) => {
+            passkey_registration(request).is_some()
+        }
+        OpKind::Agent(fstp_access::AgentKind::Consent) => consent_handle(request).is_some(),
         _ => true,
     };
     if ok {

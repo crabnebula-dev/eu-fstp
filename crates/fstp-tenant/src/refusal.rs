@@ -46,6 +46,10 @@ pub enum TenantRefusal {
     GranteeNotAdmin,
     /// The approval is unknown, used, or for another grant or grantee.
     ApprovalNotOpen,
+    /// A self-grant request names another account than the admin who
+    /// asks: only a grant to the asking admin awaits a second admin's
+    /// approval (SoD-07, Daniel 2026-11-15).
+    NotSelfGrant,
     /// The approval lapsed (P-71 after it was given).
     ApprovalExpired,
     /// The instant lies outside the ledger's range.
@@ -126,6 +130,7 @@ impl TenantRefusal {
             TenantRefusal::SelfApproval => "self_approval",
             TenantRefusal::GranteeNotAdmin => "grantee_not_admin",
             TenantRefusal::ApprovalNotOpen => "approval_not_open",
+            TenantRefusal::NotSelfGrant => "not_self_grant",
             TenantRefusal::ApprovalExpired => "approval_expired",
             TenantRefusal::InvalidInstant => "invalid_instant",
             TenantRefusal::InvalidSetting(_) => "invalid_setting",

@@ -33,6 +33,7 @@ pub mod engine;
 pub mod fixture;
 pub mod ids;
 pub mod misc;
+pub mod passkey;
 pub mod people_requests;
 pub mod precheck;
 mod reads;
@@ -58,10 +59,10 @@ pub use engine::{DryRun, Execution, FakeEngine};
 pub use ids::FakeIds;
 pub use misc::{FakeAccounts, FakeBreakGlass, FakeOutbox, FakeProber, FakeRecovery, FakeTenant};
 pub use precheck::FakePrecheck;
-pub use sessions::{FakeSessions, WebLogin};
+pub use sessions::{FakeSessions, PASSKEY_RP, PasskeyOptions, WebLogin};
 pub use step_up::FakeStepUp;
 pub use texts::{FakeBlobs, FakeSealer, FakeTexts};
-pub use tokens::{FakeTokens, TokenGrant};
+pub use tokens::{ConsentStart, FakeTokens, TokenGrant};
 pub use vault::{CellOracle, FakeVault, fake_query_digest};
 
 /// Locks `m`, taking the data of a poisoned lock. A fake never panics, so

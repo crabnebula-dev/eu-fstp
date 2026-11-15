@@ -1616,7 +1616,7 @@ pub(crate) mod reply_shape_tests {
             C::Invitations(_) => &["creator.invitations"],
             C::Programmes(_) => &["creator.list_programmes"],
             C::Templates(_) => &["creator.list_templates"],
-            C::Approvals(_) => &["admin.approvals"],
+            C::Approvals(..) => &["admin.approvals"],
             C::Impact(_) => &["creator.impact"],
             // Unshaped, see [`unshaped`].
             C::Draft { .. } | C::Proposals(_) | C::Preview { .. } => &[],
@@ -1666,6 +1666,10 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "contract") => {
                 &["contract.draft"]
             }
+            // SoD-07: the self-grant awaiting approval names its id.
+            ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "approval") => {
+                &["roles.grant"]
+            }
             ReadModel::Created(ids) if ids.first().is_some_and(|(n, _)| *n == "report") => {
                 &["report.generate"]
             }
@@ -1678,6 +1682,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Sessions(_) => &["me.sessions"],
             ReadModel::Redirect(_) => &[
                 "me.begin_verification",
+                "agents.consent",
                 "people.begin_verification",
                 "guardian.begin_consent",
                 "vault.bank.set",
@@ -2038,14 +2043,23 @@ pub(crate) mod reply_shape_tests {
                 1,
                 "SuperSAFE".to_owned(),
             )])),
-            ReadModel::Creator(crate::creator::CreatorModel::Approvals(vec![
-                crate::creator::ApprovalRow {
+            ReadModel::Creator(crate::creator::CreatorModel::Approvals(
+                vec![crate::creator::ApprovalRow {
                     programme: ProgrammeId::from_raw(7),
                     revision: fstp_creator::DraftRevision::new(4, fstp_ledger::Seq::from_raw(20)),
                     approvable: true,
                     overridable: false,
-                },
-            ])),
+                }],
+                vec![crate::creator::SelfGrantRow {
+                    approval: 9,
+                    programme: ProgrammeId::from_raw(7),
+                    role: "Auditor".to_owned(),
+                    grantee: "admin-1".to_owned(),
+                    start: 1,
+                    end: None,
+                    approvable: true,
+                }],
+            )),
             ReadModel::Creator(crate::creator::CreatorModel::Impact(vec![
                 crate::creator::ImpactRow {
                     call: CallId::from_raw(1),
@@ -2170,6 +2184,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Created(vec![("amendment", 7)]),
             ReadModel::Created(vec![("contract", 7)]),
             ReadModel::Created(vec![("report", 7)]),
+            // SoD-07: a self-grant awaiting approval names its id.
+            ReadModel::Created(vec![("approval", 9)]),
         ])
         .chain(crate::tenant::samples().into_iter().map(ReadModel::Tenant))
         .collect()

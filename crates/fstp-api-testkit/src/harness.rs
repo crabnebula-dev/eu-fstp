@@ -37,7 +37,9 @@
 //! A cell runs on a world that no earlier cell changed. A cell that
 //! changed anything, by appending to the ledger or by completing or
 //! preparing an operation that is not a read, marks its world dirty, and
-//! the next cell of that world runs on a rebuilt one. A rate-limit
+//! the next cell of that world runs on a rebuilt one. The exception is
+//! an operation whose effect stays in its own port and is renewed by
+//! every cell, such as a passkey or a consent (`port_confined`). A rate-limit
 //! refusal is an effect of earlier cells of the same instant, so the cell
 //! runs again on a rebuilt world.
 //!
@@ -419,6 +421,9 @@ pub struct Targets {
     /// The key of a warning of the draft report of P.
     warning: Option<String>,
     pending: BTreeMap<AccountId, (PendingId, String)>,
+    /// SoD-07: the self-grant awaiting approval of each tenant admin, by
+    /// grantee (lane m4/api-gaps).
+    self_grants: BTreeMap<AccountId, u128>,
     /// M5 lane L-API: see `Reached`.
     contract: Option<u128>,
     accepted: Option<u128>,
@@ -477,7 +482,13 @@ fn param(name: &str, who: Who, t: &Targets, session: Option<u128>) -> Result<Str
         "score" => id(t.plan)?,
         "step" => "organisation".to_owned(),
         "binding" => id(t.binding_end.map(|b| b.raw()))?,
-        "approval" => "1".to_owned(),
+        // SoD-07: the self-grant of another admin than the caller, so an
+        // approval by a second admin meets a pending grant it may approve.
+        "approval" => t
+            .self_grants
+            .iter()
+            .find(|(grantee, _)| Some(**grantee) != account)
+            .map_or_else(|| "1".to_owned(), |(_, id)| id.to_string()),
         "recovery" => "1".to_owned(),
         // `tenant.end_signatory` ends a binding the world holds.
         "role" => "financial_signatory".to_owned(),
@@ -996,7 +1007,26 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
         path = path.replace("/organisation", &format!("/{step}"));
     }
     let path = served_path(spec, pattern, path);
-    let body = body_of(cell.op, cell.who, cell.state, w)?;
+    let body = match cell.op {
+        // R-LG-04: a registration over the creation options of the cell's
+        // passkey ceremony, for this session.
+        "me.add_passkey" => match passkey_body(w, session)? {
+            Value::Object(o) => o,
+            _ => Object::new(),
+        },
+        // ADR-013: a consent the authorize flow left for this cell.
+        "agents.consent" => {
+            let start = w
+                .ports
+                .tokens
+                .begin_consent(Timestamp::from_micros(w.now))?;
+            match obj(vec![("consent", s(&start.handle))]) {
+                Value::Object(o) => o,
+                _ => Object::new(),
+            }
+        }
+        _ => body_of(cell.op, cell.who, cell.state, w)?,
+    };
     Ok(Request {
         op: cell.op,
         method,
@@ -1004,6 +1034,40 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
         body,
         params,
     })
+}
+
+/// Lowercase hexadecimal, the spelling of a byte string in a body.
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+    for b in bytes {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
+/// The body of `me.add_passkey` in `session` (R-LG-04): a registration
+/// of the software authenticator over the creation options the cell's
+/// ceremony issued for the session. With no session, it names a
+/// challenge no session holds.
+fn passkey_body(w: &Built, session: Option<u128>) -> Result<Value, String> {
+    let (id, challenge) = match session {
+        Some(raw) => {
+            let o = w
+                .ports
+                .sessions
+                .passkey_options(fstp_api_core::port::SessionId::from_raw(raw))
+                .map_err(|e| format!("passkey options: {e:?}"))?;
+            (o.challenge_id, o.challenge)
+        }
+        None => ([0; 16], [0; 32]),
+    };
+    let (r, _) = crate::fake::passkey::register(crate::fake::PASSKEY_RP, &challenge)?;
+    Ok(obj(vec![
+        ("attestation_object", s(&hex(&r.attestation_object))),
+        ("challenge_id", s(&hex(&id))),
+        ("client_data_json", s(&hex(&r.client_data_json))),
+    ]))
 }
 
 /// The path a web client sends for `spec`, whose registry route `pattern`
@@ -2368,6 +2432,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
     let mut revision = None;
     let mut warning = None;
     let mut narrative = None;
+    let mut self_grants = BTreeMap::new();
     let first_admin = if sole { ADMIN_SOLE } else { ADMIN_BUILDER };
     let mut seed = if key.state.before_activation() {
         // ADR-021: no programme exists before the organisation is
@@ -2437,6 +2502,9 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         }
         if !activated {
             invite_programme_manager(&mut seed, p)?;
+        }
+        if activated {
+            self_grants = request_self_grants(&mut seed, p)?;
         }
         end_binding_of(&mut seed, p, PM_ENDED, key)?;
         // The end of a binding on the draft is an edit, so the creator
@@ -2509,6 +2577,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         narrative,
         warning,
         pending,
+        self_grants,
         p71: seed.ports.step_up.p71(),
         contract: reached.contract,
         amendment: reached.amendment,
@@ -2535,6 +2604,35 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         head,
         dirty: false,
     })
+}
+
+/// SoD-07 (Daniel, 2026-11-15): each tenant admin asks for the Auditor
+/// role in `p` for their own account through `roles.grant`, so each
+/// world of an active programme holds one self-grant awaiting approval
+/// per admin. Returns each pending id by grantee.
+fn request_self_grants(
+    seed: &mut Seeder,
+    p: ProgrammeId,
+) -> Result<BTreeMap<AccountId, u128>, String> {
+    let mut out = BTreeMap::new();
+    for admin in [ADMIN_BUILDER, ADMIN_PLAIN] {
+        let start = seed.now.saturating_add(DAY);
+        let v = seed.api(
+            admin,
+            ApiMethod::Post,
+            &format!("/programmes/{}/roles", p.raw()),
+            &obj(vec![
+                ("account", dec(admin.raw())),
+                ("role", s("Auditor")),
+                ("start", dec(u128::try_from(start).unwrap_or(0))),
+            ]),
+        )?;
+        let id = str_member(&v, "approval")
+            .and_then(|x| x.parse::<u128>().ok())
+            .ok_or_else(|| format!("no pending self-grant: {}", v.to_compact()))?;
+        out.insert(admin, id);
+    }
+    Ok(out)
 }
 
 /// P2, the other programme of the tenant, with [`PM_OTHER`] its manager.
@@ -3813,6 +3911,7 @@ impl Runner {
         let head = w.ports.engine.head();
         let changed = head != w.head
             || match &result {
+                Ok(Observed::Completed) if port_confined(cell.op) => false,
                 Ok(Observed::Completed | Observed::Pending) => !is_read(cell.op),
                 _ => false,
             };
@@ -3821,6 +3920,17 @@ impl Runner {
         }
         result
     }
+}
+
+/// Whether a completed `op` changes only state of its own port that every
+/// cell of the operation renews, and that no other cell reads, so its
+/// world stays clean when the ledger head did not move (lane
+/// m4/api-gaps). `me.add_passkey` takes the challenge of options drawn
+/// for its own cell and adds a passkey of the caller, which no cell's
+/// outcome reads. `agents.consent` approves a consent drawn for its own
+/// cell and leaves a code no cell redeems.
+fn port_confined(op: &str) -> bool {
+    matches!(op, "me.add_passkey" | "agents.consent")
 }
 
 /// Whether `op` is a read or a public page.
@@ -4875,3 +4985,6 @@ mod mailbox_tests;
 #[cfg(test)]
 #[path = "harness_unmask.rs"]
 mod unmask_tests;
+
+#[cfg(test)]
+mod api_gaps_tests;

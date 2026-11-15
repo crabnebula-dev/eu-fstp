@@ -53,13 +53,15 @@
 //!   port hands the token and the email to M3 yet (`port::InviteKind` is
 //!   a W0 placeholder), so the e2e cell's M3 emulation sends the
 //!   invitation.
-//! - `admin.approve_self_grant` needs the self-grant its approval names.
-//!   No record or port lists pending self-grants yet (blocking seam of the
-//!   lead). An approval id the ledger already holds is refused under
-//!   SoD-07 as taken. Every other id names no known self-grant, so it is
-//!   refused as not found under `Input`, before any step-up. The role
-//!   grant does not consume a ledger approval yet either: `second_admin`
-//!   still reads M3's recorded approvals.
+//! - SoD-07 (Daniel, 2026-11-15): a tenant admin's `roles.grant` to their
+//!   own account, naming no approval, appends `SelfGrantRequested`, the
+//!   grant awaiting approval with its grantee, programme, role and dates
+//!   ([`request_self_grant`]). `admin.approvals` lists it, and
+//!   `admin.approve_self_grant` approves it by id ([`approve_self_grant`]).
+//!   The role grant does not consume a ledger approval yet:
+//!   `second_admin` still reads M3's recorded approvals, and a grant with
+//!   `UseSelfGrantApproval` in one entry needs a composed engine command,
+//!   as `Stage2Revision` composes two core commands (seam of the lead).
 //! - The port prober takes no domain and has no absent outcome. So the
 //!   sending-domain check cannot name the domain of this save, and a cell
 //!   with no prober shows `probe_failed`, not `prober_absent` (Q5). Both
@@ -72,11 +74,12 @@ use fstp_domain::id::{AccountId, CommandId, ContentDigest, LlmConfigId, TextRef}
 use fstp_domain::oracle::Query;
 use fstp_domain::policy::ModelRef;
 use fstp_domain::roles::Role;
+use fstp_domain::time::Timestamp;
 use fstp_engine::tenant::{PrecheckError, precheck_tenant};
 use fstp_engine::{Command, EngineState, TenantRequest};
 use fstp_tenant::{
-    ActivationRequestId, ApprovalId, InvitationId, OnboardingStep, ProbeOutcome, StepValues,
-    TenantCommand, TenantQuery, TenantRefusal, TenantState, TokenDigest,
+    ActivationRequestId, ApprovalId, GrantRef, InvitationId, OnboardingStep, ProbeOutcome,
+    StepValues, TenantCommand, TenantQuery, TenantRefusal, TenantState, TokenDigest,
 };
 
 use super::{
@@ -86,7 +89,7 @@ use super::{
 use crate::model::{AdminRow, TenantAdmins};
 use crate::port::{
     AsyncEngine, CellPorts, DisplayHandle, ExecMeta, OpName, Outcome, ProbeKind as PortProbe,
-    ProbeOutcome as PortOutcome, Prober, TenantConfig, TextClass, TextOwner, TextStore,
+    ProbeOutcome as PortOutcome, Prober, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore,
 };
 use crate::tenant::{
     ActivationView, SaveRequest, SettingsView, SignatoryList, SignatoryRow, StepView, TenantView,
@@ -196,6 +199,7 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         | TenantRefusal::ApprovalTaken
         | TenantRefusal::ApprovalNotOpen
         | TenantRefusal::ApprovalExpired
+        | TenantRefusal::NotSelfGrant
         | TenantRefusal::AlreadyAdmin
         | TenantRefusal::InvitationTaken
         | TenantRefusal::InvitationNotOpen
@@ -325,7 +329,8 @@ fn build<P: Seams>(
             },
             None,
         )),
-        TenantKind::ApproveSelfGrant => Err(unknown_self_grant(&call.state, op)),
+        // Answered by [`approve_self_grant`] before any command is built.
+        TenantKind::ApproveSelfGrant => Err(ApiError::refused(ErrorCode::NotFound, "route")),
         // The summary holds a placeholder reference with id 0 and the
         // text's digest until dispatch stores it ([`stored_notice`]).
         TenantKind::SetGuideNotice => {
@@ -357,25 +362,6 @@ fn build<P: Seams>(
         // Recorded with a validated Inference save (design 3.5), never
         // through a route of its own.
         TenantKind::RecordInferenceConfig => Err(ApiError::refused(ErrorCode::NotFound, "route")),
-    }
-}
-
-/// The refusal of a SoD-07 approval while no record or port lists the
-/// pending self-grants (module documentation). An approval id the ledger
-/// already holds is taken. Any other id names no self-grant this cell
-/// knows of.
-fn unknown_self_grant(state: &EngineState, op: &Op) -> ApiError {
-    let Some(id) = crate::forms::id_param(&op.request, "approval") else {
-        return ApiError::bad_request(crate::forms::REQUEST_RULE);
-    };
-    let taken = state
-        .tenant
-        .state()
-        .is_some_and(|ts| ts.approvals().contains_key(&ApprovalId::from_raw(id)));
-    if taken {
-        tenant_error(TenantRefusal::ApprovalTaken)
-    } else {
-        ApiError::refused(ErrorCode::NotFound, "Input")
     }
 }
 
@@ -493,6 +479,9 @@ pub(super) async fn command<P: Seams>(
         return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
     let (account, ts) = admin(call)?;
+    if kind == TenantKind::ApproveSelfGrant {
+        return approve_self_grant(call, op, account, ts).await;
+    }
     if kind == TenantKind::CheckBranding {
         // I-70: the failing pairs, and nothing is saved (M9 lane B1).
         let tokens = crate::tenant::branding_request(&op.request).map_err(|e| call.refuse(e))?;
@@ -748,4 +737,218 @@ pub(super) async fn read<P: Seams>(
         }
     };
     Ok(ReadModel::Tenant(view))
+}
+
+// ---------------------------------------------------------------------------
+// SoD-07: self-grants awaiting a second admin (Daniel, 2026-11-15)
+// ---------------------------------------------------------------------------
+
+/// A role grant to the caller's own account that awaits a second tenant
+/// admin: the grant, its start and its end.
+pub(super) struct SelfGrant {
+    grant: GrantRef,
+    start: Timestamp,
+    end: Option<Timestamp>,
+}
+
+/// The self-grant of `cmd`, when it is one that awaits approval: a
+/// `GrantRole` by a tenant admin of the ledger's admin set to their own
+/// account, with no recorded approval named (`second`). Every other
+/// grant runs as before.
+pub(super) fn self_grant_of<P: Seams>(
+    call: &Call<'_, P>,
+    account: AccountId,
+    cmd: &Command,
+    second: Option<AccountId>,
+) -> Option<SelfGrant> {
+    let Command::Core(fstp_domain::Command::GrantRole {
+        account: grantee,
+        programme,
+        role,
+        start,
+        end,
+        ..
+    }) = cmd
+    else {
+        return None;
+    };
+    let admin = call
+        .state
+        .tenant
+        .state()
+        .is_some_and(|ts| ts.is_admin(account));
+    (*grantee == account && second.is_none() && admin).then_some(SelfGrant {
+        grant: GrantRef {
+            grantee: account,
+            programme: *programme,
+            role: *role,
+        },
+        start: *start,
+        end: *end,
+    })
+}
+
+/// Takes the step-up of a high-risk call: `Ok(Some(proof))`, or the
+/// challenge to answer as `Err`, audited under I-78.
+async fn stepped_up<P: Seams>(call: &Call<'_, P>) -> Result<Result<StepUpRef, OpResult>, ApiError> {
+    match step_up(call, call.digest)
+        .await
+        .map_err(|e| call.refuse(e))?
+    {
+        Ok(p) => Ok(Ok(p)),
+        Err(ask) => {
+            let _ = call.audit(Outcome::Refused("I-78"), None);
+            Ok(Err(ask))
+        }
+    }
+}
+
+/// Executes the tenant command `cmd` of `account` with the step-up
+/// `proof`, after its precheck and dry run.
+async fn run_tenant<P: Seams>(
+    call: &Call<'_, P>,
+    account: AccountId,
+    cmd: TenantCommand,
+    proof: Option<StepUpRef>,
+) -> Result<fstp_ledger::Seq, ApiError> {
+    let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
+    let cmd = Command::Tenant(TenantRequest::new(cmd));
+    let ctx = call.ctx(account, &cmd, Via::Web, command_id);
+    if let Command::Tenant(r) = &cmd {
+        precheck_tenant(&call.state, r, account, &ctx)
+            .map_err(|e| call.refuse(precheck_error(e)))?;
+    }
+    dry_run(call, account, &cmd, ctx)
+        .await
+        .map_err(|e| call.refuse(e))?;
+    let meta = ExecMeta {
+        via: Via::Web,
+        session: call.caller.session,
+        agent: call.caller.agent,
+        op: OpName(call.spec.name),
+        request: call.digest,
+        step_up: proof,
+        pending: None,
+        second_tenant_admin: None,
+    };
+    call.ports
+        .engine()
+        .execute(cmd, ctx, meta)
+        .await
+        .map_err(|e| call.refuse(exec_failed(e)))
+}
+
+/// `roles.grant` to the caller's own account (SoD-07, Daniel 2026-11-15):
+/// the grant is recorded as awaiting a second tenant admin's approval,
+/// and the reply names the id the approval takes.
+///
+/// Every rule of the grant but SoD-07 is judged first: the dry run runs
+/// the grant as if another current tenant admin had approved it. A sole
+/// tenant admin has no one to approve it, so SoD-07 refuses at once. The
+/// request then passes its own tenant rules and the step-up of the role
+/// grant (I-78), and is appended.
+pub(super) async fn request_self_grant<P: Seams>(
+    call: &Call<'_, P>,
+    account: AccountId,
+    cmd: Command,
+    g: SelfGrant,
+) -> Result<OpResult, ApiError> {
+    if call.caller.via() != Via::Web {
+        return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
+    }
+    let (_, ts) = admin(call)?;
+    let Some(other) = ts.admins().iter().copied().find(|a| *a != account) else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "SoD-07")));
+    };
+    let mut trial = cmd;
+    if let Command::Core(fstp_domain::Command::GrantRole { second_admin, .. }) = &mut trial {
+        *second_admin = Some(other);
+    }
+    let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
+    let ctx = fstp_domain::Ctx {
+        second_tenant_admin: Some(other),
+        ..call.ctx(account, &trial, Via::Web, command_id)
+    };
+    dry_run(call, account, &trial, ctx)
+        .await
+        .map_err(|e| call.refuse(e))?;
+    let request = ApprovalId::from_raw(call.draw().map_err(|e| call.refuse(e))?);
+    let tenant_cmd = TenantCommand::RequestSelfGrant {
+        request,
+        grant: g.grant,
+        start: g.start,
+        end: g.end,
+    };
+    let probe = Command::Tenant(TenantRequest::new(tenant_cmd.clone()));
+    let probe_ctx = call.ctx(account, &probe, Via::Web, command_id);
+    if let Command::Tenant(r) = &probe {
+        precheck_tenant(&call.state, r, account, &probe_ctx)
+            .map_err(|e| call.refuse(precheck_error(e)))?;
+    }
+    let proof = match stepped_up(call).await? {
+        Ok(p) => p,
+        Err(ask) => return Ok(ask),
+    };
+    let seq = run_tenant(call, account, tenant_cmd, Some(proof)).await?;
+    Ok(OpResult::Done {
+        body: ReadModel::Created(vec![("approval", request.raw())]),
+        seq: Some(seq),
+    })
+}
+
+/// `admin.approve_self_grant` (SoD-07, Daniel 2026-11-15): a second
+/// tenant admin approves the self-grant awaiting approval under the id
+/// of the route.
+///
+/// The order follows the reference of design section 8.3: the caller
+/// must be a tenant admin while a second one exists, which a sole admin
+/// is not (SoD-07, an actor refusal). For a pending record the tenant
+/// rules run next, so the grantee approving their own grant, or a second
+/// approval, is refused under SoD-07 before any step-up. Then the
+/// step-up (I-78). An id that names no pending grant is refused under
+/// `Input` only after the step-up, so the answer to an unknown id needs
+/// the same proof as an approval.
+async fn approve_self_grant<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+    account: AccountId,
+    ts: &TenantState,
+) -> Result<OpResult, ApiError> {
+    let Some(id) = crate::forms::id_param(&op.request, "approval") else {
+        return Err(call.refuse(ApiError::bad_request(crate::forms::REQUEST_RULE)));
+    };
+    if !ts.admins().iter().any(|a| *a != account) {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "SoD-07")));
+    }
+    let approval = ApprovalId::from_raw(id);
+    let Some(pending) = ts.pending_self_grants().get(&approval).copied() else {
+        if let Err(ask) = stepped_up(call).await? {
+            return Ok(ask);
+        }
+        let e = if ts.approvals().contains_key(&approval) {
+            tenant_error(TenantRefusal::ApprovalTaken)
+        } else {
+            ApiError::refused(ErrorCode::NotFound, "Input")
+        };
+        return Err(call.refuse(e));
+    };
+    let cmd = TenantCommand::ApproveSelfGrant {
+        approval,
+        grant: pending.grant,
+    };
+    let probe = Command::Tenant(TenantRequest::new(cmd.clone()));
+    let probe_ctx = call.ctx(account, &probe, Via::Web, CommandId::from_bytes([0; 16]));
+    if let Command::Tenant(r) = &probe {
+        precheck_tenant(&call.state, r, account, &probe_ctx)
+            .map_err(|e| call.refuse(precheck_error(e)))?;
+    }
+    let proof = match stepped_up(call).await? {
+        Ok(p) => p,
+        Err(ask) => return Ok(ask),
+    };
+    let seq = run_tenant(call, account, cmd, Some(proof)).await?;
+    Ok(OpResult::Done {
+        body: ReadModel::Accepted,
+        seq: Some(seq),
+    })
 }

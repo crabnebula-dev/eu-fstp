@@ -797,6 +797,18 @@ pub const REPLIES: &[(&str, Shape)] = &[
         "report.generate",
         Shape::Object(&[m("accepted", Shape::Bool), m("report", Shape::Id)]),
     ),
+    // SoD-07 (Daniel, 2026-11-15): a grant to the admin's own account
+    // awaits a second admin and names the id the approval takes. Every
+    // other grant answers `accepted` alone.
+    (
+        "roles.grant",
+        Shape::Object(&[m("accepted", Shape::Bool), opt("approval", Shape::Id)]),
+    ),
+    // ADR-013: the client's redirect URI with the code, `state` and `iss`.
+    (
+        "agents.consent",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
     // The vault origin page that opens with a ticket (I-86).
     (
         "vault.bank.set",
@@ -1477,8 +1489,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
         )]),
     ),
     // Lane m4wire, I-67, SoD-07: the approval inbox. An activation row
-    // says whether the viewer may approve it. A self-grant row (the
-    // tenant lane) names its approval, the role and the grantee's handle.
+    // says whether the viewer may approve it. A self-grant row names its
+    // approval, the role, the grantee's handle and the dates.
     // `unlisted` names each kind of approval the server cannot list yet,
     // so the inbox never reads as complete when it is not.
     (
@@ -1498,6 +1510,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     opt("approval", Shape::Id),
                     opt("role", Shape::String),
                     opt("grantee", Shape::String),
+                    // SoD-07: the dates of a self-grant awaiting approval,
+                    // in microseconds.
+                    opt("start", Shape::String),
+                    opt("end", Shape::Nullable(&Shape::String)),
                 ])),
             ),
             opt("unlisted", Shape::Array(&Shape::Enum(&["self_grant"]))),

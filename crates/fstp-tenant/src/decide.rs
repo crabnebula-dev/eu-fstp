@@ -203,6 +203,21 @@ pub fn decide(
                 invitation: *invitation,
             }])
         }
+        TenantCommand::RequestSelfGrant {
+            request,
+            grant,
+            start,
+            end,
+        } => {
+            state.check_self_grant_request(*request, grant, by, *start, *end)?;
+            Ok(vec![TenantRecord::SelfGrantRequested {
+                request: *request,
+                grant: *grant,
+                start: *start,
+                end: *end,
+                at: ctx.at,
+            }])
+        }
         TenantCommand::ApproveSelfGrant { approval, grant } => {
             state.check_approval(*approval, grant, by)?;
             state.approval_expiry(ctx.at)?;

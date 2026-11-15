@@ -1061,6 +1061,18 @@ impl AuthorizationServer {
             })
     }
 
+    /// The digest a step-up for the live consent `handle` binds to at
+    /// `now` (I-78), or `None` for a handle the server does not hold or
+    /// that expired. The API core takes its step-up bound to its own
+    /// request, which names the handle, and the shell attests that step-up
+    /// to [`AuthorizationServer::approve`] under this digest (ADR-013
+    /// "Consent", lane m4/api-gaps).
+    pub fn consent_step_up_digest(&self, handle: &str, now: Micros) -> Option<[u8; 32]> {
+        self.find_ticket(handle)
+            .filter(|(_, t)| Self::ticket_live(t, now))
+            .map(|(_, t)| t.digest)
+    }
+
     /// The user's approval of the consent `handle`, after the API core's
     /// checks.
     ///
@@ -1701,6 +1713,40 @@ mod tests {
             ("client_id", id),
         ]);
         s.token(body.as_bytes(), now)
+    }
+
+    /// ADR-013 "Consent", I-78: the step-up digest of a live consent is
+    /// the digest its request named, an approval attested under it issues
+    /// a code, and an unknown or expired handle has none.
+    #[test]
+    fn adr013_i78_consent_step_up_digest_of_a_live_handle() {
+        let (mut s, id) = server();
+        let c = consent(&mut s, &id, 10);
+        assert_eq!(s.consent_step_up_digest(&c.handle, 10), Some(c.digest));
+        assert_eq!(s.consent_step_up_digest(&"A".repeat(43), 10), None);
+        assert_eq!(
+            s.consent_step_up_digest(&c.handle, 10 + CONSENT_LIFETIME_MICROS),
+            None
+        );
+        let digest = s.consent_step_up_digest(&c.handle, 10).unwrap_or([0; 32]);
+        let attested = ConsentAuth {
+            session: LoginMethod::Passkey,
+            step_up: Some(StepUpProof {
+                account: Account::from_raw(7),
+                digest,
+                at: 10,
+                method: LoginMethod::Passkey,
+            }),
+        };
+        assert!(matches!(
+            s.approve(&c.handle, Account::from_raw(7), &attested, 10),
+            AuthorizeOutcome::Redirect(_)
+        ));
+        assert_eq!(
+            s.consent_step_up_digest(&c.handle, 10),
+            None,
+            "approved once"
+        );
     }
 
     /// ADR-013: the issuer must be an origin and the resource must have no

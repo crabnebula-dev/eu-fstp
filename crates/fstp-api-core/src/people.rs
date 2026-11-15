@@ -351,7 +351,7 @@ pub(super) async fn begin_verification<P: Seams>(
 
 /// The codec spelling of `role` in a core command, such as
 /// `"ProgrammeManager"`.
-fn role_json(role: Role) -> Option<Value> {
+pub(crate) fn role_json(role: Role) -> Option<Value> {
     let probe = fstp_domain::Command::GrantRole {
         binding: fstp_domain::id::BindingId::from_raw(0),
         account: AccountId::from_raw(0),

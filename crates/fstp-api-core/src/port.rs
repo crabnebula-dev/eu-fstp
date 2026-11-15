@@ -127,6 +127,61 @@ pub struct StepUpProof {
     pub action: ActionDigest,
 }
 
+/// A passkey registration of `me.add_passkey` (R-LG-04, design section
+/// 8.3): the browser's response to the creation options the cell's
+/// `/auth/passkeys/options` route issued, as that route's body form names
+/// it. The cell's own passkey ceremony verifies it, through the sessions
+/// admin port, so no second ceremony exists in the API core.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PasskeyRegistration {
+    /// The id of the single-use creation challenge.
+    pub challenge_id: [u8; 16],
+    /// The client data JSON bytes.
+    pub client_data_json: Vec<u8>,
+    /// The attestation object bytes.
+    pub attestation_object: Vec<u8>,
+}
+
+impl std::fmt::Debug for PasskeyRegistration {
+    /// The lengths only: the bytes name a new credential.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasskeyRegistration")
+            .field("client_data_json", &self.client_data_json.len())
+            .field("attestation_object", &self.attestation_object.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The user's approval of an agent consent (`agents.consent`, ADR-013
+/// "Consent"). The handle names a consent of the `fstp-oauth` authorize
+/// flow. The API core checked the session and took a fresh step-up bound
+/// to this request, whose digest covers the handle (I-78). The token port
+/// attests that step-up to the authorisation server, bound to the
+/// consent's own digest.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ConsentApproval {
+    /// The consenting account.
+    pub account: AccountId,
+    /// The consent handle, a secret of the user's browser.
+    pub handle: String,
+    /// How the approving session logged in. The grant keeps it.
+    pub method: LoginMethod,
+    /// The step-up the API core took for this request.
+    pub step_up: StepUpRef,
+    /// The instant of the approval.
+    pub at: Timestamp,
+}
+
+impl std::fmt::Debug for ConsentApproval {
+    /// Never shows the handle.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsentApproval")
+            .field("account", &self.account)
+            .field("method", &self.method)
+            .finish_non_exhaustive()
+    }
+}
+
 /// No fresh step-up proof exists for the digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StepUpRequired;
@@ -867,6 +922,14 @@ pub trait Tokens: Send + Sync {
         account: AccountId,
         client: AgentClientId,
     ) -> impl Future<Output = Result<(), PortError>> + Send;
+    /// Approves the consent of `c` at the authorisation server of ADR-013
+    /// and answers where the browser goes: the client's redirect URI with
+    /// a single-use code, `state` and `iss`. A handle the server does not
+    /// hold, or holds no longer, is refused.
+    fn approve_consent(
+        &self,
+        c: ConsentApproval,
+    ) -> impl Future<Output = Result<String, PortError>> + Send;
 }
 
 /// Audit (I-24): one entry per call, in the same transaction as any append.
@@ -1121,6 +1184,20 @@ pub trait SessionsAdmin: Send + Sync {
     /// Ends one session of an account.
     fn end(&self, a: AccountId, s: SessionId)
     -> impl Future<Output = Result<(), PortError>> + Send;
+    /// Adds the passkey of `reg` to account `a` in its session `s`
+    /// through the cell's own registration ceremony, the one behind
+    /// `POST /auth/passkeys` (high-risk `AddPasskey`, design sections 8.3
+    /// and 8.7). The API core checked the session's strength and took the
+    /// step-up of `proof` first. The ceremony takes the challenge once,
+    /// verifies the registration through `fstp-webauthn` and needs a
+    /// credential id new to the cell. Any failure is refused.
+    fn add_passkey(
+        &self,
+        a: AccountId,
+        s: SessionId,
+        reg: PasskeyRegistration,
+        proof: StepUpProof,
+    ) -> impl Future<Output = Result<(), PortError>> + Send;
 }
 
 /// The M3 recovery approval flow (Q41).

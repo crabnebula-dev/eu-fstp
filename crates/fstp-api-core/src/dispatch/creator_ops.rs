@@ -698,13 +698,47 @@ pub(super) async fn read<P: Seams>(
                     overridable: admin && d.builders().contains(&viewer),
                 })
                 .collect();
-            Ok(CreatorModel::Approvals(rows))
+            let grants = self_grant_rows(call, viewer, admin).await?;
+            Ok(CreatorModel::Approvals(rows, grants))
         }
         _ => {
             let p = programme_param(call, op)?;
             programme_read(call, op, kind, p, viewer).await
         }
     }
+}
+
+/// The self-grants awaiting a second tenant admin's approval (SoD-07,
+/// Daniel 2026-11-15), oldest id first. `admin` says whether the viewer
+/// is a tenant admin, who may approve a row whose grantee is another
+/// account. The grantee shows as its pseudonymous handle only (I-86).
+async fn self_grant_rows<P: Seams>(
+    call: &Call<'_, P>,
+    viewer: AccountId,
+    admin: bool,
+) -> Result<Vec<crate::creator::SelfGrantRow>, ApiError> {
+    let Some(ts) = call.state.tenant.state() else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for (id, p) in ts.pending_self_grants() {
+        if p.approved {
+            continue;
+        }
+        let role = super::people::role_json(p.grant.role)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Unavailable, "ledger")))?;
+        out.push(crate::creator::SelfGrantRow {
+            approval: id.raw(),
+            programme: p.grant.programme,
+            role,
+            grantee: label_of(call, p.grant.grantee).await?,
+            start: p.start.micros(),
+            end: p.end.map(|e| e.micros()),
+            approvable: admin && p.grant.grantee != viewer,
+        });
+    }
+    Ok(out)
 }
 
 /// A read of one programme's draft.

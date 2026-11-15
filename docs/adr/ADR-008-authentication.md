@@ -121,6 +121,7 @@ Answered (Q15). A first passkey is accepted only inside one of three logged cere
 3. **Recovery completion** (section Recovery).
 
 - An ordinary session, weak or strong, can add another passkey only through the high-risk action `AddPasskey`. A magic-link session never can.
+- Lane m4/api-gaps (Daniel, 2026-11-15, "wire them to the real flows"): the API core's `me.add_passkey` takes the registration in the body form of `POST /auth/passkeys`, `{attestation_object, challenge_id, client_data_json}`, over the challenge of `/auth/passkeys/options`. Its step-up binds the request digest, which covers the new credential. The sessions admin port `add_passkey` then runs the cell's one ceremony: the single-use challenge of the session, `fstp_auth::ceremony::verify_fresh_passkey` through `fstp-webauthn`, and `admit_add_passkey`. No second ceremony exists. The cell's own `/auth/passkeys` route still answers 501, since its step-up digest names a credential id the options call cannot know.
 - `authentication.md` states these ceremonies in its section "First passkey" (decided 2026-10-28). An account without a passkey gets its first one through recovery.
 
 ### First admin delivery
@@ -175,6 +176,14 @@ Interim, pending Daniel (Q40) for the lifetime. The structure follows SoD-07 and
 - `attest` sets `Ctx::second_tenant_admin` only when an unconsumed approval matches the grant's digest, was given by a different current tenant admin, and has not expired.
 - The grant's batch records `SelfGrantApprovalUsed`. One approval admits one grant.
 - The granting admin still needs their own step-up for the grant itself.
+
+Amendment of lane m4/api-gaps (Daniel, 2026-11-15, "a pending-grant record"):
+
+- A tenant admin's `roles.grant` to their own account, naming no approval, appends `SelfGrantRequested { request, grant, start, end, at }` to the tenant part. `grant` names the grantee, programme and role. The role grant's own step-up covers it (I-78).
+- Every other rule of the grant runs first, in a dry run as if another current tenant admin had approved it. A sole tenant admin is refused under SoD-07.
+- `admin.approvals` lists each self-grant awaiting approval with its grantee's handle, programme, role and dates. Only another tenant admin may approve it.
+- `admin.approve_self_grant` names the record by its id on `/admin/approvals/{approval}`. The approval takes the same id and approves exactly the recorded grant. The fold refuses an approval that names another grant than its record.
+- Open: the grant does not consume a ledger approval yet. `UseSelfGrantApproval` and `GrantRole` in one entry need a composed engine command, as `Stage2Revision` composes two core commands.
 
 ## Recovery
 

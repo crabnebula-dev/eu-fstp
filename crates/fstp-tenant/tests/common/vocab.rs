@@ -504,6 +504,14 @@ pub enum RecordView {
         /// The new admin.
         account: AccountId,
     },
+    /// `SelfGrantRequested` (SoD-07, Daniel 2026-11-15). The generators
+    /// issue no request yet, so the reference never shows one.
+    SelfGrantRequested {
+        /// The request id.
+        request: u128,
+        /// The asking admin, who is the grantee.
+        by: AccountId,
+    },
     /// `SelfGrantApproved`.
     SelfGrantApproved {
         /// The approval id.
