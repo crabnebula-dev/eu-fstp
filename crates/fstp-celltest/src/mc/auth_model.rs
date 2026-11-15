@@ -642,7 +642,18 @@ impl ProdCell {
             let a = self.truth.answer(&q);
             answers.insert(q, a);
         }
-        let inputs = self.route_inputs();
+        let mut inputs = self.route_inputs();
+        // I-52: a publication carries the world's synthetic Guide, as the
+        // route reads it from the world shell (`crate::world_shell`).
+        if let CellCommand::Engine(fstp_engine::Command::Core(
+            fstp_domain::Command::PublishCall { call, .. },
+        )) = &cmd
+        {
+            inputs = inputs.with_creator(fstp_cell_core::creator::CreatorFacts {
+                guide: crate::world_shell::synthetic_guide(&self.state, *call),
+                ..Default::default()
+            });
+        }
         let batch =
             fstp_cell_core::decide_with_inputs(&self.state, &cmd, &x, command, &inputs, &answers)
                 .map_err(|e| refusal_of(&cmd, e))?;

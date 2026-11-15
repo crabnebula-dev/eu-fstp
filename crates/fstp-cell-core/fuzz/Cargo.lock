@@ -108,6 +108,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-programme",
  "fstp-report",
  "fstp-webauthn",
 ]
@@ -119,7 +120,10 @@ dependencies = [
  "fstp-auth",
  "fstp-cell-core",
  "fstp-domain",
+ "fstp-engine",
+ "fstp-guide",
  "fstp-ledger",
+ "fstp-programme",
  "libfuzzer-sys",
 ]
 

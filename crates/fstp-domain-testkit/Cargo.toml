@@ -16,6 +16,10 @@ fstp-findings.workspace = true
 fstp-engine.workspace = true
 # The paired creator entries of the setups (D2e, `src/activation.rs`).
 fstp-creator.workspace = true
+# The synthetic Guide facts of the generators' publications (I-52,
+# `src/guide.rs`).
+fstp-guide.workspace = true
+fstp-programme.workspace = true
 fstp-json.workspace = true
 fstp-prop.workspace = true
 fstp-mc.workspace = true

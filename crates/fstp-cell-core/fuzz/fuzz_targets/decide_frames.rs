@@ -21,9 +21,10 @@
 //! replay ends the input. An entry frame after the first command frame is
 //! skipped, since no command decodes from it.
 
+use fstp_cell_core::creator::{CreatorFacts, GuideInputs};
 use fstp_cell_core::{
-    CellCtx, CellRecord, CellState, apply, decide_with_id, decode_cell_command, decode_cell_record,
-    encode_cell_record, queries_with_id, replay,
+    CellCommand, CellCtx, CellRecord, CellState, RouteInputs, apply, decide_with_inputs,
+    decode_cell_command, decode_cell_record, encode_cell_record, queries_with_id, replay,
 };
 use fstp_domain::id::{AccountId, ContentDigest};
 use fstp_domain::oracle::{Answer, Answers, Query};
@@ -187,7 +188,8 @@ pub(crate) fn run(data: &[u8]) -> usize {
                 },
             );
         }
-        let batch = match decide_with_id(&state, &cmd, &ctx, id, &answers) {
+        let inputs = route_inputs(&state, &cmd);
+        let batch = match decide_with_inputs(&state, &cmd, &ctx, id, &inputs, &answers) {
             Ok(b) => b,
             Err(e) => {
                 assert!(!format!("{e:?}").is_empty());
@@ -229,4 +231,56 @@ pub(crate) fn run(data: &[u8]) -> usize {
         Err(e) => panic!("replay refused a ledger the fold accepted: {e:?}"),
     }
     decided
+}
+
+/// The route inputs of `cmd`: for a call's publication, the synthetic
+/// Guide of [`synthetic_guide`], as a test world's shell supplies one
+/// (I-52). Every other command gets none.
+pub(crate) fn route_inputs(state: &CellState, cmd: &CellCommand) -> RouteInputs {
+    match cmd {
+        CellCommand::Engine(fstp_engine::Command::Core(fstp_domain::Command::PublishCall {
+            call,
+            ..
+        })) => RouteInputs::none().with_creator(CreatorFacts {
+            guide: synthetic_guide(state, *call),
+            ..CreatorFacts::default()
+        }),
+        _ => RouteInputs::none(),
+    }
+}
+
+/// Synthetic Guide inputs for the publication of `call`: a template with
+/// every required section and one placeholder, and the compiled SuperSAFE
+/// fixture under the programme's head policy ids. The Guide reads the
+/// policy values from the ledger. Synthetic, never legal text.
+pub(crate) fn synthetic_guide(
+    state: &CellState,
+    call: fstp_domain::id::CallId,
+) -> Option<GuideInputs> {
+    let core = &state.engine().core;
+    let programme = fstp_domain::programme::call(core, call)?.programme();
+    let head = fstp_domain::policy::head(core, programme)?;
+    let mut text = String::from("# Synthetic Guide\n\n---\n");
+    for s in fstp_guide::REQUIRED_SECTIONS {
+        text.push_str("\n## ");
+        text.push_str(s.heading);
+        text.push_str("\n\nSynthetic text.\n");
+    }
+    let template = fstp_guide::parse_template(text.as_bytes()).ok()?;
+    let fixture = fstp_programme::supersafe_fixture().ok()?;
+    let compiled = fstp_programme::compile(
+        &fixture.spec,
+        &fstp_programme::FunderProfile::horizon_europe(),
+        fstp_programme::CompileIds::new(programme, head.id, head.parent),
+    )
+    .ok()?;
+    Some(GuideInputs {
+        template,
+        compiled: Some(compiled),
+        platform_url: "https://fuzz.fstp.example/".to_owned(),
+        data_protection_summary: "Synthetic summary. Not a privacy notice.".to_owned(),
+        privacy_statement_url: "https://fuzz.fstp.example/privacy".to_owned(),
+        texts: std::collections::BTreeMap::new(),
+        precheck_available: false,
+    })
 }

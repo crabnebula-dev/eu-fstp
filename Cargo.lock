@@ -370,6 +370,7 @@ dependencies = [
  "fstp-keys",
  "fstp-ledger",
  "fstp-money",
+ "fstp-programme",
  "fstp-prop",
  "fstp-report",
  "fstp-webauthn",
@@ -569,10 +570,12 @@ dependencies = [
  "fstp-domain",
  "fstp-engine",
  "fstp-findings",
+ "fstp-guide",
  "fstp-json",
  "fstp-ledger",
  "fstp-mc",
  "fstp-money",
+ "fstp-programme",
  "fstp-prop",
 ]
 

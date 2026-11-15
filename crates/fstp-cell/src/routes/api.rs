@@ -77,6 +77,13 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
         CellCommand::Engine(fstp_engine::Command::Creator(c)) => Some(c.clone()),
         _ => None,
     };
+    // I-52: a publication carries the Guide the shell supplies.
+    let published = match &command {
+        CellCommand::Engine(fstp_engine::Command::Core(
+            fstp_domain::command::Command::PublishCall { call, .. },
+        )) => Some(*call),
+        _ => None,
+    };
     let admitted = match admit(
         ctx,
         caller,
@@ -87,9 +94,13 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
     .await
     {
         // A creator command reads the shell's facts (`crate::shell`).
-        Ok((s, a)) => match &creator {
-            Some(c) => a.with_creator(ctx.backend.creator_facts(&s, c)),
-            None => a,
+        Ok((s, a)) => match (&creator, published) {
+            (Some(c), _) => a.with_creator(ctx.backend.creator_facts(&s, c)),
+            (None, Some(call)) => a.with_creator(fstp_cell_core::creator::CreatorFacts {
+                guide: ctx.backend.guide_inputs(&s, call),
+                ..Default::default()
+            }),
+            (None, None) => a,
         },
         Err(reply) => return reply,
     };

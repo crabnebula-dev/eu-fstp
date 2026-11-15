@@ -18,13 +18,18 @@
 //!   Their legal wording is pending (Q6), so the creator reports
 //!   `LegalWordingPending` until Daniel approves it.
 //!
+//! - It supplies no Guide inputs, so a publication is refused with I-52
+//!   (D2e strict, Daniel's decision of 2026-11-15). The Guide's stored
+//!   texts and the platform address are not read by the shell yet.
+//!
 //! So a production cell activates no programme until those parts exist.
 //! A test world passes a shell of its own through
 //! `crate::process::StartOptions`, and says so in its claims.
 
 use fstp_cell_core::CellState;
-use fstp_cell_core::creator::CreatorFacts;
+use fstp_cell_core::creator::{CreatorFacts, GuideInputs};
 use fstp_creator::{CreatorCommand, PortPresence, ProbeSet};
+use fstp_domain::id::CallId;
 use fstp_guide::ProfileSource;
 
 /// The facts a creator command reads from the cell's shell (module
@@ -32,6 +37,14 @@ use fstp_guide::ProfileSource;
 pub trait CreatorShell: Send + Sync + 'static {
     /// The shell facts of `cmd` on `state`.
     fn facts(&self, state: &CellState, cmd: &CreatorCommand) -> CreatorFacts;
+
+    /// The Guide inputs of the publication of `call` on `state` (I-52,
+    /// R-GA-01). The default holds none, so the publication is refused
+    /// with I-52.
+    fn guide(&self, state: &CellState, call: CallId) -> Option<GuideInputs> {
+        let _ = (state, call);
+        None
+    }
 }
 
 /// The shell of a serving cell (module documentation).
@@ -52,6 +65,7 @@ impl CreatorShell for ProductionShell {
                 score_tools: false,
             },
             profile,
+            guide: None,
         }
     }
 }
