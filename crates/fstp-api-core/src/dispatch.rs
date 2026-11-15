@@ -149,6 +149,8 @@ mod public;
 mod publicity;
 /// The tenant operations (lane m4tenant).
 mod tenant;
+// ADR-023: the coordinator unmask, its parties read and its audit read.
+mod unmask;
 
 /// What dispatch needs beside the W0 ports. `port.rs` implements it for
 /// every `CellPorts` once the lead closes the seams (module
@@ -1190,6 +1192,12 @@ async fn command<P: Seams>(
     };
     let appended = cmd.clone();
     match call.ports.engine().execute(cmd, ctx, meta).await {
+        // ADR-023: the unmask is recorded, then the vault opens its
+        // release page for the subject.
+        Ok(seq) if form.kind == fstp_domain::command::CommandKind::UnmaskParty => {
+            executed(call, account, &appended);
+            unmask::release(call, account, &appended, seq).await
+        }
         Ok(seq) => Ok(OpResult::Done {
             body: {
                 executed(call, account, &appended);
@@ -1893,6 +1901,19 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 .await
                 .map_err(|e| call.refuse(port_failed(e, "R-NT-01")))?;
             ReadModel::Timeline(rows)
+        }
+        // ADR-023 (I-17): the coordinator's parties read and the unmask log.
+        ReadKind::ListUnmaskParties => {
+            let p = forms::id_param(&op.request, "proposal")
+                .map(ProposalId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+            unmask::parties(call, p).await?
+        }
+        ReadKind::ListUnmasks => {
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+            unmask::log(call, p, &clearance).await?
         }
         // R-GA-01, I-53: the stored Guide, never one bound per request.
         ReadKind::GetGuide => ReadModel::Guide(

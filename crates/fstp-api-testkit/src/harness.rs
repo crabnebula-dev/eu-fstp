@@ -651,6 +651,29 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         | "people.accept_invitation"
         | "people.begin_verification"
         | "creator.withdraw_invitation" => obj(vec![]),
+        // ADR-023: the subject is the programme manager's binding of P,
+        // which every world past activation holds.
+        "identity.unmask" => {
+            let state = w.ports.engine.state();
+            let binding = t
+                .programme
+                .and_then(|p| {
+                    state
+                        .core
+                        .roster()
+                        .bindings()
+                        .find(|(_, b)| b.account == PM && b.programme == p)
+                        .map(|(id, _)| id.raw())
+                })
+                .unwrap_or(1);
+            obj(vec![
+                (
+                    "subject",
+                    obj(vec![("type", s("Binding")), ("binding", dec(binding))]),
+                ),
+                ("purpose", s("SYNTHETIC PURPOSE")),
+            ])
+        }
         "tenant.save_step" => {
             let step = step_name(state);
             obj(vec![
@@ -4842,3 +4865,8 @@ mod m9_publicity_tests;
 /// (`docs/handoff/mailbox-design.md` section 7).
 #[cfg(test)]
 mod mailbox_tests;
+/// ADR-023: the coordinator unmask on the matrix worlds (I-17, I-20,
+/// I-27, I-78, I-86, R-AU-01).
+#[cfg(test)]
+#[path = "harness_unmask.rs"]
+mod unmask_tests;

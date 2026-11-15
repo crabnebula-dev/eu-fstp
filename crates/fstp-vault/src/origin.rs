@@ -756,6 +756,12 @@ impl Vault {
             // who gets the ticket, after a step-up (I-78).
             let grant = c.proposal.ok_or(OriginRefusal::WrongKind)?;
             bank_document(&self.state, grant)
+        } else if c.kind == TicketKind::Unmask {
+            // ADR-023 reading 8 (I-17 as amended 2026-11-15): the cell
+            // recorded the coordinator's unmask before it issued the
+            // ticket, so no negotiation fact is asked for. The use is
+            // journalled below, so the vault chain records it.
+            unmask_document(&self.state, &c)
         } else {
             release_guard(&self.state, &c)?;
             release_document(&self.state, &c)
@@ -1033,6 +1039,38 @@ fn release_document(s: &VaultState, c: &TicketClaims) -> Vec<u8> {
         ));
     }
     document(m.lang, m.release_title, &rows)
+}
+
+/// The unmask document of ADR-023 reading 10: what the vault holds for
+/// the subject, as [`release_document`] shows it, and for a ticket that
+/// names a proposal, whether the subject's guardian consent for it is
+/// recorded (I-18). The scope names the programme, and only its country
+/// is shown.
+fn unmask_document(s: &VaultState, c: &TicketClaims) -> Vec<u8> {
+    let m = &crate::messages::EN;
+    let facts = s.facts();
+    let account = c.account;
+    let mut rows = String::new();
+    rows.push_str(&row(m.account, &account.0.to_string()));
+    rows.push_str(&row(
+        m.verified,
+        m.yes_no(facts.person_of(account).is_some()),
+    ));
+    let programme = scope_programme(&c.scope).filter(|p| country_scope(*p) == c.scope);
+    if let Some(programme) = programme
+        && let Some(country) = facts.country_of(account, programme)
+    {
+        rows.push_str(&row(
+            &format!("{} {}", m.country_for_programme, programme.0),
+            &country.to_string(),
+        ));
+    }
+    if let Some(p) = c.proposal {
+        rows.push_str(&row(m.proposal, &p.0.to_string()));
+        let consented = facts.consent_guardian(p) == Some(account);
+        rows.push_str(&row(m.guardian_consent, m.yes_no(consented)));
+    }
+    document(m.lang, m.unmask_title, &rows)
 }
 
 /// The bank details of `grant`, rendered server-side with no script (M5

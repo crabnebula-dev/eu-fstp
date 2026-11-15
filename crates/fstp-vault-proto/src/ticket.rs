@@ -170,6 +170,11 @@ pub enum TicketKind {
     /// verify, and the payment releaser for one released request (M5
     /// design reading 6). Nothing else ever shows them (I-86).
     BankView,
+    /// The FSTP coordinator's unmask of the subject (`POST /r`, ADR-023,
+    /// I-17 as amended 2026-11-15). The cell recorded `PartyUnmasked`
+    /// before it issued the ticket, so the vault admits it without a
+    /// negotiation fact. The scope names the programme.
+    Unmask,
     /// One write of one kind (`POST /w`).
     Write(WriteKind),
 }
@@ -180,6 +185,7 @@ impl TicketKind {
         match self {
             TicketKind::Release => "release".to_owned(),
             TicketKind::BankView => "view:bank".to_owned(),
+            TicketKind::Unmask => "unmask".to_owned(),
             TicketKind::Write(k) => format!("write:{}", k.label()),
         }
     }
@@ -191,6 +197,9 @@ impl TicketKind {
         }
         if s == "view:bank" {
             return Some(TicketKind::BankView);
+        }
+        if s == "unmask" {
+            return Some(TicketKind::Unmask);
         }
         let k = s.strip_prefix("write:")?;
         WriteKind::ALL

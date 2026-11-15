@@ -129,6 +129,8 @@ pub struct State {
     pub(crate) calibration: crate::calibration::ConsentState,
     /// Lane M9 P1: grantee choices for the public pages (I-43).
     pub(crate) publicity: crate::publicity::PublicityState,
+    /// ADR-023: the coordinator unmasks (I-17).
+    pub(crate) unmasks: crate::unmask::UnmaskState,
     /// Text ids and digests.
     pub(crate) texts: TextIndex,
 }
@@ -151,6 +153,7 @@ impl State {
             payments: PaymentState::genesis(),
             calibration: crate::calibration::ConsentState::genesis(),
             publicity: crate::publicity::PublicityState::genesis(),
+            unmasks: crate::unmask::UnmaskState::genesis(),
             texts: TextIndex {
                 digests: BTreeMap::new(),
             },
@@ -210,6 +213,11 @@ impl State {
     /// The publicity part: grantee choices for the public pages.
     pub fn publicity(&self) -> &crate::publicity::PublicityState {
         &self.publicity
+    }
+
+    /// The unmask part: every coordinator unmask (ADR-023, I-17).
+    pub fn unmasks(&self) -> &crate::unmask::UnmaskState {
+        &self.unmasks
     }
 
     /// The calibration consent part.

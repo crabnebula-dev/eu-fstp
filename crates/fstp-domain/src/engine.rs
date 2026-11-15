@@ -76,7 +76,7 @@ use crate::state::State;
 use crate::time::Timestamp;
 use crate::{
     amendment, assignment, calibration, decision, grant, payment, policy, programme, proposal,
-    publicity, roles,
+    publicity, roles, unmask,
 };
 
 /// Why the fold refused a record. Each variant names a log the engine
@@ -136,10 +136,12 @@ enum Lane {
     Calibration,
     /// M9 P1, `publicity.rs`.
     Publicity,
+    /// ADR-023, `unmask.rs`.
+    Unmask,
 }
 
 /// Every lane, in the order the dispatcher asks for contributions.
-const LANES: [Lane; 11] = [
+const LANES: [Lane; 12] = [
     Lane::Policy,
     Lane::Programme,
     Lane::Roles,
@@ -151,6 +153,7 @@ const LANES: [Lane; 11] = [
     Lane::Amendment,
     Lane::Calibration,
     Lane::Publicity,
+    Lane::Unmask,
 ];
 
 /// The policy version whose P-77 governs a binding action through MCP (R-MC-05).
@@ -238,6 +241,7 @@ const fn command_lane(kind: CommandKind) -> Lane {
             Lane::Calibration
         }
         K::SetPublicChoice | K::WithdrawPublicChoice => Lane::Publicity,
+        K::UnmaskParty => Lane::Unmask,
     }
 }
 
@@ -316,6 +320,7 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         | Record::CalibrationConsentGiven { .. }
         | Record::CalibrationConsentRevoked { .. } => Lane::Calibration,
         Record::PublicChoiceSet { .. } | Record::PublicChoiceWithdrawn { .. } => Lane::Publicity,
+        Record::PartyUnmasked { .. } => Lane::Unmask,
     };
     Some(lane)
 }
@@ -438,6 +443,7 @@ fn lane_queries(
         Lane::Amendment => amendment::queries(state, cmd, ctx),
         Lane::Calibration => calibration::queries(state, cmd, ctx),
         Lane::Publicity => publicity::queries(state, cmd, ctx),
+        Lane::Unmask => unmask::queries(state, cmd, ctx),
     }
 }
 
@@ -460,6 +466,7 @@ fn lane_contribute_queries(
         Lane::Amendment => amendment::contribute_queries(state, cmd, ctx),
         Lane::Calibration => calibration::contribute_queries(state, cmd, ctx),
         Lane::Publicity => publicity::contribute_queries(state, cmd, ctx),
+        Lane::Unmask => unmask::contribute_queries(state, cmd, ctx),
     }
 }
 
@@ -484,6 +491,7 @@ fn lane_decide(
         Lane::Amendment => amendment::decide(state, cmd, ctx, answers),
         Lane::Calibration => calibration::decide(state, cmd, ctx, answers),
         Lane::Publicity => publicity::decide(state, cmd, ctx, answers),
+        Lane::Unmask => unmask::decide(state, cmd, ctx, answers),
     }
 }
 
@@ -508,6 +516,7 @@ fn lane_contribute(
         Lane::Amendment => amendment::contribute(state, cmd, ctx, answers, batch),
         Lane::Calibration => calibration::contribute(state, cmd, ctx, answers, batch),
         Lane::Publicity => publicity::contribute(state, cmd, ctx, answers, batch),
+        Lane::Unmask => unmask::contribute(state, cmd, ctx, answers, batch),
     }
 }
 
@@ -525,6 +534,7 @@ fn lane_governing_policy(lane: Lane, state: &State, cmd: &Command) -> Result<Pol
         Lane::Amendment => amendment::governing_policy(state, cmd),
         Lane::Calibration => calibration::governing_policy(state, cmd),
         Lane::Publicity => publicity::governing_policy(state, cmd),
+        Lane::Unmask => unmask::governing_policy(state, cmd),
     }
 }
 
@@ -686,6 +696,7 @@ pub fn apply(state: &mut State, seq: Seq, at: Timestamp, record: &Record) -> Res
         Some(Lane::Amendment) => amendment::apply(state, seq, at, record)?,
         Some(Lane::Calibration) => calibration::apply(state, seq, at, record)?,
         Some(Lane::Publicity) => publicity::apply(state, seq, at, record)?,
+        Some(Lane::Unmask) => unmask::apply(state, seq, at, record)?,
         None => {
             crate::proposal::on_vault_outcome(state, record);
             crate::calibration::on_outbox(state, seq, record);

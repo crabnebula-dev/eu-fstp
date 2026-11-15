@@ -978,6 +978,13 @@ pub enum Rule {
     /// choice there (`public-transparency.md` Opt-in model). A team member
     /// or guardian reads nothing.
     Publicity,
+    /// ADR-023 (I-17 as amended 2026-11-15): the parties of X, for the
+    /// FSTP coordinator of P to unmask one. Reading: every state but
+    /// DRAFT, since a draft is the team's alone (I-21).
+    UnmaskParties,
+    /// ADR-023 reading 11 (R-AU-01): the unmask log of P, for its auditor
+    /// and every tenant admin.
+    UnmaskLog,
 }
 
 impl Rule {
@@ -1108,6 +1115,8 @@ impl Rule {
                 &[Some(Role::CommitteeMember)]
             }
             Rule::Publicity => &[Some(Role::Applicant)],
+            Rule::UnmaskParties => &[Some(Role::FstpCoordinator)],
+            Rule::UnmaskLog => &[Some(Role::Auditor), Some(Role::TenantAdmin)],
             // No signatory: the section 7.2 matrix names neither (NOTE 5).
             Rule::Journey => &[
                 Some(Role::Applicant),
@@ -1625,6 +1634,13 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         T::Programme,
         R::ReportReader,
     ),
+    // ADR-023 (I-17 as amended 2026-11-15, I-78, I-86). Reading: only the
+    // FSTP coordinator of P unmasks, at any stage, with a fresh step-up,
+    // and web only. A coordinator with a conflict on X still may (ADR-023
+    // open point 2). The world's subject is a staff binding of P.
+    RefOp::act("identity.unmask", T::Programme, R::Coordinator).hr(),
+    RefOp::read("identity.parties", T::Proposal, R::UnmaskParties),
+    RefOp::read("audit.unmasks", T::Programme, R::UnmaskLog),
 ];
 
 /// Whether the rule admits the principal, and the class if not. The
@@ -1884,6 +1900,8 @@ fn admit(
             )?;
             open(x == Some(StateTag::InExecution))
         }
+        Rule::UnmaskParties => open(who.coordinator() && x.is_some_and(|s| s != StateTag::Draft)),
+        Rule::UnmaskLog => open(who == Who::Auditor || who.tenant_admin()),
         Rule::Publicity => open(
             who == Who::Lead
                 && matches!(

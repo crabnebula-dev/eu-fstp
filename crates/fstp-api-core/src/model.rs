@@ -147,6 +147,8 @@ pub enum ReadModel {
     FindingsStatus(Vec<crate::views::FindingsStatusRow>),
     /// `me.mailbox`: the caller's own messages (lane m6/mailbox, I-27, I-86).
     Mailbox(crate::mailbox::MailboxView),
+    /// `identity.parties` and `audit.unmasks` (ADR-023, I-17): ids only.
+    Unmask(crate::unmask::UnmaskModel),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -288,6 +290,7 @@ impl ToJson for ReadModel {
             ReadModel::Precheck(v) => v.to_json(),
             ReadModel::FindingsStatus(rows) => array(rows),
             ReadModel::Mailbox(v) => v.to_json(),
+            ReadModel::Unmask(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1683,6 +1686,7 @@ pub(crate) mod reply_shape_tests {
                 "vault.bank.view_for_release",
                 "vault.hardship.submit",
                 "vault.hardship.verify",
+                "identity.unmask",
             ],
             ReadModel::IntakeQueue(_) => &["intake.queue"],
             ReadModel::Board(_) => &["call.board"],
@@ -1728,6 +1732,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],
             ReadModel::FindingsStatus(_) => &["assess.findings_status"],
             ReadModel::Mailbox(_) => &["me.mailbox"],
+            ReadModel::Unmask(crate::unmask::UnmaskModel::Parties(_)) => &["identity.parties"],
+            ReadModel::Unmask(crate::unmask::UnmaskModel::Log(_)) => &["audit.unmasks"],
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
@@ -2157,6 +2163,7 @@ pub(crate) mod reply_shape_tests {
         ]
         .into_iter()
         .chain(crate::grant::samples().into_iter().map(ReadModel::Grant))
+        .chain(crate::unmask::samples().into_iter().map(ReadModel::Unmask))
         .chain([
             ReadModel::Created(vec![("request", 7)]),
             ReadModel::Created(vec![("amendment", 7)]),
@@ -2233,7 +2240,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 45;
+    const VARIANTS: usize = 46;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2285,6 +2292,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Precheck(_) => 42,
             ReadModel::FindingsStatus(_) => 43,
             ReadModel::Mailbox(_) => 44,
+            ReadModel::Unmask(_) => 45,
         }
     }
 

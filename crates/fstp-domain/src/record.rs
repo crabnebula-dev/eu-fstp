@@ -965,4 +965,19 @@ pub enum Record {
         /// The lead.
         by: AccountId,
     },
+    /// The FSTP coordinator unmasked one party of their programme (I-17 as
+    /// amended 2026-11-15, ADR-023, R-AU-01). It names the subject by id
+    /// and holds no identity attribute. The entry carries the instant.
+    PartyUnmasked {
+        /// The programme.
+        programme: ProgrammeId,
+        /// The party kind, derived from the subject.
+        party: crate::unmask::PartyKind,
+        /// The party, by binding or assignment id.
+        subject: crate::unmask::UnmaskSubject,
+        /// The purpose, a confidential text of the programme.
+        purpose: TextRef,
+        /// The coordinator.
+        by: AccountId,
+    },
 }

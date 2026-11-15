@@ -110,7 +110,7 @@ fn action_of(p: &VerificationPurpose) -> Option<(&'static str, &'static str)> {
 
 /// The script of the vault's read page: it reads the ticket's action from
 /// the vault, shows its button and posts the action. No bank value passes.
-const R_JS: &str = "(async () => {\n  const t = await (await fetch('/r/ticket')).json();\n  document.querySelector('h1').textContent = t.title;\n  const b = document.querySelector('#vault-action');\n  b.textContent = t.button;\n  b.hidden = false;\n  b.addEventListener('click', async () => {\n    const r = await fetch('/r/act', { method: 'POST' });\n    if (r.ok) {\n      b.hidden = true;\n      const d = document.querySelector('#vault-done');\n      d.hidden = false;\n    }\n  });\n})();\n";
+const R_JS: &str = "(async () => {\n  const t = await (await fetch('/r/ticket')).json();\n  document.querySelector('h1').textContent = t.title;\n  if (Array.isArray(t.rows)) {\n    const table = document.querySelector('#vault-identity');\n    for (const [k, v] of t.rows) {\n      const tr = document.createElement('tr');\n      const th = document.createElement('th');\n      th.scope = 'row';\n      th.textContent = k;\n      const td = document.createElement('td');\n      td.textContent = v;\n      tr.append(th, td);\n      table.append(tr);\n    }\n    table.hidden = false;\n    return;\n  }\n  const b = document.querySelector('#vault-action');\n  b.textContent = t.button;\n  b.hidden = false;\n  b.addEventListener('click', async () => {\n    const r = await fetch('/r/act', { method: 'POST' });\n    if (r.ok) {\n      b.hidden = true;\n      const d = document.querySelector('#vault-done');\n      d.hidden = false;\n    }\n  });\n})();\n";
 
 fn vault_response(kind: &str, body: Vec<u8>, script: bool) -> Response {
     let mut r = Response::with_body(StatusCode::OK, kind, body);
@@ -145,7 +145,7 @@ pub(crate) fn vault_read(inner: &Inner, req: &Request) -> Option<Response> {
     match (&req.method, path) {
         (&Method::GET, "/r") => Some(vault_response(
             "text/html; charset=utf-8",
-            b"<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>Identity vault</title></head>\n<body><main><h1>Identity vault</h1>\n<p>Synthetic test vault of the e2e cell. The vault holds the bank details. The platform never sees them (I-86).</p>\n<button type=\"button\" id=\"vault-action\" hidden>Continue</button>\n<p id=\"vault-done\" hidden>Done. The vault recorded the fact. No bank value leaves the vault.</p>\n<script src=\"/r.js\"></script></main></body></html>\n".to_vec(),
+            b"<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>Identity vault</title></head>\n<body><main><h1>Identity vault</h1>\n<p>Synthetic test vault of the e2e cell. The vault holds the bank details and identities. What this page shows stays on the vault origin, and the platform never sees it (I-17, I-86).</p>\n<table id=\"vault-identity\" hidden></table>\n<button type=\"button\" id=\"vault-action\" hidden>Continue</button>\n<p id=\"vault-done\" hidden>Done. The vault recorded the fact. No bank value leaves the vault.</p>\n<script src=\"/r.js\"></script></main></body></html>\n".to_vec(),
             true,
         )),
         (&Method::GET, "/r.js") => Some(vault_response(
@@ -153,6 +153,10 @@ pub(crate) fn vault_read(inner: &Inner, req: &Request) -> Option<Response> {
             R_JS.as_bytes().to_vec(),
             true,
         )),
+        (&Method::GET, "/r/ticket") if unmask_of(inner).is_some() => {
+            let (programme, subject, party) = unmask_of(inner)?;
+            Some(wire::json(StatusCode::OK, &unmask_page(inner, programme, subject, party)))
+        }
         (&Method::GET, "/r/ticket") => {
             let (title, button) = ticket()
                 .and_then(|(p, _)| action_of(&p))
@@ -170,6 +174,80 @@ pub(crate) fn vault_read(inner: &Inner, req: &Request) -> Option<Response> {
         }
         _ => None,
     }
+}
+
+/// The coordinator unmask of the latest vault ticket, if it is one
+/// (ADR-023): its programme, subject and party kind.
+fn unmask_of(
+    inner: &Inner,
+) -> Option<(
+    fstp_domain::id::ProgrammeId,
+    fstp_domain::id::AccountId,
+    fstp_domain::unmask::PartyKind,
+)> {
+    match inner.ports.vault.verifications().last() {
+        Some((
+            VerificationPurpose::Unmask {
+                programme,
+                subject,
+                party,
+            },
+            _,
+        )) => Some((*programme, *subject, *party)),
+        _ => None,
+    }
+}
+
+/// The synthetic identity the demo vault releases for an unmask
+/// (ADR-023 reading 10), shown on the vault origin only. Every value is
+/// synthetic: the subject's synthetic name from the seed, and fixed words
+/// for the rest. A guardian's row names the consent record (I-18).
+fn unmask_page(
+    inner: &Inner,
+    programme: fstp_domain::id::ProgrammeId,
+    subject: fstp_domain::id::AccountId,
+    party: fstp_domain::unmask::PartyKind,
+) -> fstp_json::Value {
+    use fstp_domain::unmask::PartyKind;
+    let name = inner
+        .ports
+        .accounts
+        .name_of(subject)
+        .unwrap_or_else(|| format!("Synthetic person {}", subject.raw()));
+    let row = |k: &str, v: String| {
+        fstp_json::Value::Array(
+            [
+                fstp_json::Value::from(k),
+                fstp_json::Value::from(v.as_str()),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    };
+    let mut rows = vec![
+        row("Party", party.wire().to_owned()),
+        row("Programme", programme.raw().to_string()),
+        row("Account", subject.raw().to_string()),
+        row("Legal name (synthetic)", name),
+        row(
+            "Organisation (synthetic)",
+            "Synthetic Organisation Ltd".to_owned(),
+        ),
+        row("Verification", "verified by the synthetic vault".to_owned()),
+    ];
+    if party == PartyKind::Guardian {
+        rows.push(row(
+            "Guardian consent record",
+            "recorded on the synthetic vault".to_owned(),
+        ));
+    }
+    wire::obj(vec![
+        (
+            "title",
+            "Who this party is (FSTP coordinator unmask)".into(),
+        ),
+        ("rows", fstp_json::Value::Array(rows.into_iter().collect())),
+    ])
 }
 
 /// The action of the latest vault ticket, as the vault page's button posts

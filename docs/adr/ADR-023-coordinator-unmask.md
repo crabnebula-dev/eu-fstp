@@ -36,7 +36,7 @@ So every Judging role other than the FSTP coordinator stays masked as before. Co
 
 1. **Who may unmask.** Only an account with an active FSTP coordinator binding in the programme the request names. A tenant admin, a programme manager, an auditor, a committee member, a chair, a reviewer, an IRC member and every Receiving role are refused as actors. A coordinator of another programme is refused too, since the binding must be in the named programme.
 2. **Which parties.** A party is named by an id the coordinator's pages already show, never by an identity attribute:
-   - a role binding of the programme, held or ended: the lead (`applicant`), a team member (`team_member`), a guardian (`guardian`), a committee member or chair (`reviewer`), an IRC member (`irc`), or a Drafting or Operations role or another coordinator (`staff`);
+   - a role binding of the programme, held or ended. The lead is `applicant`, a team member `team_member` and a guardian `guardian`. A committee member or chair is `reviewer`, and an IRC member `irc`. A Drafting or Operations role, or another coordinator, is `staff`;
    - a reviewer or IRC assignment of a proposal of the programme. The assignment is the anonymous handle of P-11, so this unmasks the person behind one handle (`reviewer` or `irc`).
    The server derives the party kind from the binding's role or the assignment's kind. A binding or assignment of another programme is refused as unknown input. Tenant-wide roles, such as the Financial and Legal signatories, are not of the programme, so they cannot be named.
 3. **At any stage.** No proposal state is required. An ended binding can still be named, so a withdrawn applicant or a former member of staff stays reachable.
@@ -46,7 +46,7 @@ So every Judging role other than the FSTP coordinator stays masked as before. Co
 7. **Release on the vault origin.** After the record is appended, the cell asks the vault for an unmask ticket for the subject's account and answers with the vault origin's release page. The browser opens it there, as every identity release opens today. The released attributes never pass through the application's origin, the API core, a log or a message.
 8. **The vault's second guard.** A release ticket needs the vault's negotiation fact (ADR-009 "Releases"). An unmask ticket is its own ticket kind, `unmask`, on the release route. The vault admits it without a negotiation fact, since the cell decided the coordinator's right and recorded the unmask first. Every other ticket check holds: signature, cell, route, validity window, lifetime bound and single use.
 9. **The vault logs it too.** The vault journals the use of every release ticket, and the vault chain records it as an identity release row (ADR-010, m3-finish Q-C). So an unmask is logged twice: in the cell's ledger with its purpose, and in the vault's own chain.
-10. **What the vault shows.** For a person: the account, the party kind the ticket names, whether a verified identity exists, and the identity attributes the vault holds. For a guardian, the consent record of the proposal (I-18). The M3 vault holds no name or document attribute yet (ADR-009 reading, M4 brings verification methods). So the production page shows what the vault holds today, and the demo vault shows synthetic attributes.
+10. **What the vault shows.** For a person: the account, whether a verified identity exists, and the identity attributes the vault holds for the programme the ticket's scope names. When the ticket names a proposal, whether the subject's guardian consent for it is recorded (I-18). The M3 vault holds no name or document attribute yet (ADR-009 reading, M4 brings verification methods). So the production page shows what the vault holds today, and the demo vault shows synthetic attributes.
 11. **The audit read.** The auditor of the programme and every tenant admin read the unmask records through `audit.unmasks` (`GET /programmes/{programme}/audit/unmasks`): the party kind, the subject id, the coordinator's account id, the purpose and the instant. The read holds no identity attribute. The general `audit.entries` read is not built yet. Each unmask call also leaves its API audit entry, with its operation name, outcome and step-up reference (I-24).
 12. **Web only.** The unmask and the parties read have no MCP tool, so MCP refuses them as not exposed (I-85, I-86). No message names an unmask or its subject (I-27).
 13. **The pages.** The coordinator's board lists an "Unmask" control on each proposal, which opens the proposal's parties page. The coordinator's assignment page has an "Unmask" control per assigned reviewer, and a link to the parties page. Each control opens a short form: "As FSTP coordinator you can see who this is. Your purpose is recorded." It has a purpose field and a "Confirm with passkey and unmask" button. The released identity opens on the vault origin.
@@ -68,14 +68,20 @@ So every Judging role other than the FSTP coordinator stays masked as before. Co
 - `SPEC/01-requirements/functional.md`, R-NG-01 NOTE on the guardian exception.
 - `SPEC/06-threat-model/threat-model.md` TH-07.
 - `SPEC/07-test-plan/test-plan.md`, the I-17 and I-21 row.
+- `SPEC/03-architecture/authentication.md`, a row of the high-risk table: unmasking a party as FSTP coordinator.
 - `docs/design/spec-amendments.md` SA-07 records the amendment.
 
 ## Tests
 
-- API core, on the matrix worlds (`crates/fstp-api-testkit/src/harness_unmask.rs`): the coordinator unmasks each party kind with a purpose and a step-up, and exactly one `PartyUnmasked` is appended; no purpose, a blank purpose and an over-long purpose are refused; a stale step-up is refused; every other Judging role, staff role and Receiving role is refused; a coordinator acting on another programme is refused; MCP refuses the unmask and the parties read; the audit read shows the record to the auditor and tenant admins and to nobody else; no message is enqueued.
-- Domain (`crates/fstp-domain-testkit/tests/i17_adr023_*`): production `decide` admits only the programme's coordinator, refuses a subject of another programme, and the record holds ids only. Teeth: a decide that admits a committee member, or one that copies an identity attribute into the record, is caught.
-- Vault (`crates/fstp-vault`): an unmask ticket releases without a negotiation fact, a release ticket still needs one, and the use is journalled.
-- Web and demo: the coordinator pages offer the control, and a demo Playwright spec has coordinator C1 unmask an applicant and a reviewer handle while a committee member cannot.
+- API core, on the matrix worlds (`crates/fstp-api-testkit/src/harness_unmask.rs`):
+  - the coordinator unmasks each party kind with a purpose and a step-up, and exactly one `PartyUnmasked` is appended;
+  - no purpose, a blank purpose and an over-long purpose are refused, and so is a stale step-up;
+  - every other Judging role, staff role and Receiving role is refused, and so is a coordinator acting on another programme;
+  - MCP refuses the unmask and the parties read, and no message is enqueued;
+  - the audit read shows the record to the auditor and the tenant admins, and to nobody else.
+- Domain, in the same file over copies of the world's core state: production `decide` admits exactly the active coordinators of the programme for every party, a coordinator of another programme is refused, and the record holds ids only. Teeth: a decide that admits a committee member is caught, and so is a forged `PartyUnmasked` folded through the public `apply`.
+- Vault (`crates/fstp-vault/tests/i17_adr023_unmask_ticket.rs`): an unmask ticket releases without a negotiation fact, a release ticket still needs one, it is single use and no write ticket, and the use is journalled.
+- Web (`web/test/coordinator_unmask.test.ts`) and demo (`e2e/speedrun/adr023_coordinator_unmask.spec.ts`): the coordinator pages offer the control, and coordinator C1 unmasks an applicant and a reviewer handle while a committee member cannot.
 
 ## Open points for Daniel
 

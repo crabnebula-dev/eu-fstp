@@ -402,6 +402,19 @@ pub enum VerificationPurpose {
     HardshipEvidence(ProposalId),
     /// The finance approver verifies hardship evidence (R-PR-04).
     HardshipVerification(ProposalId),
+    /// ADR-023 (I-17 as amended 2026-11-15): the FSTP coordinator of
+    /// `programme` sees who `subject` is, on the vault origin's release
+    /// page. The cell recorded `PartyUnmasked` first. The ticket names the
+    /// subject's account, the party kind and the programme, never an
+    /// identity attribute.
+    Unmask {
+        /// The programme.
+        programme: ProgrammeId,
+        /// The account behind the party.
+        subject: AccountId,
+        /// The party kind.
+        party: fstp_domain::unmask::PartyKind,
+    },
 }
 
 /// Where the browser goes to verify.

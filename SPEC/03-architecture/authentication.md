@@ -49,6 +49,7 @@ High-risk actions need a fresh step-up with a phishing-resistant method within P
 | Publishing a template to other tenants | Data leaving the cell |
 | Approving break-glass access | Operator access to content |
 | Approving an account recovery | Changes another account's login methods (decided 2026-10-28) |
+| Unmasking a party as FSTP coordinator | Reads identity attributes outside the I-17 window (I-17 as amended 2026-11-15, ADR-023) |
 
 - **I-78** No high-risk action completes without a phishing-resistant step-up within P-71.
 - An account without a phishing-resistant method cannot perform a high-risk action. It gets a passkey only through a ceremony under First passkey (decided 2026-10-28).

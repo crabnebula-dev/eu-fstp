@@ -52,6 +52,12 @@ impl FakeAccounts {
     pub fn name(&self, a: AccountId, handle: &str) {
         lock(&self.names).insert(a, handle.to_owned());
     }
+
+    /// The name [`FakeAccounts::name`] gave `a`, if any. Only the demo
+    /// vault page reads it, on the vault origin (ADR-023).
+    pub fn name_of(&self, a: AccountId) -> Option<String> {
+        lock(&self.names).get(&a).cloned()
+    }
 }
 
 impl Accounts for FakeAccounts {

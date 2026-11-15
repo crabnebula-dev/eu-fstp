@@ -79,6 +79,7 @@ use fstp_domain::roles::{BindingScope, CoolingOff, Role};
 use fstp_domain::rules::{Row, StateTag};
 use fstp_domain::scoring::{Criteria, Criterion, ScoreKey, ScoreVector, Stage, VoidCause};
 use fstp_domain::time::{Timestamp, ZONE_NAME_MAX, ZoneName};
+use fstp_domain::unmask::{PartyKind, UnmaskSubject};
 use fstp_json::{FromJson, FromJsonError, Number, Object, ToJson, Value, parse, to_canonical};
 use fstp_ledger::{MAX_AT, Seq};
 use fstp_money::{Amount, AmountRange, Currency, NonNegAmount, Percent, PosAmount};
@@ -743,6 +744,8 @@ pub(crate) enum RecordTag {
     // M9 lane P1.
     PublicChoiceSet,
     PublicChoiceWithdrawn,
+    // ADR-023.
+    PartyUnmasked,
     // M4 changes D2 and D5.
     ProgrammeActivated,
     CutOffRoundOpened,
@@ -756,7 +759,7 @@ pub(crate) enum RecordTag {
 impl RecordTag {
     /// Every tag: the M2 tags in declaration order of [`Record`], then the
     /// tags of M4 changes D2 and D5, then the Guide record of R-GA-01.
-    pub(crate) const ALL: [RecordTag; 72] = [
+    pub(crate) const ALL: [RecordTag; 73] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -823,6 +826,7 @@ impl RecordTag {
         RecordTag::CalibrationConsentRevoked,
         RecordTag::PublicChoiceSet,
         RecordTag::PublicChoiceWithdrawn,
+        RecordTag::PartyUnmasked,
         RecordTag::ProgrammeActivated,
         RecordTag::CutOffRoundOpened,
         RecordTag::BallotCast,
@@ -935,6 +939,7 @@ impl RecordTag {
             Record::CalibrationConsentRevoked { .. } => RecordTag::CalibrationConsentRevoked,
             Record::PublicChoiceSet { .. } => RecordTag::PublicChoiceSet,
             Record::PublicChoiceWithdrawn { .. } => RecordTag::PublicChoiceWithdrawn,
+            Record::PartyUnmasked { .. } => RecordTag::PartyUnmasked,
             Record::ProgrammeActivated(_) => RecordTag::ProgrammeActivated,
             Record::CutOffRoundOpened { .. } => RecordTag::CutOffRoundOpened,
             Record::BallotCast { .. } => RecordTag::BallotCast,
@@ -1640,6 +1645,15 @@ fn outbox(g: &mut Gen, d: &mut Draw) -> OutboxEvent {
     }
 }
 
+/// A generated unmask subject (ADR-023).
+fn unmask_subject(g: &mut Gen, d: &mut Draw) -> UnmaskSubject {
+    if g.u32().is_multiple_of(2) {
+        UnmaskSubject::Binding(id(g, d, BindingId::from_raw))
+    } else {
+        UnmaskSubject::Assignment(id(g, d, AssignmentId::from_raw))
+    }
+}
+
 /// A generated command of kind `k`.
 pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
     Ok(match k {
@@ -1987,6 +2001,11 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
         CommandKind::WithdrawPublicChoice => Command::WithdrawPublicChoice {
             proposal: id(g, d, ProposalId::from_raw),
             phase: *g.pick(&PublicPhase::ALL),
+        },
+        CommandKind::UnmaskParty => Command::UnmaskParty {
+            programme: id(g, d, ProgrammeId::from_raw),
+            subject: unmask_subject(g, d),
+            purpose: text(g, d),
         },
     })
 }
@@ -2399,6 +2418,13 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
         RecordTag::PublicChoiceWithdrawn => Record::PublicChoiceWithdrawn {
             proposal: id(g, d, ProposalId::from_raw),
             phase: *g.pick(&PublicPhase::ALL),
+            by: id(g, d, AccountId::from_raw),
+        },
+        RecordTag::PartyUnmasked => Record::PartyUnmasked {
+            programme: id(g, d, ProgrammeId::from_raw),
+            party: *g.pick(&PartyKind::ALL),
+            subject: unmask_subject(g, d),
+            purpose: text(g, d),
             by: id(g, d, AccountId::from_raw),
         },
         RecordTag::CutOffRoundOpened => Record::CutOffRoundOpened {

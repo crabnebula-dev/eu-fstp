@@ -41,6 +41,11 @@ pub(crate) struct Messages {
     pub none_entered: &'static str,
     /// The row label of whether a dispute is open.
     pub dispute_open: &'static str,
+    /// The title and heading of the coordinator unmask document (ADR-023).
+    pub unmask_title: &'static str,
+    /// The row label of whether the subject's guardian consent for the
+    /// proposal is recorded (I-18).
+    pub guardian_consent: &'static str,
 }
 
 /// The English catalogue.
@@ -62,6 +67,8 @@ pub(crate) const EN: Messages = Messages {
     bank_details: "Bank details",
     none_entered: "none entered",
     dispute_open: "Dispute open",
+    unmask_title: "Who this party is (FSTP coordinator unmask)",
+    guardian_consent: "Guardian consent recorded",
 };
 
 impl Messages {

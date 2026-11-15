@@ -105,6 +105,20 @@ fn sample(kind: CommandKind) -> Option<Sample> {
             cmd: fstp_domain_testkit::activation::activate_command(P1),
             legal_on_web: false,
         },
+        // ADR-023: the coordinator unmask. OTHER holds no coordinator
+        // binding of P1, so its web twin is refused as an actor.
+        CommandKind::UnmaskParty => Sample {
+            actor: OTHER,
+            cmd: fstp_domain::Command::UnmaskParty {
+                programme: P1,
+                subject: fstp_domain::unmask::UnmaskSubject::Binding(staff_bindings(P1)[1]),
+                purpose: fstp_domain::id::TextRef::new(
+                    fstp_domain::id::TextId::from_raw(1),
+                    fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+                ),
+            },
+            legal_on_web: false,
+        },
         _ => return None,
     };
     Some(s)

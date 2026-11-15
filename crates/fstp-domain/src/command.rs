@@ -761,6 +761,17 @@ pub enum Command {
         /// The phase.
         phase: crate::publicity::PublicPhase,
     },
+    /// The FSTP coordinator unmasks one party of their own programme,
+    /// with a purpose (I-17 as amended 2026-11-15, ADR-023).
+    /// `crate::unmask`.
+    UnmaskParty {
+        /// The programme.
+        programme: ProgrammeId,
+        /// The party, by binding or assignment id.
+        subject: crate::unmask::UnmaskSubject,
+        /// The purpose, a confidential text of the programme.
+        purpose: TextRef,
+    },
 }
 
 /// The fieldless tag of a [`Command`].
@@ -904,11 +915,13 @@ pub enum CommandKind {
     SetPublicChoice,
     /// [`Command::WithdrawPublicChoice`].
     WithdrawPublicChoice,
+    /// [`Command::UnmaskParty`].
+    UnmaskParty,
 }
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 69] = [
+    pub const ALL: [CommandKind; 70] = [
         CommandKind::CreateProgramme,
         CommandKind::ActivateProgramme,
         CommandKind::EditPolicy,
@@ -978,6 +991,7 @@ impl CommandKind {
         CommandKind::RevokeCalibrationConsent,
         CommandKind::SetPublicChoice,
         CommandKind::WithdrawPublicChoice,
+        CommandKind::UnmaskParty,
     ];
 
     /// Whether the kind is a high-risk action from the list in
@@ -1002,6 +1016,7 @@ impl CommandKind {
                 | CommandKind::ApprovePayment
                 | CommandKind::ReleasePayment
                 | CommandKind::PublishCall
+                | CommandKind::UnmaskParty
         )
     }
 
@@ -1107,6 +1122,7 @@ impl Command {
             Command::RevokeCalibrationConsent { .. } => CommandKind::RevokeCalibrationConsent,
             Command::SetPublicChoice { .. } => CommandKind::SetPublicChoice,
             Command::WithdrawPublicChoice { .. } => CommandKind::WithdrawPublicChoice,
+            Command::UnmaskParty { .. } => CommandKind::UnmaskParty,
         }
     }
 

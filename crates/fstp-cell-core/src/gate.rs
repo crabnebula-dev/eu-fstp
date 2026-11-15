@@ -120,6 +120,9 @@ pub const TEMPLATE_ROW: &str = "Publishing a template to other tenants";
 pub const BREAK_GLASS_ROW: &str = "Approving break-glass access";
 /// `authentication.md` row: changing another account's login methods.
 pub const RECOVERY_ROW: &str = "Approving an account recovery";
+/// `authentication.md` row: reading identity attributes outside the I-17
+/// window (ADR-023).
+pub const UNMASK_ROW: &str = "Unmasking a party as FSTP coordinator";
 
 /// A high-risk action (I-78). Closed: each variant needs a fresh,
 /// phishing-resistant step-up within P-71.
@@ -160,6 +163,9 @@ pub enum HighRiskAction {
     ApproveBreakGlass,
     /// Approving an account recovery.
     ApproveRecovery,
+    /// Unmasking a party as FSTP coordinator (I-17 as amended 2026-11-15,
+    /// ADR-023).
+    UnmaskParty,
 }
 
 impl HighRiskAction {
@@ -368,6 +374,8 @@ pub const HIGH_RISK_TABLE: &[HighRiskEntry] = &[
         "ApproveRecovery",
         RECOVERY_ROW,
     ),
+    // ADR-023 (I-17 as amended 2026-11-15): its own spec row.
+    entry(HighRiskAction::UnmaskParty, "UnmaskParty", UNMASK_ROW),
 ];
 
 /// An entry that reads a spec row strictly, beyond the domain's

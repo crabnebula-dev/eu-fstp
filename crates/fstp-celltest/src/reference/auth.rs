@@ -587,6 +587,9 @@ pub enum RefHighRisk {
     ApproveBreakGlass,
     /// Approving an account recovery.
     ApproveRecovery,
+    /// Unmasking a party as FSTP coordinator (ADR-023, I-17 as amended
+    /// 2026-11-15).
+    UnmaskParty,
 }
 
 /// The high-risk class of the command or action named `name`, from design
@@ -612,13 +615,14 @@ pub fn high_risk_of(name: &str) -> Option<RefHighRisk> {
         "PublishTemplate" => H::PublishTemplate,
         "ApproveBreakGlass" => H::ApproveBreakGlass,
         "ApproveRecovery" => H::ApproveRecovery,
+        "UnmaskParty" => H::UnmaskParty,
         _ => return None,
     };
     Some(class)
 }
 
 /// Every command or action name that [`high_risk_of`] classifies.
-pub const HIGH_RISK_NAMES: [&str; 26] = [
+pub const HIGH_RISK_NAMES: [&str; 27] = [
     "GrantRole",
     "EndRole",
     "ReinstateBinding",
@@ -645,6 +649,7 @@ pub const HIGH_RISK_NAMES: [&str; 26] = [
     "PublishTemplate",
     "ApproveBreakGlass",
     "ApproveRecovery",
+    "UnmaskParty",
 ];
 
 /// `action_digest = SHA-256(canonical(command) || command_id)` (design section 8.4).

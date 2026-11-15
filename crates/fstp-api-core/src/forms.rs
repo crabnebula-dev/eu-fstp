@@ -200,6 +200,18 @@ pub(crate) enum Derive {
     /// public texts. A client text reference is refused, so a choice never
     /// names proposal content.
     PublicTexts,
+    /// ADR-023: the purpose of an unmask must arrive as a string with a
+    /// character other than white space, of at most [`PURPOSE_LIMIT`]
+    /// characters. The server stores it as a confidential text.
+    Purpose,
+}
+
+/// The longest unmask purpose, in characters (ADR-023 reading 4).
+pub(crate) const PURPOSE_LIMIT: usize = 500;
+
+/// Whether `s` is an admissible unmask purpose (ADR-023 reading 4).
+pub(crate) fn purpose_ok(s: &str) -> bool {
+    !s.trim().is_empty() && s.chars().count() <= PURPOSE_LIMIT
 }
 
 /// The form of one command kind.
@@ -545,6 +557,16 @@ pub(crate) fn command_form(kind: CommandKind) -> Option<CmdForm> {
         K::WithdrawPublicChoice => CmdForm {
             params: PROPOSAL,
             required: &["phase"],
+            ..form(kind)
+        },
+        // ADR-023 (I-17): the coordinator names the party by binding or
+        // assignment and gives a purpose, stored as a confidential text of
+        // the programme. The party kind is the domain's to derive.
+        K::UnmaskParty => CmdForm {
+            params: &[("programme", Some("programme"))],
+            required: &["subject", "purpose"],
+            texts: &["purpose"],
+            derive: Derive::Purpose,
             ..form(kind)
         },
         _ => return None,
@@ -1094,6 +1116,15 @@ pub(crate) fn build(
     }
     match f.derive {
         Derive::None => {}
+        Derive::Purpose => {
+            if !request
+                .get("purpose")
+                .and_then(Value::as_str)
+                .is_some_and(purpose_ok)
+            {
+                return Err(ApiError::bad_request("ADR-023"));
+            }
+        }
         Derive::PublicTexts => {
             for p in ["title", "summary", "grantee"] {
                 if request.get(p).and_then(Value::as_str).is_none() {

@@ -48,6 +48,7 @@ pub mod publicity;
 pub mod rate;
 pub mod salted;
 pub mod tenant;
+pub mod unmask;
 pub mod views;
 
 use std::future::Future;

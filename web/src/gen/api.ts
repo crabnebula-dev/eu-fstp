@@ -209,6 +209,9 @@ export type OpName =
   | "pending.discard"
   | "audit.entries"
   | "audit.vault_outcomes"
+  | "identity.unmask"
+  | "identity.parties"
+  | "audit.unmasks"
   | "grant.overview"
   | "contract.view"
   | "payment.status"
@@ -440,6 +443,9 @@ export interface OpParams {
   readonly "pending.discard": { readonly "pending": string };
   readonly "audit.entries": { readonly "programme": string };
   readonly "audit.vault_outcomes": { readonly "programme": string };
+  readonly "identity.unmask": { readonly "programme": string };
+  readonly "identity.parties": { readonly "proposal": string };
+  readonly "audit.unmasks": { readonly "programme": string };
   readonly "grant.overview": { readonly "proposal": string };
   readonly "contract.view": { readonly "proposal": string };
   readonly "payment.status": { readonly "proposal": string };
@@ -644,6 +650,9 @@ export const OP_NAMES: readonly OpName[] = [
   "pending.discard",
   "audit.entries",
   "audit.vault_outcomes",
+  "identity.unmask",
+  "identity.parties",
+  "audit.unmasks",
   "grant.overview",
   "contract.view",
   "payment.status",
@@ -2864,6 +2873,48 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "identity.unmask",
+    method: "POST",
+    path: "/programmes/{programme}/unmask",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "unmask" }],
+    params: ["programme"],
+    body: true,
+    highRisk: true,
+    binding: true,
+    session: "phishing_resistant",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "identity.parties",
+    method: "GET",
+    path: "/proposals/{proposal}/parties",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "parties" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "audit.unmasks",
+    method: "GET",
+    path: "/programmes/{programme}/audit/unmasks",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "audit" }, { kind: "literal", text: "unmasks" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "grant.overview",
     method: "GET",
     path: "/grants/{proposal}",
@@ -3905,6 +3956,45 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     kind: "object",
     fields: {
       "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "identity.unmask": {
+    kind: "object",
+    fields: {
+      "redirect": { schema: { kind: "string" }, optional: false },
+    },
+  },
+  "identity.parties": {
+    kind: "object",
+    fields: {
+      "programme": { schema: { kind: "id" }, optional: false },
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "parties": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "party": { schema: { kind: "enum", values: ["applicant", "team_member", "guardian", "reviewer", "irc", "staff"] }, optional: false },
+          "subject_type": { schema: { kind: "enum", values: ["binding", "assignment"] }, optional: false },
+          "subject": { schema: { kind: "id" }, optional: false },
+          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "applicant", "applicant_team_member", "guardian", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "financial_signatory", "legal_signatory", "auditor"] }, optional: false },
+          "label": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "audit.unmasks": {
+    kind: "object",
+    fields: {
+      "unmasks": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "party": { schema: { kind: "enum", values: ["applicant", "team_member", "guardian", "reviewer", "irc", "staff"] }, optional: false },
+          "subject_type": { schema: { kind: "enum", values: ["binding", "assignment"] }, optional: false },
+          "subject": { schema: { kind: "id" }, optional: false },
+          "by": { schema: { kind: "id" }, optional: false },
+          "purpose": { schema: { kind: "string" }, optional: false },
+          "at": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
     },
   },
   "pending.list": { kind: "array", items: {

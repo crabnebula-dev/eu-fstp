@@ -130,6 +130,7 @@ The option read: "The FSTP coordinator may unmask any party of their own program
 - `roles-and-sod.md` restates it in the FSTP coordinator row, the reviewer note and the anonymous reviewer handles section.
 - `overview.md` names the unmask ticket as the one release without a negotiation fact.
 - R-NG-01 NOTE, TH-07 and the I-17 and I-21 test plan row restate the exemption.
+- `authentication.md` lists the unmask in its high-risk table (I-78).
 - I-20, I-27, I-83, I-86 and I-89 are unchanged.
 
 ### Backend work

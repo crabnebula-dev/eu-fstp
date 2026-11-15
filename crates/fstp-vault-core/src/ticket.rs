@@ -87,8 +87,10 @@ pub fn check_ticket(
     }
     let route_ok = matches!(
         (route, c.kind),
-        (Route::Release, TicketKind::Release | TicketKind::BankView)
-            | (Route::Write, TicketKind::Write(_))
+        (
+            Route::Release,
+            TicketKind::Release | TicketKind::BankView | TicketKind::Unmask
+        ) | (Route::Write, TicketKind::Write(_))
     );
     if !route_ok {
         return Err(TicketRefusal::WrongKind);

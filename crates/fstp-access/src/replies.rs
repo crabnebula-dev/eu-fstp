@@ -288,6 +288,20 @@ const ROLE_NAMES: &[&str] = &[
     "auditor",
 ];
 
+/// The party kinds of an unmask (ADR-023), as
+/// `fstp_domain::unmask::PartyKind::wire` spells them.
+const PARTY_KINDS: &[&str] = &[
+    "applicant",
+    "team_member",
+    "guardian",
+    "reviewer",
+    "irc",
+    "staff",
+];
+
+/// How an unmask names its subject (ADR-023).
+const SUBJECT_TYPES: &[&str] = &["binding", "assignment"];
+
 /// The roles an invitation of creator step 9 names, as the wire spells
 /// them: the [`invitable`] roles in the order of [`Role::ALL`]. These are
 /// the Drafting and Judging roles and every Operations role but tenant
@@ -807,6 +821,50 @@ pub const REPLIES: &[(&str, Shape)] = &[
     (
         "vault.hardship.verify",
         Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    // ADR-023 (I-17): the coordinator unmask opens the vault origin's
+    // release page. No identity attribute passes through the API.
+    (
+        "identity.unmask",
+        Shape::Object(&[m("redirect", Shape::String)]),
+    ),
+    // ADR-023: the parties of one proposal and the staff of its
+    // programme, by id, party kind and role. The label is the display
+    // handle of a reviewer or IRC assignee, and empty otherwise. No
+    // account and no identity attribute (I-17, I-86).
+    (
+        "identity.parties",
+        Shape::Object(&[
+            m("programme", Shape::Id),
+            m("proposal", Shape::Id),
+            m(
+                "parties",
+                Shape::Array(&Shape::Object(&[
+                    m("party", Shape::Enum(PARTY_KINDS)),
+                    m("subject_type", Shape::Enum(SUBJECT_TYPES)),
+                    m("subject", Shape::Id),
+                    m("role", Shape::Enum(ROLE_NAMES)),
+                    m("label", Shape::String),
+                ])),
+            ),
+        ]),
+    ),
+    // ADR-023 reading 11 (R-AU-01): the unmask records of a programme,
+    // oldest first. `by` is the coordinator's account id, `at` the
+    // instant in UTC microseconds. No identity attribute.
+    (
+        "audit.unmasks",
+        Shape::Object(&[m(
+            "unmasks",
+            Shape::Array(&Shape::Object(&[
+                m("party", Shape::Enum(PARTY_KINDS)),
+                m("subject_type", Shape::Enum(SUBJECT_TYPES)),
+                m("subject", Shape::Id),
+                m("by", Shape::Id),
+                m("purpose", Shape::String),
+                m("at", Shape::Id),
+            ])),
+        )]),
     ),
     // I-85: the caller's own pending actions.
     (
