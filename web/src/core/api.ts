@@ -376,6 +376,27 @@ function stringValues(v: unknown): Readonly<Record<string, string>> | null {
  *   a refusal. A response in the refusal shape gives `refused`.
  * - Every other response gives `failed` with reason `invalid_response`.
  */
+/**
+ * What the shell does when a read is refused (SA-09 rule 7): it asks the
+ * page gate whether the page itself is still open, and answers true when
+ * it showed sign-in or "Page not found" instead. The read then never
+ * returns, so the page never shows the refusal code. Null outside the
+ * shell, such as in a test, where every refusal returns as it is.
+ */
+export type ReadRefusalGuard = (outcome: ApiOutcome) => Promise<boolean>;
+
+let readGuard: ReadRefusalGuard | null = null;
+
+/** Sets the guard of every refused read of every client ([`ReadRefusalGuard`]). */
+export function setReadRefusalGuard(g: ReadRefusalGuard | null): void {
+  readGuard = g;
+}
+
+/** A promise that never settles: the outcome of a read whose page the guard closed. */
+function never(): Promise<ApiOutcome> {
+  return new Promise<ApiOutcome>(() => undefined);
+}
+
 export function createApi(opts: { readonly fetch: FetchLike }): ApiClient {
   const fetchFn = opts.fetch;
   if (typeof fetchFn !== "function") {
@@ -388,6 +409,29 @@ export function createApi(opts: { readonly fetch: FetchLike }): ApiClient {
       body: unknown,
       validate: (v: unknown) => boolean,
     ): Promise<ApiOutcome> {
+      const outcome = await callOnce(op, params, body, validate);
+      if (outcome.kind === "refused" && readGuard !== null && typeof op === "object" && op !== null && op.method === "GET") {
+        let closed = false;
+        try {
+          closed = await readGuard(outcome);
+        } catch {
+          closed = false;
+        }
+        if (closed) {
+          return never();
+        }
+      }
+      return outcome;
+    },
+  });
+
+  async function callOnce(
+    op: OperationRef,
+    params: Readonly<Record<string, string>>,
+    body: unknown,
+    validate: (v: unknown) => boolean,
+  ): Promise<ApiOutcome> {
+    {
       if (typeof op !== "object" || op === null || !METHODS.has(op.method) || typeof validate !== "function") {
         return FAILED_REQUEST;
       }
@@ -450,6 +494,6 @@ export function createApi(opts: { readonly fetch: FetchLike }): ApiClient {
         return stepUpAnswer(parsed.value) ?? refusal(parsed.value) ?? FAILED_RESPONSE;
       }
       return FAILED_RESPONSE;
-    },
-  });
+    }
+  }
 }

@@ -45,7 +45,9 @@
 //!   tenant's data protection override or else the platform default
 //!   (`fstp_tenant::GuideNotice`). An environment with no text store, or
 //!   a programme with neither a complete draft nor a set spec, supplies
-//!   none, so its publication carries no Guide, as before.
+//!   the domain test kit's synthetic Guide when it is set to
+//!   ([`CellEnvironment::with_synthetic_guide`], as the fake cells are),
+//!   and none otherwise, so the engine refuses the publication (I-52).
 //! - The proposer is the fixture-driven `fstp_import::FakeProposer` over
 //!   the entries of [`annex_entries`] whose evidence the document holds.
 //!   The proposal ids derive from the document id. The blob holds the
@@ -118,6 +120,10 @@ pub struct CellEnvironment {
     /// creator draft reads, or `None`, so such a publication carries no Guide
     /// ([`CellEnvironment::set_guide_spec`]).
     guide_spec: Option<ProgrammeSpec>,
+    /// Whether a publication with no Guide of the cell's own takes the
+    /// domain test kit's synthetic Guide, as the generators' publications
+    /// do (I-52, [`CellEnvironment::with_synthetic_guide`]).
+    synthetic_guide: bool,
 }
 
 impl CellEnvironment {
@@ -145,6 +151,7 @@ impl CellEnvironment {
             dry: false,
             texts: None,
             guide_spec: None,
+            synthetic_guide: false,
         }
     }
 
@@ -169,6 +176,7 @@ impl CellEnvironment {
             dry: false,
             texts: None,
             guide_spec: None,
+            synthetic_guide: false,
         }
     }
 
@@ -198,6 +206,18 @@ impl CellEnvironment {
     /// `texts`, so a publication carries its Guide (R-GA-01, I-52).
     pub fn with_texts(mut self, texts: FakeTexts) -> CellEnvironment {
         self.texts = Some(texts);
+        self
+    }
+
+    /// The same environment giving a publication that has no Guide of the
+    /// cell's own (no text store, or neither a complete draft nor a set
+    /// spec, or an unknown profile) the synthetic Guide of the domain test
+    /// kit (`fstp_domain_testkit::guide::SyntheticGuides`), digested with
+    /// SHA-256. The engine fold refuses a publication without a Guide
+    /// (I-52, D2e), so a test world that publishes the generators' calls
+    /// sets it. Synthetic, never legal text.
+    pub fn with_synthetic_guide(mut self) -> CellEnvironment {
+        self.synthetic_guide = true;
         self
     }
 
@@ -392,10 +412,29 @@ impl CreatorEnvironment for CellEnvironment {
     }
 
     /// The Guide facts of `call` at its publication (R-GA-01, I-52,
-    /// module documentation). `None` without a text store, or for a
-    /// programme with neither a complete creator draft nor a Guide spec, so such a
-    /// publication carries no Guide, as before.
+    /// module documentation). Without a text store, or for a programme
+    /// with neither a complete creator draft nor a Guide spec, the cell
+    /// has none: the synthetic Guide stands in when the environment sets
+    /// it ([`CellEnvironment::with_synthetic_guide`]), and otherwise the
+    /// engine refuses the publication with I-52.
     fn guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
+        self.cell_guide_facts(state, call).or_else(|| {
+            if !self.synthetic_guide {
+                return None;
+            }
+            fstp_domain_testkit::guide::SyntheticGuides
+                .guide_facts(state, call)
+                .map(|f| GuideFacts {
+                    digest: fstp_crypto::sha256,
+                    ..f
+                })
+        })
+    }
+}
+
+impl CellEnvironment {
+    /// The Guide facts of the cell itself (module documentation).
+    fn cell_guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
         let texts = self.texts.as_ref()?;
         let programme = fstp_domain::programme::call(&state.core, call)?.programme();
         let head = fstp_domain::policy::head(&state.core, programme)?;

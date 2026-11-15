@@ -56,6 +56,8 @@ mod demo_signin;
 mod grantdemo;
 mod maildemo;
 mod onboarding;
+#[cfg(test)]
+mod pagegate;
 mod people;
 mod precheck;
 mod pump;

@@ -32,6 +32,19 @@ async function passkeyLogin(): Promise<void> {
   go(landingAfterSignIn(location.search, signedInHome()));
 }
 
+/**
+ * Whether the query `search` asks for a passkey sign-in: the page
+ * gate of SA-09 sends a session too weak for a page here with
+ * `method=passkey` (I-77).
+ */
+export function passkeyAsked(search: string): boolean {
+  try {
+    return new URLSearchParams(search).get('method') === 'passkey';
+  } catch {
+    return false;
+  }
+}
+
 /** Mounts the login page. */
 export function mount(): void {
   const { main, alert } = frame('login.title', 'login-error');
@@ -78,18 +91,26 @@ export function mount(): void {
     })();
   });
 
+  // SA-09 rule 4 (I-77): the page asked for needs a passkey sign-in, so
+  // the page offers no email link.
+  const passkeyOnly = passkeyAsked(location.search);
   main.append(
     h('section', { class: 'card', 'aria-labelledby': 'passkey-heading' }, [
       h('h2', { id: 'passkey-heading' }, [t('login.passkey.heading')]),
+      ...(passkeyOnly ? [h('p', { id: 'passkey-needed' }, [t('login.passkey.needed')])] : []),
       h('p', {}, [t('login.passkey.intro')]),
       passkey,
     ]),
-    h('section', { class: 'card', 'aria-labelledby': 'magic-heading' }, [
-      h('h2', { id: 'magic-heading' }, [t('login.magic.heading')]),
-      h('p', {}, [t('login.magic.intro')]),
-      form,
-      status,
-    ]),
+    ...(passkeyOnly
+      ? []
+      : [
+          h('section', { class: 'card', 'aria-labelledby': 'magic-heading' }, [
+            h('h2', { id: 'magic-heading' }, [t('login.magic.heading')]),
+            h('p', {}, [t('login.magic.intro')]),
+            form,
+            status,
+          ]),
+        ]),
     h('nav', { 'aria-label': t('login.more') }, [
       h('ul', { class: 'links' }, [
         h('li', {}, [h('a', { href: PATHS.signup }, [t('login.signup')])]),

@@ -199,7 +199,7 @@ function mountProfile(): void {
 }
 
 /** The site pages, each with its route. */
-const PAGES: readonly { readonly name: string; readonly pattern: string; readonly mount: () => void }[] = [
+export const PAGES: readonly { readonly name: string; readonly pattern: string; readonly mount: () => void }[] = [
   { name: "site.profile", pattern: "/app/me", mount: mountProfile },
 ];
 

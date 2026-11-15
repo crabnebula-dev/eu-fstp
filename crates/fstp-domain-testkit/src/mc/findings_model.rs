@@ -65,6 +65,7 @@ use crate::r#gen::review::{
     after, plan_of, read, review_truth, run_on, scenario_from, submit, tag, withdraw,
 };
 use crate::r#gen::roster::{Backend, SodSetup, Step, T0, call, publish};
+use crate::guide::GENERATOR_DECIDER;
 use crate::harness::prop::{ledger_step, two_way_exec};
 use crate::mc::life_model::{
     LifeAction, LifeConfig, LifeModel, LifeSetup, LifeState, LifeWorld, Phases, Start, T_EVAL, Who,
@@ -770,6 +771,9 @@ pub fn engine_core<D: Decider>(
     let mut out = Vec::with_capacity(batch.len());
     for r in batch {
         match r {
+            // The synthetic Guide of a publication is an M4 record that
+            // twin A's M2 reference never writes (I-52, `crate::guide`).
+            fstp_engine::Record::Core(fstp_domain::Record::GuidePublished { .. }) => {}
             fstp_engine::Record::Core(c) => out.push(c),
             fstp_engine::Record::Finding(f) => {
                 return Err(format!(
@@ -847,7 +851,7 @@ impl Decider for FindingReadingDecider {
         cmd: &fstp_engine::Command,
         ctx: &Ctx,
     ) -> Result<Vec<fstp_domain::oracle::Query>, Refusal> {
-        DomainDecider.queries(state, cmd, ctx)
+        GENERATOR_DECIDER.queries(state, cmd, ctx)
     }
 
     fn decide(
@@ -862,7 +866,7 @@ impl Decider for FindingReadingDecider {
         {
             return Err(Refusal::new(RuleRef::I10, RefusalReason::GuardFailed));
         }
-        DomainDecider.decide(state, cmd, ctx, answers)
+        GENERATOR_DECIDER.decide(state, cmd, ctx, answers)
     }
 }
 
@@ -1061,7 +1065,7 @@ impl TwinMachine {
         if self.reading {
             engine_exec(&FindingReadingDecider, &mut sut.b, store, floor, step)
         } else {
-            engine_exec(&DomainDecider, &mut sut.b, store, floor, step)
+            engine_exec(&GENERATOR_DECIDER, &mut sut.b, store, floor, step)
         }
     }
 
@@ -1071,7 +1075,7 @@ impl TwinMachine {
         if self.reading {
             engine_sync(&FindingReadingDecider, &mut sut.b, store, floor)
         } else {
-            engine_sync(&DomainDecider, &mut sut.b, store, floor)
+            engine_sync(&GENERATOR_DECIDER, &mut sut.b, store, floor)
         }
     }
 }

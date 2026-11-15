@@ -54,6 +54,32 @@ pub struct CreatorFacts {
     pub ports: PortPresence,
     /// The funder profile of the draft, from the cell's profile source.
     pub profile: Option<fstp_guide::FunderProfile>,
+    /// The Guide inputs of a call's publication (I-52, R-GA-01). `None`
+    /// refuses the publication with I-52, since the engine fold refuses a
+    /// `CallPublished` without its `GuidePublished` (D2e).
+    pub guide: Option<GuideInputs>,
+}
+
+/// What the cell's shell supplies for the Guide of a call at its
+/// publication (I-52, R-GA-01, M4 design section 3.10). The cell adds the
+/// call's identifier and SHA-256 through `fstp-crypto`
+/// (`fstp_engine::compose::GuideFacts`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuideInputs {
+    /// The parsed Guide template of the programme's funder profile.
+    pub template: fstp_guide::Template,
+    /// The programme's compiled spec. `None` compiles the creator draft.
+    pub compiled: Option<fstp_programme::Compiled>,
+    /// The `https:` address applicants create an account on.
+    pub platform_url: String,
+    /// The data protection summary.
+    pub data_protection_summary: String,
+    /// The privacy statement address.
+    pub privacy_statement_url: String,
+    /// The stored texts the Guide may read, by text id.
+    pub texts: std::collections::BTreeMap<fstp_domain::id::TextId, String>,
+    /// Whether the cell has a pre-check provider (Q38).
+    pub precheck_available: bool,
 }
 
 /// The creator environment of one decision (module documentation).
@@ -119,6 +145,27 @@ impl CreatorEnvironment for CellEnvironment<'_> {
             theme: Theme::m4_default(),
             profile: f.profile.clone(),
         }
+    }
+
+    /// The Guide facts of the route's [`GuideInputs`], with the call's
+    /// identifier and SHA-256 (I-52). `None` without them.
+    fn guide_facts(
+        &self,
+        _state: &EngineState,
+        call: fstp_domain::id::CallId,
+    ) -> Option<fstp_engine::compose::GuideFacts> {
+        let g = self.facts?.guide.as_ref()?;
+        Some(fstp_engine::compose::GuideFacts {
+            template: g.template.clone(),
+            compiled: g.compiled.clone(),
+            identifier: call.raw().to_string(),
+            platform_url: g.platform_url.clone(),
+            data_protection_summary: g.data_protection_summary.clone(),
+            privacy_statement_url: g.privacy_statement_url.clone(),
+            texts: g.texts.clone(),
+            digest: fstp_crypto::sha256,
+            precheck_available: g.precheck_available,
+        })
     }
 }
 

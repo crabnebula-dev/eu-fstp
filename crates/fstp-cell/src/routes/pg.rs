@@ -352,6 +352,14 @@ impl<R: Runtime> Backend for PgBackend<R> {
         self.shell.facts(state, cmd)
     }
 
+    fn guide_inputs(
+        &self,
+        state: &CellState,
+        call: fstp_domain::id::CallId,
+    ) -> Option<fstp_cell_core::creator::GuideInputs> {
+        self.shell.guide(state, call)
+    }
+
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send {
         std::future::ready(Ok(self.engine.state()))
     }

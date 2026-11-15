@@ -146,6 +146,12 @@ const HARNESS: AccountId = AccountId::from_raw(u128::MAX);
 const DRAFT_VERSION_BASE: u128 = 990_000;
 /// The builder's binding on a setup programme.
 const BUILDER_BINDING_BASE: u128 = 990_100;
+
+/// The builder's binding on the setup programme `p`. Its end closes the
+/// cell's set-up of `p`.
+pub fn builder_binding(p: fstp_domain::id::ProgrammeId) -> BindingId {
+    BindingId::from_raw(BUILDER_BINDING_BASE.saturating_add(p.raw()))
+}
 /// The activation decision of a setup programme.
 const ACTIVATION_BASE: u128 = 990_200;
 
@@ -308,6 +314,12 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
             let fstp_cell_core::CellRecord::Engine(fstp_engine::Record::Core(r)) = &e.record else {
                 continue;
             };
+            // The Guide of a publication is an M4 record, which the M2
+            // engine's core records leave out too (I-52,
+            // `fstp_domain_testkit::r#gen::policy::core_records`).
+            if matches!(r, Record::GuidePublished { .. }) {
+                continue;
+            }
             match batches.last_mut() {
                 Some(b) if last == Some(e.command) => b.push(r.clone()),
                 _ => batches.push(vec![r.clone()]),
@@ -692,7 +704,7 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
                 name: None,
             }),
         )?;
-        let binding = BindingId::from_raw(BUILDER_BINDING_BASE.saturating_add(p.raw()));
+        let binding = builder_binding(p);
         let now = self.client.cell().clock().now();
         self.must(
             ADMIN,
@@ -1720,8 +1732,14 @@ fn mask_between(text: &str, open: &str, close: &str) -> String {
     out
 }
 
-/// Compares what the engine and the cell appended for one step.
-fn compare(context: &str, engine: &[Record], cell: &[Record]) -> Result<(), String> {
+/// Compares what the engine and the cell appended for one step, with
+/// the vault answers split off ([`split_outcomes`]). `seam_world` uses it
+/// for its scenario after set-up.
+///
+/// # Errors
+///
+/// The masked records of both sides when they differ.
+pub fn compare(context: &str, engine: &[Record], cell: &[Record]) -> Result<(), String> {
     let (want, want_asked) = split_outcomes(&masked(engine));
     let (got, mut got_asked) = split_outcomes(&masked(cell));
     let asked_all = want_asked

@@ -15,11 +15,10 @@
 //! for a retry. They are written here, not read from the engine, so they
 //! are an independent reference.
 //!
-//! Gap (for the lead): the M2 generator equivalence of design section
-//! 14.6 needs the admission of M2 steps and the ground-truth vault of
-//! `fstp_celltest::mc::driver_model`. `fstp-celltest` depends on
-//! `fstp-cell`, so these tests cannot use it, and the equivalence stays
-//! behind [`m2_generator_ledgers`].
+//! The M2 generator equivalence of design section 14.6 through
+//! `CellEngine` lives in `fstp-celltest/tests/seam_cell_engine.rs`, since
+//! the admission of M2 steps and the ground-truth vault live in
+//! `fstp_celltest::mc::driver_model`, which these tests cannot use.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -42,12 +41,6 @@ use fstp_ledger::{MemStore, Seq};
 use fstp_prop::{Config, prop_assert_eq};
 use fstp_rt::tokio::TokioRuntime;
 use fstp_rt::{Runtime, Shutdown};
-
-/// The seam of the M2 generator equivalence (design section 14.6).
-const M2_EQUIVALENCE_SEAM: &str = "the M2 generators reach fstp-cell tests, but their admission of M2 \
-     steps and the ground-truth vault live in fstp_celltest::mc::driver_model, which fstp-cell \
-     tests cannot depend on (fstp-celltest depends on fstp-cell); the equivalence through \
-     CellEngine belongs in fstp-celltest (design section 14.6; lane W3a) (NotImplemented)";
 
 /// How the scripted vault answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,17 +278,6 @@ fn run_engine_with_restart(
     })
 }
 
-/// The canonical record bytes of a ledger, in sequence order.
-type Ledger = Vec<Vec<u8>>;
-
-/// Seam: the M2 generators of `fstp-domain-testkit` run through
-/// `fstp_engine::Engine<MemStore, SyntheticVault>` and through `CellEngine`
-/// over `MemStore` and the same synthetic vault. Returns the canonical
-/// record bytes of each ledger, the engine's first.
-fn m2_generator_ledgers() -> Result<(Ledger, Ledger), &'static str> {
-    Err(M2_EQUIVALENCE_SEAM)
-}
-
 /// A key operation as the erasure runner records it: a canonical JSON
 /// object (design section 3.5, ADR-004 Reconciliation).
 fn key_op(n: u32) -> Vec<u8> {
@@ -468,20 +450,6 @@ fn i23_cell_engine_restart_replays_the_store_and_keeps_retries_duplicates() {
     assert!(
         got == vec![(2, Some(1)), (3, None)] && seqs == vec![1, 2, 3],
         "results {got:?}, ledger {seqs:?}"
-    );
-}
-
-/// Design sections 5.2 and 14.6, I-23: the M2 generators through
-/// `CellEngine` over the in-memory store give the same ledger, byte for
-/// byte, as through the M2 reference engine.
-#[test]
-fn seam_cell_engine_matches_reference_engine_over_mem_store() {
-    let (engine, reference) = m2_generator_ledgers().unwrap_or_else(|e| panic!("{e}"));
-    assert!(
-        !reference.is_empty() && engine == reference,
-        "the cell engine's ledger differs from the M2 engine's ({} against {} records)",
-        engine.len(),
-        reference.len()
     );
 }
 

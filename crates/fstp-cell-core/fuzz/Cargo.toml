@@ -13,6 +13,10 @@ fstp-cell-core = { path = ".." }
 fstp-domain = { path = "../../fstp-domain" }
 fstp-ledger = { path = "../../fstp-ledger" }
 fstp-auth = { path = "../../fstp-auth" }
+# The synthetic Guide of a publication frame (`decide_frames::synthetic_guide`).
+fstp-engine = { path = "../../fstp-engine" }
+fstp-guide = { path = "../../fstp-guide" }
+fstp-programme = { path = "../../fstp-programme" }
 
 [[bin]]
 name = "cell_record_decode"

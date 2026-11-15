@@ -268,7 +268,8 @@ impl FakePorts {
             tenant.admin_set(),
             vault_audit.clone(),
         )
-        .with_texts(texts.clone());
+        .with_texts(texts.clone())
+        .with_synthetic_guide();
         let imports = shell::ImportShell::new(blobs.clone(), texts.clone());
         let engine = FakeEngine::open_with(world, vault.oracle(), env, Some(imports))
             .map_err(|_| NotImplemented::new("fstp_api_testkit::fake::FakePorts::new: engine"))?;

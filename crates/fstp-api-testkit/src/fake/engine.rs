@@ -110,7 +110,8 @@ impl FakeEngine {
     /// prober, no recorder of vault answers and no proposer
     /// (`CellEnvironment::detached`).
     pub fn open(world: &World, oracle: CellOracle) -> Result<FakeEngine, fstp_engine::OpenError> {
-        let env = CellEnvironment::detached(oracle.with_fresh_log(), world.admins.clone());
+        let env = CellEnvironment::detached(oracle.with_fresh_log(), world.admins.clone())
+            .with_synthetic_guide();
         FakeEngine::open_with(world, oracle, env, None)
     }
 

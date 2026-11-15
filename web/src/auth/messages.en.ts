@@ -32,6 +32,7 @@ const MESSAGES = {
   'login.passkey.heading': 'Sign in with your passkey',
   'login.passkey.intro': 'Your device asks for its lock, such as a fingerprint or a PIN.',
   'login.passkey': 'Sign in with a passkey',
+  'login.passkey.needed': 'The page you asked for needs a sign-in with a passkey. Sign in with your passkey to open it.',
   'login.magic.heading': 'Sign in with an email link',
   'login.magic.intro':
     'Applicant accounts can ask for a sign-in link when the programme allows it. Staff accounts sign in with a passkey.',

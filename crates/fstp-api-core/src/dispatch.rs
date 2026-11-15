@@ -146,6 +146,8 @@ mod mailbox;
 /// `creator.rs`, as the lane's file plan names it.
 #[path = "people.rs"]
 pub(crate) mod people;
+// SA-09: the page gate of every `/app/` page.
+pub(crate) mod page;
 /// The pre-check of a draft and the findings status of a call (M7).
 mod precheck;
 /// The public pages, the feed and the public tools (lane W2c).
@@ -426,7 +428,7 @@ async fn resolve<P: Seams>(
     ports: &P,
     cred: &Credential,
     head: &RequestHead,
-    op: &Op,
+    from_tool: bool,
     state: &EngineState,
     now: Timestamp,
 ) -> Result<Caller, ApiError> {
@@ -441,9 +443,9 @@ async fn resolve<P: Seams>(
         token: None,
     };
     match cred {
-        Credential::None => Ok(anonymous(op.from_tool)),
+        Credential::None => Ok(anonymous(from_tool)),
         Credential::SessionCookie(_) => {
-            if op.from_tool {
+            if from_tool {
                 // A tool call carries a bearer token, never a cookie.
                 return Err(ApiError::bad_request("ADR-014"));
             }
@@ -546,6 +548,9 @@ struct Call<'a, P: Seams> {
     digest: ActionDigest,
     now: Timestamp,
     state: std::sync::Arc<EngineState>,
+    /// SA-09: a call the page gate builds to judge a read without
+    /// running it. It writes no audit entry, since nothing is read.
+    quiet: bool,
 }
 
 impl<P: Seams> Call<'_, P> {
@@ -555,6 +560,9 @@ impl<P: Seams> Call<'_, P> {
 
     /// Records the audit entry of a call that appends nothing.
     fn audit(&self, outcome: Outcome, step_up: Option<StepUpRef>) -> Result<(), PortError> {
+        if self.quiet {
+            return Ok(());
+        }
         self.ports.record_audit(AuditEntry {
             actor: self.account(),
             via: self.caller.via(),
@@ -702,7 +710,7 @@ pub(crate) async fn run<P: Seams>(
     };
     // Step 0. A refusal here is audited with no actor, on the channel the
     // call arrived through.
-    let caller = match resolve(ports, &cred, head, &op, &state, now).await {
+    let caller = match resolve(ports, &cred, head, op.from_tool, &state, now).await {
         Ok(c) => c,
         Err(e) => {
             let via = if op.from_tool { Via::Mcp } else { Via::Web };
@@ -730,6 +738,7 @@ pub(crate) async fn run<P: Seams>(
         digest,
         now,
         state,
+        quiet: false,
     };
     let result = steps(&call, &op).await;
     // R-MC-03: a call through an agent client joins the caller's
