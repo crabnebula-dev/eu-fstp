@@ -47,9 +47,9 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | `.lanes/finish` | `m3/finish-gaps` | Created, not started: `i24_system_tasks` seed, wizard name at stage 1 and approver count, cell erasure gaps, CellBackup scan, devstack specs |
 | (merged, pushed dc606d38) | `m4/page-gate` | SA-09 page gate |
 | `.lanes/i66` (running) | `m4/i66-gaps` | I-66/I-67 generator gaps per m4-design last section |
-| `.lanes/retention` (running) | `m5/retention` | P-41 reminder from the last payment confirmation, mailbox message, `/app/admin/erasures` page; P-70 in SetLoginPolicy; level 2 key records |
+| (merged, pushed a77c0c65) | `m5/retention` | P-41 reminder from the last payment confirmation, mailbox message, `/app/admin/erasures` page; P-70 in SetLoginPolicy; level 2 key records |
 | `.lanes/eraseprod` (running) | `m3/erase-prod` | Witness revocation record, batch erasure approval, keyd sign-key slots, edge route table polling, S3 list and delete |
-| (queued) | `m9/answers` | Milestone publicity opt-in, P-57 periods, tenant copies of funder profiles, programme footer in /app, companion key rotation reminder, profile read for all programme staff |
+| `.lanes/m9` (running) | `m9/answers` | Milestone publicity opt-in, P-57 periods, tenant copies of funder profiles, programme footer in /app, companion key rotation reminder, profile read for all programme staff |
 | (queued) | `m4/acme` | In-house fuzzed ACME client (ADR-009 Q30) |
 | (queued) | `m3/devstack-scenarios` | `/test/scenario/negotiation` and an active programme for the last 9 devstack specs |
 
@@ -67,6 +67,7 @@ Open points from the merged lanes: `Workspaces` and the R-NG-06 acknowledgement 
 
 ## Open questions for Daniel (not blocking)
 
+- P-41 (lane m5/retention, interim): no email at retention end, mailbox only; a grant with no PAID request gets no retention start; the erasures page erases only grants whose retention ended (TODO(legal): which records P-41 covers); the cell gate does not class `EraseTexts` as high-risk yet (step-up enforced in the API core).
 - ADR-021: the admin's own set and the fail-closed port default (not asked yet).
 - ADR-023: legal basis and retention of the purpose text (TODO(legal)); whether another FSTP coordinator of the programme counts as unmaskable staff (interim: yes).
 - ADR-023 notice: Daniel chose no notice; the GDPR transparency TODO(legal) stays.
