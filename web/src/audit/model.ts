@@ -9,6 +9,7 @@
 // - `audit.vault_outcomes` gives the vault answers the programme's
 //   decisions used, by digest and answer bit only (overview NOTE 5).
 
+import type { MyRoles } from "../home/model.js";
 import { isBool, isId, isText, list, nullable, oneOf, record, type Guard } from "../reviewer/kit.js";
 
 /** The side of a ledger entry. */
@@ -171,4 +172,21 @@ export function kindsOf(rows: readonly AuditRow[]): readonly string[] {
 /** The rows of `kind`, or every row for the empty kind, in the order given. */
 export function filterRows(rows: readonly AuditRow[], kind: string): readonly AuditRow[] {
   return kind === "" ? rows : rows.filter((r) => r.kind === kind);
+}
+
+/**
+ * Whether the page asks for the unmask records of `programme`: only a
+ * caller the cell lets read them, the programme's auditor or a tenant
+ * admin (`audit.unmasks`, ADR-023 reading 11). The FSTP coordinator
+ * reads the entries (SA-08) but not the unmask records, and a refused
+ * read would show as an error in the browser (ADR-014). Unknown roles
+ * ask, and the cell decides.
+ */
+export function readsUnmasks(roles: MyRoles | null, programme: string): boolean {
+  if (roles === null) {
+    return true;
+  }
+  return (
+    roles.tenantAdmin || roles.roles.some((b) => b.role === "auditor" && b.programme === programme && b.proposal === null)
+  );
 }

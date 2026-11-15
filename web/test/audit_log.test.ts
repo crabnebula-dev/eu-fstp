@@ -6,7 +6,16 @@
 // too. The homes of all three link to the page.
 
 import { AUDIT_PAGES } from "../src/audit/pages.js";
-import { filterRows, isAuditLog, isOutcomes, isUnmasks, kindsOf, shortHash, utcMinute } from "../src/audit/model.js";
+import {
+  filterRows,
+  isAuditLog,
+  isOutcomes,
+  isUnmasks,
+  kindsOf,
+  readsUnmasks,
+  shortHash,
+  utcMinute,
+} from "../src/audit/model.js";
 import type { ApiClient, ApiOutcome, OperationRef } from "../src/core/api.js";
 import { VALIDATORS } from "../src/gen/api.js";
 import { readMyRoles, workOf } from "../src/home/model.js";
@@ -346,4 +355,20 @@ test("r_au_01_adr023_unmask_table_shows_the_conflict_flag", async () => {
   const shown = text();
   assert(shown.includes("Conflict on the proposal"), "the column heading");
   assert(shown.includes("Yes, a conflict was recorded"), "the flagged row");
+});
+
+/**
+ * R-AU-01, ADR-023 reading 11, ADR-014: the page asks for the unmask
+ * records only when the caller's roles may read them: the programme's
+ * auditor and the tenant admins. The coordinator reads the entries
+ * (SA-08), so the page never sends it a read the cell refuses, which the
+ * browser would log as an error. With unknown roles the page asks, and
+ * the cell decides.
+ */
+test("r_au_01_adr023_unmasks_read_only_by_their_readers", () => {
+  eq(readsUnmasks(rolesOf(true, []), "1"), true, "a tenant admin");
+  eq(readsUnmasks(rolesOf(false, [{ role: "auditor", programme: "1", calls: [] }]), "1"), true, "the auditor");
+  eq(readsUnmasks(rolesOf(false, [{ role: "auditor", programme: "2", calls: [] }]), "1"), false, "another programme's auditor");
+  eq(readsUnmasks(rolesOf(false, [{ role: "fstp_coordinator", programme: "1", calls: ["1"] }]), "1"), false, "the coordinator");
+  eq(readsUnmasks(null, "1"), true, "unknown roles");
 });
