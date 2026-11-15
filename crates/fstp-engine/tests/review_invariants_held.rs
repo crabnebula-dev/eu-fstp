@@ -233,6 +233,7 @@ fn open(e: &mut E) -> Result<Seq, ExecError> {
             programme: P,
             version: V1,
             profile: blank_policy().frozen.p53,
+            name: None,
         }),
         by(TA, 1),
     )

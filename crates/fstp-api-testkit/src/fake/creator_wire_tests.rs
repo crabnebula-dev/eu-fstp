@@ -472,16 +472,24 @@ fn r_pg_01_creator_and_import_routes_decode_to_their_operations() {
     }
 }
 
-/// I-84, design section 3.7 step 1: `creator.open_draft` takes no body
-/// member. The server draws the programme and the policy version, so a
-/// client-chosen id is refused as a bad request, as is an unknown member.
+/// I-84, design section 3.7 step 1: `creator.open_draft` takes one
+/// optional body member, the programme name of wizard stage 1 (design
+/// doc 11 section 15). The server draws the programme and the policy
+/// version, so a client-chosen id is refused as a bad request, as are an
+/// unknown member and a name that is not a string or is blank.
 #[test]
 fn i84_open_draft_decoder_refuses_client_ids_and_unknown_members() {
     assert_eq!(decoded(&rq::open_draft()), Ok("creator.open_draft"));
+    assert_eq!(
+        decoded(&rq::open_draft_named("Synthetic Open Calls")),
+        Ok("creator.open_draft")
+    );
     for (json, what) in [
         (r#"{"programme":"9"}"#, "a client-chosen programme"),
         (r#"{"version":"3"}"#, "a client-chosen policy version"),
         (r#"{"x":1}"#, "an unknown member"),
+        (r#"{"name":5}"#, "a name that is not a string"),
+        (r#"{"name":"  "}"#, "a blank name"),
     ] {
         let r = rq::raw(Method::Post, "/programmes", json);
         assert!(bad_request(&r), "{what}: got {:?}", decoded(&r));
@@ -743,6 +751,7 @@ fn i85_engine_refuses_high_risk_creator_commands_via_mcp() {
             programme: ProgrammeId::from_raw(8_501),
             version: PolicyVersionId::from_raw(8_501),
             profile,
+            name: None,
         },
         CreatorCommand::ApproveActivation {
             programme: P1,
@@ -2118,4 +2127,57 @@ fn adr007_restarted_cell_reads_import_proposals_and_invitations_from_the_stores(
     )
     .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(again, invitations);
+}
+
+/// R-PG-01, design doc 11 section 15 (stage 1 names the programme): a
+/// tenant admin who opens a draft with a name appends one `OpenDraft`
+/// whose name is a manual edit of the programme name, with the digest of
+/// its canonical text. The draft holds the name once the entry is in.
+#[test]
+fn r_pg_01_open_draft_with_a_name_saves_the_programme_name() {
+    let c = cell();
+    let admin = login(&c, ADMIN);
+    let first = c.web(&admin, rq::open_draft_named("Synthetic Open Calls"));
+    let Ok(OpResult::StepUpRequired(ch)) = &first else {
+        panic!("creator.open_draft without a proof gave {first:?}");
+    };
+    c.ports
+        .step_up
+        .approve(admin.session, ch.action)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let _ = done(
+        c.web(&admin, rq::open_draft_named("Synthetic Open Calls")),
+        "creator.open_draft",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let (cmd, _, _) = last_creator(&c).unwrap_or_else(|e| panic!("{e}"));
+    let CreatorCommand::OpenDraft {
+        programme,
+        name: Some(name),
+        ..
+    } = cmd
+    else {
+        panic!("the engine port appended {cmd:?}");
+    };
+    assert_eq!(name.field, fstp_programme::FieldId::ProgrammeName);
+    assert_eq!(name.provenance, fstp_creator::Provenance::Manual);
+    assert!(
+        c.ports
+            .engine
+            .state()
+            .creator
+            .is_held(programme, fstp_programme::FieldId::ProgrammeName)
+    );
+}
+
+/// I-67, design doc 11 section 15 (the approver notice): `creator.get_draft`
+/// counts the tenant admins who are not builders of the draft, so the
+/// wizard can say how many may approve. It names no account (R-CF-03). A1
+/// opened the draft, so of the two tenant admins one remains.
+#[test]
+fn i67_get_draft_counts_the_tenant_admins_outside_the_builders() {
+    let c = cell();
+    let d = opened(&c).unwrap_or_else(|e| panic!("{e}"));
+    let v = draft_of(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(v.get("approvers"), Some(&Value::from(1u32)), "{v:?}");
 }

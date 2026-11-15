@@ -81,6 +81,103 @@ fn r_pg_02_d1_open_draft_composes_create_programme_with_the_profile_default() {
     assert!(draft.builders().contains(&TA));
 }
 
+/// R-PG-01, design doc 11 section 15 (stage 1 names the programme):
+/// `OpenDraft` with a name records `DraftOpened`, then one `FieldsSaved`
+/// of `ProgrammeName` by the opener with manual provenance, in the same
+/// entry. The core command stays the profile-default `CreateProgramme`.
+/// The draft holds the name's digest at revision 1.
+#[test]
+fn r_pg_01_open_draft_with_a_name_saves_the_programme_name_in_the_same_entry() {
+    let mut cell = Cell::genesis();
+    let name = edit(
+        decode(FieldId::ProgrammeName, "\"Synthetic Open Calls\""),
+        9,
+    );
+    let cmd = match open_draft_command() {
+        CreatorCommand::OpenDraft {
+            programme,
+            version,
+            profile,
+            ..
+        } => CreatorCommand::OpenDraft {
+            programme,
+            version,
+            profile,
+            name: Some(name.clone()),
+        },
+        other => panic!("{other:?}"),
+    };
+    let d = decision(&mut cell, &cmd, TA);
+    assert_eq!(
+        d.records,
+        vec![
+            CreatorRecord::DraftOpened {
+                programme: P,
+                profile: blank_policy().frozen.p53,
+                by: TA,
+            },
+            CreatorRecord::FieldsSaved {
+                programme: P,
+                revision: fstp_creator::DraftRevision::new(0, fstp_ledger::Seq::ZERO),
+                fields: vec![(FieldId::ProgrammeName, name.digest, Provenance::Manual)],
+                by: TA,
+            },
+        ]
+    );
+    assert_eq!(
+        d.core,
+        vec![Command::CreateProgramme {
+            policy: Box::new(blank_policy()),
+        }]
+    );
+    let entry = cell.run(&cmd, TA).unwrap_or_else(|f| panic!("{f:?}"));
+    assert!(!entry.is_empty());
+    let draft = cell.creator.draft(P).unwrap();
+    assert_eq!(draft.head().seq(), 1);
+    assert_eq!(
+        draft.fields().get(&FieldId::ProgrammeName),
+        Some(&(name.digest, Provenance::Manual))
+    );
+}
+
+/// R-PG-01, design doc 11 section 15: the name an `OpenDraft` carries is
+/// the programme name only, typed by the admin. Another field is refused
+/// as nothing to save, and a non-manual provenance is refused too.
+#[test]
+fn r_pg_01_open_draft_name_is_the_programme_name_with_manual_provenance() {
+    let with = |name: fstp_creator::FieldEdit| match open_draft_command() {
+        CreatorCommand::OpenDraft {
+            programme,
+            version,
+            profile,
+            ..
+        } => CreatorCommand::OpenDraft {
+            programme,
+            version,
+            profile,
+            name: Some(name),
+        },
+        other => panic!("{other:?}"),
+    };
+    let mut cell = Cell::genesis();
+    let other = edit(decode(FieldId::ProgrammeScope, "\"Synthetic scope\""), 3);
+    let ctx = cell.ctx(TA);
+    let inputs = cell.inputs(&with(other.clone()), &ctx);
+    assert_eq!(
+        decide_creator(&cell.core, &cell.creator, &with(other), &ctx, &inputs).err(),
+        Some(fstp_creator::CreatorRefusal::NothingToSave)
+    );
+    let mut templated = edit(decode(FieldId::ProgrammeName, "\"Synthetic name\""), 4);
+    templated.provenance = Provenance::Template {
+        template: TemplateId::from_raw(SUPERSAFE_TEMPLATE.raw()),
+        version: 1,
+    };
+    assert_eq!(
+        decide_creator(&cell.core, &cell.creator, &with(templated), &ctx, &inputs).err(),
+        Some(fstp_creator::CreatorRefusal::ProvenanceNotManual)
+    );
+}
+
 /// R-PG-02 (template start), ADR-007: `ApplyStart` from the shipped
 /// SuperSAFE template by the programme manager records `StartApplied` at
 /// the head and composes exactly one core `EditPolicy` on the head

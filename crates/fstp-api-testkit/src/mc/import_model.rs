@@ -1704,6 +1704,7 @@ pub mod production {
                 programme: PLAN_P,
                 version: PolicyVersionId::from_raw(PLAN_P.raw()),
                 profile: default_profile()?,
+                name: None,
             };
             match s.run(Command::Creator(open), TA, None)? {
                 Run::Appended => {}

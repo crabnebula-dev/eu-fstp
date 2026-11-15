@@ -7,7 +7,7 @@
 // progress page reads only the existing replies. Every reply and address
 // here is synthetic.
 
-import { CREATOR_STEPS, type Report, type ReportResult } from "../src/creator/model.js";
+import { CREATOR_STEPS, readDraft, type Report, type ReportResult } from "../src/creator/model.js";
 import { readMyRoles, workOf } from "../src/home/model.js";
 import { grantOffered, readInvitations, type InvitationRow } from "../src/people/model.js";
 import {
@@ -336,6 +336,27 @@ test("i67_setup_keeps_the_approver_notice_and_a_place_for_the_override", () => {
   eq(slot.getAttribute("id"), "setup-approver-override", "the named place");
   eq(slot.getAttribute("data-slot"), "i67-override", "for the override lane");
   eq(slot.children.length, 0, "this lane builds no part of the override");
+});
+
+/** I-67, design doc 11 section 15: the notice says how many tenant admins remain outside the builders, as a count that names nobody. */
+test("i67_setup_approver_notice_counts_the_admins_outside_the_builders", () => {
+  freshDom();
+  const none = asFake(approverNotice(0));
+  assert(none.textContent.includes("No tenant admin"), "none left: says so");
+  eq(byAttr(none, "data-approvers").map((e) => e.getAttribute("data-approvers")), ["0"], "the count in an attribute");
+  assert(asFake(approverNotice(1)).textContent.includes("One tenant admin"), "one left");
+  assert(asFake(approverNotice(3)).textContent.includes("3 tenant admins"), "three left");
+  eq(byAttr(asFake(approverNotice()), "data-approvers").length, 0, "no count without a reply");
+  eq(byAttr(asFake(approverNotice(null)), "data-approvers").length, 0, "no count when the server sends none");
+});
+
+/** R-PG-01, design doc 11 section 15: a draft reply may carry the approver count, and a bad count is refused. */
+test("r_pg_01_read_draft_reads_the_approver_count", () => {
+  const base = { spec: {}, revision: "1.2", status: "draft", pending_narratives: {} };
+  eq(readDraft(base)?.approvers, null, "absent: null");
+  eq(readDraft({ ...base, approvers: 2 })?.approvers, 2, "a count");
+  eq(readDraft({ ...base, approvers: -1 }), null, "negative: refused");
+  eq(readDraft({ ...base, approvers: "2" }), null, "a string: refused");
 });
 
 /** SoD-09, R-CF-03, design doc 11 sections 6.5 and 8: the team tables and the status table group people and say each state in words. */

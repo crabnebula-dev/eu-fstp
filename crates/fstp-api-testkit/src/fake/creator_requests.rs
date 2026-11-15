@@ -79,6 +79,12 @@ pub fn open_draft() -> Result<Op, ApiError> {
     decode_route(Method::Post, "/programmes", &body(Vec::new()))
 }
 
+/// `creator.open_draft` with the programme name of wizard stage 1 (design
+/// doc 11 section 15).
+pub fn open_draft_named(name: &str) -> Result<Op, ApiError> {
+    decode_route(Method::Post, "/programmes", &body(vec![("name", s(name))]))
+}
+
 /// `creator.list_programmes`: `GET /programmes`.
 pub fn list_programmes() -> Result<Op, ApiError> {
     decode_route(Method::Get, "/programmes", &[])

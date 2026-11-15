@@ -120,6 +120,7 @@ fn r_pg_02_clone_start_copies_the_source_policy() {
         programme: Q,
         version: PolicyVersionId::from_raw(80),
         profile: blank_policy().frozen.p53,
+        name: None,
     };
     cell.run(&open_q, TA).unwrap_or_else(|f| panic!("{f:?}"));
     cell.run_core(TA, |ctx| Command::GrantRole {

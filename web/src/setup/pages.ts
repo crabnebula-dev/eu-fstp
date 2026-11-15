@@ -134,6 +134,7 @@ function datesBody(alert: HTMLElement, start: HTMLInputElement, end: HTMLInputEl
 export function mountStart(): void {
   const { main, alert } = frame({ title: t.label("setup.title.new"), alertId: "setup-error" });
   const states = statesOf(null, null);
+  const name = h("input", { id: "setup-name", type: "text", autocomplete: "off", required: true }) as HTMLInputElement;
   const email = h("input", { id: "setup-pm-email", type: "email", autocomplete: "off", spellcheck: "false", required: true }) as HTMLInputElement;
   const dates = dateControls("setup-pm");
   const submit = h("button", { id: "setup-open", type: "button", class: "fstp-primary" }, [t.label("setup.start.submit")]);
@@ -144,6 +145,14 @@ export function mountStart(): void {
     "click",
     busy(submit, async () => {
       hush(alert);
+      const programmeName = name.value.trim();
+      if (programmeName === "") {
+        warn(alert, t.label("setup.start.name_invalid"));
+        name.setAttribute("aria-invalid", "true");
+        name.focus();
+        return;
+      }
+      name.removeAttribute("aria-invalid");
       const address = email.value.trim();
       if (!plausibleEmail(address)) {
         warn(alert, t.label("setup.email.invalid"));
@@ -154,7 +163,7 @@ export function mountStart(): void {
       email.removeAttribute("aria-invalid");
       const d = datesBody(alert, dates.start, dates.end);
       if (d === null) return;
-      const o = await call("creator.open_draft", [], {}, (v) => readOpened(v) !== null);
+      const o = await call("creator.open_draft", [], { name: programmeName }, (v) => readOpened(v) !== null);
       if (report(alert, o) || o.kind !== "done") return;
       const p = readOpened(o.body);
       if (p === null) return;
@@ -171,10 +180,10 @@ export function mountStart(): void {
   const stage = h("section", { id: "setup-stage", "aria-labelledby": "setup-stage-title", "data-stage": "start" }, [
     h("p", { class: "card-kicker" }, [stageKicker("start")]),
     h("h2", { id: "setup-stage-title" }, [stageName("start")]),
+    field("setup-name", t.label("setup.start.name"), name, t.label("setup.start.name_hint")),
     h("div", { class: "field" }, [
       h("p", {}, [h("strong", {}, [t.label("setup.summary.profile")]), " ", t.label("setup.summary.profile_value")]),
       h("p", { class: "hint" }, [t.label("setup.start.profile_hint")]),
-      h("p", { class: "hint" }, [t.label("setup.start.name_note")]),
     ]),
     h("section", { class: "step-block", "aria-labelledby": "setup-pm-title" }, [
       h("h3", { id: "setup-pm-title" }, [t.label("setup.start.pm.title")]),
@@ -615,6 +624,7 @@ function mountReview(p: string): void {
     onReport: (r) => f.show(draft, r, team),
   });
   const cards = h("div", { id: "setup-review-cards" });
+  let notice = approverNotice();
   stage.append(
     h("h3", { id: "report-title" }, [t.label("setup.review.report")]),
     parts.summary,
@@ -631,7 +641,7 @@ function mountReview(p: string): void {
     ),
     h("h3", {}, [t.label("setup.review.next.title")]),
     h("ol", {}, [1, 2, 3, 4].map((n) => h("li", {}, [t.label(`setup.review.next.${n}`)]))),
-    approverNotice(),
+    notice,
     overrideSlot,
     h("p", { class: "callout callout--warning" }, [t.label("setup.review.changes")]),
     h("p", { class: "text-sm" }, [t.label("setup.review.only_manager")]),
@@ -650,6 +660,10 @@ function mountReview(p: string): void {
     const { draft: d, report: r } = await parts.load();
     draft = d;
     f.show(d, r, team);
+    // I-67: how many tenant admins remain outside the builders.
+    const counted = approverNotice(d?.approvers ?? null);
+    notice.replaceWith(counted);
+    notice = counted;
     // ADR-022: a tenant admin who built the programme may approve it as an override.
     await offerOverride(overrideSlot, p, alert, () => go(SETUP_PATHS.progress(p)));
     cards.replaceChildren(...reviewCards(p, statesOf(d, r), d, team));
@@ -737,7 +751,7 @@ export function mountProgress(p: string): void {
     if (calls === null) parts.push(h("p", { class: "text-sm muted" }, [t.label("setup.progress.calls_unread")]));
     parts.push(
       h("section", { "aria-labelledby": "setup-milestones-title" }, [h("h2", { id: "setup-milestones-title" }, [t.label("setup.progress.milestones")]), milestoneList(ms)]),
-      approverNotice(),
+      approverNotice(d.approvers),
       overrideSlot,
       h("section", { "aria-labelledby": "setup-team-status-title" }, [
         h("h2", { id: "setup-team-status-title" }, [t.label("setup.progress.team")]),

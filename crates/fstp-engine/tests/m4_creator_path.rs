@@ -247,6 +247,7 @@ fn open(e: &mut E) -> Result<Seq, ExecError> {
             programme: P,
             version: V1,
             profile: blank_policy().frozen.p53,
+            name: None,
         }),
         by(TA, 1),
     )
@@ -580,6 +581,31 @@ fn i66_engine_holds_every_saved_value_after_its_entry() {
     assert!(!failures(&r).contains(&CheckId::FlowDownMissing));
 }
 
+/// R-PG-01, design doc 11 section 15: the programme name an `OpenDraft`
+/// carries is held once the opening entry is appended, as a save's value
+/// is, so the checks that read the name run over it.
+#[test]
+fn r_pg_01_engine_holds_the_name_an_open_draft_carries() {
+    let mut e = engine(Vault::default());
+    let value = decode_field_value(FieldId::ProgrammeName, b"\"Synthetic Open Calls\"").unwrap();
+    let name = FieldEdit {
+        field: FieldId::ProgrammeName,
+        value,
+        digest: digest_of(1),
+        provenance: Provenance::Manual,
+    };
+    e.execute(
+        Command::Creator(CreatorCommand::OpenDraft {
+            programme: P,
+            version: V1,
+            profile: blank_policy().frozen.p53,
+            name: Some(name),
+        }),
+        by(TA, 1),
+    )
+    .unwrap();
+    assert!(e.state().creator.is_held(P, FieldId::ProgrammeName));
+}
 /// I-66: a replay cannot recover a saved value, which the ledger keeps
 /// only as a digest. So after `Engine::open_with` the checks that read
 /// one fail closed and the approval is refused with I-66. Once the shell

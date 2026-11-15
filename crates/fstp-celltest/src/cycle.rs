@@ -916,6 +916,7 @@ impl<'w> Cycle<'w> {
                 programme: P1,
                 version: VERSION,
                 profile,
+                name: None,
             }),
             true,
         )?;

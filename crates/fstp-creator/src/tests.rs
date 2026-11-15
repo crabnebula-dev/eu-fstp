@@ -873,6 +873,7 @@ fn r_pg_02_open_and_save_guards_refuse_with_a_named_reason() {
         programme: ProgrammeId::from_raw(8),
         version: PolicyVersionId::from_raw(8),
         profile: profile_ref(),
+        name: None,
     };
     assert!(matches!(
         decide_creator(&w.core, &w.creator, &open, &ctx(TA), &inputs),
@@ -882,6 +883,7 @@ fn r_pg_02_open_and_save_guards_refuse_with_a_named_reason() {
         programme: P,
         version: PolicyVersionId::from_raw(8),
         profile: profile_ref(),
+        name: None,
     };
     assert_eq!(
         decide_creator(&w.core, &w.creator, &again, &ctx(TA), &inputs),
@@ -1371,6 +1373,7 @@ fn codec_round_trips_records_and_commands() {
             programme: P,
             version: PolicyVersionId::from_raw(1),
             profile: profile_ref(),
+            name: None,
         },
         CreatorCommand::ApplyStart {
             programme: P,
@@ -1715,4 +1718,37 @@ fn adr022_override_command_and_record_round_trip() {
     let rec = d.records.last().unwrap().clone();
     let back = CreatorRecord::from_json(&rec.to_json()).unwrap();
     assert_eq!(back, rec);
+}
+
+/// R-PG-01, design doc 11 section 15: an `OpenDraft` with a name survives
+/// the codec. One without a name writes no `name` member, so an opening
+/// stored before the name keeps its form.
+#[test]
+fn r_pg_01_open_draft_name_round_trips_and_is_left_out_when_unset() {
+    let value = fstp_programme::decode_field_value(
+        fstp_programme::FieldId::ProgrammeName,
+        b"\"Synthetic name\"",
+    )
+    .unwrap();
+    let named = CreatorCommand::OpenDraft {
+        programme: P,
+        version: PolicyVersionId::from_raw(8),
+        profile: profile_ref(),
+        name: Some(crate::model::FieldEdit {
+            field: fstp_programme::FieldId::ProgrammeName,
+            value,
+            digest: crate::model::ValueDigest::new(ContentDigest::from_bytes([5; 32])),
+            provenance: crate::model::Provenance::Manual,
+        }),
+    };
+    assert_eq!(CreatorCommand::from_json(&named.to_json()).unwrap(), named);
+    let plain = CreatorCommand::OpenDraft {
+        programme: P,
+        version: PolicyVersionId::from_raw(8),
+        profile: profile_ref(),
+        name: None,
+    };
+    let v = plain.to_json();
+    assert!(v.as_object().unwrap().get("name").is_none());
+    assert_eq!(CreatorCommand::from_json(&v).unwrap(), plain);
 }

@@ -201,13 +201,18 @@ export function wizardLayout(stage: HTMLElement, summary: HTMLElement): HTMLElem
   return h("div", { class: "wizard" }, [stage, summary]);
 }
 
-/** The I-67 notice on who approves activation. */
-export function approverNotice(): HTMLElement {
-  return h("p", { id: "setup-approver", class: "callout callout--info" }, [
-    h("strong", {}, [t.label("setup.approver.title")]),
-    " ",
-    t.label("setup.approver.body"),
-  ]);
+/**
+ * The I-67 notice on who approves activation. With `approvers`, the count
+ * of tenant admins outside the builders that `creator.get_draft` gives, it
+ * says how many remain. The count names nobody (R-CF-03).
+ */
+export function approverNotice(approvers: number | null = null): HTMLElement {
+  const parts: (HTMLElement | string)[] = [h("strong", {}, [t.label("setup.approver.title")]), " ", t.label("setup.approver.body")];
+  if (approvers !== null) {
+    const key = approvers === 0 ? "setup.approver.count.none" : approvers === 1 ? "setup.approver.count.one" : "setup.approver.count.many";
+    parts.push(" ", h("span", { id: "setup-approver-count", "data-approvers": String(approvers) }, [approvers > 1 ? t.label(key, { count: String(approvers) }) : t.label(key)]));
+  }
+  return h("p", { id: "setup-approver", class: "callout callout--info" }, parts);
 }
 
 /**
