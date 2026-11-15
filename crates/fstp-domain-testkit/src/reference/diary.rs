@@ -43,10 +43,14 @@
 //!   FstpCoordinator and ProgrammeManager are "Coordinator, programme
 //!   manager". FinanceApprover, PaymentReleaser and ContractSignatory are
 //!   "Finance and operations". Auditor is the auditor column.
-//! - A voyager reads the diary of their own proposal only, so "Yes" and
-//!   "Own grant" in the voyager column mean the viewer is on the team.
-//! - The guardian sees guardian steps they are named in, and nothing else
-//!   (O-60, fail closed). No column of the table sees a guardian step.
+//! - The guardian sees guardian steps they are named in (O-60). No column
+//!   of the table sees a guardian step. Daniel, 2026-11-15 (night): the
+//!   guardian reads the full journey as a Receiving binding (section 10),
+//!   so every other kind reaches the guardian as the voyager column says.
+//!   The interim guardian-steps-only reading is replaced.
+//! - A voyager reads through a Receiving binding: "Yes" and "Own grant" in
+//!   the voyager column mean the viewer is the lead, a team member or the
+//!   guardian of the proposal.
 //! - IRC members see the state transitions of a proposal they are
 //!   assigned to, and nothing else: "the nominated proposal and outcome
 //!   only" (R-IR-03, O-58). They get no route strip.
@@ -192,7 +196,8 @@ pub struct Facts {
     pub path: Vec<StateTag>,
     /// The entry's own leg, for a state transition entry.
     pub transition: Option<(StateTag, StateTag)>,
-    /// The viewer is on the proposal's team.
+    /// The viewer holds a Receiving binding on the proposal: its lead, a
+    /// team member or its guardian.
     pub team: bool,
     /// The viewer is the guardian the entry names.
     pub guardian_of: bool,
@@ -376,8 +381,11 @@ pub fn visible(f: &Facts) -> bool {
         return false;
     }
     match column {
-        // O-60: the named guardian, and nothing else.
-        Column::Guardian => f.kind == Kind::GuardianStep && f.guardian_of,
+        // O-60: the named guardian sees the step. Daniel, 2026-11-15
+        // (night): the guardian reads the full journey as a Receiving
+        // binding (section 10), so every other kind reads the voyager cell.
+        Column::Guardian if f.kind == Kind::GuardianStep => f.guardian_of,
+        Column::Guardian => phrase(f.kind, Column::Voyager).is_some_and(|p| p.holds(f)),
         // R-IR-03, O-58: the outcome of the nominated proposal.
         Column::Irc => f.kind == Kind::StateTransition && f.assigned,
         Column::None => false,

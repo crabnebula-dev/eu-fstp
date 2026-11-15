@@ -42,9 +42,10 @@ function text(key: string): Label {
 }
 
 /**
- * The "Activity" link of proposal `p` alone, for a guardian: the
- * `proposal.diary` read gives the guardian their own consent steps
- * (O-60), while `proposal.journey` gives them no route.
+ * The "Activity" link of proposal `p` alone, for a guardian. The guardian
+ * reads the activity log as a Receiving binding, with their own consent
+ * steps (O-60; Daniel, 2026-11-15, night). `proposal.journey` gives the
+ * guardian no map, so the progress page would show no route.
  */
 export function activityNav(p: string): HTMLElement {
   return h("nav", { class: "journey-links", "aria-label": text("journey.link.activity_label") }, [

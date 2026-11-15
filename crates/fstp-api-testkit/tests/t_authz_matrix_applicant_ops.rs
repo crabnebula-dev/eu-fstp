@@ -11,10 +11,11 @@
 //! requires. The HTTP and MCP channels reach the same dispatch, and CI
 //! runs them in the full matrix.
 //!
-//! Two readings stay open and are left out, each named where it is
-//! skipped: whether the guardian writes the team's workspace, and
-//! whether every team member or only the lead acknowledges the
-//! negotiation notice (R-NG-06).
+//! Daniel's matrix answers of 2026-11-15 (night), the last table of
+//! `docs/handoff/m4-design.md`, settle the four operations the previous
+//! lane left open: the journey for staff and the guardian, the guardian's
+//! workspace save in DRAFT, the notice acknowledgement, and the former
+//! team's workspace read. No cell is left out.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -169,15 +170,12 @@ fn t_authz_matrix_r_ng_01_vault_statements_are_the_leads() {
 
 /// I-21, R-AC-01: a caller with no Receiving binding on X, now or ended,
 /// is refused the workspace save as an actor. The team outside DRAFT is
-/// refused by a guard on the target. Left out, pending Daniel: the
-/// guardian in DRAFT, whom the registry's `TEAM` and the reference
-/// admit and the dispatch refuses under I-21 ("a guardian consents and
-/// does not write the form").
+/// refused by a guard on the target. Daniel, 2026-11-15 (night): the
+/// guardian writes the application form in DRAFT, as the registry's
+/// `TEAM` says. I-21 concerns operator and Judging roles only.
 #[test]
 fn t_authz_matrix_i21_save_workspace_refuses_outsiders_as_actors() {
-    let (n, bad) = run(&["proposal.save_workspace"], |_, who, tag| {
-        who == Who::Guardian && tag == StateTag::Draft
-    });
+    let (n, bad) = run(&["proposal.save_workspace"], |_, _, _| false);
     assert!(
         bad.is_empty(),
         "{} of {n} cells disagree:\n{}",
@@ -187,17 +185,14 @@ fn t_authz_matrix_i21_save_workspace_refuses_outsiders_as_actors() {
     assert!(n > 1000, "{n}");
 }
 
-/// R-NG-06: a caller with no Receiving binding on X is refused the
-/// acknowledgement of the negotiation notice as an actor, before the
-/// state of X is read. Left out, pending Daniel: the team member and the
-/// guardian. The registry and the reference admit the lead only, and the
-/// dispatch and the mailbox design (`negotiation.acknowledge`, "each
-/// team member") admit the whole team.
+/// R-NG-06: only the lead acknowledges the negotiation notice, as the
+/// registry says (Daniel, 2026-11-15, night). Anyone else, the team
+/// member and the guardian included, is refused as an actor before the
+/// state of X is read. The lead outside NEGOTIATION is refused by a
+/// guard on the target.
 #[test]
-fn t_authz_matrix_r_ng_06_acknowledge_notice_refuses_outsiders_as_actors() {
-    let (n, bad) = run(&["negotiation.acknowledge_notice"], |_, who, _| {
-        matches!(who, Who::TeamMember | Who::Guardian)
-    });
+fn t_authz_matrix_r_ng_06_acknowledge_notice_is_the_leads() {
+    let (n, bad) = run(&["negotiation.acknowledge_notice"], |_, _, _| false);
     assert!(
         bad.is_empty(),
         "{} of {n} cells disagree:\n{}",
@@ -234,4 +229,55 @@ fn t_authz_matrix_r_sb_03_lead_commands_actor_first_former_lead_by_guard() {
         report(&bad)
     );
     assert!(n > 3000, "{n}");
+}
+
+/// `SPEC/12-journey-ui.md` sections 7.2 and 10, I-93, I-21, O-57, I-03,
+/// P-10 NOTE 1 (Daniel, 2026-11-15, night). Staff read the position of X
+/// as the visibility function shows them its state transition: Judging
+/// roles within P-10 and their assignment, Operations roles the grant's
+/// legs only, coordinators once declared free of conflict. The guardian
+/// reads the full journey as a Receiving binding while X is under way.
+/// The former lead and team member keep it in a terminal state.
+#[test]
+fn t_authz_matrix_r_jv_journey_staff_by_visibility_guardian_as_receiving() {
+    let (n, bad) = run(&["proposal.journey"], |_, _, _| false);
+    assert!(
+        bad.is_empty(),
+        "{} of {n} cells disagree:\n{}",
+        bad.len(),
+        report(&bad)
+    );
+    assert!(n > 1000, "{n}");
+}
+
+/// `SPEC/12-journey-ui.md` sections 7.2 and 10, I-93: the diary reads
+/// with the journey's readers, and the visibility function picks its
+/// entries (I-93). The guardian's diary follows the journey decision of
+/// 2026-11-15 (night), and nothing else changes here.
+#[test]
+fn t_authz_matrix_i93_diary_readers() {
+    let (n, bad) = run(&["proposal.diary"], |_, _, _| false);
+    assert!(
+        bad.is_empty(),
+        "{} of {n} cells disagree:\n{}",
+        bad.len(),
+        report(&bad)
+    );
+    assert!(n > 1000, "{n}");
+}
+
+/// I-21, R-AC-01 (Daniel, 2026-11-15, night): the workspace is read by
+/// the team while its Receiving bindings are active. Once X ended, the
+/// former lead and team member keep the journey, map and diary only, so
+/// the workspace is closed to them.
+#[test]
+fn t_authz_matrix_i21_get_workspace_is_closed_to_the_former_team() {
+    let (n, bad) = run(&["proposal.get_workspace"], |_, _, _| false);
+    assert!(
+        bad.is_empty(),
+        "{} of {n} cells disagree:\n{}",
+        bad.len(),
+        report(&bad)
+    );
+    assert!(n > 1000, "{n}");
 }

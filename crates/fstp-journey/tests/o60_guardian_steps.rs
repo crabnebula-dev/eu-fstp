@@ -59,3 +59,31 @@ fn o60_the_named_guardian_sees_their_step() {
         },
     );
 }
+
+/// `SPEC/12-journey-ui.md` sections 7.2 and 10, I-93 (Daniel,
+/// 2026-11-15, night): the guardian reads the full journey as a Receiving
+/// binding. Every entry other than a guardian step reaches the guardian
+/// exactly as it reaches a voyager with the same relation, and the
+/// interim guardian-steps-only reading is gone.
+#[test]
+fn r_jv_guardian_reads_the_voyager_entries_as_a_receiving_binding() {
+    fstp_prop::check_with(
+        "r_jv_guardian_reads_the_voyager_entries_as_a_receiving_binding",
+        Config::default().with_cases(2_048),
+        |g: &mut Gen| {
+            let mut f = diary::facts(g);
+            if f.kind == Kind::GuardianStep {
+                return Ok(());
+            }
+            f.role = Role::Guardian;
+            let mut voyager = f.clone();
+            voyager.role = Role::ApplicantTeamMember;
+            prop_assert_eq!(
+                production_visible(&f),
+                production_visible(&voyager),
+                "the guardian and a team member differ on {f:?}"
+            );
+            Ok(())
+        },
+    );
+}

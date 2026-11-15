@@ -2193,3 +2193,12 @@ Matrix answers (2026-11-15, night), after lane m4/matrix-final:
 | `proposal.save_workspace`, guardian in DRAFT | Follow the registry: a guardian may write the application form in DRAFT (TEAM). Production changes |
 | `negotiation.acknowledge_notice` | Follow the registry: only the lead acknowledges. Production and the mailbox item change |
 | `proposal.get_workspace`, former team | Closed. Former team keep journey, map and diary only. The reference follows production |
+
+Built by lane m4/matrix-final-2:
+
+- **Journey, staff.** The reference rule `JourneyPosition` follows the visibility function on the transition that reached the position. A conflict on X refuses first (I-03), then an undeclared coordinator (R-CF-02). The programme manager, the declared coordinator and the auditor read every position. Operations roles read GRANTED and later states only. Committee members and the chair read within P-10 and their assignment. IRC members read with a declared IRC assignment only. `proposal.diary` keeps the rule `Journey`.
+- **Journey, guardian.** The guardian column of `fstp_journey::visibility` reads every voyager entry as a Receiving binding, plus the guardian steps that name the guardian. O-60 still holds: no other viewer sees a guardian step. `Relation::team` now covers the guardian's active binding. The journey's `map` stays with the lead and team members, so the guardian still gets no route map. The `scope_mask` of a voyager kind gains the guardian bit. The reference diary follows. The guardian's binding ends at a terminal state, so the guardian reads only while X is under way.
+- **Workspace save, guardian.** The dispatch admits the guardian of a draft. The I-21 refusal is gone. Anyone else stays refused as an actor, and the team outside DRAFT by a guard.
+- **Notice acknowledgement.** The dispatch admits the lead only, and refuses anyone else as an actor before the state is read. The mailbox gives `negotiation.acknowledge` to the lead only.
+- **Workspace read, former team.** The reference rule `Workspace` admits the team while X is under way.
+- Tests: `t_authz_matrix_applicant_ops.rs` runs the four operations and `proposal.diary` with no cell left out. `o60_guardian_steps.rs` and `r_jv_03_spec_pinned_cells.rs` pin the guardian's reading. `r_ng_06_mailbox_acknowledge_goes_to_the_lead_only` pins the mailbox item.

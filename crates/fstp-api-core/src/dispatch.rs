@@ -2460,8 +2460,10 @@ async fn m3_port<P: Seams>(
             let p = ProposalId::from_raw(id("proposal")?);
             // An actor refusal first: the registry admits the team
             // (`TEAM`), so a caller never bound to X is no actor here, in
-            // any state (T-AUTHZ-MATRIX).
-            actor_first(p, TEAM_ROLES)?;
+            // any state (T-AUTHZ-MATRIX). Daniel, 2026-11-15 (night): the
+            // guardian writes the form in DRAFT too, as `TEAM` says. I-21
+            // keeps drafts from operator and Judging roles only.
+            let bound = actor_first(p, TEAM_ROLES)?;
             let text = |name: &str| {
                 op.request
                     .get(name)
@@ -2476,14 +2478,8 @@ async fn m3_port<P: Seams>(
             };
             // A guard on the target: the workspace is the draft's, and no
             // binding is revived once X ended.
-            if !in_draft(p) {
+            if bound != Lead::Active || !in_draft(p) {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "Input")));
-            }
-            // Interim, pending Daniel: the guardian consents and does not
-            // write the form, so the guardian of a draft is refused under
-            // I-21.
-            if !drafting_team(&call.state, account, p, call.now) {
-                return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-21")));
             }
             PortCall::SaveWorkspace(p, w)
         }
@@ -2554,16 +2550,15 @@ async fn m3_port<P: Seams>(
         }
         PortKind::AcknowledgeNegotiationNotice => {
             let p = ProposalId::from_raw(id("proposal")?);
-            // An actor refusal for a caller with no Receiving binding on X.
-            // Interim, pending Daniel: the registry names the lead, and
-            // this arm and the mailbox admit every team member.
-            actor_first(p, TEAM_ROLES)?;
+            // R-NG-06, Daniel, 2026-11-15 (night): only the lead
+            // acknowledges, as the registry says (`LEAD`). Anyone else, the
+            // team member and the guardian included, is refused as an actor
+            // before the state of X is read. The mailbox item goes to the
+            // lead alone.
+            let lead = actor_first(p, &["lead"])?;
             let negotiating = fstp_domain::view::proposal_state(&call.state.core, p)
                 == Some(fstp_domain::StateTag::Negotiation);
-            let team = own_proposals(&call.state, account, call.now, Ended::Excluded)
-                .iter()
-                .any(|x| x.proposal == p);
-            if !negotiating || !team {
+            if !negotiating || lead != Lead::Active {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-NG-06")));
             }
             PortCall::AcknowledgeNotice(p)
@@ -3990,27 +3985,6 @@ fn proposal_bound(
     } else {
         Lead::Not
     }
-}
-
-/// Whether `account` holds an active Receiving binding of the lead or a
-/// team member on `proposal` at `now`, and the proposal is a draft: the
-/// workspace is the drafting team's alone (I-21). A guardian consents and
-/// does not write the form.
-fn drafting_team(
-    state: &EngineState,
-    account: AccountId,
-    proposal: ProposalId,
-    now: Timestamp,
-) -> bool {
-    let member = state.core.roster().bindings().any(|(_, b)| {
-        b.account == account
-            && b.active_at(now)
-            && matches!(b.role, Role::Applicant | Role::ApplicantTeamMember)
-            && matches!(b.scope, BindingScope::Proposal { proposal: x, .. } if x == proposal)
-    });
-    member
-        && fstp_domain::view::proposal_state(&state.core, proposal)
-            == Some(fstp_domain::StateTag::Draft)
 }
 
 /// Whether `account` is the guardian of `proposal` while its consent is

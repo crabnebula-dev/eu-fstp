@@ -157,7 +157,9 @@ fn receiving<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<Mai
                     Err(_) => out.push(MailItem::new(MailKind::Stage2Respond, at)),
                 }
             }
-            (Some(StateTag::Negotiation), _)
+            // R-NG-06 (Daniel, 2026-11-15, night): only the lead
+            // acknowledges the notice, so only the lead gets the item.
+            (Some(StateTag::Negotiation), Role::Applicant)
                 if !lock(&call.st.content).acknowledged(account, proposal) =>
             {
                 out.push(MailItem::new(MailKind::NegotiationAcknowledge, at));

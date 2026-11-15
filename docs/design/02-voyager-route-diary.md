@@ -8,7 +8,7 @@ The spec names these surfaces the Voyager route and the Passage Diary (`12-journ
 
 The progress map shows an applicant where their proposal is, where it has been, and where it may go next. The activity log records each step in plain words. Both are projections of the ledger with no authority of their own (I-92). A next action is a suggestion, and the command endpoint re-checks every guard.
 
-Audience: applicants, team members and grantees. Guardians see their own consent steps only (O-60).
+Audience: applicants, team members, grantees and guardians. A guardian reads the journey and the activity log as a Receiving binding, with no map, and alone sees their own consent steps (O-60; Daniel, 2026-11-15, night).
 
 ## The progress map
 

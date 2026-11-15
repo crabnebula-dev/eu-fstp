@@ -347,8 +347,9 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
   }
   const guardian = of((x) => x.group === "guardian");
   if (guardian.length > 0) {
-    // O-60: the guardian reaches the activity log, which holds their own
-    // consent steps, by clicking from the home page.
+    // The guardian reaches the activity log, which holds the journey as a
+    // Receiving binding reads it and their own consent steps (O-60), by
+    // clicking from the home page.
     out.push({
       id: "home-guardian",
       title: homeLabel("home.group.guardian"),
