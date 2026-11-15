@@ -69,6 +69,15 @@ impl Surface {
         }
     }
 
+    /// Whether a browser loads pages from the surface: every surface but
+    /// the API and the machine routes of ADR-013 (SA-09 amendment).
+    pub(crate) fn serves_pages(self) -> bool {
+        matches!(
+            self,
+            Surface::App | Surface::Public | Surface::Brand | Surface::Other
+        )
+    }
+
     /// The one CSP of the surface.
     pub(crate) fn csp(self) -> &'static str {
         match self {

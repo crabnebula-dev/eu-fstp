@@ -31,6 +31,7 @@ const OPS: readonly (readonly [string, string, string])[] = [
   ['creator.invitations', 'GET', '/api/v1/programmes/{programme}/invitations'],
   ['creator.list_templates', 'GET', '/api/v1/creator/templates'],
   ['roles.grant', 'POST', '/api/v1/programmes/{programme}/roles'],
+  ['me.roles', 'GET', '/api/v1/me/roles'],
   ['roles.list', 'GET', '/api/v1/programmes/{programme}/roles'],
   ['roles.end', 'POST', '/api/v1/programmes/{programme}/roles/{binding}/end'],
   ['roles.reinstate', 'POST', '/api/v1/programmes/{programme}/roles/{binding}/reinstatement'],
@@ -243,6 +244,10 @@ test.describe('W4a page wire', () => {
       }
       if (method === 'GET' && path === '/api/v1/programmes/p1/invitations') {
         return [200, { invitations: [] }];
+      }
+      // Only a tenant admin's page asks for the bindings (SA-09).
+      if (method === 'GET' && path === '/api/v1/me/roles') {
+        return [200, { tenant_admin: true, roles: [], calls: [], rounds: [], drafts: [], signatories: [] }];
       }
       if (method === 'GET' && path === '/api/v1/programmes/p1/roles') {
         return [

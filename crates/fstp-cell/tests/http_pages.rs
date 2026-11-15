@@ -251,3 +251,45 @@ fn adr003_the_real_shell_loads_only_served_assets() {
     let css = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/src/auth/auth.css");
     assert!(css.is_file(), "the shell's stylesheet is missing");
 }
+
+/// A browser page navigation `GET` of `path`, with Fetch metadata.
+fn navigate(f: &Front<MemoryBackend, MemoryLog>, path: &str) -> Response {
+    let req = Request::new(Method::GET, RequestTarget::origin(path).unwrap())
+        .try_with_header("host", HOST)
+        .unwrap()
+        .try_with_header("sec-fetch-mode", "navigate")
+        .unwrap()
+        .try_with_header("accept", "text/html")
+        .unwrap();
+    fstp_rt::future::block_on(f.serve(req))
+}
+
+/// SA-09 amendment (Daniel, 2026-11-15): on the cell's page origin, a
+/// browser page request for a path no route serves goes home, 303 to
+/// `/app/`, under the cell CSP. A request that is not a navigation keeps
+/// the 404 of design section 8.7, and so does `/app/` itself, which this
+/// front does not serve, so the redirect never loops.
+#[test]
+fn sa09_unknown_browser_pages_go_home() {
+    for f in [front(Some(loaded())), front(None)] {
+        for path in [
+            "/nonexistent",
+            "/auth/nonexistent",
+            "/assets/auth/other.js",
+            "/app/x",
+        ] {
+            let r = navigate(&f, path);
+            assert_eq!(r.status.as_u16(), 303, "{path}");
+            assert_eq!(header(&r, "location"), Some(b"/app/".as_slice()), "{path}");
+            assert_eq!(
+                header(&r, "content-security-policy"),
+                Some(CELL_CSP.as_bytes()),
+                "{path}"
+            );
+            assert_eq!(get(&f, path).status.as_u16(), 404, "{path}");
+        }
+        assert_eq!(navigate(&f, "/app/").status.as_u16(), 404);
+        assert_eq!(navigate(&f, "/api/v1/nonexistent").status.as_u16(), 404);
+        assert_eq!(navigate(&f, "/auth/magic").status.as_u16(), 200);
+    }
+}

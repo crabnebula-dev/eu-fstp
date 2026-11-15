@@ -84,8 +84,10 @@ struct Shared {
 /// - `/app` redirects to `/app/`. `/app/assets/{sha256}.js` and `.css`
 ///   serve verified assets, immutable. Every other `/app/` path passes the
 ///   page gate of SA-09: the shell when the page's read admits the viewer,
-///   so the client router handles deep links; 303 to sign in; or the one
-///   "Page not found" answer, 404.
+///   so the client router handles deep links; 303 to sign in; or, for a
+///   closed or unknown page, 303 to home `/app/` (SA-09 amendment).
+/// - A browser page request for a path no surface serves goes home too:
+///   303 to `/app/`, or to `/p/{slug}/` under an existing programme.
 /// - `/api/v1/**` passes the body limit, the CSRF rule and the media type
 ///   check, then reaches `ApiCore::dispatch` and nothing else.
 /// - `/p/**` serves the public pages and the feed through the API core,
@@ -213,9 +215,11 @@ async fn app_fallback(s: &Shared, req: &Request) -> Response {
 ///   sign-in, where the gate runs again;
 /// - a session too weak for the page's read (I-77): 303 to the login
 ///   page with `method=passkey`, then the gate again;
-/// - any other refusal, and a path no page has: the one "Page not
-///   found" answer, 404. Its body is the same bytes in every case, so it
-///   never says that a page exists or why it is closed.
+/// - any other refusal, and a path no page has: the same 303 to home,
+///   `/app/`, whatever the request (SA-09 amendment, Daniel 2026-11-15).
+///   The answer is the same bytes in every case, so it never says that a
+///   page exists or why it is closed. The shell's link check asks with
+///   `redirect: "manual"` and reads a redirect as closed.
 fn page(s: &Shared, path: &str, admission: PageAdmission) -> Response {
     match admission {
         PageAdmission::Open => Response::with_body(
@@ -225,7 +229,11 @@ fn page(s: &Shared, path: &str, admission: PageAdmission) -> Response {
         ),
         PageAdmission::SignIn => see_other(&login_path(path, false)),
         PageAdmission::PasskeySignIn => see_other(&login_path(path, true)),
-        PageAdmission::NotFound => not_found_page(s),
+        // Home itself is open to every session, so it never answers
+        // NotFound. Were it to, a redirect to itself would loop, so it
+        // answers the not-found page instead.
+        PageAdmission::NotFound if path == HOME => not_found_page(s),
+        PageAdmission::NotFound => see_other(HOME),
         PageAdmission::Unavailable => reply::json(
             StatusCode::SERVICE_UNAVAILABLE,
             br#"{"code":"unavailable"}"#,
@@ -233,9 +241,10 @@ fn page(s: &Shared, path: &str, admission: PageAdmission) -> Response {
     }
 }
 
-/// The "Page not found" answer of every `/app/` path the viewer may not
-/// open or no page has (SA-09): 404 with the shell marked
-/// [`shell::NOT_FOUND`], whose client renders the not-found page.
+/// The "Page not found" answer: 404 with the shell marked
+/// [`shell::NOT_FOUND`], whose client renders the not-found page. Since
+/// the SA-09 amendment only home would answer it, which never happens
+/// ([`page`]).
 fn not_found_page(s: &Shared) -> Response {
     Response::with_body(
         StatusCode::NOT_FOUND,
@@ -252,6 +261,10 @@ fn shell_now(s: &Shared, marker: Option<&str>) -> Vec<u8> {
         (b, m) => shell::render_marked(&s.assets, b.as_ref().map(|b| b.digest.as_str()), m),
     }
 }
+
+/// The home page, where an unknown or closed page sends the browser
+/// (SA-09 amendment).
+const HOME: &str = "/app/";
 
 /// A 303 to `location`, a constant path and a query this module encodes.
 fn see_other(location: &str) -> Response {
@@ -368,12 +381,64 @@ impl WebRouter {
         resp
     }
 
-    /// Answers one request by its surface.
+    /// Answers one request by its surface. A browser page request
+    /// ([`fstp_http::is_page_navigation`]) for a path no surface serves
+    /// goes home instead ([`WebRouter::unknown_page`]).
     async fn route(&self, req: Request) -> Response {
+        let surface = Surface::of(req.target.path());
+        let page = surface.serves_pages() && fstp_http::is_page_navigation(&req);
+        let path = req.target.path().to_owned();
+        let resp = self.by_surface(surface, req).await;
+        if page && matches!(resp.status.as_u16(), 400 | 404) {
+            return self.unknown_page(surface, &path).await;
+        }
+        resp
+    }
+
+    /// The answer to a browser page request for a path that does not
+    /// exist (SA-09 amendment, Daniel 2026-11-15): 303 to home, `/app/`,
+    /// whose gate sends a visitor with no session to sign in. A path
+    /// under `/p/{slug}/` goes to that programme's public home
+    /// `/p/{slug}/` when it exists. The API and the machine routes never
+    /// get here, so they keep their JSON answers.
+    async fn unknown_page(&self, surface: Surface, path: &str) -> Response {
+        if surface == Surface::Public
+            && let Some(home) = self.public_home(path).await
+        {
+            return see_other(&home);
+        }
+        see_other(HOME)
+    }
+
+    /// The public home `/p/{slug}/` of the programme `path` names, when
+    /// the cell serves it: its page answers, or the setup gate of ADR-021
+    /// answers its "not published yet" page.
+    async fn public_home(&self, path: &str) -> Option<String> {
+        let Backend::Core(core) = &self.shared.backend else {
+            return None;
+        };
+        let slug = path.strip_prefix("/p/")?.split('/').next()?;
+        let home = format!("/p/{slug}/");
+        if home == path {
+            return None;
+        }
+        let op = decode_public_page(&home).ok()?;
+        match core
+            .dispatch(Credential::None, &RequestHead::new(), op)
+            .await
+        {
+            Ok(OpResult::Done { .. }) => Some(home),
+            Err(e) if e.is_setup_refusal() => Some(home),
+            _ => None,
+        }
+    }
+
+    /// Answers one request by the surface of its path.
+    async fn by_surface(&self, surface: Surface, req: Request) -> Response {
         if req.body.len() > BODY_LIMIT {
             return reply::too_large();
         }
-        match Surface::of(req.target.path()) {
+        match surface {
             Surface::App => self.app.handle(req).await,
             Surface::Api => {
                 if api::changes_state(&req.method)

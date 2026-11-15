@@ -97,15 +97,18 @@ test.describe('J5 FSTP coordinator', () => {
     await expectState(c1, 'INELIGIBLE');
 
     // No further review: the assignment view is closed in INELIGIBLE
-    // (`fstp-access` READ_RULES, R-AC-01), so the page offers no
-    // assignment and no admission.
+    // (`fstp-access` READ_RULES, R-AC-01). The page cannot render without
+    // that read, so the page gate closes it (SA-09 rule 5): the browser
+    // lands on home, as for a path that does not exist (SA-09 amendment),
+    // and no assignment or admission is offered anywhere on the way.
     expectRefusal(
       await apiGet(c1, cell.origin, REVIEW_API.assignmentsOf(z.id)),
       'assignment view of an INELIGIBLE proposal',
       'R-AC-01',
     );
-    await openPage(c1, cell.origin, REVIEW_PAGES.assignments(z.id));
-    await expect(c1.locator('[role="alert"]')).toContainText('R-AC-01');
+    await c1.goto(`${cell.origin}${REVIEW_PAGES.assignments(z.id)}`);
+    await expect(c1, 'the closed page lands on home').toHaveURL((u) => u.pathname === '/app/');
+    await expect(c1.locator('main')).toBeVisible();
     await expect(c1.locator(REVIEW_UI.assign.submit)).toHaveCount(0);
     await expect(c1.locator(REVIEW_UI.assign.admit)).toHaveCount(0);
   });

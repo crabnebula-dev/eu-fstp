@@ -5,22 +5,25 @@
 // asks the same gate, never a rule of its own, in three places:
 //
 // 1. An in-app navigation renders a page only after the gate admits it.
-//    A page the viewer may not open shows "Page not found", and a viewer
-//    with no session (or too weak a one) loads the page from the server,
-//    whose 303 leads to sign-in.
+//    A page the gate closes loads from the server instead, whose 303
+//    leads to sign-in or home.
 // 2. When a page's own read is refused after it loaded, for example
 //    because the session ended, the shell asks the gate again. If the
-//    page is closed now, the viewer sees sign-in or "Page not found",
-//    never the refusal code (rule 7).
+//    page is closed now, the page loads from the server, which sends the
+//    viewer to sign-in or home, never to the refusal code (rule 7).
 // 3. Every in-app link stays hidden until the gate admits its page, and a
 //    link to a page the viewer may not open is removed (rule 6).
 //
 // The question is a `HEAD` of the page path with no redirect followed:
-// 200 admits, a redirect means sign in, and 404 means not found. The
-// answers are kept for the page load, so each path is asked once.
+// 200 admits, and a redirect closes. Since the SA-09 amendment (Daniel,
+// 2026-11-15) the server answers sign-in, a closed page and an unknown
+// path alike with a 303, so the gate never tells them apart. A redirect
+// that is not followed logs no console error, where a 404 did. The
+// answers that open a page are kept for the page load, so each such
+// path is asked once.
 
 /** What the gate answers for a page. */
-export type Gate = "open" | "sign_in" | "not_found" | "unknown";
+export type Gate = "open" | "closed" | "unknown";
 
 /** The parts of a fetch response the gate reads. */
 export interface GateResponse {
@@ -31,16 +34,17 @@ export interface GateResponse {
 /** The fetch the gate calls: the page's `fetch`, or a test fake. */
 export type GateFetch = (path: string, init: RequestInit) => Promise<GateResponse>;
 
-/** The gate's answer from a response to a `HEAD` with `redirect: "manual"`. */
+/**
+ * The gate's answer from a response to a `HEAD` with `redirect: "manual"`:
+ * 200 opens, and a redirect, or the 404 of a server before the SA-09
+ * amendment, closes.
+ */
 export function gateOf(res: GateResponse): Gate {
-  if (res.type === "opaqueredirect" || (res.status >= 300 && res.status <= 399)) {
-    return "sign_in";
+  if (res.type === "opaqueredirect" || (res.status >= 300 && res.status <= 399) || res.status === 404) {
+    return "closed";
   }
   if (res.status === 200) {
     return "open";
-  }
-  if (res.status === 404) {
-    return "not_found";
   }
   return "unknown";
 }
@@ -65,7 +69,7 @@ export function pagePathOf(href: string, base: string): string | null {
 
 /** The gate of one page load. */
 export interface PageGate {
-  /** The gate's answer for `path`, asked once per page load. */
+  /** The gate's answer for `path`: an open answer is kept for the page load, any other is asked again. */
   check(path: string): Promise<Gate>;
   /** The gate's answer for `path`, asked again. */
   fresh(path: string): Promise<Gate>;
@@ -93,8 +97,17 @@ export function createGate(fetchFn: GateFetch): PageGate {
     check(path: string): Promise<Gate> {
       let p = answers.get(path);
       if (p === undefined) {
-        p = ask(path);
-        answers.set(path, p);
+        const asked = ask(path);
+        p = asked;
+        answers.set(path, asked);
+        // Only an open answer is kept. A page opens as the person acts,
+        // such as the knock-out check once the coordinator declared no
+        // conflict (R-CF-02), so a closed answer is asked again.
+        void asked.then((g) => {
+          if (g !== "open" && answers.get(path) === asked) {
+            answers.delete(path);
+          }
+        });
       }
       return p;
     },
@@ -137,7 +150,7 @@ export async function gateLinks(root: ParentNode, gate: PageGate, base: string):
       a.setAttribute(PENDING, "");
       a.hidden = true;
       const g = await gate.check(path);
-      if (g === "sign_in" || g === "not_found") {
+      if (g === "closed") {
         // A mailbox message or a home page work item exists for its link,
         // so it goes with it.
         const work = a.closest(ITEM_SELECTOR);

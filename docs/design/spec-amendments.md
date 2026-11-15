@@ -212,3 +212,10 @@ Daniel: "if i go to route that does not exist, i want to go to home, not see a J
 - **Rule 3 changes accordingly.** A page the viewer may not open gets the same answer as an unknown path: the same 303 to home. The two stay indistinguishable, so the answer still never says that a page exists.
 - **API requests keep their JSON answers.** `/api/` and every other machine route answer as before.
 - The shell's link check must not follow the redirect. A redirect counts as "may not open".
+
+**Built** by lane `m4/page-gate-2` on 2026-11-15. Readings, pending Daniel:
+
+- A browser page request is a `GET` or `HEAD` with `Sec-Fetch-Mode: navigate`. With no Fetch metadata, it is one whose `Accept` names `text/html`. A script cannot set `Sec-Fetch-Mode`, so a fetch, a script or a stylesheet keeps its answer (`fstp_http::is_page_navigation`).
+- Inside `/app/` the gate answers 303 to home for every `GET` and `HEAD`, browser or not, so the shell's link check sees the redirect.
+- The public home of a programme is served at `/p/{slug}/`, with the slash. The redirect goes there, and `/p/{slug}` without the slash goes there too.
+- The machine routes are `/api/`, `/mcp`, `/oauth` and the OAuth `/.well-known` documents. `fstp-cell`'s front does not serve `/app/` yet, so there `/app/` itself keeps its 404 and never redirects to itself.

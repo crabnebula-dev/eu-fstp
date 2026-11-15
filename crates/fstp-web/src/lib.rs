@@ -37,8 +37,12 @@
 //!   SA-09 before the shell is served (`fstp_api_core::ApiCore::page`):
 //!   no session answers 303 to the login page, a session too weak for
 //!   the page 303 to a passkey sign-in, and any other refusal or a path
-//!   no page has the one "Page not found" shell, 404. Every response but
+//!   no page has 303 to home, `/app/` (SA-09 amendment). Every response but
 //!   a served asset carries `Cache-Control: no-store`.
+//! - A browser page request (`fstp_http::is_page_navigation`) for a path
+//!   that does not exist, outside `/api/` and the ADR-013 routes, gets
+//!   303 to `/app/`, or to `/p/{slug}/` under an existing programme
+//!   (SA-09 amendment). Any other client keeps the JSON answer.
 //! - Every response carries `nosniff`, `no-referrer`, COOP and CORP
 //!   `same-origin`, HSTS of one year and exactly one CSP for its surface.
 //!   No response sets a cookie or an `Access-Control-*` field.
