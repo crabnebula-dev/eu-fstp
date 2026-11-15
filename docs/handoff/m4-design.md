@@ -2183,3 +2183,13 @@ Follow-up answers (2026-11-15, night), after lane m4/i66-gaps:
 
 - **Clearing a field.** `SaveFields` gains an explicit clear for a field. It is an edit and voids the report. The I-66 model then generates emptied required fields, which closes GAP_UNSET. Built by lane m4/matrix-final: `SaveFields` carries `clear` (the API body member `clear`, keys in ascending field order), `FieldsSaved` records `cleared`, and both members are left out when empty, so older entries decode unchanged.
 - **Readings accepted.** Restarts and narrative edits are neutral for field checks in the reference. A restart keeps every saved field, and an accepted narrative only where the new template offers the same text.
+
+Matrix answers (2026-11-15, night), after lane m4/matrix-final:
+
+| Operation | Decision |
+| --- | --- |
+| `proposal.journey`, staff | Production is right: journey-UI section 7.2 visibility (P-10 and assignment for Judging, grants only for Operations, O-57 and I-03 for coordinators). The reference follows |
+| `proposal.journey`, guardian | The guardian reads the full journey, as a Receiving binding (journey-UI section 10). Production changes; the interim guardian-steps-only reading (O-60) is replaced |
+| `proposal.save_workspace`, guardian in DRAFT | Follow the registry: a guardian may write the application form in DRAFT (TEAM). Production changes |
+| `negotiation.acknowledge_notice` | Follow the registry: only the lead acknowledges. Production and the mailbox item change |
+| `proposal.get_workspace`, former team | Closed. Former team keep journey, map and diary only. The reference follows production |
