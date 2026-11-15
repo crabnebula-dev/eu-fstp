@@ -177,13 +177,9 @@ fn review_i85_confirmed_submission_binds_the_plan_shown() {
 /// (`journal.rs`), which holds no plan recorded before it started, and
 /// refuses with R-SB-01.
 ///
-/// Corrected in fix round 1 of lane m4int-b. The full fix needs a public
-/// read accessor of the domain for a proposal's plans (lane W1b), which
-/// is outside the lane's files. Until it lands, the finding's own interim
-/// applies: the core fails closed with `NotImplemented` on a proposal
-/// whose history it does not hold. So the test accepts the submission of
-/// the ledger plan, or that fail-closed answer with nothing appended. It
-/// still refuses the wrong R-SB-01 refusal, and any other plan.
+/// Corrected in fix round 1 of lane m4int-b, and closed by lane
+/// m4/internal-seams: the journal folds the ledger, so the core knows the
+/// plan recorded before it started, and the submission names it.
 #[test]
 fn review_r_sb_01_page_submission_takes_the_ledger_plan() {
     let c = cell();
@@ -204,13 +200,8 @@ fn review_r_sb_01_page_submission_takes_the_ledger_plan() {
         Command::Core(fstp_domain::Command::Submit { plan, .. }) => Some(*plan),
         _ => None,
     });
-    match class(&r) {
-        Class::Done => assert_eq!(submitted, Some(px_plan())),
-        Class::Stub => assert_eq!(submitted, None, "a fail-closed answer appends nothing"),
-        other => {
-            panic!("the page submission of a proposal with a recorded plan gave {other:?}: {r:?}")
-        }
-    }
+    assert_eq!(class(&r), Class::Done, "the page submission: {r:?}");
+    assert_eq!(submitted, Some(px_plan()));
 }
 
 /// I-21, design section 4.1: the team's private draft lives in the
@@ -219,12 +210,9 @@ fn review_r_sb_01_page_submission_takes_the_ledger_plan() {
 /// read the draft the team saved. The lane's `content.rs` keeps it in
 /// process memory, so the second core reads an empty workspace.
 ///
-/// Corrected in fix round 1 of lane m4int-b. The full fix needs a
-/// workspace port and a read clearance in `port.rs`, which the lead owns.
-/// Until they land, the finding's own interim applies: a core that does
-/// not hold the workspace fails closed with `NotImplemented`. So the test
-/// accepts the saved draft, or that fail-closed answer, and still refuses
-/// the empty draft the lane's code showed.
+/// Corrected in fix round 1 of lane m4int-b, and closed by lane
+/// m4/internal-seams: a save is sealed into the workspace port, which the
+/// second core reads.
 #[test]
 fn review_i21_saved_workspace_survives_a_new_core() {
     let c = cell();
@@ -256,7 +244,63 @@ fn review_i21_saved_workspace_survives_a_new_core() {
             w.title, "SYNTHETIC TITLE",
             "the saved draft is lost to a second core"
         ),
-        Err(fstp_api_core::ApiError::NotImplemented(_)) => {}
         other => panic!("proposal.get_workspace gave {other:?}"),
+    }
+}
+
+/// I-21, R-CF-02, Q9, lane W6: the content frozen at submission is sealed
+/// into the workspace port under the submitted plan. After a restart,
+/// the lead's own proposal read shows the submitted title, and a draft
+/// saved later does not change it.
+#[test]
+fn i21_r_cf_02_submitted_content_survives_a_restart() {
+    let c = cell();
+    let lead = c.login(LEAD, LoginMethod::Passkey);
+    let path = format!("/proposals/{}/workspace", PX.raw());
+    let save = |c: &FakeCell, lead, title: &str| {
+        let body = object(vec![
+            ("narrative", Value::from("SYNTHETIC NARRATIVE")),
+            ("summary", Value::from("SYNTHETIC SUMMARY")),
+            ("title", Value::from(title)),
+        ]);
+        c.web(
+            lead,
+            decode_route(Method::Put, &path, &body.to_compact().into_bytes()),
+        )
+    };
+    let r = save(&c, &lead, "SUBMITTED TITLE");
+    assert_eq!(class(&r), Class::Done, "the save: {r:?}");
+    let submission = object(vec![
+        ("ethics", Value::from("none")),
+        ("notice_version", Value::from("1")),
+    ]);
+    let r = c.web(
+        &lead,
+        decode_route(
+            Method::Post,
+            &format!("/proposals/{}/submission", PX.raw()),
+            &submission.to_compact().into_bytes(),
+        ),
+    );
+    assert_eq!(class(&r), Class::Done, "the submission: {r:?}");
+    assert!(
+        c.ports
+            .workspaces
+            .slots(PX)
+            .contains(&fstp_api_core::port::WorkspaceSlot::Submitted(px_plan())),
+        "the submitted content is not stored"
+    );
+    let restarted = c.restarted().unwrap_or_else(|e| panic!("{e}"));
+    let lead = restarted.login(LEAD, LoginMethod::Passkey);
+    let r = restarted.web(
+        &lead,
+        decode_route(Method::Get, &format!("/proposals/{}", PX.raw()), &[]),
+    );
+    match r {
+        Ok(OpResult::Done {
+            body: ReadModel::OwnProposal(p),
+            ..
+        }) => assert_eq!(p.title.as_deref(), Some("SUBMITTED TITLE")),
+        other => panic!("proposal.view after a restart gave {other:?}"),
     }
 }

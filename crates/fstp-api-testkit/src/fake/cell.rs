@@ -94,6 +94,26 @@ impl FakeCell {
         })
     }
 
+    /// The cell after a restart: a fresh engine replays a copy of this
+    /// cell's ledger, over copies of its texts, blobs and sealed values,
+    /// and a fresh API core holds nothing in memory. A held import value
+    /// is gone, as the ledger keeps only its digest.
+    pub fn restarted(&self) -> Result<FakeCell, NotImplemented> {
+        let world = World {
+            store: self.ports.engine.store_copy(),
+            truth: self.ports.vault.truth(),
+            start: self.ports.clock.read(),
+            admins: self.ports.tenant.admins(),
+        };
+        let cell = FakeCell::from_world(&world)?;
+        cell.ports.texts.copy_from(&self.ports.texts);
+        cell.ports.blobs.copy_from(&self.ports.blobs);
+        cell.ports.sealer.copy_from(&self.ports.sealer);
+        cell.ports.workspaces.copy_from(&self.ports.workspaces);
+        cell.ports.ids.continue_from(&self.ports.ids);
+        Ok(cell)
+    }
+
     /// The API core, for reads that need no credential (M9 lane B2).
     pub fn core(&self) -> &ApiCore {
         &self.core

@@ -2069,3 +2069,53 @@ fn i67_adr022_approval_inbox_offers_the_override_to_a_builder_admin_only() {
     assert_eq!(a2.get("approvable").and_then(Value::as_bool), Some(true));
     assert_eq!(a2.get("overridable").and_then(Value::as_bool), Some(false));
 }
+
+/// ADR-007, I-65, R-PG-01, `fstp_access::ReadClearance`: after a restart
+/// the engine holds no proposed value and the API core neither the
+/// uploaded document nor the invitee's email. The import list and the
+/// invitation list read them from the text and blob stores under the
+/// read's clearance, each checked against its keyed digest, and answer
+/// as before the restart.
+#[test]
+fn adr007_restarted_cell_reads_import_proposals_and_invitations_from_the_stores() {
+    let c = cell();
+    let d = built(&c).unwrap_or_else(|e| panic!("{e}"));
+    done(
+        c.web(&d.owner, rq::import_upload(d.p, "text/markdown", ANNEX)),
+        "import.upload",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    done(
+        c.web(
+            &d.owner,
+            rq::invite(d.p, "m3@e2e.invalid", "programme_manager", None),
+        ),
+        "creator.invite",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let imports = done(c.web(&d.owner, rq::import_list(d.p)), "import.list")
+        .unwrap_or_else(|e| panic!("{e}"));
+    let invitations = done(c.web(&d.owner, rq::invitations(d.p)), "creator.invitations")
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        !list_of(&imports, "proposals")
+            .unwrap_or_else(|e| panic!("{e}"))
+            .is_empty(),
+        "the annex proposed no value: {}",
+        imports.to_compact()
+    );
+    let r = c.restarted().unwrap_or_else(|e| panic!("{e}"));
+    let owner = login(&r, OWNER);
+    let again = done(
+        r.web(&owner, rq::import_list(d.p)),
+        "import.list after a restart",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(again, imports);
+    let again = done(
+        r.web(&owner, rq::invitations(d.p)),
+        "creator.invitations after a restart",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(again, invitations);
+}

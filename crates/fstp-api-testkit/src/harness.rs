@@ -1356,6 +1356,7 @@ impl fstp_api_core::port::CellPorts for WorldPorts {
     type Blobs = crate::fake::FakeBlobs;
     type Precheck = crate::fake::FakePrecheck;
     type Sealer = crate::fake::FakeSealer;
+    type Workspaces = crate::fake::FakeWorkspaces;
     type VaultAudit = crate::fake::FakeVaultAudit;
     type SessionsAdmin = crate::fake::FakeSessions;
     type Recovery = crate::fake::FakeRecovery;
@@ -1396,6 +1397,9 @@ impl fstp_api_core::port::CellPorts for WorldPorts {
     }
     fn sealer(&self) -> &Self::Sealer {
         &self.base.sealer
+    }
+    fn workspaces(&self) -> &Self::Workspaces {
+        &self.base.workspaces
     }
     fn vault_audit(&self) -> &Self::VaultAudit {
         &self.base.vault_audit

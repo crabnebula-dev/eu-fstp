@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{
     BlobOwner, BlobRef, BlobStore, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass,
-    TextOwner, TextRef, TextStore,
+    TextOwner, TextRef, TextStore, WorkspaceSlot, Workspaces,
 };
+use fstp_domain::id::ProposalId;
 
 use fstp_access::ReadClearance;
 
@@ -102,13 +103,20 @@ impl FakeTexts {
 
 /// Whether `clearance` releases a text of `class` owned by `owner`. A
 /// public text is released to any cleared read. A proposal's text is
-/// released only to a read cleared on that proposal, so a clearance of one
-/// proposal never opens another's text (decided by Daniel on 2026-11-13).
-/// Every other owner is refused until a read needs it.
+/// released only to a read cleared on that proposal, or on one of its
+/// assignments, so a clearance of one proposal never opens another's
+/// text (decided by Daniel on 2026-11-13). A programme's text is released
+/// only to a read cleared on that programme or on one of its calls, never
+/// to a read of one proposal. Every other owner is refused until a read
+/// needs it.
 fn clears(class: TextClass, owner: TextOwner, clearance: &ReadClearance) -> bool {
+    use fstp_access::ReadTarget;
     match (class, owner, clearance.op().target) {
         (TextClass::Public, _, _) => true,
-        (_, TextOwner::Proposal(p), fstp_access::ReadTarget::Proposal(q)) => p == q,
+        (_, TextOwner::Proposal(p), _) => clearance.proposal() == Some(p),
+        (_, TextOwner::Programme(p), ReadTarget::Programme(_) | ReadTarget::Call(_)) => {
+            clearance.programme() == Some(p)
+        }
         _ => false,
     }
 }
@@ -153,6 +161,13 @@ impl FakeBlobs {
     pub fn peek(&self, owner: BlobOwner, r: BlobRef) -> Option<Vec<u8>> {
         lock(&self.rows).get(&(owner, r)).cloned()
     }
+
+    /// Replaces the blobs with a copy of those of `from`, as a restarted
+    /// cell keeps its blob store. Every clone of `self` sees the copy.
+    pub fn copy_from(&self, from: &FakeBlobs) {
+        let rows = lock(&from.rows).clone();
+        *lock(&self.rows) = rows;
+    }
 }
 
 impl BlobStore for FakeBlobs {
@@ -191,6 +206,21 @@ pub struct FakeSealer {
     state: Arc<Mutex<Seals>>,
 }
 
+impl FakeSealer {
+    /// Replaces the sealed values with a copy of those of `from`, as a
+    /// restarted cell keeps its sealed store. Every clone of `self` sees
+    /// the copy.
+    pub fn copy_from(&self, from: &FakeSealer) {
+        let (rows, next) = {
+            let s = lock(&from.state);
+            (s.rows.clone(), s.next)
+        };
+        let mut s = lock(&self.state);
+        s.rows = rows;
+        s.next = next;
+    }
+}
+
 impl Sealer for FakeSealer {
     async fn seal(&self, owner: SealOwner, plaintext: &[u8]) -> Result<Sealed, PortError> {
         let mut s = lock(&self.state);
@@ -213,5 +243,71 @@ impl Sealer for FakeSealer {
             Some((o, p)) if *o == owner => Ok(p.clone()),
             Some(_) | None => Err(PortError::Refused),
         }
+    }
+}
+
+/// The sealed workspaces, by proposal and slot.
+type WorkspaceRows = BTreeMap<(ProposalId, WorkspaceSlot), Sealed>;
+
+/// The workspace store (lane W6): sealed bytes by proposal and slot,
+/// kept as given. Cloning shares the rows.
+#[derive(Clone, Debug, Default)]
+pub struct FakeWorkspaces {
+    rows: Arc<Mutex<WorkspaceRows>>,
+    /// Whether every call fails as unavailable, for a test of a port that
+    /// cannot answer.
+    down: Arc<Mutex<bool>>,
+}
+
+impl FakeWorkspaces {
+    /// Replaces the rows with a copy of those of `from`, as a restarted
+    /// cell keeps its workspace store. Every clone of `self` sees the copy.
+    pub fn copy_from(&self, from: &FakeWorkspaces) {
+        let rows = lock(&from.rows).clone();
+        *lock(&self.rows) = rows;
+    }
+
+    /// The slots stored for `proposal`, in order.
+    pub fn slots(&self, proposal: ProposalId) -> Vec<WorkspaceSlot> {
+        lock(&self.rows)
+            .keys()
+            .filter(|(p, _)| *p == proposal)
+            .map(|(_, s)| *s)
+            .collect()
+    }
+
+    /// Makes every later call fail as unavailable, or answer again.
+    pub fn set_down(&self, down: bool) {
+        *lock(&self.down) = down;
+    }
+
+    fn up(&self) -> Result<(), PortError> {
+        if *lock(&self.down) {
+            Err(PortError::Unavailable)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Workspaces for FakeWorkspaces {
+    async fn put(
+        &self,
+        proposal: ProposalId,
+        slot: WorkspaceSlot,
+        sealed: Sealed,
+    ) -> Result<(), PortError> {
+        self.up()?;
+        lock(&self.rows).insert((proposal, slot), sealed);
+        Ok(())
+    }
+
+    async fn get(
+        &self,
+        proposal: ProposalId,
+        slot: WorkspaceSlot,
+    ) -> Result<Option<Sealed>, PortError> {
+        self.up()?;
+        Ok(lock(&self.rows).get(&(proposal, slot)).cloned())
     }
 }

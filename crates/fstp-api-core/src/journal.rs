@@ -361,7 +361,7 @@ impl Journal {
 
     /// Whether the journal folds the ledger rather than the commands of
     /// this core.
-    pub(crate) fn from_ledger(&self) -> bool {
+    pub(crate) fn folds_ledger(&self) -> bool {
         matches!(self.source, Source::Ledger(_))
     }
 
@@ -450,7 +450,7 @@ impl Journal {
     /// before it (`before`), which names the proposal of an assignment.
     /// A journal that folds the ledger ignores it: the ledger holds it.
     pub(crate) fn fold(&mut self, cmd: &Command, before: &EngineState, now: Timestamp) {
-        if self.from_ledger() {
+        if self.folds_ledger() {
             return;
         }
         if let Command::Core(Core::RequestPayment { request, lines, .. }) = cmd {
@@ -493,7 +493,7 @@ impl Journal {
     /// delegation or a record. A journal that folds the ledger ignores
     /// it: the ledger holds it.
     pub(crate) fn fold_round(&mut self, cmd: &Command, actor: AccountId) {
-        if self.from_ledger() {
+        if self.folds_ledger() {
             return;
         }
         if let Command::Core(c) = cmd
@@ -1011,10 +1011,15 @@ mod tests {
         for (n, r) in records {
             let mut command = [0u8; 16];
             command[..8].copy_from_slice(&n.to_be_bytes());
-            let at = i64::try_from(n).unwrap_or_default() * 10;
+            let at = i64::try_from(n).unwrap_or_default().saturating_mul(10);
             assert!(
                 store
-                    .append(Seq::from_raw(n - 1), at, command, vec![Record::Core(r)])
+                    .append(
+                        Seq::from_raw(n.saturating_sub(1)),
+                        at,
+                        command,
+                        vec![Record::Core(r)]
+                    )
                     .is_ok()
             );
         }
@@ -1117,7 +1122,7 @@ mod tests {
             assert_eq!(after, Seq::ZERO);
             Some(elsewhere())
         });
-        assert!(j.from_ledger());
+        assert!(j.folds_ledger());
         assert_eq!(j.submitted_plan(p), Ok(Some(plan)));
         assert_eq!(j.latest_plan(p), Ok(Some(plan)));
         assert_eq!(
@@ -1166,7 +1171,7 @@ mod tests {
     fn r_sb_01_journal_without_a_ledger_folds_commands() {
         let mut j = Journal::default();
         j.sync(|_| None);
-        assert!(!j.from_ledger());
+        assert!(!j.folds_ledger());
         j.sync(|_| panic!("a journal on its fallback never reads a ledger"));
         j.fold(
             &submit(7, 70),

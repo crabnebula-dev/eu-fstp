@@ -31,6 +31,13 @@ impl FakeIds {
     pub fn drawn(&self) -> u128 {
         lock(&self.next).saturating_sub(FIRST_ID)
     }
+
+    /// Continues after the ids `from` drew, as a restarted cell draws no
+    /// id twice. Every clone of `self` sees it.
+    pub fn continue_from(&self, from: &FakeIds) {
+        let next = *lock(&from.next);
+        *lock(&self.next) = next;
+    }
 }
 
 impl Ids for FakeIds {

@@ -876,6 +876,8 @@ pub struct ReadClearance {
     op: ReadOp,
     account: Option<AccountId>,
     rule: ReadRule,
+    proposal: Option<ProposalId>,
+    programme: Option<ProgrammeId>,
 }
 
 impl ReadClearance {
@@ -892,6 +894,19 @@ impl ReadClearance {
     /// The rule that admitted the read. It is never `AnyOf`.
     pub const fn rule(&self) -> ReadRule {
         self.rule
+    }
+
+    /// The proposal the cleared read is on: the target proposal, or the
+    /// proposal of the target assignment. A text store releases a
+    /// proposal's confidential text only to a read on that proposal.
+    pub const fn proposal(&self) -> Option<ProposalId> {
+        self.proposal
+    }
+
+    /// The programme the cleared read is on: the target programme, or the
+    /// programme of the target call, proposal or assignment, if any.
+    pub const fn programme(&self) -> Option<ProgrammeId> {
+        self.programme
     }
 }
 
@@ -967,6 +982,8 @@ pub fn authorize_read(
         op: *op,
         account,
         rule: matched,
+        proposal: ctx.proposal,
+        programme: ctx.programme,
     })
 }
 
