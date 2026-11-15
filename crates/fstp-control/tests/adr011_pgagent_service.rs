@@ -851,28 +851,17 @@ mod approved {
         }
     }
 
-    /// The cell's object storage prefix and witness credentials, which
-    /// no production client deletes yet: each records the cells it was
-    /// asked to delete.
+    /// The cell's witness credentials: the cells it was asked to revoke.
+    /// Step 2 deletes no object storage (ADR-004, 2026-11-15 night).
     #[derive(Default)]
-    struct Storage(std::sync::Mutex<Vec<CellId>>, std::sync::Mutex<Vec<CellId>>);
-
-    impl fstp_control::erase::CellObjects for Storage {
-        fn delete_prefix(
-            &self,
-            cell: CellId,
-        ) -> impl Future<Output = Result<u32, fstp_control::ControlError>> {
-            self.0.lock().unwrap().push(cell);
-            std::future::ready(Ok(0))
-        }
-    }
+    struct Storage(std::sync::Mutex<Vec<CellId>>);
 
     impl fstp_control::erase::WitnessCredentials for Storage {
         fn revoke_cell(
             &self,
             cell: CellId,
         ) -> impl Future<Output = Result<(), fstp_control::ControlError>> {
-            self.1.lock().unwrap().push(cell);
+            self.0.lock().unwrap().push(cell);
             std::future::ready(Ok(()))
         }
     }
@@ -1009,7 +998,6 @@ mod approved {
                 &custody,
                 &links,
                 &storage,
-                &storage,
                 &edge,
                 &erase,
                 &drops,
@@ -1047,8 +1035,7 @@ mod approved {
             .iter()
             .filter(|e| matches!(e, fstp_control::approval::ApprovalEvent::Step { .. }))
             .count();
-        assert_eq!(steps, 10);
+        assert_eq!(steps, 9);
         assert_eq!(*storage.0.lock().unwrap(), vec![cell]);
-        assert_eq!(*storage.1.lock().unwrap(), vec![cell]);
     }
 }
