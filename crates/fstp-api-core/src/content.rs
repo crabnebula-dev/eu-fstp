@@ -15,28 +15,27 @@
 //! - the **texts** are the free texts this core stored through the text
 //!   store, such as ranking summaries and stage 2 questions, by reference.
 //!
+//! # Durable copies
+//!
+//! This store is memory of the cell process. Its durable copies are in
+//! the ports, so a restarted core, or a second process, reads them:
+//!
+//! - every save is sealed through the `Sealer` and stored in the
+//!   `Workspaces` port before this store takes it ([`encode`]);
+//! - a submission stores the frozen workspace under the submitted plan;
+//! - a text is read back from the `TextStore` under the read's
+//!   `ReadClearance`, checked against its digest.
+//!
 //! # Fail closed
 //!
-//! The store holds a proposal's workspace only when this core created the
-//! proposal or saved its workspace, since a save replaces every section.
-//! Such a proposal is *known*. The workspace of an unknown proposal, the
-//! content of a proposal frozen by no submission through this core, and a
-//! text this core did not store all read as absent, and dispatch refuses
-//! the read with `NotImplemented`. A restarted core, or a second process,
-//! never shows an empty draft in place of a saved one.
+//! A workspace this store does not hold is read from the port. A
+//! proposal whose draft slot was never stored has an empty workspace. A
+//! port that cannot answer, sealed bytes that do not open or decode, and
+//! a submitted content that no slot holds all refuse the read as
+//! unavailable, never showing an empty draft in place of a saved one.
 //!
 //! Interim readings, pending Daniel and the lead:
 //!
-//! - The store is memory of the cell process, as the pending actions are
-//!   (`pending.rs`). Lane W6 moves the workspace to `workspace.drafts`,
-//!   sealed through the M3 `Sealer`, and the frozen content to its own
-//!   record. That needs a workspace port and a `ReadClearance` that
-//!   dispatch can pass, which only the lead can add in `port.rs`.
-//! - Sealing and reading back through the M3 ports need the clearance
-//!   that `authorize_read` returns. `port.rs` still takes a W0 placeholder
-//!   clearance that no module outside `port.rs` can build, so this store
-//!   keeps the bytes it was given. Every read of it passes
-//!   `authorize_read` first, in `dispatch`.
 //! - The R-NG-06 acknowledgement is kept here only, so it is lost on a
 //!   restart and leaves no audit record of its own. It belongs in a
 //!   ledger or outbox record once its port exists (lane W6).
@@ -69,6 +68,49 @@ pub(crate) struct Workspace {
     pub(crate) summary: String,
     /// The narrative: the proposal content proper.
     pub(crate) narrative: String,
+}
+
+impl Workspace {
+    /// Whether every section is within its limit.
+    pub(crate) fn fits(&self) -> bool {
+        self.title.len() <= TITLE_LIMIT
+            && self.summary.len() <= SUMMARY_LIMIT
+            && self.narrative.len() <= crate::forms::TEXT_LIMIT
+    }
+}
+
+/// The section names of an encoded workspace, in canonical order.
+const SECTIONS: [&str; 3] = ["narrative", "summary", "title"];
+
+/// The bytes a workspace is sealed as: the canonical JSON object of its
+/// three sections (RFC 8785, through `fstp_json`).
+pub(crate) fn encode(w: &Workspace) -> Option<Vec<u8>> {
+    let mut o = fstp_json::Object::new();
+    let _ = o.insert("title", fstp_json::Value::from(w.title.as_str()));
+    let _ = o.insert("summary", fstp_json::Value::from(w.summary.as_str()));
+    let _ = o.insert("narrative", fstp_json::Value::from(w.narrative.as_str()));
+    fstp_json::to_canonical(&fstp_json::Value::Object(o))
+        .ok()
+        .map(String::into_bytes)
+}
+
+/// The workspace `bytes` encode: exactly the three sections, each a
+/// string within its limit. Anything else is `None`, and the read fails
+/// closed.
+pub(crate) fn decode(bytes: &[u8]) -> Option<Workspace> {
+    // The default limits hold a narrative at its limit, escaped.
+    let v = fstp_json::parse(bytes).ok()?;
+    let o = v.as_object()?;
+    if o.len() != SECTIONS.len() || SECTIONS.iter().any(|s| !o.contains_key(s)) {
+        return None;
+    }
+    let section = |name: &str| o.get(name)?.as_str().map(str::to_owned);
+    let w = Workspace {
+        title: section("title")?,
+        summary: section("summary")?,
+        narrative: section("narrative")?,
+    };
+    w.fits().then_some(w)
 }
 
 /// Why a save was refused.
@@ -117,10 +159,7 @@ impl ContentStore {
 
     /// Replaces the workspace of `proposal` with `w`.
     pub(crate) fn save(&mut self, proposal: ProposalId, w: Workspace) -> Result<(), SaveError> {
-        if w.title.len() > TITLE_LIMIT
-            || w.summary.len() > SUMMARY_LIMIT
-            || w.narrative.len() > crate::forms::TEXT_LIMIT
-        {
+        if !w.fits() {
             return Err(SaveError::TooLong);
         }
         let new = !self.known.contains(&proposal);
@@ -265,5 +304,26 @@ mod tests {
         assert_eq!(s.title_of(p), None);
         s.freeze(p);
         assert_eq!(s.submitted(p), None);
+    }
+    /// I-21, lane W6: a workspace seals as the canonical object of its
+    /// three sections and reads back to itself. Bytes with a missing, an
+    /// extra or a non-string section, or a section over its limit, do not
+    /// decode, so a read fails closed.
+    #[test]
+    fn i21_workspace_codec_round_trips_and_is_strict() {
+        let x = w("Synthetic \"title\"\n");
+        let bytes = encode(&x).unwrap_or_default();
+        assert_eq!(decode(&bytes), Some(x));
+        for bad in [
+            &br#"{"narrative":"n","title":"t"}"#[..],
+            br#"{"narrative":"n","summary":"s","title":"t","x":"y"}"#,
+            br#"{"narrative":"n","summary":1,"title":"t"}"#,
+            br#"["n","s","t"]"#,
+            b"not json",
+        ] {
+            assert_eq!(decode(bad), None, "{}", String::from_utf8_lossy(bad));
+        }
+        let long = w(&"x".repeat(TITLE_LIMIT.saturating_add(1)));
+        assert_eq!(decode(&encode(&long).unwrap_or_default()), None);
     }
 }

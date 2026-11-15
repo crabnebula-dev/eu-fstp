@@ -33,7 +33,7 @@ use fstp_domain::time::Timestamp;
 use fstp_findings::{FindingKind, Severity};
 use fstp_json::Value;
 
-use super::{Call, Seams, call_of, content_unknown, lock, proposal_param};
+use super::{Call, Seams, call_of, lock, proposal_param};
 use crate::content::PrecheckRequest;
 use crate::port::{
     CellPorts, InferenceProvider, Precheck, PrecheckPin, PrecheckRefusal, PrecheckRun,
@@ -336,9 +336,16 @@ pub(crate) async fn request<P: Seams>(
         return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-LA-06")));
     };
     let (pin, l) = pin_of(call, p)?;
-    let w = lock(&call.st.content)
-        .workspace(p)
-        .ok_or_else(|| call.refuse(content_unknown()))?;
+    // The draft is read as the team's own workspace read would read it.
+    let own = fstp_access::ReadOp {
+        kind: fstp_access::ReadKind::GetOwnWorkspace,
+        target: fstp_access::ReadTarget::Proposal(p),
+    };
+    let clearance = fstp_access::authorize_read(&own, &call.caller.p, &call.state, call.now)
+        .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Refused, "I-21")))?;
+    let w = super::workspace_of(call, p, &clearance)
+        .await
+        .map_err(|e| call.refuse(e))?;
     {
         let mut content = lock(&call.st.content);
         let left = remaining(l, content.prechecks(), pin.call, p, account, call.now);

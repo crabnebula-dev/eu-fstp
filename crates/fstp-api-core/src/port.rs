@@ -878,6 +878,16 @@ pub trait AsyncEngine: Send + Sync {
     fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
         None
     }
+    /// The cell's ledger entries after `after`, in sequence order, which
+    /// the API core's journal folds before each read (`journal.rs`).
+    /// `None` when the engine serves no ledger. The default filters
+    /// [`AsyncEngine::ledger`]. An engine that reads its store from a
+    /// sequence number answers it directly.
+    fn ledger_after(&self, after: Seq) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
+        let mut all = self.ledger()?;
+        all.retain(|e| e.seq > after);
+        Some(all)
+    }
     /// The shell's creator facts for `cmd` by `ctx` (design section 3.2,
     /// `CreatorInputs`): the facts the engine port's
     /// `fstp_engine::CreatorEnvironment` answers for the same command. The
@@ -890,19 +900,27 @@ pub trait AsyncEngine: Send + Sync {
     ///
     /// Interim (lane m4wire seam proposal for the lead). The default
     /// supplies no shell fact, as `fstp_engine::NoEnvironment` does, so
-    /// every check that needs one fails closed.
+    /// every check that needs one fails closed. The one exception is the
+    /// funder profile: it comes from the shipped profiles only, as the
+    /// production shell of `fstp-cell` reads it (rule A9b). A draft that
+    /// names no shipped profile gets none.
     fn creator_inputs(
         &self,
         state: &EngineState,
         cmd: &fstp_creator::CreatorCommand,
         ctx: &Ctx,
     ) -> fstp_creator::CreatorInputs {
-        fstp_engine::CreatorEnvironment::creator_inputs(
+        use fstp_guide::ProfileSource as _;
+        let mut inputs = fstp_engine::CreatorEnvironment::creator_inputs(
             &fstp_engine::NoEnvironment,
             state,
             cmd,
             ctx,
-        )
+        );
+        inputs.profile = fstp_engine::compose::profile_ref(state, cmd)
+            .and_then(|r| fstp_engine::compose::profile_name(&r))
+            .and_then(|name| fstp_guide::ShippedProfiles.profile(&name).ok());
+        inputs
     }
 }
 
@@ -1187,6 +1205,39 @@ pub trait Sealer: Send + Sync {
     ) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send;
 }
 
+/// The slot of a proposal's content in the workspace store (I-21,
+/// R-CF-02, `content.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WorkspaceSlot {
+    /// The team's latest autosave of the form.
+    Draft,
+    /// The content frozen when the proposal was submitted with this plan.
+    /// A later submission, after a re-entry, has another plan, so it
+    /// never reads an earlier submission's content.
+    Submitted(fstp_domain::id::PlanVersionId),
+}
+
+/// Proposal content beside the ledger, each value sealed through the
+/// [`Sealer`] under [`SealOwner::Workspace`] (lane W6, `content.rs`). The
+/// store holds sealed bytes only and opens nothing.
+pub trait Workspaces: Send + Sync {
+    /// Stores `sealed` as the content of `proposal` in `slot`, replacing
+    /// what the slot held.
+    fn put(
+        &self,
+        proposal: ProposalId,
+        slot: WorkspaceSlot,
+        sealed: Sealed,
+    ) -> impl Future<Output = Result<(), PortError>> + Send;
+    /// The sealed content of `proposal` in `slot`, or `None` when the slot
+    /// was never stored.
+    fn get(
+        &self,
+        proposal: ProposalId,
+        slot: WorkspaceSlot,
+    ) -> impl Future<Output = Result<Option<Sealed>, PortError>> + Send;
+}
+
 /// Records vault answers that commit no command, as a query digest and the
 /// answer bit (`overview.md` NOTE 5).
 pub trait VaultAudit: Send + Sync {
@@ -1339,6 +1390,8 @@ pub trait CellPorts: Send + Sync + 'static {
     type Precheck: Precheck;
     /// The sealer.
     type Sealer: Sealer;
+    /// The sealed workspace store.
+    type Workspaces: Workspaces;
     /// The vault answer recorder.
     type VaultAudit: VaultAudit;
     /// The sessions admin port.
@@ -1381,6 +1434,8 @@ pub trait CellPorts: Send + Sync + 'static {
     fn precheck(&self) -> Option<&Self::Precheck>;
     /// The sealer.
     fn sealer(&self) -> &Self::Sealer;
+    /// The sealed workspace store.
+    fn workspaces(&self) -> &Self::Workspaces;
     /// The vault answer recorder.
     fn vault_audit(&self) -> &Self::VaultAudit;
     /// The sessions admin port.
@@ -1564,6 +1619,71 @@ mod tests {
         );
         assert_eq!(block_on(Stub.runs(p)), Err(PortError::Unavailable));
         assert_eq!(block_on(Stub.quota(p, a)), Err(PortError::Unavailable));
+    }
+
+    /// An engine port that answers nothing but its defaults.
+    struct Bare;
+    impl AsyncEngine for Bare {
+        async fn execute(
+            &self,
+            _: fstp_engine::Command,
+            _: Ctx,
+            _: ExecMeta,
+        ) -> Result<Seq, ExecError> {
+            Err(ExecError::Port(PortError::Unavailable))
+        }
+        async fn dry_run(&self, _: &fstp_engine::Command, _: Ctx) -> Result<(), Refusal> {
+            Ok(())
+        }
+        async fn dry_run_answers(
+            &self,
+            _: &fstp_engine::Command,
+            _: Ctx,
+        ) -> (Result<(), Refusal>, Vec<Answer>) {
+            (Ok(()), Vec::new())
+        }
+        fn snapshot(&self) -> Arc<EngineState> {
+            Arc::new(EngineState::genesis())
+        }
+    }
+
+    /// R-PG-01, R-RP-01, rule A9b: an engine port with no shell of its own
+    /// supplies the shipped funder profile a draft's P-53 names, as the
+    /// production shell does, and no profile for a name that ships none.
+    #[test]
+    fn r_pg_01_default_creator_inputs_read_the_shipped_profile() {
+        let ctx = Ctx {
+            now: Timestamp::from_micros(1),
+            actor: fstp_domain::command::Actor::Account(AccountId::from_raw(1)),
+            command: fstp_domain::id::CommandId::from_bytes([1; 16]),
+            via: Via::Web,
+            tenant_admin: true,
+            second_tenant_admin: None,
+            binds_tenant_admin: false,
+        };
+        let open = |profile| fstp_creator::CreatorCommand::OpenDraft {
+            programme: ProgrammeId::from_raw(5),
+            version: fstp_domain::id::PolicyVersionId::from_raw(6),
+            profile,
+        };
+        let state = EngineState::genesis();
+        let shipped = crate::creator::default_profile().unwrap();
+        let inputs = Bare.creator_inputs(&state, &open(shipped), &ctx);
+        assert_eq!(
+            inputs.profile.map(|p| p.name().to_owned()),
+            Some(fstp_guide::HORIZON_EUROPE.to_owned())
+        );
+        let other = fstp_domain::policy::FunderProfileRef(
+            fstp_domain::policy::OpaqueValue::from_value(
+                &fstp_json::parse(br#"{"profile":"no-such-funder","version":1}"#).unwrap(),
+            )
+            .unwrap(),
+        );
+        assert!(
+            Bare.creator_inputs(&state, &open(other), &ctx)
+                .profile
+                .is_none()
+        );
     }
 
     const DAY: i64 = 86_400_000_000;

@@ -209,7 +209,7 @@ pub(super) async fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> My
         .flat_map(|r| r.calls.iter().copied())
         .collect();
     let rounds: Vec<RoundItem> = {
-        let journal = lock(&call.st.journal);
+        let journal = super::journal(call);
         committee
             .iter()
             .filter_map(|c| {

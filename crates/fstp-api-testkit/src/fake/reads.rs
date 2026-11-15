@@ -420,3 +420,21 @@ fn i34_assignment_view_counts_the_current_call_only() {
         .collect();
     assert_eq!(listed, current, "only the call 2 assignments");
 }
+
+/// R-CF-04, R-SB-01, `journal.rs`: a proposal submitted before this core
+/// started is read from the ledger. The coordinator's list of notifiable
+/// conflicts of the call answers for PR1, which this core never saw
+/// submitted, instead of failing closed.
+#[test]
+fn r_cf_04_notifiable_conflicts_read_a_proposal_recorded_elsewhere() {
+    let c = cell_of(&review_world(BTreeMap::new()));
+    let coordinator = c.login(COORDINATOR, LoginMethod::Passkey);
+    let path = format!("/calls/{}/notifiable-conflicts", CALL.raw());
+    match c.web(&coordinator, decode_route(Method::Get, &path, &[])) {
+        Ok(OpResult::Done {
+            body: ReadModel::Notifiable(list),
+            ..
+        }) => assert!(list.is_empty(), "{list:?}"),
+        other => panic!("review.notifiable_conflicts gave {other:?}"),
+    }
+}

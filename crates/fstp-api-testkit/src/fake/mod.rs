@@ -61,7 +61,7 @@ pub use misc::{FakeAccounts, FakeBreakGlass, FakeOutbox, FakeProber, FakeRecover
 pub use precheck::FakePrecheck;
 pub use sessions::{FakeSessions, PASSKEY_RP, PasskeyOptions, WebLogin};
 pub use step_up::FakeStepUp;
-pub use texts::{FakeBlobs, FakeSealer, FakeTexts};
+pub use texts::{FakeBlobs, FakeSealer, FakeTexts, FakeWorkspaces};
 pub use tokens::{ConsentStart, FakeTokens, TokenGrant};
 pub use vault::{CellOracle, FakeVault, fake_query_digest};
 
@@ -131,6 +131,8 @@ pub struct FakePorts {
     pub precheck: FakePrecheck,
     /// The sealer.
     pub sealer: FakeSealer,
+    /// The sealed workspace store.
+    pub workspaces: FakeWorkspaces,
     /// The recorder of vault answers that commit no command.
     pub vault_audit: FakeVaultAudit,
     /// The recovery approvals.
@@ -162,6 +164,7 @@ impl CellPorts for FakePorts {
     type Blobs = FakeBlobs;
     type Precheck = FakePrecheck;
     type Sealer = FakeSealer;
+    type Workspaces = FakeWorkspaces;
     type VaultAudit = FakeVaultAudit;
     type SessionsAdmin = FakeSessions;
     type Recovery = FakeRecovery;
@@ -202,6 +205,9 @@ impl CellPorts for FakePorts {
     }
     fn sealer(&self) -> &FakeSealer {
         &self.sealer
+    }
+    fn workspaces(&self) -> &FakeWorkspaces {
+        &self.workspaces
     }
     fn vault_audit(&self) -> &FakeVaultAudit {
         &self.vault_audit
@@ -278,6 +284,7 @@ impl FakePorts {
             blobs,
             precheck: FakePrecheck::new(clock.clone()),
             sealer: FakeSealer::default(),
+            workspaces: FakeWorkspaces::default(),
             vault_audit,
             recovery: FakeRecovery::default(),
             break_glass: FakeBreakGlass::default(),

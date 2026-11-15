@@ -361,6 +361,24 @@ impl AsyncEngine for FakeEngine {
         Some(out)
     }
 
+    /// The fake ledger after `after`, read from the store at the next
+    /// sequence number, for the journal of the API core.
+    fn ledger_after(&self, after: Seq) -> Option<Vec<fstp_ledger::Entry<Record>>> {
+        use fstp_ledger::RecordStore;
+        let inner = lock(&self.inner);
+        let mut out = Vec::new();
+        inner
+            .engine
+            .store()
+            .read(
+                Seq::from_raw(after.raw().saturating_add(1)),
+                usize::MAX,
+                &mut out,
+            )
+            .ok()?;
+        Some(out)
+    }
+
     fn creator_inputs(
         &self,
         state: &EngineState,

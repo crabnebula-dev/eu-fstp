@@ -37,10 +37,9 @@
 //!   so this covers only cells and worlds from before the tenant part.
 //! - The data protection contact goes to the cell's text store as a
 //!   confidential text of the tenant (`TextOwner::Tenant`, Q22). As for
-//!   every other text, this core caches it to show it again. The
-//!   `TextStore` port has no read without a `ReadClearance` yet, so a
-//!   restarted core that no longer caches the contact fails the
-//!   Organisation read closed. That read path is a seam of the lead.
+//!   every other text, this core caches it to show it again. A restarted
+//!   core reads it back from the text store under the tenant admin's
+//!   read clearance, checked against its digest.
 //! - P-70 to P-72 are recorded and shown here, but the M3 session and
 //!   step-up ports enforce their own values. Those ports do not read the
 //!   ledger yet, which is a seam of the lead.
@@ -573,7 +572,9 @@ pub(super) async fn command<P: Seams>(
                 Some(s) => {
                     let after = call.ports.engine().snapshot();
                     ReadModel::Tenant(TenantView::Step(
-                        step_view(call, &after, s.values.step()).map_err(|e| call.refuse(e))?,
+                        step_view(call, &after, s.values.step(), None)
+                            .await
+                            .map_err(|e| call.refuse(e))?,
                     ))
                 }
                 None => ReadModel::Accepted,
@@ -587,12 +588,14 @@ pub(super) async fn command<P: Seams>(
     }
 }
 
-/// The text of a stored data protection contact, if `values` hold one. A
-/// contact this core does not hold, or whose text no longer matches its
-/// digest, fails closed.
-fn contact_text<P: Seams>(
+/// The text of a stored data protection contact, if `values` hold one:
+/// the one this core holds, else the text store's under a read's
+/// `clearance`. A contact neither gives, or whose text no longer matches
+/// its digest, fails closed.
+async fn contact_text<P: Seams>(
     call: &Call<'_, P>,
     values: &StepValues,
+    clearance: Option<&fstp_access::ReadClearance>,
 ) -> Result<Option<String>, ApiError> {
     let StepValues::Organisation {
         data_protection_contact: r,
@@ -601,24 +604,26 @@ fn contact_text<P: Seams>(
     else {
         return Ok(None);
     };
-    let content = lock(&call.st.content);
-    match content.text(*r) {
-        Some(t) if crate::forms::text_digest(t) == r.digest() => Ok(Some(t.to_owned())),
+    let held = lock(&call.st.content).text(*r).map(str::to_owned);
+    match (held, clearance) {
+        (Some(t), _) if crate::forms::text_digest(&t) == r.digest() => Ok(Some(t)),
+        (None, Some(c)) => super::unrefused_text(call, *r, c).await.map(Some),
         _ => Err(super::text_unknown()),
     }
 }
 
-/// The view of `step` in `state`.
-fn step_view<P: Seams>(
+/// The view of `step` in `state`. A read passes its `clearance`.
+async fn step_view<P: Seams>(
     call: &Call<'_, P>,
     state: &EngineState,
     step: OnboardingStep,
+    clearance: Option<&fstp_access::ReadClearance>,
 ) -> Result<StepView, ApiError> {
     let ts = state.tenant.state().ok_or_else(unprovisioned)?;
     let values = match ts.saved_values(step) {
         None => None,
         Some(v) => {
-            let contact = contact_text(call, v)?;
+            let contact = contact_text(call, v, clearance).await?;
             Some(
                 crate::tenant::values_json(v, contact.as_deref())
                     .ok_or(ApiError::refused(ErrorCode::Unavailable, "ledger"))?,
@@ -682,6 +687,7 @@ pub(super) async fn read<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
     kind: ReadKind,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<ReadModel, ApiError> {
     let (account, ts) = admin(call)?;
     let view = match kind {
@@ -692,7 +698,11 @@ pub(super) async fn read<P: Seams>(
                 .and_then(fstp_json::Value::as_str)
                 .and_then(OnboardingStep::from_name)
                 .ok_or_else(|| call.refuse(ApiError::bad_request(crate::forms::REQUEST_RULE)))?;
-            TenantView::Step(step_view(call, &call.state, step).map_err(|e| call.refuse(e))?)
+            TenantView::Step(
+                step_view(call, &call.state, step, Some(clearance))
+                    .await
+                    .map_err(|e| call.refuse(e))?,
+            )
         }
         ReadKind::GetTenantSettings => TenantView::Settings(
             SettingsView::of(ts.settings())
@@ -730,11 +740,8 @@ pub(super) async fn read<P: Seams>(
             TenantView::Signatories(SignatoryList::new(rows))
         }
         ReadKind::GetActivation => TenantView::Activation(ActivationView(ts.activation())),
-        _ => {
-            return Err(call.refuse(ApiError::NotImplemented(
-                "this tenant read: no tenant read model of this kind",
-            )));
-        }
+        // The parent routes the five tenant reads above here, and no other.
+        _ => return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01"))),
     };
     Ok(ReadModel::Tenant(view))
 }

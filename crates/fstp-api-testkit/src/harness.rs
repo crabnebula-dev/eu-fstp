@@ -1320,6 +1320,16 @@ impl fstp_api_core::port::AsyncEngine for WorldEngine {
         Some(out)
     }
 
+    /// The world's ledger after `after`, for the journal of the API core.
+    fn ledger_after(&self, after: fstp_ledger::Seq) -> Option<Vec<fstp_ledger::Entry<Record>>> {
+        use fstp_ledger::RecordStore;
+        let inner = lock_engine(&self.inner);
+        let mut out = Vec::new();
+        let from = fstp_ledger::Seq::from_raw(after.raw().saturating_add(1));
+        inner.engine.store().read(from, usize::MAX, &mut out).ok()?;
+        Some(out)
+    }
+
     fn creator_inputs(
         &self,
         state: &fstp_engine::EngineState,
@@ -1362,6 +1372,7 @@ impl fstp_api_core::port::CellPorts for WorldPorts {
     type Blobs = crate::fake::FakeBlobs;
     type Precheck = crate::fake::FakePrecheck;
     type Sealer = crate::fake::FakeSealer;
+    type Workspaces = crate::fake::FakeWorkspaces;
     type VaultAudit = crate::fake::FakeVaultAudit;
     type SessionsAdmin = crate::fake::FakeSessions;
     type Recovery = crate::fake::FakeRecovery;
@@ -1402,6 +1413,9 @@ impl fstp_api_core::port::CellPorts for WorldPorts {
     }
     fn sealer(&self) -> &Self::Sealer {
         &self.base.sealer
+    }
+    fn workspaces(&self) -> &Self::Workspaces {
+        &self.base.workspaces
     }
     fn vault_audit(&self) -> &Self::VaultAudit {
         &self.base.vault_audit

@@ -79,6 +79,13 @@ fn no_draft() -> ApiError {
     ApiError::refused(ErrorCode::NotFound, "Input")
 }
 
+/// The refusal of a report or preview of a draft whose P-53 names no
+/// funder profile the cell's shell supplies (rule A9b: the shipped
+/// profiles only). A decision on the draft fails closed the same way.
+fn no_profile() -> ApiError {
+    ApiError::refused(ErrorCode::Unavailable, "P-53")
+}
+
 /// The `programme` path parameter.
 fn programme_param<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<ProgrammeId, ApiError> {
     forms::id_param(&op.request, "programme")
@@ -655,6 +662,7 @@ pub(super) async fn read<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
     kind: ReadKind,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<CreatorModel, ApiError> {
     let Some(viewer) = call.account() else {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
@@ -703,7 +711,7 @@ pub(super) async fn read<P: Seams>(
         }
         _ => {
             let p = programme_param(call, op)?;
-            programme_read(call, op, kind, p, viewer).await
+            programme_read(call, op, kind, p, viewer, clearance).await
         }
     }
 }
@@ -748,6 +756,7 @@ async fn programme_read<P: Seams>(
     kind: ReadKind,
     p: ProgrammeId,
     viewer: AccountId,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<CreatorModel, ApiError> {
     let state = &call.state;
     if kind == ReadKind::GetImpact {
@@ -792,9 +801,7 @@ async fn programme_read<P: Seams>(
         ReadKind::GetPreview => preview(call, op, p, d, viewer).await,
         ReadKind::GetReport => {
             let Some(report) = report_now(call, p, viewer).await? else {
-                return Err(call.refuse(ApiError::NotImplemented(
-                    "the cell's funder profile source for the draft's profile",
-                )));
+                return Err(call.refuse(no_profile()));
             };
             let results =
                 crate::creator::report_rows(&report, &d.live_acks()).map_err(|e| call.refuse(e))?;
@@ -803,11 +810,12 @@ async fn programme_read<P: Seams>(
                 results,
             })
         }
-        ReadKind::ListInvitations => invitations(call, p, d, viewer).await,
-        ReadKind::ListImportProposals => proposals(call, p),
+        ReadKind::ListInvitations => invitations(call, p, d, viewer, clearance).await,
+        ReadKind::ListImportProposals => proposals(call, p, clearance).await,
+        // The parent routes the creator reads above here, and no other.
         _ => {
             let _ = op;
-            Err(call.refuse(ApiError::NotImplemented("this creator read")))
+            Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01")))
         }
     }
 }
@@ -1058,9 +1066,7 @@ async fn preview<P: Seams>(
     }
     let inputs = shell_inputs(call, p, d.head(), viewer);
     let Some(profile) = inputs.profile else {
-        return Err(call.refuse(ApiError::NotImplemented(
-            "the cell's funder profile source for the draft's profile",
-        )));
+        return Err(call.refuse(no_profile()));
     };
     let template = fstp_guide::parse_template(profile.guide_template().as_bytes())
         .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "I-51")))?;
@@ -1122,6 +1128,7 @@ async fn invitations<P: Seams>(
     p: ProgrammeId,
     d: &fstp_creator::Draft,
     viewer: AccountId,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<CreatorModel, ApiError> {
     let accepted: Vec<AccountId> = d
         .live_invitations()
@@ -1143,10 +1150,7 @@ async fn invitations<P: Seams>(
     let mut rows = Vec::new();
     for (id, i) in d.live_invitations() {
         let email = match i.invitee {
-            Invitee::Pending { contact } => lock(&call.st.content)
-                .text(contact)
-                .map(str::to_owned)
-                .ok_or_else(|| call.refuse(text_unknown()))?,
+            Invitee::Pending { contact } => salted_text(call, contact, clearance).await?,
             Invitee::Account(a) => label_of(call, a).await?,
         };
         let granted =
@@ -1186,24 +1190,29 @@ async fn invitations<P: Seams>(
 }
 
 /// The import proposals of a draft, each with its held value and its
-/// evidence texts. A value the engine does not hold, or a document this
-/// core did not take, fails the read closed (`creator.rs`).
-fn proposals<P: Seams>(call: &Call<'_, P>, p: ProgrammeId) -> Result<CreatorModel, ApiError> {
+/// evidence texts. A value the engine does not hold, after a replay, is
+/// read from the text store, and a document this core did not take from
+/// the blob store, each under the read's `clearance` and checked against
+/// the digest its record names (ADR-007). Any other value or document
+/// fails the read closed.
+async fn proposals<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProgrammeId,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<CreatorModel, ApiError> {
     let import = &call.state.import;
-    let memory = lock(&call.st.creator);
     let mut rows = Vec::new();
     for s in import.proposals_of(ProgrammeRef::from_raw(p.raw())) {
         let r = s.proposal();
-        let value = import.value_of(r.id).ok_or_else(|| {
-            call.refuse(ApiError::NotImplemented(
-                "a proposed value the engine does not hold: the shell's hold after a replay (the lead)",
-            ))
-        })?;
-        let text = memory.upload(r.document).ok_or_else(|| {
-            call.refuse(ApiError::NotImplemented(
-                "the text of a document uploaded outside this API core: a blob read with a clearance (port.rs, the lead)",
-            ))
-        })?;
+        let value = match import.value_of(r.id) {
+            Some(v) => v.clone(),
+            None => stored_value(call, r.text, clearance).await?,
+        };
+        let held = lock(&call.st.creator).upload(r.document).cloned();
+        let text = match held {
+            Some(t) => t,
+            None => stored_document(call, p, r.document, clearance).await?,
+        };
         let evidence = r
             .evidence
             .iter()
@@ -1221,6 +1230,65 @@ fn proposals<P: Seams>(call: &Call<'_, P>, p: ProgrammeId) -> Result<CreatorMode
         });
     }
     Ok(CreatorModel::Proposals(rows))
+}
+
+/// The proposed value stored under `text` (ADR-007): the salt, then the
+/// value's normal text, whose keyed digest must be the one the proposal
+/// names. Anything else fails the read closed.
+async fn stored_value<P: Seams>(
+    call: &Call<'_, P>,
+    text: fstp_import::ValueTextRef,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<fstp_import::UntrustedValue, ApiError> {
+    let unavailable = || call.refuse(ApiError::refused(ErrorCode::Unavailable, "text"));
+    let bytes = call
+        .ports
+        .texts()
+        .get(crate::port::TextRef(text.id().raw()), clearance)
+        .await
+        .map_err(|_| unavailable())?;
+    let (salt, value) = crate::salted::split(&bytes).ok_or_else(unavailable)?;
+    if !crate::salted::verify(&salt, value, &text.digest().bytes()) {
+        return Err(unavailable());
+    }
+    let value = std::str::from_utf8(value).map_err(|_| unavailable())?;
+    fstp_import::UntrustedValue::from_normal_text(value).map_err(|_| unavailable())
+}
+
+/// The normalised text of `document` of programme `p`, from its blob
+/// (ADR-007): the salt, then the uploaded bytes, normalised again under
+/// the standard limits. Its keyed digest must be the one the document's
+/// record names. Anything else fails the read closed.
+async fn stored_document<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProgrammeId,
+    document: fstp_import::ImportDocumentId,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<fstp_import::ExtractedText, ApiError> {
+    let unavailable = || call.refuse(ApiError::refused(ErrorCode::Unavailable, "blob"));
+    let doc = call
+        .state
+        .import
+        .document(document)
+        .ok_or_else(unavailable)?;
+    let bytes = call
+        .ports
+        .blobs()
+        .get(
+            BlobOwner::Programme(p),
+            crate::port::BlobRef(doc.blob.bytes()),
+            clearance,
+        )
+        .await
+        .map_err(|_| unavailable())?;
+    let (salt, raw) = crate::salted::split(&bytes).ok_or_else(unavailable)?;
+    let limits = fstp_import::ImportLimits::standard().map_err(|_| unavailable())?;
+    let text = fstp_import::normalise(raw, doc.media, limits).map_err(|_| unavailable())?;
+    let data = text.untrusted().as_data().as_bytes();
+    if !crate::salted::verify(&salt, data, &doc.digest.bytes()) {
+        return Err(unavailable());
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

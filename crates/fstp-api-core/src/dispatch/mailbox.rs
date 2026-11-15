@@ -134,7 +134,7 @@ fn receiving<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<Mai
                 // unanswered question, as the journal folds the answers.
                 // A thread the journal does not hold keeps one message for
                 // the proposal, and its page says why it cannot load.
-                let unanswered = lock(&call.st.journal).unanswered(proposal);
+                let unanswered = super::journal(call).unanswered(proposal);
                 match unanswered {
                     Ok(list) => {
                         for (n, asked) in list {
@@ -210,7 +210,7 @@ fn assignments<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<M
 /// not scored, so the work stays listed and its page says why it cannot
 /// load.
 fn scored<P: Seams>(call: &Call<'_, P>, a: AssignmentId, p: ProposalId, stage: Stage) -> bool {
-    let journal = lock(&call.st.journal);
+    let journal = super::journal(call);
     let Ok(submitted) = journal.submitted_plan(p) else {
         return false;
     };
@@ -284,7 +284,7 @@ fn staff<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailIte
         account,
         &[Role::CommitteeMember, Role::CommitteeChair],
     );
-    let journal = lock(&call.st.journal);
+    let journal = super::journal(call);
     for c in published(call, &committee) {
         let Some(r) = journal.open_round(c) else {
             continue;
@@ -423,7 +423,7 @@ fn notices<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailI
             BindingScope::Programme => None,
         })
         .collect();
-    let journal = lock(&call.st.journal);
+    let journal = super::journal(call);
     for p in mine {
         let tag = state_of(call, p);
         if tag.is_none_or(|t| t == StateTag::Draft) {

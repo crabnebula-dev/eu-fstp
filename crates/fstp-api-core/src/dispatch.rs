@@ -117,9 +117,9 @@ use crate::pending::{
 use crate::port::{
     Accounts, AgentClientId, AsyncEngine, AsyncIdentityOracle, AuditEntry, BreakGlass,
     BreakGlassId, CellPorts, Clock, ExecError, ExecMeta, Ids, LoginMethod, OpName, Outcome,
-    PendingId, PortError, QueryDigest, Recovery, RecoveryId, SessionId, Sessions, SessionsAdmin,
-    StepUp, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore, Tokens, Vault, VaultAudit,
-    VerificationPurpose,
+    PendingId, PortError, QueryDigest, Recovery, RecoveryId, SealOwner, Sealer, SessionId,
+    Sessions, SessionsAdmin, StepUp, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore,
+    Tokens, Vault, VaultAudit, VerificationPurpose, WorkspaceSlot, Workspaces,
 };
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
@@ -292,36 +292,46 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The journal of `st`, caught up first with the ledger the engine of
+/// `ports` serves (`journal.rs`).
+fn journal_of<'a, P: Seams>(ports: &P, st: &'a State) -> MutexGuard<'a, Journal> {
+    let mut j = lock(&st.journal);
+    j.sync(|after| ports.engine().ledger_after(after));
+    j
+}
+
+/// The journal of a call, caught up with the ledger (`journal.rs`).
+fn journal<'a, P: Seams>(call: &'a Call<'_, P>) -> MutexGuard<'a, Journal> {
+    journal_of(call.ports, call.st)
+}
+
 /// What the journal knows of the latest plan of `p` (`journal.rs`).
-fn latest_plan(st: &State, p: ProposalId) -> forms::LatestPlan {
-    match lock(&st.journal).latest_plan(p) {
+fn latest_plan<P: Seams>(ports: &P, st: &State, p: ProposalId) -> forms::LatestPlan {
+    match journal_of(ports, st).latest_plan(p) {
         Ok(x) => forms::LatestPlan::Known(x),
         Err(Unknown) => forms::LatestPlan::Unknown,
     }
 }
 
 /// The refusal of a read model whose proposal history the journal does
-/// not hold (`journal.rs`, fail closed).
+/// not hold (`journal.rs`, fail closed): the engine serves no ledger, or
+/// a bound was passed.
 fn history_unknown() -> ApiError {
-    ApiError::NotImplemented(
-        "the history of a proposal recorded outside this API core: domain read accessors (lane W1b)",
-    )
+    ApiError::refused(ErrorCode::Unavailable, "history")
 }
 
-/// The refusal of a read of content this core does not hold
-/// (`content.rs`, fail closed).
+/// The refusal of a read of content that neither this core nor the
+/// workspace port holds, or that does not open or decode (`content.rs`,
+/// fail closed).
 fn content_unknown() -> ApiError {
-    ApiError::NotImplemented(
-        "the content of a proposal saved outside this API core: the sealed workspace store (lane W6)",
-    )
+    ApiError::refused(ErrorCode::Unavailable, "content")
 }
 
-/// The refusal of a read of a text this core did not store
-/// (`content.rs`, fail closed).
+/// The refusal of a read of a text that neither this core nor the text
+/// store gives under the read's clearance, or whose digest differs from
+/// its reference (`content.rs`, fail closed).
 fn text_unknown() -> ApiError {
-    ApiError::NotImplemented(
-        "a text stored outside this API core: a read clearance of the text store (port.rs, the lead)",
-    )
+    ApiError::refused(ErrorCode::Unavailable, "text")
 }
 
 /// The caller of one call.
@@ -678,7 +688,7 @@ pub(crate) async fn run<P: Seams>(
         forms::request_form(spec, &op.request),
         forms::id_param(&op.request, "proposal"),
     ) {
-        let latest = latest_plan(st, ProposalId::from_raw(p));
+        let latest = latest_plan(ports, st, ProposalId::from_raw(p));
         forms::name_plans(&form, &mut op.request, latest);
     }
     let digest_for = |account: Option<AccountId>| {
@@ -951,7 +961,7 @@ fn build<P: Seams>(
     // members before the digest. The build only learns whether a missing
     // member is missing because the journal does not hold the history.
     cx.plan_unknown = forms::id_param(&op.request, "proposal").is_some_and(|p| {
-        latest_plan(call.st, ProposalId::from_raw(p)) == forms::LatestPlan::Unknown
+        latest_plan(call.ports, call.st, ProposalId::from_raw(p)) == forms::LatestPlan::Unknown
     });
     forms::build(form, &op.request, &refs, &cx, &mut draw)
 }
@@ -1231,12 +1241,12 @@ async fn command<P: Seams>(
         // ADR-023: the unmask is recorded, then the vault opens its
         // release page for the subject.
         Ok(seq) if form.kind == fstp_domain::command::CommandKind::UnmaskParty => {
-            executed(call, account, &appended);
+            executed(call, account, &appended).await;
             unmask::release(call, account, &appended, seq).await
         }
         Ok(seq) => Ok(OpResult::Done {
             body: {
-                executed(call, account, &appended);
+                executed(call, account, &appended).await;
                 plan_saved(&appended).unwrap_or_else(|| accepted(&form, &ids))
             },
             seq: Some(seq),
@@ -1248,10 +1258,10 @@ async fn command<P: Seams>(
 /// Folds a command that `actor` appended into the projections of this
 /// core: the journal of its read models and rounds, and the content
 /// frozen at submission.
-fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
+async fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
     use fstp_domain::command::Command as Core;
     {
-        let mut journal = lock(&call.st.journal);
+        let mut journal = journal(call);
         journal.fold(cmd, &call.state, call.now);
         journal.fold_round(cmd, actor);
     }
@@ -1259,8 +1269,9 @@ fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
         Command::Core(Core::CreateDraft { proposal, .. }) => {
             lock(&call.st.content).created(*proposal);
         }
-        Command::Core(Core::Submit { proposal, .. }) => {
+        Command::Core(Core::Submit { proposal, plan, .. }) => {
             lock(&call.st.content).freeze(*proposal);
+            freeze_stored(call, *proposal, *plan).await;
         }
         _ => {}
     }
@@ -1508,7 +1519,7 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     let appended = cmd.clone();
     match call.ports.engine().execute(cmd, ctx, meta).await {
         Ok(seq) => {
-            executed(call, account, &appended);
+            executed(call, account, &appended).await;
             let _ = lock(&call.st.pending).confirm(a.id, call.now);
             Ok(OpResult::Done {
                 body: accepted(&form, &ids),
@@ -1656,12 +1667,23 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             let mut own = own_proposals(&call.state, a, call.now, Ended::Final);
-            {
-                let content = lock(&call.st.content);
-                for p in &mut own {
-                    // An unknown proposal shows no title, never an empty one.
-                    p.title = content.title_of(p.proposal);
-                }
+            for p in &mut own {
+                // Each title is read with a clearance of that proposal's own
+                // read. One that cannot be read shows no title, never an
+                // empty one.
+                let one = ReadOp {
+                    kind: ReadKind::GetOwnProposal,
+                    target: ReadTarget::Proposal(p.proposal),
+                };
+                p.title = match fstp_access::authorize_read(
+                    &one,
+                    &call.caller.p,
+                    &call.state,
+                    call.now,
+                ) {
+                    Ok(c) => proposal_title(call, p.proposal, &c).await,
+                    Err(_) => None,
+                };
             }
             for p in &mut own {
                 if p.state != "INELIGIBLE" {
@@ -1701,7 +1723,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")));
             };
-            mine.title = lock(&call.st.content).title_of(p);
+            mine.title = proposal_title(call, p, &clearance).await;
             if mine.state == "INELIGIBLE" {
                 mine.knock_out_reason = knock_out_reason(call, p, &clearance).await;
             }
@@ -1715,7 +1737,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         ReadKind::GetOwnStage2Thread => {
             let p = proposal_param(call, op)?;
-            ReadModel::Stage2Questions(own_questions(call, p)?)
+            ReadModel::Stage2Questions(own_questions(call, p, &clearance).await?)
         }
         ReadKind::GetOwnNotices => {
             let Some(a) = account else {
@@ -1742,9 +1764,9 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         ReadKind::GetOwnWorkspace => {
             let p = proposal_param(call, op)?;
-            let w = lock(&call.st.content)
-                .workspace(p)
-                .ok_or_else(|| call.refuse(content_unknown()))?;
+            let w = workspace_of(call, p, &clearance)
+                .await
+                .map_err(|e| call.refuse(e))?;
             ReadModel::Workspace(crate::views::WorkspaceView {
                 title: w.title,
                 summary: w.summary,
@@ -1753,7 +1775,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         ReadKind::GetDeclarationView => {
             let p = proposal_param(call, op)?;
-            let c = submitted_content(call, p)?;
+            let c = submitted_content(call, p, &clearance).await?;
             ReadModel::DeclarationView(crate::views::DeclarationView {
                 title: c.title,
                 neutral_summary: c.summary,
@@ -1761,7 +1783,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         ReadKind::GetContent => {
             let p = proposal_param(call, op)?;
-            return content_read(call, p, None).await;
+            return content_read(call, p, None, &clearance).await;
         }
         ReadKind::GetIrcCase => {
             let a = assignment_param(call, op, "irc_assignment")?;
@@ -1772,19 +1794,20 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                 .get(a)
                 .map(|x| x.proposal)
                 .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
-            return content_read(call, p, Some("nominated")).await;
+            return content_read(call, p, Some("nominated"), &clearance).await;
         }
         ReadKind::GetIntakeQueue => {
             let c = call_param(call, op)?;
             let knock_out = knock_out_criteria(call, c).await?;
             // The intake holds the proposals awaiting their knock-out, and those
             // its knock-out made INELIGIBLE (R-EV-01).
-            let proposals = proposal_rows(call, c, |s| {
+            let proposals = proposal_rows(call, c, &clearance, |s| {
                 matches!(
                     s,
                     fstp_domain::StateTag::Submitted | fstp_domain::StateTag::Ineligible
                 )
-            })?;
+            })
+            .await?;
             ReadModel::IntakeQueue(crate::views::IntakeQueue {
                 knock_out,
                 proposals,
@@ -1797,15 +1820,18 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         ReadKind::GetCallBoard => {
             let c = call_param(call, op)?;
-            ReadModel::Board(proposal_rows(call, c, |s| {
-                !matches!(s, fstp_domain::StateTag::Draft)
-            })?)
+            ReadModel::Board(
+                proposal_rows(call, c, &clearance, |s| {
+                    !matches!(s, fstp_domain::StateTag::Draft)
+                })
+                .await?,
+            )
         }
         ReadKind::ListNotifiableConflicts => {
             let c = call_param(call, op)?;
             // Every submitted proposal of the call, each known to the
             // journal: an unknown one fails the read closed.
-            let journal = lock(&call.st.journal);
+            let journal = journal(call);
             let mut notifiable = Vec::new();
             for p in proposals_of_call(&call.state, c) {
                 if fstp_domain::view::proposal_state(&call.state.core, p)
@@ -1836,21 +1862,21 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         ReadKind::GetStage2Thread => {
             let a = assignment_param(call, op, "assignment")?;
-            ReadModel::Stage2Thread(stage2_thread(call, a)?)
+            ReadModel::Stage2Thread(stage2_thread(call, a, &clearance).await?)
         }
         ReadKind::GetRankingView => {
             let Some(viewer) = account else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             let c = call_param(call, op)?;
-            ReadModel::Ranking(ranking(call, c, viewer)?)
+            ReadModel::Ranking(ranking(call, c, viewer).await?)
         }
         ReadKind::GetCutOffRound => {
             let Some(viewer) = account else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
             let r = round_param(call, op)?;
-            ReadModel::Round(round_view(call, r, viewer).await?)
+            ReadModel::Round(round_view(call, r, viewer, &clearance).await?)
         }
         ReadKind::ListProposalAssignments => {
             let p = proposal_param(call, op)?;
@@ -1866,7 +1892,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         | ReadKind::GetTenantSettings
         | ReadKind::ListTenantAdmins
         | ReadKind::ListSignatories
-        | ReadKind::GetActivation => tenant::read(call, op, kind).await?,
+        | ReadKind::GetActivation => tenant::read(call, op, kind, &clearance).await?,
         // Lane m4wire: the creator pages and the approval inbox.
         ReadKind::GetDraft
         | ReadKind::GetReport
@@ -1876,7 +1902,9 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         | ReadKind::ListImportProposals
         | ReadKind::ListProgrammes
         | ReadKind::ListTemplates
-        | ReadKind::ListApprovals => ReadModel::Creator(creator_ops::read(call, op, kind).await?),
+        | ReadKind::ListApprovals => {
+            ReadModel::Creator(creator_ops::read(call, op, kind, &clearance).await?)
+        }
         // The interim home page of design section 15.0 (2026-10-31), I-86.
         ReadKind::ListMyRoles => {
             let Some(a) = account else {
@@ -2463,10 +2491,17 @@ async fn m3_port<P: Seams>(
             }
             PortCall::AcknowledgeNotice(p)
         }
-        _ => {
-            return Err(call.refuse(ApiError::NotImplemented(
-                "this M3 port operation: its port or request form (see the W3b report)",
-            )));
+        // Each of these is high-risk in the registry, so its arm above
+        // serves it. A spec that lost the mark would run without a step-up,
+        // so it is refused (I-78), never executed.
+        PortKind::ApproveRecovery | PortKind::ApproveBreakGlass | PortKind::AddPasskey => {
+            return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-78")));
+        }
+        // Served before the step-up, above.
+        PortKind::AcceptInvitation
+        | PortKind::RequestPrecheck
+        | PortKind::BeginInvitationVerification => {
+            return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01")));
         }
     };
     let proof = if call.spec.high_risk {
@@ -2637,15 +2672,20 @@ async fn m3_port<P: Seams>(
                 Err(e) => Err(call.refuse(exec_failed(e))),
             }
         }
+        // The sealed copy is stored first, so a save the port did not take
+        // changes nothing (`content.rs`). This core's memory may be full:
+        // its reads then fall back to the port.
         PortCall::SaveWorkspace(p, w) => {
-            let saved = lock(&call.st.content).save(p, w);
-            match saved {
-                Ok(()) => done(Ok(()), "I-21"),
+            if !w.fits() {
+                return Err(call.refuse(ApiError::bad_request(forms::REQUEST_RULE)));
+            }
+            store_workspace(call, p, WorkspaceSlot::Draft, &w)
+                .await
+                .map_err(|e| call.refuse(e))?;
+            match lock(&call.st.content).save(p, w) {
+                Ok(()) | Err(SaveError::Full) => done(Ok(()), "I-21"),
                 Err(SaveError::TooLong) => {
                     Err(call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))
-                }
-                Err(SaveError::Full) => {
-                    Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "I-21")))
                 }
             }
         }
@@ -2720,13 +2760,151 @@ fn call_param<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<CallId, ApiError>
         .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))
 }
 
-/// The content `p` was submitted with. A proposal this core never saw
-/// submitted has none, and the read fails closed (`content.rs`).
-fn submitted_content<P: Seams>(call: &Call<'_, P>, p: ProposalId) -> Result<Workspace, ApiError> {
-    lock(&call.st.content)
-        .submitted(p)
-        .cloned()
-        .ok_or_else(|| call.refuse(content_unknown()))
+/// The title of `p` (Q9): the submitted one, else the draft's, from this
+/// core or the workspace port, read under `clearance`. `None` when
+/// neither gives one, so a list shows no title, never an empty one.
+async fn proposal_title<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> Option<String> {
+    if let Some(t) = lock(&call.st.content).title_of(p) {
+        return Some(t);
+    }
+    let draft = fstp_domain::view::proposal_state(&call.state.core, p)
+        == Some(fstp_domain::StateTag::Draft);
+    let w = if draft {
+        workspace_of(call, p, clearance).await
+    } else {
+        submitted_of(call, p, clearance).await
+    };
+    w.ok().map(|w| w.title)
+}
+
+/// Seals `w` and stores it as the content of `p` in `slot`, through the
+/// sealer and the workspace port (`content.rs`). The error is not yet
+/// audited.
+async fn store_workspace<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    slot: WorkspaceSlot,
+    w: &Workspace,
+) -> Result<(), ApiError> {
+    let bytes =
+        crate::content::encode(w).ok_or(ApiError::refused(ErrorCode::Unavailable, "I-21"))?;
+    let sealed = call
+        .ports
+        .sealer()
+        .seal(SealOwner::Workspace(p), &bytes)
+        .await
+        .map_err(|e| port_failed(e, "I-21"))?;
+    call.ports
+        .workspaces()
+        .put(p, slot, sealed)
+        .await
+        .map_err(|e| port_failed(e, "I-21"))
+}
+
+/// The content of `p` in `slot` from the workspace port, opened under
+/// `clearance`, or `None` when the slot was never stored. Sealed bytes
+/// that do not open or decode fail closed. The error is not yet audited.
+async fn load_workspace<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    slot: WorkspaceSlot,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<Option<Workspace>, ApiError> {
+    let Some(sealed) = call
+        .ports
+        .workspaces()
+        .get(p, slot)
+        .await
+        .map_err(|e| port_failed(e, "content"))?
+    else {
+        return Ok(None);
+    };
+    let bytes = call
+        .ports
+        .sealer()
+        .open(SealOwner::Workspace(p), &sealed, clearance)
+        .await
+        .map_err(|e| port_failed(e, "content"))?;
+    crate::content::decode(&bytes)
+        .map(Some)
+        .ok_or_else(content_unknown)
+}
+
+/// The workspace of `p` (I-21): the one this core holds, else the draft
+/// slot of the workspace port, else, for a proposal the state holds and
+/// no save ever stored, the empty workspace. The error is not yet audited.
+async fn workspace_of<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<Workspace, ApiError> {
+    if let Some(w) = lock(&call.st.content).workspace(p) {
+        return Ok(w);
+    }
+    match load_workspace(call, p, WorkspaceSlot::Draft, clearance).await? {
+        Some(w) => Ok(w),
+        None if fstp_domain::view::proposal_state(&call.state.core, p).is_some() => {
+            Ok(Workspace::default())
+        }
+        None => Err(content_unknown()),
+    }
+}
+
+/// The content `p` was submitted with: the one this core froze, else the
+/// slot of its submitted plan in the workspace port. A proposal with
+/// neither fails closed (`content.rs`). The error is not yet audited.
+async fn submitted_of<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<Workspace, ApiError> {
+    if let Some(w) = lock(&call.st.content).submitted(p).cloned() {
+        return Ok(w);
+    }
+    let plan = journal(call)
+        .submitted_plan(p)
+        .map_err(|Unknown| history_unknown())?
+        .ok_or_else(content_unknown)?;
+    load_workspace(call, p, WorkspaceSlot::Submitted(plan), clearance)
+        .await?
+        .ok_or_else(content_unknown)
+}
+
+/// The content `p` was submitted with (`submitted_of`), audited when it
+/// fails.
+async fn submitted_content<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<Workspace, ApiError> {
+    submitted_of(call, p, clearance)
+        .await
+        .map_err(|e| call.refuse(e))
+}
+
+/// Stores the content `p` is submitted with under `plan`, after its
+/// `Submit` appended: the workspace this core holds, else a copy of the
+/// draft slot's sealed bytes. A store that fails leaves the slot empty,
+/// so the Judging reads fail closed rather than show other content.
+async fn freeze_stored<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    plan: fstp_domain::id::PlanVersionId,
+) {
+    let slot = WorkspaceSlot::Submitted(plan);
+    let held = lock(&call.st.content).submitted(p).cloned();
+    if let Some(w) = held {
+        let _ = store_workspace(call, p, slot, &w).await;
+        return;
+    }
+    let workspaces = call.ports.workspaces();
+    if let Ok(Some(sealed)) = workspaces.get(p, WorkspaceSlot::Draft).await {
+        let _ = workspaces.put(p, slot, sealed).await;
+    }
 }
 
 /// Every proposal of call `c`, active or ended, in id order.
@@ -2759,6 +2937,7 @@ async fn content_read<P: Seams>(
     call: &Call<'_, P>,
     p: ProposalId,
     outcome: Option<&'static str>,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<OpResult, ApiError> {
     if call.account().is_none() {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
@@ -2769,11 +2948,11 @@ async fn content_read<P: Seams>(
     let draft = fstp_domain::view::proposal_state(&call.state.core, p)
         == Some(fstp_domain::StateTag::Draft);
     let content = if draft {
-        lock(&call.st.content)
-            .workspace(p)
-            .ok_or_else(|| call.refuse(content_unknown()))?
+        workspace_of(call, p, clearance)
+            .await
+            .map_err(|e| call.refuse(e))?
     } else {
-        submitted_content(call, p)?
+        submitted_content(call, p, clearance).await?
     };
     let seq = append_content_read(call, p).await?;
     let view = crate::views::ContentView {
@@ -2875,12 +3054,12 @@ async fn knock_out_criteria<P: Seams>(
 /// Every proposal of call `c` whose state `keep` admits, in id order,
 /// with its submitted title. A row whose submitted content this core does
 /// not hold fails the read closed (`content.rs`).
-fn proposal_rows<P: Seams>(
+async fn proposal_rows<P: Seams>(
     call: &Call<'_, P>,
     c: CallId,
+    clearance: &fstp_access::ReadClearance,
     keep: impl Fn(fstp_domain::StateTag) -> bool,
 ) -> Result<Vec<crate::views::ProposalRow>, ApiError> {
-    let content = lock(&call.st.content);
     let mut out = Vec::new();
     for p in proposals_of_call(&call.state, c) {
         let Some(tag) = fstp_domain::view::proposal_state(&call.state.core, p) else {
@@ -2889,10 +3068,7 @@ fn proposal_rows<P: Seams>(
         if !keep(tag) {
             continue;
         }
-        let title = content
-            .submitted(p)
-            .map(|w| w.title.clone())
-            .ok_or_else(|| call.refuse(content_unknown()))?;
+        let title = submitted_content(call, p, clearance).await?.title;
         out.push(crate::views::ProposalRow {
             proposal: p.raw(),
             state: tag.spec_name(),
@@ -2971,7 +3147,7 @@ fn score_sheet<P: Seams>(
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
     let p = assignment.proposal;
     let tag = fstp_domain::view::proposal_state(&call.state.core, p);
-    let journal = lock(&call.st.journal);
+    let journal = journal(call);
     let unknown = |Unknown| call.refuse(history_unknown());
     let submitted = journal.submitted_plan(p).map_err(unknown)?;
     let (stage, plan) = match tag {
@@ -3053,10 +3229,12 @@ pub(crate) fn utc_day(t: Timestamp) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// The stage 2 thread of reviewer assignment `a` (R-EV-05).
-fn stage2_thread<P: Seams>(
+/// The stage 2 thread of reviewer assignment `a` (R-EV-05). Its texts
+/// are read under the read's `clearance`.
+async fn stage2_thread<P: Seams>(
     call: &Call<'_, P>,
     a: AssignmentId,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<crate::views::Stage2Thread, ApiError> {
     use fstp_domain::assignment::AssignmentKind;
     let review = call.state.core.review();
@@ -3065,20 +3243,20 @@ fn stage2_thread<P: Seams>(
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
     let p = assignment.proposal;
     let tag = fstp_domain::view::proposal_state(&call.state.core, p);
-    let journal = lock(&call.st.journal);
-    // The "no questions" marks are read only for a known proposal.
-    let entries: Vec<ThreadEntry> = journal
-        .thread(p)
-        .map_err(|Unknown| call.refuse(history_unknown()))?
-        .to_vec();
-    let everyone_done = review
-        .assignments()
-        .filter(|(_, x)| x.proposal == p && x.kind == AssignmentKind::Reviewer && x.active())
-        .all(|(id, _)| journal.no_questions(id));
-    let open = tag == Some(fstp_domain::StateTag::Stage2) && !everyone_done;
-    let own = journal.no_questions(a);
-    drop(journal);
-    let content = lock(&call.st.content);
+    let (entries, open, own) = {
+        let journal = journal(call);
+        // The "no questions" marks are read only for a known proposal.
+        let entries: Vec<ThreadEntry> = journal
+            .thread(p)
+            .map_err(|Unknown| call.refuse(history_unknown()))?
+            .to_vec();
+        let everyone_done = review
+            .assignments()
+            .filter(|(_, x)| x.proposal == p && x.kind == AssignmentKind::Reviewer && x.active())
+            .all(|(id, _)| journal.no_questions(id));
+        let open = tag == Some(fstp_domain::StateTag::Stage2) && !everyone_done;
+        (entries, open, journal.no_questions(a))
+    };
     let mut items = Vec::new();
     for e in entries {
         let item = match e {
@@ -3089,13 +3267,13 @@ fn stage2_thread<P: Seams>(
             } => crate::views::ThreadItem {
                 kind: "question",
                 author: review.get(by).and_then(|x| x.handle).map(handle_text),
-                text: known_text(call, &content, text)?,
+                text: stored_text(call, text, clearance).await?,
                 day: utc_day(at),
             },
             ThreadEntry::Answer { text, at } => crate::views::ThreadItem {
                 kind: "answer",
                 author: None,
-                text: known_text(call, &content, text)?,
+                text: stored_text(call, text, clearance).await?,
                 day: utc_day(at),
             },
         };
@@ -3109,22 +3287,71 @@ fn stage2_thread<P: Seams>(
     })
 }
 
-/// The text this core stored under `r`. A text it did not store fails
-/// the read closed (`content.rs`), never showing an empty text.
-fn known_text<P: Seams>(
+/// The text behind `r`: one this core stored, else the text store's,
+/// read under the read's `clearance` (ADR-007). The store's text must
+/// match the digest `r` names. A text neither gives fails the read
+/// closed (`content.rs`), never showing an empty or a changed text.
+async fn stored_text<P: Seams>(
     call: &Call<'_, P>,
-    content: &ContentStore,
     r: TextRef,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<String, ApiError> {
-    content
-        .text(r)
-        .map(str::to_owned)
+    unrefused_text(call, r, clearance)
+        .await
+        .map_err(|e| call.refuse(e))
+}
+
+/// [`stored_text`], with a refusal its caller audits.
+async fn unrefused_text<P: Seams>(
+    call: &Call<'_, P>,
+    r: TextRef,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<String, ApiError> {
+    if let Some(t) = lock(&call.st.content).text(r) {
+        return Ok(t.to_owned());
+    }
+    let bytes = call
+        .ports
+        .texts()
+        .get(crate::port::TextRef(r.id().raw()), clearance)
+        .await
+        .map_err(|_| text_unknown())?;
+    String::from_utf8(bytes)
+        .ok()
+        .filter(|t| forms::text_digest(t) == r.digest())
+        .ok_or_else(text_unknown)
+}
+
+/// A salted text behind `r` (`salted.rs`): one this core stored, else
+/// the text store's, read under `clearance`, whose keyed digest under
+/// its own salt must be the digest `r` names. Otherwise the read fails
+/// closed.
+async fn salted_text<P: Seams>(
+    call: &Call<'_, P>,
+    r: TextRef,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<String, ApiError> {
+    if let Some(t) = lock(&call.st.content).text(r) {
+        return Ok(t.to_owned());
+    }
+    let bytes = call
+        .ports
+        .texts()
+        .get(crate::port::TextRef(r.id().raw()), clearance)
+        .await
+        .map_err(|_| call.refuse(text_unknown()))?;
+    crate::salted::split(&bytes)
+        .filter(|(salt, text)| crate::salted::verify(salt, text, &r.digest().bytes()))
+        .and_then(|(_, text)| String::from_utf8(text.to_vec()).ok())
         .ok_or_else(|| call.refuse(text_unknown()))
 }
 
 /// The committee ranking view of call `c` for `viewer` (R-EV-08, Q16, D9,
 /// D10): a row with a conflict fact for the viewer shows "recused" only.
-fn ranking<P: Seams>(
+///
+/// The summaries are texts of each proposal, so the texts of a row are
+/// read under a clearance of the same read on that row's proposal.
+async fn ranking<P: Seams>(
     call: &Call<'_, P>,
     c: CallId,
     viewer: AccountId,
@@ -3132,10 +3359,6 @@ fn ranking<P: Seams>(
     let rows = fstp_domain::visibility::ranking_view(&call.state.core, c)
         .map_err(|r| call.refuse(refusal(r)))?;
     let review = call.state.core.review();
-    let content = lock(&call.st.content);
-    let text = |r: Option<TextRef>| -> Result<Option<String>, ApiError> {
-        r.map(|r| known_text(call, &content, r)).transpose()
-    };
     let overflow = || call.refuse(ApiError::refused(ErrorCode::Unavailable, "ranking"));
     let mut out = Vec::new();
     for row in rows {
@@ -3158,11 +3381,26 @@ fn ranking<P: Seams>(
                     .ok_or_else(overflow)?,
             });
         }
+        let rop = ReadOp {
+            kind: ReadKind::GetRankingView,
+            target: ReadTarget::Proposal(row.proposal),
+        };
+        let clearance = fstp_access::authorize_read(&rop, &call.caller.p, &call.state, call.now)
+            .map_err(|d| call.refuse(read_denied(d.rule())))?;
+        let text = |r: Option<TextRef>| async move {
+            match r {
+                Some(r) => stored_text(call, r, &clearance).await.map(Some),
+                None => Ok(None),
+            }
+        };
+        let title = text(row.title).await?;
+        let neutral_summary = text(row.neutral_summary).await?;
+        let rationale = text(row.rationale).await?;
         out.push(crate::views::RankingRow::Ranked {
             proposal: row.proposal.raw(),
-            title: text(row.title)?,
-            neutral_summary: text(row.neutral_summary)?,
-            rationale: text(row.rationale)?,
+            title,
+            neutral_summary,
+            rationale,
             effective,
             criterion_scores: scores,
             requested: row.requested.amount().to_string(),
@@ -3172,12 +3410,10 @@ fn ranking<P: Seams>(
     Ok(out)
 }
 
-/// The refusal of a read of a cut-off round this core did not see
-/// opened (`journal.rs`, fail closed).
+/// The refusal of a read of a cut-off round the journal does not hold
+/// (`journal.rs`, fail closed).
 fn round_unknown() -> ApiError {
-    ApiError::NotImplemented(
-        "a cut-off round opened outside this API core: a domain read accessor of the rounds (lane W1b)",
-    )
+    ApiError::refused(ErrorCode::Unavailable, "round")
 }
 
 /// The `round` path parameter of a read.
@@ -3187,20 +3423,19 @@ fn round_param<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<DecisionId, ApiE
         .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))
 }
 
-/// The read target of a round: its call, from the journal (change D5).
+/// The read target of a round: its call, from the journal (change D5),
+/// which folds the ledger's rounds (`journal.rs`).
 ///
-/// A round this core did not see opened resolves to a call the state
+/// A round the journal does not hold resolves to a call the state
 /// does not hold. `authorize_read` judges such a target against a
 /// context in which no relation holds (`reads.rs`). So a caller with no
 /// account is refused as an actor, and every other caller gets the
 /// COMMITTEE rule's own R-AC-01, as an outsider of a known round does.
 /// The refusal then tells no caller whether such a round exists, and
-/// none reaches the read model. Interim, pending a domain read of the
-/// rounds (lane W1b): a member of the round's own committee is refused
-/// in the same way.
+/// none reaches the read model.
 fn round_target<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<ReadTarget, ApiError> {
     let r = round_param(call, op)?;
-    let known = lock(&call.st.journal).round(r).map(|x| x.call);
+    let known = journal(call).round(r).map(|x| x.call);
     Ok(ReadTarget::Call(
         known.unwrap_or_else(|| absent_call(&call.state)),
     ))
@@ -3480,9 +3715,10 @@ async fn round_view<P: Seams>(
     call: &Call<'_, P>,
     r: DecisionId,
     viewer: AccountId,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<crate::model::RoundView, ApiError> {
     use crate::model::{CandidateRow, RoundRow, RoundView, RoundViewer};
-    let facts = lock(&call.st.journal).round(r).cloned();
+    let facts = journal(call).round(r).cloned();
     let facts = facts.ok_or_else(|| call.refuse(round_unknown()))?;
     let core = &call.state.core;
     let programme = forms::programme_of_call(&call.state, facts.call)
@@ -3496,14 +3732,10 @@ async fn round_view<P: Seams>(
             state,
         });
     }
-    let (rationale, tie_break) = {
-        let content = lock(&call.st.content);
-        let rationale = known_text(call, &content, facts.rationale)?;
-        let tie_break = facts
-            .tie_breaks
-            .map(|t| known_text(call, &content, t))
-            .transpose()?;
-        (rationale, tie_break)
+    let rationale = stored_text(call, facts.rationale, clearance).await?;
+    let tie_break = match facts.tie_breaks {
+        Some(t) => Some(stored_text(call, t, clearance).await?),
+        None => None,
     };
     let open = facts.status == RoundStatus::Open;
     let own_vote = facts.cast.get(&viewer).copied();
@@ -3676,16 +3908,16 @@ fn country_code(s: &str) -> Option<[u8; 2]> {
 /// The stage 2 questions of `p` under their P-11 handles, each with the
 /// day it was asked only (TH-08). The answers stay with the team's own
 /// form.
-fn own_questions<P: Seams>(
+async fn own_questions<P: Seams>(
     call: &Call<'_, P>,
     p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
 ) -> Result<Vec<crate::views::Question>, ApiError> {
     let review = call.state.core.review();
-    let entries: Vec<ThreadEntry> = lock(&call.st.journal)
+    let entries: Vec<ThreadEntry> = journal(call)
         .thread(p)
         .map_err(|Unknown| call.refuse(history_unknown()))?
         .to_vec();
-    let content = lock(&call.st.content);
     let mut out = Vec::new();
     for e in entries {
         if let ThreadEntry::Question {
@@ -3700,7 +3932,7 @@ fn own_questions<P: Seams>(
                     .and_then(|x| x.handle)
                     .map_or_else(|| "R".to_owned(), handle_text),
                 asked: utc_day(at),
-                text: known_text(call, &content, text)?,
+                text: stored_text(call, text, clearance).await?,
             });
         }
     }
@@ -3729,7 +3961,7 @@ fn notices<P: Seams>(
             mine.insert(proposal);
         }
     }
-    let journal = lock(&call.st.journal);
+    let journal = journal(call);
     let mut out = Vec::new();
     for p in mine {
         let tag = fstp_domain::view::proposal_state(&call.state.core, p);
