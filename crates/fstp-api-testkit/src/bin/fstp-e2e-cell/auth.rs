@@ -140,6 +140,9 @@ pub(crate) struct AuthState {
     /// How many programme role invitations of the accounts port the cell
     /// mailed (J2, `crate::people`).
     mailed_invitations: usize,
+    /// The accounts port, once the cell built it: every login email is
+    /// recorded there too, as the cell's login email index (SA-11).
+    accounts: Option<fstp_api_testkit::fake::misc::FakeAccounts>,
 }
 
 impl AuthState {
@@ -162,7 +165,17 @@ impl AuthState {
             demo_tokens: BTreeMap::new(),
             demo_sessions: BTreeSet::new(),
             mailed_invitations: 0,
+            accounts: None,
         }
+    }
+
+    /// Records every login email in `accounts` now and from here on, so
+    /// the team and member pages read them (SA-11).
+    pub(crate) fn attach_accounts(&mut self, accounts: fstp_api_testkit::fake::misc::FakeAccounts) {
+        for (email, account) in &self.emails {
+            accounts.set_login_email(*account, email);
+        }
+        self.accounts = Some(accounts);
     }
 
     /// Issues a single-use demo sign-in token for `account` at cell time
@@ -203,6 +216,9 @@ impl AuthState {
     /// Records that `email` is the login email of `account`.
     pub(crate) fn person(&mut self, email: &str, account: AccountId) {
         self.emails.insert(email.to_owned(), account);
+        if let Some(a) = &self.accounts {
+            a.set_login_email(account, email);
+        }
     }
 
     /// The account with login email `email`.

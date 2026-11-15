@@ -112,6 +112,12 @@ pub enum ReadModel {
     AgentActivity(crate::dispatch::agents::AgentActivity),
     /// `roles.list`: the staff bindings of a programme (J1).
     Bindings(crate::dispatch::bindings::ProgrammeBindings),
+    /// SA-11: the team of a programme.
+    Team(crate::dispatch::team::TeamView),
+    /// SA-11: the member accounts of the organisation.
+    Members(crate::dispatch::team::MembersView),
+    /// SA-11: the caller's own display name.
+    DisplayName(crate::dispatch::team::DisplayNameView),
     /// `proposal.journey`: a proposal's route position, its legs and the
     /// overlay (lane j2, `SPEC/12-journey-ui.md` section 10).
     Journey(crate::dispatch::journey::JourneyView),
@@ -299,6 +305,9 @@ impl ToJson for ReadModel {
             ReadModel::MyAgents(a) => a.to_json(),
             ReadModel::AgentActivity(a) => a.to_json(),
             ReadModel::Bindings(b) => b.to_json(),
+            ReadModel::Team(v) => v.to_json(),
+            ReadModel::Members(v) => v.to_json(),
+            ReadModel::DisplayName(v) => v.to_json(),
             ReadModel::Journey(v) => v.to_json(),
             ReadModel::Diary(v) => v.to_json(),
             ReadModel::Invitation(v) => v.to_json(),
@@ -335,6 +344,10 @@ impl ReadModel {
     pub fn carries_email(&self) -> bool {
         match self {
             ReadModel::Creator(m) => m.carries_email(),
+            // SA-11: the team and member pages name invitation and login
+            // emails. Both are web only (I-86).
+            ReadModel::Team(v) => v.rows.iter().any(|r| r.email.is_some()),
+            ReadModel::Members(v) => v.members.iter().any(|r| r.email.is_some()),
             _ => false,
         }
     }
@@ -1753,6 +1766,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyAgents(_) => &["agents.list"],
             ReadModel::AgentActivity(_) => &["agents.activity"],
             ReadModel::Bindings(_) => &["roles.list"],
+            ReadModel::Team(_) => &["team.list"],
+            ReadModel::Members(_) => &["admin.members"],
+            ReadModel::DisplayName(_) => &["me.display_name"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
             ReadModel::Invitation(_) => &["people.get_invitation"],
@@ -1970,6 +1986,90 @@ pub(crate) mod reply_shape_tests {
                 at,
             },
         ])
+    }
+
+    /// One role of each status for the SA-11 samples: a binding with and
+    /// without a rule and an end, and invitations with and without an
+    /// account.
+    fn sa11_roles() -> Vec<crate::dispatch::team::RoleRow> {
+        use crate::dispatch::team::{RoleRow, Status};
+        use fstp_domain::id::{AccountId, BindingId};
+        let at = Timestamp::from_micros(5);
+        [
+            Status::Invited,
+            Status::Accepted,
+            Status::Verified,
+            Status::Active,
+            Status::Suspended,
+            Status::Ended,
+        ]
+        .into_iter()
+        .zip(1u128..)
+        .map(|(status, n)| {
+            let bound = matches!(status, Status::Active | Status::Suspended | Status::Ended);
+            RoleRow {
+                account: (status != Status::Invited).then(|| AccountId::from_raw(n)),
+                programme: (n != 6).then(|| ProgrammeId::from_raw(3)),
+                binding: bound.then(|| BindingId::from_raw(n)),
+                invitation: (!bound).then(|| fstp_creator::InvitationId::from_raw(n)),
+                role: Role::CommitteeMember,
+                status,
+                rule: (status == Status::Suspended).then_some("I-06"),
+                start: (n != 6).then_some(at),
+                end: (n == 4).then_some(at),
+                contact: None,
+            }
+        })
+        .collect()
+    }
+
+    /// A `team.list` reply (SA-11): every status, with and without a
+    /// display name and an email.
+    fn team_view() -> crate::dispatch::team::TeamView {
+        use crate::dispatch::team::{Action, TeamRow, TeamView};
+        TeamView {
+            actions: vec![
+                Action::Grant,
+                Action::End,
+                Action::Reinstate,
+                Action::Invite,
+            ],
+            rows: sa11_roles()
+                .into_iter()
+                .enumerate()
+                .map(|(i, role)| TeamRow {
+                    display_name: (i % 2 == 0).then(|| "Synthetic Name".to_owned()),
+                    email: (i % 3 != 0).then(|| format!("person{i}@example.invalid")),
+                    role,
+                })
+                .collect(),
+        }
+    }
+
+    /// An `admin.members` reply (SA-11): a member with every role
+    /// status and one with none.
+    fn members_view() -> crate::dispatch::team::MembersView {
+        use crate::dispatch::team::{Action, Member, MembersView};
+        use fstp_domain::id::AccountId;
+        MembersView {
+            actions: vec![Action::Grant, Action::End, Action::Reinstate],
+            members: vec![
+                Member {
+                    account: AccountId::from_raw(1),
+                    display_name: Some("Synthetic Name".to_owned()),
+                    email: Some("member@example.invalid".to_owned()),
+                    tenant_admin: false,
+                    roles: sa11_roles(),
+                },
+                Member {
+                    account: AccountId::from_raw(2),
+                    display_name: None,
+                    email: None,
+                    tenant_admin: true,
+                    roles: Vec::new(),
+                },
+            ],
+        }
     }
 
     /// A `roles.list` reply (J1): each binding state, with and without a
@@ -2225,6 +2325,12 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyAgents(my_agents()),
             ReadModel::AgentActivity(agent_activity()),
             ReadModel::Bindings(programme_bindings()),
+            ReadModel::Team(team_view()),
+            ReadModel::Members(members_view()),
+            ReadModel::DisplayName(crate::dispatch::team::DisplayNameView(Some(
+                "Synthetic Name".to_owned(),
+            ))),
+            ReadModel::DisplayName(crate::dispatch::team::DisplayNameView(None)),
             ReadModel::Journey(journey_view(true)),
             ReadModel::Journey(journey_view(false)),
             ReadModel::Diary(diary_view(true)),
@@ -2404,11 +2510,14 @@ pub(crate) mod reply_shape_tests {
                 );
             }
         }
-        assert_eq!(bearing, 1, "the invitation list is the one sample");
+        assert_eq!(
+            bearing, 3,
+            "the invitation list and the SA-11 team and member pages"
+        );
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 52;
+    const VARIANTS: usize = 55;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2467,6 +2576,9 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Audit(_) => 49,
             ReadModel::Erasures(_) => 50,
             ReadModel::FunderProfiles(_) => 51,
+            ReadModel::Team(_) => 52,
+            ReadModel::Members(_) => 53,
+            ReadModel::DisplayName(_) => 54,
         }
     }
 

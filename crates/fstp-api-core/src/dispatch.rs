@@ -158,6 +158,8 @@ mod public;
 mod publicity;
 /// The tenant operations (lane m4tenant).
 mod tenant;
+// SA-11: the team and member pages and the display name.
+pub(crate) mod team;
 // ADR-023: the coordinator unmask, its parties read and its audit read.
 mod unmask;
 
@@ -1996,6 +1998,24 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,
         // P-41, ADR-007 (lane m5/retention): the erasure page.
         ReadKind::ListErasures => erasure::read(call).await?,
+        // SA-11 (Daniel, 2026-11-15, night): the team and member pages and
+        // the caller's own display name. The read rule admitted the caller.
+        ReadKind::ListTeam | ReadKind::ListMembers | ReadKind::GetMyDisplayName => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            // I-86: emails and display names reach the web only.
+            if call.caller.via() != Via::Web {
+                return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-86")));
+            }
+            match kind {
+                ReadKind::ListTeam => ReadModel::Team(team::team(call, op, a, &clearance).await?),
+                ReadKind::ListMembers => {
+                    ReadModel::Members(team::members(call, a, &clearance).await?)
+                }
+                _ => ReadModel::DisplayName(team::own(call, a, &clearance).await?),
+            }
+        }
         // Daniel, 2026-11-15 (late): the shipped and tenant funder profiles.
         ReadKind::ListFunderProfiles => tenant::funder_profiles(call)?,
         // M6 lane L6-API: the programme manager's timeline of a programme.
@@ -2348,6 +2368,8 @@ enum PortCall {
     /// A tenant admin requests the erasure of a grant's texts with its
     /// cause (ADR-007, P-41, lane m5/retention).
     RequestErasure(crate::port::ErasureCause, ProposalId),
+    /// The caller sets or clears its own display name (SA-11).
+    SetDisplayName(Option<String>),
 }
 
 /// An operation an M3 port serves.
@@ -2437,6 +2459,10 @@ async fn m3_port<P: Seams>(
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?,
         ),
         PortKind::EndSession => PortCall::EndSession(SessionId::from_raw(id("session")?)),
+        // SA-11: plain text of at most 100 characters, or a clear.
+        PortKind::SetDisplayName => {
+            PortCall::SetDisplayName(team::checked_name(&op.request).map_err(|e| call.refuse(e))?)
+        }
         PortKind::MarkMailboxRead => {
             let message = op
                 .request
@@ -2647,6 +2673,14 @@ async fn m3_port<P: Seams>(
                 "ADR-007",
             )
         }
+        // SA-11: a confidential text of the caller's account (ADR-007).
+        PortCall::SetDisplayName(name) => done(
+            call.ports
+                .texts()
+                .set_display_name(account, name, call.now)
+                .await,
+            "SA-11",
+        ),
         PortCall::EndSession(s) => {
             done(call.ports.sessions_admin().end(account, s).await, "R-LG-04")
         }

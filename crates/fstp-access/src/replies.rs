@@ -401,6 +401,56 @@ pub const INVITED_ROLES: &[&str] = &[
     "auditor",
 ];
 
+/// The roles a team or member page lists (SA-11), as the wire spells
+/// them: every role outside the Receiving group, in the order of
+/// [`Role::ALL`]. No applicant, team member or guardian is ever listed.
+pub const TEAM_ROLES: &[&str] = &[
+    "programme_manager",
+    "call_drafter",
+    "fstp_coordinator",
+    "committee_member",
+    "committee_chair",
+    "irc_member",
+    "tenant_admin",
+    "finance_approver",
+    "payment_releaser",
+    "contract_signatory",
+    "financial_signatory",
+    "legal_signatory",
+    "auditor",
+];
+
+/// The status of one role on the team and member pages (SA-11): an open
+/// invitation is invited, accepted or verified, and a binding is active,
+/// suspended or ended.
+const TEAM_STATUSES: &[&str] = &[
+    "invited",
+    "accepted",
+    "verified",
+    "active",
+    "suspended",
+    "ended",
+];
+
+/// The actions the team and member pages may offer the viewer (SA-11).
+/// The server decides each again when it is taken.
+const TEAM_ACTIONS: &[&str] = &["grant", "end", "reinstate", "invite"];
+
+/// One role of a member account on the member page (SA-11): the
+/// programme (null for a tenant-wide role), the binding or the open
+/// invitation it comes from, the role, its status, the rule of a
+/// suspension or a voiding, and its dates in microseconds.
+const MEMBER_ROLE: Shape = Shape::Object(&[
+    m("programme", Shape::Nullable(&Shape::Id)),
+    m("binding", Shape::Nullable(&Shape::Id)),
+    m("invitation", Shape::Nullable(&Shape::Id)),
+    m("role", Shape::Enum(TEAM_ROLES)),
+    m("status", Shape::Enum(TEAM_STATUSES)),
+    opt("rule", Shape::String),
+    m("start", Shape::Nullable(&Shape::String)),
+    m("end", Shape::Nullable(&Shape::String)),
+]);
+
 /// A pass or fail outcome, with no reason and no account (R-CF-03).
 const OUTCOME: Shape = Shape::Enum(&["pass", "fail"]);
 
@@ -1706,6 +1756,55 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 ])),
             ),
         ]),
+    ),
+    // SA-11 (Daniel, 2026-11-15, night): the team of a programme. Each
+    // row is a Drafting, Judging or Operations role, or an open
+    // invitation, with the display name and the invitation or login
+    // email. `actions` names what the viewer may offer. Web only (I-86).
+    (
+        "team.list",
+        Shape::Object(&[
+            m("actions", Shape::Array(&Shape::Enum(TEAM_ACTIONS))),
+            m(
+                "rows",
+                Shape::Array(&Shape::Object(&[
+                    m("account", Shape::Nullable(&Shape::Id)),
+                    m("display_name", Shape::Nullable(&Shape::String)),
+                    m("email", Shape::Nullable(&Shape::String)),
+                    m("binding", Shape::Nullable(&Shape::Id)),
+                    m("invitation", Shape::Nullable(&Shape::Id)),
+                    m("role", Shape::Enum(TEAM_ROLES)),
+                    m("status", Shape::Enum(TEAM_STATUSES)),
+                    opt("rule", Shape::String),
+                    m("start", Shape::Nullable(&Shape::String)),
+                    m("end", Shape::Nullable(&Shape::String)),
+                ])),
+            ),
+        ]),
+    ),
+    // SA-11: every member account of the organisation, with its display
+    // name, its login email, whether it is a tenant admin, and its roles
+    // across programmes. Web only (I-86).
+    (
+        "admin.members",
+        Shape::Object(&[
+            m("actions", Shape::Array(&Shape::Enum(TEAM_ACTIONS))),
+            m(
+                "members",
+                Shape::Array(&Shape::Object(&[
+                    m("account", Shape::Id),
+                    m("display_name", Shape::Nullable(&Shape::String)),
+                    m("email", Shape::Nullable(&Shape::String)),
+                    m("tenant_admin", Shape::Bool),
+                    m("roles", Shape::Array(&MEMBER_ROLE)),
+                ])),
+            ),
+        ]),
+    ),
+    // SA-11: the caller's own display name, or null when none is set.
+    (
+        "me.display_name",
+        Shape::Object(&[m("display_name", Shape::Nullable(&Shape::String))]),
     ),
     // Lane m4wire, SoD-09, D3: each invitation with its live SoD check,
     // which names a rule only, never an account (R-CF-03).

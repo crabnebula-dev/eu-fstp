@@ -229,6 +229,8 @@ impl Inner {
             WebConfig::new(origin, site.assets.clone()).test_cell(),
         )
         .map_err(|e| e.to_string())?;
+        let mut auth = auth;
+        auth.attach_accounts(ports.accounts.clone());
         Ok(Inner {
             ports,
             web,

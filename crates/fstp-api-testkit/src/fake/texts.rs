@@ -32,6 +32,8 @@ struct Texts {
     next: u128,
     /// The erasure log (ADR-007, lane m5/retention), oldest first.
     erased: Vec<ErasureRow>,
+    /// The text that holds each account's display name (SA-11).
+    display: BTreeMap<AccountId, u128>,
 }
 
 /// The text store. Cloning shares the texts.
@@ -70,14 +72,15 @@ impl FakeTexts {
     /// reference, so a ledger copied from `from`'s cell resolves every
     /// text it names. Every clone of `self` sees the copy.
     pub fn copy_from(&self, from: &FakeTexts) {
-        let (rows, next, erased) = {
+        let (rows, next, erased, display) = {
             let s = lock(&from.state);
-            (s.rows.clone(), s.next, s.erased.clone())
+            (s.rows.clone(), s.next, s.erased.clone(), s.display.clone())
         };
         let mut s = lock(&self.state);
         s.rows = rows;
         s.next = next;
         s.erased = erased;
+        s.display = display;
     }
 
     /// Every public text that is UTF-8, by id: what a published Guide may
@@ -92,6 +95,50 @@ impl FakeTexts {
                 Some((fstp_domain::id::TextId::from_raw(*id), s))
             })
             .collect()
+    }
+}
+
+impl FakeTexts {
+    /// Erases every text that account `a` owns, as an account erasure
+    /// does (ADR-007, cause 2), each with one log row. Its display name is
+    /// among them (SA-11). Returns how many texts it erased.
+    pub fn erase_account(&self, a: AccountId, at: Timestamp) -> usize {
+        let mut s = lock(&self.state);
+        let owned: Vec<u128> = s
+            .rows
+            .iter()
+            .filter(|(_, (_, owner, _))| *owner == TextOwner::Account(a))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &owned {
+            erase(&mut s, *id, at);
+        }
+        s.display.remove(&a);
+        owned.len()
+    }
+
+    /// The text that holds the display name of `a`, if any (SA-11).
+    pub fn display_text(&self, a: AccountId) -> Option<TextRef> {
+        lock(&self.state).display.get(&a).copied().map(TextRef)
+    }
+
+    /// The owner of the text `r`, if it is stored.
+    pub fn owner(&self, r: TextRef) -> Option<TextOwner> {
+        lock(&self.state).rows.get(&r.0).map(|(_, o, _)| *o)
+    }
+}
+
+/// Removes text `id` and logs its erasure at `at`, at the person's
+/// request (ADR-007, cause 2), naming no grant.
+fn erase(s: &mut Texts, id: u128, at: Timestamp) {
+    if s.rows.remove(&id).is_some() {
+        s.erased.push(ErasureRow {
+            text: TextRef(id),
+            cause: ErasureCause::ErasureRequest,
+            grant: None,
+            requested_at: at,
+            completed_at: Some(at),
+        });
     }
 }
 
@@ -123,11 +170,41 @@ fn clears(class: TextClass, owner: TextOwner, clearance: &ReadClearance) -> bool
         (_, TextOwner::Programme(p), ReadTarget::Programme(_) | ReadTarget::Call(_)) => {
             clearance.programme() == Some(p)
         }
+        // SA-11: an account's display name opens to the team and member
+        // reads, and to the account's own display name read. No other read
+        // shows it (I-17, P-11, I-27).
+        (_, TextOwner::Account(a), _) => match clearance.op().kind {
+            fstp_access::ReadKind::ListTeam | fstp_access::ReadKind::ListMembers => true,
+            fstp_access::ReadKind::GetMyDisplayName => clearance.account() == Some(a),
+            _ => false,
+        },
         _ => false,
     }
 }
 
 impl TextStore for FakeTexts {
+    /// Replaces the account's display name text, erasing the old one
+    /// (SA-11, ADR-007).
+    async fn set_display_name(
+        &self,
+        a: AccountId,
+        name: Option<String>,
+        at: Timestamp,
+    ) -> Result<(), PortError> {
+        self.set_display_now(a, name, at);
+        Ok(())
+    }
+
+    /// The display names under `clearance`, which must open each
+    /// account's texts (SA-11). Otherwise the whole read is refused.
+    async fn display_names(
+        &self,
+        accounts: Vec<AccountId>,
+        clearance: &ReadClearance,
+    ) -> Result<BTreeMap<AccountId, String>, PortError> {
+        self.display_names_now(&accounts, clearance)
+    }
+
     async fn put(
         &self,
         class: TextClass,
@@ -189,6 +266,49 @@ impl TextStore for FakeTexts {
             });
         }
         Ok(())
+    }
+}
+
+/// SA-11: the display name methods of the text store.
+impl FakeTexts {
+    fn set_display_now(&self, a: AccountId, name: Option<String>, at: Timestamp) {
+        let mut s = lock(&self.state);
+        if let Some(old) = s.display.remove(&a) {
+            erase(&mut s, old, at);
+        }
+        if let Some(name) = name {
+            let n = s.next;
+            s.next = n.saturating_add(1);
+            s.rows.insert(
+                n,
+                (
+                    TextClass::Confidential,
+                    TextOwner::Account(a),
+                    name.into_bytes(),
+                ),
+            );
+            s.display.insert(a, n);
+        }
+    }
+
+    fn display_names_now(
+        &self,
+        accounts: &[AccountId],
+        clearance: &ReadClearance,
+    ) -> Result<BTreeMap<AccountId, String>, PortError> {
+        let s = lock(&self.state);
+        let mut out = BTreeMap::new();
+        for a in accounts {
+            if !clears(TextClass::Confidential, TextOwner::Account(*a), clearance) {
+                return Err(PortError::Refused);
+            }
+            let Some((_, _, b)) = s.display.get(a).and_then(|id| s.rows.get(id)) else {
+                continue;
+            };
+            let name = String::from_utf8(b.clone()).map_err(|_| PortError::Refused)?;
+            out.insert(*a, name);
+        }
+        Ok(out)
     }
 }
 

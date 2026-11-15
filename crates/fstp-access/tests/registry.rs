@@ -1028,7 +1028,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 73] = [
+const READ_NAMES: [&str; 76] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1118,6 +1118,10 @@ const READ_NAMES: [&str; 73] = [
     // ADR-023 (I-17): the coordinator's parties read and the unmask log.
     "ListUnmaskParties",
     "ListUnmasks",
+    // SA-11: the team and member pages and the own display name.
+    "ListTeam",
+    "ListMembers",
+    "GetMyDisplayName",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the
