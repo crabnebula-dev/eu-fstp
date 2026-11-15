@@ -45,6 +45,7 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | (merged, pushed) | `m4/audit-publish-import`, `m3/cell-routes`, `m4/ops-roles-agents`, `m4/audit-readers`, `m4/internal-seams`, `m3/decisions-a` | On main at handoff: audit log and its readers; add passkey, vault tickets, applied self-grants; agents, roles and pending reads; the last API-core seams (journal folds the ledger, sealed workspace store, text reads under clearance); Q-I79, SoD-08 break-glass, ADR-007 causes, ADR-004 sealed layout. Known-red is down to 16 entries |
 | `.lanes/decB` | `m4/decisions-b` | Created, not started: I-52, ledger seams, I-66/I-67 creator commands |
 | `.lanes/finish` | `m3/finish-gaps` | Created, not started: `i24_system_tasks` seed, wizard name at stage 1 and approver count, cell erasure gaps, CellBackup scan, devstack specs |
+| (queued) | `m4/page-gate` | Next free slot: SA-09, server-side page gate for every `/app/` page (sign-in redirect, 404 when not permitted, links filtered), both cells, tests from the authorisation reference |
 
 The briefs for decB and finish are in the transcript of this session. In short, each item in the two tables above.
 
