@@ -5039,3 +5039,8 @@ mod unmask_tests;
 
 #[cfg(test)]
 mod api_gaps_tests;
+/// The audit reads of a programme on the matrix worlds (R-AU-01, I-24,
+/// ADR-007, ADR-022, ADR-023).
+#[cfg(test)]
+#[path = "harness_audit.rs"]
+mod audit_tests;
