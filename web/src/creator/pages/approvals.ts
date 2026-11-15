@@ -26,6 +26,7 @@
 // server knows the grant an approval belongs to, so the page sends none.
 
 import { h } from "../../core/dom.js";
+import { readMyRoles } from "../../home/model.js";
 import { roleLabel } from "../../people/i18n.js";
 import { busy, frame, hush, ready } from "../frame.js";
 import { t } from "../i18n.js";
@@ -90,6 +91,35 @@ export function overrideForm(
     }),
   );
   return form;
+}
+
+/**
+ * Fills `slot` with the override form of programme `p` when the reader
+ * is a tenant admin who built it and its activation is requested
+ * (ADR-022). The set-up wizard's Review and confirm page and its
+ * progress page call it on their `i67-override` slot. Anyone else reads
+ * nothing more, and the slot stays empty and hidden. `after` runs once
+ * the override completed.
+ */
+export async function offerOverride(
+  slot: HTMLElement,
+  p: string,
+  alert: HTMLElement,
+  after: () => void,
+): Promise<void> {
+  const me = await call("me.roles", [], undefined, (v) => readMyRoles(v) !== null);
+  if (me.kind !== "done" || readMyRoles(me.body)?.tenantAdmin !== true) return;
+  const o = await call("admin.approvals", [], undefined, (v) => readApprovals(v) !== null);
+  if (o.kind !== "done") return;
+  const row = (readApprovals(o.body) ?? []).find((r) => r.kind === "activation" && r.programme === p && r.overridable);
+  if (row === undefined) return;
+  const revisionOf = async (): Promise<string | null> => {
+    if (row.revision !== null) return row.revision;
+    const d = await loadDraft(p, alert);
+    return d === null ? null : d.revision;
+  };
+  slot.append(overrideForm(row, revisionOf, alert, (n, ps, b) => call(n, ps, b, anyObject), after));
+  slot.removeAttribute("hidden");
 }
 
 /** Mounts the approval inbox. */

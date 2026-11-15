@@ -5,7 +5,8 @@
 
 import { OPERATIONS, SCHEMAS, VALIDATORS } from "../src/gen/api.js";
 import { readApprovals, type ApprovalRow } from "../src/creator/model.js";
-import { overrideForm, type OverrideSend } from "../src/creator/pages/approvals.js";
+import { offerOverride, overrideForm, type OverrideSend } from "../src/creator/pages/approvals.js";
+import { approverOverrideSlot } from "../src/setup/view.js";
 import type { Outcome } from "../src/creator/ops.js";
 import { FakeElement, asFake, fakeDocument, freshDom } from "./support/fakedom.js";
 import { assert, eq, test } from "./support/harness.js";
@@ -124,4 +125,55 @@ test("i67_adr022_override_form_needs_a_reason_and_sends_it", async () => {
   eq(sent[0]?.body, { revision: "6.18", reason: "SYNTHETIC: the second admin is on leave." }, "revision and reason");
   eq(form.getAttribute("data-status"), "approved", "the row says it is approved");
   eq(finished, 1, "the page hears that the override completed");
+});
+
+/** Gives `offerOverride` a fake cell: `me.roles` with `admin`, and the inbox with `rows`. */
+function cell(admin: boolean, rows: unknown[]): string[] {
+  const asked: string[] = [];
+  g["location"] = { pathname: "/app/programmes/41/setup/progress", hash: "", search: "", origin: "https://cell-a.e2e.invalid", href: "https://cell-a.e2e.invalid/app/programmes/41/setup/progress" };
+  g["fetch"] = async (input: unknown): Promise<Response> => {
+    const path = new URL(String(input), "https://cell-a.e2e.invalid").pathname;
+    asked.push(path);
+    const json = (v: unknown, status = 200): Response =>
+      new Response(JSON.stringify(v), { status, headers: { "Content-Type": "application/json" } });
+    if (path.endsWith("/me/roles")) {
+      return json({ tenant_admin: admin, roles: [], calls: [], rounds: [], drafts: [], signatories: [] });
+    }
+    if (path.endsWith("/admin/approvals")) {
+      return admin ? json({ approvals: rows }) : json({ code: "refused", rule: "actor" }, 403);
+    }
+    return json({ code: "not_found", rule: "Input" }, 404);
+  };
+  return asked;
+}
+
+/**
+ * ADR-022: the set-up wizard's `i67-override` slot holds the override form
+ * for a tenant admin who built the programme. For anyone else it stays
+ * empty and hidden, and a reader who is no tenant admin never asks for
+ * the approval inbox.
+ */
+test("i67_adr022_setup_slot_offers_the_override_to_a_builder_admin_only", async () => {
+  prepare();
+  const alert = asFake(fakeDocument.createElement("p")) as unknown as HTMLElement;
+  const row = { kind: "activation", programme: "41", revision: "6.18", approvable: false, overridable: true };
+
+  cell(true, [row]);
+  const filled = asFake(approverOverrideSlot());
+  await offerOverride(filled as unknown as HTMLElement, "41", alert, () => undefined);
+  eq(filled.getAttribute("hidden"), null, "the slot shows for the builder admin");
+  assert((filled.textContent ?? "").includes("Approve as override"), "the override form is in the slot");
+  eq(all(filled, "textarea").length, 1, "with its reason field");
+
+  cell(true, [{ ...row, approvable: true, overridable: false }]);
+  const second = asFake(approverOverrideSlot());
+  await offerOverride(second as unknown as HTMLElement, "41", alert, () => undefined);
+  assert(second.getAttribute("hidden") !== null, "a second person sees no override");
+  eq(second.childNodes.length, 0, "and no form");
+
+  const asked = cell(false, [row]);
+  const manager = asFake(approverOverrideSlot());
+  await offerOverride(manager as unknown as HTMLElement, "41", alert, () => undefined);
+  assert(manager.getAttribute("hidden") !== null, "a programme manager sees no override");
+  assert(!asked.some((p) => p.endsWith("/admin/approvals")), "a non-admin never asks for the inbox");
 });
