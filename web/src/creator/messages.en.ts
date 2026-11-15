@@ -122,6 +122,10 @@ const LABELS: Readonly<Record<string, string>> = {
   "studio.overview.approval_link": "Open approval and publication",
   "studio.overview.previews": "Previews",
   "studio.overview.guide_link": "Guide for Applicants preview",
+  "studio.overview.more": "Set-up pages",
+  "studio.overview.setup_link": "Create a programme: progress and stages",
+  "studio.overview.knock_outs_link": "Knock-out criteria",
+  "studio.overview.people_link": "Members and roles of this programme",
   "studio.imports.title": "Imported values",
   "studio.imports.waiting":
     "These imported values take effect only once a named programme manager confirms or edits them (I-65):",

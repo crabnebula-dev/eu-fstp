@@ -34,6 +34,12 @@
 //! address the invitation by the token of its link, `{invitation_token}`,
 //! never by its decimal id. The landing admits a caller with no account,
 //! so a guessable id would let anyone enumerate invitations.
+//!
+//! SA-12 (Daniel, 2026-11-15 night): a tenant admin acts in every
+//! programme set-up operation of the programme manager and the call
+//! drafter, without a Drafting binding. `import.resolve` stays the
+//! manager's, since I-65 names a programme manager, and the approval and
+//! publication of calls stay the manager's (R-PC-03).
 
 use fstp_domain::CommandKind;
 use fstp_domain::roles::Role;
@@ -550,7 +556,14 @@ const EVERY: &[RoleOrApplicant] = &[
 const ADMIN: &[RoleOrApplicant] = &[R(Role::TenantAdmin)];
 const MANAGER: &[RoleOrApplicant] = &[R(Role::ProgrammeManager)];
 const MANAGER_OR_ADMIN: &[RoleOrApplicant] = &[R(Role::ProgrammeManager), R(Role::TenantAdmin)];
-const CALL_AUTHOR: &[RoleOrApplicant] = &[R(Role::ProgrammeManager), R(Role::CallDrafter)];
+/// The authors of a call: its programme manager and call drafter, and a
+/// tenant admin (SA-12, Daniel 2026-11-15 night). Approval and
+/// publication stay the programme manager's (R-PC-03).
+const CALL_AUTHOR: &[RoleOrApplicant] = &[
+    R(Role::ProgrammeManager),
+    R(Role::CallDrafter),
+    R(Role::TenantAdmin),
+];
 /// The readers of a draft and of its knock-out criteria: the programme
 /// manager, the call drafter, who writes them (roles table), and a
 /// tenant admin.
@@ -563,6 +576,14 @@ const CALL_STAFF: &[RoleOrApplicant] = &[
     R(Role::ProgrammeManager),
     R(Role::CallDrafter),
     R(Role::FstpCoordinator),
+];
+/// The readers of a programme's call list: the call staff and a tenant
+/// admin, who drafts calls (SA-12).
+const CALL_LISTER: &[RoleOrApplicant] = &[
+    R(Role::ProgrammeManager),
+    R(Role::CallDrafter),
+    R(Role::FstpCoordinator),
+    R(Role::TenantAdmin),
 ];
 const COORDINATOR: &[RoleOrApplicant] = &[R(Role::FstpCoordinator)];
 const NEW_APPLICANT: &[RoleOrApplicant] = &[
@@ -1172,14 +1193,14 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/draft/start",
     )
-    .acting(MANAGER),
+    .acting(MANAGER_OR_ADMIN),
     OpSpec::new(
         "creator.save_fields",
         OpKind::Creator(CreatorKind::SaveFields),
         Put,
         "/programmes/{programme}/draft/fields",
     )
-    .acting(MANAGER)
+    .acting(MANAGER_OR_ADMIN)
     .tool(
         "fstp_creator_save_fields",
         "Save field values of a draft programme. The values stay a draft until a person requests activation in the platform.",
@@ -1193,7 +1214,7 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/draft/narratives/{field}/acceptance",
     )
-    .acting(MANAGER),
+    .acting(MANAGER_OR_ADMIN),
     // Daniel, 2026-11-15: narrative text the draft holds is edited, an
     // edit that voids the report (I-66).
     OpSpec::new(
@@ -1202,7 +1223,7 @@ pub const OPS: &[OpSpec] = &[
         Put,
         "/programmes/{programme}/draft/narratives/{field}",
     )
-    .acting(MANAGER),
+    .acting(MANAGER_OR_ADMIN),
     OpSpec::read(
         "creator.get_draft",
         RK::GetDraft,
@@ -1252,7 +1273,7 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/activation-request",
     )
-    .acting(MANAGER),
+    .acting(MANAGER_OR_ADMIN),
     OpSpec::new(
         "creator.approve_activation",
         OpKind::Creator(CreatorKind::ApproveActivation),
@@ -1285,7 +1306,7 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/imports",
     )
-    .acting(MANAGER),
+    .acting(MANAGER_OR_ADMIN),
     OpSpec::read(
         "import.list",
         RK::ListImportProposals,
@@ -1307,7 +1328,7 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/imports/{import_document}/removal",
     )
-    .acting(MANAGER),
+    .acting(MANAGER_OR_ADMIN),
     // J1 and J2: people and roles. SoD-09: the invitation landing, read
     // before the invitee enrols. The link token is its only capability.
     OpSpec::read(
@@ -1418,7 +1439,8 @@ pub const OPS: &[OpSpec] = &[
         ),
     // Lane mcreator: the Planning Studio's list of a programme's calls,
     // each with its state and whether the caller may approve it (R-PC-03).
-    OpSpec::read("call.list", RK::ListCalls, "/programmes/{programme}/calls").acting(CALL_STAFF),
+    // SA-12: and a tenant admin, who drafts calls.
+    OpSpec::read("call.list", RK::ListCalls, "/programmes/{programme}/calls").acting(CALL_LISTER),
     // M6 lane L6-API: the scheduled, cancelled and fired events of a
     // programme (M6 design section 6). Web only.
     OpSpec::read(

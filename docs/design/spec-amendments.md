@@ -281,6 +281,25 @@ Readings, pending Daniel:
   - The approval and publication rules of calls (R-PC-03).
 - `SPEC/02-domain/roles-and-sod.md` gains a NOTE on the tenant admin row.
 
+### Built by lane m4/admin-setup
+
+- Operations opened to a tenant admin: `creator.apply_start`, `creator.save_fields` (field saves, clears and the knock-out criteria of an active programme), `creator.accept_narrative`, `creator.edit_narrative`, `creator.request_activation`, `import.upload`, `import.remove`, `call.draft` and `call.edit`. The read `call.list` opens to a tenant admin too, so the drafted calls are reachable. The list holds no proposal content.
+- Already open to a tenant admin before SA-12: `creator.open_draft`, `creator.invite`, `creator.withdraw_invitation`, `creator.acknowledge`, `creator.save_as_template`, `creator.get_draft`, `creator.get_report`, `creator.preview` (the Guide preview), `creator.impact`, `creator.invitations`, `import.list` and the creator start lists.
+- Enforcement: the creator's actor checks (`fstp-creator`), the engine's import upload and removal (`fstp-engine` bridge), and the core's `EditPolicy`, `DraftCall` and `EditCall` guards and `ACTOR_RULES` (`fstp-domain`). The shell's attested admin set decides who is a tenant admin, as for every admin act.
+- I-67: every act names the admin as its actor, so the admin joins the creator's builder set and, for a start or a policy save, the core's. The approval inbox then offers the admin the override and no approval.
+- References: the authorisation reference, the activation reference (R6 and R9) and the import reference admit a tenant admin for the same acts. The domain's policy reference admits one for `EditPolicy`, `DraftCall` and `EditCall`.
+- Pages: the SA-09 page table needed no change, since every set-up page is gated on a read a tenant admin already passes. `me.roles` lists every creator draft of the tenant to a tenant admin. The admin's home links the Programme editor, the "Create a programme" progress and wizard, the creator review, the knock-out criteria and the people page of each. The Programme editor links the progress page, the knock-out criteria and the people page. The approval page lists the waiting calls to a tenant admin, with no number filled in.
+
+Conflict with an invariant, left for Daniel:
+
+- `import.resolve` stays the programme manager's. I-65 says every imported value "is confirmed or edited by a named programme manager", and an invariant outranks SA-12. A tenant admin may upload and remove a document, since neither confirms a value. To let an admin resolve, I-65 itself would need an amendment.
+
+Readings, pending Daniel:
+
+- `call.board` stays closed to a tenant admin. It counts the call's proposals, which is evaluation data rather than set-up. `programme.timeline` stays the programme manager's.
+- The import upload and removal read the shell's attestation in the command context only, as the core's `ActorRule::TenantAdmin` does. The bridge holds no attested admin set.
+- A policy edit by a tenant admin on an active programme stays limited to the knock-out criteria, as for a call drafter, since the creator admits no other save there.
+
 ## SA-13: Field help in the wizard and the Programme editor
 
 **Source.** Daniel, 2026-11-15 (night): "provide information about every field that the administrator / programme manager can fill out. Leave the text hidden by default, but if the user clicks an 'i' icon, then the information is shown. In the wizard and the editor, it is helpful because unless you have done this before you might not know what is intended." **Status.** Decided. Built by lane `m4/field-help` on 2026-11-15.

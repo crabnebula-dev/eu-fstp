@@ -248,7 +248,8 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             base,
             start,
         } => {
-            manager(core, *programme, actor, ctx.now)?;
+            // SA-12: a tenant admin too, without a Drafting binding.
+            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
             if let StartingPoint::Clone { source } = start
@@ -293,10 +294,12 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             let knock_outs = !fields.is_empty()
                 && clear.is_empty()
                 && fields.iter().all(|f| f.field == FieldId::P09);
+            // SA-12 (Daniel, 2026-11-15 night): a tenant admin saves either,
+            // without a Drafting binding, and joins the builder set (I-67).
             if knock_outs {
-                manager_or_drafter(core, *programme, actor, ctx.now)?;
+                manager_drafter_or_admin(core, *programme, actor, ctx, ext)?;
             } else {
-                manager(core, *programme, actor, ctx.now)?;
+                manager_or_admin(core, *programme, actor, ctx, ext)?;
             }
             let d = if knock_outs {
                 creator
@@ -338,7 +341,7 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             base,
             field,
         } => {
-            manager(core, *programme, actor, ctx.now)?;
+            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
             accept_narrative(d, *field)?;
@@ -356,7 +359,8 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
         } => {
             // Daniel, 2026-11-15 (the I-66 generator gaps): narrative text
             // the draft holds can be edited. A gap is filled by a save.
-            manager(core, *programme, actor, ctx.now)?;
+            // SA-12: a tenant admin too.
+            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let d = open_draft(creator, *programme)?;
             at_head(d, *base)?;
             if !draft::is_narrative(edit.field)
@@ -486,9 +490,11 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             revision,
         } => {
             // Design section 15.0 ("Who requests activation", Daniel,
-            // 2026-11-06): a programme manager only. Reading R6 is
-            // narrowed, and a tenant admin approves (I-67).
-            manager(core, *programme, actor, ctx.now)?;
+            // 2026-11-06): a programme manager. SA-12 (Daniel, 2026-11-15
+            // night): a tenant admin too. A requesting admin joins the
+            // builder set, so it activates only through the override
+            // (ADR-022), or another admin approves (I-67).
+            manager_or_admin(core, *programme, actor, ctx, ext)?;
             let d = open_draft(creator, *programme)?;
             let head = at_head(d, *revision)?;
             let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
@@ -629,9 +635,15 @@ pub fn decide_import_save(
 /// document of `programme` that is not removed yet.
 ///
 /// It applies the guards of a save: the actor holds an active programme
-/// manager binding on the draft, the draft is open and `base` is the head.
-/// The record is an edit, so it voids every acknowledgement and the
-/// activation request (I-66), and its author joins the builder set (Q1).
+/// manager binding on the draft, or is a tenant admin as the shell attests
+/// in `ctx` (SA-12), the draft is open and `base` is the head. The removal
+/// confirms no imported value, so I-65 does not bear on it. The record is
+/// an edit, so it voids every acknowledgement and the activation request
+/// (I-66), and its author joins the builder set (Q1).
+///
+/// Interim, pending Daniel: the bridge holds no attested admin set, so the
+/// shell's attestation in `ctx` alone admits an admin here, as the core's
+/// `ActorRule::TenantAdmin` reads it.
 pub fn decide_import_removal(
     core: &State,
     creator: &CreatorState,
@@ -641,7 +653,9 @@ pub fn decide_import_removal(
     ctx: &Ctx,
 ) -> Result<CreatorDecision, CreatorRefusal> {
     let actor = account(ctx)?;
-    manager(core, programme, actor, ctx.now)?;
+    if !ctx.tenant_admin {
+        manager(core, programme, actor, ctx.now)?;
+    }
     let d = open_draft(creator, programme)?;
     at_head(d, base)?;
     Ok(CreatorDecision {
@@ -926,13 +940,19 @@ fn manager(
 }
 
 /// A programme manager or a call drafter on the programme: the writers of
-/// the knock-out criteria (roles table, `SPEC/02-domain/roles-and-sod.md`).
-fn manager_or_drafter(
+/// the knock-out criteria (roles table, `SPEC/02-domain/roles-and-sod.md`),
+/// or a tenant admin (SA-12, Daniel 2026-11-15 night).
+fn manager_drafter_or_admin(
     core: &State,
     programme: ProgrammeId,
     actor: AccountId,
-    now: Timestamp,
+    ctx: &Ctx,
+    ext: &CreatorInputs,
 ) -> Result<(), CreatorRefusal> {
+    if is_admin(actor, ctx, ext) {
+        return Ok(());
+    }
+    let now = ctx.now;
     let drafter = core.roster().bindings().any(|(_, b)| {
         b.account == actor
             && b.programme == programme
@@ -947,10 +967,12 @@ fn manager_or_drafter(
 }
 
 /// A programme manager on the draft or a tenant admin. Interim, pending
-/// Daniel: reading R5 lets either acknowledge a warning. A request for
-/// activation is a programme manager's only (design section 15.0). J1
-/// needs a tenant admin to invite the first programme manager, so either
-/// may invite and withdraw.
+/// Daniel: reading R5 lets either acknowledge a warning. J1 needs a tenant
+/// admin to invite the first programme manager, so either may invite and
+/// withdraw. SA-12 (Daniel, 2026-11-15 night): a tenant admin takes every
+/// set-up act of the programme manager, the start, the saves, the
+/// narratives and the request for activation included. Only the import
+/// resolution stays the manager's, since I-65 names a programme manager.
 fn manager_or_admin(
     core: &State,
     programme: ProgrammeId,

@@ -161,12 +161,11 @@ pub fn programme_manager_at(
     })
 }
 
-/// The resolver of an import command on `programme`: the actor's account,
+/// The resolver of an import proposal on `programme`: the actor's account,
 /// when it holds an active programme manager binding there at `ctx.now`.
+/// I-65 names "a named programme manager", so SA-12 does not widen it.
 ///
-/// The bridge runs it before any import check, and the engine runs it for
-/// an upload (`import.upload`) too, which needs the same binding (interim
-/// reading, pending Daniel).
+/// The bridge runs it before any resolution check.
 pub fn resolver(
     state: &EngineState,
     programme: ProgrammeId,
@@ -182,6 +181,22 @@ pub fn resolver(
     }
 }
 
+/// The uploader or remover of an imported document on `programme`: a
+/// programme manager as [`resolver`] admits, or a tenant admin as the
+/// shell attests in `ctx` (SA-12, Daniel 2026-11-15 night). Neither act
+/// confirms an imported value, so I-65 does not bear on it. The engine
+/// runs it for an upload (`import.upload`) and a removal
+/// (`import.remove`) before any import check.
+pub fn import_editor(
+    state: &EngineState,
+    programme: ProgrammeId,
+    ctx: &Ctx,
+) -> Result<AccountId, BridgeError> {
+    match ctx.actor {
+        Actor::Account(account) if ctx.tenant_admin => Ok(account),
+        _ => resolver(state, programme, ctx),
+    }
+}
 /// The engine refusal of an import refusal.
 pub fn import_refusal(r: ImportRefusal) -> Refusal {
     use ImportRefusal as I;
@@ -248,7 +263,7 @@ pub fn decide_import_command(
             // The actor before the draft's state, as the resolution and
             // the creator check it: a denied actor is denied in every
             // state (T-AUTHZ-MATRIX).
-            let account = resolver(state, programme, ctx).map_err(BridgeError::refusal)?;
+            let account = import_editor(state, programme, ctx).map_err(BridgeError::refusal)?;
             open_draft(state, programme)?;
             (
                 cmd.clone(),
@@ -561,10 +576,10 @@ pub fn resolve_import(
 /// Removes the imported document `document` from the draft of
 /// `programme` at `base` (Daniel, 2026-11-15, the I-66 generator gaps).
 ///
-/// The actor holds an active programme manager binding on the draft
-/// ([`resolver`]), the draft is open, and the document is registered for
-/// that programme and not removed yet. The creator then decides the
-/// draft record with the guards of a save
+/// The actor holds an active programme manager binding on the draft, or
+/// is a tenant admin (SA-12, [`import_editor`]), the draft is open, and
+/// the document is registered for that programme and not removed yet.
+/// The creator then decides the draft record with the guards of a save
 /// (`fstp_creator::decide_import_removal`). The entry holds that one
 /// `ImportRemoved`, whose fold drops the document's open proposals from
 /// the unresolved count. It composes no core command, so it asks the
@@ -576,7 +591,7 @@ pub fn remove_import(
     base: DraftRevision,
     ctx: &Ctx,
 ) -> Result<Vec<Record>, Refusal> {
-    resolver(state, programme, ctx).map_err(BridgeError::refusal)?;
+    import_editor(state, programme, ctx).map_err(BridgeError::refusal)?;
     open_draft(state, programme)?;
     let doc = state
         .import
@@ -876,6 +891,39 @@ mod tests {
         );
         assert_eq!(
             resolver(&state, P, &ctx(Actor::System(SystemCause::Timeline), 5)),
+            Err(BridgeError::NotAnAccount)
+        );
+    }
+
+    /// SA-12, I-65: a tenant admin the shell attests uploads and removes a
+    /// document without a binding, and is still refused the resolution.
+    /// An unattested account and the system are refused as before.
+    #[test]
+    fn sa12_i65_tenant_admin_uploads_and_removes_but_never_resolves() {
+        let state = EngineState::new(
+            core(&[grant(1, P, Role::ProgrammeManager, 0)]),
+            crate::FindingStore::genesis(),
+        );
+        let admin = Ctx {
+            tenant_admin: true,
+            ..ctx(Actor::Account(ADMIN), 5)
+        };
+        assert_eq!(import_editor(&state, P, &admin), Ok(ADMIN));
+        assert_eq!(
+            resolver(&state, P, &admin),
+            Err(BridgeError::NotProgrammeManager)
+        );
+        assert_eq!(import_editor(&state, P, &ctx(Actor::Account(A), 5)), Ok(A));
+        assert_eq!(
+            import_editor(&state, P, &ctx(Actor::Account(ADMIN), 5)),
+            Err(BridgeError::NotProgrammeManager)
+        );
+        let system = Ctx {
+            tenant_admin: true,
+            ..ctx(Actor::System(SystemCause::Timeline), 5)
+        };
+        assert_eq!(
+            import_editor(&state, P, &system),
             Err(BridgeError::NotAnAccount)
         );
     }

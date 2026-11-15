@@ -66,6 +66,8 @@ const TB: AccountId = AccountId::from_raw(0xA2);
 /// The programme manager who builds the draft.
 const M1: AccountId = AccountId::from_raw(0xB1);
 const ADMINS: [AccountId; 2] = [TA, TB];
+/// An account with no binding and no admin role.
+const X: AccountId = AccountId::from_raw(0xD1);
 const DOC: ImportDocumentId = ImportDocumentId::from_raw(9);
 
 /// The wording put where the shipped Guide holds a legal marker. It is
@@ -476,13 +478,23 @@ fn i65_import_on_an_active_programme_is_a_state_guard() {
     assert_eq!(upload, refused(RuleRef::Row, RefusalReason::WrongState));
     let resolution = resolve(&mut e, ClientResolution::Dismiss, 9);
     assert_eq!(resolution, refused(RuleRef::Row, RefusalReason::WrongState));
-    // The actor before the state: a tenant admin, who holds no manager
-    // binding, is refused by I-65 in every state.
+    // SA-12 (Daniel, 2026-11-15 night): a tenant admin uploads too, so it
+    // meets the same state guard. The actor before the state: an account
+    // with neither the manager binding nor the admin role is refused by
+    // the actor rule in every state.
     let admin = e.execute(
         Command::Import(ImportCommand::RegisterDocument(document())),
         by(TB, 10),
     );
-    assert_eq!(admin, refused(RuleRef::I65, RefusalReason::BindingInactive));
+    assert_eq!(admin, refused(RuleRef::Row, RefusalReason::WrongState));
+    let outsider = e.execute(
+        Command::Import(ImportCommand::RegisterDocument(document())),
+        by(X, 11),
+    );
+    assert_eq!(
+        outsider,
+        refused(RuleRef::I65, RefusalReason::BindingInactive)
+    );
     assert_eq!(e.head(), before);
 }
 
@@ -809,9 +821,9 @@ fn remove(e: &mut E, actor: AccountId, t: i64) -> Result<Seq, ExecError> {
 /// manager removes an imported document in one entry that holds one
 /// creator `ImportRemoved`. Its open proposal no longer counts as
 /// unresolved and cannot be resolved, the removal voids the request, and
-/// the replay of the store equals the live state. A tenant admin without
-/// the binding, an unknown document and a second removal are refused and
-/// append nothing.
+/// the replay of the store equals the live state. An account with neither
+/// the binding nor the tenant admin role (SA-12), an unknown document and
+/// a second removal are refused and append nothing.
 #[test]
 fn i66_import_removal_drops_the_open_proposals_and_voids_the_request() {
     let mut e = proposed();
@@ -820,7 +832,7 @@ fn i66_import_removal_drops_the_open_proposals_and_voids_the_request() {
     acknowledge_and_request(&mut e, 5);
     let before = entries(&e).len();
     assert_eq!(
-        remove(&mut e, TA, 7),
+        remove(&mut e, X, 7),
         refused(RuleRef::I65, RefusalReason::BindingInactive)
     );
     assert_eq!(entries(&e).len(), before);

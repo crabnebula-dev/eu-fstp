@@ -78,7 +78,9 @@ pub struct MyRoles {
     /// The open rounds of the caller's committee calls, by call.
     pub rounds: Vec<RoundItem>,
     /// The programmes of the caller's programme manager bindings that hold
-    /// a creator draft, ascending.
+    /// a creator draft, ascending. For a tenant admin, every programme of
+    /// the tenant that holds one: SA-12 (Daniel, 2026-11-15 night) lets the
+    /// admin take every set-up act, so the home page links each.
     pub drafts: Vec<ProgrammeId>,
     /// The tenant-wide signatory roles the caller holds, Financial first
     /// (NOTE 5). They bind no programme, so `roles` never names them.
@@ -227,14 +229,25 @@ pub(super) async fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> My
         };
         calls.push(CallItem { call: c, title });
     }
-    let drafts: Vec<ProgrammeId> = roles
+    let admin = call.caller.p.tenant_admin();
+    let mut drafts: BTreeSet<ProgrammeId> = roles
         .iter()
         .filter(|r| r.role == Role::ProgrammeManager && r.proposal.is_none())
         .map(|r| r.programme)
         .filter(|p| state.creator.draft(*p).is_some())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
         .collect();
+    // SA-12: a tenant admin sets up every programme of the tenant. A cell
+    // serves one tenant, so every draft of the state is the tenant's.
+    if admin {
+        drafts.extend(
+            state
+                .creator
+                .drafts()
+                .map(|(p, _)| p)
+                .filter(|p| state.core.policy().programme(*p).is_some()),
+        );
+    }
+    let drafts: Vec<ProgrammeId> = drafts.into_iter().collect();
     // NOTE 5: the signatory roles live in the tenant fold, not the
     // roster. Before the ledger holds the tenant part, nobody holds one.
     let signatories: Vec<Role> = match state.tenant.state() {
@@ -246,7 +259,7 @@ pub(super) async fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> My
         None => Vec::new(),
     };
     MyRoles {
-        tenant_admin: call.caller.p.tenant_admin(),
+        tenant_admin: admin,
         roles,
         calls,
         rounds,

@@ -825,6 +825,8 @@ pub enum Rule {
     /// A programme manager of P or a tenant admin. Reading: the approving
     /// admin needs the draft, its report and previews, and either may
     /// acknowledge a warning (design section 8.4, I-67 witnesses).
+    /// SA-12 (Daniel, 2026-11-15 night): either takes every set-up act of
+    /// the draft too, and the admin then counts as a builder.
     DraftManager,
     /// A programme manager or call drafter of P, or a tenant admin.
     /// Reading: the call drafter writes the knock-out criteria (roles
@@ -842,8 +844,10 @@ pub enum Rule {
     /// manager chooses the starting point (J1). An ended binding holds no
     /// role, so it lists nothing.
     CreatorStart,
-    /// A call drafter or programme manager of P. Reading: the decided M2
-    /// actor rule for drafting a call.
+    /// A call drafter or programme manager of P, or a tenant admin.
+    /// Reading: the decided M2 actor rule for drafting a call, and SA-12
+    /// (Daniel, 2026-11-15 night): a tenant admin drafts calls without a
+    /// Drafting binding.
     CallAuthor,
     /// A programme manager of P who is no drafter of C (R-PC-03).
     CallApprover,
@@ -854,6 +858,10 @@ pub enum Rule {
     CallPublisher,
     /// A programme manager, call drafter or FSTP coordinator of P.
     CallStaff,
+    /// The call staff of P, or a tenant admin: the list of P's calls.
+    /// SA-12: a tenant admin drafts calls, so it reaches them in the
+    /// Programme editor. The list holds no proposal content.
+    CallLister,
     /// The FSTP coordinator of P.
     Coordinator,
     /// The FSTP coordinator of P, declared and free of conflict: the
@@ -1069,7 +1077,11 @@ impl Rule {
             Rule::DraftManager | Rule::Inviter | Rule::CreatorStart => {
                 &[Some(Role::ProgrammeManager), Some(Role::TenantAdmin)]
             }
-            Rule::CallAuthor => &[Some(Role::ProgrammeManager), Some(Role::CallDrafter)],
+            Rule::CallAuthor => &[
+                Some(Role::ProgrammeManager),
+                Some(Role::CallDrafter),
+                Some(Role::TenantAdmin),
+            ],
             Rule::KnockOutReader => &[
                 Some(Role::ProgrammeManager),
                 Some(Role::CallDrafter),
@@ -1079,6 +1091,12 @@ impl Rule {
                 Some(Role::ProgrammeManager),
                 Some(Role::CallDrafter),
                 Some(Role::FstpCoordinator),
+            ],
+            Rule::CallLister => &[
+                Some(Role::ProgrammeManager),
+                Some(Role::CallDrafter),
+                Some(Role::FstpCoordinator),
+                Some(Role::TenantAdmin),
             ],
             Rule::Coordinator | Rule::CoordinatorDeclared | Rule::AssignmentBoard => {
                 &[Some(Role::FstpCoordinator)]
@@ -1408,17 +1426,17 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("creator.invitations", T::Programme, R::DraftManager),
     // Reading: whoever may invite may withdraw the invitation.
     RefOp::act("creator.withdraw_invitation", T::Programme, R::Inviter),
-    RefOp::act("creator.apply_start", T::Programme, R::ProgrammeManager),
-    RefOp::act("creator.save_fields", T::Programme, R::ProgrammeManager)
+    // SA-12 (Daniel, 2026-11-15 night, `roles-and-sod.md` tenant admin
+    // NOTE): a tenant admin takes every set-up act of the programme
+    // manager and the call drafter, without a Drafting binding, and then
+    // counts as a builder (I-67). The approval rules are unchanged.
+    RefOp::act("creator.apply_start", T::Programme, R::DraftManager),
+    RefOp::act("creator.save_fields", T::Programme, R::DraftManager)
         .tool("fstp_creator_save_fields"),
     // TH-49: the manager accepts template narrative before it applies.
-    RefOp::act(
-        "creator.accept_narrative",
-        T::Programme,
-        R::ProgrammeManager,
-    ),
+    RefOp::act("creator.accept_narrative", T::Programme, R::DraftManager),
     // Daniel, 2026-11-15: the manager edits narrative the draft holds.
-    RefOp::act("creator.edit_narrative", T::Programme, R::ProgrammeManager),
+    RefOp::act("creator.edit_narrative", T::Programme, R::DraftManager),
     RefOp::read("creator.get_draft", T::Programme, R::KnockOutReader)
         .tool("fstp_creator_get_draft"),
     RefOp::read("creator.get_report", T::Programme, R::DraftManager)
@@ -1426,11 +1444,7 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("creator.acknowledge", T::Programme, R::DraftManager),
     RefOp::read("creator.preview", T::Programme, R::DraftManager),
     RefOp::read("creator.impact", T::Programme, R::DraftManager),
-    RefOp::act(
-        "creator.request_activation",
-        T::Programme,
-        R::ProgrammeManager,
-    ),
+    RefOp::act("creator.request_activation", T::Programme, R::DraftManager),
     RefOp::act("creator.approve_activation", T::Programme, R::ApproverAdmin).hr(),
     // ADR-022 (Daniel, 2026-11-15): I-67 amended. A tenant admin who
     // built the draft may approve it as an override, with a reason and a
@@ -1440,12 +1454,14 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // programme's manager or a tenant admin saves it, as either reads the
     // draft it comes from.
     RefOp::act("creator.save_as_template", T::Programme, R::DraftManager),
-    RefOp::act("import.upload", T::Programme, R::ProgrammeManager),
+    RefOp::act("import.upload", T::Programme, R::DraftManager),
     RefOp::read("import.list", T::Programme, R::DraftManager),
+    // I-65 names "a named programme manager" for every imported value, and
+    // an invariant outranks SA-12, so the resolution stays the manager's.
     RefOp::act("import.resolve", T::Programme, R::ProgrammeManager),
     // Daniel, 2026-11-15: the manager removes an imported document, a
     // draft record, as a resolution is.
-    RefOp::act("import.remove", T::Programme, R::ProgrammeManager),
+    RefOp::act("import.remove", T::Programme, R::DraftManager),
     // J1 and J2: people and roles.
     // Lane m4reg, the invitation landing (J2). Reading: the invitation
     // token in the request is the capability. The invitee reads the
@@ -1484,7 +1500,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("call.board", T::Call, R::CallStaff).tool("fstp_get_call_board"),
     // Lane mcreator: the Studio list of the programme's calls. Reading: the
     // staff who read a call's board read the list of its calls.
-    RefOp::read("call.list", T::Programme, R::CallStaff),
+    // SA-12: and a tenant admin, who drafts calls.
+    RefOp::read("call.list", T::Programme, R::CallLister),
     // M6 lane L6-API, M6 design section 6: the programme manager, web only.
     RefOp::read("programme.timeline", T::Programme, R::ProgrammeManager),
     // J4: public pages, open calls and applicants.
@@ -1783,10 +1800,13 @@ fn admit(
         Rule::CreatorStart => {
             open(who.tenant_admin() || who.manager() || who == Who::OtherProgrammeManager)
         }
-        Rule::CallAuthor => open(who.manager() || who == Who::CallDrafter),
+        Rule::CallAuthor => open(who.manager() || who == Who::CallDrafter || who.tenant_admin()),
         Rule::CallApprover => open(who == Who::ProgrammeManager),
         Rule::CallPublisher => open(who.manager() && state != StateProfile::CallDrafted),
         Rule::CallStaff => open(who.manager() || who == Who::CallDrafter || who.coordinator()),
+        Rule::CallLister => open(
+            who.manager() || who == Who::CallDrafter || who.coordinator() || who.tenant_admin(),
+        ),
         Rule::Coordinator => open(who.coordinator()),
         Rule::ProposalDeclarant => {
             open(who.coordinator() || (who.committee_member() && policy.p10 == P10::AllCommittee))?;

@@ -59,7 +59,7 @@ use fstp_rt::future::block_on;
 
 use super::cell::{Class, class};
 use super::creator_requests as rq;
-use super::fixture::{ADMIN, ADMIN_2, AGENT, LEAD, OWNER, P1, P2};
+use super::fixture::{ADMIN, ADMIN_2, AGENT, LEAD, OTHER, OWNER, P1, P2};
 use super::step_up::P71_MICROS;
 use super::{FakeCell, WebLogin};
 
@@ -380,6 +380,26 @@ fn fill_gaps(c: &FakeCell, d: &Draft) -> Result<(), String> {
 /// naming the checks, when the report holds a failure.
 fn requested(c: &FakeCell) -> Result<Draft, String> {
     let d = built(c)?;
+    finish_request(c, d)
+}
+
+/// SA-12 (Daniel, 2026-11-15 night): the draft A1 opened, with M1 as its
+/// programme manager, built and requested by A2, a tenant admin with no
+/// Drafting binding: the start, the narratives, the gap saves, the
+/// acknowledgements and the request are all A2's.
+fn requested_by_admin(c: &FakeCell) -> Result<Draft, String> {
+    let d = opened(c)?;
+    let d = Draft {
+        owner: login(c, ADMIN_2),
+        ..d
+    };
+    start_supersafe(c, &d)?;
+    accept_all_narratives(c, &d)?;
+    finish_request(c, d)
+}
+
+/// [`requested`] from a built draft `d`, every act by `d.owner`.
+fn finish_request(c: &FakeCell, d: Draft) -> Result<Draft, String> {
     fill_gaps(c, &d)?;
     let report = report_of(c, &d.owner, d.p)?;
     let rows = results(&report)?;
@@ -965,9 +985,9 @@ fn r_pg_02_apply_start_template_builds_apply_start() {
 
 /// R-PG-02, design section 3.2 "`base` must equal the current
 /// `DraftRevision`": a start against a revision that is no longer the
-/// head is refused naming the input rule, and a tenant admin without the
-/// programme manager binding is refused naming the actor rule. Neither
-/// appends.
+/// head is refused naming the input rule, and an account with neither the
+/// programme manager binding on the draft nor the tenant admin role (SA-12)
+/// is refused naming the actor rule. Neither appends.
 #[test]
 fn r_pg_02_apply_start_refuses_a_stale_base_and_a_non_manager() {
     let c = cell();
@@ -982,11 +1002,12 @@ fn r_pg_02_apply_start_refuses_a_stale_base_and_a_non_manager() {
     assert!(class(&r).refused(), "the stale start gave {r:?}");
     assert_eq!(rule(&r), Some("Input"), "{r:?}");
     let fresh = revision(&c, &d.admin, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let drafter = login(&c, OTHER);
     let r = c.web(
-        &d.admin,
+        &drafter,
         rq::apply_start(d.p, &fresh, rq::supersafe_start()),
     );
-    assert!(class(&r).refused(), "the admin's start gave {r:?}");
+    assert!(class(&r).refused(), "the outsider's start gave {r:?}");
     assert_eq!(rule(&r), Some("actor"), "{r:?}");
     assert_eq!(
         creator_appended(&c).len(),
@@ -1710,7 +1731,8 @@ fn i65_import_resolve_builds_resolve_import_with_the_shell_sha256() {
 /// upload, M1 removes the document that proposed a value. The engine port
 /// appends one `BridgeCommand::RemoveImport` of the listed document at the
 /// head M1 read, and the import list no longer shows its proposals. An
-/// admin without the binding is refused with I-65 and appends nothing.
+/// account with neither the binding nor the tenant admin role (SA-12) is
+/// refused with I-65 and appends nothing.
 #[test]
 fn i66_import_remove_builds_remove_import_and_drops_the_proposals() {
     let c = cell();
@@ -1740,8 +1762,9 @@ fn i66_import_remove_builds_remove_import_and_drops_the_proposals() {
             .collect::<Vec<_>>()
     };
     let base = revision(&c, &d.owner, d.p).unwrap_or_else(|e| panic!("{e}"));
-    let r = c.web(&d.admin, rq::import_remove(d.p, &document, &base));
-    assert!(class(&r).refused(), "the admin's removal gave {r:?}");
+    let outsider = login(&c, OTHER);
+    let r = c.web(&outsider, rq::import_remove(d.p, &document, &base));
+    assert!(class(&r).refused(), "the outsider's removal gave {r:?}");
     assert_eq!(rule(&r), Some("I-65"), "{r:?}");
     assert!(bridged(&c).is_empty(), "a refused removal appended");
     let before = head(&c, d.p).unwrap_or_else(|| panic!("no draft head"));
@@ -2187,6 +2210,85 @@ fn i67_adr022_approval_inbox_offers_the_override_to_a_builder_admin_only() {
     .unwrap_or_else(|e| panic!("A2: {e}"));
     assert_eq!(a2.get("approvable").and_then(Value::as_bool), Some(true));
     assert_eq!(a2.get("overridable").and_then(Value::as_bool), Some(false));
+}
+
+/// SA-12 (Daniel, 2026-11-15 night), I-67 as amended by ADR-022, R-PG-03:
+/// A2, a tenant admin with no Drafting binding, applies the start, accepts
+/// the narratives, saves the fields, acknowledges and requests activation
+/// through dispatch. Each act names A2 as its actor. A2 is then a builder
+/// in the creator's set and the core's, so the inbox offers A2 the
+/// override and no approval, and A2's approval is refused with I-67
+/// before any step-up. A2's override with a fresh step-up activates.
+#[test]
+fn sa12_i67_tenant_admin_builds_through_dispatch_and_overrides_only() {
+    let c = cell();
+    let d = requested_by_admin(&c).unwrap_or_else(|e| panic!("A2's set-up: {e}"));
+    let appended = creator_appended(&c);
+    let kinds: Vec<&'static str> = appended
+        .iter()
+        .filter(|(_, ctx, _)| ctx.actor == Actor::Account(ADMIN_2))
+        .map(|(cmd, ..)| match cmd {
+            CreatorCommand::ApplyStart { .. } => "start",
+            CreatorCommand::AcceptNarrative { .. } => "narrative",
+            CreatorCommand::SaveFields { .. } => "save",
+            CreatorCommand::AcknowledgeWarning { .. } => "acknowledge",
+            CreatorCommand::RequestActivation { .. } => "request",
+            _ => "other",
+        })
+        .collect();
+    for k in ["start", "save", "request"] {
+        assert!(kinds.contains(&k), "SA-12: no {k} by A2 in {kinds:?}");
+    }
+    assert!(
+        !appended.iter().any(|(cmd, ctx, _)| {
+            matches!(
+                cmd,
+                CreatorCommand::ApplyStart { .. }
+                    | CreatorCommand::SaveFields { .. }
+                    | CreatorCommand::RequestActivation { .. }
+            ) && ctx.actor != Actor::Account(ADMIN_2)
+        }),
+        "every set-up act names A2"
+    );
+    let state = c.ports.engine.state();
+    let creator = state
+        .creator
+        .draft(d.p)
+        .map(|x| x.builders().clone())
+        .unwrap_or_default();
+    assert!(creator.contains(&ADMIN_2), "I-67: {creator:?}");
+    let core = fstp_domain::policy::activation::programme_builders(&state.core, d.p);
+    assert!(core.contains(&ADMIN_2), "I-67, the core's set: {core:?}");
+    let a2 = activation_row(
+        &approvals(&c, &d.admin2).unwrap_or_else(|e| panic!("{e}")),
+        d.p,
+    )
+    .unwrap_or_else(|e| panic!("A2: {e}"));
+    assert_eq!(a2.get("approvable").and_then(Value::as_bool), Some(false));
+    assert_eq!(a2.get("overridable").and_then(Value::as_bool), Some(true));
+    let rev = revision(&c, &d.admin2, d.p).unwrap_or_else(|e| panic!("{e}"));
+    let r = c.web(&d.admin2, rq::approve_activation(d.p, &rev));
+    assert_eq!(rule(&r), Some("I-67"), "{r:?}");
+    assert!(
+        !c.ports
+            .step_up
+            .begun()
+            .iter()
+            .any(|(s, _)| *s == d.admin2.session),
+        "a step-up was begun for the building admin's approval"
+    );
+    done_stepped(
+        stepped(&c, &d.admin2, || rq::override_activation(d.p, &rev, REASON)),
+        "A2's override",
+    )
+    .unwrap_or_else(|e| panic!("ADR-022: {e}"));
+    let (cmd, ctx, _) = last_creator(&c).unwrap_or_else(|e| panic!("{e}"));
+    assert!(matches!(cmd, CreatorCommand::OverrideActivation { .. }));
+    assert_eq!(ctx.actor, Actor::Account(ADMIN_2));
+    assert_eq!(
+        programme_status(&c.ports.engine.state().core, d.p),
+        Some(ProgrammeStatus::Active)
+    );
 }
 
 /// The activation messages (`admin.*`) of `l` for programme `p`, as

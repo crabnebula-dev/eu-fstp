@@ -135,7 +135,7 @@ fn ctx(actor: AccountId) -> Ctx {
         actor: Actor::Account(actor),
         command: CommandId::from_bytes([0; 16]),
         via: Via::Web,
-        tenant_admin: [TA, TB].contains(&actor),
+        tenant_admin: [TA, TB, TC].contains(&actor),
         second_tenant_admin: None,
         binds_tenant_admin: false,
     }
@@ -598,33 +598,122 @@ fn i66_i67_second_admin_activates_a_clean_draft() {
     assert_eq!(w.approve(TB, &inputs), Err(CreatorRefusal::AlreadyActive));
 }
 
-/// R-PG-03, T-AUTHZ-MATRIX, design section 15.0 ("Who requests
-/// activation", 2026-11-06): only a programme manager on the draft
-/// requests activation. A tenant admin, builder or not, is refused as an
-/// actor. The actor comes before the draft's state, so an admin is
-/// refused the same way once the programme is active.
+/// R-PG-03, T-AUTHZ-MATRIX, SA-12 (Daniel, 2026-11-15 night): a programme
+/// manager on the draft or a tenant admin requests activation. Anyone
+/// else is refused as an actor, in every state. Once the programme is
+/// active, a request meets the state refusal. The requesting admin joins
+/// the builder set, so its own approval is refused (I-67).
 #[test]
-fn r_pg_03_only_a_programme_manager_requests_activation() {
+fn sa12_r_pg_03_a_manager_or_a_tenant_admin_requests_activation() {
     let mut w = opened();
     let inputs = passing();
     w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
-    for admin in [TA, TB] {
+    assert_eq!(
+        w.request(M2, &inputs),
+        Err(CreatorRefusal::NotProgrammeManager)
+    );
+    w.request(TB, &inputs).unwrap();
+    assert!(w.creator.draft(P).unwrap().builders().contains(&TB));
+    assert_eq!(
+        w.approve(TB, &inputs),
+        Err(CreatorRefusal::ApproverIsBuilder)
+    );
+    let inputs = with_third_admin(passing());
+    let cmd = CreatorCommand::ApproveActivation {
+        programme: P,
+        revision: w.head(),
+        decision: DecisionId::from_raw(99),
+    };
+    let d = decide_with(&w.core, &w.creator, &cmd, &ctx(TC), &inputs, &clean_facts()).unwrap();
+    w.entry(d.records, Vec::new());
+    for a in [TA, TB, M1] {
         assert_eq!(
-            w.request(admin, &inputs),
-            Err(CreatorRefusal::NotProgrammeManager),
-            "{admin:?}"
+            w.request(a, &inputs),
+            Err(CreatorRefusal::AlreadyActive),
+            "{a:?} once active"
         );
     }
-    w.request(M1, &inputs).unwrap();
-    w.approve(TB, &inputs).unwrap();
-    for admin in [TA, TB] {
-        assert_eq!(
-            w.request(admin, &inputs),
-            Err(CreatorRefusal::NotProgrammeManager),
-            "{admin:?} once active"
+    assert_eq!(
+        w.request(M2, &inputs),
+        Err(CreatorRefusal::NotProgrammeManager),
+        "the actor comes before the state"
+    );
+}
+
+/// A third tenant admin, attested by the shell, who builds nothing.
+const TC: AccountId = AccountId::from_raw(0xA3);
+
+/// `inputs` with [`TC`] in the attested admin set, verified and sharing
+/// no identity with anyone.
+fn with_third_admin(mut inputs: CreatorInputs) -> CreatorInputs {
+    inputs.tenant_admins.insert(TC);
+    inputs.vault.is_verified.insert(TC, true);
+    inputs.vault.same_identity.insert(TC, false);
+    inputs
+}
+
+/// A2's field save on the draft, a set-up act of the programme manager.
+fn admin_save(w: &mut World, by: AccountId, inputs: &CreatorInputs) {
+    let cmd = CreatorCommand::SaveFields {
+        programme: P,
+        base: w.head(),
+        fields: vec![narrative_edit("SYNTHETIC narrative by a tenant admin", 9)],
+        clear: Vec::new(),
+    };
+    let d = decide_with(&w.core, &w.creator, &cmd, &ctx(by), inputs, &clean_facts())
+        .unwrap_or_else(|r| panic!("SA-12: the admin's save is refused: {r:?}"));
+    assert!(
+        d.records
+            .iter()
+            .any(|r| matches!(r, CreatorRecord::FieldsSaved { by: b, .. } if *b == by)),
+        "the save names the admin as its actor: {:?}",
+        d.records
+    );
+    assert!(d.core.is_empty(), "a narrative save composes no policy");
+    w.entry(d.records, Vec::new());
+}
+
+/// SA-12, I-67 as amended by ADR-022: A2, a tenant admin with no Drafting
+/// binding, saves a field of the draft and so becomes a builder. A2's
+/// normal approval is refused. A third admin who built nothing approves,
+/// and in another world A2 activates through the override.
+#[test]
+fn sa12_i67_a_tenant_admin_who_edits_is_a_builder() {
+    let inputs = with_third_admin(passing());
+    for approver in [TC, TB] {
+        let mut w = opened();
+        assert!(!w.creator.draft(P).unwrap().builders().contains(&TB));
+        admin_save(&mut w, TB, &inputs);
+        assert!(
+            w.creator.draft(P).unwrap().builders().contains(&TB),
+            "I-67: the editing admin is a builder"
         );
+        w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
+        w.request(M1, &inputs).unwrap();
+        assert_eq!(
+            w.approve(TB, &inputs),
+            Err(CreatorRefusal::ApproverIsBuilder),
+            "I-67: the editing admin never approves"
+        );
+        if approver == TC {
+            let cmd = CreatorCommand::ApproveActivation {
+                programme: P,
+                revision: w.head(),
+                decision: DecisionId::from_raw(99),
+            };
+            let d =
+                decide_with(&w.core, &w.creator, &cmd, &ctx(TC), &inputs, &clean_facts()).unwrap();
+            let Some(CreatorRecord::ActivationApproved(a)) = d.records.last() else {
+                panic!("no approval record: {:?}", d.records);
+            };
+            assert_eq!(a.approver(), TC);
+            assert!(a.builders().contains(&TB));
+        } else {
+            w.override_activation(TB, &inputs)
+                .unwrap_or_else(|r| panic!("ADR-022: the builder admin's override: {r:?}"));
+            assert!(w.creator.draft(P).unwrap().active().is_some());
+        }
     }
-    assert_eq!(w.request(M1, &inputs), Err(CreatorRefusal::AlreadyActive));
 }
 
 /// I-66: an unacknowledged warning blocks activation and names the check.
@@ -1158,10 +1247,11 @@ fn i67_import_dismissal_makes_the_resolver_a_builder() {
 /// I-66, I-67 (Daniel, 2026-11-15, the I-66 generator gaps): the removal
 /// of an imported document is a draft record. It voids the
 /// acknowledgement and the activation request, and its author joins the
-/// builder set. Only a programme manager at the head removes, and never
-/// after activation.
+/// builder set. Only a programme manager or a tenant admin (SA-12) at the
+/// head removes, and never after activation. An account with neither is
+/// refused as an actor.
 #[test]
-fn i66_import_removal_voids_acknowledgement_and_request() {
+fn i66_sa12_import_removal_voids_acknowledgement_and_request() {
     let mut w = opened();
     let inputs = passing();
     w.acknowledge(M1, CheckId::RosterShort, &inputs).unwrap();
@@ -1173,8 +1263,17 @@ fn i66_import_removal_voids_acknowledgement_and_request() {
     let stale = DraftRevision::new(1, Seq::from_raw(1));
     assert_eq!(removal(&w, M1, stale), Err(CreatorRefusal::StaleRevision));
     assert_eq!(
-        removal(&w, TB, w.head()),
+        removal(&w, M2, w.head()),
         Err(CreatorRefusal::NotProgrammeManager)
+    );
+    let by_admin = removal(&w, TB, w.head()).unwrap();
+    assert!(
+        matches!(
+            by_admin.records.as_slice(),
+            [CreatorRecord::ImportRemoved { by, .. }] if *by == TB
+        ),
+        "SA-12: the admin removes, named as the actor: {:?}",
+        by_admin.records
     );
     let d = removal(&w, M1, w.head()).unwrap();
     assert!(d.core.is_empty());
