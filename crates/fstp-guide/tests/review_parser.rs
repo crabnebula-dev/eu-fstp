@@ -67,3 +67,38 @@ Approved synthetic text.\n";
         p.legal_sections()
     );
 }
+
+/// TH-26, I-68: the block structure of CommonMark and GFM treats only
+/// space and tab as whitespace. U+00A0 is text. So `:-` followed by
+/// U+00A0 is no table delimiter row, and `=` followed by U+00A0 is no
+/// setext underline. The parser reads each input as a paragraph, and the
+/// paragraph round-trips. The first input is the `guide_markdown_parse`
+/// crash `crash-cbaa9e1e0ea335db0c5aa5169476275377aa9eb4` (CI run
+/// 43434274324). There the fuzz oracle trimmed U+00A0 with `str::trim`
+/// and flagged a GFM table that GFM does not see.
+#[test]
+fn review_parser_th26_no_break_space_is_text_not_block_whitespace() {
+    for doc in ["=(\n:-\u{a0}", "a\n=\u{a0}", "a\n=\u{a0}="] {
+        let parsed = fstp_guide::parse_markdown(doc.as_bytes())
+            .unwrap_or_else(|e| panic!("TH-26: the paragraph {doc:?} was refused: {e:?}"));
+        assert_eq!(parsed.len(), 1, "TH-26: {doc:?} is one paragraph");
+        let spelled = parsed.to_markdown();
+        let back = fstp_guide::parse_markdown(spelled.as_bytes()).unwrap();
+        assert_eq!(back, parsed, "TH-26: {doc:?} does not round-trip");
+    }
+}
+
+/// TH-26, I-68: the same lines with block whitespace stay refused. A line
+/// that ends with a space is refused, and a bare delimiter row or setext
+/// underline under a paragraph line is refused.
+#[test]
+fn review_parser_th26_block_whitespace_variants_stay_refused() {
+    for doc in ["=(\n:- ", "=(\n:-", "a\n= ", "a\n=", "a\n \n---"] {
+        let parsed = fstp_guide::parse_markdown(doc.as_bytes());
+        assert!(
+            parsed.is_err(),
+            "TH-26: {doc:?} was accepted as {:?}",
+            parsed.map(|d| d.to_markdown())
+        );
+    }
+}

@@ -41,15 +41,21 @@ fn tag_in(line: &str) -> bool {
     })
 }
 
+/// The whitespace of CommonMark and GFM block structure: space and tab.
+/// Rust's `str::trim` also strips Unicode White_Space such as U+00A0,
+/// which GFM reads as text. A line `:-` followed by U+00A0 is therefore
+/// no delimiter row, and `=` followed by U+00A0 is no setext underline.
+const BLOCK_SPACE: [char; 2] = [' ', '\t'];
+
 /// Whether `line` is a GFM table delimiter row, with or without outer
 /// bars: cells of `-` signs split on `|`, each with an optional `:` at
-/// either end and spaces around it.
+/// either end and spaces or tabs around it.
 fn delimiter_row(line: &str) -> bool {
     let inner = line.strip_prefix('|').unwrap_or(line);
     let inner = inner.strip_suffix('|').unwrap_or(inner);
     !inner.is_empty()
         && inner.split('|').all(|c| {
-            let c = c.trim_matches(' ');
+            let c = c.trim_matches(BLOCK_SPACE);
             let c = c.strip_prefix(':').unwrap_or(c);
             let c = c.strip_suffix(':').unwrap_or(c);
             !c.is_empty() && c.bytes().all(|b| b == b'-')
@@ -80,11 +86,11 @@ fn outside_subset(data: &[u8]) -> bool {
     // Whether a GFM table started since the last blank line.
     let mut in_table = false;
     for line in text.split('\n') {
-        let blank = line.trim().is_empty();
+        let blank = line.trim_matches(BLOCK_SPACE).is_empty();
         let trimmed = line.trim_start_matches(' ');
         let indent = line.len() - trimmed.len();
         let head = indent <= 3;
-        let bare = trimmed.trim_end();
+        let bare = trimmed.trim_end_matches(BLOCK_SPACE);
         let underline = !bare.is_empty()
             && (bare.bytes().all(|c| c == b'=') || bare.bytes().all(|c| c == b'-'));
         // A delimiter row under a header line starts a GFM table. Only the
