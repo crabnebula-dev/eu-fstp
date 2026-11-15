@@ -117,15 +117,18 @@ impl UsageOp {
             .find(|o| o.name().as_bytes() == name)
     }
 
-    /// The operation a keystore's custody call makes.
+    /// The operation a keystore's custody call makes, or `None` for a
+    /// record that announces no custody call: a level 2 signing key
+    /// created or rotated (ADR-004, 2026-11-15).
     #[must_use]
-    pub const fn of_call(call: KeyCall) -> UsageOp {
+    pub const fn of_call(call: KeyCall) -> Option<UsageOp> {
         match call {
-            KeyCall::CreateRoot => UsageOp::Create,
-            KeyCall::Wrap => UsageOp::Wrap,
-            KeyCall::Unwrap => UsageOp::Unwrap,
-            KeyCall::Destroy => UsageOp::Destroy,
-            KeyCall::Sign => UsageOp::Sign,
+            KeyCall::CreateRoot => Some(UsageOp::Create),
+            KeyCall::Wrap => Some(UsageOp::Wrap),
+            KeyCall::Unwrap => Some(UsageOp::Unwrap),
+            KeyCall::Destroy => Some(UsageOp::Destroy),
+            KeyCall::Sign => Some(UsageOp::Sign),
+            KeyCall::CreateSigner | KeyCall::RotateSigner => None,
         }
     }
 }
@@ -269,12 +272,16 @@ impl KeyUse {
         }
     }
 
-    /// The use a `KeyOp` record announces.
+    /// The use a `KeyOp` record announces, or `None` for a record that
+    /// announces no custody call ([`UsageOp::of_call`]).
     #[must_use]
-    pub const fn of_key_op(k: &KeyOp) -> KeyUse {
-        KeyUse {
-            request: RequestId(k.request),
-            op: UsageOp::of_call(k.call),
+    pub const fn of_key_op(k: &KeyOp) -> Option<KeyUse> {
+        match UsageOp::of_call(k.call) {
+            Some(op) => Some(KeyUse {
+                request: RequestId(k.request),
+                op,
+            }),
+            None => None,
         }
     }
 }
@@ -332,7 +339,7 @@ pub fn reconcile_page(entries: &[UsageEntry], key_ops: &[KeyOp]) -> Vec<CustodyA
         })
         .collect();
     let usage: Vec<KeyUse> = records.iter().map(|r| KeyUse::of_record(r)).collect();
-    let recorded: Vec<KeyUse> = key_ops.iter().map(KeyUse::of_key_op).collect();
+    let recorded: Vec<KeyUse> = key_ops.iter().filter_map(KeyUse::of_key_op).collect();
     let missing = reconcile(&usage, &recorded);
     let mut left = missing.as_slice();
     for r in records {
@@ -418,5 +425,24 @@ mod tests {
                 CustodyAnomaly::Unrecorded(rec(4, UsageOp::Unwrap)),
             ]
         );
+    }
+
+    /// ADR-004, decided by Daniel on 2026-11-15 (late): a level 2 signing
+    /// key record announces no custody call, so it covers no usage entry,
+    /// even one under its request id, and raises no anomaly itself.
+    #[test]
+    fn adr004_signer_records_cover_no_custody_use() {
+        let entries = vec![UsageEntry::Record(rec(5, UsageOp::Create))];
+        let ops = vec![
+            key_op(5, KeyCall::CreateSigner),
+            key_op(6, KeyCall::RotateSigner),
+        ];
+        assert_eq!(
+            reconcile_page(&entries, &ops),
+            vec![CustodyAnomaly::Unrecorded(rec(5, UsageOp::Create))]
+        );
+        assert_eq!(reconcile_page(&[], &ops), vec![]);
+        assert_eq!(UsageOp::of_call(KeyCall::CreateSigner), None);
+        assert_eq!(UsageOp::of_call(KeyCall::Wrap), Some(UsageOp::Wrap));
     }
 }

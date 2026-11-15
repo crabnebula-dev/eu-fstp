@@ -826,15 +826,26 @@ impl<C: Custody> ErasureRunner<C> {
 
     /// Makes generation `generation` of the signing key of `purpose`,
     /// sealed under the current seal key, and returns its public key.
-    fn make_signer(&mut self, purpose: Purpose, generation: u32) -> Result<Vec<u8>, CellError> {
+    ///
+    /// The key record `call` (`create_signer` or `rotate_signer`) is
+    /// appended first, as for a custody call, although none is made
+    /// (ADR-004, decided by Daniel on 2026-11-15). A refused purpose or a
+    /// resealing batch appends nothing.
+    async fn make_signer(
+        &mut self,
+        purpose: Purpose,
+        generation: u32,
+        call: KeyCall,
+    ) -> Result<Vec<u8>, CellError> {
         if !SIGNER_PURPOSES.contains(&purpose) {
             return Err(keys_err("no level 2 signing key of this purpose"));
         }
         if self.sealing() {
             return Err(keys_err("a batch is resealing the keystore"));
         }
-        let key = composite::generate().map_err(|_| keys_err("signing key"))?;
         let epoch = self.store.chain_state.epoch().0;
+        self.record_call(call, epoch).await?;
+        let key = composite::generate().map_err(|_| keys_err("signing key"))?;
         let row = seal_signer(
             &self.work.current,
             self.store.cell,
@@ -858,34 +869,38 @@ impl<C: Custody> ErasureRunner<C> {
     /// generation 1, unless one exists, and returns its public key. The key
     /// is sealed under the chain's seal key, which custody wraps under the
     /// root, so it is resealed at each new epoch (ADR-004, M9 decision
-    /// CD4). Only the purposes of [`SIGNER_PURPOSES`] are held.
+    /// CD4). Only the purposes of [`SIGNER_PURPOSES`] are held. Creating
+    /// the key appends a `create_signer` key record.
     ///
     /// # Errors
     ///
-    /// Another purpose, a batch that is resealing, or a failed seal.
-    pub fn ensure_signer(&mut self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
+    /// Another purpose, a batch that is resealing, a key record the
+    /// engine refused, or a failed seal.
+    pub async fn ensure_signer(&mut self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
         if let Some(row) = self.store.signers.get(&purpose) {
             return Ok(row.public.clone());
         }
-        self.make_signer(purpose, 1)
+        self.make_signer(purpose, 1, KeyCall::CreateSigner).await
     }
 
     /// Replaces the signing key of `purpose` with a new generation and
     /// returns its public key. The replaced public key stays in
-    /// [`Keystore::signer_public_keys`], and its secret is dropped.
+    /// [`Keystore::signer_public_keys`], and its secret is dropped. The
+    /// rotation appends a `rotate_signer` key record.
     ///
     /// # Errors
     ///
-    /// No key of `purpose` yet, a batch that is resealing, or a failed
-    /// seal.
-    pub fn rotate_signer(&mut self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
+    /// No key of `purpose` yet, a batch that is resealing, a key record
+    /// the engine refused, or a failed seal.
+    pub async fn rotate_signer(&mut self, purpose: Purpose) -> Result<Vec<u8>, CellError> {
         let generation = self
             .store
             .signers
             .get(&purpose)
             .and_then(|r| r.generation.checked_add(1))
             .ok_or(keys_err("no signing key to rotate"))?;
-        self.make_signer(purpose, generation)
+        self.make_signer(purpose, generation, KeyCall::RotateSigner)
+            .await
     }
 
     /// A handle on the current signing key of `purpose`, as custody of the
@@ -2007,7 +2022,7 @@ async fn run_task<C: Custody + Send + Sync + 'static, K: Clock>(
         match woke {
             Wake::Stop => break,
             Wake::Request(None) => closed = true,
-            Wake::Request(Some(req)) => serve(&mut runner, req),
+            Wake::Request(Some(req)) => serve(&mut runner, req).await,
             Wake::Tick if work => {
                 // A failed step keeps the runner's state, so it is
                 // retried after one tick (`ErasureRunner::step`).
@@ -2025,7 +2040,7 @@ async fn run_task<C: Custody + Send + Sync + 'static, K: Clock>(
     drop(stop);
 }
 
-fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
+async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
     match req {
         Request::AddGroup { group, reply } => reply.send(runner.add_group(group)),
         Request::PutText {
@@ -2043,13 +2058,12 @@ fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
         }
         Request::Keystore { reply } => reply.send(runner.keystore().clone()),
         Request::Signer { purpose, reply } => {
-            reply.send(
-                runner
-                    .ensure_signer(purpose)
-                    .and_then(|_| runner.signer(purpose)),
-            );
+            let made = runner.ensure_signer(purpose).await;
+            reply.send(made.and_then(|_| runner.signer(purpose)));
         }
-        Request::RotateSigner { purpose, reply } => reply.send(runner.rotate_signer(purpose)),
+        Request::RotateSigner { purpose, reply } => {
+            reply.send(runner.rotate_signer(purpose).await);
+        }
         Request::SetLoginEmail {
             account,
             email,

@@ -166,6 +166,9 @@ pub enum ReadKind {
     ListDeliveries,
     GetMailRelay,
     GetProgrammeTimeline,
+    // P-41, ADR-007 (lane m5/retention): the erasure log and the grants
+    // whose funder retention ended, for tenant admins.
+    ListErasures,
     // M5 reads follow-up: the caller's own grants and the contracts
     // awaiting the caller's signature (module documentation).
     ListMyGrants,
@@ -205,7 +208,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 71] = [
+    pub const ALL: [ReadKind; 72] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -265,6 +268,7 @@ impl ReadKind {
         ReadKind::ListDeliveries,
         ReadKind::GetMailRelay,
         ReadKind::GetProgrammeTimeline,
+        ReadKind::ListErasures,
         ReadKind::ListMyGrants,
         ReadKind::ListMyContractsToSign,
         ReadKind::GetDetermination,
@@ -617,6 +621,9 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // relay are the tenant admin's, the timeline the programme manager's.
     (ReadKind::ListDeliveries, ReadRule::TenantAdmin, OPEN_ALWAYS),
     (ReadKind::GetMailRelay, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    // ADR-007: tenant admins read every erasure-log entry (P-41, lane
+    // m5/retention).
+    (ReadKind::ListErasures, ReadRule::TenantAdmin, OPEN_ALWAYS),
     (
         ReadKind::GetProgrammeTimeline,
         ReadRule::Holder(Role::ProgrammeManager),

@@ -140,6 +140,8 @@ pub(crate) mod me_roles;
 pub(crate) mod agents;
 // J1: the staff bindings of a programme.
 pub(crate) mod bindings;
+// Lane m5/retention: the erasure page of the tenant admin (P-41, ADR-007).
+mod erasure;
 // Lane m6/mailbox: `me.mailbox`, derived from existing state.
 mod mailbox;
 /// The people operations of journey J2 (lane inv). The file sits beside
@@ -1985,6 +1987,8 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         // M6 lane L6-API, M6 design section 6: the tenant admin's mail
         // relay and delivery log.
         ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,
+        // P-41, ADR-007 (lane m5/retention): the erasure page.
+        ReadKind::ListErasures => erasure::read(call).await?,
         // M6 lane L6-API: the programme manager's timeline of a programme.
         ReadKind::GetProgrammeTimeline => {
             use crate::port::Outbox as _;
@@ -2332,6 +2336,9 @@ enum PortCall {
     AddPasskey(crate::port::PasskeyRegistration),
     /// The lead asks for a copy of the application at an address (R-SB-04).
     RequestCopy(ProposalId, String),
+    /// A tenant admin requests the erasure of a grant's texts with its
+    /// cause (ADR-007, P-41, lane m5/retention).
+    RequestErasure(crate::port::ErasureCause, ProposalId),
 }
 
 /// An operation an M3 port serves.
@@ -2377,6 +2384,19 @@ async fn m3_port<P: Seams>(
                 .and_then(Value::as_bool)
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
             PortCall::ApproveBreakGlass(b, approve)
+        }
+        // ADR-007, P-41 (Daniel, 2026-11-15 late): high-risk, so served
+        // here. The grant must be one whose retention ended.
+        PortKind::RequestErasure if call.spec.high_risk => {
+            let cause = op
+                .request
+                .get("cause")
+                .and_then(Value::as_str)
+                .and_then(crate::port::ErasureCause::from_wire)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            let grant = ProposalId::from_raw(id("grant")?);
+            erasure::check_grant(call, grant)?;
+            PortCall::RequestErasure(cause, grant)
         }
         // Adding a passkey is high-risk (`authentication.md`). The cell's
         // own ceremony registers it after the step-up, through the
@@ -2503,7 +2523,10 @@ async fn m3_port<P: Seams>(
         // Each of these is high-risk in the registry, so its arm above
         // serves it. A spec that lost the mark would run without a step-up,
         // so it is refused (I-78), never executed.
-        PortKind::ApproveRecovery | PortKind::ApproveBreakGlass | PortKind::AddPasskey => {
+        PortKind::ApproveRecovery
+        | PortKind::ApproveBreakGlass
+        | PortKind::AddPasskey
+        | PortKind::RequestErasure => {
             return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-78")));
         }
         // Served before the step-up, above.
@@ -2571,6 +2594,16 @@ async fn m3_port<P: Seams>(
                 .await,
             "SoD-08",
         ),
+        PortCall::RequestErasure(cause, grant) => {
+            use crate::port::TextStore as _;
+            done(
+                call.ports
+                    .texts()
+                    .request_erasure(account, cause, grant, call.now, proof_of(proof))
+                    .await,
+                "ADR-007",
+            )
+        }
         PortCall::EndSession(s) => {
             done(call.ports.sessions_admin().end(account, s).await, "R-LG-04")
         }

@@ -6,6 +6,11 @@
 //! request id, so a reconciliation can match each backend usage entry
 //! with its record (`fstp_custody::reconcile`).
 //!
+//! Since Daniel's decision of 2026-11-15 (late, ADR-004), creating or
+//! rotating a level 2 signing key appends a record too, with the calls
+//! `create_signer` and `rotate_signer`. Those records announce no custody
+//! call ([`KeyCall::is_custody_call`]), so reconciliation skips them.
+//!
 //! The body is the canonical JSON object
 //!
 //! ```text
@@ -37,16 +42,24 @@ pub enum KeyCall {
     Destroy,
     /// `sign`.
     Sign,
+    /// `create_signer`: the keystore created a level 2 signing key. No
+    /// custody call is made (ADR-004, decided by Daniel on 2026-11-15).
+    CreateSigner,
+    /// `rotate_signer`: the keystore replaced a level 2 signing key with
+    /// its next generation. No custody call is made either.
+    RotateSigner,
 }
 
 impl KeyCall {
     /// Every call.
-    pub const ALL: [KeyCall; 5] = [
+    pub const ALL: [KeyCall; 7] = [
         KeyCall::CreateRoot,
         KeyCall::Wrap,
         KeyCall::Unwrap,
         KeyCall::Destroy,
         KeyCall::Sign,
+        KeyCall::CreateSigner,
+        KeyCall::RotateSigner,
     ];
 
     /// The name in a `KeyOp` body.
@@ -58,7 +71,17 @@ impl KeyCall {
             KeyCall::Unwrap => "unwrap",
             KeyCall::Destroy => "destroy",
             KeyCall::Sign => "sign",
+            KeyCall::CreateSigner => "create_signer",
+            KeyCall::RotateSigner => "rotate_signer",
         }
+    }
+
+    /// Whether the record announces a call to custody, which the custody
+    /// usage log then reports under the same request id. A level 2
+    /// signing key record announces none.
+    #[must_use]
+    pub const fn is_custody_call(self) -> bool {
+        !matches!(self, KeyCall::CreateSigner | KeyCall::RotateSigner)
     }
 
     /// The call of a body name, if the name is known.
@@ -247,6 +270,32 @@ mod tests {
         ];
         for b in bad {
             assert!(decode(b).is_err(), "{}", String::from_utf8_lossy(b));
+        }
+    }
+
+    /// ADR-004, decided by Daniel on 2026-11-15 (late): creating or
+    /// rotating a level 2 signing key has a key record of its own, in the
+    /// same four-member body, although no custody call is made.
+    #[test]
+    fn adr004_level2_signer_records_round_trip_and_make_no_custody_call() {
+        for call in [KeyCall::CreateSigner, KeyCall::RotateSigner] {
+            let body = encode(&op(call)).unwrap();
+            assert_eq!(decode(&body), Ok(op(call)));
+            assert!(!call.is_custody_call(), "{call:?}");
+        }
+        assert_eq!(
+            String::from_utf8(encode(&op(KeyCall::RotateSigner)).unwrap()).unwrap(),
+            "{\"call\":\"rotate_signer\",\"chain\":\"app\",\"epoch\":7,\
+             \"request\":\"a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5\"}"
+        );
+        for call in [
+            KeyCall::CreateRoot,
+            KeyCall::Wrap,
+            KeyCall::Unwrap,
+            KeyCall::Destroy,
+            KeyCall::Sign,
+        ] {
+            assert!(call.is_custody_call(), "{call:?}");
         }
     }
 }

@@ -758,6 +758,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ("host", s("smtp.relay.example")),
         ]),
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
+        "admin.request_erasure" => obj(vec![("cause", s("retention_expiry")), ("grant", s("41"))]),
         "creator.invite" => obj(vec![
             ("email", s("invitee@matrix.invalid")),
             ("role", s("programme_manager")),

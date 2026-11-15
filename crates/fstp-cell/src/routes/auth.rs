@@ -309,7 +309,7 @@ pub(crate) async fn login<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
     let holdings = holds(&s, account, now);
     let ok = match verify_passkey_login(
         holdings,
-        &ctx.cfg.enabled,
+        &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
         &b.assertion,
         &stored,
         &ctx.cfg.rp,
@@ -386,7 +386,11 @@ fn decode_email(bytes: &[u8]) -> Result<String, BodyRefusal> {
 async fn issue_magic_link<B: Backend>(ctx: &Ctx<B>, account: AccountId) -> Result<(), ()> {
     let s = ctx.backend.state().await.map_err(|_| ())?;
     let now = ctx.backend.now();
-    may_issue_magic_link(holds(&s, account, now), &ctx.cfg.enabled).map_err(|_| ())?;
+    may_issue_magic_link(
+        holds(&s, account, now),
+        &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
+    )
+    .map_err(|_| ())?;
     let token = random::<32>().map_err(|_| ())?;
     let row = TokenRow {
         digest: fstp_crypto::sha256(&token),
@@ -467,7 +471,7 @@ pub(crate) async fn magic_consume<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Re
     let holdings = holds(&s, row.account, now);
     if admit_magic_link(
         holdings,
-        &ctx.cfg.enabled,
+        &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
         &link,
         &Token(token),
         now,

@@ -10,10 +10,13 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{
-    BlobOwner, BlobRef, BlobStore, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass,
-    TextOwner, TextRef, TextStore, WorkspaceSlot, Workspaces,
+    BlobOwner, BlobRef, BlobStore, ErasureCause, ErasureRow, PortError, PublicTextRef, SealOwner,
+    Sealed, Sealer, StepUpProof, TextClass, TextOwner, TextRef, TextStore, WorkspaceSlot,
+    Workspaces,
 };
+use fstp_domain::id::AccountId;
 use fstp_domain::id::ProposalId;
+use fstp_domain::time::Timestamp;
 
 use fstp_access::ReadClearance;
 
@@ -27,6 +30,8 @@ pub const BLOB_LIMIT: usize = 1 << 20;
 struct Texts {
     rows: BTreeMap<u128, (TextClass, TextOwner, Vec<u8>)>,
     next: u128,
+    /// The erasure log (ADR-007, lane m5/retention), oldest first.
+    erased: Vec<ErasureRow>,
 }
 
 /// The text store. Cloning shares the texts.
@@ -65,13 +70,14 @@ impl FakeTexts {
     /// reference, so a ledger copied from `from`'s cell resolves every
     /// text it names. Every clone of `self` sees the copy.
     pub fn copy_from(&self, from: &FakeTexts) {
-        let (rows, next) = {
+        let (rows, next, erased) = {
             let s = lock(&from.state);
-            (s.rows.clone(), s.next)
+            (s.rows.clone(), s.next, s.erased.clone())
         };
         let mut s = lock(&self.state);
         s.rows = rows;
         s.next = next;
+        s.erased = erased;
     }
 
     /// Every public text that is UTF-8, by id: what a published Guide may
@@ -143,6 +149,46 @@ impl TextStore for FakeTexts {
             Some((TextClass::Public, _, b)) => Ok(b.clone()),
             Some(_) | None => Err(PortError::Refused),
         }
+    }
+
+    async fn erasures(&self) -> Result<Vec<ErasureRow>, PortError> {
+        Ok(lock(&self.state).erased.clone())
+    }
+
+    /// Erases every text the grant owns at once: its bytes leave the
+    /// store, so every later read is refused, and each text gets one log
+    /// row completed at the request instant (ADR-007). A grant that owns
+    /// no live text is refused.
+    async fn request_erasure(
+        &self,
+        by: AccountId,
+        cause: ErasureCause,
+        grant: ProposalId,
+        at: Timestamp,
+        proof: StepUpProof,
+    ) -> Result<(), PortError> {
+        let _ = (by, proof);
+        let mut s = lock(&self.state);
+        let owned: Vec<u128> = s
+            .rows
+            .iter()
+            .filter(|(_, (_, owner, _))| *owner == TextOwner::Proposal(grant))
+            .map(|(id, _)| *id)
+            .collect();
+        if owned.is_empty() {
+            return Err(PortError::Refused);
+        }
+        for id in owned {
+            s.rows.remove(&id);
+            s.erased.push(ErasureRow {
+                text: TextRef(id),
+                cause,
+                grant: Some(grant),
+                requested_at: at,
+                completed_at: Some(at),
+            });
+        }
+        Ok(())
     }
 }
 

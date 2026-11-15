@@ -586,6 +586,7 @@ const fn kind_name(kind: u16) -> &'static str {
         8 => "corrigendum",
         9 => "notice_issued",
         10 => "copy_requested",
+        11 => "retention_end",
         _ => "immediate",
     }
 }

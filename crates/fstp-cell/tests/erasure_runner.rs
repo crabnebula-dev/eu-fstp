@@ -871,6 +871,12 @@ struct SignerRun {
     signature_verifies: bool,
     due_now: bool,
     due_in_a_year: bool,
+    /// The calls of the key records appended from the first `ensure_signer`
+    /// on, in order.
+    key_calls: Vec<String>,
+    /// The custody calls the signer steps made: create, again, refused
+    /// and rotate.
+    signer_custody_calls: usize,
 }
 
 /// Seam: a cell with one text, the notice companion key created through
@@ -887,7 +893,7 @@ fn run_signer() -> Result<SignerRun, &'static str> {
             .await
             .map_err(|_| "the store did not open")?;
         let shutdown = Shutdown::new();
-        let (engine, _task) = CellEngine::start(&rt2, store, GenesisVault, &shutdown, 8)
+        let (engine, task) = CellEngine::start(&rt2, store, GenesisVault, &shutdown, 8)
             .await
             .map_err(|_| "the engine did not start")?;
         as_admin(
@@ -912,13 +918,18 @@ fn run_signer() -> Result<SignerRun, &'static str> {
         runner
             .put_text(G1, T1, b"synthetic text one")
             .map_err(|_| "no T1")?;
+        let before = engine.state().head();
+        let calls_before = *lock(&sim.0.calls);
         let first = runner
             .ensure_signer(Purpose::NoticeCompanion)
+            .await
             .map_err(|_| "no notice companion key")?;
         let again = runner
             .ensure_signer(Purpose::NoticeCompanion)
+            .await
             .map_err(|_| "no notice companion key")?;
-        let anchor_refused = runner.ensure_signer(Purpose::Anchor).is_err();
+        let anchor_refused = runner.ensure_signer(Purpose::Anchor).await.is_err();
+        let mut signer_custody_calls = *lock(&sim.0.calls) - calls_before;
         let key = runner
             .signer(Purpose::NoticeCompanion)
             .map_err(|_| "no signer")?;
@@ -970,9 +981,12 @@ fn run_signer() -> Result<SignerRun, &'static str> {
             .public_key()
             .to_bytes()
             .to_vec();
+        let rotate_before = *lock(&sim.0.calls);
         let rotated = runner
             .rotate_signer(Purpose::NoticeCompanion)
+            .await
             .map_err(|_| "no rotation")?;
+        signer_custody_calls += *lock(&sim.0.calls) - rotate_before;
         let store = runner.keystore().clone();
         drop(runner);
         let runner = ErasureRunner::resume(sim.clone(), engine.clone(), store)
@@ -984,8 +998,22 @@ fn run_signer() -> Result<SignerRun, &'static str> {
             .public_key()
             .to_bytes()
             .to_vec();
-        let ks = runner.keystore();
+        let ks = runner.keystore().clone();
         let now = fstp_cell::tasks::system_now();
+        drop(runner);
+        drop(engine);
+        let store = task.await.map_err(|_| "the engine task failed")?;
+        let key_calls = read_after(&store, before)
+            .await
+            .map_err(|_| "the ledger read failed")?
+            .into_iter()
+            .filter_map(|e| match e.record {
+                CellRecord::Key(KeyRecord::KeyOpRecorded { op }) => erasure::key_op_of_body(&op)
+                    .ok()
+                    .map(|k| k.call.name().to_owned()),
+                _ => None,
+            })
+            .collect();
         Ok(SignerRun {
             first,
             again,
@@ -999,6 +1027,8 @@ fn run_signer() -> Result<SignerRun, &'static str> {
             signature_verifies,
             due_now: ks.signer_due(Purpose::NoticeCompanion, now),
             due_in_a_year: ks.signer_due(Purpose::NoticeCompanion, now + SIGNER_LIFETIME_US),
+            key_calls,
+            signer_custody_calls,
         })
     })
 }
@@ -1027,4 +1057,27 @@ fn r_cr_04_keystore_holds_and_rotates_the_notice_companion_key() {
         !r.due_now && r.due_in_a_year,
         "yearly rotation is due after one year"
     );
+}
+
+/// ADR-004, decided by Daniel on 2026-11-15 (late), I-24: creating and
+/// rotating the level 2 notice companion key each append one key record,
+/// `create_signer` then `rotate_signer`, although neither makes a custody
+/// call. The second `ensure_signer` and the refused `Anchor` purpose
+/// append none.
+#[test]
+fn adr004_level2_signer_create_and_rotate_append_key_records() {
+    let r = run_signer().unwrap_or_else(|e| panic!("{e}"));
+    let signer: Vec<&str> = r
+        .key_calls
+        .iter()
+        .map(String::as_str)
+        .filter(|c| *c == "create_signer" || *c == "rotate_signer")
+        .collect();
+    assert_eq!(
+        signer,
+        ["create_signer", "rotate_signer"],
+        "{:?}",
+        r.key_calls
+    );
+    assert_eq!(r.signer_custody_calls, 0, "no custody call for a signer");
 }

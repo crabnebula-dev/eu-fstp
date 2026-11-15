@@ -1,0 +1,32 @@
+// The English labels of the tenant admin's erasure page (P-41, ADR-007,
+// lane m5/retention). Every id starts with `admin.erasures.`. Plain
+// language only (docs/design/10). No approved or legal text is held here.
+
+export const ADMIN_ERASURE_LABELS: Readonly<Record<string, string>> = {
+  "admin.erasures.title": "Erasures",
+  "admin.erasures.intro":
+    "Texts are erased by destroying their keys. The erasure log keeps each erased text with its cause and its times. It never keeps the text.",
+  "admin.erasures.ended.heading": "Grants whose retention ended",
+  "admin.erasures.ended.intro":
+    "The funder retention period of a grant starts when its last payment is confirmed and lasts the programme's retention period. Once it has ended, you may request the erasure of the grant's texts.",
+  "admin.erasures.ended.none": "No grant has reached the end of its retention period.",
+  "admin.erasures.ended.row": "Grant {grant} in programme {programme}: retention started {start} and ended {end}.",
+  "admin.erasures.request.heading": "Request an erasure",
+  "admin.erasures.request.intro":
+    "Choose a grant whose retention ended and the cause. The request erases every text of the grant and cannot be undone. It needs a fresh confirmation with your passkey.",
+  "admin.erasures.request.grant": "Grant",
+  "admin.erasures.request.cause": "Cause",
+  "admin.erasures.request.submit": "Request erasure",
+  "admin.erasures.request.invalid": "Choose a grant and a cause.",
+  "admin.erasures.request.done": "The erasure of the texts of grant {grant} was recorded.",
+  "admin.erasures.cause.retention_expiry": "The retention period ended",
+  "admin.erasures.cause.erasure_request": "A person asked for erasure",
+  "admin.erasures.cause.cell_erasure": "The organisation's data is being erased",
+  "admin.erasures.cause.verification_completed": "An identity check was completed",
+  "admin.erasures.log.heading": "Erasure log",
+  "admin.erasures.log.none": "No text has been erased.",
+  "admin.erasures.log.row": "Text {text}, grant {grant}: {cause}. Requested {requested}, completed {completed}.",
+  "admin.erasures.log.no_grant": "none",
+  "admin.erasures.log.pending": "not yet",
+  "admin.erasures.back": "Back to home",
+};

@@ -34,6 +34,7 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "nav.programme_setup": "Programme set-up",
   "nav.setup_wizard": "Set up a programme",
   "nav.approvals": "Approvals",
+  "nav.erasures": "Erasures",
   "nav.my_applications": "My applications",
   "nav.grants": "Grants",
   "nav.operations": "Operations",
@@ -100,6 +101,7 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.work.org": "Open the organisation step",
   "home.work.branding": "Set the brand colours",
   "home.work.terminology": "Set the terminology",
+  "home.work.erasures": "Erasures and retention",
   "home.work.admins": "Open the administrators step",
 
   "home.group.applicant": "Your applications",

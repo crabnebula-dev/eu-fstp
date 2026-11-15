@@ -28,6 +28,7 @@ export type NavKind =
   | 'setup'
   | 'creator'
   | 'approvals'
+  | 'erasures'
   | 'operations'
   | 'proposals'
   | 'grants'
@@ -96,6 +97,7 @@ export function siteLinks(roles: NavRoles | null): readonly SiteLink[] {
       out.push({ kind: 'setup', href: '/app/setup/new' });
       out.push({ kind: 'creator', href: '/app/creator/new' });
       out.push({ kind: 'approvals', href: '/app/admin/approvals' });
+      out.push({ kind: 'erasures', href: '/app/admin/erasures' });
     }
   }
   out.push(

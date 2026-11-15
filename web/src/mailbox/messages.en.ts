@@ -45,6 +45,8 @@ export const MAILBOX_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "mailbox.kind.notice.irc_concern": "A notice about proposal {proposal} waits for you",
   "mailbox.kind.invitation.open": "Your invitation to a role in programme {programme} waits for its grant",
   "mailbox.kind.role.granted": "You hold a new role in programme {programme}. Your home page lists your roles",
+  "mailbox.kind.admin.retention_ended":
+    "The funder retention period of grant {proposal} in programme {programme} has ended. You may now request the erasure of its texts",
 
   "pending.title": "Prepared action",
   "pending.intro": "An agent you connected prepared this action. It runs only if you confirm it here.",

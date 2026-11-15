@@ -426,6 +426,7 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
         h("p", {}, [h("a", { href: ONBOARDING_STEP("organisation") }, [homeLabel("home.work.org")])]),
         h("p", {}, [h("a", { href: WORK_PATHS.branding, "data-work": "branding" }, [homeLabel("home.work.branding")])]),
         h("p", {}, [h("a", { href: WORK_PATHS.terminology, "data-work": "terminology" }, [homeLabel("home.work.terminology")])]),
+        h("p", {}, [h("a", { href: WORK_PATHS.erasures, "data-work": "erasures" }, [homeLabel("home.work.erasures")])]),
       ],
       items: [],
     });

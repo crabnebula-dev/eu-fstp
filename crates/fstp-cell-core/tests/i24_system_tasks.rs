@@ -349,6 +349,7 @@ fn i78_stored_login_policy_is_clamped_to_the_defaults_where_used() {
         p71_us: Some(P71_DEFAULT_US + 1),
         p72_idle_us: Some(P72_IDLE_DEFAULT_US + 1),
         p72_absolute_us: Some(P72_ABSOLUTE_DEFAULT_US + 1),
+        p70_magic_links: None,
     };
     assert_eq!(TenantLoginPolicy::decode_stored(&long.encode()), Ok(long));
     assert!(TenantLoginPolicy::decode(&long.encode()).is_err());

@@ -95,6 +95,7 @@ const MESSAGES = {
   'account.nav.setup': 'Set up a programme',
   'account.nav.creator': 'Programme set-up',
   'account.nav.approvals': 'Approvals',
+  'account.nav.erasures': 'Erasures',
   'account.nav.proposals': 'My applications',
   'account.nav.grants': 'Grants',
   'account.nav.operations': 'Operations',

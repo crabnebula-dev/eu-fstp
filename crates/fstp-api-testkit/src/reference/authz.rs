@@ -1307,6 +1307,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("admin.approve_self_grant", T::None, R::SecondAdmin).hr(),
     RefOp::act("admin.approve_recovery", T::None, R::TenantAdmin).hr(),
     RefOp::act("admin.approve_break_glass", T::None, R::TenantAdmin).hr(),
+    // P-41, ADR-007 (lane m5/retention): the erasure page. A request is
+    // high-risk (Daniel, 2026-11-15 late), and its grant guard names P-41.
+    RefOp::read("admin.erasures", T::None, R::TenantAdmin),
+    RefOp::act("admin.request_erasure", T::None, R::TenantAdmin).hr(),
     // Lane m4reg, the Administrators step: the tenant's admins and whether
     // each verified identity, since onboarding finishes only with two
     // verified admins (J0, SoD-07).

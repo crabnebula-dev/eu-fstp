@@ -1001,6 +1001,97 @@ pub trait TextStore: Send + Sync {
         &self,
         r: PublicTextRef,
     ) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send;
+
+    /// The erasure log, oldest first: one row per erased text (ADR-007,
+    /// lane m5/retention). The default is the seam of a store that keeps
+    /// no log: it fails closed.
+    fn erasures(&self) -> impl Future<Output = Result<Vec<ErasureRow>, PortError>> + Send {
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
+    /// Erases every text that grant `grant` owns, with `cause`, as tenant
+    /// admin `by` asked at `at` with the step-up of `proof` (ADR-007, P-41,
+    /// lane m5/retention). The API core checked the admin, the cause and
+    /// the end of the grant's retention first. Each erased text gets one
+    /// log row naming its cause and authoriser. A grant that owns no live
+    /// text is refused. The default fails closed.
+    fn request_erasure(
+        &self,
+        by: AccountId,
+        cause: ErasureCause,
+        grant: ProposalId,
+        at: Timestamp,
+        proof: StepUpProof,
+    ) -> impl Future<Output = Result<(), PortError>> + Send {
+        let _ = (by, cause, grant, at, proof);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+}
+
+/// An erasure cause of ADR-007, with the closed code of
+/// `fstp_cell_core::decide::ERASURE_CAUSES`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ErasureCause {
+    /// The funder retention period ended (P-41). Code 1.
+    RetentionExpiry,
+    /// A person's erasure request. Code 2.
+    ErasureRequest,
+    /// The cell is erased. Code 3.
+    CellErasure,
+    /// An identity verification completed (R-ID-03). Code 4.
+    VerificationCompleted,
+}
+
+impl ErasureCause {
+    /// Every cause, in code order.
+    pub const ALL: [ErasureCause; 4] = [
+        ErasureCause::RetentionExpiry,
+        ErasureCause::ErasureRequest,
+        ErasureCause::CellErasure,
+        ErasureCause::VerificationCompleted,
+    ];
+
+    /// The closed code the cell records.
+    pub const fn code(self) -> u16 {
+        match self {
+            ErasureCause::RetentionExpiry => 1,
+            ErasureCause::ErasureRequest => 2,
+            ErasureCause::CellErasure => 3,
+            ErasureCause::VerificationCompleted => 4,
+        }
+    }
+
+    /// The wire name (`fstp_access::ERASURE_CAUSES`).
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ErasureCause::RetentionExpiry => "retention_expiry",
+            ErasureCause::ErasureRequest => "erasure_request",
+            ErasureCause::CellErasure => "cell_erasure",
+            ErasureCause::VerificationCompleted => "verification_completed",
+        }
+    }
+
+    /// The cause of a wire name.
+    pub fn from_wire(s: &str) -> Option<ErasureCause> {
+        ErasureCause::ALL.into_iter().find(|c| c.wire() == s)
+    }
+}
+
+/// One erasure-log row (ADR-007): the text, its cause, the grant whose
+/// texts were asked for, and when it was requested and completed. It
+/// names no account and holds no text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ErasureRow {
+    /// The erased text.
+    pub text: TextRef,
+    /// The cause.
+    pub cause: ErasureCause,
+    /// The grant the request named, if any.
+    pub grant: Option<ProposalId>,
+    /// When the erasure was requested.
+    pub requested_at: Timestamp,
+    /// When it completed, once it did.
+    pub completed_at: Option<Timestamp>,
 }
 
 /// Blobs, such as uploaded import documents (R-PG-02): content-addressed,

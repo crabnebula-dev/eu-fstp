@@ -1900,6 +1900,7 @@ impl AuthBackend for Production {
                 p71_us: None,
                 p72_idle_us: Some(p72.idle_us),
                 p72_absolute_us: Some(p72.absolute_us),
+                p70_magic_links: None,
             };
             let cmd = CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::SetLoginPolicy {
                 policy: policy.encode(),

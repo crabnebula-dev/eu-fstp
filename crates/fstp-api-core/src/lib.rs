@@ -34,6 +34,7 @@ mod content;
 mod creator;
 pub mod decode;
 mod dispatch;
+pub mod erasure;
 mod forms;
 pub mod grant;
 pub mod grant_lists;

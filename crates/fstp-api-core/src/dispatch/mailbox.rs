@@ -34,6 +34,7 @@ pub(super) fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> MailboxV
     assignments(call, account, &mut out);
     staff(call, account, &mut out);
     approvals(call, account, &mut out);
+    retention(call, &mut out);
     contracts(call, account, &mut out);
     payments(call, account, &mut out);
     notices(call, account, &mut out);
@@ -331,6 +332,29 @@ fn approvals<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<Mai
                 ..refs()
             },
         ));
+    }
+}
+
+/// P-41 (Daniel, 2026-11-15 late): each grant whose funder retention
+/// ended, for every tenant admin, as a notice that links to the erasure
+/// page. It names the grant and its programme and the end instant only
+/// (I-27). It appears when the end comes, the instant the timeline's
+/// `RETENTION_END` event of the grant falls due.
+fn retention<P: Seams>(call: &Call<'_, P>, out: &mut Vec<MailItem>) {
+    if !call.caller.p.tenant_admin() {
+        return;
+    }
+    for e in super::erasure::retention_ended(call) {
+        let mut m = MailItem::new(
+            MailKind::AdminRetentionEnded,
+            MailRefs {
+                proposal: Some(e.grant.raw()),
+                programme: Some(e.programme.raw()),
+                ..refs()
+            },
+        );
+        m.since = Some(e.end);
+        out.push(m);
     }
 }
 

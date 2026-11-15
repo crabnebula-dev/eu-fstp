@@ -131,18 +131,24 @@ pub const P72_IDLE_DEFAULT_US: i64 = 30 * 60 * 1_000_000;
 /// P-72, the default absolute session lifetime: 12 hours (proposed, Q37).
 pub const P72_ABSOLUTE_DEFAULT_US: i64 = 12 * 60 * 60 * 1_000_000;
 
-/// The tenant login policy that `SetLoginPolicy` carries (P-71 and P-72,
+/// The tenant login policy that `SetLoginPolicy` carries (P-70 to P-72,
 /// design sections 5.1 and 8.4).
 ///
-/// Its canonical form is the RFC 8785 text of an object with exactly the
-/// members `p71_us`, `p72_absolute_us` and `p72_idle_us`. Each is `null`
+/// Its canonical form is the RFC 8785 text of an object with the members
+/// `p71_us`, `p72_absolute_us` and `p72_idle_us`, and `p70_magic_links`
+/// when the tenant made that choice. Each P-71 and P-72 member is `null`
 /// for the default, or a decimal string of microseconds. A tenant value
 /// may only shorten the default, so a value above it, zero or a negative
 /// value is refused.
 ///
-/// Reading, interim pending Daniel: P-70, the enabled login methods, is
-/// not part of the form yet. Login method checks belong to `fstp-auth`
-/// (lane W2b), and the form gains a member once that lane fixes it.
+/// P-70 (ADR-008, decided by Daniel on 2026-11-15, late): a tenant admin
+/// turns magic links on or off with `p70_magic_links`, `true` or
+/// `false`. Without the member, the cell's start option decides
+/// ([`TenantLoginPolicy::magic_links`]). The member is left out rather
+/// than `null`, so every policy stored before it keeps its bytes and
+/// replays the same (I-23). Passkeys are always on, and the deferred
+/// methods are never offered (Q10 A), so magic links are the only P-70
+/// choice the form holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TenantLoginPolicy {
     /// P-71 in microseconds, or `None` for the default.
@@ -152,6 +158,8 @@ pub struct TenantLoginPolicy {
     /// The P-72 absolute lifetime in microseconds, or `None` for the
     /// default.
     pub p72_absolute_us: Option<i64>,
+    /// P-70: magic links on or off, or `None` for the cell's start option.
+    pub p70_magic_links: Option<bool>,
 }
 
 /// Why a login policy was refused.
@@ -166,7 +174,37 @@ pub enum PolicyError {
 /// The members of the canonical form, in RFC 8785 order.
 const POLICY_MEMBERS: [&str; 3] = ["p71_us", "p72_absolute_us", "p72_idle_us"];
 
+/// The optional P-70 member of the canonical form.
+const P70_MEMBER: &str = "p70_magic_links";
+
 impl TenantLoginPolicy {
+    /// Whether magic links are on: the tenant's P-70 choice, or `start`,
+    /// the cell's start option, when the tenant made none (ADR-008,
+    /// 2026-11-15).
+    pub fn magic_links(&self, start: bool) -> bool {
+        self.p70_magic_links.unwrap_or(start)
+    }
+
+    /// The login methods in force: the cell's start option `start` with
+    /// the tenant's P-70 choice applied. Passkeys stay on, whatever either
+    /// holds (`fstp_auth::EnabledMethods::offers`).
+    pub fn enabled_methods(&self, start: &fstp_auth::EnabledMethods) -> fstp_auth::EnabledMethods {
+        let Some(on) = self.p70_magic_links else {
+            return start.clone();
+        };
+        let magic = fstp_auth::Method::MagicLink;
+        let mut methods: Vec<fstp_auth::Method> = start
+            .methods
+            .iter()
+            .copied()
+            .filter(|m| *m != magic)
+            .collect();
+        if on {
+            methods.push(magic);
+        }
+        fstp_auth::EnabledMethods { methods }
+    }
+
     /// The effective P-71: the tenant value or the default, whichever is
     /// shorter. A value only shortens its default, so a stored value above
     /// this build's default is clamped where it is used (Q37).
@@ -194,7 +232,10 @@ impl TenantLoginPolicy {
             Some(n) => fstp_json::Value::String(n.to_string()),
             None => fstp_json::Value::Null,
         };
-        let mut o = fstp_json::Object::with_capacity(3);
+        let mut o = fstp_json::Object::with_capacity(4);
+        if let Some(on) = self.p70_magic_links {
+            o.insert(P70_MEMBER, fstp_json::Value::Bool(on));
+        }
         o.insert("p71_us", field(self.p71_us));
         o.insert("p72_absolute_us", field(self.p72_absolute_us));
         o.insert("p72_idle_us", field(self.p72_idle_us));
@@ -225,7 +266,10 @@ impl TenantLoginPolicy {
     pub fn decode_stored(bytes: &[u8]) -> Result<TenantLoginPolicy, PolicyError> {
         let v = fstp_json::parse(bytes).map_err(|_| PolicyError::Malformed)?;
         let o = v.as_object().ok_or(PolicyError::Malformed)?;
-        if o.len() != POLICY_MEMBERS.len() || POLICY_MEMBERS.iter().any(|m| !o.contains_key(m)) {
+        let members = POLICY_MEMBERS
+            .len()
+            .saturating_add(usize::from(o.contains_key(P70_MEMBER)));
+        if o.len() != members || POLICY_MEMBERS.iter().any(|m| !o.contains_key(m)) {
             return Err(PolicyError::Malformed);
         }
         let read = |name: &str| -> Result<Option<i64>, PolicyError> {
@@ -248,10 +292,16 @@ impl TenantLoginPolicy {
                 _ => Err(PolicyError::Malformed),
             }
         };
+        let p70_magic_links = match o.get(P70_MEMBER) {
+            None => None,
+            Some(fstp_json::Value::Bool(b)) => Some(*b),
+            Some(_) => return Err(PolicyError::Malformed),
+        };
         let policy = TenantLoginPolicy {
             p71_us: read("p71_us")?,
             p72_idle_us: read("p72_idle_us")?,
             p72_absolute_us: read("p72_absolute_us")?,
+            p70_magic_links,
         };
         if policy.encode() != bytes {
             return Err(PolicyError::Malformed);
@@ -272,6 +322,7 @@ mod tests {
             p71_us: Some(60_000_000),
             p72_idle_us: None,
             p72_absolute_us: Some(P72_ABSOLUTE_DEFAULT_US),
+            p70_magic_links: None,
         };
         assert_eq!(TenantLoginPolicy::decode(&p.encode()), Ok(p));
         assert_eq!(p.p71_us(), 60_000_000);
@@ -293,5 +344,73 @@ mod tests {
                 Err(PolicyError::Malformed)
             );
         }
+    }
+
+    /// ADR-008, decided by Daniel on 2026-11-15 (late): `SetLoginPolicy`
+    /// carries P-70, magic links on or off. Without a choice the form keeps
+    /// its earlier bytes, so a stored policy replays the same (I-23), and
+    /// the cell's start option is the default.
+    #[test]
+    fn adr008_p70_login_policy_carries_magic_links() {
+        let earlier = b"{\"p71_us\":null,\"p72_absolute_us\":null,\"p72_idle_us\":null}";
+        assert_eq!(TenantLoginPolicy::default().encode(), earlier.to_vec());
+        assert_eq!(
+            TenantLoginPolicy::decode_stored(earlier),
+            Ok(TenantLoginPolicy::default())
+        );
+        for on in [true, false] {
+            let p = TenantLoginPolicy {
+                p70_magic_links: Some(on),
+                ..TenantLoginPolicy::default()
+            };
+            let bytes = p.encode();
+            assert!(
+                String::from_utf8_lossy(&bytes).contains(&format!("\"p70_magic_links\":{on}")),
+                "{}",
+                String::from_utf8_lossy(&bytes)
+            );
+            assert_eq!(TenantLoginPolicy::decode(&bytes), Ok(p));
+            assert_eq!(p.magic_links(!on), on, "the tenant's choice wins");
+        }
+        for start in [true, false] {
+            assert_eq!(TenantLoginPolicy::default().magic_links(start), start);
+        }
+        for malformed in [
+            &b"{\"p70_magic_links\":null,\"p71_us\":null,\"p72_absolute_us\":null,\"p72_idle_us\":null}"[..],
+            b"{\"p70_magic_links\":\"true\",\"p71_us\":null,\"p72_absolute_us\":null,\"p72_idle_us\":null}",
+            b"{\"p70_magic_links\":true,\"p71_us\":null,\"p72_absolute_us\":null}",
+        ] {
+            assert_eq!(
+                TenantLoginPolicy::decode(malformed),
+                Err(PolicyError::Malformed),
+                "{}",
+                String::from_utf8_lossy(malformed)
+            );
+        }
+        let start = fstp_auth::EnabledMethods {
+            methods: vec![fstp_auth::Method::Passkey, fstp_auth::Method::MagicLink],
+        };
+        let off = TenantLoginPolicy {
+            p70_magic_links: Some(false),
+            ..TenantLoginPolicy::default()
+        };
+        assert!(
+            !off.enabled_methods(&start)
+                .offers(fstp_auth::Method::MagicLink)
+        );
+        assert!(
+            off.enabled_methods(&start)
+                .offers(fstp_auth::Method::Passkey)
+        );
+        let on = TenantLoginPolicy {
+            p70_magic_links: Some(true),
+            ..TenantLoginPolicy::default()
+        };
+        let none = fstp_auth::EnabledMethods::default();
+        assert!(
+            on.enabled_methods(&none)
+                .offers(fstp_auth::Method::MagicLink)
+        );
+        assert_eq!(TenantLoginPolicy::default().enabled_methods(&start), start);
     }
 }

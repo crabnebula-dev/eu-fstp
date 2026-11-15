@@ -756,10 +756,11 @@ pub fn prod_key_ops_of_chain(
         {
             let k = fstp_cell::tasks::erasure::key_op_of_body(&op)
                 .map_err(|_| NotImplemented::new(UNREADABLE))?;
-            out.push(ref_key_op(
-                fstp_custody::RequestId(k.request),
-                fstp_custody::usage::UsageOp::of_call(k.call),
-            ));
+            // A level 2 signing key record announces no custody call
+            // (ADR-004, 2026-11-15), so it matches no usage entry.
+            if let Some(op) = fstp_custody::usage::UsageOp::of_call(k.call) {
+                out.push(ref_key_op(fstp_custody::RequestId(k.request), op));
+            }
         }
     }
     Ok(out)

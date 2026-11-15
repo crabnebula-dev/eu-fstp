@@ -36,6 +36,8 @@ export const MAIL_KINDS = [
   // MB-Q3 (2026-11-13): invitations and role grants of an existing account.
   "invitation.open",
   "role.granted",
+  // P-41 (Daniel, 2026-11-15 late): a grant's funder retention ended.
+  "admin.retention_ended",
 ] as const;
 
 /** One kind. */
@@ -67,6 +69,7 @@ export const MAILBOX_ROUTES: Readonly<Record<MailKind, string>> = Object.freeze(
   "notice.irc_concern": "/app/notices",
   "invitation.open": "/app/",
   "role.granted": "/app/",
+  "admin.retention_ended": "/app/admin/erasures",
 });
 
 /**

@@ -7,6 +7,7 @@
 // server list the same pages, and a new page cannot skip the gate.
 
 import { ADMIN_BRANDING_PAGES } from "../admin/branding/page.js";
+import { ADMIN_ERASURE_PAGES } from "../admin/erasures/page.js";
 import { PAGES as APPLICANT_PAGES } from "../applicant/app.js";
 import type { RouteDef } from "../core/router.js";
 import { CREATOR_ROUTES } from "../creator/routes.js";
@@ -35,6 +36,7 @@ export function appRoutes(): readonly RouteDef[] {
     ...JOURNEY_ROUTES.map(plain),
     ...APPLICANT_PAGES.map(plain),
     ...ADMIN_BRANDING_PAGES.map((p) => p.route),
+    ...ADMIN_ERASURE_PAGES.map((p) => p.route),
     ...POST_GRANT_PAGES.map((p) => p.route),
     ...JUDGING_PAGES.map((p) => p.route),
   ];

@@ -486,10 +486,12 @@ pub struct StartOptions {
     /// (design section 8.5). `None` refuses every ticket, as a cell does
     /// until provisioning hands it the key (Interim, pending Daniel).
     pub operator_key: Option<Vec<u8>>,
-    /// The login methods the tenant enables (P-70). Passkeys are always
-    /// enabled. The default enables nothing more, so magic links are off
-    /// until the tenant's setting is handed in (lane m3/login-m2http,
-    /// Interim, pending Daniel: no record carries P-70 yet).
+    /// The cell's start option for the login methods (P-70). Passkeys are
+    /// always enabled. The default enables nothing more, so magic links are
+    /// off unless this option enables them. Since Daniel's decision of
+    /// 2026-11-15 (late, ADR-008) it is the default only: a tenant admin's
+    /// `SetLoginPolicy` turns magic links on or off, and its choice wins
+    /// (`fstp_cell_core::tenant::TenantLoginPolicy::enabled_methods`).
     pub login_methods: fstp_auth::EnabledMethods,
     /// The control plane link of a SaaS cell ([`crate::control`]). With
     /// one, the cell sends its heartbeats there. Interim, pending Daniel

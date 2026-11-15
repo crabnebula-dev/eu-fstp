@@ -159,6 +159,9 @@ pub enum ReadModel {
     /// `audit.entries` and `audit.vault_outcomes` (R-AU-01, I-24,
     /// ADR-007): ids, kinds and digests only.
     Audit(crate::audit::AuditModel),
+    /// `admin.erasures`: the erasure log and the grants whose retention
+    /// ended (P-41, ADR-007, lane m5/retention). Ids, causes and instants.
+    Erasures(crate::erasure::ErasuresView),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -305,6 +308,7 @@ impl ToJson for ReadModel {
             ReadModel::Mailbox(v) => v.to_json(),
             ReadModel::Unmask(v) => v.to_json(),
             ReadModel::Audit(v) => v.to_json(),
+            ReadModel::Erasures(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1749,6 +1753,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Diary(_) => &["proposal.diary"],
             ReadModel::Invitation(_) => &["people.get_invitation"],
             ReadModel::Deliveries(_) => &["tenant.deliveries"],
+            ReadModel::Erasures(_) => &["admin.erasures"],
             ReadModel::Timeline(_) => &["programme.timeline"],
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
             ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],
@@ -2036,6 +2041,30 @@ pub(crate) mod reply_shape_tests {
     fn one_of_each() -> Vec<ReadModel> {
         vec![
             ReadModel::Accepted,
+            ReadModel::Erasures(crate::erasure::ErasuresView {
+                erasures: vec![
+                    crate::port::ErasureRow {
+                        text: crate::port::TextRef(7),
+                        cause: crate::port::ErasureCause::RetentionExpiry,
+                        grant: Some(ProposalId::from_raw(8)),
+                        requested_at: fstp_domain::time::Timestamp::from_micros(1),
+                        completed_at: Some(fstp_domain::time::Timestamp::from_micros(2)),
+                    },
+                    crate::port::ErasureRow {
+                        text: crate::port::TextRef(9),
+                        cause: crate::port::ErasureCause::VerificationCompleted,
+                        grant: None,
+                        requested_at: fstp_domain::time::Timestamp::from_micros(3),
+                        completed_at: None,
+                    },
+                ],
+                retention_ended: vec![fstp_domain::retention::RetentionEnd {
+                    grant: ProposalId::from_raw(8),
+                    programme: fstp_domain::id::ProgrammeId::from_raw(4),
+                    start: fstp_domain::time::Timestamp::from_micros(10),
+                    end: fstp_domain::time::Timestamp::from_micros(20),
+                }],
+            }),
             ReadModel::Created(vec![("proposal", 1001)]),
             ReadModel::Created(vec![("call", 2001)]),
             ReadModel::Calls(vec![
@@ -2356,7 +2385,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 50;
+    const VARIANTS: usize = 51;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2413,6 +2442,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::AgentActivity(_) => 47,
             ReadModel::Bindings(_) => 48,
             ReadModel::Audit(_) => 49,
+            ReadModel::Erasures(_) => 50,
         }
     }
 

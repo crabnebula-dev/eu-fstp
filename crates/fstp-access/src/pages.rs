@@ -198,6 +198,8 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/admin/settings/{param}", TENANT_ADMIN).values(&[("param", SETTINGS)]),
     PageRow::read("/app/admin/branding", TENANT_ADMIN),
     PageRow::read("/app/admin/terminology", TENANT_ADMIN),
+    // P-41, ADR-007 (lane m5/retention): the erasure page reads the log.
+    PageRow::read("/app/admin/erasures", &["admin.erasures"]),
     // The creator, the Planning Studio, the wizard and the people page.
     PageRow::read("/app/creator/new", CREATOR_START),
     PageRow::read("/app/setup/new", CREATOR_START),
