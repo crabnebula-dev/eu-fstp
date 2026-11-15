@@ -2164,3 +2164,17 @@ Daniel started M4 on 2026-10-29, before M3 closes, so that M4 pages exist for a 
 - A: Ship both as designed, record the AI Act trigger as an acknowledged warning, and leave a `TODO(legal)` on the DSA position until L-16 is settled.
 - B: Hold the public MCP tools until L-16 is settled.
 - Recommendation: A. These are legal questions for you, and this design draws no legal conclusion.
+
+## Daniel's decisions on the I-66 and I-67 generator gaps (2026-11-15, late)
+
+Lane m4/decisions-b built I-52 and the ledger seams, then stopped on these gaps (`crates/fstp-api-testkit/src/mc/activate_model.rs`).
+
+| Gap | Decision |
+| --- | --- |
+| GAP_FIX, GAP_UNSET on invitations, withdrawals and import resolutions | Fix the reference vocabulary. Only field saves set or clear fields. Every edit production can express is still generated and checked |
+| GAP_POLICY_INVALID | I-50 stays strict. A seeded invalid policy that production refuses at save counts as the failure caught earlier, so it can never activate |
+| GAP_START | A restart applies the new starting point and keeps the fields and narratives already saved where they still exist. It voids the activation report like every edit (I-66) |
+| GAP_NARRATIVE | A creator command edits a narrative after it was saved (decided earlier: production adds it) |
+| GAP_FEWER_IMPORTS | A draft record removes an imported document. It voids the report and any approval request (I-66) |
+| GAP_GUIDE_SECTION | No command. The test environment seeds a profile template with a missing section, as it seeds theme faults |
+| D3, Grant and EndBinding after activation | Align the reference to production, as D3 says. The M-ACTIVATE check in CI confirms it |

@@ -23,7 +23,7 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | R-NF-08 sealed blobs | Record the layout (12-byte nonce, then ciphertext and tag) in ADR-004 |
 | I-52 | Domain generators supply Guide facts; the fold is strict |
 | Ledger seams | Compare after set-up; positions relative to the scenario start |
-| I-66/I-67 generator gaps | Production adds the creator commands (restart draft, narrative after save, remove imports, clear field, fix) |
+| I-66/I-67 generator gaps | Production adds restart (keeps saved work), narrative edit after save and import removal; the reference drops field effects of invitations, withdrawals and import resolutions; invalid policy refused at save counts; Guide section gap seeded via template; reference aligned to D3 (docs/handoff/m4-design.md, last section) |
 | Wizard | Exact email only; Operations roles as planned rows; invitations carry dates |
 | `tenant.complete` | SoD-07 (second admin) before the step checks |
 | r_nf_08 caller nonce | `approval_challenge` listed in NOT_SEALS (done) |
