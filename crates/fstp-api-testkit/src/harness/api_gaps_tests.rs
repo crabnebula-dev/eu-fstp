@@ -366,3 +366,193 @@ fn sod_07_only_a_self_grant_awaits_approval() {
     assert_eq!(str_member(&reply, "approval"), None, "{reply:?}");
     assert_eq!(pending(&w), before);
 }
+
+// ---------------------------------------------------------------------------
+// roles.grant with a ledger approval (SoD-07)
+// ---------------------------------------------------------------------------
+
+/// The ledger entries of `w`'s engine, oldest first.
+fn entries(w: &Built) -> Vec<fstp_ledger::Entry<Record>> {
+    let mut out = Vec::new();
+    w.ports
+        .engine
+        .store_copy()
+        .read(fstp_ledger::Seq::ZERO, usize::MAX, &mut out)
+        .unwrap();
+    out
+}
+
+/// Whether `w`'s roster holds a binding of `account` in `role`.
+fn holds_role(w: &Built, account: AccountId, role: Role) -> bool {
+    w.ports
+        .engine
+        .state()
+        .core
+        .roster()
+        .bindings()
+        .any(|(_, b)| b.account == account && b.role == role)
+}
+
+/// The self-grant of an Auditor binding to `ADMIN_BUILDER` from `start` to
+/// `end`, naming `approval` when given.
+fn auditor_self_grant(start: i64, end: i64, approval: Option<&str>) -> Value {
+    let mut members = vec![
+        ("account", dec(ADMIN_BUILDER.raw())),
+        ("role", s("Auditor")),
+        ("start", dec(u128::try_from(start).unwrap())),
+        ("end", dec(u128::try_from(end).unwrap())),
+    ];
+    if let Some(a) = approval {
+        members.push(("approval", s(a)));
+    }
+    obj(members)
+}
+
+/// Requests the self-grant of `auditor_self_grant(start, end)` as the
+/// builder, and has the plain admin approve it by id: the approval id.
+fn approved_self_grant(w: &Built, start: i64, end: i64) -> String {
+    let p = w.targets.programme.unwrap().raw();
+    let builder = w.ports.sessions.login(ADMIN_BUILDER, LoginMethod::Passkey);
+    let plain = w.ports.sessions.login(ADMIN_PLAIN, LoginMethod::Passkey);
+    let reply = body_json(stepped(
+        w,
+        &builder,
+        POST,
+        &format!("/programmes/{p}/roles"),
+        &auditor_self_grant(start, end, None),
+    ));
+    let approval = str_member(&reply, "approval").unwrap();
+    let r = stepped(
+        w,
+        &plain,
+        POST,
+        &format!("/admin/approvals/{approval}"),
+        &obj(vec![]),
+    );
+    assert_eq!(observed(&r), Observed::Completed, "{r:?}");
+    approval
+}
+
+/// SoD-07, TH-05 (lane m3/cell-routes): the grantee's `roles.grant` that
+/// names a ledger approval consumes it and grants the role in one ledger
+/// batch, under one command id: `SelfGrantApprovalUsed` with the binding. The grantee still
+/// steps up for the grant (I-78). A second use of the approval is
+/// refused, and no second binding is granted.
+#[test]
+fn sod_07_i78_roles_grant_uses_its_ledger_approval_in_one_entry() {
+    let w = active();
+    let p = w.targets.programme.unwrap().raw();
+    let start = w.now + DAY;
+    let end = w.now + 30 * DAY;
+    let approval = approved_self_grant(&w, start, end);
+    assert!(!holds_role(&w, ADMIN_BUILDER, Role::Auditor));
+    let builder = w.ports.sessions.login(ADMIN_BUILDER, LoginMethod::Passkey);
+    let path = format!("/programmes/{p}/roles");
+    let body = auditor_self_grant(start, end, Some(&approval));
+    assert_eq!(
+        observed(&once(&w, &builder, POST, &path, &body)),
+        Observed::StepUpRequired,
+        "the grant needs its own step-up"
+    );
+    let r = stepped(&w, &builder, POST, &path, &body);
+    assert_eq!(observed(&r), Observed::Completed, "{r:?}");
+    assert!(holds_role(&w, ADMIN_BUILDER, Role::Auditor));
+    // The last batch: every entry under the last command id.
+    let all = entries(&w);
+    let command = all.last().unwrap().command;
+    let last: Vec<Record> = all
+        .into_iter()
+        .filter(|e| e.command == command)
+        .map(|e| e.record)
+        .collect();
+    let used = last.iter().any(|r| {
+        matches!(
+            r,
+            Record::Tenant(fstp_engine::TenantEntry::Record(
+                fstp_tenant::TenantRecord::SelfGrantApprovalUsed { by, .. }
+            )) if *by == ADMIN_BUILDER
+        )
+    });
+    let granted = last.iter().any(|r| {
+        matches!(
+            r,
+            Record::Core(fstp_domain::Record::BindingGranted(b))
+                if b.account == ADMIN_BUILDER && b.role == Role::Auditor
+                    && b.second_admin == Some(ADMIN_PLAIN)
+        )
+    });
+    assert!(used && granted, "one batch holds both: {last:?}");
+    let ts = w.ports.engine.state().tenant.state().cloned().unwrap();
+    let id = fstp_tenant::ApprovalId::from_raw(approval.parse().unwrap());
+    assert!(ts.approvals().get(&id).unwrap().used);
+    let head = w.ports.engine.head();
+    let again = stepped(&w, &builder, POST, &path, &body);
+    assert_ne!(observed(&again), Observed::Completed, "{again:?}");
+    assert_eq!(w.ports.engine.head(), head, "a second use appended");
+}
+
+/// SoD-07 (lane m3/cell-routes): a ledger approval admits exactly the
+/// approved grant with the requested dates. Another role, another start
+/// or another end is refused and appends nothing, and the approval stays
+/// unused for the grant it approved.
+#[test]
+fn sod_07_roles_grant_with_a_ledger_approval_must_match_the_request() {
+    let w = active();
+    let p = w.targets.programme.unwrap().raw();
+    let start = w.now + DAY;
+    let end = w.now + 30 * DAY;
+    let approval = approved_self_grant(&w, start, end);
+    let builder = w.ports.sessions.login(ADMIN_BUILDER, LoginMethod::Passkey);
+    let path = format!("/programmes/{p}/roles");
+    let head = w.ports.engine.head();
+    let mut other_role = auditor_self_grant(start, end, Some(&approval));
+    if let Value::Object(o) = &mut other_role {
+        o.insert("role", s("ProgrammeManager"));
+    }
+    for (what, body) in [
+        ("another role", other_role),
+        (
+            "another start",
+            auditor_self_grant(start + DAY, end, Some(&approval)),
+        ),
+        (
+            "another end",
+            auditor_self_grant(start, end + DAY, Some(&approval)),
+        ),
+    ] {
+        let r = stepped(&w, &builder, POST, &path, &body);
+        assert_ne!(observed(&r), Observed::Completed, "{what}: {r:?}");
+        assert_eq!(w.ports.engine.head(), head, "{what} appended");
+    }
+    let r = stepped(
+        &w,
+        &builder,
+        POST,
+        &path,
+        &auditor_self_grant(start, end, Some(&approval)),
+    );
+    assert_eq!(observed(&r), Observed::Completed, "{r:?}");
+}
+
+/// SoD-07: only the grantee uses an approval. Another tenant admin who
+/// names it for a grant to the grantee is refused, and nothing is
+/// appended.
+#[test]
+fn sod_07_only_the_grantee_uses_a_ledger_approval() {
+    let w = active();
+    let p = w.targets.programme.unwrap().raw();
+    let start = w.now + DAY;
+    let end = w.now + 30 * DAY;
+    let approval = approved_self_grant(&w, start, end);
+    let plain = w.ports.sessions.login(ADMIN_PLAIN, LoginMethod::Passkey);
+    let head = w.ports.engine.head();
+    let r = stepped(
+        &w,
+        &plain,
+        POST,
+        &format!("/programmes/{p}/roles"),
+        &auditor_self_grant(start, end, Some(&approval)),
+    );
+    assert_ne!(observed(&r), Observed::Completed, "{r:?}");
+    assert_eq!(w.ports.engine.head(), head);
+}

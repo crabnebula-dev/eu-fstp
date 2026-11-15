@@ -1119,6 +1119,109 @@ pub fn profile_ref(
     }
 }
 
+// ---------------------------------------------------------------------------
+// SoD-07: a self-grant with its ledger approval (lane m3/cell-routes)
+// ---------------------------------------------------------------------------
+
+/// The refusal of a self-grant whose approval does not admit it: SoD-07.
+fn sod07() -> Refusal {
+    Refusal::new(RuleRef::Sod07, RefusalReason::GuardFailed)
+}
+
+/// The approver of `g` and the context its core grant is decided under.
+///
+/// The approval must be a recorded `SelfGrantApproved` whose approver is
+/// still a tenant admin. The grant must be a `GrantRole` to the actor's
+/// own account, with the dates of the `SelfGrantRequested` record the
+/// approval took its id from, and it must name that approver as its
+/// second admin. The tenant command `UseSelfGrantApproval` then checks
+/// the grantee, programme and role, single use and expiry (TH-05). The
+/// context's second tenant admin is the ledger's approver, never the
+/// shell's.
+fn approved_grant_ctx(
+    state: &EngineState,
+    g: &crate::ApprovedSelfGrant,
+    ctx: &Ctx,
+) -> Result<(fstp_tenant::GrantRef, Ctx), Refusal> {
+    let Actor::Account(actor) = ctx.actor else {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+    };
+    let ts = state
+        .tenant
+        .state()
+        .ok_or(Refusal::new(RuleRef::Ledger, RefusalReason::WrongState))?;
+    let fstp_domain::Command::GrantRole {
+        account,
+        programme,
+        role,
+        start,
+        end,
+        second_admin,
+        ..
+    } = g.grant()
+    else {
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+    };
+    let approval = ts.approvals().get(&g.approval()).ok_or_else(sod07)?;
+    let request = ts
+        .pending_self_grants()
+        .get(&g.approval())
+        .ok_or_else(sod07)?;
+    if *account != actor
+        || request.start != *start
+        || request.end != *end
+        || *second_admin != Some(approval.approver)
+        || approval.approver == actor
+        || !ts.is_admin(approval.approver)
+    {
+        return Err(sod07());
+    }
+    let grant = fstp_tenant::GrantRef {
+        grantee: *account,
+        programme: *programme,
+        role: *role,
+    };
+    let core_ctx = Ctx {
+        second_tenant_admin: Some(approval.approver),
+        ..*ctx
+    };
+    Ok((grant, core_ctx))
+}
+
+/// The vault questions of a self-grant with its approval: those of its
+/// core `GrantRole`, decided under the ledger's approver. The tenant use
+/// asks none.
+pub(crate) fn approved_self_grant_queries(
+    state: &EngineState,
+    g: &crate::ApprovedSelfGrant,
+    ctx: &Ctx,
+) -> Result<Vec<Query>, Refusal> {
+    let (_, core_ctx) = approved_grant_ctx(state, g, ctx)?;
+    fstp_domain::queries(&state.core, g.grant(), &core_ctx)
+}
+
+/// Decides a self-grant with its SoD-07 approval in one entry: the
+/// tenant `SelfGrantApprovalUsed`, then the core records of the
+/// `GrantRole`, decided with the ledger's approver as the second tenant
+/// admin. Nothing is recorded on a failure.
+pub(crate) fn decide_approved_self_grant(
+    state: &EngineState,
+    g: &crate::ApprovedSelfGrant,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<Vec<Record>, Refusal> {
+    let (grant, core_ctx) = approved_grant_ctx(state, g, ctx)?;
+    let use_approval =
+        crate::TenantRequest::new(fstp_tenant::TenantCommand::UseSelfGrantApproval {
+            approval: g.approval(),
+            grant,
+        });
+    let mut out = crate::tenant::decide_tenant(state, &use_approval, ctx, answers)?;
+    let core = fstp_domain::decide(&state.core, g.grant(), &core_ctx, answers)?;
+    out.extend(core.into_iter().map(Record::Core));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -190,7 +190,11 @@ Amendment of lane m4/api-gaps (Daniel, 2026-11-15, "a pending-grant record"):
 - Every other rule of the grant runs first, in a dry run as if another current tenant admin had approved it. A sole tenant admin is refused under SoD-07.
 - `admin.approvals` lists each self-grant awaiting approval with its grantee's handle, programme, role and dates. Only another tenant admin may approve it.
 - `admin.approve_self_grant` names the record by its id on `/admin/approvals/{approval}`. The approval takes the same id and approves exactly the recorded grant. The fold refuses an approval that names another grant than its record.
-- Open: the grant does not consume a ledger approval yet. `UseSelfGrantApproval` and `GrantRole` in one entry need a composed engine command, as `Stage2Revision` composes two core commands.
+- Lane m3/cell-routes (2026-11-15): the grantee's `roles.grant` that names the approval's id in `approval` consumes it in the grant's own batch. The composed engine command `ApprovedSelfGrant` decides the tenant `UseSelfGrantApproval`, then the core `GrantRole`, as `Stage2Revision` composes two core commands.
+  - The engine reads the approver from the ledger's `SelfGrantApproved`, never from the shell. The approver must still be a tenant admin and must differ from the grantee.
+  - The grant must be to the actor's own account. Its programme and role must be the approved `GrantRef`, and its start and end must equal those of the `SelfGrantRequested` record. The `GrantRole` names the approver as `second_admin`, and the core decides it with that approver as the second tenant admin.
+  - `UseSelfGrantApproval` keeps its rules: unused, not expired, the grantee as actor, web only. The grant still needs the grantee's own step-up (I-78).
+  - An `approval` id the ledger does not hold is read from M3's recorded approvals, as before. Interim, pending Daniel: the engine fold does not yet refuse a `SelfGrantApprovalUsed` without its binding in the same batch.
 
 ## Recovery
 

@@ -235,6 +235,8 @@ impl Journal {
                     self.fold_core(&c, before, now);
                 }
             }
+            // SoD-07: the grant of a self-grant with its ledger approval.
+            Command::ApprovedSelfGrant(g) => self.fold_core(g.grant(), before, now),
             _ => {}
         }
     }
