@@ -22,6 +22,13 @@
 //! - [`kind::CORRIGENDUM`]: each numbered change of a call's effective
 //!   limits, to every lead and team member bound to a proposal in the
 //!   call, resolved when it fires (I-53).
+//! - [`kind::RETENTION_END`]: the end of a grant's funder retention
+//!   period (P-41), due at the confirmation of its last payment request
+//!   plus P-41 years (`fstp_domain::retention`). Its source is the grant.
+//!   It carries no email and no command: the tenant admins' reminder is
+//!   the platform mailbox message the API core derives from the same
+//!   date (lane m5/retention, interim, pending Daniel: no email template
+//!   exists for it). Its fire entry records that retention ended.
 //!
 //! The other kinds of design section 4 have their codes reserved here,
 //! but no source yet: milestone reminders need a milestone due date that
@@ -75,6 +82,10 @@ pub mod kind {
     pub const NOTICE_ISSUED: u16 = 9;
     /// A copy of a submission record (R-SB-04). Reserved: no source yet.
     pub const COPY_REQUESTED: u16 = 10;
+    /// The end of a grant's funder retention period (P-41, Daniel,
+    /// 2026-11-15 late): the confirmation of its last payment request plus
+    /// P-41 years.
+    pub const RETENTION_END: u16 = 11;
 }
 
 /// The event kind of a sweep kind.
@@ -206,6 +217,63 @@ pub fn derive(s: &CellState, now: Timestamp) -> BTreeMap<EventId, Derived> {
             });
         }
     }
+    for d in retention_events(t, &retention_ends(s)) {
+        put(d);
+    }
+    out
+}
+
+/// Every grant whose funder retention period has a start and an end
+/// (P-41, `fstp_domain::retention`), from the confirmation instants the
+/// cell folded.
+pub fn retention_ends(s: &CellState) -> Vec<fstp_domain::retention::RetentionEnd> {
+    fstp_domain::retention::retention_ends(&s.engine().core, s.payments_confirmed())
+}
+
+/// The `RETENTION_END` events of `ends` (P-41).
+///
+/// The source is the grant id. An event already fired for a grant ends
+/// its derivation, since retention ends once. The version counts the
+/// cancelled events of the grant, so a moved end (a changed P-41)
+/// cancels the scheduled event, superseded by one at the new end
+/// (R-NT-01 AC), and each end is scheduled at most once per version.
+pub fn retention_events(
+    t: &TimelineState,
+    ends: &[fstp_domain::retention::RetentionEnd],
+) -> Vec<Derived> {
+    let mut out = Vec::new();
+    for e in ends {
+        let source = e.grant.raw().to_be_bytes().to_vec();
+        let mine = || {
+            t.events()
+                .filter(|(_, x)| x.kind == kind::RETENTION_END && x.source == source)
+                .map(|(_, x)| x)
+        };
+        if mine().any(|x| x.status == EventStatus::Fired) {
+            continue;
+        }
+        let cancelled = mine()
+            .filter(|x| matches!(x.status, EventStatus::Cancelled(_)))
+            .count();
+        let cancelled = u64::try_from(cancelled).unwrap_or(u64::MAX);
+        let due = e.end.micros();
+        // A scheduled event at another instant is superseded: the next
+        // version is derived, so `diff` cancels the old one.
+        let moved = mine().any(|x| x.status == EventStatus::Scheduled && x.due != due);
+        let version = if moved {
+            cancelled.saturating_add(1)
+        } else {
+            cancelled
+        };
+        out.push(Derived {
+            kind: kind::RETENTION_END,
+            lead: 0,
+            source,
+            source_version: version,
+            due,
+            offset_minutes: 0,
+        });
+    }
     out
 }
 
@@ -333,6 +401,10 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
                 })
                 .collect()
         }
+        // P-41: no email and no command. The fire entry records that
+        // retention ended, and the API core's mailbox reminds the tenant
+        // admins from the same date (module documentation).
+        kind::RETENTION_END => Vec::new(),
         k => {
             let cmd = sweep::due(s.engine(), now)
                 .unwrap_or_default()

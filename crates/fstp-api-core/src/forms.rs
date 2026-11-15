@@ -665,6 +665,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::Pending(PendingKind::Confirm) => BodyRule::Exactly(&["shown"]),
         OpKind::Pending(PendingKind::Discard) | OpKind::Agent(AgentKind::Revoke) => BodyRule::Empty,
         OpKind::M3Port(PortKind::ApproveBreakGlass) => BodyRule::Exactly(&["approve"]),
+        // ADR-007, P-41 (lane m5/retention): the cause and the grant.
+        OpKind::M3Port(PortKind::RequestErasure) => BodyRule::Exactly(&["cause", "grant"]),
         // R-LG-04: the registration, in the body form of the cell's
         // `POST /auth/passkeys` route (lowercase hexadecimal).
         OpKind::M3Port(PortKind::AddPasskey) => {
@@ -820,6 +822,14 @@ fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
             .is_some(),
         OpKind::M3Port(fstp_access::PortKind::ApproveBreakGlass) => {
             request.get("approve").and_then(Value::as_bool).is_some()
+        }
+        OpKind::M3Port(fstp_access::PortKind::RequestErasure) => {
+            request
+                .get("cause")
+                .and_then(Value::as_str)
+                .and_then(crate::port::ErasureCause::from_wire)
+                .is_some()
+                && id_param(request, "grant").is_some()
         }
         OpKind::M3Port(fstp_access::PortKind::AddPasskey) => {
             passkey_registration(request).is_some()

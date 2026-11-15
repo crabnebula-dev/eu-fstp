@@ -351,6 +351,7 @@ export const WORK_PATHS = Object.freeze({
   setupProgress: (p: string): string => `/app/programmes/${p}/setup/progress`,
   approvals: "/app/admin/approvals",
   branding: "/app/admin/branding",
+  erasures: "/app/admin/erasures",
   terminology: "/app/admin/terminology",
   creator: (p: string): string => `/app/programmes/${p}/creator/review`,
   studio: (p: string): string => `/app/programmes/${p}/studio`,
@@ -583,6 +584,7 @@ export type NavKind =
   | "setup"
   | "creator"
   | "approvals"
+  | "erasures"
   | "operations"
   | "proposals"
   | "grants"
@@ -638,6 +640,8 @@ export function navLinksOf(r: MyRoles, reviewWork = false): readonly NavLink[] {
     out.push({ kind: "setup", href: WORK_PATHS.setupNew, label: "nav.setup_wizard" });
     out.push({ kind: "creator", href: WORK_PATHS.creatorNew, label: "nav.programme_setup" });
     out.push({ kind: "approvals", href: WORK_PATHS.approvals, label: "nav.approvals" });
+    // P-41, ADR-007 (lane m5/retention): the erasure page.
+    out.push({ kind: "erasures", href: WORK_PATHS.erasures, label: "nav.erasures" });
   }
   return Object.freeze(out);
 }

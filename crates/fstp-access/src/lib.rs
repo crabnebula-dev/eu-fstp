@@ -56,8 +56,8 @@ pub use registry::{
     SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
 };
 pub use replies::{
-    BRAND_PAIR_NAMES, ENTRY_KIND_NAMES, INVITED_ROLES, MAILBOX_KINDS, Member, REPLIES, STATE_NAMES,
-    Shape, invitable, reply, role_wire_name,
+    BRAND_PAIR_NAMES, ENTRY_KIND_NAMES, ERASURE_CAUSES, INVITED_ROLES, MAILBOX_KINDS, Member,
+    REPLIES, STATE_NAMES, Shape, invitable, reply, role_wire_name,
 };
 
 pub use setup::{

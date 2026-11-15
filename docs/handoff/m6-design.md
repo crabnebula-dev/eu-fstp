@@ -93,6 +93,7 @@ ops.delivery (outbox_id uuid, attempt int, phase smallint, at bigint,
 | `Corrigendum(n)` | `Tightening` of the effective-limits record | Its entry time | Reading 5 |
 | `NoticeIssued` | M5 contractual notice record with its sealed PDF digest | Its entry time | Grantee parties |
 | `CopyRequested` | New `OutboxEvent::CopyRequested { proposal, address }` | Its entry time | The given address |
+| `RetentionEnd` (code 11, lane m5/retention) | A closed grant whose PAID requests are all confirmed (`fstp_domain::retention`) | Its last payment confirmation plus P-41 years | None. The API core's mailbox gives every tenant admin the notice `admin.retention_ended` from the same date |
 
 Working days use the tenant calendar in `fstp-domain/src/time.rs` (P-40).
 

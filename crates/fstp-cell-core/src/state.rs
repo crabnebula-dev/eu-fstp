@@ -28,7 +28,7 @@ use std::hash::{Hash, Hasher};
 use fstp_auth::{CoseKey, RecoveryPath};
 
 use fstp_domain::FoldError as DomainFold;
-use fstp_domain::id::{AccountId, BindingId, CallId, ProposalId};
+use fstp_domain::id::{AccountId, BindingId, CallId, ProposalId, RequestId};
 use fstp_domain::time::Timestamp;
 use fstp_ledger::Seq;
 
@@ -511,6 +511,9 @@ pub struct CellState {
     pub(crate) timeline: crate::timeline::TimelineState,
     bindings: BTreeMap<BindingId, BindingFacts>,
     proposals: BTreeMap<ProposalId, (CallId, AccountId)>,
+    /// When each payment request was confirmed as paid: the entry time of
+    /// its `PaymentConfirmed` record (P-41, lane m5/retention).
+    payments_confirmed: BTreeMap<RequestId, Timestamp>,
     commands: BTreeMap<[u8; 16], Seq>,
     /// The command id of the engine entry being folded and the sequence
     /// number of its first engine record (`fstp_engine::apply_entry_record`).
@@ -536,6 +539,7 @@ impl CellState {
             timeline: crate::timeline::TimelineState::default(),
             bindings: BTreeMap::new(),
             proposals: BTreeMap::new(),
+            payments_confirmed: BTreeMap::new(),
             commands: BTreeMap::new(),
             engine_entry: None,
         }
@@ -640,6 +644,13 @@ impl CellState {
     /// `ProposalCreated` record.
     pub fn proposal(&self, p: ProposalId) -> Option<(CallId, AccountId)> {
         self.proposals.get(&p).copied()
+    }
+
+    /// When each payment request was confirmed as paid, from the entry
+    /// time of its `PaymentConfirmed` record. Retention of a grant starts
+    /// at the last one (P-41, `fstp_domain::retention`).
+    pub fn payments_confirmed(&self) -> &BTreeMap<RequestId, Timestamp> {
+        &self.payments_confirmed
     }
 
     /// Whether any binding of `a` ended at an instant after `after` and at
@@ -815,6 +826,11 @@ fn index_engine(s: &mut CellState, seq: Seq, at: Timestamp, r: &fstp_engine::Rec
         // M6 design section 4: every outbox record becomes an immediate
         // timeline event, sourced by its ledger sequence.
         R::OutboxEnqueued(event) => s.timeline.enqueue(seq.raw(), at.micros(), *event),
+        // P-41 (Daniel, 2026-11-15): retention starts at the confirmation
+        // of a grant's last payment request, so the instant is kept.
+        R::PaymentConfirmed { request, .. } => {
+            s.payments_confirmed.insert(*request, at);
+        }
         _ => {}
     }
 }

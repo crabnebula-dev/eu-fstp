@@ -203,6 +203,9 @@ pub(crate) struct Journal {
     /// Lane m5/polish-access: the evidence of each line of each payment
     /// request this core recorded, for the line review view (R-PR-08).
     evidence: BTreeMap<RequestId, Vec<(LineId, LineEvidence)>>,
+    /// Lane m5/retention (P-41): when each payment request was confirmed
+    /// as paid. Retention of a grant starts at its last confirmation.
+    confirmed: BTreeMap<RequestId, Timestamp>,
 }
 
 /// The proposal a folded command concerns, read against the state before
@@ -384,6 +387,7 @@ impl Journal {
             CoreRecord::PaymentRequested { request, lines, .. } => {
                 self.keep_evidence(*request, lines.iter().map(|l| (l.line, &l.evidence)));
             }
+            CoreRecord::PaymentConfirmed { request, .. } => self.confirm(*request, now),
             _ => {}
         }
         if let Some(act) = round_act_of_record(r) {
@@ -446,6 +450,21 @@ impl Journal {
         }
     }
 
+    /// Keeps when payment request `request` was confirmed as paid (P-41,
+    /// lane m5/retention). Past the bound nothing is kept, so a grant of
+    /// that request derives no retention end rather than a wrong one.
+    fn confirm(&mut self, request: RequestId, at: Timestamp) {
+        if self.confirmed.len() < MAX_REQUESTS || self.confirmed.contains_key(&request) {
+            self.confirmed.insert(request, at);
+        }
+    }
+
+    /// When each payment request was confirmed as paid, as far as the
+    /// journal folded it (P-41, `fstp_domain::retention`).
+    pub(crate) fn confirmations(&self) -> &BTreeMap<RequestId, Timestamp> {
+        &self.confirmed
+    }
+
     /// Folds a command that appended at `now`, read against the state
     /// before it (`before`), which names the proposal of an assignment.
     /// A journal that folds the ledger ignores it: the ledger holds it.
@@ -455,6 +474,9 @@ impl Journal {
         }
         if let Command::Core(Core::RequestPayment { request, lines, .. }) = cmd {
             self.keep_evidence(*request, lines.iter().map(|l| (l.line, &l.evidence)));
+        }
+        if let Command::Core(Core::ConfirmPaid { request }) = cmd {
+            self.confirm(*request, now);
         }
         match cmd {
             Command::Core(c) => self.fold_core(c, before, now),

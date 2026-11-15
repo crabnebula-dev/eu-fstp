@@ -86,6 +86,8 @@ export type OpName =
   | "admin.approve_self_grant"
   | "admin.approve_recovery"
   | "admin.approve_break_glass"
+  | "admin.erasures"
+  | "admin.request_erasure"
   | "creator.open_draft"
   | "creator.list_programmes"
   | "creator.list_templates"
@@ -321,6 +323,8 @@ export interface OpParams {
   readonly "admin.approve_self_grant": { readonly "approval": string };
   readonly "admin.approve_recovery": { readonly "recovery": string };
   readonly "admin.approve_break_glass": { readonly "break_glass": string };
+  readonly "admin.erasures": Readonly<Record<never, string>>;
+  readonly "admin.request_erasure": Readonly<Record<never, string>>;
   readonly "creator.open_draft": Readonly<Record<never, string>>;
   readonly "creator.list_programmes": Readonly<Record<never, string>>;
   readonly "creator.list_templates": Readonly<Record<never, string>>;
@@ -529,6 +533,8 @@ export const OP_NAMES: readonly OpName[] = [
   "admin.approve_self_grant",
   "admin.approve_recovery",
   "admin.approve_break_glass",
+  "admin.erasures",
+  "admin.request_erasure",
   "creator.open_draft",
   "creator.list_programmes",
   "creator.list_templates",
@@ -1146,6 +1152,34 @@ export const OPERATIONS: readonly Operation[] = [
     base: "api",
     segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "break-glass" }, { kind: "param", name: "break_glass" }, { kind: "literal", text: "approval" }],
     params: ["break_glass"],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "admin.erasures",
+    method: "GET",
+    path: "/admin/erasures",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "erasures" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "admin.request_erasure",
+    method: "POST",
+    path: "/admin/erasures",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "erasures" }],
+    params: [],
     body: true,
     highRisk: true,
     binding: false,
@@ -4555,7 +4589,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         kind: "object",
         fields: {
           "id": { schema: { kind: "string" }, optional: false },
-          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted"] }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted", "admin.retention_ended"] }, optional: false },
           "action": { schema: { kind: "bool" }, optional: false },
           "href": { schema: { kind: "string" }, optional: false },
           "read": { schema: { kind: "bool" }, optional: true },
@@ -4742,11 +4776,35 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "reply_code": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
     },
   } },
+  "admin.erasures": {
+    kind: "object",
+    fields: {
+      "erasures": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "text": { schema: { kind: "id" }, optional: false },
+          "cause": { schema: { kind: "enum", values: ["retention_expiry", "erasure_request", "cell_erasure", "verification_completed"] }, optional: false },
+          "grant": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "requested_at": { schema: { kind: "id" }, optional: false },
+          "completed_at": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+        },
+      } }, optional: false },
+      "retention_ended": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "grant": { schema: { kind: "id" }, optional: false },
+          "programme": { schema: { kind: "id" }, optional: false },
+          "start": { schema: { kind: "id" }, optional: false },
+          "end": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "programme.timeline": { kind: "array", items: {
     kind: "object",
     fields: {
       "event": { schema: { kind: "string" }, optional: false },
-      ["kind"]: { schema: { kind: "enum", values: ["immediate", "stage2_expiry", "re_enter", "start_execution", "complete", "milestone_reminder", "milestone_overdue", "corrigendum", "notice_issued", "copy_requested"] }, optional: false },
+      ["kind"]: { schema: { kind: "enum", values: ["immediate", "stage2_expiry", "re_enter", "start_execution", "complete", "milestone_reminder", "milestone_overdue", "corrigendum", "notice_issued", "copy_requested", "retention_end"] }, optional: false },
       "due": { schema: { kind: "id" }, optional: false },
       "status": { schema: { kind: "enum", values: ["scheduled", "cancelled", "fired"] }, optional: false },
     },
@@ -5120,6 +5178,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/admin/settings/{param}", need: { kind: "reads", reads: ["tenant.settings"] }, values: { param: ["p20", "p69", "p70", "p71", "p72", "p74"] }, listed: null },
   { pattern: "/app/admin/branding", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/terminology", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
+  { pattern: "/app/admin/erasures", need: { kind: "reads", reads: ["admin.erasures"] }, values: {}, listed: null },
   { pattern: "/app/creator/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
   { pattern: "/app/setup/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/creator/start", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },

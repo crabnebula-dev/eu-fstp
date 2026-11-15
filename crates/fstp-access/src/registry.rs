@@ -384,6 +384,9 @@ pub enum PortKind {
     ApproveRecovery,
     /// Approving a break-glass request (SoD-08).
     ApproveBreakGlass,
+    /// A tenant admin's erasure request with its cause (ADR-007, P-41,
+    /// lane m5/retention).
+    RequestErasure,
 }
 
 /// An M5 operation that is neither a core command nor a read (M5 design
@@ -1044,6 +1047,19 @@ pub const OPS: &[OpSpec] = &[
         OpKind::M3Port(PortKind::ApproveBreakGlass),
         Post,
         "/admin/break-glass/{break_glass}/approval",
+    )
+    .hr()
+    .acting(ADMIN),
+    // P-41 and ADR-007 (Daniel, 2026-11-15 late): the erasure log and the
+    // grants whose retention ended, and an erasure request with its cause.
+    // All four causes are tenant admin acts. The request is high-risk by
+    // Daniel's decision, so it needs a step-up and is web only.
+    OpSpec::read("admin.erasures", RK::ListErasures, "/admin/erasures").acting(ADMIN),
+    OpSpec::new(
+        "admin.request_erasure",
+        OpKind::M3Port(PortKind::RequestErasure),
+        Post,
+        "/admin/erasures",
     )
     .hr()
     .acting(ADMIN),
@@ -2361,8 +2377,8 @@ pub const OPS: &[OpSpec] = &[
 
 /// High-risk by the strict reading, beyond the `authentication.md` table:
 /// the tenant settings other than P-70 (design section 3.5, Q10 interim),
-/// the brand tokens (M9 lane B1, interim), and the mail relay (M6 lane
-/// L6-EGR, interim).
+/// the brand tokens (M9 lane B1, interim), the mail relay (M6 lane
+/// L6-EGR, interim), and an erasure request (Daniel, 2026-11-15 late).
 pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P71)),
     OpKind::Tenant(TenantKind::SetSetting(TenantParam::P72)),
@@ -2375,6 +2391,8 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetBranding),
     OpKind::Tenant(TenantKind::SetTerminology),
     OpKind::Tenant(TenantKind::SetMailRelay),
+    // Daniel, 2026-11-15 (late): an erasure request needs a step-up.
+    OpKind::M3Port(PortKind::RequestErasure),
 ];
 
 /// Kinds that never arrive from a person. In M4 cells, the D13 sweep

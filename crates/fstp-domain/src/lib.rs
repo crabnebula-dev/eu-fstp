@@ -73,6 +73,9 @@ pub mod publicity;
 // ADR-023: the FSTP coordinator unmasks a party of their programme (I-17).
 pub mod unmask;
 
+// Lane m5/retention: the end of the funder retention period (P-41).
+pub mod retention;
+
 // M3 lane W2c: read-only accessors for the cell (M3 design section 0.5).
 pub mod view;
 

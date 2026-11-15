@@ -64,11 +64,14 @@ pub enum MailKind {
     InvitationOpen,
     /// A role granted to the caller's existing account (MB-Q3).
     RoleGranted,
+    /// A grant's funder retention period ended (P-41, Daniel, 2026-11-15
+    /// late): a notice for every tenant admin, linking to the erasure page.
+    AdminRetentionEnded,
 }
 
 impl MailKind {
     /// Every kind, in the order the mailbox lists them.
-    pub const ALL: [MailKind; 21] = [
+    pub const ALL: [MailKind; 22] = [
         MailKind::PendingConfirm,
         MailKind::ContractSign,
         MailKind::PaymentReview,
@@ -90,6 +93,7 @@ impl MailKind {
         MailKind::NoticeIrcConcern,
         MailKind::InvitationOpen,
         MailKind::RoleGranted,
+        MailKind::AdminRetentionEnded,
     ];
 
     /// The kind as the wire spells it (`fstp_access::MAILBOX_KINDS`).
@@ -116,6 +120,7 @@ impl MailKind {
             MailKind::NoticeIrcConcern => "notice.irc_concern",
             MailKind::InvitationOpen => "invitation.open",
             MailKind::RoleGranted => "role.granted",
+            MailKind::AdminRetentionEnded => "admin.retention_ended",
         }
     }
 
@@ -128,6 +133,7 @@ impl MailKind {
                 | MailKind::NoticeIrcConcern
                 | MailKind::InvitationOpen
                 | MailKind::RoleGranted
+                | MailKind::AdminRetentionEnded
         )
     }
 
@@ -156,6 +162,7 @@ impl MailKind {
             MailKind::NoticeOutcome | MailKind::NoticeIrcConcern => ReadKind::GetOwnNotices,
             // MB-Q3: the home page lists the caller's own roles.
             MailKind::InvitationOpen | MailKind::RoleGranted => ReadKind::ListMyRoles,
+            MailKind::AdminRetentionEnded => ReadKind::ListErasures,
         }
     }
 
@@ -196,6 +203,7 @@ pub const MAILBOX_ROUTES: &[(MailKind, &str)] = &[
     (MailKind::NoticeIrcConcern, "/app/notices"),
     (MailKind::InvitationOpen, "/app/"),
     (MailKind::RoleGranted, "/app/"),
+    (MailKind::AdminRetentionEnded, "/app/admin/erasures"),
 ];
 
 /// The ids a message names. Only those its page needs are set.

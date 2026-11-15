@@ -193,6 +193,18 @@ pub const MAILBOX_KINDS: &[&str] = &[
     // account.
     "invitation.open",
     "role.granted",
+    // P-41 (Daniel, 2026-11-15 late): a grant's funder retention ended.
+    "admin.retention_ended",
+];
+
+/// The erasure causes of ADR-007, as the wire names them (lane
+/// m5/retention): retention expiry (P-41), an erasure request, a cell
+/// erasure, and a completed identity verification (R-ID-03).
+pub const ERASURE_CAUSES: &[&str] = &[
+    "retention_expiry",
+    "erasure_request",
+    "cell_erasure",
+    "verification_completed",
 ];
 
 /// Every proposal state, as the state machine names it.
@@ -1543,6 +1555,33 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("reply_code", Shape::Nullable(&Shape::Int)),
         ])),
     ),
+    // P-41, ADR-007 (lane m5/retention): the erasure log, entry by entry,
+    // with its cause and times and the grant it served, and the grants
+    // whose funder retention ended. Ids, causes and instants only (I-27).
+    (
+        "admin.erasures",
+        Shape::Object(&[
+            m(
+                "erasures",
+                Shape::Array(&Shape::Object(&[
+                    m("text", Shape::Id),
+                    m("cause", Shape::Enum(ERASURE_CAUSES)),
+                    m("grant", Shape::Nullable(&Shape::Id)),
+                    m("requested_at", Shape::Id),
+                    m("completed_at", Shape::Nullable(&Shape::Id)),
+                ])),
+            ),
+            m(
+                "retention_ended",
+                Shape::Array(&Shape::Object(&[
+                    m("grant", Shape::Id),
+                    m("programme", Shape::Id),
+                    m("start", Shape::Id),
+                    m("end", Shape::Id),
+                ])),
+            ),
+        ]),
+    ),
     // M6 lane L6-API, M6 design section 6, R-NT-01: the events of a
     // programme, with their due instant and where each stands.
     (
@@ -1562,6 +1601,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     "corrigendum",
                     "notice_issued",
                     "copy_requested",
+                    "retention_end",
                 ]),
             ),
             m("due", Shape::Id),
