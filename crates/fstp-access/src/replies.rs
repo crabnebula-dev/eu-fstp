@@ -943,7 +943,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
         )]),
     ),
     // R-AU-01, I-24: the ledger entries of a programme, newest first, for
-    // its auditor. Each row names its side, its record kind, the acting
+    // its auditor, the tenant admins and its FSTP coordinator (SA-08). Each row names its side, its record kind, the acting
     // account and that account's role in the programme, the object it
     // acts on and the ids of the texts it references. ADR-007: a text is
     // named by its id, never shown. The hash is the SHA-256 of the

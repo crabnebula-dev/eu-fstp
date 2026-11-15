@@ -415,12 +415,17 @@ function receivingProposals(r: MyRoles): OwnProposal[] {
  * read; then the proposals of the caller's Receiving bindings stand in,
  * without titles. `proposalName` names a proposal without a title, and
  * `callName` a call whose title the cell did not send.
+ *
+ * `adminProgrammes` lists the tenant's programmes, as
+ * `creator.list_programmes` gives them to a tenant admin. A tenant admin
+ * reads the audit log of each (SA-08); nobody else uses the list.
  */
 export function workOf(
   r: MyRoles,
   own: readonly OwnProposal[] | null,
   callName: (call: string) => string,
   proposalName: (proposal: string) => string,
+  adminProgrammes: readonly string[] = [],
 ): Work {
   const items: WorkItem[] = [];
   const seen = new Set<string>();
@@ -469,6 +474,11 @@ export function workOf(
     add("tenant_admin", "setup", WORK_PATHS.setupNew, text("home.work.setup_new"));
     add("tenant_admin", "creator", WORK_PATHS.creatorNew, text("home.work.creator_new"));
     add("tenant_admin", "approvals", WORK_PATHS.approvals, text("home.work.approvals"));
+    // R-AU-01, SA-08 (Daniel, 2026-11-15): a tenant admin reads the audit
+    // log of every programme of the tenant, read-only.
+    for (const p of [...new Set(adminProgrammes)].sort(byId)) {
+      add("tenant_admin", "audit", WORK_PATHS.audit(p), text("home.work.audit", { programme: p }));
+    }
   }
 
   const staff = r.roles.filter((b) => b.proposal === null);
@@ -503,6 +513,11 @@ export function workOf(
     add("coordinator", "intake", WORK_PATHS.intake(c), text("home.work.intake", { call }));
     add("coordinator", "board", WORK_PATHS.board(c), text("home.work.board", { call }));
     add("coordinator", "notifiable", WORK_PATHS.notifiable(c), text("home.work.notifiable", { call }));
+  }
+  // R-AU-01, SA-08: the coordinator reads the audit log of each programme
+  // it coordinates, read-only.
+  for (const p of programmes(holds("fstp_coordinator"))) {
+    add("coordinator", "audit", WORK_PATHS.audit(p), text("home.work.audit", { programme: p }));
   }
   // J7: the committee, by call, and its open rounds.
   const committeeCalls = callsOf([...holds("committee_member"), ...holds("committee_chair")]);

@@ -22,7 +22,8 @@ export const AUDIT_LABELS: Readonly<Record<string, string>> = {
   "audit.object": "{type} {id}",
   "audit.text_ref": "text {id}",
   "audit.no_texts": "None",
-  "audit.not_auditor": "The audit entries and the vault answers are for the programme's auditor. The unmask records below are open to tenant admins too.",
+  "audit.not_auditor":
+    "The audit entries and the vault answers are for the programme's auditor, its FSTP coordinator and the tenant admins. The unmask records below are open to the auditor and the tenant admins.",
   "audit.unmasks.heading": "Unmasks",
   "audit.unmasks.intro": "Each time the FSTP coordinator saw who a party is, with the purpose they gave (ADR-023).",
   "audit.unmasks.caption": "{count} unmasks, oldest first",

@@ -1,8 +1,9 @@
 // The audit log page over the fake DOM (R-AU-01, I-24, ADR-007,
 // ADR-022, ADR-023). The auditor sees the programme's entries newest
 // first with an event type filter, the unmask records and the vault
-// answers. Texts appear by id only. A tenant admin sees a note and the
-// unmask records. The auditor's home links to the page.
+// answers. Texts appear by id only. SA-08 (Daniel, 2026-11-15): the
+// tenant admins and the programme's FSTP coordinator read the entries
+// too. The homes of all three link to the page.
 
 import { AUDIT_PAGES } from "../src/audit/pages.js";
 import { filterRows, isAuditLog, isOutcomes, isUnmasks, kindsOf, shortHash, utcMinute } from "../src/audit/model.js";
@@ -225,13 +226,35 @@ test("r_au_01_event_type_filter_narrows_the_table", async () => {
   assert(text().includes("1 of 4 entries, newest first"), "the caption counts the filter");
 });
 
-/** ADR-023 reading 11, roles table: a tenant admin is refused the entries, sees why, and reads the unmask records. */
-test("adr023_tenant_admin_sees_the_unmasks_and_a_note", async () => {
+/** R-AU-01, SA-08 (Daniel, 2026-11-15): a tenant admin reads the entries, the unmask records and the vault answers, with no refusal note. */
+test("r_au_01_sa08_tenant_admin_reads_the_entries_and_the_unmasks", async () => {
+  prepare();
+  await mount(ALL);
+  const shown = text();
+  assert(shown.includes("4 entries, newest first"), "the entries table");
+  assert(shown.includes("SYNTHETIC PURPOSE"), "the unmask purpose, as ADR-023 shows it to admins");
+  assert(shown.includes("SameIdentityAsAny"), "the vault answers");
+  eq(fakeDocument.getElementById("audit-not-auditor"), null, "no refusal note");
+});
+
+/** R-AU-01, SA-08: the FSTP coordinator of the programme reads the entries and the vault answers; the unmask records stay the auditor's and the admins'. */
+test("r_au_01_sa08_coordinator_reads_the_entries", async () => {
+  prepare();
+  await mount({ "GET /programmes/1/audit": LOG, "GET /programmes/1/audit/vault-outcomes": OUTCOMES });
+  const shown = text();
+  assert(shown.includes("4 entries, newest first"), "the entries table");
+  assert(shown.includes("SameIdentityAsAny"), "the vault answers");
+  assert(!shown.includes("SYNTHETIC PURPOSE"), "no unmask records");
+  eq(fakeDocument.getElementById("audit-not-auditor"), null, "no refusal note");
+});
+
+/** R-AU-01, ADR-023 reading 11: a reader refused the entries sees why, and the unmask records the cell still sends. */
+test("r_au_01_refused_entries_show_a_note", async () => {
   prepare();
   await mount({ "GET /programmes/1/audit/unmasks": UNMASKS });
   const shown = text();
   byId("audit-not-auditor");
-  assert(shown.includes("SYNTHETIC PURPOSE"), "the unmask purpose, as ADR-023 shows it to admins");
+  assert(shown.includes("SYNTHETIC PURPOSE"), "the unmask records");
   assert(!shown.includes("entries, newest first"), "no entries table");
 });
 
@@ -249,4 +272,48 @@ test("r_au_01_auditor_home_links_to_the_audit_log", () => {
   const w = workOf(r, null, (c) => `Call ${c}`, (p) => `Proposal ${p}`);
   const item = w.items.find((i) => i.kind === "audit");
   eq(item?.href, "/app/programmes/1/audit", "the audit log link");
+});
+
+function rolesOf(tenantAdmin: boolean, roles: readonly unknown[]): NonNullable<ReturnType<typeof readMyRoles>> {
+  const r = readMyRoles({ tenant_admin: tenantAdmin, roles, calls: [], rounds: [], drafts: [], signatories: [] });
+  assert(r !== null, "me.roles");
+  return r;
+}
+
+function auditLinks(w: ReturnType<typeof workOf>): string[] {
+  return w.items.filter((i) => i.kind === "audit").map((i) => i.href);
+}
+
+/** R-AU-01, SA-08: a tenant admin's home links to the audit log of each programme of the tenant. */
+test("r_au_01_sa08_tenant_admin_home_links_to_each_audit_log", () => {
+  const w = workOf(rolesOf(true, []), null, (c) => `Call ${c}`, (p) => `Proposal ${p}`, ["2", "1"]);
+  eq(auditLinks(w), ["/app/programmes/1/audit", "/app/programmes/2/audit"], "one link per programme");
+  assert(
+    w.items.filter((i) => i.kind === "audit").every((i) => i.group === "tenant_admin"),
+    "under the tenant admin work",
+  );
+});
+
+/** R-AU-01, SA-08: a coordinator's home links to the audit log of its own programmes only. */
+test("r_au_01_sa08_coordinator_home_links_to_its_programmes_audit_log", () => {
+  const w = workOf(
+    rolesOf(false, [{ role: "fstp_coordinator", programme: "3", calls: ["9"] }]),
+    null,
+    (c) => `Call ${c}`,
+    (p) => `Proposal ${p}`,
+    ["1", "2", "3"],
+  );
+  eq(auditLinks(w), ["/app/programmes/3/audit"], "its programme alone, never the tenant list");
+});
+
+/** R-AU-01, SA-08: a committee member, an applicant and a programme manager get no audit link. */
+test("r_au_01_sa08_other_roles_get_no_audit_link", () => {
+  for (const roles of [
+    [{ role: "committee_member", programme: "1", calls: ["1"] }],
+    [{ role: "programme_manager", programme: "1", calls: ["1"] }],
+    [{ role: "applicant", programme: "1", calls: ["1"], proposal: "5" }],
+  ]) {
+    const w = workOf(rolesOf(false, roles), null, (c) => `Call ${c}`, (p) => `Proposal ${p}`, ["1"]);
+    eq(auditLinks(w), [], `no audit link for ${JSON.stringify(roles)}`);
+  }
 });

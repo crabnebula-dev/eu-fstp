@@ -582,8 +582,15 @@ const PROPOSAL_DECLARANT: &[RoleOrApplicant] =
     &[R(Role::FstpCoordinator), R(Role::CommitteeMember)];
 const COMMITTEE: &[RoleOrApplicant] = &[R(Role::CommitteeMember), R(Role::CommitteeChair)];
 const IRC: &[RoleOrApplicant] = &[R(Role::IrcMember)];
-const AUDITOR: &[RoleOrApplicant] = &[R(Role::Auditor)];
 const AUDITOR_OR_ADMIN: &[RoleOrApplicant] = &[R(Role::Auditor), R(Role::TenantAdmin)];
+/// The readers of a programme's audit log, read-only: its auditor, every
+/// tenant admin and its FSTP coordinator (R-AU-01, SA-08, Daniel
+/// 2026-11-15).
+const AUDIT_READERS: &[RoleOrApplicant] = &[
+    R(Role::Auditor),
+    R(Role::TenantAdmin),
+    R(Role::FstpCoordinator),
+];
 const FINANCE: &[RoleOrApplicant] = &[R(Role::FinanceApprover)];
 const RELEASER: &[RoleOrApplicant] = &[R(Role::PaymentReleaser)];
 const FIN_SIGNATORY: &[RoleOrApplicant] = &[R(Role::FinancialSignatory)];
@@ -1973,7 +1980,7 @@ pub const OPS: &[OpSpec] = &[
         RK::GetAuditLog,
         "/programmes/{programme}/audit",
     )
-    .acting(AUDITOR)
+    .acting(AUDIT_READERS)
     .tool(
         "fstp_audit_list_entries",
         "List the audit entries of a programme.",
@@ -1985,7 +1992,7 @@ pub const OPS: &[OpSpec] = &[
         RK::GetVaultOutcomes,
         "/programmes/{programme}/audit/vault-outcomes",
     )
-    .acting(AUDITOR),
+    .acting(AUDIT_READERS),
     // ADR-023 (I-17 as amended 2026-11-15). The FSTP coordinator of the
     // programme unmasks one party with a purpose and a step-up, and the
     // vault shows the identity on its own origin. Web only: no tool, so

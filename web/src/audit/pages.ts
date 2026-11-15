@@ -4,12 +4,13 @@
 // table of entries, newest first, with time, event type, actor role,
 // object and hash.
 //
-// - The auditor of the programme reads its ledger entries
+// - The auditor of the programme, every tenant admin and the FSTP
+//   coordinator of the programme read its ledger entries
 //   (`audit.entries`) and the vault answers its decisions used
-//   (`audit.vault_outcomes`).
+//   (`audit.vault_outcomes`), read-only (SA-08, Daniel 2026-11-15).
 // - The auditor and the tenant admins read the unmask records
-//   (`audit.unmasks`, ADR-023 reading 11). A tenant admin sees a note
-//   that the entries are the auditor's, and the unmask records.
+//   (`audit.unmasks`, ADR-023 reading 11). A reader the cell refuses the
+//   entries sees a note saying whose they are.
 // - ADR-007: a text appears by its id only. Every server value is shown
 //   as text through `h`, so no string reaches an HTML parser (ADR-014).
 

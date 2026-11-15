@@ -1000,6 +1000,10 @@ pub enum Rule {
     /// ADR-023 reading 11 (R-AU-01): the unmask log of P, for its auditor
     /// and every tenant admin.
     UnmaskLog,
+    /// R-AU-01, SA-08 (Daniel, 2026-11-15): the audit log of P, read-only,
+    /// for its auditor, every tenant admin and an FSTP coordinator of P.
+    /// The entries show texts by id only (ADR-007).
+    AuditReader,
 }
 
 impl Rule {
@@ -1134,6 +1138,11 @@ impl Rule {
             Rule::Publicity => &[Some(Role::Applicant)],
             Rule::UnmaskParties => &[Some(Role::FstpCoordinator)],
             Rule::UnmaskLog => &[Some(Role::Auditor), Some(Role::TenantAdmin)],
+            Rule::AuditReader => &[
+                Some(Role::Auditor),
+                Some(Role::TenantAdmin),
+                Some(Role::FstpCoordinator),
+            ],
             // No signatory: the section 7.2 matrix names neither (NOTE 5).
             Rule::Journey => &[
                 Some(Role::Applicant),
@@ -1584,8 +1593,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("pending.list", T::None, R::AnyAccount),
     RefOp::act("pending.confirm", T::None, R::AnyAccount),
     RefOp::act("pending.discard", T::None, R::AnyAccount),
-    RefOp::read("audit.entries", T::Programme, R::Auditor).tool("fstp_audit_list_entries"),
-    RefOp::read("audit.vault_outcomes", T::Programme, R::Auditor),
+    RefOp::read("audit.entries", T::Programme, R::AuditReader).tool("fstp_audit_list_entries"),
+    RefOp::read("audit.vault_outcomes", T::Programme, R::AuditReader),
     // M5 lane L-API (M5 design section 5, 12.1). Every command is web only
     // (reading 9), so MCP refuses it as not exposed. The three status
     // reads carry read-only tools.
@@ -1925,6 +1934,7 @@ fn admit(
         }
         Rule::UnmaskParties => open(who.coordinator() && x.is_some_and(|s| s != StateTag::Draft)),
         Rule::UnmaskLog => open(who == Who::Auditor || who.tenant_admin()),
+        Rule::AuditReader => open(who == Who::Auditor || who.tenant_admin() || who.coordinator()),
         Rule::Publicity => open(
             who == Who::Lead
                 && matches!(

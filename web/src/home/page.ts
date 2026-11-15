@@ -57,6 +57,7 @@ import type { Label } from "../core/i18n.js";
 import { isIntakeQueue, isBoard } from "../coordinator/models.js";
 import { isRankingView } from "../committee/models.js";
 import { isIrcCase } from "../irc/models.js";
+import { type ProgrammeRow, readProgrammes } from "../creator/model.js";
 import { isScoreSheet } from "../reviewer/models.js";
 import {
   type AssignmentSummary,
@@ -516,6 +517,11 @@ function signatoryRoles(w: Work): HTMLElement[] {
   ];
 }
 
+/** The `creator.list_programmes` reply, as `creator/model.ts` reads it. */
+function isProgrammeList(v: unknown): v is { readonly programmes: readonly ProgrammeRow[] } {
+  return readProgrammes(v) !== null;
+}
+
 /** Whether the caller holds the tenant admin role and nothing else. */
 function adminOnly(r: MyRoles): boolean {
   return r.tenantAdmin && r.roles.length === 0;
@@ -569,11 +575,18 @@ export function mountHome(): void {
     const own: readonly OwnProposal[] | null = listed.ok
       ? listed.value.map((p) => ({ proposal: p.proposal, role: p.role, title: p.title, state: p.state }))
       : null;
+    // R-AU-01, SA-08: a tenant admin reads the audit log of every
+    // programme of the tenant, so the home lists them.
+    const programmes =
+      a.roles.tenantAdmin && !setup
+        ? await readOp(browserEnv(document.body), "creator.list_programmes", {}, isProgrammeList)
+        : null;
     const all = workOf(
       a.roles,
       own,
       (c) => homeLabel("home.call", { id: c }),
       (p) => homeLabel("home.proposal", { id: p }),
+      programmes !== null && programmes.ok ? programmes.data.programmes.map((p) => p.id) : [],
     );
     const w: Work = setup
       ? { ...all, items: all.items.filter((i) => i.group === "tenant_admin" && i.kind === "onboarding") }
