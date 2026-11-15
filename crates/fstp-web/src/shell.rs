@@ -44,6 +44,29 @@ pub(crate) fn render(assets: &AssetSet, brand: Option<&str>) -> Vec<u8> {
     html.into_bytes()
 }
 
+/// A public page (`/p`, rendered by `fstp-public`) with the platform
+/// stylesheets of `assets` linked first in its `<head>`, so the page
+/// looks like every other page (Daniel, 2026-11-15: the `/p` pages had
+/// no styling). The tenant brand sheet the renderer links, if any, comes
+/// after them, so the tenant tokens still win (M9 lane B2). Each link is
+/// a content-addressed path of the form `/app/assets/{sha256}.css`, which
+/// the `/p` policy `style-src 'self'` admits. A page with no `<head>`
+/// is returned unchanged.
+pub(crate) fn public_page(html: &str, assets: &AssetSet) -> Vec<u8> {
+    const HEAD: &str = "<head>";
+    let Some(at) = html.find(HEAD).and_then(|i| i.checked_add(HEAD.len())) else {
+        return html.as_bytes().to_vec();
+    };
+    let (before, after) = html.split_at(at);
+    let mut out = String::with_capacity(html.len().saturating_add(256));
+    out.push_str(before);
+    for href in assets.style_paths() {
+        out.push_str(&format!("<link rel=\"stylesheet\" href=\"{href}\">"));
+    }
+    out.push_str(after);
+    out.into_bytes()
+}
+
 #[cfg(test)]
 #[allow(clippy::panic, reason = "a test fails by panicking")]
 mod tests {
@@ -66,5 +89,34 @@ mod tests {
         assert!(!bad.contains("/brand/"));
         let none = String::from_utf8(render(&assets, None)).unwrap_or_default();
         assert!(!none.contains("/brand/"));
+    }
+
+    /// R-NF-03, I-70: a public page links the platform stylesheets first
+    /// in its head, before the brand sheet the renderer wrote.
+    #[test]
+    fn r_nf_03_public_page_links_platform_sheets_before_the_brand() {
+        let Ok(assets) = fstp_web_assets::AssetSet::from_files(
+            "main.js",
+            &[
+                ("main.js", b"export {};" as &[u8]),
+                ("site/ui.css", b"body{margin:0}" as &[u8]),
+            ],
+        ) else {
+            panic!("assets");
+        };
+        let Some(sheet) = assets.style_paths().into_iter().next() else {
+            panic!("no sheet");
+        };
+        let page = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"/brand/b.css\"></head><body></body></html>";
+        let html = String::from_utf8(public_page(page, &assets)).unwrap_or_default();
+        let platform = html
+            .find(&format!("href=\"{sheet}\""))
+            .unwrap_or(usize::MAX);
+        let brand = html.find("/brand/b.css").unwrap_or(0);
+        assert!(platform < brand, "{html}");
+        assert_eq!(
+            public_page("<p>no head</p>", &assets),
+            b"<p>no head</p>".to_vec()
+        );
     }
 }

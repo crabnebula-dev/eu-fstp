@@ -202,7 +202,7 @@ fn app_fallback(s: &Shared, req: &Request) -> Response {
 /// HTML and the feed as JSON. A refusal answers its status with the
 /// stable JSON body of every API refusal. The headers of the public
 /// surface are set by [`WebRouter::serve`], so no answer sets a cookie.
-async fn public(backend: &Backend, req: &Request) -> Response {
+async fn public(backend: &Backend, assets: &AssetSet, req: &Request) -> Response {
     if req.method != Method::GET && req.method != Method::HEAD {
         return reply::get_only();
     }
@@ -222,7 +222,7 @@ async fn public(backend: &Backend, req: &Request) -> Response {
             Some(html) => Response::with_body(
                 StatusCode::OK,
                 "text/html; charset=utf-8",
-                html.as_bytes().to_vec(),
+                shell::public_page(html, assets),
             ),
             None => Response::with_body(
                 StatusCode::OK,
@@ -272,7 +272,7 @@ impl WebRouter {
                 }
                 self.api.handle(req).await
             }
-            Surface::Public => public(&self.shared.backend, &req).await,
+            Surface::Public => public(&self.shared.backend, &self.shared.assets, &req).await,
             Surface::Brand => crate::brand::answer(self.shared.backend.brand(), &req),
             Surface::Adr013 => match &self.shared.mcp {
                 Some(m) => m.answer(req).await,
