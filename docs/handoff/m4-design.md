@@ -2178,3 +2178,8 @@ Lane m4/decisions-b built I-52 and the ledger seams, then stopped on these gaps 
 | GAP_FEWER_IMPORTS | A draft record removes an imported document. It voids the report and any approval request (I-66) |
 | GAP_GUIDE_SECTION | No command. The test environment seeds a profile template with a missing section, as it seeds theme faults |
 | D3, Grant and EndBinding after activation | Align the reference to production, as D3 says. The M-ACTIVATE check in CI confirms it |
+
+Follow-up answers (2026-11-15, night), after lane m4/i66-gaps:
+
+- **Clearing a field.** `SaveFields` gains an explicit clear for a field. It is an edit and voids the report. The I-66 model then generates emptied required fields, which closes GAP_UNSET (to build).
+- **Readings accepted.** Restarts and narrative edits are neutral for field checks in the reference. A restart keeps every saved field, and an accepted narrative only where the new template offers the same text.
