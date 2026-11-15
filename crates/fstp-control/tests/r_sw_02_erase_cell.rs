@@ -518,7 +518,7 @@ mod steps {
     }
 
     impl WitnessCredentials for Storage {
-        fn delete_cell(&self, cell: CellId) -> impl Future<Output = Result<(), ControlError>> {
+        fn revoke_cell(&self, cell: CellId) -> impl Future<Output = Result<(), ControlError>> {
             self.witness.lock().unwrap().push((cell, self.live()));
             std::future::ready(Ok(()))
         }
@@ -667,7 +667,7 @@ mod steps {
             },
             ErasureStep::HbaRewritten { cluster: VAULT },
             ErasureStep::ObjectsDeleted { count: 3 },
-            ErasureStep::WitnessCredentialsDeleted,
+            ErasureStep::WitnessCellRevoked,
             ErasureStep::RoutesRemoved { count: 2 },
         ];
         assert_eq!(steps, want);

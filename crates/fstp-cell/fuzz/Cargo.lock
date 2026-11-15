@@ -216,6 +216,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-programme",
  "fstp-report",
  "fstp-webauthn",
 ]

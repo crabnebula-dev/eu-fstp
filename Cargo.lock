@@ -466,6 +466,7 @@ dependencies = [
 name = "fstp-control"
 version = "0.1.0"
 dependencies = [
+ "fstp-audit",
  "fstp-cp-proto",
  "fstp-crypto",
  "fstp-custody",
@@ -481,6 +482,7 @@ dependencies = [
  "fstp-rt",
  "fstp-tls",
  "fstp-webauthn",
+ "fstp-witness",
 ]
 
 [[package]]

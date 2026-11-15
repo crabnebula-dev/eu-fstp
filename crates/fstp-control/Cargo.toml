@@ -24,6 +24,10 @@ fstp-migrate.workspace = true
 fstp-http.workspace = true
 fstp-tls.workspace = true
 fstp-obs.workspace = true
+# Cell erasure revokes the cell at the SaaS witness through the witness's
+# own store code (R-SW-02, ADR-004, 2026-11-15 late). In-house.
+fstp-witness.workspace = true
+fstp-audit.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

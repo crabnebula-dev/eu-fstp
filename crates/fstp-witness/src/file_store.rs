@@ -166,6 +166,11 @@ pub fn chain_file_name(cell: CellId, chain: ChainId) -> String {
 const REG_CA: u8 = 1;
 /// The tag of a registry record that adds an anchor key.
 const REG_KEY: u8 = 2;
+/// The tag of a registry record that revokes a cell (R-SW-02): the tag,
+/// the cell and `be64(revoked_at)`, 25 bytes.
+const REG_REVOKE: u8 = 3;
+/// The length of a revocation record.
+const REVOKE_LEN: usize = 1 + 16 + 8;
 /// The suffix of an abort or in-doubt record: `be64(received_at)` and the
 /// witness link.
 const WITHDRAWAL_SUFFIX_LEN: usize = 8 + 32;
@@ -350,6 +355,9 @@ impl FileStore {
         at: i64,
     ) -> Result<(), StoreError> {
         if let Some(c) = self.load_registry()?.into_iter().find(|c| c.cell == cell) {
+            if c.revoked_at.is_some() {
+                return Err(StoreError::Revoked);
+            }
             return if c.ca_cert == ca_cert {
                 Ok(())
             } else {
@@ -382,6 +390,9 @@ impl FileStore {
             .iter()
             .find(|c| c.cell == cell)
             .ok_or(corrupt("anchor key of an unknown cell"))?;
+        if c.revoked_at.is_some() {
+            return Err(StoreError::Revoked);
+        }
         let have = match chain {
             ChainId::App => &c.app_keys,
             ChainId::Vault => &c.vault_keys,
@@ -394,6 +405,30 @@ impl FileStore {
         bytes.push(chain.byte());
         bytes.extend_from_slice(&at.to_be_bytes());
         bytes.extend_from_slice(key);
+        self.append_registry(bytes)
+    }
+
+    /// Revokes `cell` at `at` (R-SW-02, ADR-004 "Decided by Daniel,
+    /// 2026-11-15 (late)"): one revocation record is appended to the
+    /// registry. The CA record and the chain files of the cell stay. A
+    /// second revocation changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Corrupt`] for a cell that is not registered, and
+    /// [`StoreError::Unavailable`] when the record cannot be written.
+    pub fn revoke_cell(&mut self, cell: CellId, at: i64) -> Result<(), StoreError> {
+        let registry = self.load_registry()?;
+        let c = registry
+            .iter()
+            .find(|c| c.cell == cell)
+            .ok_or(corrupt("revocation of an unknown cell"))?;
+        if c.revoked_at.is_some() {
+            return Ok(());
+        }
+        let mut bytes = vec![REG_REVOKE];
+        bytes.extend_from_slice(&cell.0);
+        bytes.extend_from_slice(&at.to_be_bytes());
         self.append_registry(bytes)
     }
 
@@ -486,14 +521,16 @@ impl FileStore {
     }
 }
 
-/// Loads a registry file: each record pins one cell CA certificate or
-/// adds one anchor key to a registered cell. Fuzzed
+/// Loads a registry file: each record pins one cell CA certificate, adds
+/// one anchor key to a registered cell, or revokes a registered cell
+/// (R-SW-02, a tag, the cell and `be64(revoked_at)`). Fuzzed
 /// (`file_store_records_decode`).
 ///
 /// # Errors
 ///
 /// [`StoreError::Corrupt`] for a file that does not load, a record that
-/// does not read, a second CA for one cell, or a key of an unknown cell.
+/// does not read, a second CA for one cell, a key of an unknown or revoked
+/// cell, or a revocation of an unknown or revoked cell.
 pub fn load_registry_file(bytes: &[u8]) -> Result<Vec<RegisteredCell>, StoreError> {
     let records = load_file_store(bytes).map_err(|_| corrupt("registry"))?;
     let mut out: Vec<RegisteredCell> = Vec::new();
@@ -515,6 +552,7 @@ pub fn load_registry_file(bytes: &[u8]) -> Result<Vec<RegisteredCell>, StoreErro
                     ca_cert,
                     app_keys: Vec::new(),
                     vault_keys: Vec::new(),
+                    revoked_at: None,
                 });
             }
             REG_KEY => {
@@ -529,9 +567,31 @@ pub fn load_registry_file(bytes: &[u8]) -> Result<Vec<RegisteredCell>, StoreErro
                     .iter_mut()
                     .find(|c| c.cell == cell)
                     .ok_or(corrupt("anchor key of an unknown cell"))?;
+                if entry.revoked_at.is_some() {
+                    return Err(corrupt("anchor key of a revoked cell"));
+                }
                 match chain {
                     ChainId::App => entry.app_keys.push(key),
                     ChainId::Vault => entry.vault_keys.push(key),
+                }
+            }
+            REG_REVOKE => {
+                // The revocation time (8 bytes), and nothing after it.
+                if r.bytes.len() != REVOKE_LEN {
+                    return Err(bad);
+                }
+                let at = r
+                    .bytes
+                    .get(17..REVOKE_LEN)
+                    .and_then(|b| <[u8; 8]>::try_from(b).ok())
+                    .map(i64::from_be_bytes)
+                    .ok_or(bad)?;
+                let entry = out
+                    .iter_mut()
+                    .find(|c| c.cell == cell)
+                    .ok_or(corrupt("revocation of an unknown cell"))?;
+                if entry.revoked_at.replace(at).is_some() {
+                    return Err(corrupt("a cell revoked twice"));
                 }
             }
             _ => return Err(corrupt("registry record")),

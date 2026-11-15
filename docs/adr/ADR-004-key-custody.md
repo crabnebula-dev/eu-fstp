@@ -550,3 +550,14 @@ W2f also checks these items on the host side.
 - **Sign keys in `fstp-keyd`.** The key table gains a sign-key slot form beside the root slots. Install creates the local cluster CA sign keys there, and a destroy overwrites the key in place.
 - **Route removal on a remote edge.** Each `fstp-edge` polls a signed route table from `fstp-control`. The erasure finishes route removal once every edge reports the table version without the cell's routes.
 - **Level 2 signing keys.** Creating or rotating a level 2 signing key appends a key record, although no custody call is made.
+
+## Built by lane m3/erase-prod, 2026-11-15
+
+Each entry builds one decision of the section above. Interim readings are marked "interim, pending Daniel".
+
+- **Witness revocation.** Witness migration 4 adds `witness.cell_revocation`: the cell, referencing `witness.cell_ca`, and the revocation time. It is append-only under the same triggers as the other witness tables. Triggers also refuse an anchor key, an anchor row or a withdrawal of a revoked cell. `witness.cell_ca` and every record of the cell stay.
+  - The witness refuses every request of a revoked cell, on open connections too. It asks its store once per request until it knows the cell is revoked, so a revocation another login wrote counts from the next request. It then unpins the cell's CA, and a registry reload or a restart pins it no more. A registration of a revoked cell is refused.
+  - The local witness of a self-hosted install appends a registry record of tag 3: the cell and the revocation time. The registry loader refuses a second revocation, one of an unknown cell, and an anchor key after it. The loader keeps its fuzz target `file_store_records_decode`.
+  - `fstp_control::erase::WitnessRegistry` implements `WitnessCredentials`. It logs in to the witness database as `witness_migrator`, as provisioning does to register a cell, and appends the row (`fstp_witness::store::revoke_cell`). Interim, pending Daniel: `witness_service` gains SELECT on the new table only, so the service still cannot write the registry. The erasure step is now `WitnessCellRevoked`.
+  - The cell's secret key material at the witness is its CA key and its App and Vault anchor keys. Step 1 destroys them in custody, so the revocation needs no secret of its own.
+  - The test world revokes the erased cell at its witness after step 1, as it plays provisioning.

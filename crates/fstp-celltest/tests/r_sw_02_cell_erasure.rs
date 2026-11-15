@@ -278,7 +278,8 @@ fn erasure_confirmation(world: &World, cell: u8) -> Result<(Vec<Vec<u8>>, bool),
 /// restores cell 1. ADR-004 part 2: the confirmation lists one destroy
 /// receipt for each custody key cell 0 held, the cell CA key and every
 /// live root of its App, Vault and CellBackup chains, and no other. Its
-/// signature verifies, and cell 1 keeps every key.
+/// signature verifies, and cell 1 keeps every key. The witness revoked
+/// cell 0 only (ADR-004, 2026-11-15 late), and cell 1 still runs a cycle.
 #[test]
 fn r_sw_02_cell_erasure_kills_every_backup() {
     let world = World::start(WorldSpec {
@@ -338,6 +339,19 @@ fn r_sw_02_cell_erasure_kills_every_backup() {
         kept, other,
         "the erasure of cell 0 changed the keys of cell 1"
     );
+    // Design section 3.7 step 2, ADR-004 (2026-11-15 late): the witness
+    // revoked cell 0 and only cell 0, and cell 1 still anchors there.
+    assert_eq!(
+        world.witness_revoked(0).map_err(|e| e.to_string()),
+        Ok(true)
+    );
+    assert_eq!(
+        world.witness_revoked(1).map_err(|e| e.to_string()),
+        Ok(false)
+    );
+    if let Err(e) = world.run_cycle(1, &steps(&["call-cycle"])).result {
+        panic!("cell 1 after the erasure of cell 0: {e}");
+    }
 }
 
 /// R-SW-02 teeth for the world test above: before `erase-cell`, the
@@ -371,6 +385,10 @@ fn r_sw_02_teeth_restore_trial_opens_every_kind_before_erasure() {
         );
     }
     assert!(world.cell_erasure(0).unwrap().is_none());
+    assert_eq!(
+        world.witness_revoked(0).map_err(|e| e.to_string()),
+        Ok(false)
+    );
     if let Err(e) = world.run_cycle(0, &steps(&["erase-cell"])).result {
         panic!("erase-cell: {e} (NotImplemented)");
     }

@@ -32,7 +32,7 @@
 //!   [`WitnessParts::receipt_key`] is handed in by the caller.
 //! - Restore declarations from the control plane (ADR-012, interim).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -214,6 +214,33 @@ impl<R: Runtime> Backend<R> {
         }
     }
 
+    /// Whether `cell` is revoked (R-SW-02). The registry is read again,
+    /// so a revocation another login wrote counts at once.
+    async fn is_revoked(&mut self, rt: &R, cell: CellId) -> Result<bool, StoreError> {
+        match self {
+            Backend::Pg { db, client } => {
+                let c = Self::client(rt, db, client).await?;
+                store::is_revoked(c, cell).await
+            }
+            Backend::File(f) => Ok(f
+                .load_registry()?
+                .iter()
+                .any(|c| c.cell == cell && c.revoked_at.is_some())),
+            Backend::Closed => Err(CLOSED),
+        }
+    }
+
+    async fn revoke(&mut self, rt: &R, cell: CellId, at: i64) -> Result<(), StoreError> {
+        match self {
+            Backend::Pg { db, client } => {
+                let c = Self::client(rt, db, client).await?;
+                store::revoke_cell(c, cell, at).await
+            }
+            Backend::File(f) => f.revoke_cell(cell, at),
+            Backend::Closed => Err(CLOSED),
+        }
+    }
+
     async fn register(
         &mut self,
         rt: &R,
@@ -277,6 +304,9 @@ struct Shared<R: Runtime> {
     server_key_pem: Vec<u8>,
     core: AsyncMutex<Core<R>>,
     cells: Mutex<BTreeMap<CellId, Registered>>,
+    /// The cells known to be revoked (R-SW-02). A revocation is never
+    /// undone, so this set only grows.
+    revoked: Mutex<BTreeSet<CellId>>,
     tls: Mutex<Option<Arc<fstp_tls::ServerConfig>>>,
 }
 
@@ -352,6 +382,57 @@ impl<R: Runtime> Shared<R> {
             },
         );
         Ok(())
+    }
+
+    /// Pins the registered cell `r`, or for a revoked cell drops its pin
+    /// and remembers the revocation (R-SW-02).
+    fn pin_registered(&self, r: &store::RegisteredCell) -> Result<(), WitnessError> {
+        if r.revoked_at.is_some() {
+            self.unpin(r.cell);
+            Ok(())
+        } else {
+            self.pin(r.cell, &r.ca_cert, keys_of(r))
+        }
+    }
+
+    /// Drops the pin of the revoked `cell` and remembers the revocation.
+    /// The caller rebuilds the TLS configuration.
+    fn unpin(&self, cell: CellId) {
+        locked(&self.revoked).insert(cell);
+        locked(&self.cells).remove(&cell);
+    }
+
+    /// Whether the witness refuses `sender` because its cell is revoked
+    /// (R-SW-02, ADR-004 "Decided by Daniel, 2026-11-15 (late)"). The
+    /// store is asked for each request of a cell not yet known to be
+    /// revoked, so a revocation that provisioning wrote counts from the
+    /// next request on. A store that cannot answer refuses too.
+    async fn refuses(&self, sender: Sender) -> bool {
+        let cell = match sender {
+            Sender::CellWitness { cell } | Sender::VaultWitness { cell } => cell,
+            Sender::ControlPlane => return false,
+        };
+        if locked(&self.revoked).contains(&cell) {
+            return true;
+        }
+        let revoked = {
+            let mut core = self.core.lock().await;
+            match core.backend.is_revoked(&self.rt, cell).await {
+                Ok(r) => r,
+                Err(_) => {
+                    core.backend.reset();
+                    return true;
+                }
+            }
+        };
+        if revoked {
+            self.unpin(cell);
+            // A configuration that does not rebuild keeps the old one for
+            // new handshakes. The request check above refuses the cell
+            // either way.
+            let _ = self.rebuild_tls();
+        }
+        revoked
     }
 
     fn pins(&self) -> Vec<PinnedCa> {
@@ -552,6 +633,9 @@ impl<R: Runtime> Shared<R> {
     }
 
     async fn handle(&self, sender: Sender, req: WireRequest) -> WireReply {
+        if self.refuses(sender).await {
+            return WireReply::Refused;
+        }
         match req {
             WireRequest::Message(WitnessMessage::Prepare(p)) => self.prepare(sender, p).await,
             WireRequest::Message(WitnessMessage::Abort {
@@ -622,7 +706,8 @@ impl<R: Runtime> WitnessHandle<R> {
     /// rebuilds the TLS configuration of new connections over their CAs.
     /// Provisioning writes the registry as `witness_migrator`
     /// ([`crate::store::registration_sql`]) and then calls this, so the
-    /// service role needs only SELECT on the registry tables.
+    /// service role needs only SELECT on the registry tables. A revoked
+    /// cell is unpinned instead (R-SW-02).
     ///
     /// # Errors
     ///
@@ -639,7 +724,7 @@ impl<R: Runtime> WitnessHandle<R> {
                 }
             };
             for r in &all {
-                self.shared.pin(r.cell, &r.ca_cert, keys_of(r))?;
+                self.shared.pin_registered(r)?;
             }
         }
         self.shared.rebuild_tls()
@@ -680,6 +765,35 @@ impl<R: Runtime> WitnessHandle<R> {
             let mine = all.into_iter().find(|r| r.cell == cell);
             let keys = mine.map(|r| keys_of(&r)).unwrap_or_default();
             self.shared.pin(cell, ca_cert_der, keys)?;
+        }
+        self.shared.rebuild_tls()
+    }
+
+    /// Revokes `cell` (R-SW-02, design section 3.7 step 2, ADR-004
+    /// "Decided by Daniel, 2026-11-15 (late)"). The revocation record is
+    /// stored first. Then the cell's CA is unpinned, the TLS configuration
+    /// of new connections drops it, and every request of the cell is
+    /// refused from then on, on open connections too. The registration and
+    /// every record of the cell stay. A second revocation changes nothing.
+    ///
+    /// A local witness writes the record to its file store. A SaaS
+    /// witness's own login needs INSERT on `witness.cell_revocation` for
+    /// this; provisioning writes the row as `witness_migrator` instead
+    /// ([`crate::store::revoke_cell`]), and the witness refuses the cell
+    /// at its next request.
+    ///
+    /// # Errors
+    ///
+    /// [`WitnessError::Store`] when the record cannot be stored, as for a
+    /// cell the witness never registered.
+    pub async fn revoke_cell(&self, cell: CellId) -> Result<(), WitnessError> {
+        {
+            let mut core = self.shared.core.lock().await;
+            if let Err(e) = core.backend.revoke(&self.shared.rt, cell, now_us()).await {
+                core.backend.reset();
+                return Err(store_err(e));
+            }
+            self.shared.unpin(cell);
         }
         self.shared.rebuild_tls()
     }
@@ -845,10 +959,11 @@ async fn start<R: Runtime>(
             chains: BTreeMap::new(),
         }),
         cells: Mutex::new(BTreeMap::new()),
+        revoked: Mutex::new(BTreeSet::new()),
         tls: Mutex::new(None),
     });
     for r in &registry {
-        shared.pin(r.cell, &r.ca_cert, keys_of(r))?;
+        shared.pin_registered(r)?;
     }
     shared.rebuild_tls()?;
     let listener = rt

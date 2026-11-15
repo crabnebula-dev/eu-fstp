@@ -848,7 +848,7 @@ mod approved {
     }
 
     impl fstp_control::erase::WitnessCredentials for Storage {
-        fn delete_cell(
+        fn revoke_cell(
             &self,
             cell: CellId,
         ) -> impl Future<Output = Result<(), fstp_control::ControlError>> {

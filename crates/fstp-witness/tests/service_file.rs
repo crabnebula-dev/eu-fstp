@@ -543,3 +543,125 @@ fn adr010_local_witness_takes_only_the_chain_writer_and_its_anchor_key() {
     let stored = std::fs::read(cell.chain_file(&s)).unwrap_or_default();
     assert!(load_file_store(&stored).unwrap().is_empty());
 }
+
+/// R-SW-02, design section 3.7 step 2, ADR-004 "Decided by Daniel,
+/// 2026-11-15 (late)": a local witness revokes a cell. Its open
+/// connection is refused from the next request on, the chain file and the
+/// CA record stay, a second revocation changes nothing, and the cell
+/// cannot register again. After a restart the witness still refuses it,
+/// and another cell is served throughout.
+#[test]
+fn r_sw_02_local_witness_refuses_a_revoked_cell_after_restart() {
+    let mut s = setup();
+    let gone = Cell::new(0x81);
+    let kept = Cell::new(0x82);
+    gone.register(&s);
+    kept.register(&s);
+    let (n, link) = three_records(&s, &gone);
+    let file_before = std::fs::read(gone.chain_file(&s)).unwrap();
+    let mut c = Conn::open(&s, &gone.ca, "cell-witness").unwrap();
+    s.rt.block_on(s.witness.revoke_cell(gone.id)).unwrap();
+    s.rt.block_on(s.witness.revoke_cell(gone.id)).unwrap();
+    assert_eq!(
+        c.message(
+            &s,
+            WitnessMessage::Prepare(prepare(&gone, (n, link), [9; 32]))
+        ),
+        WireReply::Refused,
+        "the revoked cell was served on its open connection"
+    );
+    assert_eq!(log_of(&mut c, &s, &gone), WireReply::Refused);
+    assert_eq!(std::fs::read(gone.chain_file(&s)).unwrap(), file_before);
+    assert!(
+        s.rt.block_on(s.witness.register_cell(
+            gone.id,
+            &gone.ca.der,
+            &[(ChainId::App, gone.anchor.public_key().to_bytes().to_vec())],
+        ))
+        .is_err(),
+        "the revoked cell registered again"
+    );
+    s.restart().unwrap();
+    let reopened = Conn::open(&s, &gone.ca, "cell-witness").and_then(|mut c| {
+        c.ask(
+            &s,
+            &WireRequest::Log {
+                cell: gone.id,
+                chain: ChainId::App,
+            },
+        )
+    });
+    assert!(
+        !matches!(reopened, Ok(WireReply::Log(_))),
+        "the restarted witness served the revoked cell: {reopened:?}"
+    );
+    let registry = fstp_witness::file_store::load_registry_file(
+        &std::fs::read(s.dir.0.join(fstp_witness::file_store::REGISTRY_FILE)).unwrap(),
+    )
+    .unwrap();
+    let revoked: Vec<bool> = registry.iter().map(|r| r.revoked_at.is_some()).collect();
+    assert_eq!(revoked, [true, false]);
+    let mut k = Conn::open(&s, &kept.ca, "cell-witness").unwrap();
+    let g = (0, genesis(kept.id, ChainId::App));
+    assert!(matches!(
+        k.message(&s, WitnessMessage::Prepare(prepare(&kept, g, [3; 32]))),
+        WireReply::Receipt(_)
+    ));
+}
+
+/// R-SW-02, ADR-010 "Self-hosted witness": the registry loader reads a
+/// revocation record of a registered cell, and refuses one of an unknown
+/// cell, a second one, one of another length, and an anchor key after it.
+#[test]
+fn r_sw_02_registry_file_reads_and_bounds_revocations() {
+    use fstp_witness::encode_file_store;
+    use fstp_witness::file_store::{FileRecord, load_registry_file};
+    let cell = [0x83u8; 16];
+    let ca = {
+        let mut b = vec![1u8];
+        b.extend_from_slice(&cell);
+        b.extend_from_slice(&5i64.to_be_bytes());
+        b.extend_from_slice(b"ca");
+        b
+    };
+    let revoke = |c: [u8; 16], at: i64| {
+        let mut b = vec![3u8];
+        b.extend_from_slice(&c);
+        b.extend_from_slice(&at.to_be_bytes());
+        b
+    };
+    let key = {
+        let mut b = vec![2u8];
+        b.extend_from_slice(&cell);
+        b.push(1);
+        b.extend_from_slice(&6i64.to_be_bytes());
+        b.extend_from_slice(b"key");
+        b
+    };
+    let file = |records: &[Vec<u8>]| {
+        let recs: Vec<FileRecord> = records
+            .iter()
+            .enumerate()
+            .map(|(i, bytes)| FileRecord {
+                witness_seq: u64::try_from(i).unwrap() + 1,
+                bytes: bytes.clone(),
+            })
+            .collect();
+        encode_file_store(&recs).unwrap()
+    };
+    let ok = load_registry_file(&file(&[ca.clone(), key.clone(), revoke(cell, 7)])).unwrap();
+    assert_eq!(ok.len(), 1);
+    assert_eq!(ok[0].revoked_at, Some(7));
+    assert_eq!(ok[0].app_keys, vec![b"key".to_vec()]);
+    let mut long = revoke(cell, 7);
+    long.push(0);
+    for bad in [
+        vec![ca.clone(), revoke([0x84; 16], 7)],
+        vec![ca.clone(), revoke(cell, 7), revoke(cell, 8)],
+        vec![ca.clone(), long],
+        vec![ca.clone(), revoke(cell, 7), key.clone()],
+        vec![ca.clone(), revoke(cell, 7)[..20].to_vec()],
+    ] {
+        assert!(load_registry_file(&file(&bad)).is_err(), "{bad:?}");
+    }
+}
