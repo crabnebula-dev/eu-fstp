@@ -25,7 +25,10 @@ use crate::model::{
 use crate::probe::ProbeKind;
 use crate::state::{CreatorState, Draft};
 use crate::validate::{OwnFacts, ReadFacts, validate_at};
-use crate::witness::{AckSet, ActivationApproved, Uncleared, clean, clear_activation};
+use crate::witness::{
+    AckSet, ActivationApproved, ActivationOverridden, Uncleared, clean, clear_activation,
+    clear_override,
+};
 
 /// What one creator command decides.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,6 +121,9 @@ pub enum CreatorRefusal {
     SameIdentity,
     /// I-67 under Q2 (interim, pending Daniel): a builder is unverified.
     BuilderUnverified,
+    /// ADR-022: the override of I-67 is for a tenant admin of the builder
+    /// set only. A tenant admin outside it takes the normal approval.
+    NotABuilder,
     /// The engine passed no vault answer the decision needs.
     VaultAnswerMissing,
     /// I-66: the recomputed report does not clear.
@@ -461,6 +467,35 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             )));
             records(out)
         }
+        CreatorCommand::OverrideActivation {
+            programme,
+            revision,
+            decision,
+            reason,
+        } => {
+            // ADR-022: the override checks its actor before the draft's
+            // state, as the approval does, then I-66 as the approval does.
+            override_checks(creator, *programme, *revision, ctx, ext)?;
+            let facts = facts.read(core, creator, *programme, ext.profile.as_ref());
+            let report = validate_at(core, creator, *programme, &facts, ext);
+            let acks = AckSet::live(creator, *programme);
+            let cleaned = clean(&report, &acks).map_err(CreatorRefusal::Uncleared)?;
+            let clearance =
+                clear_override(creator, *programme, cleaned, ctx, ext, *decision, *reason)?;
+            let mut out: Vec<CreatorRecord> = ProbeKind::ALL
+                .into_iter()
+                .map(|probe| CreatorRecord::ProbeRecorded {
+                    programme: *programme,
+                    probe,
+                    outcome: ext.probes.get(probe),
+                    at: ctx.now,
+                })
+                .collect();
+            out.push(CreatorRecord::ActivationOverridden(
+                ActivationOverridden::new(&clearance),
+            ));
+            records(out)
+        }
         CreatorCommand::SaveAsTenantTemplate {
             programme,
             template,
@@ -668,6 +703,46 @@ pub(crate) fn approver_checks(
     match ext.vault.same_identity.get(&actor) {
         Some(false) => {}
         Some(true) => return Err(CreatorRefusal::SameIdentity),
+        None => return Err(CreatorRefusal::VaultAnswerMissing),
+    }
+    if !d.request_live() {
+        return Err(CreatorRefusal::NoLiveRequest);
+    }
+    Ok((actor, d.builders().clone()))
+}
+
+/// The override checks of ADR-022 (Daniel, 2026-11-15): the actor is a
+/// tenant admin inside the builder set, the draft is open at the head
+/// revision, the vault verifies the actor, and a request is live. The
+/// actor comes before the draft's state, as for an approval. Returns the
+/// actor and the builder set.
+///
+/// Interim, pending Daniel: a tenant admin outside the builder set is
+/// refused here, since the normal approval is the path for them, and the
+/// Sybil question is not asked, since the override lifts the
+/// second-person rule only.
+pub(crate) fn override_checks(
+    creator: &CreatorState,
+    programme: ProgrammeId,
+    revision: DraftRevision,
+    ctx: &Ctx,
+    ext: &CreatorInputs,
+) -> Result<(AccountId, BTreeSet<AccountId>), CreatorRefusal> {
+    let actor = account(ctx)?;
+    if !is_admin(actor, ctx, ext) {
+        return Err(CreatorRefusal::NotTenantAdmin);
+    }
+    let d = creator
+        .draft(programme)
+        .ok_or(CreatorRefusal::UnknownDraft)?;
+    if !d.builders().contains(&actor) {
+        return Err(CreatorRefusal::NotABuilder);
+    }
+    open_draft(creator, programme)?;
+    at_head(d, revision)?;
+    match ext.vault.is_verified.get(&actor) {
+        Some(true) => {}
+        Some(false) => return Err(CreatorRefusal::ApproverUnverified),
         None => return Err(CreatorRefusal::VaultAnswerMissing),
     }
     if !d.request_live() {

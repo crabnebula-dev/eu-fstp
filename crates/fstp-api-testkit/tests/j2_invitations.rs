@@ -805,6 +805,7 @@ fn activate(j: &J2) -> Result<(), String> {
         report: fstp_domain::policy::activation::ReportDigest::from_bytes([7; 32]),
         revision: 0,
         creator_builders: std::collections::BTreeSet::new(),
+        override_reason: None,
     };
     let mut ctx = fixture::ctx(ADMIN_2, fstp_domain::Via::Web, now, 0);
     ctx.command = world_command(2);

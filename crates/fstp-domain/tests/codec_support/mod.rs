@@ -1652,6 +1652,7 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
             report: ReportDigest::from_bytes(digest(g).bytes()),
             revision: g.u32(),
             creator_builders: accounts(g, d),
+            override_reason: None,
         },
         CommandKind::EditPolicy => Command::EditPolicy {
             base: id(g, d, PolicyVersionId::from_raw),

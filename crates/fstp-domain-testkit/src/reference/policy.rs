@@ -594,8 +594,16 @@ impl Ghost {
                 programme,
                 decision,
                 creator_builders,
+                override_reason,
                 ..
-            } => self.activate_verdict(who, tenant_admin, *programme, *decision, creator_builders),
+            } => self.activate_verdict(
+                who,
+                tenant_admin,
+                *programme,
+                *decision,
+                creator_builders,
+                override_reason.is_some(),
+            ),
             other => return Err(format!("not a policy or call command: {other:?}")),
         };
         // M4 change D3: nothing runs on a draft programme beside policy
@@ -639,6 +647,9 @@ impl Ghost {
     /// outside the builder set of a draft programme, with a fresh decision
     /// id. Every account of the machines' vault has its own identity, so
     /// `SameIdentityAsAny` never holds there.
+    ///
+    /// ADR-022 (Daniel, 2026-11-15): an override is accepted only from a
+    /// tenant admin inside the builder set, the reverse of the approval.
     fn activate_verdict(
         &self,
         who: AccountId,
@@ -646,15 +657,13 @@ impl Ghost {
         programme: ProgrammeId,
         decision: DecisionId,
         creator_builders: &BTreeSet<AccountId>,
+        overridden: bool,
     ) -> Verdict {
         let Some(p) = self.programmes.get(&programme) else {
             return Verdict::Refuse;
         };
-        if !tenant_admin
-            || p.active
-            || self.decisions.contains(&decision)
-            || p.builders.contains(&who)
-            || creator_builders.contains(&who)
+        let builder = p.builders.contains(&who) || creator_builders.contains(&who);
+        if !tenant_admin || p.active || self.decisions.contains(&decision) || builder != overridden
         {
             return Verdict::Refuse;
         }
@@ -838,10 +847,11 @@ impl Ghost {
                 report,
                 revision,
                 creator_builders,
+                override_reason,
             } => {
                 let mut builders = self.builders(*programme);
                 builders.extend(creator_builders.iter().copied());
-                vec![crate::activation::forge_programme_activated(
+                vec![crate::activation::forge_activation(
                     *programme,
                     *decision,
                     report.bytes(),
@@ -849,6 +859,7 @@ impl Ghost {
                     who,
                     &builders,
                     fstp_domain::record::RulesVersion::M4.0,
+                    *override_reason,
                 )?]
             }
             other => return Err(format!("not a policy or call command: {other:?}")),

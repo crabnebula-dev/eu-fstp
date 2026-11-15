@@ -64,7 +64,8 @@ The creator runs every check that can be decided before a call opens:
 - reachability of channels and email sending domain,
 - contrast and mandatory elements of the white-label package (I-68, I-69).
 - **I-66** A programme cannot be activated while its validation report shows any failure. Warnings need a recorded acknowledgement.
-- **I-67** Activating a programme needs approval by a second person who did not build it.
+- **I-67** Activating a programme needs approval by a second person who did not build it, or an override by a tenant admin who built it. Every override is a separate step with a fresh step-up and a written reason, and it leaves its own ledger record.
+  NOTE: Amended by Daniel on 2026-11-15, option "Override I-67 itself" (`docs/adr/ADR-022-tenant-admin-activation-override.md`). Only a tenant admin of the builder set may override. A programme manager or any other builder never may. I-66 is unchanged.
 
 ## After activation
 
@@ -79,7 +80,7 @@ A template holds policy parameter values, narrative sections, the activity list,
 - **I-73** A template is published to other tenants only by a tenant admin and a programme manager together, after an automated scan finds no personal data. The publisher chooses its licence (P-69).
 - Published templates live in a library in the control plane. This is the only shared content the control plane holds, and it contains no tenant data beyond what the publisher released.
 - Templates are versioned and carry their provenance: publisher, version, funder profile and licence.
-- Using a template creates a draft in the creator. Every step still validates, and activation still needs a clean report and a second approver (I-66, I-67).
+- Using a template creates a draft in the creator. Every step still validates, and activation still needs a clean report and a second approver, or a tenant admin override (I-66, I-67, ADR-022).
 - Template narrative and links are shown in the creator as editable text, never applied silently.
 - A publisher can withdraw a template from the library. Programmes already built from it are unaffected.
 - Self-hosted cells can import and export templates as files.

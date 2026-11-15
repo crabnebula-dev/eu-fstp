@@ -497,6 +497,14 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.approvals.approve": "Approve the activation of {name}",
   "creator.approvals.approved": "Approved.",
   "creator.approvals.builder": "You built this draft, so another tenant admin approves it.",
+  // ADR-022: a tenant admin who built the draft may approve it as an
+  // override of I-67, with a reason.
+  "creator.approvals.override_intro":
+    "You built this programme. As a tenant admin you can approve it anyway. Your reason is recorded.",
+  "creator.approvals.override_reason": "Your reason",
+  "creator.approvals.override": "Approve as override",
+  "creator.approvals.override_empty": "Write your reason first.",
+  "creator.approvals.overridden": "Approved as an override. Your reason is recorded.",
   "creator.approvals.none": "No activation request waits.",
   "creator.approvals.self_grants": "Role grants to an admin's own account",
   "creator.approvals.self_grants_intro":

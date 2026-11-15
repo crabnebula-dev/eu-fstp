@@ -25,6 +25,11 @@
 //!    through [`activate_command`], the only place that builds it (D2e).
 //!    The entry then holds the probe results, the approval, the vault
 //!    outcomes of the approval, and the core activation records.
+//! 5. An `ActivationOverridden` record (ADR-022, Daniel 2026-11-15)
+//!    composes the core `ActivateProgramme` with its reason through
+//!    [`override_command`]. The core guard admits a builder only for such
+//!    a command from a tenant admin of the builder set. The override asks
+//!    no `SameIdentityAsAny` question.
 //!
 //! The engine fold refuses an entry with a `ProgrammeActivated` of
 //! any programme without its `ActivationApproved`, and the reverse
@@ -72,9 +77,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_creator::{
-    ActivationApproved, CreatorCommand, CreatorDecision, CreatorInputs, CreatorRecord,
-    CreatorRefusal, DraftRevision, PortPresence, ProbeSet, SodPreview, Theme, VaultChecks,
-    vault_questions,
+    ActivationApproved, ActivationOverridden, CreatorCommand, CreatorDecision, CreatorInputs,
+    CreatorRecord, CreatorRefusal, DraftRevision, PortPresence, ProbeSet, SodPreview, Theme,
+    VaultChecks, vault_questions,
 };
 use fstp_domain::command::{Actor, Ctx};
 use fstp_domain::id::{AccountId, CallId, ProgrammeId};
@@ -162,6 +167,7 @@ pub(crate) fn creator_kind(cmd: &CreatorCommand) -> u8 {
         CreatorCommand::ApproveActivation { .. } => 8,
         CreatorCommand::SaveAsTenantTemplate { .. } => 9,
         CreatorCommand::AcceptInvitation { .. } => 10,
+        CreatorCommand::OverrideActivation { .. } => 11,
     }
 }
 
@@ -215,6 +221,8 @@ pub fn creator_refusal(c: CreatorRefusal) -> Refusal {
         C::NotAWarning => (RuleRef::I66, Why::InvalidValue),
         C::Uncleared(_) => (RuleRef::I66, Why::GuardFailed),
         C::ApproverIsBuilder => (RuleRef::I67, Why::GuardFailed),
+        // ADR-022: the override is a builder admin's only.
+        C::NotABuilder => (RuleRef::I67, Why::WrongActor),
         C::ApproverUnverified | C::SameIdentity | C::BuilderUnverified => {
             (RuleRef::I67, Why::VaultRefused)
         }
@@ -241,6 +249,7 @@ fn reads_report(cmd: &CreatorCommand) -> bool {
         CreatorCommand::AcknowledgeWarning { .. }
             | CreatorCommand::RequestActivation { .. }
             | CreatorCommand::ApproveActivation { .. }
+            | CreatorCommand::OverrideActivation { .. }
     )
 }
 
@@ -252,10 +261,13 @@ fn actor_account(ctx: &Ctx) -> Option<AccountId> {
     }
 }
 
-/// The approver an approval names: the actor of an `ApproveActivation`.
+/// The approver an approval names: the actor of an `ApproveActivation`
+/// or of an `OverrideActivation` (ADR-022).
 fn approver(cmd: &CreatorCommand, ctx: &Ctx) -> Option<AccountId> {
     match cmd {
-        CreatorCommand::ApproveActivation { .. } => actor_account(ctx),
+        CreatorCommand::ApproveActivation { .. } | CreatorCommand::OverrideActivation { .. } => {
+            actor_account(ctx)
+        }
         _ => None,
     }
 }
@@ -271,10 +283,18 @@ fn creator_questions(state: &EngineState, cmd: &CreatorCommand, ctx: &Ctx) -> Ve
         .iter()
         .map(|a| Query::IsVerified { account: *a })
         .collect();
-    if let Some((subject, others)) = q.same_identity {
+    if let Some((subject, others)) = q.same_identity
+        && !is_override(cmd)
+    {
         out.push(Query::SameIdentityAsAny { subject, others });
     }
     out
+}
+
+/// Whether `cmd` is the override of I-67 (ADR-022), which asks no
+/// `SameIdentityAsAny` question: it lifts the second-person rule only.
+fn is_override(cmd: &CreatorCommand) -> bool {
+    matches!(cmd, CreatorCommand::OverrideActivation { .. })
 }
 
 /// The refusal of a high-risk creator command that arrives through MCP
@@ -309,7 +329,9 @@ fn engine_inputs(
                 is_verified.insert(*a, ans.holds);
             }
         }
-        if let Some((subject, others)) = q.same_identity {
+        if let Some((subject, others)) = q.same_identity
+            && !is_override(cmd)
+        {
             let query = Query::SameIdentityAsAny { subject, others };
             if let Some(ans) = answers.get(&query) {
                 same_identity.insert(subject, ans.holds);
@@ -375,6 +397,28 @@ fn predicted_core(
                 report: ReportDigest::from_bytes([0; 32]),
                 revision: revision.seq(),
                 creator_builders: d.builders().clone(),
+                override_reason: None,
+            }]
+        }
+        CreatorCommand::OverrideActivation {
+            programme,
+            revision,
+            decision,
+            reason,
+        } => {
+            let Some(d) = state.creator.draft(*programme) else {
+                return Vec::new();
+            };
+            if actor_account(ctx).is_none() {
+                return Vec::new();
+            }
+            vec![fstp_domain::Command::ActivateProgramme {
+                programme: *programme,
+                decision: *decision,
+                report: ReportDigest::from_bytes([0; 32]),
+                revision: revision.seq(),
+                creator_builders: d.builders().clone(),
+                override_reason: Some(*reason),
             }]
         }
         c if reads_report(c) => Vec::new(),
@@ -417,7 +461,38 @@ pub fn activate_command(approved: &ActivationApproved) -> fstp_domain::Command {
         report: report_ref(approved.report()),
         revision: approved.revision().seq(),
         creator_builders: approved.builders().clone(),
+        override_reason: None,
     }
+}
+
+/// The core `ActivateProgramme` of an override of I-67 (ADR-022). The
+/// overriding admin is the actor of the entry, and the reason travels to
+/// the core, whose guard admits a builder only with it.
+pub fn override_command(o: &ActivationOverridden) -> fstp_domain::Command {
+    fstp_domain::Command::ActivateProgramme {
+        programme: o.programme(),
+        decision: o.decision(),
+        report: report_ref(o.report()),
+        revision: o.revision().seq(),
+        creator_builders: o.builders().clone(),
+        override_reason: Some(o.reason()),
+    }
+}
+
+/// Whether the core `ProgrammeActivated` `pa` is the activation of the
+/// override `o` (ADR-022): the same programme, decision, revision,
+/// report, actor and reason, with the creator's builders among its own.
+pub fn pairs_with_override(
+    o: &ActivationOverridden,
+    pa: &fstp_domain::record::ProgrammeActivated,
+) -> bool {
+    pa.programme() == o.programme()
+        && pa.decision() == o.decision()
+        && pa.revision() == o.revision().seq()
+        && pa.report() == report_ref(o.report())
+        && pa.approver() == o.by()
+        && pa.override_reason() == Some(o.reason())
+        && o.builders().is_subset(pa.builders())
 }
 
 /// Whether the core `ProgrammeActivated` `pa` is the activation of the
@@ -432,6 +507,7 @@ pub fn pairs_with(
         && pa.revision() == approved.revision().seq()
         && pa.report() == report_ref(approved.report())
         && pa.approver() == approved.approver()
+        && pa.override_reason().is_none()
         && approved.builders().is_subset(pa.builders())
 }
 
@@ -439,7 +515,10 @@ pub fn pairs_with(
 /// command is the activation. Every other creator command composes the
 /// core commands of a save on the draft.
 fn cmd_is_approval(cmd: &CreatorCommand) -> bool {
-    matches!(cmd, CreatorCommand::ApproveActivation { .. })
+    matches!(
+        cmd,
+        CreatorCommand::ApproveActivation { .. } | CreatorCommand::OverrideActivation { .. }
+    )
 }
 
 /// Decides `cmd` on `core` and folds its records into `core`, as one
@@ -555,6 +634,19 @@ pub fn decide_creator_command(
                 }));
             }
             let records = decide_core(&mut scratch, &activate_command(a), ctx, answers)
+                .map_err(CreatorFailure::Core)?;
+            tail.extend(records.into_iter().map(Record::Core));
+        }
+        if let CreatorRecord::ActivationOverridden(o) = &r {
+            for (q, ans) in approval_outcomes(state, cmd, ctx, answers) {
+                tail.push(Record::Core(CoreRecord::VaultOutcome {
+                    kind: q.kind(),
+                    digest: ans.digest,
+                    holds: ans.holds,
+                    epoch: ans.epoch,
+                }));
+            }
+            let records = decide_core(&mut scratch, &override_command(o), ctx, answers)
                 .map_err(CreatorFailure::Core)?;
             tail.extend(records.into_iter().map(Record::Core));
         }

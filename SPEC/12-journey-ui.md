@@ -47,7 +47,7 @@ These points were stated or implied in earlier conversation and are **wrong agai
 | Python for the drift test, fixtures or snapshot tooling | `CLAUDE.md`: no Python anywhere | Write all tooling in Rust or TypeScript |
 | Amounts as "integer minor units" in the journey API | ADR-006: amounts are canonical decimal strings, never JSON numbers, never floats | Strings in JSON, exact decimal type in Rust, `numeric` in PostgreSQL |
 | Diary rows holding summary text and free-text reasons | ADR-007: free text stays out of ledger bodies and sits behind a `TextRef`. Erasure destroys the text key | Rows hold `TextRef` only. Erased text shows a placeholder (section 7.4) |
-| One-person "wax seal" publication | Publication needs a non-drafter (R-PC-03). Activation needs a second approver (I-67) | The seal is a two-person ceremony |
+| One-person "wax seal" publication | Publication needs a non-drafter (R-PC-03). Activation needs a second approver, or a recorded tenant admin override (I-67, ADR-022) | The seal is a two-person ceremony by default |
 
 ## 3. Architecture
 
@@ -341,7 +341,7 @@ Also provide:
 
 - Starting points: blank, clone, template, imported funding document (I-65: every imported value confirmed by a named programme manager).
 - Per-step validation before the next step opens, with the final validation report. A programme with failures cannot activate (I-66). Warnings need acknowledgement.
-- **Seal ceremony**: publication of a call needs approval by someone who is not a drafter (R-PC-03). Programme activation needs a second approver (I-67). An edit to call text, P-01 or P-09 after approval returns the call to DRAFT, and the UI says so before the user saves.
+- **Seal ceremony**: publication of a call needs approval by someone who is not a drafter (R-PC-03). Programme activation needs a second approver (I-67). A tenant admin who built the programme may instead approve it as an override, with a fresh step-up and a written reason (ADR-022, 2026-11-15). An edit to call text, P-01 or P-09 after approval returns the call to DRAFT, and the UI says so before the user saves.
 - Call states shown as DRAFT, APPROVED, PUBLISHED. "Open" and "closed" are derived from time, not states.
 - After activation, show which calls each change affects (R-PG-04). Frozen parameters apply to the next call only (I-12).
 - Live voyager-route preview of the overlay, so planners see what voyagers will see.

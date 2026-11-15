@@ -261,6 +261,7 @@ pub(crate) fn activate_command(a: &ActivationApproved) -> Command {
         report: report_ref(a),
         revision: a.revision().seq(),
         creator_builders: a.builders().clone(),
+        override_reason: None,
     }
 }
 
@@ -747,6 +748,7 @@ pub(crate) fn reference_builders(entries: &[Vec<Rec>]) -> BTreeSet<AccountId> {
     for entry in entries {
         if entry.iter().any(|r| {
             matches!(r, Rec::Creator(CreatorRecord::ActivationApproved(a)) if a.programme() == P)
+                || matches!(r, Rec::Creator(CreatorRecord::ActivationOverridden(o)) if o.programme() == P)
         }) {
             break;
         }
@@ -762,9 +764,9 @@ pub(crate) fn reference_builders(entries: &[Vec<Rec>]) -> BTreeSet<AccountId> {
                     | CreatorRecord::WarningAcknowledged { by, .. }
                     | CreatorRecord::ActivationRequested { by, .. }
                     | CreatorRecord::TemplateSaved { by, .. } => Some(*by),
-                    CreatorRecord::ProbeRecorded { .. } | CreatorRecord::ActivationApproved(_) => {
-                        None
-                    }
+                    CreatorRecord::ProbeRecorded { .. }
+                    | CreatorRecord::ActivationApproved(_)
+                    | CreatorRecord::ActivationOverridden(_) => None,
                 },
                 Rec::Core(Record::ProgrammeCreated { programme, by, .. }) if *programme == P => {
                     Some(*by)

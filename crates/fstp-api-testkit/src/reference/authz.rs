@@ -15,7 +15,8 @@
 //! - the capability table and rules of `SPEC/03-architecture/mcp-server.md`;
 //! - the strong methods and the high-risk table of
 //!   `SPEC/03-architecture/authentication.md`;
-//! - I-03, I-17, I-21, I-65, I-67, I-77, I-78, I-84 and I-85;
+//! - I-03, I-17, I-21, I-65, I-67 (amended by ADR-022), I-77, I-78, I-84
+//!   and I-85;
 //! - the setup gate of ADR-021 (decided by Daniel on 2026-11-14);
 //! - the decided readings that design section 15.0 builds as interim
 //!   readings: Q1, Q9, Q10, Q16, Q32, Q39 and Q42.
@@ -805,6 +806,9 @@ pub enum Rule {
     TenantAdmin,
     /// A tenant admin outside the builder set (I-67, Q1 interim).
     ApproverAdmin,
+    /// A tenant admin inside the builder set: the override of I-67 at
+    /// activation (ADR-022, Daniel 2026-11-15).
+    BuilderAdmin,
     /// A tenant admin while a second tenant admin exists: approving a
     /// self-grant (SoD-07), and finishing onboarding, which needs two
     /// admins (design section 2.2, J0).
@@ -1010,7 +1014,7 @@ impl Rule {
         ];
         match self {
             Rule::Anyone | Rule::PublishedCall | Rule::AnyAccount => &EVERY,
-            Rule::TenantAdmin | Rule::ApproverAdmin | Rule::SecondAdmin => {
+            Rule::TenantAdmin | Rule::ApproverAdmin | Rule::BuilderAdmin | Rule::SecondAdmin => {
                 &[Some(Role::TenantAdmin)]
             }
             Rule::ProgrammeManager | Rule::CallApprover => &[Some(Role::ProgrammeManager)],
@@ -1340,6 +1344,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         R::ProgrammeManager,
     ),
     RefOp::act("creator.approve_activation", T::Programme, R::ApproverAdmin).hr(),
+    // ADR-022 (Daniel, 2026-11-15): I-67 amended. A tenant admin who
+    // built the draft may approve it as an override, with a reason and a
+    // fresh step-up. Reading: the override is for a builder admin only.
+    RefOp::act("creator.override_activation", T::Programme, R::BuilderAdmin).hr(),
     // R-PG-05, Q17 interim: a tenant-private template. Reading: the
     // programme's manager or a tenant admin saves it, as either reads the
     // draft it comes from.
@@ -1657,6 +1665,7 @@ fn admit(
         Rule::AnyAccount => open(who.account()),
         Rule::TenantAdmin => open(who.tenant_admin()),
         Rule::ApproverAdmin => open(who == Who::TenantAdmin),
+        Rule::BuilderAdmin => open(who == Who::TenantAdminBuilder),
         Rule::SecondAdmin => open(who.tenant_admin() && who != Who::SoleTenantAdmin),
         Rule::ProgrammeManager => open(who.manager()),
         Rule::DraftManager | Rule::Inviter => open(who.manager() || who.tenant_admin()),

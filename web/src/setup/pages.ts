@@ -28,6 +28,7 @@ import { labelOr, t as ct } from "../creator/i18n.js";
 import { canonicalJson, draftValue, readOpened, readProgrammes, readReport, stepOfResult, type Draft, type Report } from "../creator/model.js";
 import { anyObject, call, report } from "../creator/ops.js";
 import { PATHS, checkText, loadDraft, loadReport, queue } from "../creator/pages/common.js";
+import { offerOverride } from "../creator/pages/approvals.js";
 import { reviewParts } from "../creator/pages/review.js";
 import { STUDIO_PATHS } from "../studio/view.js";
 import { readWaitingCalls } from "../studio/model.js";
@@ -605,6 +606,7 @@ const PREVIEW_NAMES = ["guide", "public", "contract"] as const;
 function mountReview(p: string): void {
   const f = stageFrame(p, "review");
   const { main, alert, stage } = f;
+  const overrideSlot = approverOverrideSlot();
   const write = queue();
   let draft: Draft | null = null;
   let team: InvitationRow[] | null = null;
@@ -630,7 +632,7 @@ function mountReview(p: string): void {
     h("h3", {}, [t.label("setup.review.next.title")]),
     h("ol", {}, [1, 2, 3, 4].map((n) => h("li", {}, [t.label(`setup.review.next.${n}`)]))),
     approverNotice(),
-    approverOverrideSlot(),
+    overrideSlot,
     h("p", { class: "callout callout--warning" }, [t.label("setup.review.changes")]),
     h("p", { class: "text-sm" }, [t.label("setup.review.only_manager")]),
     h("p", { class: "stepup-note" }, [t.label("setup.stepup_note")]),
@@ -648,6 +650,8 @@ function mountReview(p: string): void {
     const { draft: d, report: r } = await parts.load();
     draft = d;
     f.show(d, r, team);
+    // ADR-022: a tenant admin who built the programme may approve it as an override.
+    await offerOverride(overrideSlot, p, alert, () => go(SETUP_PATHS.progress(p)));
     cards.replaceChildren(...reviewCards(p, statesOf(d, r), d, team));
     if (d !== null && r !== null) ready(main);
   });
@@ -690,6 +694,7 @@ function callStates(v: unknown): ("DRAFT" | "APPROVED" | "PUBLISHED")[] | null {
 /** Mounts `/app/programmes/{p}/setup/progress` (design doc 11 section 8). */
 export function mountProgress(p: string): void {
   const { main, alert } = frame({ title: t.label("setup.title.progress"), alertId: "setup-error" });
+  const overrideSlot = approverOverrideSlot();
   const head = h("p", { id: "setup-progress-status" });
   const body = h("div", {});
   main.append(head, body);
@@ -733,7 +738,7 @@ export function mountProgress(p: string): void {
     parts.push(
       h("section", { "aria-labelledby": "setup-milestones-title" }, [h("h2", { id: "setup-milestones-title" }, [t.label("setup.progress.milestones")]), milestoneList(ms)]),
       approverNotice(),
-      approverOverrideSlot(),
+      overrideSlot,
       h("section", { "aria-labelledby": "setup-team-status-title" }, [
         h("h2", { id: "setup-team-status-title" }, [t.label("setup.progress.team")]),
         h("p", {}, [t.label("setup.progress.team_intro")]),
@@ -745,6 +750,8 @@ export function mountProgress(p: string): void {
       ]),
     );
     body.replaceWith(h("div", { id: "setup-progress" }, parts));
+    // ADR-022: a tenant admin who built the programme may approve it as an override.
+    await offerOverride(overrideSlot, p, alert, () => go(SETUP_PATHS.progress(p)));
     ready(main);
   })();
 }

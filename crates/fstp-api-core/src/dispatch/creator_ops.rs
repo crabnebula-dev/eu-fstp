@@ -330,6 +330,32 @@ async fn store<P: Seams>(
             lock(&call.st.content).remember(r, email);
             supplied.contact = Some(r);
         }
+        // ADR-022, ADR-007: the reason of an override is a confidential
+        // text of the programme, salted as an invitation's email is, so
+        // the ledger holds its reference only.
+        Form::OverrideActivation => {
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
+            let reason = crate::creator::override_reason(&op.request)?;
+            let salt = crate::salted::draw()?;
+            let r = call
+                .ports
+                .texts()
+                .put(
+                    TextClass::Confidential,
+                    TextOwner::Programme(p),
+                    &crate::salted::stored(&salt, reason.as_bytes()),
+                )
+                .await
+                .map_err(|e| port_failed(e, "text"))?;
+            let r = TextRef::new(
+                TextId::from_raw(r.0),
+                ContentDigest::from_bytes(crate::salted::digest(&salt, reason.as_bytes())),
+            );
+            lock(&call.st.content).remember(r, reason);
+            supplied.reason = Some(r);
+        }
         Form::Upload => {
             let p = forms::id_param(&op.request, "programme")
                 .map(ProgrammeId::from_raw)
@@ -668,6 +694,8 @@ pub(super) async fn read<P: Seams>(
                     programme,
                     revision: d.head(),
                     approvable: admin && !d.builders().contains(&viewer),
+                    // ADR-022: a builder admin may override instead.
+                    overridable: admin && d.builders().contains(&viewer),
                 })
                 .collect();
             Ok(CreatorModel::Approvals(rows))

@@ -2037,6 +2037,7 @@ pub(crate) mod reply_shape_tests {
                     programme: ProgrammeId::from_raw(7),
                     revision: fstp_creator::DraftRevision::new(4, fstp_ledger::Seq::from_raw(20)),
                     approvable: true,
+                    overridable: false,
                 },
             ])),
             ReadModel::Creator(crate::creator::CreatorModel::Impact(vec![

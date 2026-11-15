@@ -187,3 +187,70 @@
 //!     ActivationApproved::new(c)
 //! }
 //! ```
+//!
+//! # ADR-022: `OverrideClearance` cannot be written as a literal
+//!
+//! ```compile_fail
+//! use fstp_creator::OverrideClearance;
+//! fn forge(c: OverrideClearance) -> OverrideClearance {
+//!     OverrideClearance { ..c }
+//! }
+//! ```
+//!
+//! ```no_run
+//! use fstp_creator::OverrideClearance;
+//! fn forge(c: OverrideClearance) -> OverrideClearance {
+//!     c
+//! }
+//! ```
+//!
+//! # ADR-022: `OverrideClearance` has no `Default`
+//!
+//! ```compile_fail
+//! use fstp_creator::OverrideClearance;
+//! fn forge() -> OverrideClearance {
+//!     Default::default()
+//! }
+//! ```
+//!
+//! ```no_run
+//! use fstp_creator::OverrideClearance;
+//! fn forge() -> Option<OverrideClearance> {
+//!     None
+//! }
+//! ```
+//!
+//! # ADR-022: `ActivationOverridden` cannot be written as a literal
+//!
+//! ```compile_fail
+//! use fstp_creator::ActivationOverridden;
+//! fn forge(o: ActivationOverridden) -> ActivationOverridden {
+//!     ActivationOverridden { ..o }
+//! }
+//! ```
+//!
+//! ```no_run
+//! use fstp_creator::ActivationOverridden;
+//! fn forge(o: ActivationOverridden) -> ActivationOverridden {
+//!     o
+//! }
+//! ```
+//!
+//! # ADR-022: `ActivationOverridden::new` takes an override clearance
+//!
+//! An approval's clearance never builds an override record, so a
+//! non-builder's clearance cannot be turned into an override.
+//!
+//! ```compile_fail
+//! use fstp_creator::{ActivationClearance, ActivationOverridden, OverrideClearance};
+//! fn forge(a: &ActivationClearance, o: &OverrideClearance) -> ActivationOverridden {
+//!     ActivationOverridden::new(a)
+//! }
+//! ```
+//!
+//! ```no_run
+//! use fstp_creator::{ActivationClearance, ActivationOverridden, OverrideClearance};
+//! fn forge(a: &ActivationClearance, o: &OverrideClearance) -> ActivationOverridden {
+//!     ActivationOverridden::new(o)
+//! }
+//! ```

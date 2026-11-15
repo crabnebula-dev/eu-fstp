@@ -276,7 +276,7 @@ NOTE: R-WA-01 and R-WA-02 are deferred by Daniel on 2026-11-04 (B-03). Their ide
 - **R-PG-01** Programmes are built in a guided programme creator with per-step validation, previews and a final validation report.
   AC: a programme with P-05 above P-58 cannot be activated, and the report names both values.
 - **R-PG-02** Programmes can start from blank, a clone, a template or an imported funding document (I-65).
-- **R-PG-03** Activation needs a clean validation report and a second approver (I-66, I-67).
+- **R-PG-03** Activation needs a clean validation report and a second approver, or an override by a tenant admin who built the programme (I-66, I-67; amended by Daniel on 2026-11-15, ADR-022).
 - **R-PG-04** After activation, the creator shows which calls each change affects.
 
 ## White-labelling

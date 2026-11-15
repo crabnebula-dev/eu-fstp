@@ -24,6 +24,13 @@
 //! with and without a Sybil pair. In the Sybil configuration A2 shares a
 //! verified identity with M1 (T-SOD-SYBIL).
 //!
+//! ADR-022 (Daniel, 2026-11-15) amends I-67: a tenant admin of the
+//! builder set may activate as an override with a reason. The model adds
+//! the override by A1, A2 and M1 within the approval budget. A refused
+//! override adds no state, so the override costs only the terminal states
+//! of its activations. [`check_i67`] admits an activation that is either
+//! an approval by a non-builder or an override by a builder admin.
+//!
 //! Design 8.5 names no request budget, so the model allows one request. A
 //! refusal that both sides agree on and that adds no witness is a
 //! disabled step. Both choices keep the exhaustive run near 30,000
@@ -334,6 +341,15 @@ pub mod production {
     }
 
     /// The reference probe of a creator probe.
+    /// The stored reason every override of the adapter names (ADR-022):
+    /// a synthetic text reference, as the shell would store it.
+    pub fn override_reason() -> TextRef {
+        TextRef::new(
+            TextId::from_raw(0x4f56_5252),
+            ContentDigest::from_bytes([0x52; 32]),
+        )
+    }
+
     fn ref_probe(p: ProbeKind) -> RefProbe {
         match p {
             ProbeKind::Channel => RefProbe::Channel,
@@ -1231,6 +1247,9 @@ pub mod production {
                 (RuleRef::I66, Why::InvalidValue) => RefRefusal::NotAWarning,
                 (RuleRef::I66, _) => self.uncleared()?,
                 (RuleRef::I67, Why::GuardFailed) => RefRefusal::ApproverIsBuilder,
+                // ADR-022: an override by a tenant admin outside the
+                // builder set.
+                (RuleRef::I67, Why::WrongActor) => RefRefusal::NotABuilder,
                 (RuleRef::I67, _) => {
                     let unverified = approver.is_some_and(|a| !self.plan.stat.vault.is_verified(a));
                     if unverified {
@@ -1616,6 +1635,23 @@ pub mod production {
                     let r = self.run(Command::Creator(approve), by, Tag::Plain)?;
                     self.verdict(r, Some(by))
                 }
+                RefCommand::Override { by, base } => {
+                    let Some(revision) = self.named(base) else {
+                        return Ok(StepVerdict::Refused(RefRefusal::Opening));
+                    };
+                    let decision =
+                        DecisionId::from_raw(0x4d41_0e00u128.saturating_add(u128::from(self.n)));
+                    // The shell stores the reason before the command runs
+                    // (ADR-007), so the command names it by reference.
+                    let over = CreatorCommand::OverrideActivation {
+                        programme: PLAN_P,
+                        revision,
+                        decision,
+                        reason: override_reason(),
+                    };
+                    let r = self.run(Command::Creator(over), by, Tag::Plain)?;
+                    self.verdict(r, Some(by))
+                }
                 RefCommand::SetProbe { probe, outcome } => {
                     let _ = self.probes.insert(probe, outcome);
                     Ok(StepVerdict::Accepted)
@@ -1676,15 +1712,28 @@ pub mod production {
             managers: &mut BTreeMap<BindingId, AccountId>,
         ) -> Result<Vec<RefEvent>, NotImplemented> {
             let mut out = Vec::new();
+            // The approver, the revision and whether the entry is an
+            // override (ADR-022). An override counts only when the core
+            // `ProgrammeActivated` of the entry carries the same reason,
+            // read from the raw records.
             let approval = entry.iter().find_map(|r| match r {
                 Record::Creator(CreatorRecord::ActivationApproved(a))
                     if a.programme() == PLAN_P =>
                 {
-                    Some(a.clone())
+                    Some((a.approver(), a.revision(), false))
+                }
+                Record::Creator(CreatorRecord::ActivationOverridden(o))
+                    if o.programme() == PLAN_P =>
+                {
+                    let carried = entry.iter().any(|c| {
+                        matches!(c, Record::Core(fstp_domain::Record::ProgrammeActivated(pa))
+                            if pa.override_reason() == Some(o.reason()))
+                    });
+                    Some((o.by(), o.revision(), carried))
                 }
                 _ => None,
             });
-            if let Some(a) = approval {
+            if let Some((approver, approved_at, override_reason)) = approval {
                 let mut probes = BTreeMap::new();
                 for r in entry {
                     if let Record::Creator(CreatorRecord::ProbeRecorded {
@@ -1700,12 +1749,13 @@ pub mod production {
                     .import
                     .unresolved(fstp_import::ProgrammeRef::from_raw(PLAN_P.raw()));
                 out.push(RefEvent::Activated {
-                    by: a.approver(),
-                    revision: a.revision().seq().saturating_sub(offset),
+                    by: approver,
+                    revision: approved_at.seq().saturating_sub(offset),
                     inputs: RefInputs {
                         probes,
                         unresolved_imports: unresolved,
                     },
+                    override_reason,
                 });
                 return Ok(out);
             }
@@ -1801,12 +1851,15 @@ pub mod production {
         /// `ProgrammeActivated` by `by` at `revision`, through the public
         /// fold, as `harness::teeth::inject_entry` does in M2. Both records
         /// are forged through their codecs, past every guard, with the
-        /// probe results of `inputs`.
+        /// probe results of `inputs`. With `overridden` the entry holds
+        /// `ActivationOverridden` with the adapter's reason instead, and the
+        /// core record carries that reason (ADR-022).
         pub fn inject_activation(
             &mut self,
             by: AccountId,
             revision: u32,
             inputs: &RefInputs,
+            overridden: bool,
         ) -> Result<(), NotImplemented> {
             let state = self.state()?;
             let d = state.creator.draft(PLAN_P).ok_or(GAP_STEP)?;
@@ -1874,8 +1927,14 @@ pub mod production {
                 return Err(GAP_STEP);
             };
             let activated = self.forged_activation(a, &builders)?;
-            records.push(Record::Creator(approved));
-            records.push(Record::Core(activated));
+            if overridden {
+                let (creator, core) = forged_override(a, &activated, now)?;
+                records.push(Record::Creator(creator));
+                records.push(Record::Core(core));
+            } else {
+                records.push(Record::Creator(approved));
+                records.push(Record::Core(activated));
+            }
             let ctx = self.ctx(by);
             let mut store = self.store()?;
             let head = store.head();
@@ -1910,6 +1969,7 @@ pub mod production {
                     report,
                     revision,
                     creator_builders: builders.clone(),
+                    override_reason: None,
                 },
                 other => other,
             };
@@ -1945,6 +2005,49 @@ pub mod production {
             let v = fstp_json::parse(text.as_bytes()).map_err(|_| GAP_STEP)?;
             fstp_domain::Record::from_json(&v).map_err(|_| GAP_STEP)
         }
+    }
+
+    /// The override twins of a forged approval and its activation
+    /// (ADR-022): `ActivationOverridden` with the same fields and the
+    /// adapter's reason, and the core record with that reason, both
+    /// through their codecs.
+    fn forged_override(
+        a: &fstp_creator::ActivationApproved,
+        activated: &fstp_domain::Record,
+        at: Timestamp,
+    ) -> Result<(CreatorRecord, fstp_domain::Record), NotImplemented> {
+        let reason = override_reason();
+        let hex: String = reason
+            .digest()
+            .bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let reason_json = format!("{{\"digest\":\"{hex}\",\"id\":\"{}\"}}", reason.id().raw());
+        let mut o = match CreatorRecord::ActivationApproved(a.clone()).to_json() {
+            Value::Object(o) => o,
+            _ => return Err(GAP_STEP),
+        };
+        let approver = o.remove("approver").ok_or(GAP_STEP)?;
+        let _ = o.insert("by", approver);
+        let _ = o.insert("kind", Value::from("ActivationOverridden"));
+        let _ = o.insert(
+            "reason",
+            fstp_json::parse(reason_json.as_bytes()).map_err(|_| GAP_STEP)?,
+        );
+        let _ = o.insert("at", Value::String(at.micros().to_string()));
+        let creator = CreatorRecord::from_json(&Value::Object(o)).map_err(|_| GAP_STEP)?;
+        let text = activated
+            .to_json()
+            .to_canonical()
+            .map_err(|_| GAP_STEP)?
+            .replace(
+                "\"override_reason\":null",
+                &format!("\"override_reason\":{reason_json}"),
+            );
+        let v = fstp_json::parse(text.as_bytes()).map_err(|_| GAP_STEP)?;
+        let core = fstp_domain::Record::from_json(&v).map_err(|_| GAP_STEP)?;
+        Ok((creator, core))
     }
 
     /// The reference record of one creator record on the draft, with the
@@ -2007,7 +2110,9 @@ pub mod production {
                 outcome: ref_outcome(*outcome),
             },
             CreatorRecord::TemplateSaved { by, .. } => RefEvent::TemplateSaved { by: *by },
-            CreatorRecord::ActivationApproved(_) => return None,
+            CreatorRecord::ActivationApproved(_) | CreatorRecord::ActivationOverridden(_) => {
+                return None;
+            }
         })
     }
 
@@ -2049,6 +2154,7 @@ pub mod production {
             report: fstp_domain::policy::activation::ReportDigest::from_bytes([0; 32]),
             revision: head.seq(),
             creator_builders: creator_builders.clone(),
+            override_reason: None,
         };
         let ctx = s.ctx(actor);
         let state = s.state()?;
@@ -2147,6 +2253,7 @@ pub mod production {
             report: fstp_domain::policy::activation::ReportDigest::from_bytes([0; 32]),
             revision: head.seq(),
             creator_builders: BTreeSet::new(),
+            override_reason: None,
         };
         let at = Timestamp::from_micros(T0.saturating_add(i64::from(n).saturating_mul(1_000_000)));
         let ctx = draft_cell::ctx(approver, at, n, &plan.stat.admins);
@@ -2195,6 +2302,7 @@ pub mod production {
             report: fstp_domain::policy::activation::ReportDigest::from_bytes([0; 32]),
             revision: head.seq(),
             creator_builders: builders,
+            override_reason: None,
         };
         let at = Timestamp::from_micros(T0.saturating_add(i64::from(n).saturating_mul(1_000_000)));
         let ctx = draft_cell::ctx(actor, at, n, &plan.stat.admins);
@@ -2395,12 +2503,23 @@ impl System {
     /// Teeth: appends an activation record by `by` at `revision`, in the
     /// current environment, past every check.
     pub fn inject_activation(&mut self, by: AccountId, revision: u32) -> Result<(), String> {
+        self.inject(by, revision, false)
+    }
+
+    /// Teeth (ADR-022): appends an override activation by `by` at
+    /// `revision`, with a reason, past every check.
+    pub fn inject_override(&mut self, by: AccountId, revision: u32) -> Result<(), String> {
+        self.inject(by, revision, true)
+    }
+
+    fn inject(&mut self, by: AccountId, revision: u32, overridden: bool) -> Result<(), String> {
         match self {
             System::Reference(r) => {
                 let e = RefEvent::Activated {
                     by,
                     revision,
                     inputs: r.env.clone(),
+                    override_reason: overridden,
                 };
                 r.draft.apply(&e);
                 r.events.push(e);
@@ -2408,7 +2527,7 @@ impl System {
             }
             System::Production(p) => {
                 let inputs = RefInputs::passing();
-                p.inject_activation(by, revision, &inputs)
+                p.inject_activation(by, revision, &inputs, overridden)
                     .map_err(|e| format!("production: {e}"))
             }
         }
@@ -2611,13 +2730,25 @@ pub fn check_i66(stat: &RefStatic, events: &[RefEvent]) -> Result<(), String> {
     Ok(())
 }
 
-/// I-67 over the records on one draft: every approver is a tenant admin
-/// outside the builder set recomputed from raw records, the vault
-/// verified the approver and every builder, and no builder shares the
-/// approver's verified identity (Q1 A, Q2 B).
+/// I-67 as amended by ADR-022 (Daniel, 2026-11-15) over the records on
+/// one draft. Every activation is one of two kinds:
+///
+/// - an approval: the approver is a tenant admin outside the builder set
+///   recomputed from raw records, the vault verified the approver and
+///   every builder, and no builder shares the approver's verified identity
+///   (Q1 A, Q2 B);
+/// - an override: its entry carries an override record with a reason, by
+///   a tenant admin inside that builder set, whom the vault verified, and
+///   the vault verified every builder (reading R10).
 pub fn check_i67(stat: &RefStatic, events: &[RefEvent]) -> Result<(), String> {
     for (k, e) in events.iter().enumerate() {
-        let RefEvent::Activated { by, revision, .. } = e else {
+        let RefEvent::Activated {
+            by,
+            revision,
+            override_reason,
+            ..
+        } = e
+        else {
             continue;
         };
         let prefix = events.get(..k).unwrap_or_default();
@@ -2627,6 +2758,24 @@ pub fn check_i67(stat: &RefStatic, events: &[RefEvent]) -> Result<(), String> {
             return Err(format!(
                 "I-67: the approver {by:?} at revision {revision} is not a tenant admin"
             ));
+        }
+        if *override_reason {
+            if !builders.contains(by) {
+                return Err(format!(
+                    "I-67, ADR-022: the override by {by:?} at revision {revision} is not by a builder"
+                ));
+            }
+            if !v.is_verified(*by) {
+                return Err(format!(
+                    "I-67, ADR-022: the overriding admin {by:?} at revision {revision} is unverified"
+                ));
+            }
+            if let Some(b) = builders.iter().find(|b| !v.is_verified(**b)) {
+                return Err(format!(
+                    "I-67, ADR-022: the builder {b:?} of the override at revision {revision} is unverified"
+                ));
+            }
+            continue;
         }
         if builders.contains(by) {
             return Err(format!(
@@ -2654,6 +2803,18 @@ pub fn check_i67(stat: &RefStatic, events: &[RefEvent]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// How the draft of `s` was activated: `Some(true)` for an override of
+/// I-67 (ADR-022), `Some(false)` for an approval, `None` while it is a
+/// draft or when its records cannot be read.
+pub fn activated_by(s: &ActivateState) -> Option<bool> {
+    s.events().ok()?.iter().find_map(|e| match e {
+        RefEvent::Activated {
+            override_reason, ..
+        } => Some(*override_reason),
+        _ => None,
+    })
 }
 
 /// The number of activation records in `events`.
@@ -2956,6 +3117,17 @@ impl Model for ActivateModel {
                 by: M2,
                 base: Base::Head,
             });
+            // ADR-022: the override by the opener A1, a builder admin, by
+            // A2, who is a builder once it acknowledged or granted, and by
+            // the builder manager M1, who never may. A refusal both sides
+            // agree on adds no state, so the override costs only the
+            // terminal states of its activations.
+            for by in [TA, TB, M1] {
+                actions.push(RefCommand::Override {
+                    by,
+                    base: Base::Head,
+                });
+            }
         }
         if b.flips > 0 {
             actions.push(RefCommand::SetProbe {
@@ -2973,7 +3145,7 @@ impl Model for ActivateModel {
             RefCommand::Edit { .. } => &mut budget.edits,
             RefCommand::Acknowledge { .. } => &mut budget.acks,
             RefCommand::Request { .. } => &mut budget.requests,
-            RefCommand::Approve { .. } => &mut budget.approvals,
+            RefCommand::Approve { .. } | RefCommand::Override { .. } => &mut budget.approvals,
             RefCommand::SetProbe { .. } => &mut budget.flips,
             RefCommand::Open { .. }
             | RefCommand::EndBinding { .. }
@@ -3127,7 +3299,11 @@ where
     let mut v = i67_core::<M>();
     v.push(Property::<M>::reachable(
         "I-67 witness: activation by a non-builder admin",
-        |s: &ActivateState| s.active(),
+        |s: &ActivateState| activated_by(s) == Some(false),
+    ));
+    v.push(Property::<M>::reachable(
+        "I-67 witness: activation by an override of a builder admin (ADR-022)",
+        |s: &ActivateState| activated_by(s) == Some(true),
     ));
     v.push(Property::<M>::reachable(
         "I-67 witness: refusal of an admin who acknowledged a warning",
@@ -3146,9 +3322,11 @@ where
     M: Model<State = ActivateState, Action = RefCommand>,
 {
     let mut v = i67_core::<M>();
+    // ADR-022: a builder admin may override, so a Sybil configuration
+    // can activate, but never through the normal approval.
     v.push(Property::<M>::always(
-        "I-67: no activation with a Sybil pair",
-        |s: &ActivateState| !s.active(),
+        "I-67: no approval activates with a Sybil pair",
+        |s: &ActivateState| activated_by(s) != Some(false),
     ));
     v.push(Property::<M>::reachable(
         "I-67 witness: Sybil approver refused",
@@ -3171,11 +3349,25 @@ where
             if activations(&events) == activations(&prior) {
                 return Ok(());
             }
-            let RefCommand::Approve { by, .. } = *cmd else {
-                return Err(format!("I-67: {cmd:?} activated the programme"));
-            };
-            if builders_from_raw(&prior).contains(&by) {
-                return Err(format!("I-67: the builder {by:?} approved the activation"));
+            match *cmd {
+                RefCommand::Approve { by, .. } => {
+                    if builders_from_raw(&prior).contains(&by) {
+                        return Err(format!("I-67: the builder {by:?} approved the activation"));
+                    }
+                }
+                // ADR-022: only a tenant admin of the builder set
+                // overrides.
+                RefCommand::Override { by, .. } => {
+                    if !before.stat().admins.contains(&by) {
+                        return Err(format!(
+                            "I-67: {by:?} overrode without being a tenant admin"
+                        ));
+                    }
+                    if !builders_from_raw(&prior).contains(&by) {
+                        return Err(format!("I-67: {by:?} overrode without being a builder"));
+                    }
+                }
+                _ => return Err(format!("I-67: {cmd:?} activated the programme")),
             }
             check_i67(after.stat(), &events)
         },
@@ -3206,6 +3398,41 @@ pub fn fault_stale_report_accepted(s: &ActivateState) -> Option<ActivateState> {
         return None;
     }
     inject(s, TB)
+}
+
+/// Teeth for I-67 as amended by ADR-022: a creator that lets the
+/// programme manager M1, a builder who is no tenant admin, override.
+/// Where A2's approval would be accepted, the fault appends M1's override
+/// with a reason instead, so only I-67 can catch it.
+pub fn fault_non_admin_override(s: &ActivateState) -> Option<ActivateState> {
+    if s.fault.is_some() || s.active() {
+        return None;
+    }
+    let ok = s.reference.decide(&RefCommand::Approve {
+        by: TB,
+        base: Base::Head,
+    });
+    if ok.is_err() {
+        return None;
+    }
+    let mut next = s.clone();
+    let head = next.reference.draft.head;
+    let mut reference = System::Reference(Box::new(next.reference.clone()));
+    if let Err(e) = reference.inject_override(M1, head) {
+        next.fault = Some(e);
+        return Some(next);
+    }
+    if let System::Reference(r) = reference {
+        next.reference = *r;
+    }
+    if let Some(Err(e)) = next
+        .production
+        .as_mut()
+        .map(|p| p.inject_override(M1, head))
+    {
+        next.fault = Some(e);
+    }
+    Some(next)
 }
 
 /// Teeth for I-67: a creator that lets the opener A1 approve. Where A2's
@@ -3409,14 +3636,22 @@ impl StateMachine for ActivationMachine {
                 by: pick_account(g, &everyone),
                 base: pick_base(g),
             },
-            4 => RefCommand::Approve {
-                by: if g.weighted(&approver_weights) == 0 {
+            4 => {
+                let by = if g.weighted(&approver_weights) == 0 {
                     TB
                 } else {
                     pick_account(g, &everyone)
-                },
-                base: pick_base(g),
-            },
+                };
+                let base = pick_base(g);
+                // ADR-022: now and then the override, by any cast member,
+                // so the builder admin's override and every refusal of it
+                // are tried.
+                if g.weighted(&[3, 1]) == 0 {
+                    RefCommand::Approve { by, base }
+                } else {
+                    RefCommand::Override { by, base }
+                }
+            }
             5 => RefCommand::SetProbe {
                 probe: *g.pick(&RefProbe::ALL),
                 outcome: *g.pick(&[

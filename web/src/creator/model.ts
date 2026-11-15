@@ -350,6 +350,11 @@ export interface ApprovalRow {
    * admin may not approve a grant of their own (SoD-07).
    */
   readonly approvable: boolean;
+  /**
+   * Whether the viewer may approve it as an override of I-67: a tenant
+   * admin who built the draft (ADR-022). False when the reply leaves it out.
+   */
+  readonly overridable: boolean;
   readonly name: string | null;
   /** The approval id of a self-grant, which `admin.approve_self_grant` names. */
   readonly approval: string | null;
@@ -363,8 +368,8 @@ export interface ApprovalRow {
 const APPROVAL_ID = /^[0-9A-Za-z_-]{1,64}$/;
 
 /**
- * Reads `{approvals: [{kind, programme, revision?, approvable, name?,
- * approval?, role?, grantee?}]}`. Null otherwise. A `self_grant` row
+ * Reads `{approvals: [{kind, programme, revision?, approvable,
+ * overridable?, name?, approval?, role?, grantee?}]}`. Null otherwise. A `self_grant` row
  * must carry `approval`, `role` and `grantee`.
  *
  * Interim, pending Daniel and lane W3a: the self-grant members are this
@@ -381,17 +386,19 @@ export function readApprovals(body: unknown): ApprovalRow[] | null {
     const kind = r["kind"];
     const programme = r["programme"];
     const approvable = r["approvable"];
+    const overridable = r["overridable"] ?? false;
     const revision = optString(r, "revision");
     const name = optString(r, "name");
     if (typeof kind !== "string" || typeof programme !== "string" || !isProgrammeId(programme)) return null;
     if (typeof approvable !== "boolean" || revision === undefined || name === undefined) return null;
+    if (typeof overridable !== "boolean") return null;
     const approval = optString(r, "approval");
     const role = optString(r, "role");
     const grantee = optString(r, "grantee");
     if (approval === undefined || role === undefined || grantee === undefined) return null;
     if (approval !== null && !APPROVAL_ID.test(approval)) return null;
     if (kind === "self_grant" && (approval === null || role === null || grantee === null)) return null;
-    out.push({ kind, programme, revision, approvable, name, approval, role, grantee });
+    out.push({ kind, programme, revision, approvable, overridable, name, approval, role, grantee });
   }
   return out;
 }

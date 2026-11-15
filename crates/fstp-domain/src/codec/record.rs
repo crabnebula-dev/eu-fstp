@@ -20,7 +20,7 @@ use crate::grant::GrantDecided;
 use crate::id::VaultEpoch;
 use crate::id::{
     AccountId, ContentDigest, ContractId, DecisionId, PlanVersionId, ProgrammeId, ProposalId,
-    RequestId,
+    RequestId, TextRef,
 };
 use crate::payment::PaymentReleased;
 use crate::policy::activation::{ProgrammeActivated, ReportDigest};
@@ -262,6 +262,7 @@ impl Flat for ProgrammeActivated {
         "approver",
         "builders",
         "rules",
+        "override_reason",
     ];
 
     fn put_into(&self, o: &mut Object) {
@@ -272,6 +273,7 @@ impl Flat for ProgrammeActivated {
         let _ = o.insert("approver", self.approver().put());
         let _ = o.insert("builders", self.builders().put());
         let _ = o.insert("rules", self.rules().put());
+        let _ = o.insert("override_reason", self.override_reason().put());
     }
 
     fn take_from(f: &Fields<'_>, cx: Cx) -> R<Self> {
@@ -282,8 +284,16 @@ impl Flat for ProgrammeActivated {
         let approver: AccountId = f.get("approver", cx)?;
         let builders: BTreeSet<AccountId> = f.get("builders", cx)?;
         let rules: RulesVersion = f.get("rules", cx)?;
+        let override_reason: Option<TextRef> = f.get("override_reason", cx)?;
         Ok(ProgrammeActivated::from_decoded(
-            programme, decision, report, revision, approver, builders, rules,
+            programme,
+            decision,
+            report,
+            revision,
+            approver,
+            builders,
+            rules,
+            override_reason,
         ))
     }
 }

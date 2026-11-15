@@ -278,6 +278,16 @@ pub fn approve_activation(p: ProgrammeId, revision: &str) -> Result<Op, ApiError
     )
 }
 
+/// `creator.override_activation`: `POST /programmes/{p}/activation-override`
+/// with `{revision, reason}` (ADR-022, high-risk, no tool).
+pub fn override_activation(p: ProgrammeId, revision: &str, reason: &str) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Post,
+        &format!("/programmes/{}/activation-override", seg(p)),
+        &body(vec![("revision", s(revision)), ("reason", s(reason))]),
+    )
+}
+
 /// `creator.save_as_template`: `POST /programmes/{p}/templates` with
 /// `{}`. The server draws the template (Q17, tenant-private).
 pub fn save_as_template(p: ProgrammeId) -> Result<Op, ApiError> {

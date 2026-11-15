@@ -21,6 +21,11 @@
 //!   creator checks `IsVerified` for the approver and every builder before
 //!   it composes the command (M4 design section 3.2). The core does not
 //!   repeat that check, as D2 names only the two refusals above.
+//! - ADR-022 (Daniel, 2026-11-15) amends I-67: a tenant admin of the
+//!   builder set may activate as an override, with a reason. A command
+//!   with an `override_reason` is admitted only from a tenant admin inside
+//!   the builder set, else `RuleRef::I67` with `WrongActor`. It asks no
+//!   identity question, and its record carries the reason.
 //! - [`ProgrammeActivated`] has private fields. Only [`decide`] and the
 //!   record decoder build it, so no code outside the crate states an
 //!   approver or a builder set.
@@ -28,7 +33,7 @@
 use std::collections::BTreeSet;
 
 use crate::command::{Command, Ctx};
-use crate::id::{AccountId, DecisionId, ProgrammeId};
+use crate::id::{AccountId, DecisionId, ProgrammeId, TextRef};
 use crate::oracle::{Answers, Query};
 use crate::programme::{ProgrammeStatus, programme_status};
 use crate::record::{Record, RulesVersion};
@@ -67,10 +72,12 @@ pub struct ProgrammeActivated {
     approver: AccountId,
     builders: BTreeSet<AccountId>,
     rules: RulesVersion,
+    override_reason: Option<TextRef>,
 }
 
 impl ProgrammeActivated {
     /// Every field, for the record decoder in `codec/` only.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_decoded(
         programme: ProgrammeId,
         decision: DecisionId,
@@ -79,6 +86,7 @@ impl ProgrammeActivated {
         approver: AccountId,
         builders: BTreeSet<AccountId>,
         rules: RulesVersion,
+        override_reason: Option<TextRef>,
     ) -> ProgrammeActivated {
         ProgrammeActivated {
             programme,
@@ -88,6 +96,7 @@ impl ProgrammeActivated {
             approver,
             builders,
             rules,
+            override_reason,
         }
     }
 
@@ -111,7 +120,8 @@ impl ProgrammeActivated {
         self.revision
     }
 
-    /// The approving tenant admin, outside the builder set (I-67).
+    /// The approving tenant admin: outside the builder set, or inside it
+    /// for an override (I-67, ADR-022).
     pub fn approver(&self) -> AccountId {
         self.approver
     }
@@ -125,6 +135,12 @@ impl ProgrammeActivated {
     /// The rules version that produced the decision.
     pub fn rules(&self) -> RulesVersion {
         self.rules
+    }
+
+    /// The reason of a tenant admin override of I-67 (ADR-022), or `None`
+    /// for the normal approval by a non-builder.
+    pub fn override_reason(&self) -> Option<TextRef> {
+        self.override_reason
     }
 }
 
@@ -142,12 +158,14 @@ pub fn programme_builders(state: &State, programme: ProgrammeId) -> BTreeSet<Acc
 /// A checked `ActivateProgramme`, before the vault answer.
 struct Plan {
     record: ProgrammeActivated,
-    /// `SameIdentityAsAny(approver, builders)` (Q2 B).
-    identity: Query,
+    /// `SameIdentityAsAny(approver, builders)` (Q2 B), or `None` for an
+    /// override, which lifts the second-person rule (ADR-022).
+    identity: Option<Query>,
 }
 
 /// Checks an `ActivateProgramme` against the state: a draft programme, a
-/// fresh decision id and an approver outside the builder set.
+/// fresh decision id and an approver outside the builder set. An override
+/// (ADR-022) instead needs a tenant admin inside the builder set.
 fn plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Plan, Refusal> {
     let Command::ActivateProgramme {
         programme,
@@ -155,6 +173,7 @@ fn plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Plan, Refusal> {
         report,
         revision,
         creator_builders,
+        override_reason,
     } = cmd
     else {
         return Err(Refusal::new(RuleRef::Input, RefusalReason::WrongState));
@@ -175,14 +194,27 @@ fn plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Plan, Refusal> {
     }
     let mut builders = programme_builders(state, *programme);
     builders.extend(creator_builders.iter().copied());
-    if builders.contains(&approver) {
-        return Err(Refusal::new(RuleRef::I67, RefusalReason::GuardFailed));
-    }
+    let identity = match override_reason {
+        None => {
+            if builders.contains(&approver) {
+                return Err(Refusal::new(RuleRef::I67, RefusalReason::GuardFailed));
+            }
+            Some(Query::SameIdentityAsAny {
+                subject: approver,
+                others: builders.clone(),
+            })
+        }
+        Some(_) => {
+            // ADR-022: only a tenant admin of the builder set overrides.
+            // A non-builder takes the normal approval.
+            if !ctx.tenant_admin || !builders.contains(&approver) {
+                return Err(Refusal::new(RuleRef::I67, RefusalReason::WrongActor));
+            }
+            None
+        }
+    };
     Ok(Plan {
-        identity: Query::SameIdentityAsAny {
-            subject: approver,
-            others: builders.clone(),
-        },
+        identity,
         record: ProgrammeActivated {
             programme: *programme,
             decision: *decision,
@@ -191,17 +223,18 @@ fn plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Plan, Refusal> {
             approver,
             builders,
             rules: RulesVersion::M4,
+            override_reason: *override_reason,
         },
     })
 }
 
-/// The vault question of an `ActivateProgramme`.
+/// The vault question of an `ActivateProgramme`. An override asks none.
 pub(crate) fn queries(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Query>, Refusal> {
-    Ok(vec![plan(state, cmd, ctx)?.identity])
+    Ok(plan(state, cmd, ctx)?.identity.into_iter().collect())
 }
 
-/// The records of an `ActivateProgramme`: the recorded identity answer and
-/// the activation.
+/// The records of an `ActivateProgramme`: the recorded identity answer, if
+/// one was asked, and the activation.
 pub(crate) fn decide(
     state: &State,
     cmd: &Command,
@@ -209,21 +242,23 @@ pub(crate) fn decide(
     answers: &Answers,
 ) -> Result<Vec<Record>, Refusal> {
     let plan = plan(state, cmd, ctx)?;
-    let a = answers.get(&plan.identity).ok_or(Refusal::new(
-        RuleRef::FactsIncomplete,
-        RefusalReason::AnswerMissing,
-    ))?;
-    if a.holds {
-        // A second account of a builder is not a second person (Q2 B).
-        return Err(Refusal::new(RuleRef::I67, RefusalReason::VaultRefused));
-    }
-    Ok(vec![
-        Record::VaultOutcome {
-            kind: plan.identity.kind(),
+    let mut out = Vec::new();
+    if let Some(identity) = &plan.identity {
+        let a = answers.get(identity).ok_or(Refusal::new(
+            RuleRef::FactsIncomplete,
+            RefusalReason::AnswerMissing,
+        ))?;
+        if a.holds {
+            // A second account of a builder is not a second person (Q2 B).
+            return Err(Refusal::new(RuleRef::I67, RefusalReason::VaultRefused));
+        }
+        out.push(Record::VaultOutcome {
+            kind: identity.kind(),
             digest: a.digest,
             holds: a.holds,
             epoch: a.epoch,
-        },
-        Record::ProgrammeActivated(plan.record),
-    ])
+        });
+    }
+    out.push(Record::ProgrammeActivated(plan.record));
+    Ok(out)
 }

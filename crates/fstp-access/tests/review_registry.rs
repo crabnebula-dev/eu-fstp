@@ -19,6 +19,7 @@ fn person_issued(k: CreatorKind) -> bool {
         | CreatorKind::AcknowledgeWarning
         | CreatorKind::RequestActivation
         | CreatorKind::ApproveActivation
+        | CreatorKind::OverrideActivation
         | CreatorKind::SaveAsTenantTemplate => true,
     }
 }
@@ -41,6 +42,7 @@ fn review_every_person_issued_creator_kind_is_routed() {
         CreatorKind::AcknowledgeWarning,
         CreatorKind::RequestActivation,
         CreatorKind::ApproveActivation,
+        CreatorKind::OverrideActivation,
         CreatorKind::SaveAsTenantTemplate,
     ];
     let unrouted: Vec<CreatorKind> = kinds

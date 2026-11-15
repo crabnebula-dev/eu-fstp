@@ -39,7 +39,7 @@ use std::collections::BTreeSet;
 
 use fstp_creator::{CreatorRecord, DraftRevision};
 use fstp_domain::command::{Actor, Command, Ctx};
-use fstp_domain::id::{AccountId, DecisionId, ProgrammeId};
+use fstp_domain::id::{AccountId, DecisionId, ProgrammeId, TextRef};
 use fstp_domain::oracle::Answers;
 use fstp_domain::policy::PolicyVersion;
 use fstp_domain::policy::activation::ReportDigest;
@@ -95,6 +95,7 @@ pub fn activate_with(programme: ProgrammeId, creator_builders: BTreeSet<AccountI
         report: ReportDigest::from_bytes(SETUP_REPORT),
         revision: SETUP_REVISION,
         creator_builders,
+        override_reason: None,
     }
 }
 
@@ -164,7 +165,8 @@ pub fn activated(records: &[Record], programme: ProgrammeId) -> bool {
 /// The JSON form follows the codec rules of `fstp_domain::codec`: ids as
 /// decimal strings, the digest as lowercase hexadecimal, the builder set
 /// as an ascending list, the revision and the rules version as numbers,
-/// and no currency member, since the record holds no amount.
+/// and no currency member, since the record holds no amount. The
+/// override reason is `null`: a normal approval (ADR-022).
 pub fn forge_programme_activated(
     programme: ProgrammeId,
     decision: DecisionId,
@@ -174,13 +176,44 @@ pub fn forge_programme_activated(
     builders: &BTreeSet<AccountId>,
     rules: u16,
 ) -> Result<Record, String> {
+    forge_activation(
+        programme, decision, report, revision, approver, builders, rules, None,
+    )
+}
+
+/// [`forge_programme_activated`] with an override reason: the record of
+/// a tenant admin override of I-67 when `override_reason` is `Some`
+/// (ADR-022).
+#[allow(clippy::too_many_arguments)]
+pub fn forge_activation(
+    programme: ProgrammeId,
+    decision: DecisionId,
+    report: [u8; 32],
+    revision: u32,
+    approver: AccountId,
+    builders: &BTreeSet<AccountId>,
+    rules: u16,
+    override_reason: Option<TextRef>,
+) -> Result<Record, String> {
+    let reason = match override_reason {
+        None => "null".to_owned(),
+        Some(r) => {
+            let d: String = r
+                .digest()
+                .bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            format!("{{\"digest\":\"{d}\",\"id\":\"{}\"}}", r.id().raw())
+        }
+    };
     let hex: String = report.iter().map(|b| format!("{b:02x}")).collect();
     let set: Vec<String> = builders
         .iter()
         .map(|a| format!("\"{}\"", a.raw()))
         .collect();
     let text = format!(
-        "{{\"approver\":\"{}\",\"builders\":[{}],\"decision\":\"{}\",\"programme\":\"{}\",\
+        "{{\"approver\":\"{}\",\"builders\":[{}],\"decision\":\"{}\",\"override_reason\":{reason},\"programme\":\"{}\",\
          \"report\":\"{hex}\",\"revision\":{revision},\"rules\":{rules},\
          \"type\":\"ProgrammeActivated\"}}",
         approver.raw(),
@@ -307,6 +340,7 @@ pub fn as_composed(cmd: &Command, head: DraftRevision) -> Result<Command, String
             programme,
             decision,
             creator_builders,
+            override_reason,
             ..
         } => Ok(Command::ActivateProgramme {
             programme: *programme,
@@ -314,6 +348,7 @@ pub fn as_composed(cmd: &Command, head: DraftRevision) -> Result<Command, String
             report: setup_report(*programme, head)?,
             revision: head.seq(),
             creator_builders: creator_builders.clone(),
+            override_reason: *override_reason,
         }),
         other => Ok(other.clone()),
     }
@@ -432,6 +467,52 @@ pub fn approval_record(
         .map_err(|e| format!("the creator codec refuses the approval {text}: {e:?}"))
 }
 
+/// The creator's `ActivationOverridden` of `programme` at `revision` by
+/// `by` under `decision`, with `builders` and `reason`, at `at`, over an
+/// empty report of that revision (ADR-022). Only a clearance builds one in
+/// code, so it is decoded from its stored form, as [`approval_record`] is.
+#[allow(clippy::too_many_arguments)]
+pub fn override_record(
+    programme: ProgrammeId,
+    revision: DraftRevision,
+    decision: DecisionId,
+    by: AccountId,
+    builders: &BTreeSet<AccountId>,
+    reason: TextRef,
+    at: Timestamp,
+) -> Result<CreatorRecord, String> {
+    let rev = format!(
+        "{{\"entry\":\"{}\",\"seq\":\"{}\"}}",
+        revision.entry().raw(),
+        revision.seq()
+    );
+    let set: Vec<String> = builders
+        .iter()
+        .map(|a| format!("\"{}\"", a.raw()))
+        .collect();
+    let digest: String = reason
+        .digest()
+        .bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let text = format!(
+        "{{\"at\":\"{}\",\"builders\":[{}],\"by\":\"{}\",\"decision\":\"{}\",\
+         \"kind\":\"ActivationOverridden\",\"programme\":\"{}\",\
+         \"reason\":{{\"digest\":\"{digest}\",\"id\":\"{}\"}},\
+         \"report\":{{\"programme\":\"{}\",\"revision\":{rev},\"rows\":[]}},\"revision\":{rev}}}",
+        at.micros(),
+        set.join(","),
+        by.raw(),
+        decision.raw(),
+        programme.raw(),
+        reason.id().raw(),
+        programme.raw(),
+    );
+    fstp_creator::decode_record(text.as_bytes())
+        .map_err(|e| format!("the creator codec refuses the override {text}: {e:?}"))
+}
+
 /// The entry a creator `ApproveActivation` appends for the core
 /// activation `cmd` by the context's account (M4 design section 3.4, D2e):
 /// the creator's `ActivationApproved`, then the records of the core
@@ -450,6 +531,8 @@ pub fn approval_record(
 ///   guards run as on the creator path, and refuse what they refuse there.
 /// - A programme with no draft has no approval, so its activation is
 ///   refused with I-66, as the engine refuses it.
+/// - A command with an override reason becomes the entry of a creator
+///   `OverrideActivation` instead ([`override_record`], ADR-022).
 pub fn activation_records<O: IdentityOracle>(
     state: &EngineState,
     oracle: &O,
@@ -460,6 +543,7 @@ pub fn activation_records<O: IdentityOracle>(
         programme,
         decision,
         creator_builders,
+        override_reason,
         ..
     } = cmd
     else {
@@ -480,6 +564,26 @@ pub fn activation_records<O: IdentityOracle>(
     };
     let mut builders = draft.builders().clone();
     builders.extend(creator_builders.iter().copied());
+    if let Some(reason) = override_reason {
+        // ADR-022: an override becomes the entry of a creator
+        // `OverrideActivation`, whose record composes the core command.
+        let overridden = override_record(
+            *programme, head, *decision, approver, &builders, *reason, ctx.now,
+        )
+        .map_err(|_| ExecError::Unfoldable(fstp_domain::FoldError::Inconsistent))?;
+        let CreatorRecord::ActivationOverridden(o) = &overridden else {
+            return Err(ExecError::Unfoldable(fstp_domain::FoldError::Inconsistent));
+        };
+        let core = core_records(
+            oracle,
+            state,
+            &fstp_engine::compose::override_command(o),
+            ctx,
+        )?;
+        let mut out = vec![EngineRecord::Creator(overridden)];
+        out.extend(core);
+        return Ok(out);
+    }
     let approved = approval_record(*programme, head, *decision, approver, &builders)
         .map_err(|_| ExecError::Unfoldable(fstp_domain::FoldError::Inconsistent))?;
     let CreatorRecord::ActivationApproved(a) = &approved else {

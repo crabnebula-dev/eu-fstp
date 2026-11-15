@@ -283,6 +283,7 @@ fn i66_execute_refuses_core_activate_programme_of_a_draft() {
         report: fstp_domain::policy::activation::ReportDigest::from_bytes([6; 32]),
         revision: 1,
         creator_builders: BTreeSet::new(),
+        override_reason: None,
     };
     let c = ctx(Actor::Account(ADMIN_2), 5, 2);
     let mut answers = Answers::new();

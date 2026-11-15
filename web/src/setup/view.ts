@@ -211,10 +211,10 @@ export function approverNotice(): HTMLElement {
 }
 
 /**
- * The place where the tenant admin override of I-67 will go. Lane
- * m4/i67-override adds the form: a tenant admin overrides the builder
- * rule, with a reason and a ledger record. This lane builds no part of
- * it, so the slot stays empty and hidden.
+ * The place of the tenant admin override of I-67 (ADR-022). It is empty
+ * and hidden when built. The pages fill it through `offerOverride` of
+ * `creator/pages/approvals.ts` when the reader is a tenant admin who
+ * built the programme and its activation is requested.
  */
 export function approverOverrideSlot(): HTMLElement {
   return h("section", { id: "setup-approver-override", "data-slot": "i67-override", hidden: true });

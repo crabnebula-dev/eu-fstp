@@ -38,6 +38,9 @@
 //!   `key` of a report row.
 //! - `creator.request_activation` and `creator.approve_activation`:
 //!   `{revision}`.
+//! - `creator.override_activation` (ADR-022): `{revision, reason}`, where
+//!   `reason` is a free text that is not blank. The reason is stored in
+//!   the text store, and the command carries its reference only (ADR-007).
 //! - `import.upload`: `{media, text}`, with `media` `text/plain` or
 //!   `text/markdown` (Q24).
 //! - `import.resolve`: `{base, conflict_acknowledged, resolution, shown}`,
@@ -117,6 +120,8 @@ pub(crate) enum Form {
     RequestActivation,
     /// `creator.approve_activation`.
     ApproveActivation,
+    /// `creator.override_activation` (ADR-022).
+    OverrideActivation,
     /// `creator.save_as_template`.
     SaveAsTemplate,
     /// `import.upload`.
@@ -139,6 +144,7 @@ pub(crate) fn form_of(spec: &OpSpec) -> Option<Form> {
             CreatorKind::AcknowledgeWarning => Form::Acknowledge,
             CreatorKind::RequestActivation => Form::RequestActivation,
             CreatorKind::ApproveActivation => Form::ApproveActivation,
+            CreatorKind::OverrideActivation => Form::OverrideActivation,
             CreatorKind::SaveAsTenantTemplate => Form::SaveAsTemplate,
         },
         OpKind::Bridge(BridgeKind::ResolveImport) => Form::Resolve,
@@ -159,6 +165,7 @@ impl Form {
             Form::Invite => (&["email", "role"], &["organisation", "start", "end"]),
             Form::Acknowledge => (&["revision", "warning"], &[]),
             Form::RequestActivation | Form::ApproveActivation => (&["revision"], &[]),
+            Form::OverrideActivation => (&["revision", "reason"], &[]),
             Form::Upload => (&["media", "text"], &[]),
             Form::Resolve => (
                 &["base", "conflict_acknowledged", "resolution", "shown"],
@@ -181,6 +188,8 @@ pub(crate) struct Supplied {
     pub(crate) actor: AccountId,
     /// The stored invitation email.
     pub(crate) contact: Option<TextRef>,
+    /// The stored reason of an override of I-67 (ADR-022).
+    pub(crate) reason: Option<TextRef>,
     /// The stored upload: its blob address and the salted digest of its
     /// normalised text.
     pub(crate) upload: Option<(BlobAddress, TextDigest)>,
@@ -199,6 +208,7 @@ impl Supplied {
         Supplied {
             actor,
             contact: None,
+            reason: None,
             upload: None,
             link: None,
             now: Timestamp::from_micros(0),
@@ -296,6 +306,18 @@ fn invited_role(name: &str) -> Option<Role> {
         .iter()
         .copied()
         .find(|r| fstp_access::invitable(*r) && fstp_access::role_wire_name(*r) == name)
+}
+
+/// The written reason of `creator.override_activation` (ADR-022): a
+/// string that holds a character other than white space, at most
+/// [`crate::forms::TEXT_LIMIT`] bytes, as every other free text. Anything
+/// else is a bad request, so a blank reason never reaches the creator.
+pub(crate) fn override_reason(request: &Object) -> Result<&str, ApiError> {
+    request
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty() && s.len() <= crate::forms::TEXT_LIMIT)
+        .ok_or_else(bad)
 }
 
 /// Whether `s` is a plausible email address: at most [`MAX_EMAIL`]
@@ -433,6 +455,22 @@ pub(crate) fn build(
                 programme,
                 revision,
                 decision: DecisionId::from_raw(draw()?),
+            })
+        }
+        Form::OverrideActivation => {
+            let programme = programme(request)?;
+            let revision = revision_at(request, "revision")?;
+            let text = override_reason(request)?;
+            // The dry run names the reason by a placeholder reference, as
+            // an invitation names its email (ADR-007).
+            let reason = supplied
+                .reason
+                .unwrap_or_else(|| crate::forms::text_ref(0, text));
+            creator(CreatorCommand::OverrideActivation {
+                programme,
+                revision,
+                decision: DecisionId::from_raw(draw()?),
+                reason,
             })
         }
         Form::SaveAsTemplate => {
@@ -879,6 +917,9 @@ pub struct ApprovalRow {
     /// Whether the viewer may approve it: a tenant admin outside the
     /// builder set (I-67).
     pub approvable: bool,
+    /// Whether the viewer may approve it as an override of I-67 instead:
+    /// a tenant admin inside the builder set (ADR-022).
+    pub overridable: bool,
 }
 
 /// One impact row of R-PG-04: a call of the programme and what an edit
@@ -1104,6 +1145,7 @@ impl ToJson for CreatorModel {
                             ("programme", dec(r.programme.raw())),
                             ("revision", Value::String(revision_text(r.revision))),
                             ("approvable", Value::Bool(r.approvable)),
+                            ("overridable", Value::Bool(r.overridable)),
                         ])
                     }),
                 ),

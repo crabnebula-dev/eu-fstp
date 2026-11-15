@@ -204,6 +204,7 @@ fn d1_activation_makes_the_programme_active_once() {
             report: ReportDigest::from_bytes([1; 32]),
             revision: 2,
             creator_builders: BTreeSet::new(),
+            override_reason: None,
         },
     );
     let refused = run(&mut s, &again);
