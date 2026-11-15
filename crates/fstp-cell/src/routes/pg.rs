@@ -154,6 +154,8 @@ pub struct PgBackend<R: Runtime> {
     mode: Option<fstp_auth::recovery::Deployment>,
     /// The pinned control-plane key of operator tickets.
     operator_key: Option<Vec<u8>>,
+    /// The vault ticket key (ADR-004 purpose `Ticket`).
+    ticket: Option<Arc<fstp_crypto::sig::Ed25519SigningKey>>,
     /// What the routes keep between two steps of a ceremony (module
     /// documentation).
     pending: Mutex<Pending>,
@@ -205,6 +207,7 @@ impl<R: Runtime> PgBackend<R> {
             keys: None,
             mode: None,
             operator_key: None,
+            ticket: None,
             pending: Mutex::new(Pending::default()),
         })
     }
@@ -250,6 +253,17 @@ impl<R: Runtime> PgBackend<R> {
     #[must_use]
     pub fn with_operator_key(mut self, key: Option<Vec<u8>>) -> PgBackend<R> {
         self.operator_key = key;
+        self
+    }
+
+    /// The same backend with the vault ticket key `key` (ADR-004 purpose
+    /// `Ticket`, design section 6.5).
+    #[must_use]
+    pub fn with_ticket_key(
+        mut self,
+        key: Option<Arc<fstp_crypto::sig::Ed25519SigningKey>>,
+    ) -> PgBackend<R> {
+        self.ticket = key;
         self
     }
 
@@ -322,6 +336,10 @@ impl<R: Runtime> PgBackend<R> {
 }
 
 impl<R: Runtime> Backend for PgBackend<R> {
+    fn ticket_key(&self) -> Option<Arc<fstp_crypto::sig::Ed25519SigningKey>> {
+        self.ticket.clone()
+    }
+
     fn now(&self) -> Timestamp {
         Timestamp::from_micros((self.clock)())
     }

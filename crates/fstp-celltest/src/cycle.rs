@@ -159,9 +159,11 @@ pub const NO_ACTIVE_PROGRAMME_SEAM: &str = "fstp_celltest::cycle publish-call an
 /// proof with a lifetime and the world's mail capture.
 pub const SIGNUP_SEAM: &str = "fstp_celltest::cycle signup: POST /auth/signup fails closed (501), since fstp-cell-core has no self-registration command and the email proof has no delivery (design section 8.3 ceremony 2)";
 
-/// `verify-identity` refuses: the vault ticket routes answer 501 before
-/// the engine runs them, since the route layer holds no `Ticket` key.
-pub const VERIFY_IDENTITY_SEAM: &str = "fstp_celltest::cycle verify-identity: POST /api/v1/vault-tickets and /api/v1/verifications answer 501, since the route layer holds no Ticket key to sign a write ticket (design section 6.5)";
+/// `verify-identity` refuses: the cell signs every ticket its engine
+/// issues (lane m3/cell-routes), but `decide` has a writer rule for the
+/// guardian consent write only, so a verification or a country write is
+/// refused before any ticket exists.
+pub const VERIFY_IDENTITY_SEAM: &str = "fstp_celltest::cycle verify-identity: POST /api/v1/verifications is refused, since fstp_cell_core::decide has no writer rule for VerificationRecorded or CountryStated tickets yet (design section 6.5)";
 
 /// The former seam of `submit-proposal` and the evaluation steps, closed
 /// by lane F-CYCLE3.

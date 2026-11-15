@@ -172,6 +172,14 @@ pub trait Backend: Send + Sync + 'static {
         fstp_cell_core::creator::CreatorFacts::default()
     }
 
+    /// The cell's vault ticket key: the Ed25519 key of purpose `Ticket`
+    /// on the App chain (ADR-004, design section 6.5), whose public key
+    /// the vault pins. `None` when the cell holds none, and then no ticket
+    /// route commits an issue (it answers 501).
+    fn ticket_key(&self) -> Option<Arc<fstp_crypto::sig::Ed25519SigningKey>> {
+        None
+    }
+
     /// The state folded to the engine's head.
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send;
 

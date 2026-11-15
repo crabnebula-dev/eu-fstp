@@ -100,6 +100,12 @@ pub struct CellKeys {
     pub ledger: Arc<LedgerKeys>,
     /// The CredLookup key of the sign count rows.
     pub cred_lookup: [u8; 32],
+    /// The vault ticket key: purpose `Ticket` on the App chain, Ed25519
+    /// (ADR-004, design section 6.5). The vault pins its public key.
+    /// Interim, pending Daniel (lane m3/cell-routes): it is handed in by
+    /// the caller, as the `Anchor` key is, until the keystore creates and
+    /// rotates it. `None` leaves the ticket routes at 501.
+    pub ticket: Option<Arc<fstp_crypto::sig::Ed25519SigningKey>>,
 }
 
 /// Where the cell's listeners bind. Port 0 picks a free port.
@@ -694,7 +700,8 @@ where
                 Mode::Saas => fstp_auth::recovery::Deployment::Saas,
                 Mode::SelfHosted => fstp_auth::recovery::Deployment::SelfHosted,
             })
-            .with_operator_key(operator_key),
+            .with_operator_key(operator_key)
+            .with_ticket_key(keys.ticket),
     );
     // The timeline reads `auth.session` through the route backend for
     // `EndSessionsAtBindingEnd` (design sections 4.2 and 5.1).

@@ -92,6 +92,9 @@ pub enum SeedError {
 pub struct MemoryBackend {
     mem: Mutex<Mem>,
     now: AtomicI64,
+    /// The vault ticket key, drawn at start. `None` when no key could be
+    /// drawn, and then the ticket routes answer 501.
+    ticket: Option<Arc<Ed25519SigningKey>>,
 }
 
 impl std::fmt::Debug for MemoryBackend {
@@ -112,7 +115,13 @@ impl MemoryBackend {
         MemoryBackend {
             mem: Mutex::new(Mem::default()),
             now: AtomicI64::new(DEFAULT_NOW_US),
+            ticket: Ed25519SigningKey::generate().ok().map(Arc::new),
         }
+    }
+
+    /// The public key of the vault ticket key, which a vault would pin.
+    pub fn ticket_public_key(&self) -> Option<[u8; 32]> {
+        self.ticket.as_ref().map(|k| k.public_key())
     }
 
     /// Sets the clock.
@@ -248,6 +257,10 @@ fn answer(store: &mut MemStore<CellRecord>, need: Need) -> Event {
 }
 
 impl Backend for MemoryBackend {
+    fn ticket_key(&self) -> Option<Arc<Ed25519SigningKey>> {
+        self.ticket.clone()
+    }
+
     fn now(&self) -> Timestamp {
         Timestamp::from_micros(self.now.load(Ordering::SeqCst))
     }
@@ -483,10 +496,43 @@ impl LocalCell {
     /// A [`LocalError`] for another host, a refused front or seed, or no
     /// key.
     pub fn start(cell: [u8; 16], host: &str) -> Result<LocalCell, LocalError> {
+        LocalCell::start_after(cell, host, &[])
+    }
+
+    /// [`LocalCell::start`] over a ledger that first holds `prior`, each
+    /// command's records seeded as one batch at its entry's instant, in
+    /// order. The seeded admin and applicant follow it. A test builds
+    /// `prior` with production `decide`, so the cell starts in a state a
+    /// real ledger reaches, such as a proposal in NEGOTIATION. Synthetic
+    /// data only.
+    ///
+    /// # Errors
+    ///
+    /// [`LocalCell::start`]'s, and [`LocalError::Seed`] for a prior batch
+    /// the fold refuses.
+    pub fn start_after(
+        cell: [u8; 16],
+        host: &str,
+        prior: &[fstp_ledger::Entry<CellRecord>],
+    ) -> Result<LocalCell, LocalError> {
         if !host.ends_with(".test") {
             return Err(LocalError::Host);
         }
         let backend = Arc::new(MemoryBackend::new());
+        let mut i = 0;
+        while let Some(first) = prior.get(i) {
+            let batch: Vec<CellRecord> = prior
+                .get(i..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|e| e.command == first.command)
+                .map(|e| e.record.clone())
+                .collect();
+            i = i.saturating_add(batch.len());
+            backend
+                .seed(Timestamp::from_micros(first.at), batch)
+                .map_err(LocalError::Seed)?;
+        }
         let log = Arc::new(MemoryLog::default());
         let cfg = FrontConfig {
             cell,
