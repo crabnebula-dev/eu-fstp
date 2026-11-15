@@ -219,3 +219,29 @@ Daniel: "if i go to route that does not exist, i want to go to home, not see a J
 - Inside `/app/` the gate answers 303 to home for every `GET` and `HEAD`, browser or not, so the shell's link check sees the redirect.
 - The public home of a programme is served at `/p/{slug}/`, with the slash. The redirect goes there, and `/p/{slug}` without the slash goes there too.
 - The machine routes are `/api/`, `/mcp`, `/oauth` and the OAuth `/.well-known` documents. `fstp-cell`'s front does not serve `/app/` yet, so there `/app/` itself keeps its 404 and never redirects to itself.
+
+## SA-11: Team and member pages, with display names
+
+**Source.** Daniel's decision, 2026-11-15 (night): "I need to have a page where I as an admin / or programme manager can see who is a member of the team." Answers: both views; add a display name; overview with actions. **Status.** Decided. To be built by lane `m4/team-pages`.
+
+### Display name (new personal data)
+
+- Each account may set its own display name on its account page, and clear it. It is plain text, at most 100 characters, with no markup.
+- It is stored as a confidential text of the account (ADR-007), so account erasure erases it.
+- It is shown only on the team and member pages below. It never appears to applicants or Judging roles in place of a handle (I-17, P-11), in a message (I-27), or in a log.
+- `TODO(legal)`: the privacy notice needs a line for this processing. Daniel supplies the wording.
+
+### Programme team page: `/app/programmes/{programme}/team`
+
+- **Readers.** Tenant admins and the programme's manager.
+- **Rows.** Every Drafting, Judging and Operations role of the programme, including open invitations. Each row shows:
+  - the display name (or "no name set") and the invitation or login email;
+  - the role and its status: invited, accepted, verified, active, suspended or ended;
+  - the role dates.
+- **Actions.** The page offers the actions the viewer may take, each decided again by the server: grant, end and reinstate, each with a step-up, plus inviting a person. Applicants and their teams are not listed.
+
+### Organisation member page: `/app/admin/members`
+
+- **Readers.** Tenant admins only.
+- **Rows.** Every member account of the organisation, with its display name, its email, and its roles across programmes with their status.
+- **Actions.** The same actions per role, each with a step-up.
