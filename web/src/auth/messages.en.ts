@@ -91,6 +91,7 @@ const MESSAGES = {
   'account.nav.assignments': 'My assignments',
   'account.nav.irc-cases': 'My cases',
   'account.nav.onboarding': 'Onboarding',
+  'account.nav.setup': 'Set up a programme',
   'account.nav.creator': 'Programme set-up',
   'account.nav.approvals': 'Approvals',
   'account.nav.proposals': 'My applications',

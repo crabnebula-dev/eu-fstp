@@ -7,8 +7,9 @@
 
 /**
  * The role keys of the invitation form, one per `fstp_domain::roles::Role`
- * that the creator's People step invites. Interim, pending Daniel: the
- * wire spelling of roles is not fixed yet.
+ * that the creator's People step invites: the wire names of
+ * `fstp_access::INVITED_ROLES`. The Operations roles are among them
+ * (design doc 11, Q2): a tenant admin grants them after activation.
  */
 export const ROLES = [
   "programme_manager",
@@ -17,6 +18,10 @@ export const ROLES = [
   "committee_member",
   "committee_chair",
   "irc_member",
+  "finance_approver",
+  "payment_releaser",
+  "contract_signatory",
+  "auditor",
 ] as const;
 
 /** One role the People step invites. */
@@ -30,6 +35,9 @@ export function isRole(s: string): s is RoleKey {
 /** The Judging roles, whose terms state the programme's P-75 and P-77 choices (J2). */
 export const JUDGING_ROLES: ReadonlySet<string> = new Set(["committee_member", "committee_chair", "irc_member"]);
 
+/** The Operations roles, which need no verified identity (SoD-09 names Drafting and Judging only). */
+export const OPERATIONS_ROLES: ReadonlySet<string> = new Set(["finance_approver", "payment_releaser", "contract_signatory", "auditor"]);
+
 /** An invitation's state as the people pages show it. */
 export type InvitationState = "invited" | "accepted" | "verified" | "granted";
 
@@ -40,10 +48,14 @@ export type SodState = "pass" | "fail" | "unchecked";
  * Whether the people admin page offers the grant. It does only for an
  * invitee who accepted the confidentiality terms and verified identity
  * (J2, SoD-09), and never twice. While the programme is a draft, it does
- * only for a programme manager (D1). The server checks each rule again
- * at the grant.
+ * only for a programme manager (D1). An Operations role needs no verified
+ * identity, so it is offered once accepted, after activation (design
+ * doc 11, Q2). The server checks each rule again at the grant.
  */
 export function grantOffered(programme: "draft" | "active", role: string, state: InvitationState): boolean {
+  if (OPERATIONS_ROLES.has(role)) {
+    return programme === "active" && (state === "accepted" || state === "verified");
+  }
   if (state !== "verified") return false;
   return programme === "active" || role === "programme_manager";
 }
@@ -85,10 +97,20 @@ export interface InvitationRow {
    * consumes it.
    */
   readonly approval: string | null;
+  /** When the role starts, in microseconds as a decimal string (design doc 11, Q3). Null when the reply names none. */
+  readonly start: string | null;
+  /** When the role ends, likewise. Null for an open end. */
+  readonly end: string | null;
+}
+
+/** An instant member: absent or null is null, a canonical decimal string is kept, anything else refuses. */
+function instant(v: unknown): string | null | undefined {
+  if (v === undefined || v === null) return null;
+  return typeof v === "string" && /^(0|[1-9][0-9]{0,18})$/.test(v) ? v : undefined;
 }
 
 /**
- * Reads `{invitations: [{id, email, role, state, sod, rule?, approval?}]}`.
+ * Reads `{invitations: [{id, email, role, state, sod, rule?, approval?, start?, end?}]}`.
  * Null otherwise.
  *
  * Interim, pending Daniel and lane W3a: `approval` is this lane's
@@ -114,6 +136,9 @@ export function readInvitations(body: unknown): InvitationRow[] | null {
     if (typeof state !== "string" || !STATES.has(state) || typeof sod !== "string" || !SODS.has(sod)) return null;
     if (rule !== undefined && rule !== null && typeof rule !== "string") return null;
     if (approval !== undefined && approval !== null && !isApprovalId(approval)) return null;
+    const start = instant(r["start"]);
+    const end = instant(r["end"]);
+    if (start === undefined || end === undefined) return null;
     out.push({
       id,
       email,
@@ -122,6 +147,8 @@ export function readInvitations(body: unknown): InvitationRow[] | null {
       sod: sod as SodState,
       rule: typeof rule === "string" ? rule : null,
       approval: isApprovalId(approval) ? approval : null,
+      start,
+      end,
     });
   }
   return out;

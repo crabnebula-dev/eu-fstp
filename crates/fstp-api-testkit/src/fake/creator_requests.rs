@@ -218,6 +218,28 @@ pub fn invite(
     )
 }
 
+/// `creator.invite` with the role dates (design doc 11, Q3): `start` and
+/// `end` are instants in microseconds, `end` `None` for an open end.
+pub fn invite_dated(
+    p: ProgrammeId,
+    email: &str,
+    role: &str,
+    start: i64,
+    end: Option<i64>,
+) -> Result<Op, ApiError> {
+    let end = end.map_or(Value::Null, |e| s(&e.to_string()));
+    decode_route(
+        Method::Post,
+        &format!("/programmes/{}/invitations", seg(p)),
+        &body(vec![
+            ("email", s(email)),
+            ("role", s(role)),
+            ("start", s(&start.to_string())),
+            ("end", end),
+        ]),
+    )
+}
+
 /// `creator.withdraw_invitation`:
 /// `DELETE /programmes/{p}/invitations/{invitation}`.
 pub fn withdraw_invitation(p: ProgrammeId, invitation: &str) -> Result<Op, ApiError> {

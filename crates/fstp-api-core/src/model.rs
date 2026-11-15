@@ -1599,6 +1599,8 @@ pub(crate) mod reply_shape_tests {
             },
             sod: if rule.is_some() { "fail" } else { "unchecked" },
             rule,
+            start: fstp_domain::time::Timestamp::from_micros(1_000_000),
+            end: None,
         }
     }
 

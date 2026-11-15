@@ -1015,6 +1015,8 @@ pub mod production {
                         role,
                         invitee,
                         organisation,
+                        start: fstp_domain::time::Timestamp::from_micros(0),
+                        end: None,
                     };
                     self.run(Command::Creator(invite), by, tag)
                 }
@@ -2276,6 +2278,8 @@ pub mod production {
                 role: Role::ProgrammeManager,
                 invitee: fstp_creator::Invitee::Account(*a),
                 organisation: None,
+                start: fstp_domain::time::Timestamp::from_micros(0),
+                end: None,
             };
             cell.execute(Command::Creator(invite), ctx)
                 .map_err(|_| GAP_STEP)?;

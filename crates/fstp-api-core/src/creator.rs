@@ -26,9 +26,13 @@
 //!   `value` the spec JSON. The server takes the value's canonical RFC
 //!   8785 text and its SHA-256 through `fstp-crypto` as the value digest.
 //! - `creator.accept_narrative`: `{base}`, with the field key in the route.
-//! - `creator.invite`: `{email, role, organisation?}`. The role is a wire
-//!   name of `fstp_access::INVITED_ROLES`. The email is stored in the text
-//!   store, and the command carries its reference only (ADR-007).
+//! - `creator.invite`: `{email, role, organisation?, start?, end?}`. The
+//!   role is a wire name of `fstp_access::INVITED_ROLES`. The email is
+//!   stored in the text store, and the command carries its reference only
+//!   (ADR-007). `start` and `end` are instants in microseconds, as
+//!   canonical decimal strings like the `roles.grant` form's. `end` may
+//!   be `null`. Without `start`, the role starts at the invitation (design
+//!   doc 11, Q3, Daniel 2026-11-15). The grant reuses both.
 //! - `creator.withdraw_invitation` and `creator.save_as_template`: `{}`.
 //! - `creator.acknowledge`: `{revision, warning}`, where `warning` is the
 //!   `key` of a report row.
@@ -66,6 +70,7 @@ use fstp_domain::id::{
 };
 use fstp_domain::policy::{FunderProfileRef, OpaqueValue};
 use fstp_domain::roles::Role;
+use fstp_domain::time::Timestamp;
 use fstp_engine::{BridgeCommand, Command};
 use fstp_import::{
     AccountRef, BlobAddress, ClientResolution, ImportCommand, ImportDocument, ImportDocumentId,
@@ -151,7 +156,7 @@ impl Form {
             Form::ApplyStart => (&["base", "start"], &[]),
             Form::SaveFields => (&["base", "fields"], &[]),
             Form::AcceptNarrative => (&["base"], &[]),
-            Form::Invite => (&["email", "role"], &["organisation"]),
+            Form::Invite => (&["email", "role"], &["organisation", "start", "end"]),
             Form::Acknowledge => (&["revision", "warning"], &[]),
             Form::RequestActivation | Form::ApproveActivation => (&["revision"], &[]),
             Form::Upload => (&["media", "text"], &[]),
@@ -182,6 +187,9 @@ pub(crate) struct Supplied {
     /// The link token of an invitation, drawn once per call so the dry
     /// run and the execution name the same invitation (J2, lane inv).
     pub(crate) link: Option<[u8; 32]>,
+    /// The instant of the call: the start of an invitation that names
+    /// none (design doc 11, Q3).
+    pub(crate) now: Timestamp,
 }
 
 impl Supplied {
@@ -193,6 +201,7 @@ impl Supplied {
             contact: None,
             upload: None,
             link: None,
+            now: Timestamp::from_micros(0),
         }
     }
 }
@@ -545,6 +554,14 @@ fn invite(
         Some(Value::String(s)) => Some(OrganisationId::from_raw(canonical_id(s).ok_or_else(bad)?)),
         Some(_) => return Err(bad()),
     };
+    let start = match request.get("start") {
+        None | Some(Value::Null) => supplied.now,
+        Some(v) => instant(v)?,
+    };
+    let end = match request.get("end") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(instant(v)?),
+    };
     let contact = supplied
         .contact
         .unwrap_or_else(|| crate::forms::text_ref(0, email));
@@ -557,7 +574,19 @@ fn invite(
         role,
         invitee: Invitee::Pending { contact },
         organisation,
+        start,
+        end,
     })
+}
+
+/// An instant of a request: its microseconds since the epoch as a
+/// canonical decimal string, at most `i64::MAX`.
+fn instant(v: &Value) -> Result<Timestamp, ApiError> {
+    v.as_str()
+        .and_then(canonical_id)
+        .and_then(|n| i64::try_from(n).ok())
+        .map(Timestamp::from_micros)
+        .ok_or_else(bad)
 }
 
 /// The label of the link token digest (ADR-007 `SecretDigest`, J2).
@@ -815,6 +844,10 @@ pub struct InvitationRow {
     pub sod: &'static str,
     /// The rule of a failed check, never an account (R-CF-03).
     pub rule: Option<&'static str>,
+    /// When the role starts, as the invitation names it (design doc 11, Q3).
+    pub start: Timestamp,
+    /// When the role ends, if the invitation limits it.
+    pub end: Option<Timestamp>,
 }
 
 /// One import proposal as `web/src/creator/model.ts` reads it.
@@ -1011,6 +1044,12 @@ impl ToJson for CreatorModel {
                         ("role", Value::from(r.role)),
                         ("state", Value::from(r.state)),
                         ("sod", Value::from(r.sod)),
+                        ("start", Value::String(r.start.micros().to_string())),
+                        (
+                            "end",
+                            r.end
+                                .map_or(Value::Null, |e| Value::String(e.micros().to_string())),
+                        ),
                     ];
                     if let Some(rule) = r.rule {
                         members.push(("rule", Value::from(rule)));

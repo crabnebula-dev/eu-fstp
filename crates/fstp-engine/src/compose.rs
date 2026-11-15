@@ -207,7 +207,9 @@ pub fn creator_refusal(c: CreatorRefusal) -> Refusal {
         C::StaleRevision | C::AlreadyAccepted => (RuleRef::Input, Why::WrongState),
         C::NotAnAccount | C::NotTenantAdmin => (RuleRef::Actor, Why::WrongActor),
         C::NotProgrammeManager => (RuleRef::Actor, Why::BindingInactive),
-        C::NothingToSave | C::RoleNotInvitable => (RuleRef::Input, Why::InvalidValue),
+        C::NothingToSave | C::RoleNotInvitable | C::InvitationDates => {
+            (RuleRef::Input, Why::InvalidValue)
+        }
         C::CapAboveCeiling { .. } => (RuleRef::I50, Why::InvalidValue),
         C::ProvenanceNotManual => (RuleRef::I65, Why::InvalidValue),
         C::NotAWarning => (RuleRef::I66, Why::InvalidValue),

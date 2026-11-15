@@ -15,11 +15,12 @@ import { createRouter } from "../core/router.js";
 import { h } from "../core/dom.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
+import { SETUP_ROUTES } from "../setup/routes.js";
 import { frame } from "./frame.js";
 import { t } from "./i18n.js";
 import { CREATOR_ROUTES, type PageRoute } from "./routes.js";
 
-const ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES];
+const ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES, ...SETUP_ROUTES];
 
 /** Mounts the page of the current path. */
 function run(): void {

@@ -40,6 +40,16 @@ const M1_BINDING: BindingId = BindingId::from_raw(3_001);
 /// The tenant admin who opens the draft and grants M1 (design 2.1, A1).
 const OPENER: AccountId = ADMIN;
 
+/// The second tenant admin A2, who signs in too (design doc 11): A2
+/// reaches the set-up wizard from the admin home. A2 never worked on
+/// M1's draft, so A2 is outside its builders and may approve it (I-67).
+const SECOND_ADMIN: (&str, AccountId, &str) = ("a2", ADMIN_2, "Tenant admin A2");
+
+/// The label of a person of this scene outside the shared personas.
+pub(crate) fn label(account: AccountId) -> Option<&'static str> {
+    (account == SECOND_ADMIN.1).then_some(SECOND_ADMIN.2)
+}
+
 /// One minute and one second, in microseconds. The seed moves its clock
 /// by this much before each creator call, so no call meets the H-07 rate
 /// of vault reads per account and minute.
@@ -323,6 +333,9 @@ fn fresh(info: &SiteInfo) -> Result<(Inner, String), String> {
     let (key, pm, label) = PROGRAMME_MANAGER;
     auth.person(&email(key)?, pm);
     let url = auth.invite(pm)?;
+    let (a2_key, a2, _) = SECOND_ADMIN;
+    auth.person(&email(a2_key)?, a2);
+    let _ = auth.invite(a2)?;
     let inner = Inner::new(info, &world, auth, PRIMARY_MODEL)?;
     inner.ports.accounts.name(pm, label);
     Ok((inner, url))
@@ -443,5 +456,11 @@ mod tests {
         drop(state);
         let line = crate::demo::what_they_can_do(&inner, STAFF_PM);
         assert!(line.contains("set-up"), "{line}");
+        // Design doc 11: A2 signs in too, and is outside the builders.
+        assert!(
+            crate::lock(&inner.auth).email_of(ADMIN_2).is_some(),
+            "A2 has a login"
+        );
+        assert_eq!(label(ADMIN_2), Some("Tenant admin A2"));
     }
 }

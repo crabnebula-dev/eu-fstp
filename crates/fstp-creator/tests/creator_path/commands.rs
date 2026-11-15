@@ -290,6 +290,8 @@ fn r_pg_01_invite_records_the_invitation() {
         role: Role::CommitteeMember,
         invitee: Invitee::Account(OUT),
         organisation: Some(OrganisationId::from_raw(1)),
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     let d = decision(&mut cell, &cmd, M1);
     assert_eq!(
@@ -300,6 +302,8 @@ fn r_pg_01_invite_records_the_invitation() {
             role: Role::CommitteeMember,
             invitee: Invitee::Account(OUT),
             organisation: Some(OrganisationId::from_raw(1)),
+            start: fstp_domain::time::Timestamp::from_micros(0),
+            end: None,
             by: M1,
         }]
     );
@@ -325,6 +329,8 @@ fn r_pg_01_withdraw_invitation_records_the_withdrawal() {
         role: Role::CallDrafter,
         invitee: Invitee::Account(OUT),
         organisation: None,
+        start: fstp_domain::time::Timestamp::from_micros(0),
+        end: None,
     };
     cell.run(&invite, M1).unwrap_or_else(|f| panic!("{f:?}"));
     let cmd = CreatorCommand::WithdrawInvitation {

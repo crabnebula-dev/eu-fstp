@@ -289,6 +289,12 @@ pub enum CreatorCommand {
         invitee: Invitee,
         /// The committee organisation, for committee roles (I-34).
         organisation: Option<OrganisationId>,
+        /// When the role starts (Daniel, 2026-11-15, design doc 11
+        /// section 14 Q3). The grant after acceptance reuses it, never
+        /// earlier than the grant itself (no backdating, design 2.6).
+        start: Timestamp,
+        /// When the role ends, if it is limited. It lies after `start`.
+        end: Option<Timestamp>,
     },
     /// Withdraw an invitation.
     WithdrawInvitation {
@@ -439,6 +445,10 @@ pub enum CreatorRecord {
         invitee: Invitee,
         /// The committee organisation.
         organisation: Option<OrganisationId>,
+        /// When the role starts, as the invitation names it.
+        start: Timestamp,
+        /// When the role ends, if the invitation limits it.
+        end: Option<Timestamp>,
         /// The author.
         by: AccountId,
     },

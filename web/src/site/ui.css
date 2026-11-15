@@ -190,3 +190,59 @@ main h1:focus-visible { outline: var(--focus-outline); outline-offset: var(--foc
 /* The profile link of the sidebar foot shows at every width. */
 .sidebar .sidebar-account { display: list-item; list-style: none; }
 .topbar-nav .topbar-tools { margin: 0; }
+
+/* ------------------------------------------------------------------ */
+/* The programme set-up wizard and its progress page                  */
+/* (docs/design/11-programme-setup-wizard.md, the approved prototypes) */
+/* ------------------------------------------------------------------ */
+
+.wizard { display: grid; gap: var(--space-6); grid-template-columns: minmax(0, 1fr) 17rem; align-items: start; }
+@media (max-width: 60rem) { .wizard { grid-template-columns: 1fr; } }
+.stage-bar { list-style: none; padding: 0; margin: var(--space-4) 0 var(--space-6); display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0; }
+.stage-bar > li { position: relative; text-align: center; font-size: var(--text-sm); line-height: var(--leading-sm); padding: 0 var(--space-1); }
+.stage-bar > li::after { content: ""; position: absolute; top: 1.125rem; left: calc(50% + 1.25rem); right: calc(-50% + 1.25rem); border-top: 3px dashed var(--color-journey-upcoming); }
+.stage-bar > li:last-child::after { display: none; }
+.stage-bar > li.is-done::after { border-top-style: solid; border-top-color: var(--color-journey-complete); }
+.stage-bar a, .stage-bar .stage-static { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); min-height: var(--target-min); color: var(--color-text-1); text-decoration: none; }
+.stage-bar a:hover .stage-name { text-decoration: underline; }
+.stage-mark { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 2px solid var(--color-journey-upcoming); background: var(--color-surface-0); font-weight: var(--weight-bold); }
+.is-done .stage-mark { border-color: var(--color-journey-complete); color: var(--color-journey-complete); background: var(--color-journey-complete-fill); }
+.is-current .stage-mark { border-color: var(--color-brand); background: var(--color-brand); color: var(--color-on-brand); box-shadow: 0 0 0 3px var(--color-surface-0), 0 0 0 5px var(--color-brand); }
+.is-current .stage-name { font-weight: var(--weight-bold); }
+.is-upcoming .stage-mark { border-style: dashed; color: var(--color-text-2); }
+.is-upcoming .stage-name { color: var(--color-text-2); }
+@media (max-width: 40rem) {
+  .stage-bar { grid-template-columns: 1fr; gap: var(--space-1); }
+  .stage-bar > li { text-align: left; }
+  .stage-bar > li::after { display: none; }
+  .stage-bar a, .stage-bar .stage-static { flex-direction: row; min-height: var(--target-min); }
+  .stage-mark { width: 2rem; height: 2rem; }
+}
+.summary { position: sticky; top: var(--space-4); }
+.summary h2 { font-size: var(--text-xl); line-height: var(--leading-xl); margin: 0 0 var(--space-3); }
+.summary section { border-top: 1px solid var(--color-surface-3); padding-top: var(--space-3); margin-top: var(--space-3); }
+.summary h3 { font-size: var(--text-base); line-height: var(--leading-base); margin: 0 0 var(--space-1); display: flex; justify-content: space-between; gap: var(--space-2); }
+.summary h3 a { font-size: var(--text-sm); font-weight: var(--weight-regular); }
+.summary dl { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); }
+.summary dt { color: var(--color-text-2); }
+.summary dd { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
+.summary .not-set { color: var(--color-text-2); font-size: var(--text-sm); margin: 0; }
+.sum-mark { font-weight: var(--weight-bold); margin-right: var(--space-1); }
+.step-block { border: 1px solid var(--color-surface-3); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4); background: var(--color-surface-0); }
+.step-block > h3 { margin-top: 0; }
+.row-2 { display: grid; gap: 0 var(--space-4); grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.check-list { list-style: none; padding: 0; margin: 0; }
+.check-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-3); }
+.check-list li > span:last-child { flex: 1; min-width: 14rem; }
+.role-groups { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.role-groups fieldset { margin: 0; }
+.team-table, .status-table { width: 100%; }
+.team-table .dates { min-width: 8rem; }
+.milestones .journey-node { align-items: flex-start; padding: var(--space-3) var(--space-4); margin-bottom: var(--space-2); }
+.milestones h3 { margin: 0 0 var(--space-1); font-size: var(--text-lg); line-height: var(--leading-lg); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.milestones p { margin-bottom: var(--space-1); }
+.milestones .journey-node--upcoming p { color: var(--color-text-2); }
+.status-table .group-row th { background: var(--color-surface-2); color: var(--color-text-1); }
+.status-table td { vertical-align: top; white-space: normal; }
+.table-wrap { overflow-x: auto; }
+.team-table td, .status-table td { overflow-wrap: anywhere; }

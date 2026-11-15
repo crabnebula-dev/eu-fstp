@@ -14,6 +14,10 @@ const LABELS: Readonly<Record<string, string>> = {
   "people.role.committee_member": "Committee member",
   "people.role.committee_chair": "Committee chair",
   "people.role.irc_member": "IRC member",
+  "people.role.finance_approver": "Finance approver",
+  "people.role.payment_releaser": "Payment releaser",
+  "people.role.contract_signatory": "Contract signatory",
+  "people.role.auditor": "Auditor",
 
   // The invitation form of the People step.
   "people.invite.title": "Invitations",
@@ -44,7 +48,7 @@ const LABELS: Readonly<Record<string, string>> = {
   // The people admin page.
   "people.admin.title": "People of this programme",
   "people.admin.intro":
-    "Grant each role once the invitee accepted the terms and verified identity. Each grant needs your passkey.",
+    "Grant each role once the invitee accepted the terms and verified identity. An Operations role needs no identity check and is granted after activation. Each grant needs your passkey.",
   "people.admin.grant": "Grant {role} to {email}",
 
   // The invitation landing.
