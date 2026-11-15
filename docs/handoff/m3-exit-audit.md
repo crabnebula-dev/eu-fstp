@@ -38,7 +38,7 @@ Other M3 tests still red: `seam_async` (item 15 was not enough, see section 8), 
 - The S(e) memory scan covers the App and Vault chains only, not CellBackup.
 - Devstack browser specs: 8 of 22 pass. The rest wait on the `/test/scenario/negotiation` control route, a login policy command (P-70 is a start option only), the creator-path programme set-up in the spec, and the AddPasskey step-up digest.
 - The `devstack` CI part compiles the auth pages with Node before `cargo test`. ADR-003 says `cargo test` never needs Node.
-- Cell erasure: keyd holds no sign keys yet; each erasure takes five approvals per operator; route removal reaches only an edge in the same process; the object-storage prefix and witness credentials are not deleted.
+- Cell erasure: keyd holds no sign keys yet; each erasure takes five approvals per operator; route removal reaches only an edge in the same process. Lane m3/finish-gaps (2026-11-15): the erase-cell job now deletes the object-storage prefix and the witness credentials after the database drops, through two traits that only tests implement (ADR-004). Still open: the S3 client has no list or delete; the witness has no delete, and `witness.cell_ca` refuses DELETE by trigger; keyd sign key slots and batch approval are open for Daniel (ADR-004); the remote route feed is not designed.
 
 ## 2. Where the tests run
 

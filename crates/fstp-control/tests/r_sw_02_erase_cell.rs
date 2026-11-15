@@ -376,7 +376,8 @@ mod steps {
     use fstp_control::agent::JobOutcome;
     use fstp_control::approval::{ApprovalEvent, ApprovalEvidence};
     use fstp_control::erase::{
-        CellDatabases, EdgeRoutes, ErasureEvent, ErasureStep, database_drop_jobs, erase_cell_steps,
+        CellDatabases, CellObjects, EdgeRoutes, ErasureEvent, ErasureStep, WitnessCredentials,
+        database_drop_jobs, erase_cell_steps,
     };
     use fstp_control::pg::CellDatabase;
     use fstp_control::placement::{Cluster, ClusterKind, Placement};
@@ -481,6 +482,48 @@ mod steps {
         }
     }
 
+    /// The cell's object storage prefix and its witness credentials: what
+    /// each deletion was asked for, how many keys custody still held then,
+    /// and whether the object deletion fails.
+    #[derive(Default)]
+    struct Storage {
+        objects: Mutex<Vec<(CellId, usize)>>,
+        witness: Mutex<Vec<(CellId, usize)>>,
+        live: Option<Arc<Mutex<BTreeSet<Vec<u8>>>>>,
+        fail_objects: bool,
+    }
+
+    impl Storage {
+        fn over(custody: &Recorder) -> Storage {
+            Storage {
+                live: Some(custody.live.clone()),
+                ..Storage::default()
+            }
+        }
+
+        fn live(&self) -> usize {
+            self.live.as_ref().map_or(0, |l| l.lock().unwrap().len())
+        }
+    }
+
+    impl CellObjects for Storage {
+        fn delete_prefix(&self, cell: CellId) -> impl Future<Output = Result<u32, ControlError>> {
+            self.objects.lock().unwrap().push((cell, self.live()));
+            std::future::ready(if self.fail_objects {
+                Err(ControlError::Job("the object store"))
+            } else {
+                Ok(3)
+            })
+        }
+    }
+
+    impl WitnessCredentials for Storage {
+        fn delete_cell(&self, cell: CellId) -> impl Future<Output = Result<(), ControlError>> {
+            self.witness.lock().unwrap().push((cell, self.live()));
+            std::future::ready(Ok(()))
+        }
+    }
+
     /// The control plane's side of an edge in the same process.
     struct Edge(LiveRoutes);
 
@@ -534,6 +577,7 @@ mod steps {
     fn run_steps(
         custody: &Recorder,
         agents: &Agents<'_>,
+        storage: &Storage,
         edge: &Edge,
         agent_jobs: &[ApprovedJob],
         book: &mut ApprovalBook,
@@ -544,6 +588,8 @@ mod steps {
         let r = block_on(erase_cell_steps(
             custody,
             agents,
+            storage,
+            storage,
             edge,
             &job,
             agent_jobs,
@@ -571,7 +617,9 @@ mod steps {
     /// R-SW-02, design section 3.7 steps 1 to 4, ADR-011: the erasure
     /// destroys every key first. Only then do the agents drop the
     /// application database, its roles and its `pg_hba` lines, then the
-    /// vault's, each drop sent with its approvals. Then the edge removes
+    /// vault's, each drop sent with its approvals. Then the cell's object
+    /// storage prefix and its witness credentials are deleted, once each.
+    /// Then the edge removes
     /// both routes of the cell and keeps the other cell's. Each step is
     /// reported after it finished and logged in the approval book, in that
     /// order, and the confirmation lists every destroyed key.
@@ -584,9 +632,10 @@ mod steps {
             calls: Mutex::new(Vec::new()),
             fail: None,
         };
+        let storage = Storage::over(&custody);
         let edge = edge();
         let mut book = ApprovalBook::default();
-        let (r, events) = run_steps(&custody, &agents, &edge, &drops(CELL), &mut book);
+        let (r, events) = run_steps(&custody, &agents, &storage, &edge, &drops(CELL), &mut book);
         let c = r.unwrap();
         assert_eq!(c.keys.len(), 5);
 
@@ -617,6 +666,8 @@ mod steps {
                 database: CellDatabase::Vault,
             },
             ErasureStep::HbaRewritten { cluster: VAULT },
+            ErasureStep::ObjectsDeleted { count: 3 },
+            ErasureStep::WitnessCredentialsDeleted,
             ErasureStep::RoutesRemoved { count: 2 },
         ];
         assert_eq!(steps, want);
@@ -641,6 +692,8 @@ mod steps {
             ],
             "an agent job ran before every key was destroyed, or out of order"
         );
+        assert_eq!(*storage.objects.lock().unwrap(), vec![(CELL, 0)]);
+        assert_eq!(*storage.witness.lock().unwrap(), vec![(CELL, 0)]);
         assert_eq!(
             hosts(&edge),
             vec![
@@ -706,10 +759,12 @@ mod steps {
                 calls: Mutex::new(Vec::new()),
                 fail: None,
             };
+            let storage = Storage::default();
             let edge = edge();
             let (r, events) = run_steps(
                 &custody,
                 &agents,
+                &storage,
                 &edge,
                 &jobs,
                 &mut ApprovalBook::default(),
@@ -718,6 +773,8 @@ mod steps {
             assert!(events.is_empty(), "{what}: {events:?}");
             assert!(custody.calls.lock().unwrap().is_empty(), "{what}");
             assert!(agents.calls.lock().unwrap().is_empty(), "{what}");
+            assert!(storage.objects.lock().unwrap().is_empty(), "{what}");
+            assert!(storage.witness.lock().unwrap().is_empty(), "{what}");
             assert_eq!(hosts(&edge).len(), 4, "{what}");
         }
     }
@@ -735,10 +792,13 @@ mod steps {
             calls: Mutex::new(Vec::new()),
             fail: Some(PgagentJob::DropCellDatabase(v)),
         };
+        let storage = Storage::default();
         let edge = edge();
         let mut book = ApprovalBook::default();
-        let (r, events) = run_steps(&custody, &agents, &edge, &drops(CELL), &mut book);
+        let (r, events) = run_steps(&custody, &agents, &storage, &edge, &drops(CELL), &mut book);
         assert!(matches!(r, Err(ControlError::Job(_))), "{r:?}");
+        assert!(storage.objects.lock().unwrap().is_empty());
+        assert!(storage.witness.lock().unwrap().is_empty());
         assert_eq!(
             events.last(),
             Some(&ErasureEvent::Step(ErasureStep::HbaRewritten {
@@ -753,5 +813,37 @@ mod steps {
                 ..
             })
         ));
+    }
+
+    /// R-SW-02, design section 3.7 step 2: an object storage deletion that
+    /// fails stops the erasure after the database drops, with no
+    /// confirmation. The witness credentials and the routes stay, and the
+    /// log ends with the last finished step.
+    #[test]
+    fn r_sw_02_erase_cell_steps_stop_at_a_failed_object_deletion() {
+        let keys = cell_keys();
+        let custody = custody_holding(&keys, &[]);
+        let agents = Agents {
+            custody: &custody,
+            calls: Mutex::new(Vec::new()),
+            fail: None,
+        };
+        let storage = Storage {
+            fail_objects: true,
+            ..Storage::default()
+        };
+        let edge = edge();
+        let mut book = ApprovalBook::default();
+        let (r, events) = run_steps(&custody, &agents, &storage, &edge, &drops(CELL), &mut book);
+        assert!(matches!(r, Err(ControlError::Job(_))), "{r:?}");
+        assert_eq!(storage.objects.lock().unwrap().len(), 1);
+        assert!(storage.witness.lock().unwrap().is_empty());
+        assert_eq!(
+            events.last(),
+            Some(&ErasureEvent::Step(ErasureStep::HbaRewritten {
+                cluster: VAULT
+            }))
+        );
+        assert_eq!(hosts(&edge).len(), 4);
     }
 }
