@@ -110,6 +110,7 @@ const PLACE_MODEL: &str = "crates/fstp-celltest/src/mc/place_model.rs";
 
 const I16: &str = "crates/fstp-celltest/tests/i16_funds.rs";
 const I17: &str = "crates/fstp-celltest/tests/i17_identity_release.rs";
+const I17_UNMASK: &str = "crates/fstp-api-testkit/src/harness_unmask.rs";
 const I18: &str = "crates/fstp-celltest/tests/i18_guardian_consent.rs";
 const I18_VCP: &str = "crates/fstp-celltest/tests/i18_m_vcp.rs";
 const ORIGIN: &str = "crates/fstp-celltest/tests/fstp_vault_origin_binding.rs";
@@ -154,6 +155,8 @@ const REGISTRY: &[Row] = &[
         teeth: &[
             t(I17, "i17_teeth_ticket_issued_in_ranked_is_caught"),
             t(I17, "i17_teeth_attribute_logged_is_caught"),
+            t(I17_UNMASK, "i17_teeth_committee_member_unmask_is_caught"),
+            t(I17_UNMASK, "i17_teeth_forged_unmask_record_is_caught"),
         ],
     },
     Row {

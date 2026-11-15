@@ -31,6 +31,7 @@ use fstp_audit::anchor::{
 };
 use fstp_audit::chain::{ChainId, Link};
 use fstp_audit::{Anchor, CellId, Receipt, ReceiptFields};
+use fstp_auth::breakglass::{STAFF_ASSERTION_CONTEXT, StaffAssertion, verify_staff_assertion};
 use fstp_auth::codec::encode_operator_ticket;
 use fstp_auth::recovery::{OperatorTicket, StaffRef, TicketKind, verify_ticket_as};
 use fstp_contract::digest::Digest;
@@ -43,6 +44,7 @@ use fstp_control::erase::{
     CONFIRMATION_CONTEXT, ErasedKey, ErasureConfirmation, verify_erasure_confirmation,
 };
 use fstp_crypto::composite::{self, CompositeSigningKey, MLDSA_SIGNATURE_LEN, SIGNATURE_LEN};
+use fstp_domain::time::Timestamp;
 use fstp_keys::Purpose;
 use fstp_release::metadata::{
     METADATA_BODY_LEN, METADATA_CONTEXT, METADATA_MAGIC, ReleaseSigningKey, verify_metadata,
@@ -72,7 +74,7 @@ struct Verifier {
 /// Every composite verifier of the platform. A shipped file with a
 /// `composite::verify*` call that no row names fails
 /// [`i90_every_composite_verify_call_site_is_in_the_table`].
-const VERIFIERS: [Verifier; 8] = [
+const VERIFIERS: [Verifier; 9] = [
     Verifier {
         name: "audit anchor (fstp_audit::anchor::anchor_signature_verifies)",
         site: "crates/fstp-audit/src/anchor.rs",
@@ -114,6 +116,12 @@ const VERIFIERS: [Verifier; 8] = [
         site: "crates/fstp-control/src/erase.rs",
         sign: erasure_sign,
         verify: erasure_verify,
+    },
+    Verifier {
+        name: "break-glass staff assertion (fstp_auth::breakglass::verify_staff_assertion)",
+        site: "crates/fstp-auth/src/breakglass.rs",
+        sign: staff_assertion_sign,
+        verify: staff_assertion_verify,
     },
     Verifier {
         name: "edge route table (fstp_edge::verify_route_table)",
@@ -305,6 +313,30 @@ fn route_table_body(v: u8) -> Vec<u8> {
         vault: ep(9443),
     };
     fstp_edge::encode_route_table_body(u64::from(v), &[route]).unwrap()
+}
+
+/// The staff assertion of variant `v` (SoD-08, ADR-008 "Break-glass").
+fn staff_assertion(v: u8) -> StaffAssertion {
+    StaffAssertion {
+        grant: [v; 16],
+        staff: StaffRef([v ^ 0x5a; 16]),
+        issued_at: Timestamp::from_micros(1_700_000_000_000_000 + i64::from(v)),
+    }
+}
+
+fn staff_assertion_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
+    key.sign_with_context(&staff_assertion(v).message(), STAFF_ASSERTION_CONTEXT)
+        .unwrap()
+        .to_bytes()
+        .to_vec()
+}
+
+/// Verifies one microsecond after issue, well inside the lifetime, so
+/// only the signature decides.
+fn staff_assertion_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
+    let a = staff_assertion(v);
+    let now = Timestamp::from_micros(a.issued_at.micros() + 1);
+    verify_staff_assertion(&a, sig, Some(pk), now, 60_000_000).is_ok()
 }
 
 fn route_table_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
