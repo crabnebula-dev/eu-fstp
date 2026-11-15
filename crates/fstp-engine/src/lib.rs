@@ -53,7 +53,9 @@
 //!   field;
 //! - a `GuidePublished` whose entry holds no earlier `CallPublished` of
 //!   the same call (R-GA-01, I-52). The domain fold refuses a second
-//!   `GuidePublished` for a call (I-53).
+//!   `GuidePublished` for a call (I-53);
+//! - a `CallPublished` whose entry holds no `GuidePublished` of the same
+//!   call (I-52, D2e; Daniel's decision of 2026-11-15).
 //!
 //! The driver refuses every core `ActivateProgramme` that arrives through
 //! `execute` with `RuleRef::I66`, drafted or not. Only the creator's
@@ -75,10 +77,6 @@
 //!
 //! # Seams
 //!
-//! - Publication (I-52): a core `PublishCall` carries its `GuidePublished`
-//!   when the shell supplies `compose::GuideFacts`. Without them `execute`
-//!   still accepts it alone, and the fold its `CallPublished` (lane
-//!   m4d2e-cont makes that pairing strict).
 //! - L-CODEC: a `fstp_ledger::Canonical` impl for [`Record`], and the
 //!   switch of the testkit's `harness::prop::append_only` to
 //!   `fstp_ledger::verify_append_only`.
@@ -207,6 +205,9 @@ struct OpenEntry {
     /// The calls this entry published so far. A `GuidePublished` folds
     /// only after the `CallPublished` of its call in the same entry.
     published: Vec<fstp_domain::id::CallId>,
+    /// The calls this entry published whose `GuidePublished` it still
+    /// owes (I-52, D2e).
+    guides: Vec<fstp_domain::id::CallId>,
     /// The contracts whose core `ContractFactRecorded` the entry holds,
     /// which a `ContractEffective` of the entry needs (lane L-CON).
     contract_facts: Vec<fstp_domain::id::ContractId>,
@@ -239,6 +240,7 @@ impl OpenEntry {
             openings: Vec::new(),
             resolutions: Vec::new(),
             published: Vec::new(),
+            guides: Vec::new(),
             contract_facts: Vec::new(),
         }
     }
@@ -249,6 +251,7 @@ impl OpenEntry {
             && self.overrides.is_empty()
             && self.openings.is_empty()
             && self.resolutions.is_empty()
+            && self.guides.is_empty()
     }
 }
 
@@ -752,13 +755,17 @@ fn apply_core(
             }
         }
         fstp_domain::Record::CallPublished { call, .. } => {
-            open_entry(state)?.published.push(*call);
+            let open = open_entry(state)?;
+            open.published.push(*call);
+            open.guides.push(*call);
         }
         // R-GA-01, I-52, D2e: a Guide folds only in its publication entry.
         fstp_domain::Record::GuidePublished { call, .. } => {
-            if !open_entry(state)?.published.contains(call) {
+            let open = open_entry(state)?;
+            if !open.published.contains(call) {
                 return Err(FoldError::Inconsistent);
             }
+            open.guides.retain(|c| c != call);
         }
         fstp_domain::Record::ProgrammeCreated { programme, by, .. } => {
             let open = open_entry(state)?;

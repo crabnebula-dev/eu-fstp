@@ -172,6 +172,18 @@ pub trait Backend: Send + Sync + 'static {
         fstp_cell_core::creator::CreatorFacts::default()
     }
 
+    /// The Guide inputs of the publication of `call` on `state` (I-52,
+    /// `crate::shell`). The default holds none, so the publication is
+    /// refused with I-52.
+    fn guide_inputs(
+        &self,
+        state: &CellState,
+        call: fstp_domain::id::CallId,
+    ) -> Option<fstp_cell_core::creator::GuideInputs> {
+        let _ = (state, call);
+        None
+    }
+
     /// The cell's vault ticket key: the Ed25519 key of purpose `Ticket`
     /// on the App chain (ADR-004, design section 6.5), whose public key
     /// the vault pins. `None` when the cell holds none, and then no ticket

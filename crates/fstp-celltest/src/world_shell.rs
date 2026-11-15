@@ -16,10 +16,14 @@
 //!   replaced by [`SYNTHETIC_WORDING`], so its wording counts as approved.
 //!   Every section and placeholder of the shipped template stays. The
 //!   wording is synthetic, never legal text.
+//! - The Guide of a publication is the synthetic Guide of the domain
+//!   test kit's generators ([`synthetic_guide`], I-52).
 
 use fstp_cell_core::CellState;
-use fstp_cell_core::creator::CreatorFacts;
+use fstp_cell_core::creator::{CreatorFacts, GuideInputs};
 use fstp_creator::{CreatorCommand, PortPresence, ProbeSet};
+use fstp_domain::id::CallId;
+use fstp_engine::CreatorEnvironment;
 use fstp_guide::{FunderProfile, ProfileError, ProfileFiles, ProfileSource, ShippedProfiles};
 
 /// The wording a world profile puts where a shipped Guide holds a legal
@@ -72,6 +76,29 @@ impl fstp_cell::shell::CreatorShell for WorldShell {
                 score_tools: false,
             },
             profile,
+            guide: None,
         }
     }
+
+    fn guide(&self, state: &CellState, call: CallId) -> Option<GuideInputs> {
+        synthetic_guide(state, call)
+    }
+}
+
+/// The synthetic Guide inputs of the publication of `call` on `state`:
+/// those of the domain test kit's generators
+/// (`fstp_domain_testkit::guide::SyntheticGuides`), with no digest and
+/// no identifier, which the cell adds (I-52). Synthetic, never legal
+/// text.
+pub fn synthetic_guide(state: &CellState, call: CallId) -> Option<GuideInputs> {
+    let f = fstp_domain_testkit::guide::SyntheticGuides.guide_facts(state.engine(), call)?;
+    Some(GuideInputs {
+        template: f.template,
+        compiled: f.compiled,
+        platform_url: f.platform_url,
+        data_protection_summary: f.data_protection_summary,
+        privacy_statement_url: f.privacy_statement_url,
+        texts: f.texts,
+        precheck_available: f.precheck_available,
+    })
 }

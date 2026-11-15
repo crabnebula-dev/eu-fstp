@@ -42,6 +42,7 @@ use fstp_domain::refusal::{RefusalReason, RuleRef};
 use fstp_domain::roles::Role;
 use fstp_domain::time::Timestamp;
 use fstp_domain_testkit::r#gen::roster::{A, ADMIN, ADMIN_2, B, P1, STAFF_PM, SodSetup, T0, grant};
+use fstp_domain_testkit::guide::GENERATOR_DECIDER;
 use fstp_engine::Decider;
 use fstp_ledger::{Entry, Seq};
 use fstp_prop::{Gen, check, prop_assert, prop_assert_eq};
@@ -399,7 +400,7 @@ fn seam_decide_engine_commands_match_m2_decide() {
             at: at.micros(),
         };
         let ctx = m2_ctx(step, at);
-        let want_q = fstp_engine::DomainDecider.queries(&t.engine, &m2c, &ctx);
+        let want_q = GENERATOR_DECIDER.queries(&t.engine, &m2c, &ctx);
         assert_eq!(
             queries(&t.cell, &c, &x),
             want_q.clone().map_err(fstp_cell_core::CellRefusal::Domain),
@@ -420,18 +421,34 @@ fn seam_decide_engine_commands_match_m2_decide() {
             a.epoch = t.engine.epoch();
             answers.insert(q, a);
         }
-        let want = fstp_engine::DomainDecider
-            .decide(&t.engine, &m2c, &ctx, &answers)
-            .unwrap();
-        let got = decide(&t.cell, &c, &x, &answers).unwrap();
+        // I-52: both sides publish with a synthetic Guide. The reference
+        // digests it with the test kit's mix, the cell with SHA-256, so the
+        // Guide digests are left out of the comparison.
+        let want = without_guide_digest(
+            GENERATOR_DECIDER
+                .decide(&t.engine, &m2c, &ctx, &answers)
+                .unwrap(),
+        );
+        let inputs = guide_inputs(&t.cell, &c);
+        let got = fstp_cell_core::decide_with_inputs(
+            &t.cell,
+            &c,
+            &x,
+            ctx.command.bytes(),
+            &inputs,
+            &answers,
+        )
+        .unwrap();
         let (m2_part, rest) = got.split_at(want.len().min(got.len()));
-        let m2_part: Vec<fstp_engine::Record> = m2_part
-            .iter()
-            .filter_map(|r| match r {
-                CellRecord::Engine(e) => Some(e.clone()),
-                _ => None,
-            })
-            .collect();
+        let m2_part: Vec<fstp_engine::Record> = without_guide_digest(
+            m2_part
+                .iter()
+                .filter_map(|r| match r {
+                    CellRecord::Engine(e) => Some(e.clone()),
+                    _ => None,
+                })
+                .collect(),
+        );
         assert_eq!(m2_part, want, "step {i} {:?}", step.cmd.kind());
         assert!(
             rest.iter().all(|r| !matches!(r, CellRecord::Engine(_))),
@@ -761,4 +778,56 @@ fn i78_fold_refuses_a_second_step_up_consumption() {
     let r = replay(&twice);
     assert!(r.is_err(), "a second consumption folded");
     assert!(!is_stub(&shown(&r)), "{r:?}");
+}
+
+/// `records` with the digest of each `GuidePublished` zeroed (I-52).
+fn without_guide_digest(records: Vec<fstp_engine::Record>) -> Vec<fstp_engine::Record> {
+    records
+        .into_iter()
+        .map(|r| match r {
+            fstp_engine::Record::Core(fstp_domain::Record::GuidePublished {
+                call,
+                version,
+                canonical,
+                page,
+                ..
+            }) => fstp_engine::Record::Core(fstp_domain::Record::GuidePublished {
+                call,
+                version,
+                digest: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+                canonical,
+                page,
+            }),
+            other => other,
+        })
+        .collect()
+}
+
+/// The route inputs of `cmd`: for a call's publication, the test kit's
+/// synthetic Guide (`fstp_domain_testkit::guide::SyntheticGuides`), as a
+/// test world's shell supplies it (I-52). Every other command gets none.
+fn guide_inputs(s: &fstp_cell_core::CellState, cmd: &CellCommand) -> fstp_cell_core::RouteInputs {
+    use fstp_engine::CreatorEnvironment;
+    let CellCommand::Engine(fstp_engine::Command::Core(fstp_domain::Command::PublishCall {
+        call,
+        ..
+    })) = cmd
+    else {
+        return fstp_cell_core::RouteInputs::none();
+    };
+    let guide = fstp_domain_testkit::guide::SyntheticGuides
+        .guide_facts(s.engine(), *call)
+        .map(|f| fstp_cell_core::creator::GuideInputs {
+            template: f.template,
+            compiled: f.compiled,
+            platform_url: f.platform_url,
+            data_protection_summary: f.data_protection_summary,
+            privacy_statement_url: f.privacy_statement_url,
+            texts: f.texts,
+            precheck_available: f.precheck_available,
+        });
+    fstp_cell_core::RouteInputs::none().with_creator(fstp_cell_core::creator::CreatorFacts {
+        guide,
+        ..Default::default()
+    })
 }

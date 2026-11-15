@@ -894,11 +894,16 @@ impl PolicyWorld {
     }
 }
 
-/// The core records of `entries`, in order.
+/// The M2 core records of `entries`, in order.
+///
+/// A `GuidePublished` is left out. It is an M4 record that the synthetic
+/// Guide of a generator publication adds to the entry (I-52,
+/// `crate::guide`), and no M2 reference writes one.
 pub fn core_records(entries: &[Entry<EngineRecord>]) -> Vec<Record> {
     entries
         .iter()
         .filter_map(|e| match &e.record {
+            EngineRecord::Core(Record::GuidePublished { .. }) => None,
             EngineRecord::Core(r) => Some(r.clone()),
             EngineRecord::Finding(_)
             | EngineRecord::Creator(_)

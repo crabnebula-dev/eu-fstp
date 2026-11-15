@@ -835,6 +835,14 @@ pub fn admit<'a>(
     command_id: [u8; 16],
 ) -> Result<Admitted, AdmitError> {
     let on: GateState<'a> = on.into();
+    // I-52: a publication carries the world's synthetic Guide, as the
+    // route reads it from the world shell (`crate::world_shell`).
+    let guide = match &cmd {
+        CellCommand::Engine(fstp_engine::Command::Core(
+            fstp_domain::command::Command::PublishCall { call, .. },
+        )) => Some(crate::world_shell::synthetic_guide(on.state, *call)),
+        _ => None,
+    };
     let session = session_of(actor, at);
     let action = Action::Command(cmd.clone());
     let high = gate::HighRiskAction::of(&action).map_err(deny)?;
@@ -864,6 +872,13 @@ pub fn admit<'a>(
         &POLICY,
     )
     .map_err(deny)
+    .map(|a| match guide {
+        Some(guide) => a.with_creator(fstp_cell_core::creator::CreatorFacts {
+            guide,
+            ..Default::default()
+        }),
+        None => a,
+    })
 }
 
 fn fold_ni(e: FoldError) -> NotImplemented {

@@ -600,6 +600,37 @@ pub fn activation_records<O: IdentityOracle>(
     Ok(out)
 }
 
+/// The entry of the core `PublishCall` `cmd` with its synthetic Guide
+/// (I-52, R-GA-01, D2e): the engine decides it with
+/// [`crate::guide::SyntheticGuides`], so the entry holds `CallPublished`
+/// and then `GuidePublished` of the call. The core guards run as for
+/// every publication.
+pub fn publication_records<O: IdentityOracle>(
+    state: &EngineState,
+    oracle: &O,
+    cmd: &Command,
+    ctx: &Ctx,
+) -> Result<Vec<EngineRecord>, ExecError> {
+    let decider = fstp_engine::CreatorDecider(crate::guide::SyntheticGuides);
+    let wrapped = fstp_engine::Command::Core(cmd.clone());
+    let mut answers = Answers::new();
+    for q in decider
+        .queries(state, &wrapped, ctx)
+        .map_err(ExecError::Refused)?
+    {
+        let a = oracle.ask(&q).map_err(|_| {
+            ExecError::Refused(Refusal::new(
+                RuleRef::OracleDown,
+                RefusalReason::OracleUnavailable,
+            ))
+        })?;
+        answers.insert(q, a);
+    }
+    decider
+        .decide(state, &wrapped, ctx, &answers)
+        .map_err(ExecError::Refused)
+}
+
 /// The engine error of a fold refusal of a composed entry: a time before
 /// the ledger's latest is the engine's clock refusal (design section
 /// 2.2), any other is an unfoldable batch.
@@ -662,6 +693,11 @@ where
 ///   ([`open_records`]);
 /// - an `ActivateProgramme` becomes the entry of a creator
 ///   `ApproveActivation` ([`activation_records`]);
+/// - a `PublishCall` on an engine whose decider supplies no Guide facts
+///   is decided with those of [`crate::guide::SyntheticGuides`], so its
+///   entry pairs `CallPublished` with `GuidePublished` (I-52, D2e;
+///   [`publication_records`]). A decider with Guide facts of its own
+///   publishes through `Engine::execute`;
 /// - every other command runs through `Engine::execute`.
 ///
 /// Before a composed entry the vault change is processed, as the driver
@@ -677,10 +713,15 @@ where
     O: IdentityOracle + Clone,
     D: Decider + Clone,
 {
-    let compose = matches!(
-        cmd,
-        Command::CreateProgramme { .. } | Command::ActivateProgramme { .. }
-    );
+    let compose = match cmd {
+        Command::CreateProgramme { .. } | Command::ActivateProgramme { .. } => true,
+        // A shell that supplies its own Guide facts publishes through
+        // `execute`, with its own Guide.
+        Command::PublishCall { call, .. } => {
+            !engine.decider().supplies_guide(engine.state(), *call)
+        }
+        _ => false,
+    };
     if !compose {
         return engine.execute(fstp_engine::Command::Core(cmd.clone()), ctx);
     }
@@ -694,6 +735,9 @@ where
     let records = match cmd {
         Command::CreateProgramme { policy } => {
             open_records(engine.state(), engine.oracle(), policy, &ctx)?
+        }
+        Command::PublishCall { .. } => {
+            publication_records(engine.state(), engine.oracle(), cmd, &ctx)?
         }
         _ => activation_records(engine.state(), engine.oracle(), cmd, &ctx)?,
     };

@@ -1160,7 +1160,8 @@ impl WorldEngine {
             base.prober.clone(),
             base.tenant.admin_set(),
             base.vault_audit.clone(),
-        );
+        )
+        .with_synthetic_guide();
         let imports = crate::fake::shell::ImportShell::new(base.blobs.clone(), base.texts.clone());
         let engine = fstp_engine::Engine::open_with(
             store,
@@ -4585,9 +4586,9 @@ mod tests {
     /// web read of a public page reaches the system. No page is public
     /// while the programme is a draft. Once it is active its pages are
     /// served. Once the call is open its call page is served too (lane
-    /// mpubfin2). The Guide page still answers not found: the Guide is an
-    /// M4 seam that fails closed (`fstp-api-core` `dispatch/public.rs`,
-    /// "Seams"). It is pinned here, so this test fails once the seam lands.
+    /// mpubfin2). Its Guide page is served as well: since D2e is strict
+    /// (I-52, Daniel's decision of 2026-11-15) every publication stores
+    /// its Guide, so the pin on the former Guide seam is lifted.
     #[test]
     fn i87_r_pb_04_direct_public_pages_are_served_once_active() {
         let m = crate::matrix::matrix().unwrap();
@@ -4620,7 +4621,7 @@ mod tests {
             .chain(
                 [
                     ("public.call", Observed::Completed),
-                    ("public.guide", Observed::NotFound("Input".to_owned())),
+                    ("public.guide", Observed::Completed),
                 ]
                 .into_iter()
                 .map(|(op, want)| (StateProfile::CallOpen, op, want)),

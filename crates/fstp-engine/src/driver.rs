@@ -99,7 +99,7 @@ use fstp_creator::{
 };
 use fstp_domain::command::{Actor, Ctx, SystemCause, Via};
 use fstp_domain::engine::FoldError;
-use fstp_domain::id::{CommandId, ProgrammeId, VaultEpoch};
+use fstp_domain::id::{CallId, CommandId, ProgrammeId, VaultEpoch};
 use fstp_domain::oracle::{Answers, Query};
 use fstp_domain::refusal::{Refusal, RefusalReason, RuleRef};
 use fstp_domain::time::Timestamp;
@@ -145,6 +145,14 @@ pub trait Decider {
         ctx: &Ctx,
         answers: &Answers,
     ) -> Result<Vec<Record>, Refusal>;
+
+    /// Whether the decider supplies the Guide facts of the publication of
+    /// `call` in `state` (I-52, `compose::GuideFacts`). Without them a
+    /// core `PublishCall` is refused. The default supplies none.
+    fn supplies_guide(&self, state: &EngineState, call: CallId) -> bool {
+        let _ = (state, call);
+        false
+    }
 }
 
 /// The production decision functions, with no shell facts for the
@@ -332,6 +340,10 @@ impl<E: CreatorEnvironment> Decider for CreatorDecider<E> {
         answers: &Answers,
     ) -> Result<Vec<Record>, Refusal> {
         route_decide(state, cmd, ctx, answers, &self.0)
+    }
+
+    fn supplies_guide(&self, state: &EngineState, call: CallId) -> bool {
+        self.0.guide_facts(state, call).is_some()
     }
 }
 

@@ -103,8 +103,8 @@ pub trait CreatorEnvironment {
 
     /// The facts of the Guide of `call` at its publication in `state`
     /// ([`GuideFacts`]), or `None` when the shell supplies none. The
-    /// default supplies none, so the publication carries no Guide (the
-    /// seam of [`with_guide`]).
+    /// default supplies none, so the publication is refused with I-52
+    /// ([`with_guide`]).
     fn guide_facts(&self, state: &EngineState, call: CallId) -> Option<GuideFacts> {
         let _ = (state, call);
         None
@@ -901,9 +901,9 @@ const fn no_guide() -> Refusal {
 /// placeholder that does not resolve, refuses the publication with I-52,
 /// so nothing is appended. Every other command keeps its records.
 ///
-/// Seam: a shell that supplies no facts publishes as before, with no
-/// Guide. The strict fold of D2e, which refuses a `CallPublished` without
-/// its `GuidePublished`, is lane m4d2e-cont's.
+/// A shell that supplies no facts gets the I-52 refusal, since the fold
+/// refuses a `CallPublished` without its `GuidePublished` (D2e, Daniel's
+/// decision of 2026-11-15).
 pub(crate) fn with_guide(
     state: &EngineState,
     cmd: &fstp_domain::Command,
@@ -915,7 +915,7 @@ pub(crate) fn with_guide(
         return Ok(records);
     };
     let Some(facts) = env.guide_facts(state, *call) else {
-        return Ok(records);
+        return Err(no_guide());
     };
     let mut post = state.core.clone();
     for r in &records {
