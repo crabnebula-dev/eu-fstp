@@ -677,6 +677,38 @@ impl CellHandle {
             .block_on(running.vault.seed_vault_fact(source, fact))
     }
 
+    /// The negotiation fact of `proposal` listing `accounts`, sent to the
+    /// cell's vault as the internal request `NegotiationOpened` at the
+    /// cell's ledger length ([`crate::seeded_vault::SeededVault::negotiation_opened`]).
+    ///
+    /// Interim stand-in, pending Daniel (lane m3/devstack-scenarios): the
+    /// cell pushes no negotiation fact when NEGOTIATION opens (design
+    /// section 6.5 "Second guard"), so its vault refuses every release.
+    /// Claims built on a fact sent here say so.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the ledger cannot be read or the vault refused.
+    pub fn negotiation_opened(
+        &self,
+        proposal: fstp_domain::id::ProposalId,
+        accounts: &[fstp_domain::id::AccountId],
+    ) -> Result<(), WorldError> {
+        let seq = u64::try_from(self.ledger()?.len())
+            .map_err(|_| WorldError::Store("the ledger length".to_owned()))?;
+        let accounts: Vec<u128> = accounts.iter().map(|a| a.raw()).collect();
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        rt.services
+            .rt
+            .block_on(
+                running
+                    .vault
+                    .negotiation_opened(proposal.raw(), &accounts, seq),
+            )
+            .map_err(|e| WorldError::Store(format!("the negotiation fact: {e}")))
+    }
+
     /// The contract port's EFFECTIVE fact of `contract` on `proposal`,
     /// issued in process (`fstp_cell::process::RunningCell::contract_fact`,
     /// lane F-CYCLE3). It stands for a completed contract signature, which
@@ -858,6 +890,24 @@ impl CellHandle {
             .as_ref()
             .map(|c| c.erasure().clone())
             .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
+    }
+
+    /// The account whose login email is `email`, through the cell's keyed
+    /// login email index (lane m3/devstack-scenarios, for the devstack's
+    /// `GET /test/account`). Test only: the world reads the index in
+    /// process, since no route looks an account up by its email.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no listener or its key chain does not
+    /// open.
+    pub fn login_account(
+        &self,
+        email: &str,
+    ) -> Result<Option<fstp_domain::id::AccountId>, WorldError> {
+        let erasure = self.erasure()?;
+        self.block_on(erasure.login_account(email.to_owned()))?
+            .map_err(|e| WorldError::Store(format!("the login email index: {e}")))
     }
 
     /// Stores `text` as text `id` of the cell's text store, in a fresh
@@ -3644,6 +3694,13 @@ fn start_cell(
     if let Some(d) = dev {
         clock.set(d.clock_start);
     }
+    let vault_pages = match pages {
+        Some(_) => crate::vault_pages::VaultPages::load(
+            &crate::mc::place_model::db::workspace_root().join("web"),
+        )?
+        .map(std::sync::Arc::new),
+        None => None,
+    };
     let mail = crate::world_mail::WorldMail::default();
     // The control plane's operator ticket key (design section 8.5). In
     // production it is a ControlPlane chain key held in custody.
@@ -3691,6 +3748,9 @@ fn start_cell(
                 origin_host: vault_host.clone(),
                 clock: clock.clone(),
                 chain: Some(vault_chain),
+                // A world whose cells serve pages serves the vault's
+                // loader pages too (lane m3/devstack-scenarios).
+                pages: vault_pages,
             },
         ))
         .map_err(|e| fail("the vault", &e))?;

@@ -131,6 +131,34 @@ pub const fn body_limit(kind: WriteKind) -> usize {
 /// (ADR-009 "Each route has a body limit per ticket kind").
 pub const MAX_RELEASE_LEN: usize = 2 * fstp_vault_proto::MAX_TICKET_LEN;
 
+/// The one field of the release loader's form (`web/src/vault/release.ts`,
+/// ADR-009 "Delivery"). The loader posts the ticket as a top-level form
+/// navigation, so the body is `application/x-www-form-urlencoded` with
+/// this field. Hex needs no escape, so its value is the ticket's hex as
+/// it stands.
+pub const RELEASE_FIELD: &str = "ticket=";
+
+/// The ticket's hex of a `POST /r` body: the bare hex, or the loader's
+/// form body `ticket=<hex>` ([`RELEASE_FIELD`]). The length of the hex is
+/// checked against [`MAX_RELEASE_LEN`] before anything is decoded. Any
+/// other form, such as another field name or a second field, is left
+/// whole, so its hex decoding refuses it as malformed.
+///
+/// # Errors
+///
+/// [`OriginRefusal::TooLarge`] for hex over [`MAX_RELEASE_LEN`], and
+/// [`OriginRefusal::Malformed`] for an empty one.
+pub fn release_hex(body: &[u8]) -> Result<&[u8], OriginRefusal> {
+    let hex = body.strip_prefix(RELEASE_FIELD.as_bytes()).unwrap_or(body);
+    if hex.len() > MAX_RELEASE_LEN {
+        return Err(OriginRefusal::TooLarge);
+    }
+    if hex.is_empty() {
+        return Err(OriginRefusal::Malformed);
+    }
+    Ok(hex)
+}
+
 /// The method and path of a route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RouteSpec {
@@ -797,13 +825,15 @@ impl Vault {
                 Err(r) => refusal_reply(r),
             },
             ("POST", "/r") => {
-                // The ticket is the whole body: the loader posts it as the
-                // fragment gave it, in lowercase hex. The body limit of a
-                // release applies before the body is read (ADR-009).
-                if body.len() > MAX_RELEASE_LEN {
-                    return refusal_reply(OriginRefusal::TooLarge);
-                }
-                let ticket = match std::str::from_utf8(body)
+                // The ticket is the bare body or the loader's one form
+                // field, in lowercase hex as the fragment gave it. The
+                // body limit of a release applies before the hex is
+                // decoded (ADR-009, [`release_hex`]).
+                let hex = match release_hex(body) {
+                    Ok(h) => h,
+                    Err(r) => return refusal_reply(r),
+                };
+                let ticket = match std::str::from_utf8(hex)
                     .ok()
                     .and_then(|s| fstp_vault_proto::json::unhex(s, "ticket").ok())
                 {
@@ -1100,7 +1130,7 @@ fn bank_document(s: &VaultState, grant: WireProposal) -> Vec<u8> {
 /// `rows`. Every text comes from the catalogue (R-NF-04).
 fn document(lang: &str, title: &str, rows: &str) -> Vec<u8> {
     format!(
-        "<!doctype html><html lang=\"{}\"><head><meta charset=\"utf-8\"><title>{}</title></head><body><h1>{}</h1><table>{rows}</table></body></html>",
+        "<!doctype html><html lang=\"{}\"><head><meta charset=\"utf-8\"><title>{}</title></head><body><main><h1>{}</h1><table>{rows}</table></main></body></html>",
         escape(lang),
         escape(title),
         escape(title)

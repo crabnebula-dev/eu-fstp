@@ -88,6 +88,10 @@ async function eachPageState(
   await page.keyboard.press('Escape');
   await expect(page.locator(UI.stepup.dialog)).toBeHidden();
 
+  // The scenario's own client enrols the first admin through the split
+  // invitation, which the browser used above. So the cell starts again
+  // first (`fstp-devstack e2e`, lane m3/devstack-scenarios).
+  await control.reset();
   const s = await control.negotiation();
   const writer = await person();
   await writer.goto(await control.writeTicketUrl('AffiliationDeclared'));

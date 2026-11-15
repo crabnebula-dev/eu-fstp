@@ -70,6 +70,7 @@
 )]
 
 mod e2e;
+mod scenario;
 
 use std::io::Write as _;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};

@@ -3534,6 +3534,44 @@ pub mod http {
             Ok(true)
         }
 
+        /// Enrols the model account `account` at the cell account `cell`
+        /// with a software passkey, through an invitation that someone
+        /// else issued with the token `token`, such as a tenant admin in a
+        /// browser (lane m3/devstack-scenarios). `false` when the model
+        /// account is enrolled already or the cell refused the
+        /// registration.
+        ///
+        /// When `account` is [`FIRST_ADMIN`], the enrolled account stands
+        /// in for the first admin: the client logs it in and issues its
+        /// invitations and roster changes in that session. It must then
+        /// hold the tenant admin role before the client acts for it.
+        pub fn enrol_invited(
+            &self,
+            account: AccountId,
+            cell: AccountId,
+            token: &[u8; 32],
+        ) -> Result<bool, NotImplemented> {
+            if self.known().people.contains_key(&account) {
+                return Ok(false);
+            }
+            let mut device = Device::new(self.cell.host())?;
+            if !self.register(&hex(token), &mut device)? {
+                return Ok(false);
+            }
+            self.known().people.insert(
+                account,
+                Person {
+                    cell,
+                    devices: vec![device],
+                },
+            );
+            if account == FIRST_ADMIN {
+                let admin = self.passkey_login(FIRST_ADMIN)?.ok_or_else(failed)?;
+                self.known().admin = Some(admin);
+            }
+            Ok(true)
+        }
+
         /// Self-registers `account` with the synthetic address `email` and a
         /// software passkey (design section 8.3 ceremony 2, lane F-CYCLE3):
         /// `POST /auth/signup/options {email}`, the proof from the world's

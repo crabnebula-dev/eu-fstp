@@ -479,9 +479,11 @@ export class Control {
    * is only built here. The spec sends it through the real routes. `ids`
    * names the ids the command creates, such as `programme`.
    *
-   * Kinds the specs use: `CreateProgramme {}`, `GrantRole {programme,
-   * account, role}` with an M2 role name, and `SetLoginPolicy
-   * {magic_links}` (P-70, a strict addition of design section 8.4).
+   * Kinds the specs use: `CreateProgramme {}` (see [`createProgramme`]),
+   * `GrantRole {programme, account, role, starts_in?}` with an M2 role
+   * name and an optional start that many microseconds after the cell's
+   * instant, and `SetLoginPolicy {magic_links}` (P-70, a strict addition
+   * of design section 8.4).
    */
   async command(kind: string, params: Record<string, string> = {}): Promise<BuiltCommand> {
     const r = await this.request.post(this.url(`/test/commands/${kind}`), { data: params });
@@ -1166,15 +1168,34 @@ export async function enableMagicLinks(_page: Page, _control: Control): Promise<
   return Promise.resolve();
 }
 
-/** Creates a programme (high risk, design section 8.4). Returns its id. */
+/** The most commands `createProgramme` sends before the programme is active. */
+const CREATOR_COMMANDS_MAX = 4;
+
+/**
+ * Creates an active programme as the tenant admin on `page` (design
+ * section 8.4, M4 design section 3.4). Returns its id.
+ *
+ * A draft admits only a programme manager grant (I-66), and a second
+ * tenant admin who built nothing approves the activation (I-67). So no
+ * single command creates an active programme. The devstack drives the
+ * creator path (lane m3/devstack-scenarios): each `CreateProgramme` call
+ * answers the next command that only this admin can send, each a
+ * management change sent here with a fresh step-up, or `null` once the
+ * programme is active. On `fstp-devstack e2e` those are the invitation
+ * of a stand-in admin and its tenant admin grant. The stand-in then
+ * invites the second admin and the builder and runs the rest.
+ */
 export async function createProgramme(page: Page, control: Control): Promise<string> {
-  const c = await control.command('CreateProgramme');
-  const programme = c.ids['programme'];
-  if (programme === undefined) {
-    throw new StackMissing('devstack control command CreateProgramme: no programme id');
+  for (let i = 0; i <= CREATOR_COMMANDS_MAX; i++) {
+    const c = await control.command('CreateProgramme');
+    const programme = c.ids['programme'];
+    if (programme === undefined) {
+      throw new StackMissing('devstack control command CreateProgramme: no programme id');
+    }
+    if (c.command === null) return programme;
+    await runHighRisk(page, control.cell.origin, c.command);
   }
-  await runHighRisk(page, control.cell.origin, c.command);
-  return programme;
+  throw new Error(`CreateProgramme: no active programme after ${CREATOR_COMMANDS_MAX} commands`);
 }
 
 /** Copies every credential of `from` into a new authenticator on `page`. */

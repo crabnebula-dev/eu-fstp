@@ -38,10 +38,19 @@
 //!   token are kind `recovery`, with `<origin>/auth/recovery#e.<case>.<token>`
 //!   and `<origin>/auth/recovery#c.<case>.<token>` (lane m3/login-m2http).
 //! - `POST /test/clock/advance {micros}` moves the cell's test clock.
-//! - `GET /test/account`, `POST /test/commands/{kind}`,
-//!   `POST /test/scenario/negotiation` and `POST /test/vault-tickets/write`
-//!   answer 501 with the seam they wait on. No production part offers
-//!   them yet, and this stack invents none.
+//! - `GET /test/account?email=` answers `{account}` through the cell's
+//!   login email index.
+//! - `POST /test/scenario/negotiation` seeds a proposal in NEGOTIATION, one
+//!   in RANKED, and Operations and Judging invitations. It needs a cell
+//!   whose first admin nobody enrolled.
+//! - `POST /test/commands/CreateProgramme` hands the browser's first admin
+//!   the next command of the creator path, or `null` once the programme
+//!   is active. `POST /test/commands/GrantRole` builds a role grant.
+//! - `POST /test/vault-tickets/write {kind}` gives a write page link.
+//!
+//!   The last four are [`crate::scenario`]'s (lane m3/devstack-scenarios),
+//!   which says who enrols the first admin and what each claim rests on.
+//!   Another command kind answers 501.
 //!
 //! The cell clock starts at the wall clock at each world start and then
 //! moves only through `/test/clock/advance`.
@@ -57,13 +66,14 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fstp_cell::http::pages::Pages;
-use fstp_celltest::world::{DevCell, EDGE_PORT_ENV, World, WorldError, WorldSpec};
+use fstp_celltest::world::{CellHandle, DevCell, EDGE_PORT_ENV, World, WorldError, WorldSpec};
 use fstp_http::{Handler, Method, Request, Response, Server, ServerConfig, StatusCode};
 use fstp_json::{Object, Value};
 use fstp_rt::Runtime as _;
 use fstp_rt::signal::{Signals as _, TerminationListener as _};
 use fstp_rt::tokio::TokioRuntime;
 
+use crate::scenario::{self, Refusal, Seeded};
 use crate::{ENROL_PAGE, SPEC, check_enrol_page, hex};
 
 /// The parent domain of both cell hosts.
@@ -144,6 +154,9 @@ struct Stack {
     pages: Pages,
     world: Option<World>,
     handed: [bool; 2],
+    /// What the seeding and command builder routes seeded on each cell
+    /// ([`crate::scenario`]).
+    seeded: [Seeded; 2],
 }
 
 type Shared = Arc<Mutex<Stack>>;
@@ -240,6 +253,7 @@ fn reset(stack: &Shared, i: usize) -> Response {
         // The old world's cells stop before the new ones take the hosts.
         s.world = None;
         s.handed = [false; 2];
+        s.seeded = Default::default();
         match start_world(&s.pages) {
             Ok(w) => s.world = Some(w),
             Err(e) => {
@@ -394,27 +408,40 @@ fn advance(stack: &Shared, i: usize, req: &Request) -> Response {
     )
 }
 
-/// The seam each unserved control route waits on.
-fn seam(path: &str) -> Option<&'static str> {
-    if path == "/test/account" {
-        return Some(
-            "the M3 cell has no login email index to look an account up by (lane m3/login-m2http)",
-        );
+/// Runs `f` on cell `i` and what the stack seeded on it, and answers its
+/// value or its refusal ([`crate::scenario`]).
+fn seeding(
+    stack: &Shared,
+    i: usize,
+    f: impl FnOnce(&CellHandle, &mut Seeded) -> Result<Value, Refusal>,
+) -> Response {
+    let mut s = lock(stack);
+    let Stack { world, seeded, .. } = &mut *s;
+    let Some(cell) = world
+        .as_ref()
+        .and_then(|w| u8::try_from(i).ok().and_then(|i| w.cell(i)))
+    else {
+        return refuse(StatusCode::INTERNAL_SERVER_ERROR, "world", "no such cell");
+    };
+    let Some(seeded) = seeded.get_mut(i) else {
+        return refuse(StatusCode::INTERNAL_SERVER_ERROR, "world", "no such cell");
+    };
+    match f(cell, seeded) {
+        Ok(v) => json(StatusCode::OK, &v),
+        Err(r) => refuse(r.status, r.code, &r.detail),
     }
-    if path.starts_with("/test/commands/") {
-        return Some(
-            "no command builder of the devstack: an Operations or Judging grant needs an active programme, since a draft admits only a programme manager grant (I-66), so CreateProgramme needs the whole creator path with a second tenant admin; no command carries P-70, so magic links are a start option",
-        );
+}
+
+/// `GET /test/account?email=` of cell `i` ([`scenario::account`]).
+fn account(stack: &Shared, i: usize, req: &Request) -> Response {
+    if !names_param(req, "email") {
+        return refuse(StatusCode::BAD_REQUEST, "bad_request", "email");
     }
-    if path == "/test/scenario/negotiation" {
-        return Some(
-            "no negotiation seed: a proposal in NEGOTIATION with vault facts and Operations and Judging invitations",
-        );
-    }
-    if path == "/test/vault-tickets/write" {
-        return Some("no route that issues a vault write ticket for a test account");
-    }
-    None
+    seeding(stack, i, |cell, _| {
+        let mut known: Vec<String> = cell.mail().captured().into_iter().map(|m| m.to).collect();
+        known.push(cell.login_email(fstp_domain_testkit::r#gen::roster::ADMIN));
+        scenario::account(cell, &known, |e| has_param(req, "email", e))
+    })
 }
 
 /// The control routes of cell `i`.
@@ -424,10 +451,18 @@ fn control(stack: &Shared, i: usize, req: &Request) -> Response {
         (false, "/test/reset") => reset(stack, i),
         (true, "/test/mailbox") => mailbox(stack, i, req),
         (false, "/test/clock/advance") => advance(stack, i, req),
-        _ => match seam(path) {
-            Some(why) => refuse(StatusCode::NOT_IMPLEMENTED, "not_implemented", why),
-            None => Response::new(StatusCode::NOT_FOUND),
-        },
+        (true, "/test/account") => account(stack, i, req),
+        (false, "/test/scenario/negotiation") => seeding(stack, i, scenario::negotiation),
+        (false, "/test/vault-tickets/write") => seeding(stack, i, |cell, seeded| {
+            scenario::write_ticket(cell, seeded, &req.body)
+        }),
+        (false, p) if p.starts_with("/test/commands/") => {
+            let kind = p.trim_start_matches("/test/commands/");
+            seeding(stack, i, |cell, seeded| {
+                scenario::command(cell, seeded, kind, &req.body)
+            })
+        }
+        _ => Response::new(StatusCode::NOT_FOUND),
     }
 }
 
@@ -494,6 +529,7 @@ pub(crate) fn run(raw: &[String], pages: Pages) -> ExitCode {
         pages,
         world: Some(world),
         handed: [false; 2],
+        seeded: Default::default(),
     }));
     let mut servers = Vec::new();
     for (i, port) in (0u16..).zip([a.control_port, a.control_port.saturating_add(1)]) {
