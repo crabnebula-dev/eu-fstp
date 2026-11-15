@@ -2215,3 +2215,7 @@ Built by lane m4/guardian-map:
 - **Reference.** The rule `RouteMap` admits the readers of `Journey` on the team side: the lead and the team member in every state, and the guardian while X is under way. The guardian's binding ends at a terminal state and the 2026-11-06 decision names no guardian, so a former guardian reads no map. `diary::route_map` states the section 8.1 and 8.3 verdicts per role.
 - **Web.** The guardian's home card and guardian page show the "Progress" and "Activity" links (`journeyNav`). The activity-only navigation and its label are gone. The SA-09 page table is unchanged: the progress page is gated on `proposal.journey`, which already admits the guardian.
 - Tests: `r_jv_route_map_read.rs` adds a guardian to its world and `r_jv_01_guardian_reads_the_route_map_with_the_journey`. `r_jv_03_spec_pinned_cells.rs` pins the route map cells per role. `t_authz_matrix_applicant_ops.rs` adds `proposal.route_map` with no cell left out. `web/test/journey.test.ts` checks the guardian's links.
+
+Follow-up answer (2026-11-15, night), on the applicant's proposal page: "if i wrote it i should be able to read it".
+
+- **Authors keep reading their application.** Everyone who was on the team (lead, team member or guardian) keeps a read-only view of the application's content in every state, including after the proposal ends and after their own binding ended. This replaces "Former team: workspace closed" above for the application content. It is read-only: no former team member writes. Built by lane m4/proposal-read.
