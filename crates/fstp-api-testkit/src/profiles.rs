@@ -15,7 +15,7 @@
 //!
 //! Status: lane m4wire, in place of the W0 stub of lane W2c.
 
-use fstp_guide::{HORIZON_EUROPE, ProfileError, ProfileFiles, ProfileSource};
+use fstp_guide::{FunderProfile, HORIZON_EUROPE, ProfileError, ProfileFiles, ProfileSource};
 
 use crate::NotImplemented;
 
@@ -48,6 +48,49 @@ impl ProfileSource for SyntheticProfiles {
 /// Builds the `SyntheticProfiles`.
 pub fn synthetic_profiles() -> Result<SyntheticProfiles, NotImplemented> {
     Ok(SyntheticProfiles::default())
+}
+
+/// The heading of the required section "Contact and FAQ" in the Horizon
+/// Europe Guide template, which [`SectionGapProfiles`] renames.
+pub const GAP_HEADING: &str = "## 15. Contact and FAQ";
+
+/// The heading [`SectionGapProfiles`] writes in place of [`GAP_HEADING`].
+/// A renamed heading leaves its section missing (`fstp_guide` sections).
+pub const GAP_RENAMED: &str = "## 15. Contact";
+
+/// A profile source whose Guide template lacks one required section, as
+/// the test environment seeds `GuideSectionMissing` (I-52; Daniel,
+/// 2026-11-15, the I-66 generator gaps: no command, a seeded template, as
+/// theme faults are seeded). It holds a test-only template: it reaches
+/// `fstp-guide` only through this testkit `ProfileSource` (rule A9b).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SectionGapProfiles {
+    guide: Vec<u8>,
+}
+
+impl SectionGapProfiles {
+    /// The template of `base` with [`GAP_HEADING`] renamed, or `None`
+    /// when `base` has no such heading.
+    pub fn from_profile(base: &FunderProfile) -> Option<SectionGapProfiles> {
+        let text = base.guide_template();
+        let from = format!("\n{GAP_HEADING}\n");
+        if !text.contains(&from) {
+            return None;
+        }
+        let guide = text.replacen(&from, &format!("\n{GAP_RENAMED}\n"), 1);
+        Some(SectionGapProfiles {
+            guide: guide.into_bytes(),
+        })
+    }
+}
+
+impl ProfileSource for SectionGapProfiles {
+    fn files(&self, name: &str) -> Result<ProfileFiles<'_>, ProfileError> {
+        match name {
+            HORIZON_EUROPE => Ok(ProfileFiles { guide: &self.guide }),
+            _ => Err(ProfileError::UnknownProfile),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +144,28 @@ mod tests {
         }
         assert_eq!(replaced, 2);
         assert!(!shipped.guide_template().contains(SYNTHETIC_MARKER));
+    }
+
+    /// I-52, I-66 (Daniel, 2026-11-15): the seeded template lacks exactly
+    /// the section "Contact and FAQ", for the synthetic and the shipped
+    /// profile alike.
+    #[test]
+    fn i52_section_gap_template_lacks_one_required_section() {
+        let synthetic = synthetic_profiles()
+            .unwrap()
+            .profile(HORIZON_EUROPE)
+            .unwrap();
+        let shipped = ShippedProfiles.profile(HORIZON_EUROPE).unwrap();
+        for base in [synthetic, shipped] {
+            let full = fstp_guide::parse_template(base.guide_template().as_bytes()).unwrap();
+            assert!(fstp_guide::missing_sections(&full).is_empty());
+            let gap = SectionGapProfiles::from_profile(&base)
+                .unwrap()
+                .profile(HORIZON_EUROPE)
+                .unwrap();
+            let t = fstp_guide::parse_template(gap.guide_template().as_bytes()).unwrap();
+            assert_eq!(fstp_guide::missing_sections(&t), vec!["Contact and FAQ"]);
+        }
     }
 
     /// A9b: only the profiles `fstp-guide` names exist in the source.

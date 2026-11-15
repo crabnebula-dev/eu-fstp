@@ -194,6 +194,9 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.narrative.accept": "Accept the template text",
   "creator.narrative.accepting": "Accepting the template text.",
   "creator.narrative.accepted": "The template text is accepted.",
+  "creator.narrative.edit": "Save the edited text",
+  "creator.narrative.edited":
+    "The edited text is saved. Acknowledgements and an activation request made before it no longer count.",
 
   // Value editors.
   "creator.value.unset": "Not set",
@@ -467,6 +470,9 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.imports.confirmed": "Confirmed.",
   "creator.imports.edited": "Edited.",
   "creator.imports.dismissed": "Dismissed.",
+  "creator.imports.remove": "Remove the document",
+  "creator.imports.removed":
+    "The document is removed, with its open values. Acknowledgements and an activation request made before it no longer count.",
   "creator.imports.none": "The document proposed no value.",
   "creator.imports.to_steps": "Go to the creator steps",
 

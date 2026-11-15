@@ -97,6 +97,7 @@ export type OpName =
   | "creator.apply_start"
   | "creator.save_fields"
   | "creator.accept_narrative"
+  | "creator.edit_narrative"
   | "creator.get_draft"
   | "creator.get_report"
   | "creator.acknowledge"
@@ -109,6 +110,7 @@ export type OpName =
   | "import.upload"
   | "import.list"
   | "import.resolve"
+  | "import.remove"
   | "people.get_invitation"
   | "people.accept_invitation"
   | "people.begin_verification"
@@ -334,6 +336,7 @@ export interface OpParams {
   readonly "creator.apply_start": { readonly "programme": string };
   readonly "creator.save_fields": { readonly "programme": string };
   readonly "creator.accept_narrative": { readonly "programme": string; readonly "field": string };
+  readonly "creator.edit_narrative": { readonly "programme": string; readonly "field": string };
   readonly "creator.get_draft": { readonly "programme": string };
   readonly "creator.get_report": { readonly "programme": string };
   readonly "creator.acknowledge": { readonly "programme": string };
@@ -346,6 +349,7 @@ export interface OpParams {
   readonly "import.upload": { readonly "programme": string };
   readonly "import.list": { readonly "programme": string };
   readonly "import.resolve": { readonly "programme": string; readonly "import_proposal": string };
+  readonly "import.remove": { readonly "programme": string; readonly "import_document": string };
   readonly "people.get_invitation": { readonly "invitation_token": string };
   readonly "people.accept_invitation": { readonly "invitation_token": string };
   readonly "people.begin_verification": { readonly "invitation_token": string };
@@ -544,6 +548,7 @@ export const OP_NAMES: readonly OpName[] = [
   "creator.apply_start",
   "creator.save_fields",
   "creator.accept_narrative",
+  "creator.edit_narrative",
   "creator.get_draft",
   "creator.get_report",
   "creator.acknowledge",
@@ -556,6 +561,7 @@ export const OP_NAMES: readonly OpName[] = [
   "import.upload",
   "import.list",
   "import.resolve",
+  "import.remove",
   "people.get_invitation",
   "people.accept_invitation",
   "people.begin_verification",
@@ -1314,6 +1320,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "creator.edit_narrative",
+    method: "PUT",
+    path: "/programmes/{programme}/draft/narratives/{field}",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "draft" }, { kind: "literal", text: "narratives" }, { kind: "param", name: "field" }],
+    params: ["programme", "field"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "creator.get_draft",
     method: "GET",
     path: "/programmes/{programme}/draft",
@@ -1474,6 +1494,20 @@ export const OPERATIONS: readonly Operation[] = [
     base: "api",
     segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "imports" }, { kind: "literal", text: "proposals" }, { kind: "param", name: "import_proposal" }, { kind: "literal", text: "resolution" }],
     params: ["programme", "import_proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "import.remove",
+    method: "POST",
+    path: "/programmes/{programme}/imports/{import_document}/removal",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "imports" }, { kind: "param", name: "import_document" }, { kind: "literal", text: "removal" }],
+    params: ["programme", "import_document"],
     body: true,
     highRisk: false,
     binding: false,

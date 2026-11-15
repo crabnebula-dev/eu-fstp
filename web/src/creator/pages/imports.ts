@@ -147,10 +147,38 @@ export function mount(p: string): void {
       edit.setAttribute("aria-expanded", "true");
       firstControl(editor.root)?.focus();
     });
-    actions.append(confirm, edit, dismiss);
+    // Daniel, 2026-11-15: removing the document drops its open values. It
+    // is a draft record, so it voids the report (I-66).
+    const removal = h("button", { type: "button", "data-action": "remove-document" }, [t.label("creator.imports.remove")]);
+    removal.addEventListener("click", () => {
+      void removeDocument(row.document).then((ok) => {
+        if (!ok) return;
+        for (const other of Array.from(list.querySelectorAll(`[data-document="${row.document}"]`))) {
+          other.remove();
+        }
+        list.append(h("li", { role: "status" }, [t.label("creator.imports.removed")]));
+      });
+    });
+    li.setAttribute("data-document", row.document);
+    actions.append(confirm, edit, dismiss, removal);
     li.append(actions, editBox, state);
     return li;
   };
+
+  /** Removes one imported document against the current revision. */
+  const removeDocument = (doc: string): Promise<boolean> =>
+    new Promise<boolean>((done) => {
+      void write(async () => {
+        hush(alert);
+        const d = await loadDraft(p, alert);
+        if (d === null) {
+          done(false);
+          return;
+        }
+        const o = await call("import.remove", [p, doc], { base: d.revision }, anyObject);
+        done(!report(alert, o));
+      });
+    });
 
   main.append(
     h("p", {}, [t.label("creator.imports.intro")]),

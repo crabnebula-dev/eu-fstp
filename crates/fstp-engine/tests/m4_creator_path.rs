@@ -793,3 +793,136 @@ fn i65_dismissed_import_holds_nothing() {
             .contains_key(&FieldId::ActionAcronym)
     );
 }
+
+/// The removal of the acronym document by `actor` at time `t`.
+fn remove(e: &mut E, actor: AccountId, t: i64) -> Result<Seq, ExecError> {
+    let cmd = Command::Bridge(BridgeCommand::RemoveImport {
+        programme: P,
+        document: DOC,
+        base: head(e),
+    });
+    e.execute(cmd, by(actor, t))
+}
+
+/// I-66, I-65 (Daniel, 2026-11-15, the I-66 generator gaps): a programme
+/// manager removes an imported document in one entry that holds one
+/// creator `ImportRemoved`. Its open proposal no longer counts as
+/// unresolved and cannot be resolved, the removal voids the request, and
+/// the replay of the store equals the live state. A tenant admin without
+/// the binding, an unknown document and a second removal are refused and
+/// append nothing.
+#[test]
+fn i66_import_removal_drops_the_open_proposals_and_voids_the_request() {
+    let mut e = proposed();
+    let programme = ProgrammeRef::from_raw(P.raw());
+    assert_eq!(e.state().import.unresolved(programme), 1);
+    acknowledge_and_request(&mut e, 5);
+    let before = entries(&e).len();
+    assert_eq!(
+        remove(&mut e, TA, 7),
+        refused(RuleRef::I65, RefusalReason::BindingInactive)
+    );
+    assert_eq!(entries(&e).len(), before);
+    remove(&mut e, M1, 8).unwrap_or_else(|r| panic!("the removal is refused: {r:?}"));
+    let all = entries(&e);
+    let last = all.last().unwrap();
+    assert!(matches!(
+        &last.record,
+        Record::Creator(CreatorRecord::ImportRemoved { programme: p, by: b, .. })
+            if *p == P && *b == M1
+    ));
+    assert_eq!(all.len(), before + 1, "one entry of one record");
+    assert_eq!(e.state().import.unresolved(programme), 0);
+    let d = e.state().creator.draft(P).unwrap();
+    assert!(!d.request_live(), "I-66: the removal voids the request");
+    assert!(d.live_acks().is_empty());
+    assert_eq!(
+        remove(&mut e, M1, 9),
+        refused(RuleRef::I65, RefusalReason::WrongState)
+    );
+    assert!(resolve(&mut e, ClientResolution::Dismiss, 10).is_err());
+    let replayed = replay(&entries(&e)).unwrap();
+    assert_eq!(&replayed, e.state());
+}
+
+/// I-66 (Daniel, 2026-11-15): the text of a narrative edit is held once
+/// its entry is appended, as a save's value is.
+#[test]
+fn i66_engine_holds_the_text_of_a_narrative_edit() {
+    let mut e = requested(Vault::default());
+    let value =
+        decode_field_value(FieldId::ProgrammeNarrative, b"\"Edited synthetic text\"").unwrap();
+    let edit = FieldEdit {
+        field: FieldId::ProgrammeNarrative,
+        value: value.clone(),
+        digest: ValueDigest::new(ContentDigest::from_bytes([0x5e; 32])),
+        provenance: Provenance::Manual,
+    };
+    let cmd = CreatorCommand::EditNarrative {
+        programme: P,
+        base: head(&e),
+        edit: edit.clone(),
+    };
+    e.execute(Command::Creator(cmd), by(M1, 9))
+        .unwrap_or_else(|r| panic!("the narrative edit is refused: {r:?}"));
+    let state = e.state();
+    assert_eq!(
+        state
+            .creator
+            .held(P, FieldId::ProgrammeNarrative, edit.digest),
+        Some(&value)
+    );
+    assert!(!state.creator.draft(P).unwrap().request_live());
+}
+
+/// TH-26 (Daniel, 2026-11-15): the envelope fuzz seeds of the narrative
+/// edit and the import removal decode as creator records.
+#[test]
+fn i66_envelope_seeds_of_the_new_creator_records_decode() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/seeds/envelope_decode");
+    for file in [
+        "typed_creator_narrative_edited",
+        "typed_creator_import_removed",
+    ] {
+        let text = std::fs::read(dir.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let v = fstp_json::parse(&text).unwrap_or_else(|e| panic!("{file}: {e:?}"));
+        let entry = <Entry<fstp_json::Value> as fstp_json::FromJson>::from_json(&v)
+            .unwrap_or_else(|e| panic!("{file}: {e:?}"));
+        let record = fstp_engine::record_from_json_at(entry.schema, &entry.record)
+            .unwrap_or_else(|e| panic!("{file}: {e:?}"));
+        assert!(
+            matches!(
+                record,
+                Record::Creator(
+                    CreatorRecord::NarrativeEdited { .. } | CreatorRecord::ImportRemoved { .. }
+                )
+            ),
+            "{file}: {record:?}"
+        );
+    }
+}
+
+/// I-65 (Daniel, 2026-11-15): the fold refuses the removal of a document
+/// that is not the draft's, so no removal reaches another programme's
+/// imports.
+#[test]
+fn i65_fold_refuses_the_removal_of_an_unknown_document() {
+    let e = proposed();
+    let mut state = e.state().clone();
+    let removal = Record::Creator(CreatorRecord::ImportRemoved {
+        programme: P,
+        revision: head(&e),
+        document: fstp_creator::ImportDocumentId::from_raw(DOC.raw().saturating_add(1)),
+        by: M1,
+    });
+    let seq = Seq::from_raw(1_000);
+    assert!(
+        fstp_engine::apply(
+            &mut state,
+            seq,
+            Timestamp::from_micros(1_000_000_000),
+            &removal
+        )
+        .is_err()
+    );
+}

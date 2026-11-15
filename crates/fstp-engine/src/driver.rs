@@ -31,7 +31,8 @@
 //! values the later checks read, outside the ledger:
 //!
 //! - a `RecordProposals` batch: each proposal value, in the import store;
-//! - a creator `SaveFields`, or the name of an `OpenDraft`: each saved
+//! - a creator `SaveFields`, or the name of an `OpenDraft`, or the text of
+//!   an `EditNarrative`: each saved
 //!   value, in the creator (`CreatorState::hold_saved`);
 //! - a confirmed or edited `ResolveImport`: the saved value, in the
 //!   creator (`CreatorState::hold_import`). It is the value
@@ -976,6 +977,21 @@ fn holds_of(state: &EngineState, cmd: &Command, ctx: &Ctx, batch: &[Record]) -> 
                 .cloned()
                 .collect(),
         }],
+        // A narrative edit holds its new text like a save (Daniel,
+        // 2026-11-15), when the entry's `NarrativeEdited` names it.
+        Command::Creator(CreatorCommand::EditNarrative {
+            programme, edit, ..
+        }) if batch.iter().any(|r| {
+            matches!(r, Record::Creator(CreatorRecord::NarrativeEdited {
+                programme: p, field, digest, ..
+            }) if p == programme && *field == edit.field && *digest == edit.digest)
+        }) =>
+        {
+            vec![Hold::Saved {
+                programme: *programme,
+                fields: vec![edit.clone()],
+            }]
+        }
         Command::Bridge(b) => match crate::bridge::applied_edit(state, b, ctx) {
             Some((programme, edit))
                 if saves(

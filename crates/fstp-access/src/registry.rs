@@ -207,6 +207,9 @@ pub enum CreatorKind {
     SaveFields,
     /// `CreatorCommand::AcceptNarrative`.
     AcceptNarrative,
+    /// `CreatorCommand::EditNarrative`: narrative text the draft holds is
+    /// edited (Daniel, 2026-11-15).
+    EditNarrative,
     /// `CreatorCommand::Invite`.
     Invite,
     /// `CreatorCommand::WithdrawInvitation`.
@@ -230,6 +233,9 @@ pub enum CreatorKind {
 pub enum BridgeKind {
     /// `BridgeCommand::ResolveImport` (I-65).
     ResolveImport,
+    /// `BridgeCommand::RemoveImport`: an imported document is removed from
+    /// its draft, a draft record (Daniel, 2026-11-15).
+    RemoveImport,
 }
 
 /// A tenant-level parameter that M4 can set (design section 3.5).
@@ -1130,6 +1136,15 @@ pub const OPS: &[OpSpec] = &[
         "/programmes/{programme}/draft/narratives/{field}/acceptance",
     )
     .acting(MANAGER),
+    // Daniel, 2026-11-15: narrative text the draft holds is edited, an
+    // edit that voids the report (I-66).
+    OpSpec::new(
+        "creator.edit_narrative",
+        OpKind::Creator(CreatorKind::EditNarrative),
+        Put,
+        "/programmes/{programme}/draft/narratives/{field}",
+    )
+    .acting(MANAGER),
     OpSpec::read(
         "creator.get_draft",
         RK::GetDraft,
@@ -1224,6 +1239,15 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Bridge(BridgeKind::ResolveImport),
         Post,
         "/programmes/{programme}/imports/proposals/{import_proposal}/resolution",
+    )
+    .acting(MANAGER),
+    // Daniel, 2026-11-15: a draft record removes an imported document, so
+    // its open proposals no longer count. It voids the report (I-66).
+    OpSpec::new(
+        "import.remove",
+        OpKind::Bridge(BridgeKind::RemoveImport),
+        Post,
+        "/programmes/{programme}/imports/{import_document}/removal",
     )
     .acting(MANAGER),
     // J1 and J2: people and roles. SoD-09: the invitation landing, read

@@ -15,6 +15,7 @@
 //!   `field` is the `<step>.<member>` key of `fstp_programme::FieldId::key`
 //!   and `value` its spec JSON, with amounts as ADR-006 strings.
 //! - `creator.accept_narrative` sends `{base}` on the field's route.
+//! - `creator.edit_narrative` sends `{base, value}` on the field's route.
 //! - `creator.invite` sends `{email, role, organisation?}` with the role
 //!   keys of `e2e/creator/contract.ts`. The server draws the invitation.
 //! - `creator.acknowledge` sends `{revision, warning}`, with the result's
@@ -26,6 +27,7 @@
 //!   shown}`, where `resolution` is `{kind: "confirm", value}`, `{kind:
 //!   "edit", value}` or `{kind: "dismiss"}` and `shown` the proposal's
 //!   `digest` of the import list.
+//! - `import.remove` sends `{base}` on the document's route.
 //!
 //! A revision is the opaque string of the `revision` member of
 //! `creator.get_draft`. The test author of lane m4wire wrote this file
@@ -206,6 +208,21 @@ pub fn accept_narrative(p: ProgrammeId, field: &str, base: &str) -> Result<Op, A
     )
 }
 
+/// `creator.edit_narrative`:
+/// `PUT /programmes/{p}/draft/narratives/{field}`.
+pub fn edit_narrative(
+    p: ProgrammeId,
+    field: &str,
+    base: &str,
+    value: &str,
+) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Put,
+        &format!("/programmes/{}/draft/narratives/{field}", seg(p)),
+        &body(vec![("base", s(base)), ("value", s(value))]),
+    )
+}
+
 /// `creator.invite`: `POST /programmes/{p}/invitations`.
 pub fn invite(
     p: ProgrammeId,
@@ -344,6 +361,16 @@ pub fn import_resolve(
             ("resolution", resolution),
             ("shown", s(shown)),
         ]),
+    )
+}
+
+/// `import.remove`:
+/// `POST /programmes/{p}/imports/{document}/removal`.
+pub fn import_remove(p: ProgrammeId, document: &str, base: &str) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Post,
+        &format!("/programmes/{}/imports/{document}/removal", seg(p)),
+        &body(vec![("base", s(base))]),
     )
 }
 

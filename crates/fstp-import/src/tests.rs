@@ -1168,3 +1168,43 @@ fn th26_fuzz_seeds_decode() {
         );
     }
 }
+
+/// I-66 (Daniel, 2026-11-15, the I-66 generator gaps): a removed document
+/// no longer counts its unresolved proposals, and none of them can be
+/// resolved or recorded again. A document is removed once, and only a
+/// registered one. The store with the removal differs from the one
+/// without, so a replay keeps it.
+#[test]
+fn i66_removed_document_proposals_no_longer_count() {
+    let s = store_with(vec![
+        proposal(1, name(), "\"SuperSAFE\"", 1),
+        proposal(2, cap(), "\"400000.00\"", 2),
+    ]);
+    assert_eq!(s.unresolved(P), 2);
+    let mut removed = s.clone();
+    assert_eq!(
+        removed.remove_document(ImportDocumentId::from_raw(77)),
+        Err(ImportFoldError::UnknownDocument)
+    );
+    removed.remove_document(D1).unwrap();
+    assert!(removed.is_removed(D1));
+    assert_ne!(removed, s);
+    assert_eq!(removed.unresolved(P), 0);
+    assert_eq!(
+        removed.remove_document(D1),
+        Err(ImportFoldError::DocumentRemoved)
+    );
+    let dismiss = ClientResolution::Dismiss;
+    assert_eq!(
+        check_resolution(&removed, &resolve(1, salted(1), &dismiss, false)),
+        Err(ImportRefusal::DocumentRemoved)
+    );
+    let more = ImportCommand::RecordProposals {
+        document: D1,
+        proposals: vec![proposal(3, name(), "\"Other\"", 3)],
+    };
+    assert_eq!(
+        decide_import(&removed, &more, ImportActor::System),
+        Err(ImportRefusal::DocumentRemoved)
+    );
+}

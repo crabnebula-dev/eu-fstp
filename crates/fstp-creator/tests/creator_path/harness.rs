@@ -760,6 +760,8 @@ pub(crate) fn reference_builders(entries: &[Vec<Rec>]) -> BTreeSet<AccountId> {
                     | CreatorRecord::StartApplied { by, .. }
                     | CreatorRecord::FieldsSaved { by, .. }
                     | CreatorRecord::NarrativeAccepted { by, .. }
+                    | CreatorRecord::NarrativeEdited { by, .. }
+                    | CreatorRecord::ImportRemoved { by, .. }
                     | CreatorRecord::InvitationRecorded { by, .. }
                     | CreatorRecord::InvitationWithdrawn { by, .. }
                     | CreatorRecord::WarningAcknowledged { by, .. }

@@ -72,6 +72,9 @@ pub struct DraftShell {
     /// What the vault knows for the Q35 answers, or `None` for the fixed
     /// answers of the fake vault.
     pub q35: Option<Q35Known>,
+    /// Whether the funder profile's Guide template lacks a required
+    /// section, as a test seeds `GuideSectionMissing` (I-52, I-66).
+    pub guide_section_gap: bool,
 }
 
 impl Default for DraftShell {
@@ -86,6 +89,7 @@ impl Default for DraftShell {
                 score_tools: false,
             },
             q35: None,
+            guide_section_gap: false,
         }
     }
 }
@@ -162,7 +166,8 @@ impl DraftCell {
         )
         .with_shipped_profiles(shell.shipped)
         .with_theme(shell.theme.clone())
-        .with_ports(shell.ports);
+        .with_ports(shell.ports)
+        .with_guide_section_gap(shell.guide_section_gap);
         let engine = Engine::open_with(store, vault.oracle(), CreatorDecider(env))
             .map_err(|e| format!("open the draft cell: {e:?}"))?;
         Ok(DraftCell {

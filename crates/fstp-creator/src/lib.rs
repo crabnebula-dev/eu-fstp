@@ -96,7 +96,9 @@ pub use codec::{
     CreatorError, DraftInput, decode_command, decode_draft, decode_record, encode_command,
     encode_record, validate_draft,
 };
-pub use decide::{CreatorDecision, CreatorRefusal, decide_creator, decide_import_save};
+pub use decide::{
+    CreatorDecision, CreatorRefusal, decide_creator, decide_import_removal, decide_import_save,
+};
 pub use draft::{
     DraftView, PendingWording, affected_calls, draft_view, manual_wording, pending_wording,
 };

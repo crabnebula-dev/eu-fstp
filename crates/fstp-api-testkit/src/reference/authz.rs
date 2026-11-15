@@ -1366,6 +1366,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         T::Programme,
         R::ProgrammeManager,
     ),
+    // Daniel, 2026-11-15: the manager edits narrative the draft holds.
+    RefOp::act("creator.edit_narrative", T::Programme, R::ProgrammeManager),
     RefOp::read("creator.get_draft", T::Programme, R::KnockOutReader)
         .tool("fstp_creator_get_draft"),
     RefOp::read("creator.get_report", T::Programme, R::DraftManager)
@@ -1390,6 +1392,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("import.upload", T::Programme, R::ProgrammeManager),
     RefOp::read("import.list", T::Programme, R::DraftManager),
     RefOp::act("import.resolve", T::Programme, R::ProgrammeManager),
+    // Daniel, 2026-11-15: the manager removes an imported document, a
+    // draft record, as a resolution is.
+    RefOp::act("import.remove", T::Programme, R::ProgrammeManager),
     // J1 and J2: people and roles.
     // Lane m4reg, the invitation landing (J2). Reading: the invitation
     // token in the request is the capability. The invitee reads the
