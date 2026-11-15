@@ -283,9 +283,23 @@ Readings, pending Daniel:
 
 ## SA-13: Field help in the wizard and the Programme editor
 
-**Source.** Daniel, 2026-11-15 (night): "provide information about every field that the administrator / programme manager can fill out. Leave the text hidden by default, but if the user clicks an 'i' icon, then the information is shown. In the wizard and the editor, it is helpful because unless you have done this before you might not know what is intended." **Status.** Decided. To be built by lane `m4/field-help`.
+**Source.** Daniel, 2026-11-15 (night): "provide information about every field that the administrator / programme manager can fill out. Leave the text hidden by default, but if the user clicks an 'i' icon, then the information is shown. In the wizard and the editor, it is helpful because unless you have done this before you might not know what is intended." **Status.** Decided. Built by lane `m4/field-help` on 2026-11-15.
 
 - Every field a tenant admin or programme manager can fill in has a help text. This covers the "Create a programme" wizard, the Programme editor and creator steps, knock-out criteria, imports and invitations.
 - The help text is hidden by default. An "i" button beside the field's label shows it and hides it again. The button follows the disclosure pattern: a real button, `aria-expanded`, `aria-controls`, keyboard operable, and an accessible name "About <field label>".
 - The text is plain language (docs/design/10). It says what the field means, what a typical value looks like, and what it affects, such as which check, which document or which applicants. Content comes from the SPEC descriptions (`policy-parameters.md`, `programme-creator.md`, the profile and Guide sections) with the P- id. It never invents legal claims; where a legal explanation would be needed it says `TODO(legal)`.
 - A completeness test fails when a field has no help text, as the label check already does.
+
+### Built by lane m4/field-help
+
+- Component: `web/src/help/help.ts`, with its style in `web/src/site/ui.css` (`.fstp-info`, `.fstp-help`). Design docs 05 ("Field help") and 11 (section 11) describe it.
+- Texts: `web/src/help/messages.en.ts`. It holds 84 creator field texts, 7 wizard texts, 3 invitation texts and 3 import texts.
+- Where: the creator field editors (`creator/editor.ts` `fieldEditor`), so every creator step, the Knock-out criteria page and the import review; the wizard's stage 1 and Team stage; the People step's invitation form and the team page's; the creator start page's clone and import choices; the conflict acknowledgement of the import review.
+- Tests: `web/test/sa13_field_help.test.ts` (completeness, ARIA state, toggling, placement) and `e2e/studio/field_help.spec.ts` (a programme manager on a Programme editor step and a tenant admin on wizard stage 1, with the suite's structure and contrast checks).
+
+Readings, pending Daniel:
+
+- The help is per field. The members and list items of a structured field, such as the criteria of P-01, share the field's text.
+- The call number on Approval and publication is outside SA-13's list, so it has no help yet.
+- These texts say `TODO(legal)` in place of a legal explanation: P-41, P-46, P-19, the statement on minors, P-77, P-30, P-44, P-47 and the flow-down obligations.
+- The P-61 to P-64 texts give the policy table's proposed values as "Proposed value".

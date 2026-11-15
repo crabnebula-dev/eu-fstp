@@ -54,6 +54,18 @@ The prototype shows step 6 Money as the current step.
 - A programme with validation failures cannot be activated. Warnings need an acknowledgement (I-66).
 - Previews: progress map preview (R-JV-08), Guide for Applicants preview (R-GA-01) and public page preview.
 - Amount inputs take decimal strings with `inputmode="decimal"`.
+- Field help (SA-13). Every field has an "i" button beside its label. It shows a plain-language help text under the label, and hides it again. The pattern is under "Field help" below.
+
+### Field help (SA-13)
+
+Every field a programme manager or tenant admin fills in has a help text: the creator steps, knock-out criteria, the import review, the start page and invitations. One shared component draws it (`web/src/help/help.ts`), and the field editors use it.
+
+- **Control.** A real `<button type="button">` beside the label, named "About <field label>". It follows the disclosure pattern: `aria-expanded`, and `aria-controls` pointing to the help region. A click, Enter or Space toggles it.
+- **Region.** The help sits under the label as a block, never as a tooltip. It is hidden until the button opens it.
+- **Legend.** On a fieldset, the button sits in the legend beside its text. The group is named by that text alone through `aria-labelledby`.
+- **Scope.** One help per field, on the field's own label. Members and list items of a structured field share it.
+- **Icon.** A styled text "i" from `site/ui.css` `.fstp-info`, 28px across. Its border and glyph use the brand text token, and the open state uses the brand fill, so both themes meet contrast. No inline style or script is needed (CSP).
+- **Text.** `web/src/help/messages.en.ts`, keyed `help.field.<step>.<member>` like the labels. Each text says what the field means, a typical value and what it affects, and names its P- id. A text that would need a legal explanation says `TODO(legal)` instead.
 
 ## Approval and publication
 
@@ -85,7 +97,7 @@ An edit to the call text, P-01 or P-09 after approval returns the call to DRAFT.
 
 ## Spec IDs
 
-R-CF-02, R-CF-04, R-LA-03, R-PC-03, R-JV-08, R-JV-10, R-GA-01, I-07, I-08, I-12, I-50, I-52, I-65, I-66, I-67, P-02, P-05, P-08, P-10, P-58, SoD-07, O-57.
+R-NF-03 (field help, SA-13), R-CF-02, R-CF-04, R-LA-03, R-PC-03, R-JV-08, R-JV-10, R-GA-01, I-07, I-08, I-12, I-50, I-52, I-65, I-66, I-67, P-02, P-05, P-08, P-10, P-58, SoD-07, O-57.
 
 ## Open points
 

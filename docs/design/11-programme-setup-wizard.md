@@ -171,6 +171,7 @@ The flow is clickable: Administration, "Set up a new programme", each "Save and 
 - The checks region is `aria-live="polite"`, so a changed result is announced once.
 - Disabled buttons carry a `TODO(js)` comment and an `aria-describedby` reason. No TODO renders inside `main`.
 - At 375px the stage bar becomes a vertical list and the summary panel moves below the stage.
+- Every field of every stage has an "i" button beside its label, with its help hidden under the label until opened (SA-13). It is the shared field help of doc 05, "Field help". The stage 1 and Team stage fields use it too: programme name, email, role, home organisation and the role dates.
 
 ## 12. Spec IDs per screen element
 

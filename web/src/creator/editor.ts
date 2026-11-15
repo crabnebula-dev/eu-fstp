@@ -27,6 +27,7 @@ import { clearError, linkError } from "../core/a11y.js";
 import { h } from "../core/dom.js";
 import type { Label } from "../core/i18n.js";
 import { parseAmount } from "../core/money.js";
+import { attachHelp, fieldHelpId } from "../help/help.js";
 import type { FieldDef, Member, Shape } from "./fields.js";
 import { labelOr, t } from "./i18n.js";
 import { canonicalJson, record } from "./model.js";
@@ -454,6 +455,12 @@ export function fieldEditor(def: FieldDef, value: unknown, opts: { readonly mark
     },
   };
   const node = build(def.shape, value, "", fieldLabel(def.key), ctx, null, null);
+  // SA-13: the field's help sits beside its label or legend. Members and
+  // list items share the field's help.
+  const label = Array.from(node.el.children).find((c) => c.localName === "label" || c.localName === "legend");
+  if (label instanceof HTMLElement) {
+    attachHelp(label, opts.prefix, fieldHelpId(def.key));
+  }
   const notes = h("div", { class: "fstp-notes" });
   const attrs: Record<string, string> = { class: "fstp-field" };
   if (opts.mark) {

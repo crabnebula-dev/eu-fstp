@@ -10,6 +10,7 @@
 //   start leaves template narrative for a person to accept (TH-49).
 
 import { h } from "../../core/dom.js";
+import { labelWithHelp } from "../../help/help.js";
 import { busy, frame, go, hush, ready, warn } from "../frame.js";
 import { t } from "../i18n.js";
 import { readOpened, readProgrammes, readTemplates, type TemplateRow } from "../model.js";
@@ -128,7 +129,7 @@ export function mountStart(p: string): void {
         }),
       );
       cloneBox.replaceChildren(
-        h("label", { for: "clone-source" }, [t.label("creator.start.clone_source")]),
+        ...labelWithHelp("clone-source", t.label("creator.start.clone_source"), "help.import.clone_source"),
         select,
         go2,
       );
@@ -146,7 +147,7 @@ export function mountStart(p: string): void {
   const file = h("input", { id: "import-file", type: "file", accept: ".md,.txt,text/markdown,text/plain" });
   const upload = h("button", { id: "import-upload", type: "button" }, [t.label("creator.import.upload")]);
   importBox.append(
-    h("label", { for: "import-file" }, [t.label("creator.import.file")]),
+    ...labelWithHelp("import-file", t.label("creator.import.file"), "help.import.file"),
     file,
     h("p", { class: "fstp-hint" }, [t.label("creator.import.hint")]),
     upload,

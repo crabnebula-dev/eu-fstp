@@ -9,6 +9,7 @@
 // the people admin page, with its own step-up.
 
 import { h } from "../core/dom.js";
+import { labelWithHelp } from "../help/help.js";
 import { hush, warn } from "../creator/frame.js";
 import { anyObject, call, report } from "../creator/ops.js";
 import { ROLES, plausibleEmail, readInvitations, type InvitationRow } from "./model.js";
@@ -69,10 +70,10 @@ export function inviteSection(p: string, alert: HTMLElement): HTMLElement {
   const submit = h("button", { id: "invite-submit", type: "submit" }, [t.label("people.invite.submit")]);
   const status = h("p", { id: "invite-status", role: "status", class: "fstp-status" });
   const form = h("form", { id: "invite-form", novalidate: true }, [
-    h("div", { class: "fstp-control" }, [h("label", { for: "invite-email" }, [t.label("people.invite.email")]), email]),
-    h("div", { class: "fstp-control" }, [h("label", { for: "invite-role" }, [t.label("people.invite.role")]), role]),
+    h("div", { class: "fstp-control" }, [...labelWithHelp("invite-email", t.label("people.invite.email"), "help.invite.email"), email]),
+    h("div", { class: "fstp-control" }, [...labelWithHelp("invite-role", t.label("people.invite.role"), "help.invite.role"), role]),
     h("div", { class: "fstp-control" }, [
-      h("label", { for: "invite-organisation" }, [t.label("people.invite.organisation")]),
+      ...labelWithHelp("invite-organisation", t.label("people.invite.organisation"), "help.invite.organisation"),
       organisation,
       h("p", { class: "fstp-hint", id: "invite-organisation-hint" }, [t.label("people.invite.organisation_hint")]),
     ]),
