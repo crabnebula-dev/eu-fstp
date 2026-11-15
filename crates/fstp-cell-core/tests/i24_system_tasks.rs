@@ -28,9 +28,9 @@ use fstp_cell_core::tenant::{
 };
 use fstp_cell_core::text::{TextCommand, TextRecord};
 use fstp_cell_core::{
-    ACCOUNT_ERASURE_CAUSES, CellCommand, CellCtx, CellRecord, CellRefusal, ERASURE_CAUSES,
-    KeyCommand, KeyRecord, SystemCtx, SystemTask, decide, decide_system, decode_cell_record,
-    encode_cell_record, try_action_digest,
+    CellCommand, CellCtx, CellRecord, CellRefusal, ERASURE_CAUSES, KeyCommand, KeyRecord,
+    SystemCtx, SystemTask, decide, decide_system, decode_cell_record, encode_cell_record,
+    try_action_digest,
 };
 use fstp_domain::id::{BindingId, VaultEpoch};
 use fstp_domain::oracle::Answers;
@@ -675,12 +675,13 @@ fn i23_driver_sequence_reaction_seed_appends_and_acks_a_reaction() {
     assert_eq!(done.head, Seq::from_raw(3));
 }
 
-/// ADR-007 "Erasure-log entries", design section 5.6: a tenant admin is
-/// the authoriser of an erasure request and of a cell erasure only. A
-/// retention expiry (P-41) and a completed verification (R-ID-03) have the
-/// system or the vault as authoriser, so an account is refused them.
+/// ADR-007 "Erasure-log entries", design section 5.6, Daniel's decision
+/// of 2026-11-15 ("Tenant admin for all"): a tenant admin requests every
+/// erasure cause, retention expiry (P-41) and a completed verification
+/// (R-ID-03) included, and is the authoriser the log entry names. Any
+/// other account is refused every cause.
 #[test]
-fn adr007_account_records_only_request_and_cell_erasure_causes() {
+fn adr007_tenant_admin_records_every_erasure_cause() {
     let entries = ledger(&[
         (T0, cid(1), vec![common::admin_granted(ADMIN)]),
         (
@@ -691,34 +692,37 @@ fn adr007_account_records_only_request_and_cell_erasure_causes() {
     ])
     .unwrap();
     let s = common::state_of(&entries).unwrap();
-    let x = CellCtx {
-        actor: ADMIN,
-        at: T0.micros(),
-    };
     let erase = |cause: u16| {
         CellCommand::Text(TextCommand::EraseTexts {
             ids: vec![[0x7A; 16]],
             cause,
         })
     };
-    let mut got = Vec::new();
     for cause in ERASURE_CAUSES {
-        got.push((
-            cause,
-            decide(&s, &erase(cause), &x, &Answers::new()).is_ok(),
-        ));
+        let x = CellCtx {
+            actor: ADMIN,
+            at: T0.micros(),
+        };
+        let batch = decide(&s, &erase(cause), &x, &Answers::new()).unwrap();
+        assert_eq!(
+            batch[0],
+            CellRecord::Text(TextRecord::ErasureRequested {
+                ids: vec![[0x7A; 16]],
+                cause,
+                by: ADMIN,
+            }),
+            "cause {cause}"
+        );
+        let other = CellCtx {
+            actor: fstp_domain::id::AccountId::from_raw(7_702),
+            at: T0.micros(),
+        };
+        let r = decide(&s, &erase(cause), &other, &Answers::new());
+        assert!(
+            refused(&r, RuleRef::Actor, RefusalReason::WrongActor),
+            "cause {cause}: {r:?}"
+        );
     }
-    let want: Vec<(u16, bool)> = ERASURE_CAUSES
-        .iter()
-        .map(|c| (*c, ACCOUNT_ERASURE_CAUSES.contains(c)))
-        .collect();
-    assert_eq!(got, want);
-    assert_eq!(ACCOUNT_ERASURE_CAUSES, [2, 3]);
-    let r = decide(&s, &erase(1), &x, &Answers::new());
-    assert!(
-        refused(&r, RuleRef::Actor, RefusalReason::WrongActor),
-        "{r:?}"
-    );
 }
 
 /// I-23, design sections 5.3 and 5.6: an erasure of more texts than the
@@ -779,7 +783,12 @@ fn sod05_overdue_end_leaves_the_commands_that_end_access_open() {
     for (k, record) in [
         common::admin_granted(ADMIN),
         common::admin_granted(other),
-        CellRecord::Ops(OpsRecord::BreakGlassApproved { grant: grant_id }),
+        CellRecord::Ops(OpsRecord::BreakGlassApproved {
+            grant: grant_id,
+            staff: fstp_auth::recovery::StaffRef([0x57; 16]),
+            scope: vec![fstp_auth::breakglass::BreakGlassRead::Content],
+            until: plus(T0, 60 * MINUTE_US),
+        }),
     ]
     .into_iter()
     .enumerate()
@@ -799,6 +808,9 @@ fn sod05_overdue_end_leaves_the_commands_that_end_access_open() {
     let end_admin = CellCommand::Tenant(TenantCommand::EndTenantAdmin { account: other });
     let approve = CellCommand::Ops(OpsCommand::ApproveBreakGlass {
         request: [0x6C; 16],
+        staff: fstp_auth::recovery::StaffRef([0x57; 16]),
+        scope: vec![fstp_auth::breakglass::BreakGlassRead::Content],
+        until: plus(T0, 3 * MINUTE_US),
     });
     let r = decide(&s, &end_glass, &x, &Answers::new());
     assert!(r.is_ok(), "{r:?}");

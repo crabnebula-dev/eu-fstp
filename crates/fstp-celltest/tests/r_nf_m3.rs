@@ -706,31 +706,50 @@ fn unhex(text: &str) -> Vec<u8> {
         .collect()
 }
 
-/// The offset of the nonce in `value`, a value of a sealed column of
-/// `table`.
+/// The vault columns whose values are `nonce 12 || ciphertext || tag`,
+/// sealed by `fstp_vault::AeadSealer` (ADR-004 "Vault sealed values",
+/// Daniel, 2026-11-15).
+const VAULT_SEALED: &[(&str, &str, &str)] = &[
+    ("vault", "epoch", "affected"),
+    ("vault", "fact", "body"),
+    ("vault", "negotiation", "sealed_accounts"),
+    ("vault_audit", "chain", "body"),
+];
+
+/// The offset of the nonce in `value`, a value of sealed column `column`
+/// of `table`.
 ///
 /// - A sealed key (ADR-004): 1210 bytes that start with `FSK1`, nonce at
 ///   offset 1150.
 /// - The bodies of a table with a `key_ix` column, such as `ledger.entry`
 ///   and `ops.checkpoint`: "random nonce 12 || ciphertext || tag" (design
 ///   section 4.2), nonce at offset 0.
+/// - The vault's sealed values (ADR-004 "Vault sealed values"): nonce 12,
+///   then the ciphertext and tag, nonce at offset 0.
 ///
-/// Gap, reported by lane W1f and raised to the lead: the layout of every
-/// other sealed blob belongs to the ADR that owns its table (ADR-004,
-/// "Sealed blobs"), and `fstp_keys::envelope::SealedBlob` exposes no nonce.
-/// A nonce accessor there would close this seam. Until then such a value
-/// is reported as unread, so the test never passes over a seal it cannot
-/// see.
-fn nonce_offset(table: &TableSpec, value: &[u8]) -> Result<usize, fstp_celltest::NotImplemented> {
+/// The layout of any other sealed blob belongs to the ADR that owns its
+/// table (ADR-004, "Sealed blobs"). Such a value is reported as unread
+/// until that ADR records it, so the test never passes over a seal it
+/// cannot see.
+fn nonce_offset(
+    table: &TableSpec,
+    column: &str,
+    value: &[u8],
+) -> Result<usize, fstp_celltest::NotImplemented> {
     if value.len() == SEALED_KEY_LEN && value.starts_with(b"FSK1") {
         return Ok(SEALED_KEY_NONCE_AT);
     }
     if table.columns.iter().any(|c| c.name == "key_ix") {
         return Ok(0);
     }
+    if VAULT_SEALED
+        .iter()
+        .any(|(s, t, c)| *s == table.schema && *t == table.name && *c == column)
+    {
+        return Ok(0);
+    }
     Err(fstp_celltest::NotImplemented::new(
-        "the nonce of a sealed blob outside the key_ix tables \
-         (a nonce accessor on fstp_keys::envelope::SealedBlob; gap raised by lane W1f)",
+        "the nonce of a sealed blob whose layout no ADR records (ADR-004 \"Sealed blobs\")",
     ))
 }
 
@@ -771,7 +790,7 @@ fn committed_seals(
             for line in out.lines().filter(|l| !l.is_empty()) {
                 let value = unhex(line);
                 let place = format!("{dbname} {table}.{col}");
-                match nonce_offset(t, &value) {
+                match nonce_offset(t, col, &value) {
                     Ok(at) => match seal_at(place.clone(), &value, at) {
                         Some(s) => seals.push(s),
                         None => {

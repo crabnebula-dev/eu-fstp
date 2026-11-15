@@ -9,7 +9,8 @@
 //! - A step-up that the ledger granted admits only its recorded session.
 //!   The route-only auth commands never pass the gate through a session.
 //! - `ApproveRecovery` asks the vault, needs its step-up, and records the
-//!   approval of a second tenant admin only on the `SecondAdmin` path.
+//!   approval of a second tenant admin on any path as evidence (Q-I79).
+//!   Only the `SecondAdmin` path counts it as the second factor.
 //! - A command whose batch needs a route input is refused with the closed
 //!   refusal `ROUTE_INPUT_MISSING`, never the stub's `NotImplemented`.
 //! - A recovery completion folds only when the case holds the recorded
@@ -1107,11 +1108,13 @@ fn i79_same_identity_and_vault_outage_refuse_the_approval() {
     assert_eq!(batch, None);
 }
 
-/// I-79, design section 8.5: only a different current tenant admin
-/// approves, and only on the `SecondAdmin` path. A holder of Receiving
-/// roles only takes `EmailThenPasskey`, which takes no approval.
+/// I-79, design section 8.5, Q-I79 (Daniel, 2026-11-15: "Record it as
+/// evidence"): only a different current tenant admin approves. An
+/// approval is recorded on any recovery path as extra evidence. A holder
+/// of Receiving roles only takes `EmailThenPasskey`; the approval is
+/// recorded there, and the completion of that path never reads it.
 #[test]
-fn i79_approval_needs_another_admin_and_the_second_admin_path() {
+fn i79_approval_needs_another_admin_and_is_evidence_on_any_path() {
     let wrong_actor = Err(format!(
         "{:?}",
         ExecError::Refused(refused(RuleRef::Actor, RefusalReason::WrongActor))
@@ -1128,13 +1131,17 @@ fn i79_approval_needs_another_admin_and_the_second_admin_path() {
         "not a tenant admin"
     );
     let mut store = case_store(&[ADMIN, ADMIN_2], A);
+    let (r, batch) = approve(&mut store, ADMIN_2, Vault::Unverified);
+    assert_eq!(r, Ok(()), "EmailThenPasskey takes the approval as evidence");
+    assert_eq!(batch.unwrap()[0], approved(ADMIN_2));
+    let s = fstp_cell_core::replay(&read_all(&store).unwrap()).unwrap();
+    assert_eq!(s.auth().recovery(CASE).unwrap().approver, Some(ADMIN_2));
+    // The evidence still needs another admin.
+    let mut store = case_store(&[ADMIN, ADMIN_2], A);
     assert_eq!(
-        approve(&mut store, ADMIN_2, Vault::Unverified).0,
-        Err(format!(
-            "{:?}",
-            ExecError::Refused(refused(RuleRef::Input, RefusalReason::WrongState))
-        )),
-        "EmailThenPasskey"
+        approve(&mut store, A, Vault::Unverified).0,
+        wrong_actor,
+        "self approval on EmailThenPasskey"
     );
 }
 

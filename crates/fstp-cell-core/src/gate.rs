@@ -525,6 +525,23 @@ impl Admitted {
         self.principal
     }
 
+    /// The record that logs this admission, for a staff read under a
+    /// break-glass grant: `BreakGlassRead { grant, read }` (SoD-08, design
+    /// section 8.6). Only [`admit_break_glass`] builds such an admission.
+    /// The caller appends the record before it serves the read, so no
+    /// staff read goes unlogged. `None` for every other admission.
+    pub fn break_glass_log(&self) -> Option<crate::CellRecord> {
+        match (self.principal, &self.action) {
+            (Principal::BreakGlass(grant), Action::Read(read)) => Some(crate::CellRecord::Ops(
+                crate::ops::OpsRecord::BreakGlassRead {
+                    grant,
+                    read: break_glass_read(*read),
+                },
+            )),
+            _ => None,
+        }
+    }
+
     /// The step-up the action consumes, if any.
     pub fn stepup(&self) -> Option<StepUpUse> {
         self.stepup
@@ -1642,6 +1659,70 @@ pub fn admit_system(
         command: Some(command_id),
         inputs: RouteInputs::none(),
     })
+}
+
+/// Admits a staff member's read under a break-glass grant, or refuses it
+/// (SoD-08, TH-18, design sections 5.4 step 4 and 8.6, ADR-008
+/// "Break-glass").
+///
+/// `assertion` and `signature` are the control plane's staff assertion.
+/// It verifies under `pinned_key`, the staff assertion key the cell pins,
+/// within [`crate::lifetimes::STAFF_ASSERTION_US`]. A cell that pins no
+/// key (`None`, a self-hosted cell) admits no break-glass principal. The
+/// grant the assertion names must be recorded, name the asserted staff
+/// member, cover the read, and hold at `now`
+/// (`fstp_auth::breakglass::admit_break_glass_read`). The principal is
+/// [`Principal::BreakGlass`] with the grant, and it holds no binding, so
+/// no command is ever admitted here. Every refusal is
+/// [`Deny::NotPermitted`].
+///
+/// Every admitted read is logged: the caller appends
+/// [`Admitted::break_glass_log`] before it serves the read.
+pub fn admit_break_glass(
+    s: &CellState,
+    assertion: &fstp_auth::breakglass::StaffAssertion,
+    signature: &[u8],
+    pinned_key: Option<&[u8]>,
+    read: ReadAction,
+    now: Timestamp,
+) -> Result<Admitted, Deny> {
+    let verified = fstp_auth::breakglass::verify_staff_assertion(
+        assertion,
+        signature,
+        pinned_key,
+        now,
+        crate::lifetimes::STAFF_ASSERTION_US,
+    )
+    .map_err(|_| Deny::NotPermitted)?;
+    let grant = verified.grant();
+    let g = s.break_glass_grant(grant).ok_or(Deny::NotPermitted)?;
+    if !fstp_auth::breakglass::admit_break_glass_read(
+        g,
+        break_glass_read(read),
+        true,
+        Some(verified.staff()),
+        now,
+    ) {
+        return Err(Deny::NotPermitted);
+    }
+    Ok(Admitted {
+        action: Action::Read(read),
+        principal: Principal::BreakGlass(grant),
+        stepup: None,
+        at: now,
+        command: None,
+        inputs: RouteInputs::none(),
+    })
+}
+
+/// The break-glass read action of a gate read action.
+pub const fn break_glass_read(r: ReadAction) -> fstp_auth::breakglass::BreakGlassRead {
+    use fstp_auth::breakglass::BreakGlassRead as B;
+    match r {
+        ReadAction::ReadContent => B::Content,
+        ReadAction::ReadAudit => B::Audit,
+        ReadAction::ReadErasureLog => B::ErasureLog,
+    }
 }
 
 /// Whether `authentication.md` counts the method as phishing resistant.

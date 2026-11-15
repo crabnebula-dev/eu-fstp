@@ -34,7 +34,7 @@ pub enum BreakGlassRead {
 }
 
 /// A break-glass grant: `BreakGlassApproved { grant, staff, scope, until }`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BreakGlassGrant {
     /// The one staff member the request named.
     pub staff: StaffRef,
@@ -102,4 +102,103 @@ pub fn admit_break_glass_read(
         && g.approved_at.micros() <= now.micros()
         && now.micros() < g.until.micros()
         && g.ended.is_none_or(|e| now.micros() < e.micros())
+}
+
+// ---------------------------------------------------------------------------
+// Staff assertions (ADR-008 "Break-glass", Daniel, 2026-11-15).
+
+/// The composite signature context of a staff assertion. It differs from
+/// every operator ticket context, so no ticket verifies as an assertion.
+pub const STAFF_ASSERTION_CONTEXT: &[u8] = b"fstp-staff-assertion-v1";
+
+/// The length of the signed part of a staff assertion.
+pub const STAFF_ASSERTION_MESSAGE_LEN: usize = 40;
+
+/// A staff assertion: the control plane states that staff member `staff`
+/// acts under break-glass grant `grant`, at `issued_at`. It names the
+/// grant and an opaque staff reference only, never an account (I-20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StaffAssertion {
+    /// The break-glass grant.
+    pub grant: [u8; 16],
+    /// The staff member.
+    pub staff: StaffRef,
+    /// When the control plane issued it.
+    pub issued_at: Timestamp,
+}
+
+impl StaffAssertion {
+    /// The bytes the control plane signs: `grant || staff ||
+    /// issued_at`, the instant as a big-endian `i64` of UTC microseconds.
+    pub fn message(&self) -> [u8; STAFF_ASSERTION_MESSAGE_LEN] {
+        let mut out = [0u8; STAFF_ASSERTION_MESSAGE_LEN];
+        let (grant, rest) = out.split_at_mut(16);
+        let (staff, at) = rest.split_at_mut(16);
+        grant.copy_from_slice(&self.grant);
+        staff.copy_from_slice(&self.staff.0);
+        at.copy_from_slice(&self.issued_at.micros().to_be_bytes());
+        out
+    }
+}
+
+/// A staff assertion whose composite signature verified under the pinned
+/// key, within its lifetime. Only [`verify_staff_assertion`] builds one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VerifiedStaff {
+    assertion: StaffAssertion,
+}
+
+impl VerifiedStaff {
+    /// The grant the assertion names.
+    pub const fn grant(&self) -> [u8; 16] {
+        self.assertion.grant
+    }
+
+    /// The staff member the assertion names.
+    pub const fn staff(&self) -> StaffRef {
+        self.assertion.staff
+    }
+}
+
+/// Why a staff assertion is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaffAssertionDeny {
+    /// The cell pins no staff assertion key: a self-hosted cell (ADR-008,
+    /// proposed reading).
+    NoPinnedKey,
+    /// The composite signature did not verify under the pinned key.
+    Signature,
+    /// The instant lies before the issue or at or after its lifetime.
+    Expired,
+}
+
+/// Verifies staff assertion `a` with composite signature `signature`
+/// under `pinned_key`, the control plane's composite public key, at `now`
+/// (ADR-008, I-90). Both halves must verify. It is valid from its issue
+/// instant and before `issued_at + lifetime_us`.
+pub fn verify_staff_assertion(
+    a: &StaffAssertion,
+    signature: &[u8],
+    pinned_key: Option<&[u8]>,
+    now: Timestamp,
+    lifetime_us: i64,
+) -> Result<VerifiedStaff, StaffAssertionDeny> {
+    let Some(key) = pinned_key else {
+        return Err(StaffAssertionDeny::NoPinnedKey);
+    };
+    fstp_crypto::composite::verify_with_context(
+        key,
+        &a.message(),
+        STAFF_ASSERTION_CONTEXT,
+        signature,
+    )
+    .map_err(|_| StaffAssertionDeny::Signature)?;
+    let fresh = now
+        .micros()
+        .checked_sub(a.issued_at.micros())
+        .is_some_and(|age| age >= 0 && age < lifetime_us);
+    if !fresh {
+        return Err(StaffAssertionDeny::Expired);
+    }
+    Ok(VerifiedStaff { assertion: *a })
 }

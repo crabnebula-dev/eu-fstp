@@ -138,7 +138,9 @@ Status of this section: Accepted 2026-10-28 (Daniel Thompson-Yvetot). The sectio
 - The erasure log is the set of `TextErasureRequested` and `TextErased` ledger records. `DocumentErased` and `KeyEpochDestroyed` are ledger records too. Each sits in the audit chain by construction (I-24).
 - Each entry holds the text id, the request time, `completed_at`, the cause and the authoriser.
 - Causes: retention expiry (P-41), an erasure request, cell erasure, and a completed verification for identity documents (R-ID-03).
-- The authoriser is the requesting account for an erasure request, and the tenant admin or the operator ticket for a cell erasure. For a retention expiry it is the system, with a reference to the P-41 rule.
+- Decided (Daniel, 2026-11-15: "Tenant admin for all"). A tenant admin requests an erasure of every cause: retention expiry (P-41), an erasure request, cell erasure and a completed verification. The requesting tenant admin is the authoriser the entry names. No system or vault path records an erasure.
+- When a retention period (P-41) expires, the system only reminds the tenant admins. It erases nothing by itself. The reminder has no place yet. The M6 timeline (`fstp-timeline`) has no event kind and no source for the end of P-41 per action, and no mailbox message covers it. It is noted as open in `docs/handoff/m3-exit-audit.md`.
+- The operator ticket path for a cell erasure is unchanged.
 - `completed_at` comes from the `TextErased` or `DocumentErased` record. That record is appended only after the custody backend has returned its destroy receipt for the old root epoch (ADR-004 part 2). Until then the entry shows the request time only.
 - A `TextRef` under destruction resolves to its erasure-log entry from the moment the request is recorded, never to the text.
 - Interim, pending Daniel (Q42): an Auditor reads only entries for texts of the programme its binding names. Entries for tenant-wide texts, such as login emails, and for cell erasure are for tenant admins only. Tenant admins read every entry.
