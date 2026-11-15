@@ -1,6 +1,7 @@
 //! The audit reads of a programme (R-AU-01, I-24, ADR-007, `overview.md`
-//! NOTE 5). `authorize_read` cleared the caller as the auditor of the
-//! programme first (`roles-and-sod.md`, roles table).
+//! NOTE 5). `authorize_read` cleared the caller first as the auditor of the
+//! programme, a tenant admin or an FSTP coordinator of the programme
+//! (`roles-and-sod.md`, roles table, SA-08). Every reader reads only.
 //!
 //! - `audit.entries` lists the ledger entries of the programme, newest
 //!   first. An entry belongs to the programme when its record names the

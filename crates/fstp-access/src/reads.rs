@@ -354,6 +354,16 @@ pub enum ReadRule {
 }
 
 impl ReadRule {
+    /// The readers of a programme's audit log, read-only: its auditor,
+    /// every tenant admin, and an FSTP coordinator of the programme
+    /// (R-AU-01, SA-08, Daniel 2026-11-15). The entries show texts by id
+    /// only (ADR-007), so no proposal content is exposed.
+    pub const AUDIT_READER: ReadRule = ReadRule::AnyOf(&[
+        ReadRule::Auditor,
+        ReadRule::TenantAdmin,
+        ReadRule::Holder(Role::FstpCoordinator),
+    ]);
+
     /// The states after NEGOTIATION in which [`ReadRule::GrantReviewer`]
     /// opens. Interim reading, pending Daniel: WITHDRAWN and DECLINED end
     /// the negotiation without a grant, so they are left out.
@@ -512,8 +522,12 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     (ReadKind::ListImportProposals, DRAFT_READER, OPEN_ALWAYS),
     (ReadKind::ListInvitations, DRAFT_READER, OPEN_ALWAYS),
     (ReadKind::ListBindings, ReadRule::TenantAdmin, OPEN_ALWAYS),
-    (ReadKind::GetAuditLog, ReadRule::Auditor, OPEN_ALWAYS),
-    (ReadKind::GetVaultOutcomes, ReadRule::Auditor, OPEN_ALWAYS),
+    (ReadKind::GetAuditLog, ReadRule::AUDIT_READER, OPEN_ALWAYS),
+    (
+        ReadKind::GetVaultOutcomes,
+        ReadRule::AUDIT_READER,
+        OPEN_ALWAYS,
+    ),
     (ReadKind::ListMyAgents, ReadRule::Own, OPEN_ALWAYS),
     (ReadKind::ListMyAgentActivity, ReadRule::Own, OPEN_ALWAYS),
     (ReadKind::ListMyPendingActions, ReadRule::Own, OPEN_ALWAYS),

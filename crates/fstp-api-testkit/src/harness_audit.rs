@@ -13,8 +13,9 @@
 //!   reason appear by id only.
 //! - `audit.vault_outcomes` lists the vault answers the decisions of P
 //!   used, by digest and answer bit only.
-//! - Only the auditor of P reads either (`roles-and-sod.md`, roles
-//!   table). `audit.vault_outcomes` has no tool (I-86).
+//! - The auditor of P, every tenant admin and the FSTP coordinator of P
+//!   read both, read-only (`roles-and-sod.md`, roles table, SA-08).
+//!   `audit.vault_outcomes` has no tool (I-86).
 
 #![allow(
     clippy::unwrap_used,
@@ -284,22 +285,46 @@ fn i67_adr022_audit_entries_list_the_override() {
     assert!(!v.to_compact().contains("SYNTHETIC AUDIT REASON"));
 }
 
-/// `roles-and-sod.md` roles table, R-AU-01: only the auditor of P reads
-/// its audit entries and vault outcomes. The tenant admins, the
-/// programme manager, the coordinator and a team member are refused.
+/// `roles-and-sod.md` roles table, R-AU-01, SA-08 (Daniel, 2026-11-15):
+/// the auditor of P, every tenant admin and the FSTP coordinator of P read
+/// its audit entries and vault outcomes, read-only. A committee member,
+/// an applicant, the programme manager, an unbound account and the
+/// manager of P2 are refused. The coordinator of P reading P2, where it
+/// holds no binding, is refused as a coordinator of another programme.
 #[test]
-fn r_au_01_only_the_auditor_reads_the_audit_entries() {
+fn r_au_01_sa08_auditor_admins_and_coordinator_read_the_audit_log() {
     let w = built(StateProfile::Proposal(StateTag::Stage1));
     let mut seed = seeder(&w);
     let p = w.targets.programme.expect("P");
+    let p2 = other_programme_of(&seed, p);
     for path in [entries_path(p), outcomes_path(p)] {
-        let ok = seed.api(AUDITOR, GET, &path, &Value::Null);
-        assert!(ok.is_ok(), "{path}: {ok:?}");
-        for who in [ADMIN_PLAIN, ADMIN_BUILDER, PM, COORD, LEAD, UNBOUND] {
+        for who in [AUDITOR, ADMIN_PLAIN, ADMIN_BUILDER, COORD] {
+            let ok = seed.api(who, GET, &path, &Value::Null);
+            assert!(ok.is_ok(), "{path}: {} refused: {ok:?}", who.raw());
+        }
+        for who in [MEMBER, CHAIR, LEAD, TEAM, PM, PM_OTHER, UNBOUND] {
             let r = seed.api(who, GET, &path, &Value::Null);
             assert!(r.is_err(), "{path}: {} read it: {r:?}", who.raw());
         }
     }
+    for path in [entries_path(p2), outcomes_path(p2)] {
+        let r = seed.api(COORD, GET, &path, &Value::Null);
+        assert!(r.is_err(), "{path}: the coordinator of P read P2: {r:?}");
+        let ok = seed.api(ADMIN_PLAIN, GET, &path, &Value::Null);
+        assert!(ok.is_ok(), "{path}: a tenant admin refused P2: {ok:?}");
+    }
+}
+
+/// The other programme of the tenant, P2.
+fn other_programme_of(seed: &Seeder, p: ProgrammeId) -> ProgrammeId {
+    let state = seed.ports.engine.state();
+    state
+        .core
+        .roster()
+        .bindings()
+        .map(|(_, b)| b.programme)
+        .find(|q| *q != p)
+        .expect("P2")
 }
 
 /// `overview.md` NOTE 5, I-86: the vault outcomes of P are its ledger's

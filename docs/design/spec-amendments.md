@@ -158,3 +158,23 @@ The option read: "The FSTP coordinator may unmask any party of their own program
 2. The operation `identity.unmask`, high-risk with step-up, web only, with a purpose of 1 to 500 characters stored as a `TextRef`.
 3. The vault ticket kind `unmask` on the release route, admitted without a negotiation fact.
 4. The reads `identity.parties` for the coordinator and `audit.unmasks` for the auditor and tenant admins.
+
+## SA-08: Tenant admins and the FSTP coordinator read the audit log
+
+**Source.** Daniel's decision, 2026-11-15: "tenant admins and coordinators can all 'read-only' the audit log." **Status.** Spec amendment applied on 2026-11-15. Backend and web work applied by lane `m4/audit-readers`.
+
+### Spec amendment applied
+
+- `roles-and-sod.md`: the FSTP coordinator, Tenant admin and Auditor rows carry a NOTE. Tenant admins and the FSTP coordinator of a programme read its audit log read-only. The entries show text references only (ADR-007), so no proposal content is exposed.
+- R-AU-01 and I-24 are unchanged. The tenant admin row's "No proposal content access by default" still holds.
+
+### Backend work
+
+1. `audit.entries` and `audit.vault_outcomes` share the read rule `ReadRule::AUDIT_READER`: the auditor of the programme, every tenant admin, and an FSTP coordinator of the programme. The reference names it `Rule::AuditReader`.
+2. I-86 exposure is unchanged. `audit.entries` keeps its MCP tool `fstp_audit_list_entries` for every reader. `audit.vault_outcomes` stays web only.
+3. `audit.unmasks` is unchanged: the auditor and the tenant admins.
+
+### Web work
+
+1. The audit page shows the entries to all three readers.
+2. A tenant admin's home links to the audit log of each programme of the tenant, from `creator.list_programmes`. A coordinator's home links to the audit log of each programme it coordinates.

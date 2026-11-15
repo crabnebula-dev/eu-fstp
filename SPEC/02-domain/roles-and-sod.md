@@ -8,7 +8,7 @@ Roles bind a tenant account to a programme with a start date and an optional end
 | --- | --- | --- |
 | Programme manager | Drafting | Sets policy parameters, approves call publication. |
 | Call drafter | Drafting | Writes call text and knock-out criteria. |
-| FSTP coordinator | Judging | Runs the knock-out check (Annexe 5.b). May unmask any party of the own programme, with a purpose and a step-up (I-17 as amended 2026-11-15, ADR-023). |
+| FSTP coordinator | Judging | Runs the knock-out check (Annexe 5.b). May unmask any party of the own programme, with a purpose and a step-up (I-17 as amended 2026-11-15, ADR-023). NOTE: Tenant admins and the FSTP coordinator of a programme read its audit log read-only (Daniel, 2026-11-15). The entries show text references only (ADR-007), so no proposal content is exposed. |
 | Committee member | Judging | Votes on committee decisions. |
 | Committee chair | Judging | Casting vote on ties (Annexe 5.a). |
 | Assigned reviewer | Judging | Committee member assigned to a proposal for one call. |
@@ -16,13 +16,13 @@ Roles bind a tenant account to a programme with a start date and an optional end
 | Applicant | Receiving | Lead of a proposal. |
 | Applicant team member | Receiving | Contributor on a proposal. |
 | Guardian | Receiving | Consents on behalf of a minor applicant. |
-| Tenant admin | Operations | Tenant configuration. No proposal content access by default. |
+| Tenant admin | Operations | Tenant configuration. No proposal content access by default. NOTE: Tenant admins and the FSTP coordinator of a programme read its audit log read-only (Daniel, 2026-11-15). The entries show text references only (ADR-007), so no proposal content is exposed. |
 | Finance approver | Operations | Accepts milestones for payment. |
 | Payment releaser | Operations | Releases approved payments. |
 | Contract signatory | Operations | Signs contracts for the funder side, with signing authority (`02-domain/contracts.md`). |
 | Financial signatory | Operations | Approves payment instructions and financial commitments for the organisation. Tenant-wide, not bound to a programme (decided by Daniel 2026-11-01). |
 | Legal signatory | Operations | Approves contracts, terms and legal commitments for the organisation. Tenant-wide, not bound to a programme (decided by Daniel 2026-11-01). |
-| Auditor | Operations | Read-only access to audit log and aggregates. |
+| Auditor | Operations | Read-only access to audit log and aggregates. NOTE: Tenant admins and the FSTP coordinator of a programme read its audit log read-only (Daniel, 2026-11-15). The entries show text references only (ADR-007), so no proposal content is exposed. |
 
 NOTE: The Contract signatory is the tenant operator signatory that `02-domain/contracts.md` lists as a party, and it holds signing authority (decided 2026-10-25). SoD-03 keeps it apart from Receiving roles.
 
