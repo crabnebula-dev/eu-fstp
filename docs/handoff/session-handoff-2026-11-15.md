@@ -35,16 +35,17 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 
 | Worktree | Branch | State |
 | --- | --- | --- |
-| (merged) | `m4/audit-publish-import`, `m3/cell-routes`, `m4/ops-roles-agents` | On main: audit log read and page, activation, publish and import fixes; add passkey, vault tickets, applied self-grants; agents, roles and pending reads |
-| `.lanes/auditread` | `m4/audit-readers` | Running: audit log read-only for tenant admins and coordinators |
-| `.lanes/seams` | `m4/internal-seams` | Running: the last `NotImplemented` seams in fstp-api-core |
-| `.lanes/decA` | `m3/decisions-a` | Running: Q-I79, SoD-08, ADR-007 causes, ADR-004 layout |
+| (merged, pushed) | `m4/audit-publish-import`, `m3/cell-routes`, `m4/ops-roles-agents`, `m4/audit-readers`, `m4/internal-seams`, `m3/decisions-a` | On main at handoff: audit log and its readers; add passkey, vault tickets, applied self-grants; agents, roles and pending reads; the last API-core seams (journal folds the ledger, sealed workspace store, text reads under clearance); Q-I79, SoD-08 break-glass, ADR-007 causes, ADR-004 sealed layout. Known-red is down to 16 entries |
 | `.lanes/decB` | `m4/decisions-b` | Created, not started: I-52, ledger seams, I-66/I-67 creator commands |
 | `.lanes/finish` | `m3/finish-gaps` | Created, not started: `i24_system_tasks` seed, wizard name at stage 1 and approver count, cell erasure gaps, CellBackup scan, devstack specs |
 
 The briefs for decB and finish are in the transcript of this session. In short, each item in the two tables above.
 
 ## After the lanes
+
+Start the two lanes not yet run (`.lanes/decB`, `.lanes/finish`), one after the other or both, with lean gates. Their scope is in the decision table above and in the `m3/finish-gaps` list: wizard name at stage 1 and approver count, cell erasure gaps, CellBackup scan, devstack specs. The `i24_system_tasks` seed is already refreshed.
+
+Open points from the merged lanes: `Workspaces` and the R-NG-06 acknowledgement have no PostgreSQL port in `fstp-cell` yet; no HTTP route serves break-glass staff reads yet (M4 operator views); the P-41 retention reminder has no timeline source; the Ticket key is handed in, not kept in the keystore.
 
 1. Merge decB and finish when done, push, restart the demo.
 2. One CI run with the full matrices. Patch what it names.
