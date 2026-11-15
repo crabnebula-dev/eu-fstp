@@ -75,6 +75,39 @@ details > summary { cursor: pointer; font-weight: var(--weight-bold); min-height
 .fstp-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin: var(--space-4) 0; }
 .fstp-items { padding-left: var(--space-6); }
 
+/*
+ * Field help (SA-13, R-NF-03): the "i" button beside a field's label and
+ * the help region under it. The glyph is generated here, so the button's
+ * only name is its aria-label. The button is 28px across (WCAG 2.5.8).
+ * Its border uses brand text, 3:1 or more on the page in both themes,
+ * and the expanded state is a brand fill with its on-brand glyph.
+ */
+label:has(+ .fstp-info) { display: inline-block; margin: 0 var(--space-2) var(--space-1) 0; vertical-align: middle; }
+legend > .fstp-info { margin-left: var(--space-2); }
+button.fstp-info {
+  display: inline-grid; place-items: center; vertical-align: middle;
+  width: 1.75rem; height: 1.75rem; min-height: 0; padding: 0;
+  border: 2px solid var(--color-brand-text); border-radius: 50%;
+  background: var(--color-surface-0); color: var(--color-brand-text);
+  font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: var(--weight-bold);
+  font-size: 1rem; line-height: 1;
+}
+button.fstp-info::before { content: "i"; }
+button.fstp-info:hover { background: var(--color-state-info-bg); }
+button.fstp-info[aria-expanded="true"] { background: var(--color-brand); border-color: var(--color-brand); color: var(--color-on-brand); }
+.fstp-help {
+  display: block; max-width: 40rem; margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 4px solid var(--color-state-info-border); border-radius: var(--radius-sm);
+  background: var(--color-state-info-bg); color: var(--color-text-1);
+  font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-regular);
+}
+.fstp-help > p { margin: 0; }
+.fstp-help[hidden] { display: none; }
+.fstp-check:has(> .fstp-info) { flex-wrap: wrap; }
+.fstp-check:has(> .fstp-info) > label { max-width: calc(100% - 5rem); }
+.fstp-check > .fstp-help { flex-basis: 100%; }
+
 .fstp-field-error, .fstp-error {
   display: block; color: var(--color-state-error-text);
   font-weight: var(--weight-bold); font-size: var(--text-sm); margin-top: var(--space-1);

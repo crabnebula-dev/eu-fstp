@@ -12,6 +12,7 @@
 // parsed as markup or followed as a link.
 
 import { h } from "../../core/dom.js";
+import { labelWithHelp } from "../../help/help.js";
 import { clearProblems, fieldEditor, fieldLabel, firstControl, showProblems } from "../editor.js";
 import { fieldOf } from "../fields.js";
 import { frame, hush, ready, warn } from "../frame.js";
@@ -96,7 +97,7 @@ export function mount(p: string): void {
       ack = h("input", { id, type: "checkbox", "data-role": "conflict-ack" });
       li.append(
         h("p", { class: "fstp-note" }, [t.label(flag === "unset" ? "creator.imports.flagged_unset" : "creator.imports.flagged")]),
-        h("div", { class: "fstp-check" }, [ack, h("label", { for: id }, [t.label("creator.imports.conflict_ack")])]),
+        h("div", { class: "fstp-check" }, [ack, ...labelWithHelp(id, t.label("creator.imports.conflict_ack"), "help.import.conflict_ack")]),
       );
     }
     const acknowledged = (): boolean => ack instanceof HTMLInputElement && ack.checked;

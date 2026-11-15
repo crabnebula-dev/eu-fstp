@@ -35,6 +35,7 @@ import { readWaitingCalls } from "../studio/model.js";
 import { record } from "../creator/model.js";
 import { plausibleEmail, readInvitations, type InvitationRow } from "../people/model.js";
 import { roleLabel } from "../people/i18n.js";
+import { attachHelp, labelWithHelp } from "../help/help.js";
 import { t } from "./i18n.js";
 import {
   ROLE_GROUPS,
@@ -89,9 +90,9 @@ function statesOf(d: Draft | null, r: Report | null): readonly StageState[] {
   return stageStates(r, d !== null, d !== null && (d.activationRequested || d.status === "active"));
 }
 
-/** A labelled control in the token sheet's `.field` form. */
-function field(id: string, label: string, control: HTMLElement, hint: string | null = null): HTMLElement {
-  const parts: HTMLElement[] = [h("label", { for: id }, [label])];
+/** A labelled control in the token sheet's `.field` form, with its help (SA-13). */
+function field(id: string, label: string, control: HTMLElement, hint: string | null, help: string): HTMLElement {
+  const parts: HTMLElement[] = labelWithHelp(id, label, help);
   if (hint !== null) {
     parts.push(h("span", { class: "hint", id: `${id}-hint` }, [hint]));
     control.setAttribute("aria-describedby", `${id}-hint`);
@@ -104,8 +105,8 @@ function dateControls(prefix: string): { readonly root: HTMLElement; readonly st
   const start = h("input", { id: `${prefix}-start`, type: "date", required: true, value: todayOf(Date.now()) }) as HTMLInputElement;
   const end = h("input", { id: `${prefix}-end`, type: "date" }) as HTMLInputElement;
   const root = h("div", { class: "row-2" }, [
-    field(`${prefix}-start`, t.label("setup.dates.start"), start, t.label("setup.dates.start_hint")),
-    field(`${prefix}-end`, t.label("setup.dates.end"), end, t.label("setup.dates.end_hint")),
+    field(`${prefix}-start`, t.label("setup.dates.start"), start, t.label("setup.dates.start_hint"), "help.wizard.role_start"),
+    field(`${prefix}-end`, t.label("setup.dates.end"), end, t.label("setup.dates.end_hint"), "help.wizard.role_end"),
   ]);
   return { root, start, end };
 }
@@ -180,7 +181,7 @@ export function mountStart(): void {
   const stage = h("section", { id: "setup-stage", "aria-labelledby": "setup-stage-title", "data-stage": "start" }, [
     h("p", { class: "card-kicker" }, [stageKicker("start")]),
     h("h2", { id: "setup-stage-title" }, [stageName("start")]),
-    field("setup-name", t.label("setup.start.name"), name, t.label("setup.start.name_hint")),
+    field("setup-name", t.label("setup.start.name"), name, t.label("setup.start.name_hint"), "help.wizard.programme_name"),
     h("div", { class: "field" }, [
       h("p", {}, [h("strong", {}, [t.label("setup.summary.profile")]), " ", t.label("setup.summary.profile_value")]),
       h("p", { class: "hint" }, [t.label("setup.start.profile_hint")]),
@@ -188,7 +189,7 @@ export function mountStart(): void {
     h("section", { class: "step-block", "aria-labelledby": "setup-pm-title" }, [
       h("h3", { id: "setup-pm-title" }, [t.label("setup.start.pm.title")]),
       h("p", {}, [t.label("setup.start.pm.intro")]),
-      field("setup-pm-email", t.label("setup.email"), email, t.label("setup.email.hint")),
+      field("setup-pm-email", t.label("setup.email"), email, t.label("setup.email.hint"), "help.wizard.manager_email"),
       h("p", { class: "callout callout--warning" }, [t.label("setup.start.pm.self")]),
       dates.root,
     ]),
@@ -576,13 +577,16 @@ function teamSection(
   );
 
   drawTeam();
+  const roleLegend = h("legend", {}, [t.label("setup.team.role")]);
+  const roleSet = h("fieldset", {}, [roleLegend, h("span", { class: "hint" }, [t.label("setup.team.role_hint")]), h("div", { class: "role-groups" }, groups)]);
+  attachHelp(roleLegend, "setup-team-role", "help.wizard.role");
   return h("div", { id: "setup-team" }, [
     h("p", { class: "callout callout--info" }, [t.label("setup.team.scope")]),
     h("section", { class: "step-block", "aria-labelledby": "setup-add-title" }, [
       h("h3", { id: "setup-add-title" }, [t.label("setup.team.add.title")]),
-      h("fieldset", {}, [h("legend", {}, [t.label("setup.team.person")]), field("setup-team-email", t.label("setup.email"), email, t.label("setup.email.hint"))]),
-      h("fieldset", {}, [h("legend", {}, [t.label("setup.team.role")]), h("span", { class: "hint" }, [t.label("setup.team.role_hint")]), h("div", { class: "role-groups" }, groups)]),
-      field("setup-team-organisation", t.label("setup.team.organisation"), organisation, t.label("setup.team.organisation_hint")),
+      h("fieldset", {}, [h("legend", {}, [t.label("setup.team.person")]), field("setup-team-email", t.label("setup.email"), email, t.label("setup.email.hint"), "help.wizard.team_email")]),
+      roleSet,
+      field("setup-team-organisation", t.label("setup.team.organisation"), organisation, t.label("setup.team.organisation_hint"), "help.wizard.organisation"),
       dates.root,
       h("section", { class: "checks", "aria-labelledby": "setup-sod-title", "aria-live": "polite" }, [
         h("h4", { id: "setup-sod-title" }, [t.label("setup.sod.title")]),

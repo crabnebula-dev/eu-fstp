@@ -20,6 +20,7 @@
 //   Receiving role (`TEAM_ROLES`).
 
 import { h, type Child } from "../../core/dom.js";
+import { labelWithHelp } from "../../help/help.js";
 import type { I18n, Label } from "../../core/i18n.js";
 import { createRouter, type RouteDef } from "../../core/router.js";
 import { act, anyObject, buttonEl, formEl, link, onSubmit, section } from "../../grant/kit.js";
@@ -179,8 +180,8 @@ function inviteForm(env: PageEnv, t: I18n, f: Frame, p: string, reload: () => Pr
   );
   const submit = buttonEl("team-invite-submit", "submit", t.label("team.invite.submit"));
   const form = formEl("team-invite-form", [
-    h("div", { class: "fstp-field" }, [h("label", { for: "team-invite-email" }, [t.label("team.invite.email")]), email]),
-    h("div", { class: "fstp-field" }, [h("label", { for: "team-invite-role" }, [t.label("team.invite.role")]), role]),
+    h("div", { class: "fstp-field" }, [...labelWithHelp("team-invite-email", t.label("team.invite.email"), "help.invite.email"), email]),
+    h("div", { class: "fstp-field" }, [...labelWithHelp("team-invite-role", t.label("team.invite.role"), "help.invite.role"), role]),
     submit,
   ]);
   onSubmit(f, form, submit, async () => {
