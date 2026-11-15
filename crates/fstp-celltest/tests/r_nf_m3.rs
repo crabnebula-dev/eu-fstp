@@ -1062,7 +1062,13 @@ fn nonce_apis(source: &str) -> Vec<String> {
 ///
 /// - `fstp-pgwire` `with_nonce`: the SCRAM client nonce of an M1
 ///   known-answer test entry point. It seals nothing at rest.
-const NOT_SEALS: [(&str, &str); 1] = [("fstp-pgwire", "with_nonce")];
+/// - `fstp-control` `approval_challenge`: hashes the nonce of the
+///   two-operator check into a passkey challenge. It seals nothing
+///   (Daniel, 2026-11-15).
+const NOT_SEALS: [(&str, &str); 2] = [
+    ("fstp-pgwire", "with_nonce"),
+    ("fstp-control", "approval_challenge"),
+];
 
 /// R-NF-08, design section 3.2: no public function of a shipped crate
 /// takes a nonce from its caller for sealing. Every seal draws its own.
