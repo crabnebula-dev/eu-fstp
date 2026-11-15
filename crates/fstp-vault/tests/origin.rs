@@ -283,3 +283,84 @@ fn adr009_release_route_body_limit_is_the_longest_ticket() {
     let at = v.origin("POST", "/r", &vec![b'0'; limit], NOW);
     assert_ne!(at.status, 413, "a body at the limit is read");
 }
+
+/// Lowercase hex of `b`.
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// ADR-009 "Delivery" and `web/src/vault/release.ts`: the release loader
+/// posts the ticket as a top-level form, so the body is `ticket=<hex>`.
+/// `POST /r` shows that release as it shows the bare hex body. Another
+/// field name, a second field or an empty field is malformed. The body
+/// limit counts the ticket's hex in either form, so a form body is
+/// refused as too large exactly when its hex is.
+#[test]
+fn adr009_release_route_takes_the_loader_form_body() -> Result<(), Fail> {
+    let key = Signer::new(1);
+    let mut o = origin(&key)?;
+    o.negotiation_opened(PR, &[APPLICANT])?;
+    let signed =
+        |nonce: u8| hex(&key.sign(&ticket("release", APPLICANT, Some(PR), "identity", nonce)));
+    let bare = o.vault.origin("POST", "/r", signed(30).as_bytes(), NOW);
+    let form = o.vault.origin(
+        "POST",
+        "/r",
+        format!("ticket={}", signed(31)).as_bytes(),
+        NOW,
+    );
+    assert_eq!(bare.status, 200);
+    assert_eq!(form.status, 200);
+    assert_eq!(form.headers, bare.headers);
+    assert_eq!(form.body, bare.body, "one document for one subject");
+    for body in [
+        format!("tickets={}", signed(32)),
+        format!("ticket={}&x=1", signed(33)),
+        format!("x=1&ticket={}", signed(34)),
+        format!("Ticket={}", signed(35)),
+        "ticket=".to_owned(),
+    ] {
+        let r = o.vault.origin("POST", "/r", body.as_bytes(), NOW);
+        assert_eq!(r.status, 400, "{body}");
+    }
+    let limit = fstp_vault::origin::MAX_RELEASE_LEN;
+    let over = format!("ticket={}", "0".repeat(limit + 1));
+    assert_eq!(
+        o.vault.origin("POST", "/r", over.as_bytes(), NOW).status,
+        413
+    );
+    let at = format!("ticket={}", "0".repeat(limit));
+    assert_ne!(
+        o.vault.origin("POST", "/r", at.as_bytes(), NOW).status,
+        413,
+        "a form body whose hex is at the limit is read"
+    );
+    Ok(())
+}
+
+/// R-NF-03 (M3 design section 11.2, `r-nf-03-auth-and-vault-pages.spec.ts`
+/// "vault release"): the server-rendered release document has a language,
+/// a title, one main landmark and its heading inside it, and runs no
+/// script (I-17).
+#[test]
+fn r_nf_03_release_document_has_one_main_landmark() -> Result<(), Fail> {
+    let key = Signer::new(1);
+    let mut o = origin(&key)?;
+    o.negotiation_opened(PR, &[APPLICANT])?;
+    let t = ticket("release", APPLICANT, Some(PR), "identity", 40);
+    let body = String::from_utf8(o.post_release(&key.sign(&t), NOW)?.body).unwrap();
+    assert_eq!(body.matches("<main").count(), 1, "{body}");
+    assert!(body.contains("<html lang=\"en\">"), "{body}");
+    assert!(!body.contains("<title></title>"), "{body}");
+    let (before, inside) = body.split_once("<main>").unwrap();
+    assert!(
+        !before.contains("<h1>"),
+        "the heading is inside main: {body}"
+    );
+    assert!(
+        inside.contains("<h1>") && inside.contains("</main>"),
+        "{body}"
+    );
+    assert!(!body.to_lowercase().contains("<script"), "{body}");
+    Ok(())
+}

@@ -9,9 +9,8 @@
 //
 // The release must arrive as a navigation, since a document that runs no
 // script cannot be built from a `fetch` reply. A form sends
-// `application/x-www-form-urlencoded`, so the body is `ticket=<hex>`.
-// Open point for lane W2d: `fstp-vault` `origin` takes the bare hex body
-// today, and needs to take `ticket=<hex>` too.
+// `application/x-www-form-urlencoded`, so the body is `ticket=<hex>`,
+// which `fstp-vault` `origin::release_hex` takes beside the bare hex.
 
 import { h } from '../auth/dom.js';
 import { frame, t, takeTicket } from './page.js';

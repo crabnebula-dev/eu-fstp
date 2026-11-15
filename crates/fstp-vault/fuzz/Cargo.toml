@@ -26,6 +26,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "release_body_decode"
+path = "fuzz_targets/release_body_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "config_decode"
 path = "fuzz_targets/config_decode.rs"
 test = false
