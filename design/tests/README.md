@@ -6,7 +6,7 @@ Written to the patterns in the Playwright guide "Writing tests" (https://playwri
 
 ## What the tests cover
 
-Shared rules, run on all 69 prototypes:
+Shared rules, run on all 77 prototypes:
 
 - `lang="en"`, a title ending in " - FSTP", header, main and footer landmarks, and the prototype state label.
 - No `<script>`, no inline event handlers, no banned DOM calls, no em dashes, and only `../tokens.css` as a stylesheet.
@@ -71,14 +71,26 @@ Checks for the 28 post-grant prototypes (`10-post-grant-screens.md`):
 - Navigation: the updated home, negotiation, contract, funder report, payment status and final outcome pages link to the new screens.
 
 Layout shell and masquerade rules:
-- The 61 signed-in prototypes have one `aside.sidebar` labelled "Main navigation" in the app layout. It holds the nav, a role chip, Account and Sign out. The top bar has no nav.
+- The 69 signed-in prototypes have one `aside.sidebar` labelled "Main navigation" in the app layout. It holds the nav, a role chip, Account and Sign out. The top bar has no nav.
 - On those pages the masquerade banner is the first element in the page body. It is hidden on every page except `home-voyager.html` and `reviewer-scoring.html`, where it is visible above the nav and Exit masquerade goes to Administration.
 - The 8 public prototypes use the public layout, with the nav in the top bar and no sidebar or banner.
 - Desktop at 1280px: the sidebar is 220px, sticky and left of main, main is at most 960px and the avatar is hidden. Mobile at 375px with scripts off: the nav stacks under the top bar and the avatar leads to the profile page.
 - Sidebar links, role chip, label and the visible banner meet 4.5:1 in light and dark themes.
 - `admin-masquerade.html`: heading, explanation, ten "View as" links, the read-only note and the TODO(js) comment. `home-admin.html` links to it under Support tools.
 
-Last run on 2026-11-01: 847 passed, 0 failed.
+Checks for the 8 programme set-up prototypes (`11-programme-setup-wizard.md`):
+
+- Each file loads with HTTP status 200 through a local route and has one main landmark.
+- No metaphor word in headings, buttons, table headers, labels, legends or captions. No `.voyage-label` and no Voyage pack label. The Horizon Bridges brand and the right role chip.
+- TODO markers sit in HTML comments. Every disabled button has a TODO(js) comment and an `aria-describedby` reason. Every email address is synthetic.
+- Wizard: 7 stages in order, one current with `aria-current="step"`, done stages linked and later ones not. The summary panel fills to the current stage, with one Change link per done stage.
+- The flow is clickable from Administration through every "Save and continue" and "Request activation" to the progress page, and back.
+- Start: the ADR-021 status, a search of this organisation only, and the SoD-07, I-67 and step-up notes.
+- Team: GET search, invite by email, three role groups with 2, 4 and 4 roles, date fields, and checks for SoD-01 to SoD-05, SoD-07 and SoD-09 that change with the chosen role. Also the SoD-02 refusal, the R-CF-03 rule, three team tables and the P-15, R-PC-03 and I-67 notes.
+- Review: two acknowledged warnings, no select, and Request activation leading to the progress page.
+- Progress: nine milestones in order, each with a next action, activation approval current, and the grouped team status table.
+
+Last run on 2026-11-01: 847 passed, 0 failed. Last run on 2026-11-15: 964 passed, 0 failed.
 
 ## Running
 

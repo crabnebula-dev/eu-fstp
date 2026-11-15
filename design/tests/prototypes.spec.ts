@@ -55,7 +55,7 @@ async function lowContrast(page: Page, selector: string, min = 4.5) {
 }
 
 test('every expected prototype exists', () => {
-  expect(FILES).toHaveLength(69);
+  expect(FILES).toHaveLength(77);
   for (const f of ['route-map.html', 'diary.html', 'irc-view.html', 'profile.html', 'tokens-showcase.html', 'admin-masquerade.html']) {
     expect(FILES).toContain(f);
   }
@@ -1136,7 +1136,7 @@ const MASQUERADE_PAGES: Record<string, string> = { 'home-voyager.html': 'Applica
 test.describe('layout shell: app layout with sidebar', () => {
   test('public and app page lists cover every prototype', () => {
     expect(PUBLIC_FILES.every(f => FILES.includes(f))).toBe(true);
-    expect(APP_FILES).toHaveLength(61);
+    expect(APP_FILES).toHaveLength(69);
   });
 
   for (const file of APP_FILES) {
@@ -1260,5 +1260,178 @@ test.describe('masquerade mode (Tenant admin, read-only)', () => {
     await expect(section.getByRole('heading', { level: 2 })).toHaveText('Support tools');
     await section.getByRole('link', { name: 'Masquerade as another role' }).click();
     await expect(page).toHaveURL(/admin-masquerade\.html$/);
+  });
+});
+
+// Programme set-up wizard and set-up progress (docs/design/11-programme-setup-wizard.md, Daniel's request of 2026-11-15).
+const WIZARD_FILES = ['setup-wizard-start.html', 'setup-wizard-programme.html', 'setup-wizard-applicants.html', 'setup-wizard-evaluation.html',
+  'setup-wizard-team.html', 'setup-wizard-communications.html', 'setup-wizard-review.html'];
+const WIZARD_STAGES = ['Start', 'Programme', 'Applicants', 'Evaluation and money', 'Team', 'Communications', 'Review and confirm'];
+const SETUP_FILES = [...WIZARD_FILES, 'setup-progress.html'];
+
+for (const file of SETUP_FILES) {
+  test.describe(`${file}: programme set-up checks`, () => {
+    test('loads with status 200 over HTTP and has one main landmark', async ({ page }) => {
+      const body = readFileSync(join(DIR, file), 'utf8');
+      const css = readFileSync(join(DIR, '..', 'tokens.css'), 'utf8');
+      await page.route('http://proto.test/**', route => route.request().url().endsWith('/tokens.css')
+        ? route.fulfill({ status: 200, contentType: 'text/css', body: css })
+        : route.fulfill({ status: 200, contentType: 'text/html', body }));
+      const res = await page.goto(`http://proto.test/prototypes/${file}`);
+      expect(res?.status()).toBe(200);
+      await expect(page.getByRole('main')).toHaveCount(1);
+    });
+
+    test('plain language, no Voyage labels, Horizon Bridges brand and the right role', async ({ page }) => {
+      await open(page, file);
+      const texts = await page.locator('h1, h2, h3, h4, button, .btn, th, label, legend, caption').evaluateAll(els => els.map(el => el.textContent || ''));
+      expect(texts.filter(t => METAPHOR.test(t)).map(t => t.trim())).toEqual([]);
+      await expect(page.locator('.voyage-label')).toHaveCount(0);
+      expect(await page.locator('body').innerText()).not.toMatch(VOYAGE_PACK);
+      await expect(page.locator('header .brand')).toContainText('Horizon Bridges');
+      await expect(page.locator('.role-chip')).toHaveText(file === 'setup-wizard-start.html' ? 'Signed in as Tenant admin' : 'Signed in as Programme manager');
+    });
+
+    test('TODO markers are HTML comments, disabled buttons carry TODO(js) and a reason', async ({ page }) => {
+      const html = readFileSync(join(DIR, file), 'utf8');
+      const main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+      expect(main.replace(/<!--[\s\S]*?-->/g, '')).not.toMatch(/TODO/);
+      const disabled = (main.match(/<button[^>]*disabled/g) || []).length;
+      expect((main.match(/<!-- TODO\(js\)/g) || []).length).toBeGreaterThanOrEqual(disabled);
+      await open(page, file);
+      const buttons = page.locator('main button[disabled]');
+      for (let i = 0; i < await buttons.count(); i++) {
+        await expect(buttons.nth(i)).toHaveAttribute('aria-describedby', /\S/);
+      }
+    });
+
+    test('only synthetic Horizon Bridges and example.org addresses appear', async ({ page }) => {
+      await open(page, file);
+      const text = await page.locator('main').innerText();
+      const emails = text.match(/[\w.+-]+@[\w.-]+/g) || [];
+      for (const e of emails) expect(e).toMatch(/@(horizon-bridges|lakeside|northgate)\.example$|@example\.org$/);
+    });
+  });
+}
+
+test.describe('programme set-up wizard (11-programme-setup-wizard.md)', () => {
+  WIZARD_FILES.forEach((file, i) => {
+    test(`${file}: 7 stages, stage ${i + 1} current, earlier stages linked, later ones not, summary panel filled to stage ${i}`, async ({ page }) => {
+      await open(page, file);
+      const bar = page.getByRole('navigation', { name: 'Set-up stages' }).locator('ol > li');
+      await expect(bar).toHaveCount(7);
+      for (let s = 0; s < 7; s++) {
+        await expect(bar.nth(s)).toContainText(`${s + 1}. ${WIZARD_STAGES[s]}`);
+        await expect(bar.nth(s).locator('a')).toHaveCount(s < i ? 1 : 0);
+        await expect(bar.nth(s)).toContainText(s < i ? ', complete' : s === i ? ', current stage' : ', not started');
+      }
+      await expect(bar.nth(i)).toHaveAttribute('aria-current', 'step');
+      await expect(page.locator('[aria-current="step"]')).toHaveCount(1);
+      const summary = page.getByRole('complementary', { name: 'Your set-up so far' });
+      await expect(summary).toContainText(`${i} of 7 stages complete.`);
+      await expect(summary.getByRole('link', { name: /^Change/ })).toHaveCount(i);
+      await expect(summary.getByText('Not yet set')).toHaveCount(6 - i);
+      await expect(page.locator('main .card-kicker').first()).toContainText(`Stage ${i + 1} of 7.`);
+    });
+  });
+
+  test('the flow is clickable from Administration to the progress page', async ({ page }) => {
+    await open(page, 'home-admin.html');
+    await page.getByRole('link', { name: 'Set up a new programme' }).click();
+    await expect(page).toHaveURL(/setup-wizard-start\.html$/);
+    await page.getByRole('link', { name: 'Open draft and invite programme manager' }).click();
+    for (const next of WIZARD_FILES.slice(2)) {
+      await page.getByRole('link', { name: 'Save and continue' }).click();
+      await expect(page).toHaveURL(new RegExp(`${next.replace('.', '\\.')}$`));
+    }
+    await page.getByRole('link', { name: 'Request activation' }).click();
+    await expect(page).toHaveURL(/setup-progress\.html$/);
+    await page.getByRole('link', { name: 'Back to Review and confirm' }).click();
+    await page.getByRole('link', { name: 'Back to Communications' }).click();
+    await expect(page).toHaveURL(/setup-wizard-communications\.html$/);
+  });
+
+  test('start: organisation active under ADR-021, search of this organisation only, SoD-07 and I-67 notes, step-up', async ({ page }) => {
+    await open(page, 'setup-wizard-start.html');
+    await expect(page.locator('main .callout--success')).toContainText('Programme set-up is open (ADR-021)');
+    await expect(page.getByRole('search', { name: 'Find a programme manager' }).getByLabel('Name or email')).toHaveAttribute('type', 'search');
+    await expect(page.locator('main')).toContainText('Accounts of other organisations on the platform are never shown (I-19, I-20).');
+    await expect(page.locator('main')).toContainText('a second tenant admin must approve the grant (SoD-07)');
+    await expect(page.locator('main')).toContainText('approves its activation (I-67). You cannot choose that person.');
+    await expect(page.locator('main .stepup-note')).toHaveText('Opening the draft needs a passkey confirmation.');
+  });
+
+  test('team: search, invite by email, three role groups, dates, live SoD checks that follow the chosen role', async ({ page }) => {
+    await open(page, 'setup-wizard-team.html');
+    const search = page.getByRole('search', { name: 'Find a person in Horizon Bridges' });
+    await expect(search).toHaveAttribute('method', 'get');
+    await expect(page.locator('table.results caption')).toHaveText('2 accounts in Horizon Bridges match "k"');
+    await expect(page.locator('main')).toContainText('never searched or shown (I-19, I-20)');
+    await expect(page.getByLabel('Someone without an account: invite by email')).toBeVisible();
+    await expect(page.getByLabel('Email address for the invitation')).toHaveAttribute('type', 'email');
+    const groups = page.locator('.role-groups > fieldset');
+    await expect(groups.locator('> legend')).toHaveText(['Drafting', 'Judging', 'Operations']);
+    await expect(groups.nth(0).getByRole('radio')).toHaveCount(2);
+    await expect(groups.nth(1).getByRole('radio')).toHaveCount(4);
+    await expect(groups.nth(2).getByRole('radio')).toHaveCount(4);
+    await expect(page.getByLabel('Role starts on')).toHaveAttribute('type', 'date');
+    await expect(page.getByLabel('Role ends on (optional)')).not.toHaveAttribute('required', /.*/);
+    const visibleRules = () => page.locator('.checks .checks-variant:visible li strong').allTextContents();
+    expect(await visibleRules()).toEqual(['SoD-01', 'SoD-02', 'SoD-03', 'SoD-04', 'SoD-05', 'SoD-07', 'SoD-09']);
+    await expect(page.locator('.checks-variant:visible')).toContainText('Judging role');
+    await expect(page.locator('.checks-variant:visible')).toContainText('Identity verified on 15 Sep 2026');
+    await page.getByLabel('Payment releaser').check();
+    await expect(page.locator('.checks-variant:visible')).toContainText('Operations role');
+    await expect(page.locator('.checks-variant:visible')).toContainText('K. Wu approves payments.');
+    await page.getByLabel('Call drafter').check();
+    await expect(page.locator('.checks-variant:visible')).toContainText('Drafting role');
+    expect(await visibleRules()).toEqual(['SoD-01', 'SoD-02', 'SoD-03', 'SoD-04', 'SoD-05', 'SoD-07', 'SoD-09']);
+    await expect(page.getByRole('button', { name: 'Add to team' })).toBeDisabled();
+  });
+
+  test('team: refusals name the rule, identity refusals name no account, team grouped by role group', async ({ page }) => {
+    await open(page, 'setup-wizard-team.html');
+    await expect(page.locator('main .callout--error')).toContainText('is refused (SoD-02)');
+    await expect(page.locator('main')).toContainText('It never names another account (R-CF-03).');
+    await expect(page.locator('#team table caption')).toHaveText(['Drafting: 2 people', 'Judging: 5 people', 'Operations: 2 people']);
+    await expect(page.locator('#team tbody tr')).toHaveCount(9);
+    await expect(page.locator('#team')).toContainText('(R-PC-03)');
+    await expect(page.locator('#team')).toContainText('(P-15)');
+    await expect(page.locator('#team')).toContainText('approves activation (I-67)');
+  });
+
+  test('review: two acknowledged warnings, no approver choice, Request activation leads to progress (I-66, I-67)', async ({ page }) => {
+    await open(page, 'setup-wizard-review.html');
+    await expect(page.locator('main')).toContainText('2 warnings need your acknowledgement before you can request activation (I-66).');
+    await expect(page.locator('table.report tbody tr')).toHaveCount(2);
+    await expect(page.getByLabel(/^Acknowledged/)).toHaveCount(2);
+    for (const box of await page.getByLabel(/^Acknowledged/).all()) await expect(box).toBeChecked();
+    await expect(page.locator('main select')).toHaveCount(0);
+    await expect(page.locator('main')).toContainText('You cannot choose the approver.');
+    await expect(page.getByRole('link', { name: 'progress map preview' })).toHaveAttribute('href', 'route-map.html');
+    await expect(page.getByRole('link', { name: 'Request activation' })).toHaveAttribute('href', 'setup-progress.html');
+  });
+
+  test('progress: nine milestones in order, activation approval current, each with a next action, team status table', async ({ page }) => {
+    await open(page, 'setup-progress.html');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Set-up progress');
+    const names = ['Programme drafted', 'Validation report clean', 'Team invited', 'Activation requested', 'Activation approved',
+      'Team roles granted', 'Call drafted', 'Call approved', 'Call published'];
+    const items = page.locator('ol.milestones > li');
+    await expect(items).toHaveCount(9);
+    for (let i = 0; i < 9; i++) {
+      await expect(items.nth(i).locator('h3')).toContainText(`${i + 1}. ${names[i]}`);
+      await expect(items.nth(i)).toContainText('Next action:');
+    }
+    await expect(page.locator('ol.milestones > li[aria-current="step"]')).toContainText('Activation approved');
+    await expect(page.locator('ol.milestones > li.journey-node--complete')).toHaveCount(4);
+    await expect(page.locator('ol.strip > li')).toHaveCount(9);
+    await expect(page.locator('ol.strip > li[aria-current="step"]')).toHaveText('Activation approved');
+    const table = page.locator('table.status-table');
+    await expect(table.locator('thead th')).toHaveText(['Person', 'Role', 'Invited', 'Terms accepted', 'Identity verified', 'Role granted', 'Next action']);
+    await expect(table.locator('tbody tr.group-row')).toHaveText(['Drafting', 'Judging', 'Operations']);
+    await expect(table.locator('tbody tr:not(.group-row)')).toHaveCount(9);
+    await expect(page.locator('main')).toContainText('(I-67)');
+    await expect(page.locator('main')).toContainText('(R-PC-03)');
   });
 });
