@@ -27,7 +27,7 @@ import { del, get, ok, post, record, type Reply } from '../api.js';
 import { clear, h } from '../dom.js';
 import { isHex } from '../encoding.js';
 import { PATHS, frame, go, hush, i18n, showFailure, statusRegion, t } from '../layout.js';
-import { appShell } from '../appshell.js';
+import { appShell, awaitsActivation } from '../appshell.js';
 import { ADD_PASSKEY, askStepUp, revokeCredential, type StepUp } from '../stepup.js';
 import { Failure, failureOf, optionsOf, registration } from '../webauthn.js';
 
@@ -356,8 +356,9 @@ export function mount(): void {
   clearName.addEventListener('click', () => sendName(''));
 
   // The section shows once its read answered. Before activation the cell
-  // refuses the read (ADR-021), and the section then stays hidden, so the
-  // account page shows no error for it.
+  // refuses the read (ADR-021), so the page does not send it and the
+  // section stays hidden: the browser would log the refusal as an error
+  // (ADR-014).
   const nameSection = h('section', { id: 'display-name-section', 'aria-labelledby': 'display-name-heading', hidden: '' }, [
     h('h2', { id: 'display-name-heading' }, [t('account.name.heading')]),
     h('p', {}, [t('account.name.intro')]),
@@ -383,8 +384,12 @@ export function mount(): void {
       await loadDevices();
     })(),
   );
-  loadName().then(
-    () => nameSection.removeAttribute('hidden'),
-    () => undefined,
+  void awaitsActivation().then((waiting) =>
+    waiting
+      ? undefined
+      : loadName().then(
+          () => nameSection.removeAttribute('hidden'),
+          () => undefined,
+        ),
   );
 }
