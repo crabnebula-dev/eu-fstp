@@ -1084,9 +1084,14 @@ fn nonce_apis(source: &str) -> Vec<String> {
 /// - `fstp-control` `approval_challenge`: hashes the nonce of the
 ///   two-operator check into a passkey challenge. It seals nothing
 ///   (Daniel, 2026-11-15).
-const NOT_SEALS: [(&str, &str); 2] = [
+/// - `fstp-control` `batch_challenge`: hashes the nonce of one
+///   operator's batch approval of a cell erasure into a passkey
+///   challenge, as `approval_challenge` does. It seals nothing (Daniel,
+///   2026-11-15 night).
+const NOT_SEALS: [(&str, &str); 3] = [
     ("fstp-pgwire", "with_nonce"),
     ("fstp-control", "approval_challenge"),
+    ("fstp-control", "batch_challenge"),
 ];
 
 /// R-NF-08, design section 3.2: no public function of a shipped crate
