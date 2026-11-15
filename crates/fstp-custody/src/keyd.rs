@@ -98,6 +98,11 @@ pub const SIGN_KEY_CELL_CA: u8 = 0x01;
 /// The class byte of a sign key handle for a local cluster CA key. The
 /// `fstp-pgagent` socket reaches it.
 pub const SIGN_KEY_CLUSTER_CA: u8 = 0x02;
+/// Length of the name of a sign key that `fstp-keyd` holds: the handle is
+/// the class byte and these 8 name bytes (lane m3/erase-prod).
+pub const SIGN_KEY_NAME_LEN: usize = 8;
+/// Length of the handle of a sign key that `fstp-keyd` holds.
+pub const SIGN_KEY_HANDLE_LEN: usize = 1 + SIGN_KEY_NAME_LEN;
 
 /// The log index of the damaged record that `record` reports, if
 /// `record` is a damage marker of a usage page ([`USAGE_DAMAGED_TAG`]).
@@ -126,6 +131,9 @@ pub const KIND_SIGN: u8 = 0x05;
 pub const KIND_USAGE: u8 = 0x06;
 /// Request kind: destroy a CA sign key (ADR-004 "CA keys in custody").
 pub const KIND_DESTROY_SIGN_KEY: u8 = 0x07;
+/// Request kind: create a CA sign key (ADR-004 "Decided by Daniel,
+/// 2026-11-15 (late)", lane m3/erase-prod).
+pub const KIND_CREATE_SIGN_KEY: u8 = 0x08;
 /// Response kind: a root.
 pub const KIND_ROOT: u8 = 0x81;
 /// Response kind: a wrapped seal key.
@@ -138,6 +146,9 @@ pub const KIND_DESTROYED: u8 = 0x84;
 pub const KIND_SIGNED: u8 = 0x85;
 /// Response kind: a usage page.
 pub const KIND_USAGE_PAGE: u8 = 0x86;
+/// Response kind: the public key of a sign key, as a DER
+/// SubjectPublicKeyInfo.
+pub const KIND_SIGN_KEY: u8 = 0x87;
 /// Response kind: a refusal.
 pub const KIND_REFUSED: u8 = 0xff;
 
@@ -475,6 +486,16 @@ pub enum Request {
         /// The signing key handle.
         key: Vec<u8>,
     },
+    /// Create a CA sign key in a sign-key slot of the key table, or find
+    /// the live one of that handle (ADR-004 "Decided by Daniel, 2026-11-15
+    /// (late)"). Kept apart from the six operations of the `Custody` trait
+    /// (I-80). The response is the public key only.
+    CreateSignKey {
+        /// The request id.
+        id: RequestId,
+        /// The signing key handle.
+        key: Vec<u8>,
+    },
 }
 
 impl std::fmt::Debug for Request {
@@ -531,6 +552,11 @@ impl std::fmt::Debug for Request {
                 .field("id", id)
                 .field("key_len", &key.len())
                 .finish(),
+            Request::CreateSignKey { id, key } => f
+                .debug_struct("CreateSignKey")
+                .field("id", id)
+                .field("key_len", &key.len())
+                .finish(),
         }
     }
 }
@@ -546,7 +572,8 @@ impl Request {
             | Request::Destroy { id, .. }
             | Request::Sign { id, .. }
             | Request::UsageSince { id, .. }
-            | Request::DestroySignKey { id, .. } => *id,
+            | Request::DestroySignKey { id, .. }
+            | Request::CreateSignKey { id, .. } => *id,
         }
     }
 
@@ -561,6 +588,7 @@ impl Request {
             Request::Sign { .. } => KIND_SIGN,
             Request::UsageSince { .. } => KIND_USAGE,
             Request::DestroySignKey { .. } => KIND_DESTROY_SIGN_KEY,
+            Request::CreateSignKey { .. } => KIND_CREATE_SIGN_KEY,
         }
     }
 }
@@ -621,7 +649,9 @@ fn request_body(request: &Request) -> Result<Zeroizing<Vec<u8>>, CustodyError> {
             put_handle(&mut b, key)?;
             b.extend_from_slice(digest);
         }
-        Request::DestroySignKey { key, .. } => put_handle(&mut b, key)?,
+        Request::DestroySignKey { key, .. } | Request::CreateSignKey { key, .. } => {
+            put_handle(&mut b, key)?;
+        }
         Request::UsageSince { root, cursor, .. } => {
             b.extend_from_slice(&root.encode());
             b.extend_from_slice(&cursor.to_be_bytes());
@@ -644,6 +674,8 @@ pub enum Response {
     Destroyed(Vec<u8>),
     /// A DER signature.
     Signed(Vec<u8>),
+    /// The public key of a sign key, as a DER SubjectPublicKeyInfo.
+    SignKey(Vec<u8>),
     /// A page of usage records.
     Usage {
         /// The records.
@@ -663,6 +695,7 @@ impl std::fmt::Debug for Response {
             Response::Unwrapped(_) => f.debug_struct("Unwrapped").finish_non_exhaustive(),
             Response::Destroyed(r) => f.debug_struct("Destroyed").field("len", &r.len()).finish(),
             Response::Signed(s) => f.debug_struct("Signed").field("len", &s.len()).finish(),
+            Response::SignKey(k) => f.debug_struct("SignKey").field("len", &k.len()).finish(),
             Response::Usage { records, next } => f
                 .debug_struct("Usage")
                 .field("records", &records.len())
@@ -688,6 +721,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response, CustodyError> {
         KIND_UNWRAPPED => Response::Unwrapped(key_box(r.take(32)?)?),
         KIND_DESTROYED => Response::Destroyed(r.u16_bytes(MAX_FRAME_BODY)?.to_vec()),
         KIND_SIGNED => Response::Signed(r.u16_bytes(MAX_FRAME_BODY)?.to_vec()),
+        KIND_SIGN_KEY => Response::SignKey(r.u16_bytes(MAX_FRAME_BODY)?.to_vec()),
         KIND_USAGE_PAGE => {
             let next = r.u64()?;
             let count = usize::from(r.u16()?);
@@ -734,8 +768,9 @@ pub const SIGN_RECEIPT_MAGIC: [u8; 4] = *b"FKS1";
 /// Like a root's [`Receipt`], it confirms a destroy only when it lists
 /// every step of [`DestroyStep::ALL`], once each and in order, and it
 /// names only the handle, so a repeated destroy returns the same bytes.
-/// Interim, pending Daniel: `fstp-keyd` holds no sign key yet, since no
-/// request creates one, so it never issues this receipt yet.
+/// `fstp-keyd` issues it once a sign key in a sign-key slot is destroyed
+/// (lane m3/erase-prod). The steps are those of a root destroy, with the
+/// sign-key file in place of the epoch file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignKeyReceipt {
     /// The handle of the destroyed key.
@@ -963,6 +998,38 @@ impl KeydCustody {
                 }
                 Ok(DestroyReceipt(r))
             }
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Creates the CA sign key `key` in a sign-key slot of the key table,
+    /// or finds the live one, and returns its public key as a DER
+    /// SubjectPublicKeyInfo (ADR-004 "Decided by Daniel, 2026-11-15
+    /// (late)"). The private key never leaves `fstp-keyd`. It is not one
+    /// of the six `Custody` operations (I-80). The install creates the
+    /// local cluster CA keys through it, over the console socket.
+    ///
+    /// # Errors
+    ///
+    /// [`CustodyError::InvalidConfig`] for a key of another backend or a
+    /// handle that is not the class byte and [`SIGN_KEY_NAME_LEN`] name
+    /// bytes, and the refusal of the server, such as [`Refusal::Destroyed`]
+    /// or [`Refusal::NotPermitted`].
+    pub async fn create_sign_key(&self, key: &SignKeyRef) -> Result<Vec<u8>, CustodyError> {
+        if key.backend != BackendId::Keyd {
+            return Err(CustodyError::InvalidConfig("the key is not a keyd key"));
+        }
+        if key.handle.0.len() != SIGN_KEY_HANDLE_LEN {
+            return Err(CustodyError::InvalidConfig(
+                "a keyd sign key handle is a class byte and 8 name bytes",
+            ));
+        }
+        let request = Request::CreateSignKey {
+            id: crate::request_or_fresh()?,
+            key: key.handle.0.clone(),
+        };
+        match self.call(&request).await? {
+            Response::SignKey(spki) => Ok(spki),
             other => Err(unexpected(other)),
         }
     }

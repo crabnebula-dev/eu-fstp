@@ -157,11 +157,12 @@ impl Server {
                     Receipt::full(handle.chain, handle.epoch).encode(),
                 ))
             }
-            // The simulator holds no signing keys, as fstp-keyd holds none
-            // yet (lane m3/erase-cell-2), so it can destroy none either.
-            Request::Sign { .. } | Request::DestroySignKey { .. } => {
-                Err(Response::Refused(Refusal::NoSignKey))
-            }
+            // The simulator's socket holds no signing keys. File custody
+            // keeps them in sign-key slots (lane m3/erase-prod), and the
+            // world's cell CA keys live in `WorldCustody`.
+            Request::Sign { .. }
+            | Request::DestroySignKey { .. }
+            | Request::CreateSignKey { .. } => Err(Response::Refused(Refusal::NoSignKey)),
             Request::UsageSince { root, cursor, .. } => {
                 let root = self.root(*root)?.clone();
                 let page = block_on(

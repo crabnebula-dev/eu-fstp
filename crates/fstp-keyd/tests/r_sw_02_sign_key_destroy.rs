@@ -4,9 +4,10 @@
 //!
 //! The request is not one of the six `Custody` operations. The server
 //! applies the sign rules of the socket: the `fstp-cell` socket reaches
-//! cell CA handles only. Interim, pending Daniel: the server holds no
-//! sign key yet, so a permitted destroy answers `NoSignKey` and issues
-//! no receipt.
+//! cell CA handles only. No key of these handles was created, so a
+//! permitted destroy answers `NoSignKey` and issues no receipt. The
+//! sign-key slots that hold created keys are tested in the server and in
+//! `fstp-control` (lane m3/erase-prod).
 
 #![allow(
     clippy::unwrap_used,

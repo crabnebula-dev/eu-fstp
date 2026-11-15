@@ -31,8 +31,9 @@
 //!
 //! - Destroying a CA sign key is [`SignKeyCustody`], outside the six
 //!   operations of the `Custody` trait (I-80). The test custody and the
-//!   file custody client implement it. `fstp-keyd` holds no sign key
-//!   yet, so it answers `NoSignKey`.
+//!   file custody client implement it. `fstp-keyd` holds sign keys in
+//!   sign-key slots of its key table, and a destroy overwrites the key
+//!   in place (lane m3/erase-prod). `OkmsCustody` does not implement it.
 //! - The key list is input. In production it comes from
 //!   `cp.custody_entry` and the backend's listing, which is not built.
 //! - Step 2 deletes the object storage prefix through a trait that only
@@ -121,9 +122,9 @@ pub trait SignKeyCustody: Send + Sync + 'static {
 }
 
 /// The file custody client destroys a sign key through its own request
-/// (`fstp_custody::KeydCustody::destroy_sign_key`). Interim, pending
-/// Daniel: `fstp-keyd` holds no sign key yet, since no request creates
-/// one, so it answers `NoSignKey`.
+/// (`fstp_custody::KeydCustody::destroy_sign_key`). `fstp-keyd` keeps each
+/// sign key in a sign-key slot of its key table and overwrites it in place
+/// (ADR-004 "Decided by Daniel, 2026-11-15 (late)").
 impl SignKeyCustody for fstp_custody::KeydCustody {
     fn destroy_sign_key(
         &self,

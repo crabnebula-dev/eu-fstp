@@ -473,6 +473,7 @@ dependencies = [
  "fstp-edge",
  "fstp-http",
  "fstp-json",
+ "fstp-keyd",
  "fstp-migrate",
  "fstp-obs",
  "fstp-pgtest",

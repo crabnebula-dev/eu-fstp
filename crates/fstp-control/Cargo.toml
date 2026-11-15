@@ -30,6 +30,9 @@ fstp-witness.workspace = true
 fstp-audit.workspace = true
 
 [dev-dependencies]
+# The install and erasure tests run a real fstp-keyd for the local cluster
+# CA sign keys (ADR-004, 2026-11-15 late). In-house, test only.
+fstp-keyd.workspace = true
 fstp-prop.workspace = true
 # The erase-cell tests remove routes from the edge's own route table
 # (design section 3.7 step 3). In-house.

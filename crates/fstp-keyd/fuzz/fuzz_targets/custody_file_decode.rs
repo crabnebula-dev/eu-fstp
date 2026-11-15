@@ -8,7 +8,8 @@
 //! the 600 000 PBKDF2 iterations of ADR-004 part 2. Opening the table
 //! is not fuzzed, since each PBKDF2 derivation of 600 000 rounds would
 //! slow the target to a few runs a second. The second is the plaintext
-//! body decoder that runs once a table opens. An accepted body must
+//! body decoder that runs once a table opens. Its entries name roots and,
+//! since lane m3/erase-prod, sign keys in sign-key slots. An accepted body must
 //! name no more entries than its input holds. Every refusal must have a
 //! short display, so no error can carry key table bytes.
 
@@ -45,7 +46,7 @@ fuzz_target!(|data: &[u8]| {
     }
     match fstp_keyd::decode_key_table_body(data) {
         Ok(t) => assert!(
-            t.entries.len() <= data.len() / 32,
+            t.entries.len() + t.sign_keys.len() <= data.len() / 32,
             "more entries than the input holds"
         ),
         Err(e) => check_display(&e),

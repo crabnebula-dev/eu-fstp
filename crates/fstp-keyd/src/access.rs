@@ -117,6 +117,19 @@ impl ClientRole {
         SignKeyClass::of(handle).is_some_and(|c| self.sign_keys().contains(&c))
     }
 
+    /// The classes of CA sign key a socket of this role may create
+    /// (ADR-004 "Decided by Daniel, 2026-11-15 (late)": "Install creates
+    /// the local cluster CA sign keys there"). Interim, pending Daniel: the
+    /// install runs as root, so only the console socket creates, and only
+    /// cluster CA keys. No socket creates a cell CA key yet.
+    #[must_use]
+    pub const fn creates_sign_keys(self) -> &'static [SignKeyClass] {
+        match self {
+            ClientRole::Console => &[SignKeyClass::ClusterCa],
+            ClientRole::Cell | ClientRole::Vault | ClientRole::PgAgent => &[],
+        }
+    }
+
     /// Whether a socket of this role may make `request`.
     #[must_use]
     pub fn permits(self, request: &Request) -> bool {
@@ -127,6 +140,9 @@ impl ClientRole {
             | Request::Destroy { root, .. }
             | Request::UsageSince { root, .. } => self.chains().contains(&root.chain),
             Request::Sign { key, .. } | Request::DestroySignKey { key, .. } => self.signs_with(key),
+            Request::CreateSignKey { key, .. } => {
+                SignKeyClass::of(key).is_some_and(|c| self.creates_sign_keys().contains(&c))
+            }
         }
     }
 }

@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use fstp_crypto::aead;
-use fstp_custody::keyd::{MAX_USAGE_RECORDS, Request, RequestId, Response, RootHandle};
+use fstp_crypto::sig::EcdsaP256KeyPair;
+use fstp_custody::keyd::{
+    MAX_USAGE_RECORDS, Request, RequestId, Response, RootHandle, SignKeyReceipt,
+};
 use fstp_custody::{Chain, Epoch, Refusal};
 use fstp_obs::LogEvent;
 use fstp_obs::assurance::{
@@ -17,9 +20,9 @@ use zeroize::Zeroizing;
 
 use crate::access::{ClientRole, ClientSocket};
 use crate::receipt::Receipt;
-use crate::table::{EpochKey, KeyTable, TableStore};
+use crate::table::{EpochKey, KeyTable, SignKeyName, TableStore};
 use crate::usage::{self, UsageLog};
-use crate::{KeydError, Passphrase, RootMaterial, epoch};
+use crate::{KeydError, Passphrase, RootMaterial, epoch, sign_key};
 
 /// The label bound into every wrap, beside the root and the caller's AAD.
 const WRAP_LABEL: &[u8; 17] = b"fstp-keyd-wrap-v1";
@@ -148,14 +151,9 @@ impl Server {
                 root, aad, wrapped, ..
             } => self.unwrap(*root, aad, wrapped),
             Request::Destroy { root, .. } => self.destroy(*root),
-            Request::Sign { .. } => Err(Refusal::NoSignKey),
-            // Interim, pending Daniel: no request creates a sign key yet
-            // (ADR-004 "CA keys in custody", design section 9.5 step 2),
-            // so the server holds none, and a destroy finds none. Once
-            // keys exist, a destroy takes the steps of a root destroy and
-            // answers `SignKeyReceipt::full`, also for a key destroyed
-            // before, as `destroy` does for a root.
-            Request::DestroySignKey { .. } => Err(Refusal::NoSignKey),
+            Request::Sign { key, digest, .. } => self.sign(key, digest),
+            Request::DestroySignKey { key, .. } => self.destroy_sign_key(key),
+            Request::CreateSignKey { key, .. } => self.create_sign_key(key),
             Request::UsageSince { root, cursor, .. } => {
                 let (records, next) = self
                     .usage
@@ -313,6 +311,95 @@ impl Server {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CA sign keys in sign-key slots (ADR-004 "Decided by Daniel, 2026-11-15
+// (late)", lane m3/erase-prod).
+
+impl Server {
+    /// Creates the sign key `handle`, or finds the live one, and answers
+    /// its public key. A handle of no known form has no key, and a
+    /// destroyed key is never created again.
+    fn create_sign_key(&mut self, handle: &[u8]) -> Result<Response, Refusal> {
+        let name = SignKeyName::from_handle(handle).ok_or(Refusal::BadRequest)?;
+        if let Some(e) = self.table.table.sign_key(name) {
+            return match &e.key {
+                Some(k) => {
+                    let pair = self.open_sign_key(k, name)?;
+                    Ok(Response::SignKey(
+                        pair.spki_der().map_err(|_| Refusal::Internal)?,
+                    ))
+                }
+                None => Err(Refusal::Destroyed),
+            };
+        }
+        let k = EpochKey::generate().map_err(|_| Refusal::Internal)?;
+        let pair = EcdsaP256KeyPair::generate().map_err(|_| Refusal::Internal)?;
+        let sealed = sign_key::seal(&k, name, &pair).map_err(|_| Refusal::Internal)?;
+        sign_key::write_new(&self.volume, name, &sealed).map_err(|_| Refusal::Internal)?;
+        self.table
+            .insert_sign_key(name, k)
+            .map_err(|_| Refusal::Internal)?;
+        Ok(Response::SignKey(
+            pair.spki_der().map_err(|_| Refusal::Internal)?,
+        ))
+    }
+
+    fn open_sign_key(&self, k: &EpochKey, name: SignKeyName) -> Result<EcdsaP256KeyPair, Refusal> {
+        let bytes = sign_key::read(&self.volume, name)
+            .map_err(|_| Refusal::Internal)?
+            .ok_or(Refusal::Internal)?;
+        sign_key::open(k, name, &bytes).map_err(|_| Refusal::Internal)
+    }
+
+    /// Signs `digest` with the live sign key `handle`. The key is opened
+    /// from its file for the one signature and dropped after it.
+    fn sign(&mut self, handle: &[u8], digest: &[u8; 32]) -> Result<Response, Refusal> {
+        let name = SignKeyName::from_handle(handle).ok_or(Refusal::NoSignKey)?;
+        let entry = self.table.table.sign_key(name).ok_or(Refusal::NoSignKey)?;
+        let k = entry.key.as_ref().ok_or(Refusal::Destroyed)?;
+        let pair = self.open_sign_key(k, name)?;
+        let signature = pair.sign_digest(digest).map_err(|_| Refusal::Internal)?;
+        Ok(Response::Signed(signature))
+    }
+
+    /// Destroys the sign key `handle` in the five steps of a root destroy:
+    /// overwrite its `K` in its slot in place and fsync, unlink its file,
+    /// fsync the directory, and read back. It answers the full receipt,
+    /// also for a key destroyed before, once the read back passes again.
+    fn destroy_sign_key(&mut self, handle: &[u8]) -> Result<Response, Refusal> {
+        let name = SignKeyName::from_handle(handle).ok_or(Refusal::NoSignKey)?;
+        let live = self
+            .table
+            .table
+            .sign_key(name)
+            .ok_or(Refusal::NoSignKey)?
+            .is_live();
+        let slot = crate::table::Slot::Sign(name);
+        if live {
+            self.table
+                .mark_sign_key_destroyed(name)
+                .map_err(|_| Refusal::Internal)?;
+        }
+        self.table
+            .scrub_blocked_slot(slot)
+            .map_err(|_| Refusal::Internal)?;
+        sign_key::unlink(&self.volume, name).map_err(|_| Refusal::Internal)?;
+        epoch::sync_dir(&self.volume).map_err(|_| Refusal::Internal)?;
+        let gone = self
+            .table
+            .read_back_slot_gone(slot)
+            .map_err(|_| Refusal::Internal)?;
+        let file = sign_key::read(&self.volume, name).map_err(|_| Refusal::Internal)?;
+        if !gone || file.is_some() {
+            return Err(Refusal::Internal);
+        }
+        SignKeyReceipt::full(&name.handle())
+            .encode()
+            .map(Response::Destroyed)
+            .map_err(|_| Refusal::Internal)
+    }
+}
+
 /// The usage log operation and root of `request`.
 fn op_and_root(request: &Request) -> (u8, Option<RootHandle>) {
     match request {
@@ -328,6 +415,7 @@ fn op_and_root(request: &Request) -> (u8, Option<RootHandle>) {
         Request::Destroy { root, .. } => (usage::OP_DESTROY, Some(*root)),
         Request::Sign { .. } => (usage::OP_SIGN, None),
         Request::DestroySignKey { .. } => (usage::OP_DESTROY_SIGN_KEY, None),
+        Request::CreateSignKey { .. } => (usage::OP_CREATE_SIGN_KEY, None),
         Request::UsageSince { root, .. } => (usage::OP_USAGE, Some(*root)),
     }
 }
@@ -1372,6 +1460,108 @@ mod tests {
         let Response::Wrapped(_) = wrap(&mut s, app, [5; 32]) else {
             panic!("a sign key destroy touched the App root");
         };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// R-SW-02, I-81, ADR-004 "Decided by Daniel, 2026-11-15 (late)": the
+    /// console socket creates a local cluster CA key in a sign-key slot of
+    /// the key table, and a retried create finds the same key. The
+    /// pgagent socket signs with it, and the signature verifies under the
+    /// public key the create answered. A destroy overwrites the slot in
+    /// place, unlinks the sign-key file and answers the full receipt,
+    /// also when retried, and after a restart. The destroyed key neither
+    /// signs nor is created again, and the root slots stay usable.
+    #[test]
+    fn r_sw_02_keyd_sign_key_slot_is_created_used_and_destroyed_in_place() {
+        let dir = scratch("sign-key-slot");
+        let handle = {
+            let mut h = vec![fstp_custody::keyd::SIGN_KEY_CLUSTER_CA];
+            h.extend_from_slice(b"cluster1");
+            h
+        };
+        let name = SignKeyName::from_handle(&handle).unwrap();
+        let mut s = Server::open(&dir, &pass()).unwrap();
+        let app = create(&mut s, Chain::App, 1);
+        let create_key = |s: &mut Server, role| {
+            s.handle_as(
+                role,
+                &Request::CreateSignKey {
+                    id: ID,
+                    key: handle.clone(),
+                },
+            )
+        };
+        for role in [ClientRole::Cell, ClientRole::Vault, ClientRole::PgAgent] {
+            assert_eq!(
+                create_key(&mut s, role),
+                Response::Refused(Refusal::NotPermitted),
+                "{role:?} created a cluster CA key"
+            );
+        }
+        let Response::SignKey(spki) = create_key(&mut s, ClientRole::Console) else {
+            panic!("the console created no cluster CA key");
+        };
+        assert_eq!(
+            create_key(&mut s, ClientRole::Console),
+            Response::SignKey(spki.clone()),
+            "a retried create made another key"
+        );
+        assert!(crate::sign_key::path(&dir, name).exists());
+        let message = b"tbs certificate bytes";
+        let digest = fstp_crypto::sha256(message);
+        let sign = |s: &mut Server| {
+            s.handle_as(
+                ClientRole::PgAgent,
+                &Request::Sign {
+                    id: ID,
+                    key: handle.clone(),
+                    digest,
+                },
+            )
+        };
+        let Response::Signed(sig) = sign(&mut s) else {
+            panic!("the pgagent socket did not sign");
+        };
+        assert!(fstp_crypto::sig::ecdsa_p256_sha256_verify(&spki, message, &sig).is_ok());
+        let slot_bytes = std::fs::read(dir.join(crate::table::TABLE_FILE)).unwrap();
+        let destroy = |s: &mut Server| {
+            s.handle_as(
+                ClientRole::PgAgent,
+                &Request::DestroySignKey {
+                    id: ID,
+                    key: handle.clone(),
+                },
+            )
+        };
+        let Response::Destroyed(receipt) = destroy(&mut s) else {
+            panic!("the destroy issued no receipt");
+        };
+        let decoded = fstp_custody::keyd::decode_sign_receipt(&receipt).unwrap();
+        assert_eq!(decoded.handle, handle);
+        assert_eq!(decoded.steps, fstp_custody::keyd::DestroyStep::ALL.to_vec());
+        let after = std::fs::read(dir.join(crate::table::TABLE_FILE)).unwrap();
+        assert_eq!(
+            after.len(),
+            slot_bytes.len(),
+            "the destroy did not write in place"
+        );
+        assert_ne!(after, slot_bytes, "the destroy left the slot as it was");
+        assert!(!crate::sign_key::path(&dir, name).exists());
+        assert_eq!(destroy(&mut s), Response::Destroyed(receipt.clone()));
+        assert_eq!(sign(&mut s), Response::Refused(Refusal::Destroyed));
+        assert_eq!(
+            create_key(&mut s, ClientRole::Console),
+            Response::Refused(Refusal::Destroyed)
+        );
+        let Response::Wrapped(_) = wrap(&mut s, app, [6; 32]) else {
+            panic!("the sign key destroy touched the App root");
+        };
+        drop(s);
+        let mut s = Server::open(&dir, &pass()).unwrap();
+        assert_eq!(destroy(&mut s), Response::Destroyed(receipt));
+        assert_eq!(sign(&mut s), Response::Refused(Refusal::Destroyed));
+        let table = crate::table::open_key_table(&dir, &pass()).unwrap();
+        assert!(table.sign_key(name).is_some_and(|e| !e.is_live()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

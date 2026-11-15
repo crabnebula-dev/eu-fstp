@@ -27,6 +27,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "sign_key_file_decode"
+path = "fuzz_targets/sign_key_file_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "mountinfo_decode"
 path = "fuzz_targets/mountinfo_decode.rs"
 test = false

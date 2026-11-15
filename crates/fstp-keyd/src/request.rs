@@ -69,6 +69,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, KeydError> {
             id,
             key: r.handle()?,
         },
+        wire::KIND_CREATE_SIGN_KEY => Request::CreateSignKey {
+            id,
+            key: r.handle()?,
+        },
         wire::KIND_USAGE => {
             let root = r.root()?;
             let cursor = r.u64()?;
@@ -107,6 +111,10 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>, KeydError> {
         Response::Signed(s) => {
             put_u16_bytes(&mut b, s, wire::MAX_FRAME_BODY)?;
             wire::KIND_SIGNED
+        }
+        Response::SignKey(k) => {
+            put_u16_bytes(&mut b, k, wire::MAX_FRAME_BODY)?;
+            wire::KIND_SIGN_KEY
         }
         Response::Usage { records, next } => {
             if records.len() > MAX_USAGE_RECORDS {
