@@ -2354,6 +2354,10 @@ fn fresh_cell(
     };
     let seams = crate::fake::port_seams().map_err(|e| e.to_string())?;
     let base = FakePorts::new(&world, seams).map_err(|e| e.to_string())?;
+    // I-18: a guardian consent opens the vault's write page, so every
+    // world has a vault origin, as a cell serves one (`id.<cell host>`).
+    // Without it the guardian's valid call fails as the vault being down.
+    base.vault.set_origin(VAULT_ORIGIN);
     let engine = WorldEngine::open(store, &base)?;
     let ports = WorldPorts { base, engine };
     let core = Arc::new(api_core(ports.clone()));
@@ -4305,6 +4309,9 @@ pub fn observed_of_http(status: u16, body: &[u8]) -> Result<Observed, ChannelFau
 
 /// The tenant origin of the HTTP channel.
 const ORIGIN: &str = "https://tenant.fstp.test";
+
+/// The vault origin of every world: `id.` before the tenant host.
+const VAULT_ORIGIN: &str = "https://id.tenant.fstp.test";
 
 /// Sends `req` through the HTTP routes of `fstp-web` over a duplex pair.
 fn http_call(w: &mut Built, req: &Request, cred: &Credential) -> Result<Reply, ChannelFault> {
