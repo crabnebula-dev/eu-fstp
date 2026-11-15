@@ -1,0 +1,60 @@
+# Session handoff, 2026-11-15
+
+For the lead session that takes over from the session of 2026-11-11 to 2026-11-15. Read `.claude/CLAUDE.md` first, then this file.
+
+## Working rules Daniel set in this session
+
+- Spend the laptop's time building. No authorisation matrix runs on the laptop, not even narrowed ones. No local M-ACTIVATE model checks unless a lane touches activation. No full demo Playwright suite per lane.
+- Lanes verify with fmt, clippy, the touched crates' tests, the gen-ts check and the six web commands. Lanes run only their own new Playwright specs.
+- Push a merge as soon as its lane gates pass. Run the lead's combined gate after the push and fix forward.
+- At most three lanes at a time, unless Daniel asks for more. Lane test and matrix threads default to 2 (`.lanes/.cargo/config.toml`, `.lanes/testlock.sh`).
+- Daniel's demo: `FSTP_DEMO_STATE=$PWD/target/demo-daniel FSTP_DEMO_PORT=8640 tools/demo/run.sh start|stop`, front door http://127.0.0.1:8641/demo. Restart it after each push that changes the product. Lanes never touch ports 8640 to 8643.
+- When development is done, run CI once with the matrices, then patch what it names. The CI matrix parts still run on every push. A change to make them manual-only was refused by the permission system and waits on Daniel.
+
+## Decided in this session
+
+ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022 with SA-06 (tenant admin override of I-67), ADR-023 with SA-07 (coordinator unmasks parties, I-17 amended). Also decided, to be built:
+
+| Item | Decision |
+| --- | --- |
+| Q-I79 | Record a second admin's approval as evidence on any recovery path (the cell changes) |
+| SoD-08 break-glass | `BreakGlassApproved { grant, staff, scope, until }` |
+| ADR-007 erasure causes 1 and 4 | A tenant admin requests all four causes; the system reminds at retention expiry |
+| R-NF-08 sealed blobs | Record the layout (12-byte nonce, then ciphertext and tag) in ADR-004 |
+| I-52 | Domain generators supply Guide facts; the fold is strict |
+| Ledger seams | Compare after set-up; positions relative to the scenario start |
+| I-66/I-67 generator gaps | Production adds the creator commands (restart draft, narrative after save, remove imports, clear field, fix) |
+| Wizard | Exact email only; Operations roles as planned rows; invitations carry dates |
+| `tenant.complete` | SoD-07 (second admin) before the step checks |
+| r_nf_08 caller nonce | `approval_challenge` listed in NOT_SEALS (done) |
+| Audit log readers | Tenant admins and the programme's FSTP coordinator read it read-only, beside the auditor (lane `m4/audit-readers`, SA-08) |
+| R-PC-03 in the reference | Every publisher is refused while the call is unapproved (approved, merged) |
+| Matrix: guard refusal versus expected step-up | Not decided. Lane m4/audit-publish-import let a guard refusal agree with an expected step-up (design 3.7 step 5 runs the dry run first). Held out of main as it widens an invariant test; Daniel to decide |
+
+## Lanes at the time of handoff
+
+| Worktree | Branch | State |
+| --- | --- | --- |
+| (merged) | `m4/audit-publish-import`, `m3/cell-routes`, `m4/ops-roles-agents` | On main: audit log read and page, activation, publish and import fixes; add passkey, vault tickets, applied self-grants; agents, roles and pending reads |
+| `.lanes/auditread` | `m4/audit-readers` | Running: audit log read-only for tenant admins and coordinators |
+| `.lanes/seams` | `m4/internal-seams` | Running: the last `NotImplemented` seams in fstp-api-core |
+| `.lanes/decA` | `m3/decisions-a` | Running: Q-I79, SoD-08, ADR-007 causes, ADR-004 layout |
+| `.lanes/decB` | `m4/decisions-b` | Created, not started: I-52, ledger seams, I-66/I-67 creator commands |
+| `.lanes/finish` | `m3/finish-gaps` | Created, not started: `i24_system_tasks` seed, wizard name at stage 1 and approver count, cell erasure gaps, CellBackup scan, devstack specs |
+
+The briefs for decB and finish are in the transcript of this session. In short, each item in the two tables above.
+
+## After the lanes
+
+1. Merge decB and finish when done, push, restart the demo.
+2. One CI run with the full matrices. Patch what it names.
+3. Update `README.md` status, `docs/handoff/m3-exit-audit.md` and the M9 audit.
+
+## Open questions for Daniel (not blocking)
+
+- ADR-021: sessions and passkeys open to everyone before activation (R-LG-04); `tenant.request_activation` without the `OnboardingCompleted` record; `/p` pages answer JSON before activation.
+- ADR-022: a non-builder admin cannot use the override; the override skips the Sybil check; a mailbox item for overridable activations.
+- ADR-023: telling the unmasked person (TODO(legal)); a coordinator with a conflict; 500-character purpose; purpose retention (TODO(legal)); DRAFT parties read closed.
+- Wizard: planned rows email at once; Operations invitees accept terms.
+- Cell routes: AddPasskey digest bound to the command id; release subject defaults to the lead; Ticket key not yet in the keystore.
+- Not finishable here: M7 live-model evaluation, M10 Mythos run, M11 pilot, M12 calibration.
