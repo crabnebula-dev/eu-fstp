@@ -202,6 +202,8 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/admin/erasures", &["admin.erasures"]),
     // Daniel, 2026-11-15 (late): tenant copies of funder profiles.
     PageRow::read("/app/admin/funder-profiles", &["tenant.funder_profiles"]),
+    // SA-11 (Daniel, 2026-11-15, night): the member page, tenant admins only.
+    PageRow::read("/app/admin/members", &["admin.members"]),
     // The creator, the Planning Studio, the wizard and the people page.
     PageRow::read("/app/creator/new", CREATOR_START),
     PageRow::read("/app/setup/new", CREATOR_START),
@@ -223,6 +225,8 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/programmes/{programme}/setup/{stage}", DRAFT)
         .values(&[("stage", SETUP_STAGES)]),
     PageRow::read("/app/programmes/{programme}/people", DRAFT),
+    // SA-11: the team page, for the manager and the tenant admins.
+    PageRow::read("/app/programmes/{programme}/team", &["team.list"]),
     PageRow::read(
         "/app/programmes/{programme}/audit",
         &["audit.entries", "audit.unmasks"],

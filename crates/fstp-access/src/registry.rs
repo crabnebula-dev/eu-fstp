@@ -396,6 +396,9 @@ pub enum PortKind {
     /// A tenant admin's erasure request with its cause (ADR-007, P-41,
     /// lane m5/retention).
     RequestErasure,
+    /// The caller sets or clears its own display name, a confidential
+    /// text of its account (SA-11, ADR-007).
+    SetDisplayName,
 }
 
 /// An M5 operation that is neither a core command nor a read (M5 design
@@ -1118,6 +1121,12 @@ pub const OPS: &[OpSpec] = &[
     )
     .hr()
     .acting(ADMIN),
+    // SA-11 (Daniel, 2026-11-15, night): every member account of the
+    // organisation with its roles, for the tenant admins. Web only: it
+    // names emails and display names (I-86).
+    OpSpec::read("admin.members", RK::ListMembers, "/admin/members")
+        .acting(ADMIN)
+        .class(Personal),
     // J1: the creator and import.
     OpSpec::new(
         "creator.open_draft",
@@ -1327,6 +1336,15 @@ pub const OPS: &[OpSpec] = &[
         "/programmes/{programme}/roles",
     )
     .acting(ADMIN),
+    // SA-11: the team of a programme, open invitations included, for its
+    // manager and the tenant admins. Web only (I-86).
+    OpSpec::read(
+        "team.list",
+        RK::ListTeam,
+        "/programmes/{programme}/team",
+    )
+    .acting(MANAGER_OR_ADMIN)
+    .class(Personal),
     OpSpec::command(
         "roles.grant",
         CK::GrantRole,
@@ -2030,6 +2048,16 @@ pub const OPS: &[OpSpec] = &[
         OpKind::M3Port(PortKind::MarkMailboxRead),
         Post,
         "/me/mailbox/read",
+    )
+    .class(Personal),
+    // SA-11: the caller's own display name, which only the team and
+    // member pages show. Web only: no tool (I-86).
+    OpSpec::read("me.display_name", RK::GetMyDisplayName, "/me/display-name").class(Personal),
+    OpSpec::new(
+        "me.set_display_name",
+        OpKind::M3Port(PortKind::SetDisplayName),
+        Post,
+        "/me/display-name",
     )
     .class(Personal),
     OpSpec::new(

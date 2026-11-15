@@ -96,6 +96,7 @@ const MESSAGES = {
   'account.nav.creator': 'Programme editor',
   'account.nav.approvals': 'Approvals',
   'account.nav.erasures': 'Erasures',
+  'account.nav.members': 'Members',
   'account.nav.proposals': 'My applications',
   'account.nav.grants': 'Grants',
   'account.nav.operations': 'Operations',
@@ -144,6 +145,19 @@ const MESSAGES = {
   'account.device.removed': 'The passkey is removed.',
   'account.passkey.add': 'Add a passkey',
   'account.passkey.added': 'The passkey is added.',
+  // SA-11. TODO(legal): the privacy notice needs a line for this
+  // processing. Daniel supplies the wording. No legal text is held here.
+  'account.name.heading': 'Display name',
+  'account.name.intro':
+    'Your display name helps the tenant admins and the programme managers recognise you on the team and member pages. Applicants and reviewers never see it. It is optional.',
+  'account.name.label': 'Display name',
+  'account.name.hint': 'Plain text, at most 100 characters.',
+  'account.name.none': 'You have not set a display name.',
+  'account.name.save': 'Save display name',
+  'account.name.clear': 'Remove display name',
+  'account.name.saved': 'Your display name is saved.',
+  'account.name.cleared': 'Your display name is removed.',
+  'account.name.invalid': 'Use at most 100 characters of plain text, without < or >.',
 
   'stepup.title': 'Confirm with your passkey',
   'stepup.intro': 'This action needs a fresh confirmation with your passkey.',

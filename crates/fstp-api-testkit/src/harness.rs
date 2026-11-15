@@ -840,6 +840,8 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ("start", dec(u128::try_from(w.now).unwrap_or(0))),
         ]),
         "roles.end" => obj(vec![]),
+        // SA-11: a synthetic display name, valid in every cell.
+        "me.set_display_name" => obj(vec![("display_name", s("Synthetic Matrix Name"))]),
         "roles.reinstate" => obj(vec![("reason", s("SYNTHETIC REINSTATEMENT REASON"))]),
         "call.draft" | "call.edit" => obj(vec![
             ("opens", dec(u128::try_from(OPENS).unwrap_or(0))),
@@ -5152,3 +5154,9 @@ mod ops_roles_agents_tests;
 #[cfg(test)]
 #[path = "harness_audit.rs"]
 mod audit_tests;
+
+/// SA-11: the team and member pages and the display name on the matrix
+/// worlds (I-17, P-11, I-27, I-86, ADR-007).
+#[cfg(test)]
+#[path = "harness_team.rs"]
+mod team_tests;

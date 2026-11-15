@@ -1358,6 +1358,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // each verified identity, since onboarding finishes only with two
     // verified admins (J0, SoD-07).
     RefOp::read("tenant.list_admins", T::None, R::TenantAdmin),
+    // SA-11: "Organisation member page. Readers. Tenant admins only."
+    RefOp::read("admin.members", T::None, R::TenantAdmin),
     // Lane m4/roles (SA-01, NOTE 5): the tenant-wide signatory roles. Only a
     // tenant admin lists, grants or ends them (Q31), and a grant or an end
     // changes an Operations role, so it is high-risk (I-78). SoD-07 and the
@@ -1456,6 +1458,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("people.accept_invitation", T::None, R::AnyAccount),
     RefOp::act("people.begin_verification", T::None, R::AnyAccount),
     RefOp::read("roles.list", T::Programme, R::TenantAdmin),
+    // SA-11 (Daniel, 2026-11-15, night): "Readers. Tenant admins and the
+    // programme's manager." The team page needs no step-up to read.
+    RefOp::read("team.list", T::Programme, R::DraftManager),
     RefOp::act("roles.grant", T::Programme, R::TenantAdmin).hr(),
     RefOp::act("roles.end", T::Programme, R::TenantAdmin).hr(),
     RefOp::act("roles.reinstate", T::SuspendedBinding, R::TenantAdmin).hr(),
@@ -1645,6 +1650,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // no tool (MB-D5, I-86).
     RefOp::read("me.mailbox", T::None, R::AnyAccount),
     RefOp::act("me.end_session", T::None, R::AnyAccount),
+    // SA-11: "Each account may set its own display name on its account
+    // page, and clear it." Reading: any account reads and sets its own,
+    // with no step-up, since the amendment names none, and web only.
+    RefOp::read("me.display_name", T::None, R::AnyAccount),
+    RefOp::act("me.set_display_name", T::None, R::AnyAccount),
     // MB-Q1, ADR-020 (Proposed): the caller marks its own notice read.
     RefOp::act("me.mailbox.mark_read", T::None, R::AnyAccount),
     RefOp::act("me.add_passkey", T::None, R::AnyAccount).hr(),

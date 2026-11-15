@@ -15,7 +15,7 @@
 //! Every answer a vault port gives, dry runs and previews included, is
 //! recorded through [`VaultAudit`] (`overview.md` NOTE 5).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -568,6 +568,9 @@ pub enum TextOwner {
     /// The tenant, for its onboarding texts such as the data protection
     /// contact (Q22, lane m4tenant).
     Tenant,
+    /// An account, for its own display name (SA-11). An account erasure
+    /// erases every text its account owns (ADR-007).
+    Account(AccountId),
 }
 
 /// A reference to a stored text.
@@ -787,6 +790,17 @@ pub trait Accounts: Send + Sync {
         &self,
         a: AccountId,
     ) -> impl Future<Output = Result<DisplayHandle, PortError>> + Send;
+    /// The login email of an account, from the cell's login email index,
+    /// or `None` when the account has none (SA-11). Only the team and
+    /// member pages read it, both web only (I-86). The default is the seam
+    /// of a cell that keeps no index: it fails closed.
+    fn login_email(
+        &self,
+        a: AccountId,
+    ) -> impl Future<Output = Result<Option<String>, PortError>> + Send {
+        let _ = a;
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// The M2 oracle answers, asynchronously.
@@ -1024,6 +1038,39 @@ pub trait TextStore: Send + Sync {
         proof: StepUpProof,
     ) -> impl Future<Output = Result<(), PortError>> + Send {
         let _ = (by, cause, grant, at, proof);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
+    /// Sets the display name of account `a` to `name`, or clears it with
+    /// `None` (SA-11). The store keeps it as a confidential text that the
+    /// account owns (`TextOwner::Account`, ADR-007), so an account
+    /// erasure erases it. A text it replaces or clears is erased at once.
+    /// The API core checked the name first. The default fails closed.
+    ///
+    /// Interim reading, pending Daniel: a display name changes no domain
+    /// fact, so no ledger record names it. The store alone knows which of
+    /// an account's texts is its display name.
+    fn set_display_name(
+        &self,
+        a: AccountId,
+        name: Option<String>,
+        at: Timestamp,
+    ) -> impl Future<Output = Result<(), PortError>> + Send {
+        let _ = (a, name, at);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
+    /// The display names of those of `accounts` that have one, under
+    /// `clearance` (SA-11). A store releases them only to a clearance of
+    /// the team read, the member read, or the account's own display name
+    /// read, so no other read can show one (I-17, P-11, I-27). The default
+    /// fails closed.
+    fn display_names(
+        &self,
+        accounts: Vec<AccountId>,
+        clearance: &ReadClearance,
+    ) -> impl Future<Output = Result<BTreeMap<AccountId, String>, PortError>> + Send {
+        let _ = (accounts, clearance);
         std::future::ready(Err(PortError::Unavailable))
     }
 }

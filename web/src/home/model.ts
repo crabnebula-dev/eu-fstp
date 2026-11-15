@@ -253,6 +253,8 @@ export type WorkKind =
   | "operations"
   | "audit"
   | "funder-profile"
+  | "team"
+  | "members"
   | "open-calls";
 
 /** One own proposal, as `proposal.list_own` gives it. */
@@ -359,6 +361,8 @@ export const WORK_PATHS = Object.freeze({
   studio: (p: string): string => `/app/programmes/${p}/studio`,
   knockOuts: (p: string): string => `/app/programmes/${p}/studio/knock-outs`,
   people: (p: string): string => `/app/programmes/${p}/people`,
+  team: (p: string): string => `/app/programmes/${p}/team`,
+  members: "/app/admin/members",
   board: (c: string): string => `/app/calls/${c}/board`,
   intake: (c: string): string => `/app/calls/${c}/intake`,
   notifiable: (c: string): string => `/app/calls/${c}/notifiable-conflicts`,
@@ -483,6 +487,12 @@ export function workOf(
     for (const p of [...new Set(adminProgrammes)].sort(byId)) {
       add("tenant_admin", "audit", WORK_PATHS.audit(p), text("home.work.audit", { programme: p }));
     }
+    // SA-11 (Daniel, 2026-11-15 night): the member page, and the team page
+    // of every programme of the tenant.
+    add("tenant_admin", "members", WORK_PATHS.members, text("home.work.members"));
+    for (const p of [...new Set(adminProgrammes)].sort(byId)) {
+      add("tenant_admin", "team", WORK_PATHS.team(p), text("home.work.team", { programme: p }));
+    }
   }
 
   const staff = r.roles.filter((b) => b.proposal === null);
@@ -501,6 +511,11 @@ export function workOf(
     add("programme", "studio", WORK_PATHS.studio(p), text("home.work.studio", { programme: p }));
     add("programme", "creator", WORK_PATHS.creator(p), text("home.work.creator", { programme: p }));
     add("programme", "people", WORK_PATHS.people(p), text("home.work.people", { programme: p }));
+  }
+  // SA-11: the programme manager's team page of each programme it
+  // manages, a draft or active.
+  for (const p of programmes(holds("programme_manager"))) {
+    add("programme", "team", WORK_PATHS.team(p), text("home.work.team", { programme: p }));
   }
   // J6: a committee member's assignments.
   if (holds("committee_member").length > 0) {
@@ -596,6 +611,7 @@ export type NavKind =
   | "creator"
   | "approvals"
   | "erasures"
+  | "members"
   | "operations"
   | "proposals"
   | "grants"
@@ -653,7 +669,11 @@ export function navLinksOf(r: MyRoles, reviewWork = false): readonly NavLink[] {
     out.push({ kind: "approvals", href: WORK_PATHS.approvals, label: "nav.approvals" });
     // P-41, ADR-007 (lane m5/retention): the erasure page.
     out.push({ kind: "erasures", href: WORK_PATHS.erasures, label: "nav.erasures" });
+    // SA-11: the member page.
+    out.push({ kind: "members", href: WORK_PATHS.members, label: "nav.members" });
   }
+  // SA-11: the team page needs a programme id, so the home page and the
+  // people page link it instead (r_nf_03: navigation links need no id).
   return Object.freeze(out);
 }
 

@@ -91,6 +91,7 @@ export type OpName =
   | "admin.approve_break_glass"
   | "admin.erasures"
   | "admin.request_erasure"
+  | "admin.members"
   | "creator.open_draft"
   | "creator.list_programmes"
   | "creator.list_templates"
@@ -118,6 +119,7 @@ export type OpName =
   | "people.accept_invitation"
   | "people.begin_verification"
   | "roles.list"
+  | "team.list"
   | "roles.grant"
   | "roles.end"
   | "roles.reinstate"
@@ -210,6 +212,8 @@ export type OpName =
   | "me.roles"
   | "me.mailbox"
   | "me.mailbox.mark_read"
+  | "me.display_name"
+  | "me.set_display_name"
   | "me.end_session"
   | "me.add_passkey"
   | "pending.list"
@@ -333,6 +337,7 @@ export interface OpParams {
   readonly "admin.approve_break_glass": { readonly "break_glass": string };
   readonly "admin.erasures": Readonly<Record<never, string>>;
   readonly "admin.request_erasure": Readonly<Record<never, string>>;
+  readonly "admin.members": Readonly<Record<never, string>>;
   readonly "creator.open_draft": Readonly<Record<never, string>>;
   readonly "creator.list_programmes": Readonly<Record<never, string>>;
   readonly "creator.list_templates": Readonly<Record<never, string>>;
@@ -360,6 +365,7 @@ export interface OpParams {
   readonly "people.accept_invitation": { readonly "invitation_token": string };
   readonly "people.begin_verification": { readonly "invitation_token": string };
   readonly "roles.list": { readonly "programme": string };
+  readonly "team.list": { readonly "programme": string };
   readonly "roles.grant": { readonly "programme": string };
   readonly "roles.end": { readonly "programme": string; readonly "binding": string };
   readonly "roles.reinstate": { readonly "programme": string; readonly "binding": string };
@@ -452,6 +458,8 @@ export interface OpParams {
   readonly "me.roles": Readonly<Record<never, string>>;
   readonly "me.mailbox": Readonly<Record<never, string>>;
   readonly "me.mailbox.mark_read": Readonly<Record<never, string>>;
+  readonly "me.display_name": Readonly<Record<never, string>>;
+  readonly "me.set_display_name": Readonly<Record<never, string>>;
   readonly "me.end_session": { readonly "session": string };
   readonly "me.add_passkey": Readonly<Record<never, string>>;
   readonly "pending.list": Readonly<Record<never, string>>;
@@ -548,6 +556,7 @@ export const OP_NAMES: readonly OpName[] = [
   "admin.approve_break_glass",
   "admin.erasures",
   "admin.request_erasure",
+  "admin.members",
   "creator.open_draft",
   "creator.list_programmes",
   "creator.list_templates",
@@ -575,6 +584,7 @@ export const OP_NAMES: readonly OpName[] = [
   "people.accept_invitation",
   "people.begin_verification",
   "roles.list",
+  "team.list",
   "roles.grant",
   "roles.end",
   "roles.reinstate",
@@ -667,6 +677,8 @@ export const OP_NAMES: readonly OpName[] = [
   "me.roles",
   "me.mailbox",
   "me.mailbox.mark_read",
+  "me.display_name",
+  "me.set_display_name",
   "me.end_session",
   "me.add_passkey",
   "pending.list",
@@ -1245,6 +1257,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "admin.members",
+    method: "GET",
+    path: "/admin/members",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "members" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
     name: "creator.open_draft",
     method: "POST",
     path: "/programmes",
@@ -1620,6 +1646,20 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "team.list",
+    method: "GET",
+    path: "/programmes/{programme}/team",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "team" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
     tool: null,
   },
   {
@@ -2902,6 +2942,34 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/me/mailbox/read",
     base: "api",
     segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "mailbox" }, { kind: "literal", text: "read" }],
+    params: [],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "me.display_name",
+    method: "GET",
+    path: "/me/display-name",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "display-name" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "me.set_display_name",
+    method: "POST",
+    path: "/me/display-name",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "display-name" }],
     params: [],
     body: true,
     highRisk: false,
@@ -4997,6 +5065,61 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "team.list": {
+    kind: "object",
+    fields: {
+      "actions": { schema: { kind: "array", items: { kind: "enum", values: ["grant", "end", "reinstate", "invite"] } }, optional: false },
+      "rows": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "account": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "display_name": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "email": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "binding": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "invitation": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "financial_signatory", "legal_signatory", "auditor"] }, optional: false },
+          "status": { schema: { kind: "enum", values: ["invited", "accepted", "verified", "active", "suspended", "ended"] }, optional: false },
+          "rule": { schema: { kind: "string" }, optional: true },
+          "start": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "end": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "admin.members": {
+    kind: "object",
+    fields: {
+      "actions": { schema: { kind: "array", items: { kind: "enum", values: ["grant", "end", "reinstate", "invite"] } }, optional: false },
+      "members": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "account": { schema: { kind: "id" }, optional: false },
+          "display_name": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "email": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "tenant_admin": { schema: { kind: "bool" }, optional: false },
+          "roles": { schema: { kind: "array", items: {
+            kind: "object",
+            fields: {
+              "programme": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+              "binding": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+              "invitation": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+              "role": { schema: { kind: "enum", values: ["programme_manager", "call_drafter", "fstp_coordinator", "committee_member", "committee_chair", "irc_member", "tenant_admin", "finance_approver", "payment_releaser", "contract_signatory", "financial_signatory", "legal_signatory", "auditor"] }, optional: false },
+              "status": { schema: { kind: "enum", values: ["invited", "accepted", "verified", "active", "suspended", "ended"] }, optional: false },
+              "rule": { schema: { kind: "string" }, optional: true },
+              "start": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "end": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+            },
+          } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "me.display_name": {
+    kind: "object",
+    fields: {
+      "display_name": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+    },
+  },
   "creator.invitations": {
     kind: "object",
     fields: {
@@ -5296,6 +5419,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/admin/terminology", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/erasures", need: { kind: "reads", reads: ["admin.erasures"] }, values: {}, listed: null },
   { pattern: "/app/admin/funder-profiles", need: { kind: "reads", reads: ["tenant.funder_profiles"] }, values: {}, listed: null },
+  { pattern: "/app/admin/members", need: { kind: "reads", reads: ["admin.members"] }, values: {}, listed: null },
   { pattern: "/app/creator/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
   { pattern: "/app/setup/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/creator/start", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
@@ -5308,6 +5432,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/programmes/{programme}/setup/progress", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/setup/{stage}", need: { kind: "reads", reads: ["creator.get_draft"] }, values: { stage: ["programme", "applicants", "evaluation", "team", "communications", "review"] }, listed: null },
   { pattern: "/app/programmes/{programme}/people", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/team", need: { kind: "reads", reads: ["team.list"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/audit", need: { kind: "reads", reads: ["audit.entries", "audit.unmasks"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/reports", need: { kind: "reads", reads: ["report.list"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/funder-profile", need: { kind: "reads", reads: ["programme.funder_profile.view"] }, values: {}, listed: null },

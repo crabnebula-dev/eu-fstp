@@ -207,11 +207,20 @@ pub enum ReadKind {
     // ADR-023 reading 11 (R-AU-01): the unmask records of a programme, for
     // its auditor and the tenant admins.
     ListUnmasks,
+    // SA-11 (Daniel, 2026-11-15, night): the team of one programme, open
+    // invitations included, with display names and emails, for its
+    // manager and the tenant admins.
+    ListTeam,
+    // SA-11: every member account of the organisation with its roles
+    // across programmes, for the tenant admins.
+    ListMembers,
+    // SA-11: the caller's own display name, for the account page.
+    GetMyDisplayName,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 73] = [
+    pub const ALL: [ReadKind; 76] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -285,6 +294,9 @@ impl ReadKind {
         ReadKind::GetFunderProfile,
         ReadKind::ListUnmaskParties,
         ReadKind::ListUnmasks,
+        ReadKind::ListTeam,
+        ReadKind::ListMembers,
+        ReadKind::GetMyDisplayName,
     ];
 }
 
@@ -391,6 +403,12 @@ impl ReadRule {
         ReadRule::Auditor,
     ]);
 
+    /// The readers of a programme's team page: its programme manager
+    /// and every tenant admin, who read its invitations too (SA-11,
+    /// Daniel 2026-11-15 night).
+    pub const TEAM_READER: ReadRule =
+        ReadRule::AnyOf(&[ReadRule::DraftManager, ReadRule::TenantAdmin]);
+
     /// The states after NEGOTIATION in which [`ReadRule::GrantReviewer`]
     /// opens. Interim reading, pending Daniel: WITHDRAWN and DECLINED end
     /// the negotiation without a grant, so they are left out.
@@ -410,7 +428,7 @@ const COMMITTEE: ReadRule = ReadRule::AnyOf(&[
     ReadRule::Holder(Role::CommitteeMember),
     ReadRule::Holder(Role::CommitteeChair),
 ]);
-const DRAFT_READER: ReadRule = ReadRule::AnyOf(&[ReadRule::DraftManager, ReadRule::TenantAdmin]);
+const DRAFT_READER: ReadRule = ReadRule::TEAM_READER;
 /// The draft read of the knock-out criteria: a draft reader, or a call
 /// drafter of the programme, who writes the knock-out criteria (roles
 /// table; lane m4/fast-flow, Daniel 2026-11-12).
@@ -758,6 +776,12 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::AnyOf(&[ReadRule::Auditor, ReadRule::TenantAdmin]),
         OPEN_ALWAYS,
     ),
+    // SA-11 (Daniel, 2026-11-15, night): the team page of a programme is
+    // read by its manager and the tenant admins, the member page by the
+    // tenant admins, and a display name by its own account only.
+    (ReadKind::ListTeam, ReadRule::TEAM_READER, OPEN_ALWAYS),
+    (ReadKind::ListMembers, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    (ReadKind::GetMyDisplayName, ReadRule::Own, OPEN_ALWAYS),
 ];
 
 /// The readers of a grant (M5 design section 5).

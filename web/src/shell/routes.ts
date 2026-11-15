@@ -9,6 +9,7 @@
 import { ADMIN_BRANDING_PAGES } from "../admin/branding/page.js";
 import { ADMIN_ERASURE_PAGES } from "../admin/erasures/page.js";
 import { ADMIN_PROFILE_PAGES } from "../admin/profiles/page.js";
+import { TEAM_PAGES } from "../admin/team/page.js";
 import { PAGES as APPLICANT_PAGES } from "../applicant/app.js";
 import type { RouteDef } from "../core/router.js";
 import { CREATOR_ROUTES } from "../creator/routes.js";
@@ -39,6 +40,7 @@ export function appRoutes(): readonly RouteDef[] {
     ...ADMIN_BRANDING_PAGES.map((p) => p.route),
     ...ADMIN_ERASURE_PAGES.map((p) => p.route),
     ...ADMIN_PROFILE_PAGES.map((p) => p.route),
+    ...TEAM_PAGES.map((p) => p.route),
     ...POST_GRANT_PAGES.map((p) => p.route),
     ...JUDGING_PAGES.map((p) => p.route),
   ];

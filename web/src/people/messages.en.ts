@@ -49,6 +49,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "people.admin.title": "People of this programme",
   "people.admin.intro":
     "Grant each role once the invitee accepted the terms and verified identity. An Operations role needs no identity check and is granted after activation. Each grant needs your passkey.",
+  "people.admin.team_link": "See everyone with a role in this programme on the Team page",
   "people.admin.grant": "Grant {role} to {email}",
 
   // The current roles of the people admin page (J1, lane m4/ops-roles-agents).

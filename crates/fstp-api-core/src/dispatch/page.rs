@@ -291,6 +291,11 @@ fn body_admits<P: Seams>(
         | ReadKind::ListImportProposals => {
             id("programme").is_some_and(|p| state.creator.draft(ProgrammeId::from_raw(p)).is_some())
         }
+        // SA-11: the team page of a programme that exists, as a draft or
+        // an active programme.
+        ReadKind::ListTeam => id("programme").map(ProgrammeId::from_raw).is_some_and(|p| {
+            state.creator.draft(p).is_some() || state.core.policy().programme(p).is_some()
+        }),
         ReadKind::GetIntakeQueue => id("call").is_some_and(|c| {
             state
                 .core

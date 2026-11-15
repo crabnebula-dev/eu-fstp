@@ -21,6 +21,8 @@ pub struct FakeAccounts {
     names: Arc<Mutex<BTreeMap<AccountId, String>>>,
     /// Every invitation M3 received, oldest first (lane inv).
     kinds: Arc<Mutex<Vec<InviteKind>>>,
+    /// The login email index of the cell, by account (SA-11).
+    logins: Arc<Mutex<BTreeMap<AccountId, String>>>,
 }
 
 impl FakeAccounts {
@@ -53,6 +55,12 @@ impl FakeAccounts {
         lock(&self.names).insert(a, handle.to_owned());
     }
 
+    /// Records `email` as the login email of `a`, as the cell's login
+    /// email index holds it (SA-11). Synthetic addresses only.
+    pub fn set_login_email(&self, a: AccountId, email: &str) {
+        lock(&self.logins).insert(a, email.to_owned());
+    }
+
     /// The name [`FakeAccounts::name`] gave `a`, if any. Only the demo
     /// vault page reads it, on the vault origin (ADR-023).
     pub fn name_of(&self, a: AccountId) -> Option<String> {
@@ -82,6 +90,11 @@ impl Accounts for FakeAccounts {
             return Ok(DisplayHandle(n.clone()));
         }
         Ok(DisplayHandle(format!("person-{:x}", a.raw())))
+    }
+
+    /// The login email [`FakeAccounts::set_login_email`] recorded.
+    async fn login_email(&self, a: AccountId) -> Result<Option<String>, PortError> {
+        Ok(lock(&self.logins).get(&a).cloned())
     }
 }
 
