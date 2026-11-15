@@ -16,8 +16,11 @@
 //! first policy version of `creator.open_draft`, the invitation, the
 //! decision of an approval, the tenant template and the import document.
 //!
-//! - `creator.open_draft`: `{}`. The draft starts under the default
-//!   funder profile, Horizon Europe version 1 (P-53).
+//! - `creator.open_draft`: `{name?}`. The draft starts under the default
+//!   funder profile, Horizon Europe version 1 (P-53). `name` is the
+//!   programme name of wizard stage 1, a string that is not blank (design
+//!   doc 11 section 15). It is saved in the opening entry as a manual edit
+//!   of the name field, with its value digest as a save computes it.
 //! - `creator.apply_start`: `{base, start}`, where `start` is `{kind:
 //!   "blank"}`, `{kind: "template", template, version}`, `{kind: "clone",
 //!   source}` or `{kind: "import", document}`.
@@ -92,6 +95,11 @@ pub(crate) const MAX_EDITS: usize = 256;
 /// The longest invitation email, in bytes (RFC 5321 path limit).
 const MAX_EMAIL: usize = 254;
 
+/// The key of the programme name field, which `creator.open_draft` saves.
+/// The codec decodes it to `fstp_programme::FieldId::ProgrammeName`, which
+/// a test of `fstp-api-testkit` checks.
+const PROGRAMME_NAME: &str = "identity.name";
+
 /// The previews of journey J1, as the route segment names them.
 pub(crate) const PREVIEWS: [&str; 3] = ["guide", "public", "contract"];
 
@@ -158,7 +166,8 @@ impl Form {
     /// The body members the client must send, and those it may send.
     const fn members(self) -> (&'static [&'static str], &'static [&'static str]) {
         match self {
-            Form::OpenDraft | Form::Withdraw | Form::SaveAsTemplate => (&[], &[]),
+            Form::OpenDraft => (&[], &["name"]),
+            Form::Withdraw | Form::SaveAsTemplate => (&[], &[]),
             Form::ApplyStart => (&["base", "start"], &[]),
             Form::SaveFields => (&["base", "fields"], &[]),
             Form::AcceptNarrative => (&["base"], &[]),
@@ -387,11 +396,16 @@ pub(crate) fn build(
         Form::OpenDraft => {
             let programme = ProgrammeId::from_raw(draw()?);
             let version = PolicyVersionId::from_raw(draw()?);
-            creator(CreatorCommand::OpenDraft {
+            let open = CreatorCommand::OpenDraft {
                 programme,
                 version,
                 profile: default_profile()?,
-            })
+                name: None,
+            };
+            match request.get("name") {
+                None => creator(open),
+                Some(name) => named_open(open, name).and_then(creator),
+            }
         }
         Form::ApplyStart => creator(CreatorCommand::ApplyStart {
             programme: programme(request)?,
@@ -527,6 +541,28 @@ fn start(v: &Value) -> Result<StartingPoint, ApiError> {
         }
         _ => Err(bad()),
     }
+}
+
+/// `open` with the programme name of `creator.open_draft` (module
+/// documentation): a manual edit of the name field, decoded by its strict
+/// decoder through the creator codec.
+fn named_open(open: CreatorCommand, name: &Value) -> Result<CreatorCommand, ApiError> {
+    let text = name
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(bad)?;
+    let (canonical, digest) = value_text(&Value::from(text))?;
+    let mut e = Object::new();
+    let _ = e.insert("field", Value::from(PROGRAMME_NAME));
+    let _ = e.insert("value", Value::String(canonical));
+    let _ = e.insert("digest", hex32(digest));
+    let _ = e.insert("provenance", tagged("Manual", Vec::new()));
+    let mut v = open.to_json();
+    let Value::Object(o) = &mut v else {
+        return Err(bad());
+    };
+    let _ = o.insert("name", Value::Object(e));
+    decode(&v)
 }
 
 /// The `SaveFields` of `creator.save_fields`: one manual edit per field,
@@ -971,6 +1007,10 @@ pub enum CreatorModel {
         pending_narratives: BTreeMap<String, String>,
         /// Whether an activation request is live.
         requested: bool,
+        /// How many attested tenant admins are not builders of the draft:
+        /// those who may approve its activation (I-67). A count only, it
+        /// names no account (R-CF-03; design doc 11 section 15).
+        approvers: u32,
     },
     /// `creator.get_report`.
     Report {
@@ -1053,6 +1093,7 @@ impl ToJson for CreatorModel {
                 active,
                 pending_narratives,
                 requested,
+                approvers,
             } => {
                 let mut pending = Object::new();
                 for (k, v) in pending_narratives {
@@ -1066,6 +1107,7 @@ impl ToJson for CreatorModel {
                         Value::from(if *active { "active" } else { "draft" }),
                     ),
                     ("pending_narratives", Value::Object(pending)),
+                    ("approvers", Value::from(*approvers)),
                 ];
                 if *requested {
                     members.push(("activation", Value::from("requested")));
@@ -1417,10 +1459,11 @@ mod tests {
             active: false,
             pending_narratives: BTreeMap::new(),
             requested: true,
+            approvers: 1,
         };
         assert_eq!(
             d.to_json().to_canonical().unwrap(),
-            r#"{"activation":"requested","pending_narratives":{},"revision":"2.9","spec":{},"status":"draft"}"#
+            r#"{"activation":"requested","approvers":1,"pending_narratives":{},"revision":"2.9","spec":{},"status":"draft"}"#
         );
         let o = CreatorModel::Opened {
             programme: ProgrammeId::from_raw(7),

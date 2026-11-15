@@ -592,6 +592,18 @@ export class VirtualAuthenticator {
     return r.credentials as VirtualCredential[];
   }
 
+  /**
+   * Whether the authenticator answers a ceremony on its own. Chromium sends
+   * a ceremony to every attached authenticator, so a paused one leaves a
+   * creation to the other: one new credential, not two.
+   */
+  async setPresence(on: boolean): Promise<void> {
+    await this.cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+      authenticatorId: this.id,
+      enabled: on,
+    });
+  }
+
   async setUserVerified(v: boolean): Promise<void> {
     await this.cdp.send('WebAuthn.setUserVerified', {
       authenticatorId: this.id,
@@ -869,7 +881,7 @@ export async function stepUp(
  */
 export const ROUTE_ACTIONS = {
   addPasskey: { type: 'AddPasskey' },
-  removeDevice: (device: string) => ({ type: 'ChangeLoginMethods', device }),
+  approveRecovery: (recoveryCase: string) => ({ auth: { case: recoveryCase, type: 'ApproveRecovery' } }),
 } as const;
 
 /**
@@ -923,10 +935,12 @@ export async function openLink(page: Page, url: string): Promise<void> {
  * creation options, so the new passkey has a device that does not hold
  * the enrolled one. Chromium allows one platform authenticator per page,
  * and an empty second authenticator breaks the step-up assertion that
- * comes first. `key` resolves once the key is attached.
+ * comes first. `key` resolves once the key is attached. The `enrolled`
+ * device pauses then (`setPresence`), and the caller resumes it.
  */
 export async function keyForNextPasskey(
   page: Page,
+  enrolled?: VirtualAuthenticator,
 ): Promise<{ readonly key: Promise<VirtualAuthenticator> }> {
   let attached: (a: VirtualAuthenticator) => void = () => undefined;
   const key = new Promise<VirtualAuthenticator>((resolve) => {
@@ -935,6 +949,8 @@ export async function keyForNextPasskey(
   await page.route(
     '**/auth/passkeys/options',
     async (route) => {
+      // The enrolled device pauses, so only the key answers the creation.
+      await enrolled?.setPresence(false);
       attached(await VirtualAuthenticator.attach(page, { transport: 'usb' }));
       await route.continue();
     },
@@ -1140,12 +1156,14 @@ export async function confirmStepUp(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Enables magic links for the tenant (P-70) through `SetLoginPolicy`, a
- * high-risk action with its own step-up, in the admin's `page`.
+ * Magic links for the tenant (P-70). No command carries P-70 yet:
+ * `SetLoginPolicy` holds P-71 and P-72 only (`fstp_cell_core::tenant`,
+ * interim pending Daniel). So the stack's tenant enables magic links at
+ * start, as the world's start options do, and this sends nothing. Each
+ * caller keeps a positive control that a Receiving account is sent a link.
  */
-export async function enableMagicLinks(page: Page, control: Control): Promise<void> {
-  const c = await control.command('SetLoginPolicy', { magic_links: 'enabled' });
-  await runHighRisk(page, control.cell.origin, c.command);
+export async function enableMagicLinks(_page: Page, _control: Control): Promise<void> {
+  return Promise.resolve();
 }
 
 /** Creates a programme (high risk, design section 8.4). Returns its id. */

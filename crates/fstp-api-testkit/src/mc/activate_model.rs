@@ -591,6 +591,7 @@ pub mod production {
                 programme: PLAN_P,
                 version: PolicyVersionId::from_raw(PLAN_P.raw()),
                 profile: default_profile()?,
+                name: None,
             };
             if !matches!(
                 s.run(Command::Creator(open), plan.opener, Tag::Plain)?,
@@ -1561,6 +1562,7 @@ pub mod production {
                         programme: PLAN_P,
                         version: PolicyVersionId::from_raw(PLAN_P.raw()),
                         profile: default_profile()?,
+                        name: None,
                     };
                     let r = self.run(Command::Creator(open), by, Tag::Plain)?;
                     self.verdict(r, None)

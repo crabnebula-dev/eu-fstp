@@ -1011,6 +1011,12 @@ fn i80_process_mode_keeps_roots_in_a_custody_process() {
         all.len(),
         destroyed.len()
     );
+    // The Linux scans look for CellBackup seal keys too: `rotate-chain`
+    // destroyed one, so that part of the scan has a needle.
+    let backup = world
+        .epoch_seal_needles(&[Chain::CellBackup], true)
+        .unwrap();
+    assert!(!backup.is_empty(), "no destroyed CellBackup seal key");
 }
 
 /// I-80, Q27: the Linux-only memory scans run in CI. This companion runs
@@ -1034,6 +1040,10 @@ mod linux {
     use fstp_celltest::egress::Component;
     use fstp_celltest::procmem::read_memory;
 
+    /// The chains whose epoch seal keys the memory scans look for in the
+    /// `fstp-cell` and `fstp-vault` processes (ADR-004 part 2).
+    const CELL_CHAINS: [Chain; 3] = [Chain::App, Chain::Vault, Chain::CellBackup];
+
     /// The process that runs component `c` of cell `cell` in a world in
     /// process mode (`World::process_id`, lane m3/custody-decisions). The
     /// cell's custody runs in a process of its own, so a root never has
@@ -1053,12 +1063,13 @@ mod linux {
     /// `destroyed_only` holds. Custody sees each `S(e)` when it wraps it
     /// (Daniel, 2026-11-13: the simulator wraps, m3-exit-audit section 7,
     /// item 2). The chains are those an `fstp-cell` or `fstp-vault`
-    /// process holds keys of: App and Vault. CellBackup keys belong to
-    /// `fstp-backup`. No needle at all would pass vacuously, so it is an
-    /// error.
+    /// process holds keys of: App, Vault and CellBackup. The cell holds
+    /// its CellBackup chain (ADR-004), and the harness that plays its
+    /// backups runs in the cell's process. No needle at all would pass
+    /// vacuously, so it is an error.
     fn epoch_seal_needles(world: &World, destroyed_only: bool) -> Result<Vec<Needle>, String> {
         let needles = world
-            .epoch_seal_needles(&[Chain::App, Chain::Vault], destroyed_only)
+            .epoch_seal_needles(&CELL_CHAINS, destroyed_only)
             .map_err(|e| e.to_string())?;
         if needles.is_empty() {
             return Err("custody reported no seal key to look for".to_owned());

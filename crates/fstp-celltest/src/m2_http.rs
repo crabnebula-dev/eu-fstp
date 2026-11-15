@@ -689,6 +689,7 @@ impl<'c, 'w> HttpDriver<'c, 'w> {
                 programme: p,
                 version: draft,
                 profile,
+                name: None,
             }),
         )?;
         let binding = BindingId::from_raw(BUILDER_BINDING_BASE.saturating_add(p.raw()));

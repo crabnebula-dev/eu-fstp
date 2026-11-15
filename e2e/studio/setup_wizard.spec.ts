@@ -96,6 +96,7 @@ test.describe('programme set-up wizard', () => {
     const bar = a2.page.getByRole('navigation', { name: 'Set-up stages' });
     await expect(bar.locator('li[aria-current="step"]')).toHaveAttribute('data-stage', 'start');
     await expect(a2.page.getByRole('complementary', { name: 'Your set-up so far' })).toBeVisible();
+    await a2.page.locator('#setup-name').fill('Synthetic Open Calls 2027');
     await a2.page.locator('#setup-pm-email').fill(PM);
     await a2.page.locator('#setup-pm-end').fill('2029-12-31');
     await shot(a2.page, '01-start');
@@ -109,6 +110,7 @@ test.describe('programme set-up wizard', () => {
     await readyAt(a2.page, /^\/app\/programmes\/\d+\/setup\/progress$/);
     await expect(a2.page.locator('main h1')).toHaveText('Set-up progress');
     await expect(a2.page.locator('#setup-strip li[data-milestone="drafted"]')).toHaveAttribute('data-condition', 'done');
+    await expect(a2.page.locator('#setup-approver-count')).toHaveAttribute('data-approvers', /^\d+$/);
     await expect(a2.page.locator('#setup-strip li[data-milestone="invited"]')).not.toHaveAttribute('data-condition', 'current');
     const pmRow = a2.page.locator('#setup-team-status tr[data-role="programme_manager"]');
     await expect(pmRow).toContainText(PM);

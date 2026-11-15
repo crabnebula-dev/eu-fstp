@@ -249,6 +249,10 @@ pub enum CreatorCommand {
         version: PolicyVersionId,
         /// The funder profile.
         profile: FunderProfileRef,
+        /// The programme name the opening tenant admin typed, a manual
+        /// edit of `ProgrammeName` (design doc 11 section 15, stage 1).
+        /// It is saved in the same entry, as a save by the opener.
+        name: Option<FieldEdit>,
     },
     /// Apply a starting point.
     ApplyStart {

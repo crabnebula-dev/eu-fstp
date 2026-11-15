@@ -203,6 +203,11 @@ export interface Draft {
   readonly pendingNarratives: Readonly<Record<string, string>>;
   /** Whether an activation request stands at the current revision. */
   readonly activationRequested: boolean;
+  /**
+   * How many tenant admins are not builders of this draft, so may approve
+   * its activation (I-67). Null when the server sends no count.
+   */
+  readonly approvers: number | null;
 }
 
 /**
@@ -233,7 +238,10 @@ export function readDraft(body: unknown): Draft | null {
   }
   const activation = o["activation"];
   if (activation !== undefined && activation !== null && typeof activation !== "string") return null;
-  return { spec, revision, status, pendingNarratives: pending, activationRequested: activation === "requested" };
+  const a = o["approvers"];
+  if (a !== undefined && a !== null && (typeof a !== "number" || !Number.isSafeInteger(a) || a < 0)) return null;
+  const approvers = typeof a === "number" ? a : null;
+  return { spec, revision, status, pendingNarratives: pending, activationRequested: activation === "requested", approvers };
 }
 
 /** The value of field `key` in a draft spec. A gap or a missing member is null. */

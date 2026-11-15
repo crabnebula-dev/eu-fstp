@@ -31,8 +31,8 @@
 //! values the later checks read, outside the ledger:
 //!
 //! - a `RecordProposals` batch: each proposal value, in the import store;
-//! - a creator `SaveFields`: each saved value, in the creator
-//!   (`CreatorState::hold_saved`);
+//! - a creator `SaveFields`, or the name of an `OpenDraft`: each saved
+//!   value, in the creator (`CreatorState::hold_saved`);
 //! - a confirmed or edited `ResolveImport`: the saved value, in the
 //!   creator (`CreatorState::hold_import`). It is the value
 //!   `bridge::applied_edit` gives on the state the command was decided
@@ -941,6 +941,18 @@ fn holds_of(state: &EngineState, cmd: &Command, ctx: &Ctx, batch: &[Record]) -> 
     match cmd {
         Command::Import(ImportCommand::RecordProposals { proposals, .. }) => {
             vec![Hold::Proposals(proposals.clone())]
+        }
+        // The programme name an opening carries is a save by the opener
+        // (design doc 11 section 15).
+        Command::Creator(CreatorCommand::OpenDraft {
+            programme,
+            name: Some(n),
+            ..
+        }) if saves(batch, *programme, n.field, n.digest, &n.provenance) => {
+            vec![Hold::Saved {
+                programme: *programme,
+                fields: vec![n.clone()],
+            }]
         }
         Command::Creator(CreatorCommand::SaveFields {
             programme, fields, ..

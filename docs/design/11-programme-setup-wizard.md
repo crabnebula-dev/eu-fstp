@@ -222,7 +222,7 @@ Daniel's answers to section 14:
 
 - **Pages.** `web/src/setup/`: `/app/setup/new` (stage 1), `/app/programmes/{p}/setup/{stage}` (stages 2 to 7) and `/app/programmes/{p}/setup/progress`. They use the app shell, the creator's field editors, the draft and report reads, and the creator review's report, previews and request (`creator/pages/review.ts` `reviewParts`, shared with the creator review page).
 - **Entry.** The tenant admin home and navigation link "Set up a new programme with the wizard". The programme manager home links the wizard and the progress page of each draft. Before activation the home lists onboarding alone, so the wizard is not offered (ADR-021). A refusal under ADR-021 shows the creator's ADR-021 text.
-- **Stage 1.** A tenant admin opens the draft (`creator.open_draft`, step-up) and invites the programme manager with `creator.invite`. The progress page of the new draft follows. The programme name is set by the programme manager in stage 2, since `creator.save_fields` acts as programme manager only.
+- **Stage 1.** A tenant admin names the programme, opens the draft (`creator.open_draft`, step-up) and invites the programme manager with `creator.invite`. The progress page of the new draft follows. `creator.open_draft` takes an optional `name`, saved in the opening entry as a manual edit of `identity.name` by the opener (lane m3/finish-gaps). The roles table is unchanged: `creator.save_fields` stays programme manager only, and the programme manager can rename in stage 2. Interim, pending Daniel: that save names draft revision 0, since it is decided before the draft exists.
 - **Starting point.** Stage 2 links the creator start page with `?then=setup`. After a start, that page returns to the wizard.
 
 ### 15.2 Exact email (answer 1)
@@ -261,3 +261,7 @@ The progress page reads `creator.get_draft`, `creator.get_report`, `creator.invi
 ### 15.7 The approver (answer 4)
 
 Review and confirm and the progress page keep the notice on who approves activation (I-67). Each holds an empty, hidden `section#setup-approver-override[data-slot="i67-override"]` where lane m4/i67-override puts its form.
+
+### 15.8 The approver count (lane m3/finish-gaps)
+
+`creator.get_draft` carries `approvers`: how many attested tenant admins are not builders of the draft. It is a count and names no account (R-CF-03). The approver notice on Review and confirm and on the progress page says how many remain, or that none does. The count does not check verified identity or the vault's identity answers, which the approval still checks (I-67).

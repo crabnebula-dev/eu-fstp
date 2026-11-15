@@ -790,12 +790,17 @@ async fn programme_read<P: Seams>(
             let mut view = fstp_creator::draft_view(&state.core, &state.creator, p)
                 .ok_or_else(|| call.refuse(no_draft()))?;
             view.show_wording(&wording_texts(call, &view.wording_refs()).await);
+            // I-67: the attested tenant admins outside the builders, as a
+            // count (design doc 11 section 15).
+            let admins = shell_inputs(call, p, d.head(), viewer).tenant_admins;
+            let outside = admins.iter().filter(|a| !d.builders().contains(a)).count();
             Ok(CreatorModel::Draft {
                 spec: view.spec,
                 revision: d.head(),
                 active: d.active().is_some(),
                 pending_narratives: view.pending_narratives,
                 requested: d.request_live(),
+                approvers: u32::try_from(outside).unwrap_or(u32::MAX),
             })
         }
         ReadKind::GetPreview => preview(call, op, p, d, viewer).await,

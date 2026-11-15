@@ -518,3 +518,28 @@ fn i78_local_cell_admits_a_high_risk_command_with_a_ledger_step_up() {
         status(&resp)
     );
 }
+
+/// R-LG-04, design section 8.4: `GET /auth/devices` names the caller's
+/// own account, which the account page needs to name the step-up of a
+/// removal (`RevokeCredential {account, credential}`). Each caller reads
+/// its own account only.
+#[test]
+fn r_lg_04_devices_name_the_callers_own_account() {
+    let c = cell();
+    let admin = c.admin_session().unwrap();
+    let applicant = c.applicant_session().unwrap();
+    let account = |cookie: &[u8]| {
+        let resp = c.serve(request("GET", "/auth/devices", Some(cookie), None));
+        assert_eq!(status(&resp), 200);
+        let v = fstp_json::parse(&resp.body).unwrap();
+        v.get("account").and_then(|a| a.as_str()).map(str::to_owned)
+    };
+    assert_eq!(
+        account(&admin),
+        Some(fstp_cell::routes::memory::LOCAL_ADMIN.raw().to_string())
+    );
+    assert_eq!(
+        account(&applicant),
+        Some(fstp_cell::routes::memory::LOCAL_APPLICANT.raw().to_string())
+    );
+}

@@ -597,6 +597,7 @@ pub(crate) fn open_draft_command() -> CreatorCommand {
         programme: P,
         version: V1,
         profile: blank_policy().frozen.p53,
+        name: None,
     }
 }
 

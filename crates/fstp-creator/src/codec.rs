@@ -809,14 +809,20 @@ impl ToJson for CreatorCommand {
                 programme,
                 version,
                 profile,
-            } => tagged(
-                "OpenDraft",
-                vec![
+                name,
+            } => {
+                // `name` is written only when set, so an opening without
+                // one keeps its earlier form.
+                let mut members = vec![
                     p(*programme),
                     ("version", dec(version.raw())),
                     ("profile", put_profile(profile)),
-                ],
-            ),
+                ];
+                if let Some(n) = name {
+                    members.push(("name", put_edit(n)));
+                }
+                tagged("OpenDraft", members)
+            }
             CreatorCommand::ApplyStart {
                 programme,
                 base,
@@ -959,11 +965,21 @@ impl FromJson for CreatorCommand {
         let o = |names: &[&'static str]| exact(v, names);
         match kind {
             "OpenDraft" => {
-                let o = o(&["kind", "programme", "version", "profile"])?;
+                let named = v.as_object().is_some_and(|m| m.get("name").is_some());
+                let o = if named {
+                    o(&["kind", "programme", "version", "profile", "name"])?
+                } else {
+                    o(&["kind", "programme", "version", "profile"])?
+                };
                 Ok(CreatorCommand::OpenDraft {
                     programme: at(o, "programme", programme)?,
                     version: PolicyVersionId::from_raw(at(o, "version", take_dec)?),
                     profile: at(o, "profile", profile)?,
+                    name: if named {
+                        Some(at(o, "name", edit)?)
+                    } else {
+                        None
+                    },
                 })
             }
             "ApplyStart" => {

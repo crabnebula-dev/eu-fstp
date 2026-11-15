@@ -192,9 +192,20 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
             programme,
             version,
             profile,
+            name,
         } => {
             if !is_admin(actor, ctx, ext) {
                 return Err(CreatorRefusal::NotTenantAdmin);
+            }
+            // Stage 1 of the wizard names the programme (design doc 11
+            // section 15): a manual edit of the name field only.
+            if let Some(n) = name {
+                if n.field != FieldId::ProgrammeName || n.value.field() != n.field {
+                    return Err(CreatorRefusal::NothingToSave);
+                }
+                if n.provenance != Provenance::Manual {
+                    return Err(CreatorRefusal::ProvenanceNotManual);
+                }
             }
             if creator.draft(*programme).is_some() || core.policy().programme(*programme).is_some()
             {
@@ -207,12 +218,24 @@ pub(crate) fn decide_with<F: ReadFacts + ?Sized>(
                 .ok_or(CreatorRefusal::Unavailable(draft::NO_PROFILE))?;
             let compiled = compile(&p.blank(), &p, CompileIds::new(*programme, *version, None))
                 .map_err(|_| CreatorRefusal::Unavailable(draft::NO_PROFILE))?;
-            Ok(CreatorDecision {
-                records: vec![CreatorRecord::DraftOpened {
+            let mut records = vec![CreatorRecord::DraftOpened {
+                programme: *programme,
+                profile: profile.clone(),
+                by: actor,
+            }];
+            if let Some(n) = name {
+                // A save by the opener in the opening entry. It was decided
+                // before the draft had a revision, so it names revision 0
+                // (interim, pending Daniel).
+                records.push(CreatorRecord::FieldsSaved {
                     programme: *programme,
-                    profile: profile.clone(),
+                    revision: DraftRevision::new(0, fstp_ledger::Seq::ZERO),
+                    fields: vec![(n.field, n.digest, Provenance::Manual)],
                     by: actor,
-                }],
+                });
+            }
+            Ok(CreatorDecision {
+                records,
                 core: vec![Command::CreateProgramme {
                     policy: Box::new(compiled.policy),
                 }],

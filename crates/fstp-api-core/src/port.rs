@@ -1665,6 +1665,7 @@ mod tests {
             programme: ProgrammeId::from_raw(5),
             version: fstp_domain::id::PolicyVersionId::from_raw(6),
             profile,
+            name: None,
         };
         let state = EngineState::genesis();
         let shipped = crate::creator::default_profile().unwrap();

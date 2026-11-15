@@ -2165,6 +2165,7 @@ pub(crate) mod reply_shape_tests {
                 active: false,
                 pending_narratives: std::collections::BTreeMap::new(),
                 requested: false,
+                approvers: 1,
             }),
             ReadModel::Creator(crate::creator::CreatorModel::Proposals(Vec::new())),
             ReadModel::MyRoles(my_roles(true)),

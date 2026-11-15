@@ -117,13 +117,15 @@ test.describe('R-LG-03 step-up for high-risk actions', () => {
     expect(late.status, late.body).toBe(403);
 
     // A step-up for another action.
-    const forOther = await stepUp(page, cell.origin, ROUTE_ACTIONS.removeDevice('0'));
+    const forOther = await stepUp(page, cell.origin, ROUTE_ACTIONS.approveRecovery(randomHex(16)));
     const wrong = await call(page, cell.origin, 'POST', '/auth/passkeys/options', forOther);
     expect(wrong.status, wrong.body).toBe(403);
 
     // Accepted over the same wire: a fresh step-up with the enrolled
     // passkey, then the ceremony on a new security key.
     const fresh = await stepUp(page, cell.origin, ROUTE_ACTIONS.addPasskey);
+    // The enrolled device pauses, so only the new key answers the creation.
+    await device.setPresence(false);
     const key = await VirtualAuthenticator.attach(page, { transport: 'usb' });
     // The same wire as the account page: `{challenge_id, public_key}`
     // options, then the new credential's hex members.
@@ -154,7 +156,7 @@ test.describe('R-LG-03 step-up for high-risk actions', () => {
     const devices = page.locator(`${UI.account.devices} > li`);
     await expect(devices).toHaveCount(1);
 
-    const next = await keyForNextPasskey(page);
+    const next = await keyForNextPasskey(page, device);
     const steps: string[] = [];
     page.on('request', (r) => {
       const p = new URL(r.url()).pathname;
