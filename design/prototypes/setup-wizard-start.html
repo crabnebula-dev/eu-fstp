@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up a new programme - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+    .wizard { display: grid; gap: var(--space-6); grid-template-columns: minmax(0, 1fr) 17rem; align-items: start; }
+    @media (max-width: 60rem) { .wizard { grid-template-columns: 1fr; } }
+    .stage-bar { list-style: none; padding: 0; margin: var(--space-4) 0 var(--space-6); display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0; }
+    .stage-bar > li { position: relative; text-align: center; font-size: var(--text-sm); line-height: var(--leading-sm); padding: 0 var(--space-1); }
+    .stage-bar > li::after { content: ""; position: absolute; top: 1.125rem; left: calc(50% + 1.25rem); right: calc(-50% + 1.25rem); border-top: 3px dashed var(--color-journey-upcoming); }
+    .stage-bar > li:last-child::after { display: none; }
+    .stage-bar > li.is-done::after { border-top-style: solid; border-top-color: var(--color-journey-complete); }
+    .stage-bar a, .stage-bar .stage-static { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); min-height: var(--target-min); color: var(--color-text-1); text-decoration: none; }
+    .stage-bar a:hover .stage-name { text-decoration: underline; }
+    .stage-mark { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 2px solid var(--color-journey-upcoming); background: var(--color-surface-0); font-weight: var(--weight-bold); }
+    .is-done .stage-mark { border-color: var(--color-journey-complete); color: var(--color-journey-complete); background: var(--color-journey-complete-fill); }
+    .is-current .stage-mark { border-color: var(--color-brand); background: var(--color-brand); color: var(--color-on-brand); box-shadow: 0 0 0 3px var(--color-surface-0), 0 0 0 5px var(--color-brand); }
+    .is-current .stage-name { font-weight: var(--weight-bold); }
+    .is-upcoming .stage-mark { border-style: dashed; color: var(--color-text-2); }
+    .is-upcoming .stage-name { color: var(--color-text-2); }
+    @media (max-width: 40rem) {
+      .stage-bar { grid-template-columns: 1fr; gap: var(--space-1); }
+      .stage-bar > li { text-align: left; }
+      .stage-bar > li::after { display: none; }
+      .stage-bar a, .stage-bar .stage-static { flex-direction: row; min-height: var(--target-min); }
+      .stage-mark { width: 2rem; height: 2rem; }
+    }
+    .summary { position: sticky; top: var(--space-4); }
+    .summary h2 { font-size: var(--text-xl); line-height: var(--leading-xl); margin: 0 0 var(--space-3); }
+    .summary section { border-top: 1px solid var(--color-surface-3); padding-top: var(--space-3); margin-top: var(--space-3); }
+    .summary h3 { font-size: var(--text-base); line-height: var(--leading-base); margin: 0 0 var(--space-1); display: flex; justify-content: space-between; gap: var(--space-2); }
+    .summary h3 a { font-size: var(--text-sm); font-weight: var(--weight-regular); }
+    .summary dl { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); }
+    .summary dt { color: var(--color-text-2); }
+    .summary dd { margin: 0 0 var(--space-2); }
+    .summary .not-set { color: var(--color-text-2); font-size: var(--text-sm); margin: 0; }
+    .sum-mark { font-weight: var(--weight-bold); margin-right: var(--space-1); }
+    .stage-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--space-2); }
+    .step-block { border: 1px solid var(--color-surface-3); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4); background: var(--color-surface-0); }
+    .step-block > h3 { margin-top: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; }
+    .row-2 { display: grid; gap: 0 var(--space-4); grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .results td, .results th { vertical-align: top; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="home-admin.html"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+
+        <span class="topbar-spacer"></span>
+
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">AC</span><span class="sr-only">Account: a.chen@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Tenant admin.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Tenant admin</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="home-admin.html">Home</a></li><li><a href="admin-org.html">Organisation</a></li><li><a href="admin-members.html">Members and roles</a></li><li><a href="admin-branding.html">Branding</a></li><li><a href="admin-domains.html">Domains and email</a></li><li><a href="onboarding.html">Set-up</a></li><li><a href="setup-wizard-start.html" aria-current="page">Programme set-up</a></li><li><a href="setup-progress.html">Set-up progress</a></li><li><a href="admin-masquerade.html">Support tools</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Programme set-up wizard, stage 1 of 7 (Start). Signed in as tenant admin A. Chen. Horizon Bridges is active, so programme set-up is open (ADR-021). S. Okafor is chosen as programme manager.</p>
+
+    <h1>Set up a new programme</h1>
+    <p class="callout callout--success"><strong>Organisation active:</strong> Horizon Bridges was activated on 20 Oct 2026, approved by a second tenant admin (SoD-18). Programme set-up is open (ADR-021).</p>
+    <p>You open the draft and choose its programme manager. The programme manager then builds the programme stage by stage. Everyone can see how far it has got on the set-up progress page.</p>
+    <nav aria-label="Set-up stages">
+      <ol class="stage-bar">
+        <li class="is-current" aria-current="step"><span class="stage-static"><span class="stage-mark" aria-hidden="true">1</span><span class="stage-name">1. Start</span><span class="sr-only">, current stage</span></span></li>
+        <li class="is-upcoming"><span class="stage-static"><span class="stage-mark" aria-hidden="true">○</span><span class="stage-name">2. Programme</span><span class="sr-only">, not started</span></span></li>
+        <li class="is-upcoming"><span class="stage-static"><span class="stage-mark" aria-hidden="true">○</span><span class="stage-name">3. Applicants</span><span class="sr-only">, not started</span></span></li>
+        <li class="is-upcoming"><span class="stage-static"><span class="stage-mark" aria-hidden="true">○</span><span class="stage-name">4. Evaluation and money</span><span class="sr-only">, not started</span></span></li>
+        <li class="is-upcoming"><span class="stage-static"><span class="stage-mark" aria-hidden="true">○</span><span class="stage-name">5. Team</span><span class="sr-only">, not started</span></span></li>
+        <li class="is-upcoming"><span class="stage-static"><span class="stage-mark" aria-hidden="true">○</span><span class="stage-name">6. Communications</span><span class="sr-only">, not started</span></span></li>
+        <li class="is-upcoming"><span class="stage-static"><span class="stage-mark" aria-hidden="true">○</span><span class="stage-name">7. Review and confirm</span><span class="sr-only">, not started</span></span></li>
+      </ol>
+    </nav>
+    <div class="wizard">
+      <section aria-labelledby="stage-h">
+        <p class="card-kicker">Stage 1 of 7. Open the draft</p>
+        <h2 id="stage-h" style="margin-top:0">Start</h2>
+        <form method="get" action="setup-wizard-start.html">
+          <div class="field"><label for="prog-name">Programme name</label><input id="prog-name" name="name" type="text" value="OpenTech Fund" autocomplete="off"></div>
+          <div class="field"><label for="profile">Funder profile</label><span class="hint" id="profile-hint">Sets the funder bounds every later stage is checked against, such as the per-recipient ceiling (P-58).</span>
+            <select id="profile" name="profile" aria-describedby="profile-hint"><option selected>Horizon Europe FSTP</option><option>Blank profile</option></select></div>
+        </form>
+        <section class="step-block" aria-labelledby="pm-h">
+          <h3 id="pm-h">Programme manager</h3>
+          <p>Choose the person who builds the programme. Only accounts in Horizon Bridges are searched. Accounts of other organisations on the platform are never shown (I-19, I-20).</p>
+          <form role="search" method="get" action="setup-wizard-start.html" aria-label="Find a programme manager">
+            <div class="field"><label for="pm-q">Name or email</label><input id="pm-q" name="q" type="search" value="okafor" autocomplete="off"></div>
+            <button class="btn btn--secondary" type="submit">Search<span class="sr-only"> accounts</span></button>
+          </form>
+          <table class="results">
+            <caption>1 account in Horizon Bridges matches "okafor"</caption>
+            <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Identity</th><th scope="col">Choice</th></tr></thead>
+            <tbody><tr><td>S. Okafor</td><td class="pid">s.okafor@horizon-bridges.example</td><td><span class="badge badge--success">Verified</span></td><td><span class="badge badge--info">Chosen</span></td></tr></tbody>
+          </table>
+          <p class="callout callout--warning"><strong>Your own account:</strong> If you choose yourself, a second tenant admin must approve the grant (SoD-07).</p>
+          <div class="row-2">
+            <div class="field"><label for="pm-from">Role starts on</label><input id="pm-from" type="date" value="2026-11-03"></div>
+            <div class="field"><label for="pm-to">Role ends on (optional)</label><input id="pm-to" type="date" value=""></div>
+          </div>
+        </section>
+        <p class="callout callout--info"><strong>Who approves activation:</strong> Opening the draft makes you one of its builders. A tenant admin who has not worked on this draft approves its activation (I-67). You cannot choose that person.</p>
+        <h3>What happens next</h3>
+        <ol>
+          <li>S. Okafor gets an invitation, accepts the terms and confirms a verified identity (SoD-09).</li>
+          <li>You grant the Programme manager role, with a passkey confirmation (I-78).</li>
+          <li>S. Okafor continues with stage 2, Programme.</li>
+        </ol>
+        <p class="stepup-note">Opening the draft needs a passkey confirmation.</p>
+        <div class="btn-row"><a class="btn btn--primary" href="setup-wizard-programme.html">Open draft and invite programme manager</a></div>
+        <p class="text-sm muted">Your answers are saved at each stage. You can leave and come back at any point. The next stage opens when this one validates.</p>
+      </section>
+      <aside class="summary card" aria-labelledby="sum-h">
+        <h2 id="sum-h">Your set-up so far</h2>
+        <p class="text-sm">0 of 7 stages complete.</p>
+        <section aria-labelledby="sum-1"><h3 id="sum-1"><span><span class="sum-mark" aria-hidden="true">●</span>Start</span></h3><dl><dt>Programme</dt><dd>OpenTech Fund</dd><dt>Funder profile</dt><dd>Horizon Europe FSTP</dd><dt>Programme manager</dt><dd>S. Okafor (chosen)</dd></dl></section>
+        <section aria-labelledby="sum-2"><h3 id="sum-2"><span><span class="sum-mark" aria-hidden="true">○</span>Programme</span></h3><p class="not-set">Not yet set</p></section>
+        <section aria-labelledby="sum-3"><h3 id="sum-3"><span><span class="sum-mark" aria-hidden="true">○</span>Applicants</span></h3><p class="not-set">Not yet set</p></section>
+        <section aria-labelledby="sum-4"><h3 id="sum-4"><span><span class="sum-mark" aria-hidden="true">○</span>Evaluation and money</span></h3><p class="not-set">Not yet set</p></section>
+        <section aria-labelledby="sum-5"><h3 id="sum-5"><span><span class="sum-mark" aria-hidden="true">○</span>Team</span></h3><p class="not-set">Not yet set</p></section>
+        <section aria-labelledby="sum-6"><h3 id="sum-6"><span><span class="sum-mark" aria-hidden="true">○</span>Communications</span></h3><p class="not-set">Not yet set</p></section>
+        <section aria-labelledby="sum-7"><h3 id="sum-7"><span><span class="sum-mark" aria-hidden="true">○</span>Review and confirm</span></h3><p class="not-set">Not yet set</p></section>
+      </aside>
+    </div>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>

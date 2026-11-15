@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Communications: set up OpenTech Fund - FSTP</title>
+  <link rel="stylesheet" href="../tokens.css">
+  <style>
+    .wizard { display: grid; gap: var(--space-6); grid-template-columns: minmax(0, 1fr) 17rem; align-items: start; }
+    @media (max-width: 60rem) { .wizard { grid-template-columns: 1fr; } }
+    .stage-bar { list-style: none; padding: 0; margin: var(--space-4) 0 var(--space-6); display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0; }
+    .stage-bar > li { position: relative; text-align: center; font-size: var(--text-sm); line-height: var(--leading-sm); padding: 0 var(--space-1); }
+    .stage-bar > li::after { content: ""; position: absolute; top: 1.125rem; left: calc(50% + 1.25rem); right: calc(-50% + 1.25rem); border-top: 3px dashed var(--color-journey-upcoming); }
+    .stage-bar > li:last-child::after { display: none; }
+    .stage-bar > li.is-done::after { border-top-style: solid; border-top-color: var(--color-journey-complete); }
+    .stage-bar a, .stage-bar .stage-static { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); min-height: var(--target-min); color: var(--color-text-1); text-decoration: none; }
+    .stage-bar a:hover .stage-name { text-decoration: underline; }
+    .stage-mark { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 2px solid var(--color-journey-upcoming); background: var(--color-surface-0); font-weight: var(--weight-bold); }
+    .is-done .stage-mark { border-color: var(--color-journey-complete); color: var(--color-journey-complete); background: var(--color-journey-complete-fill); }
+    .is-current .stage-mark { border-color: var(--color-brand); background: var(--color-brand); color: var(--color-on-brand); box-shadow: 0 0 0 3px var(--color-surface-0), 0 0 0 5px var(--color-brand); }
+    .is-current .stage-name { font-weight: var(--weight-bold); }
+    .is-upcoming .stage-mark { border-style: dashed; color: var(--color-text-2); }
+    .is-upcoming .stage-name { color: var(--color-text-2); }
+    @media (max-width: 40rem) {
+      .stage-bar { grid-template-columns: 1fr; gap: var(--space-1); }
+      .stage-bar > li { text-align: left; }
+      .stage-bar > li::after { display: none; }
+      .stage-bar a, .stage-bar .stage-static { flex-direction: row; min-height: var(--target-min); }
+      .stage-mark { width: 2rem; height: 2rem; }
+    }
+    .summary { position: sticky; top: var(--space-4); }
+    .summary h2 { font-size: var(--text-xl); line-height: var(--leading-xl); margin: 0 0 var(--space-3); }
+    .summary section { border-top: 1px solid var(--color-surface-3); padding-top: var(--space-3); margin-top: var(--space-3); }
+    .summary h3 { font-size: var(--text-base); line-height: var(--leading-base); margin: 0 0 var(--space-1); display: flex; justify-content: space-between; gap: var(--space-2); }
+    .summary h3 a { font-size: var(--text-sm); font-weight: var(--weight-regular); }
+    .summary dl { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); }
+    .summary dt { color: var(--color-text-2); }
+    .summary dd { margin: 0 0 var(--space-2); }
+    .summary .not-set { color: var(--color-text-2); font-size: var(--text-sm); margin: 0; }
+    .sum-mark { font-weight: var(--weight-bold); margin-right: var(--space-1); }
+    .stage-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--space-2); }
+    .step-block { border: 1px solid var(--color-surface-3); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4); background: var(--color-surface-0); }
+    .step-block > h3 { margin-top: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; }
+    .row-2 { display: grid; gap: 0 var(--space-4); grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <header class="site-header site-header--app">
+      <div class="topbar">
+        <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">HB</span><span>Horizon Bridges<span class="sr-only">, FSTP home</span></span></a>
+
+        <span class="topbar-spacer"></span>
+
+        <ul class="topbar-tools">
+          <li><a class="tool-link" href="#">Notifications <span class="count-badge">2</span><span class="sr-only"> unread</span></a></li>
+          <li><a class="tool-link" href="#">Help</a></li>
+          <li class="topbar-avatar"><a class="avatar" href="profile.html" title="Account"><span aria-hidden="true">SO</span><span class="sr-only">Account: s.okafor@horizon-bridges.example</span></a></li>
+        </ul>
+      </div>
+  </header>
+  <div class="page-body">
+  <aside class="sidebar" aria-label="Main navigation">
+        <div class="masquerade-banner masquerade-banner--hidden" data-slot="masquerade">
+          <p><strong>Masquerading as Programme manager.</strong> This is a read-only admin view. You are still signed in as a.chen@horizon-bridges.example. <a href="home-admin.html">Exit masquerade</a></p>
+        </div>
+        <p class="role-chip" data-slot="role">Signed in as Programme manager</p>
+        <p class="sidebar-label" aria-hidden="true">Navigation</p>
+        <nav class="main-nav" aria-label="Main navigation" data-slot="nav"><ul><li><a href="#">Home</a></li><li><a href="#">Programmes</a></li><li><a href="#">Calls</a></li><li><a href="setup-wizard-programme.html" aria-current="page">Programme set-up</a></li><li><a href="setup-progress.html">Set-up progress</a></li></ul></nav>
+        <ul class="sidebar-foot" data-slot="account">
+          <li class="sidebar-account"><a href="profile.html">Account</a></li>
+          <li><a href="#">Sign out</a></li>
+        </ul>
+      </aside>
+  <main id="main-content" tabindex="-1">
+    <p class="proto-state">Prototype state: Programme set-up wizard, stage 6 of 7 (Communications, creator step 10). Signed in as programme manager S. Okafor. Email is the only channel (B-03, B-05).</p>
+
+    <h1>Set up OpenTech Fund</h1>
+    <p>Programme <strong>OpenTech Fund</strong>, status <span class="badge badge--neutral">Draft</span>. Built from the SuperSAFE template.</p>
+    <nav aria-label="Set-up stages">
+      <ol class="stage-bar">
+        <li class="is-done"><a href="setup-wizard-start.html"><span class="stage-mark" aria-hidden="true">✓</span><span class="stage-name">1. Start</span><span class="sr-only">, complete</span></a></li>
+        <li class="is-done"><a href="setup-wizard-programme.html"><span class="stage-mark" aria-hidden="true">✓</span><span class="stage-name">2. Programme</span><span class="sr-only">, complete</span></a></li>
+        <li class="is-done"><a href="setup-wizard-applicants.html"><span class="stage-mark" aria-hidden="true">✓</span><span class="stage-name">3. Applicants</span><span class="sr-only">, complete</span></a></li>
+        <li class="is-done"><a href="setup-wizard-evaluation.html"><span class="stage-mark" aria-hidden="true">✓</span><span class="stage-name">4. Evaluation and money</span><span class="sr-only">, complete</span></a></li>
+        <li class="is-done"><a href="setup-wizard-team.html"><span class="stage-mark" aria-hidden="true">✓</span><span class="stage-name">5. Team</span><span class="sr-only">, complete</span></a></li>
+        <li class="is-current" aria-current="step"><span class="stage-static"><span class="stage-mark" aria-hidden="true">6</span><span class="stage-name">6. Communications</span><span class="sr-only">, current stage</span></span></li>
+        <li class="is-upcoming"><span class="stage-static"><span class="stage-mark" aria-hidden="true">○</span><span class="stage-name">7. Review and confirm</span><span class="sr-only">, not started</span></span></li>
+      </ol>
+    </nav>
+    <div class="wizard">
+      <section aria-labelledby="stage-h">
+        <p class="card-kicker">Stage 6 of 7. Creator step 10 of 11</p>
+        <h2 id="stage-h" style="margin-top:0">Communications</h2>
+        <section class="step-block" aria-labelledby="s10-h">
+          <h3 id="s10-h">Step 10. Communications <span class="badge badge--success">Validated</span></h3>
+          <fieldset><legend>Channels, P-32</legend>
+            <div class="choice"><input type="checkbox" id="ch-mail" checked><label for="ch-mail">Email</label></div>
+            <p class="text-sm">Email is the only channel for now. Chat channels are deferred (B-03, B-05).</p>
+          </fieldset>
+          <div class="field"><label for="rem">Reminder offsets, P-31</label><span class="hint" id="rem-hint">Days before a deadline, separated by commas. 0 means on the due date.</span><input id="rem" type="text" value="14, 3, 0" aria-describedby="rem-hint"></div>
+          <div class="field"><label for="esc">Overdue escalation, P-33</label><select id="esc"><option selected>After 7 days, to the programme manager</option><option>After 3 days, to the programme manager</option></select></div>
+          <p>Message templates: 8 platform templates, version 1. The sending domain passed its checks in organisation set-up.</p>
+        </section>
+        <div class="btn-row"><a class="btn btn--ghost" href="setup-wizard-team.html">Back to Team</a><a class="btn btn--primary" href="setup-wizard-review.html">Save and continue</a></div>
+        <p class="text-sm muted">Your answers are saved at each stage. You can leave and come back at any point. The next stage opens when this one validates.</p>
+      </section>
+      <aside class="summary card" aria-labelledby="sum-h">
+        <h2 id="sum-h">Your set-up so far</h2>
+        <p class="text-sm">5 of 7 stages complete.</p>
+        <section aria-labelledby="sum-1"><h3 id="sum-1"><span><span class="sum-mark" aria-hidden="true">✓</span>Start</span><a href="setup-wizard-start.html">Change<span class="sr-only"> Start</span></a></h3><dl><dt>Programme</dt><dd>OpenTech Fund, draft</dd><dt>Draft opened by</dt><dd>A. Chen, tenant admin</dd><dt>Programme manager</dt><dd>S. Okafor</dd></dl></section>
+        <section aria-labelledby="sum-2"><h3 id="sum-2"><span><span class="sum-mark" aria-hidden="true">✓</span>Programme</span><a href="setup-wizard-programme.html">Change<span class="sr-only"> Programme</span></a></h3><dl><dt>Starting point</dt><dd>SuperSAFE template, version 1</dd><dt>Funder profile</dt><dd>Horizon Europe FSTP</dd><dt>FSTP budget</dt><dd>1 200 000.00 EUR</dd><dt>Action dates</dt><dd>1 Jan 2027 to 31 Dec 2029</dd></dl></section>
+        <section aria-labelledby="sum-3"><h3 id="sum-3"><span><span class="sum-mark" aria-hidden="true">✓</span>Applicants</span><a href="setup-wizard-applicants.html">Change<span class="sr-only"> Applicants</span></a></h3><dl><dt>Who can apply</dt><dd>Organisations and natural persons</dd><dt>Minors</dt><dd>Not supported</dd><dt>What we fund</dt><dd>3 activity types</dd></dl></section>
+        <section aria-labelledby="sum-4"><h3 id="sum-4"><span><span class="sum-mark" aria-hidden="true">✓</span>Evaluation and money</span><a href="setup-wizard-evaluation.html">Change<span class="sr-only"> Evaluation and money</span></a></h3><dl><dt>Criteria</dt><dd>3, weighted 30, 40 and 30</dd><dt>Threshold</dt><dd>Above 75.00%</dd><dt>Grant range</dt><dd>5 000.00 to 60 000.00 EUR</dd><dt>Cap per recipient</dt><dd>60 000.00 EUR</dd></dl></section>
+        <section aria-labelledby="sum-5"><h3 id="sum-5"><span><span class="sum-mark" aria-hidden="true">✓</span>Team</span><a href="setup-wizard-team.html">Change<span class="sr-only"> Team</span></a></h3><dl><dt>Drafting</dt><dd>2 people</dd><dt>Judging</dt><dd>5 people</dd><dt>Operations</dt><dd>2 people</dd><dt>Roles granted</dt><dd>1 of 9</dd></dl></section>
+        <section aria-labelledby="sum-6"><h3 id="sum-6"><span><span class="sum-mark" aria-hidden="true">●</span>Communications</span></h3><dl><dt>Channel</dt><dd>Email</dd></dl></section>
+        <section aria-labelledby="sum-7"><h3 id="sum-7"><span><span class="sum-mark" aria-hidden="true">○</span>Review and confirm</span></h3><p class="not-set">Not yet set</p></section>
+      </aside>
+    </div>
+  </main>
+  </div>
+  <footer class="site-footer">
+    <div class="inner">
+      <ul>
+        <li><a href="#">Privacy notice</a></li>
+        <li><a href="#">Accessibility statement</a></li>
+        <li><a href="#">Help and contact</a></li>
+      </ul>
+      <p>FSTP platform for Horizon Bridges. TODO(legal): platform attribution (P-68), funder visibility elements and legal notice text.</p>
+      <p class="text-xs">Design prototype. Synthetic data only. Never shipped.</p>
+    </div>
+  </footer>
+</body>
+</html>
