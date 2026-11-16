@@ -519,21 +519,49 @@ fn imported(save_p58_first: bool) -> E {
     e
 }
 
-/// I-65: an upload needs an active programme manager binding on the
-/// draft, and the uploader's own account.
+/// SA-12, I-65: an upload needs an active programme manager binding on
+/// the draft or a tenant admin the shell attests, and names the
+/// uploader's own account. An outsider's upload is refused. Neither
+/// upload confirms a value, so I-65 does not bar the admin's. Resolving an
+/// imported value stays the programme manager's, since I-65 says each one
+/// "is confirmed or edited by a named programme manager": a tenant admin's
+/// resolution is refused with I-65, and the manager's is admitted.
 #[test]
-fn i65_import_upload_needs_a_programme_manager() {
-    let mut e = drafted();
+fn sa12_i65_import_upload_admits_admin_and_manager_but_only_a_manager_resolves() {
+    let upload = |by: AccountId, actor: AccountId| {
+        let mut e = drafted();
+        let before = e.head();
+        let r = e.execute(
+            Command::Import(ImportCommand::RegisterDocument(document(by))),
+            ctx(Actor::Account(actor), 5, 5),
+        );
+        (r, before, e.head())
+    };
+    let (by_outsider, before, after) = upload(OUTSIDER, OUTSIDER);
+    assert_eq!(refused_rule(by_outsider), RuleRef::I65);
+    assert_eq!(after, before);
+    let (as_other, before, after) = upload(OUTSIDER, PM);
+    assert_eq!(refused_rule(as_other), RuleRef::Actor);
+    assert_eq!(after, before);
+    for who in [ADMIN, PM] {
+        let (r, before, after) = upload(who, who);
+        assert!(r.is_ok(), "{who:?}: {r:?}");
+        assert_ne!(after, before);
+    }
+    let mut e = imported(false);
+    let base = head(&e);
+    let before = e.head();
     let by_admin = e.execute(
-        Command::Import(ImportCommand::RegisterDocument(document(ADMIN))),
-        ctx(Actor::Account(ADMIN), 5, 5),
+        resolve(2, [2; 32], ClientResolution::Dismiss, base),
+        ctx(Actor::Account(ADMIN), 7, 7),
     );
     assert_eq!(refused_rule(by_admin), RuleRef::I65);
-    let as_other = e.execute(
-        Command::Import(ImportCommand::RegisterDocument(document(OUTSIDER))),
-        ctx(Actor::Account(PM), 5, 5),
-    );
-    assert_eq!(refused_rule(as_other), RuleRef::Actor);
+    assert_eq!(e.head(), before);
+    e.execute(
+        resolve(2, [2; 32], ClientResolution::Dismiss, base),
+        ctx(Actor::Account(PM), 7, 7),
+    )
+    .unwrap();
 }
 
 /// I-65: recorded proposals change no draft value: the creator draft and
