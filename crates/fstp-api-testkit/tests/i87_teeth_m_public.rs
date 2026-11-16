@@ -55,3 +55,9 @@ fn i87_teeth_filter_skipped_for_feed_is_caught() {
     caught(Fault::FeedSkipsFilter, FEED_EQUALS_PAGES);
 }
 
+/// I-87 teeth: a public tool that reads the core state around
+/// `public_view` is caught by the tools-equal-pages property of M-PUBLIC.
+#[test]
+fn i87_teeth_tool_reads_state_directly_is_caught() {
+    caught(Fault::ToolReadsState, TOOLS_EQUAL_PAGES);
+}
