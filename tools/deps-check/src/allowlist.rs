@@ -328,11 +328,15 @@ pub(crate) fn parse_roots(text: &str) -> Result<BTreeMap<String, Root>, Vec<Line
 }
 
 /// Renders roots in the `deps/adr-roots.txt` format.
+///
+/// Fields are joined by one space. Each accepted line separates its fields
+/// by at least one whitespace byte, so a rendered line is never longer than
+/// the line it came from and stays within `MAX_LINE` (TH-26, H-05).
 pub(crate) fn render_roots(roots: &BTreeMap<String, Root>) -> String {
     let mut out = String::new();
     for (name, r) in roots {
         let line = format!(
-            "{name}  {}  {}  {}",
+            "{name} {} {} {}",
             r.adr,
             features_field(&r.features),
             r.note
@@ -828,6 +832,24 @@ tokio 1.54.1 ADR-002 runtime missing checksum
         assert_eq!(f, vec!["fstp-json".to_owned(), "fstp-http".to_owned()]);
         assert!(parse_fuzz_required("fstp json\n").is_err());
         assert!(parse_fuzz_required("a\na\n").is_err());
+    }
+
+    /// TH-26, H-05: the fuzz smoke of CI run 43773491368 found a root line
+    /// just under `MAX_LINE` bytes that parsed, while its rendering grew past
+    /// `MAX_LINE` and no longer parsed. Every accepted file must round trip.
+    #[test]
+    fn th26_h05_adr_roots_fuzz_crash_06e469b7_round_trips() {
+        let data = include_bytes!(
+            "../fuzz/seeds/adr_roots/crash-06e469b7202c1525a692e8f713e857313647ebd6"
+        );
+        assert_eq!(crate::fuzzing::adr_roots(data), Ok(()));
+        // The same edge without fuzz noise: single-space separators and a
+        // line of exactly `MAX_LINE` bytes.
+        let head = "tokio ADR-002 net,rt ";
+        let line = format!("{head}{}", "n".repeat(MAX_LINE - head.len()));
+        assert_eq!(line.len(), MAX_LINE);
+        let roots = parse_roots(&line).unwrap();
+        assert_eq!(parse_roots(&render_roots(&roots)), Ok(roots));
     }
 
     /// Regression for review finding feature-changes-unchecked (ADR-001,
