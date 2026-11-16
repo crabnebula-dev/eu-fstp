@@ -139,3 +139,7 @@ A milestone closes, and a release ships, only on a green full run. A green light
 - The full tier adds no skip and no cap to any part. An unknown tier fails the step.
 - The exhaustive model checks (tests named `*_m_*`, and the M-ACTIVATE part) run on both tiers at the same size. Each must finish under its tripwire, so they have no smaller light setting.
 - `teeth_m3_registry` checks both tiers: `ci_light_tier_skips_only_the_declared_heavy_classes` and `ci_full_tier_adds_no_skip_and_no_case_cap`. A new heavy class needs an amendment here and an entry in that file's `LIGHT_HEAVY_CLASSES`.
+
+### Runs before the tiers
+
+CI run 43853477946 on `9acb87d1` ran before the tiers existed. It ran every part at full size, with every teeth test, every default case count and all three matrices. Only the MCP matrix failed, and it is an M4 criterion. So that run counts as a full run for the M3, M5, M6 and M9 closures recorded on 2026-11-16.
