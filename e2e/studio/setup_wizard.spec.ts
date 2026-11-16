@@ -89,7 +89,9 @@ test.describe('programme set-up wizard', () => {
     // 1. A2 opens a draft and invites its programme manager.
     const a2 = await Seat.signIn(browser, cell, A2);
     const a2Errors = watch(a2.page);
-    await a2.page.locator('#home-work a[data-work="setup"]').click();
+    // SA-12: the home also links the wizard of each draft of the tenant,
+    // so pick the link that starts a new programme.
+    await a2.page.locator('#home-work a[data-work="setup"][href="/app/setup/new"]').click();
     await readyAt(a2.page, /^\/app\/setup\/new$/);
     await expect(a2.page.locator('main h1')).toHaveText('Set up a new programme');
     await expect(a2.page.locator('#setup-active')).toContainText('ADR-021');
