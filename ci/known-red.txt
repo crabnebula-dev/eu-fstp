@@ -7,5 +7,3 @@
 # PROVISIONAL (2026-10-31 evening): built from the local runs of the day.
 # It is corrected from the full CI run of PR #5 before that PR merges.
 
-fstp_api_testkit::matrix::tests::t_authz_matrix_direct | authorisation matrix harness | m4access (W3a)
-t_authz_matrix_http::t_authz_matrix_http | authorisation matrix harness | m4access (W3a)
