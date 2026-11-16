@@ -27,7 +27,7 @@
 
 use fstp_api_testkit::matrix::{self, Cell, Channel, ChannelFault, Denial, Observed};
 use fstp_api_testkit::reference::authz::{
-    AuthClass, Channel as Via, Expected, Login, Session, StepUp,
+    AuthClass, AuthzReference, Channel as Via, Expected, Login, Session, StepUp,
 };
 
 /// The web twin of an MCP cell: the same operation, principal, state and
@@ -47,6 +47,21 @@ fn web_twin(cell: &Cell) -> Cell {
         },
         ..*cell
     }
+}
+
+/// M4 design change D6 (TH-62): with P-75 off, a content reader outside
+/// the applicant team is refused through MCP only. The domain's read check
+/// refuses it, not `channel_policy`, so the web twin of the cell may
+/// complete. An MCP refusal under P-75 keeps parity only when P-75 is off
+/// and the reference allows the same cell with P-75 on. P-75 is then the
+/// only difference between the channels (CI run 43853477946).
+fn p75_alone(reference: &AuthzReference, cell: &Cell, mcp: &Observed) -> bool {
+    if cell.policy.p75_on || *mcp != Observed::Refused(Some("P-75".to_owned())) {
+        return false;
+    }
+    let mut on = *cell;
+    on.policy.p75_on = true;
+    reference.expected(&on) == Some(Expected::Allow)
 }
 
 /// I-84 parity of one MCP cell: what `channel_policy` makes of the web
@@ -107,6 +122,7 @@ impl Channel for Parity {
             let twin = web_twin(cell);
             let web = self.inner.observe(&twin)?;
             if let Some(e) = self.reference.expected(cell)
+                && !p75_alone(&self.reference, cell, &got)
                 && let Err(why) = parity(e, &web, &got)
             {
                 let mut f = self
@@ -238,6 +254,67 @@ fn i84_r_mc_04_public_research_tools_keep_parity_with_their_web_twin() {
     assert!(
         completed > 0 && other > 0,
         "{completed} completed, {other} other"
+    );
+    let f = failures
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(
+        f.is_empty(),
+        "{} MCP cells break parity with their web twin:\n{}",
+        f.len(),
+        f.join("\n")
+    );
+}
+
+/// I-84, M4 design change D6, TH-62: the focused reproduction of CI run
+/// 43853477946, where the MCP cells of `review.read_content` broke parity
+/// with P-75 off. For each state, the run takes the first policy row with
+/// P-75 off and the first with P-75 on. With P-75 off, a reviewer's agent
+/// is refused under P-75 while the web twin reads. With P-75 on, the MCP
+/// outcome is the web outcome. It is not vacuous: some cells are refused
+/// under P-75, and some complete.
+#[test]
+fn i84_d6_p75_off_refuses_content_through_mcp_only() {
+    let filter = matrix::OpFilter::parse("review.read_content").unwrap();
+    let m = matrix::matrix().unwrap().narrowed(&filter).unwrap();
+    let mut seen = Vec::new();
+    let groups: Vec<_> = m
+        .groups()
+        .into_iter()
+        .filter(|(s, p)| {
+            let first = !seen.contains(&(*s, p.p75_on));
+            seen.push((*s, p.p75_on));
+            first
+        })
+        .collect();
+    let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut channel = Parity {
+        inner: matrix::mcp_channel().unwrap(),
+        reference: fstp_api_testkit::reference::authz::authz_reference().unwrap(),
+        failures: std::sync::Arc::clone(&failures),
+    };
+    let p75 = Observed::Refused(Some("P-75".to_owned()));
+    let (mut refused, mut completed) = (0usize, 0usize);
+    for (state, policy) in groups {
+        for cell in m.group_cells(state, policy) {
+            if !matches!(cell.session.channel, Via::Mcp { .. }) {
+                continue;
+            }
+            let got = channel.observe(&cell).unwrap();
+            if got == p75 {
+                assert!(
+                    !policy.p75_on,
+                    "refused under P-75 while it is on: {cell:?}"
+                );
+                refused += 1;
+            } else if got == Observed::Completed {
+                completed += 1;
+            }
+        }
+    }
+    assert!(
+        refused > 0 && completed > 0,
+        "{refused} refused under P-75, {completed} completed"
     );
     let f = failures
         .lock()
