@@ -1784,3 +1784,94 @@ fn ci_full_tier_adds_no_skip_and_no_case_cap() {
     assert!(bad.is_empty(), "{bad:#?}");
     assert_eq!(ci_job_env("LIGHT_PROP_MAX_CASES"), LIGHT_PROP_MAX_CASES);
 }
+
+/// TH-26, CI tiers (Daniel, 2026-11-16): the fuzz smoke runs every fuzz
+/// target on both tiers, and the tiers differ only in the time per
+/// target. The full tier keeps 60 s, and the light tier can only shorten
+/// it. The tier rule is the test job's. The shards are `0/N` to `N-1/N`
+/// of one N, the run passes no `--crate`, and `tools/fuzz-all.sh` gives
+/// the shards every fuzz project exactly once.
+#[test]
+fn ci_fuzz_smoke_runs_every_target_on_both_tiers() {
+    let full: u32 = ci_job_env("FUZZ_FULL_SECONDS").parse().unwrap();
+    let light: u32 = ci_job_env("FUZZ_LIGHT_SECONDS").parse().unwrap();
+    assert_eq!(full, 60, "the full tier fuzzes each target for 60 s");
+    assert!(
+        (1..=full).contains(&light),
+        "the light tier may only shorten the time: {light} s"
+    );
+    let (decide_env, decide) = ci_step("Decide the fuzz tier and the time per target");
+    assert_eq!(
+        decide_env.get("WANT_FULL").map(String::as_str),
+        Some("${{ github.event_name == 'workflow_dispatch' && inputs.full }}")
+    );
+    assert!(
+        decide.iter().any(|l| l
+            == r#"if [[ "$WANT_FULL" == true ]]; then tier=full; seconds="$FUZZ_FULL_SECONDS"; else tier=light; seconds="$FUZZ_LIGHT_SECONDS"; fi"#),
+        "{decide:#?}"
+    );
+    let (run_env, run) = ci_step("Run every fuzz target of this shard");
+    assert_eq!(
+        run_env.get("FUZZ_SECONDS").map(String::as_str),
+        Some("${{ steps.fuzz.outputs.seconds }}")
+    );
+    let commands: Vec<&String> = run.iter().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        commands,
+        [r#"tools/fuzz-all.sh -j "$(nproc)" --shard "$FUZZ_SHARD" "$FUZZ_SECONDS""#],
+        "the fuzz smoke runs every target of its shard"
+    );
+    let ci = read(CI_YML);
+    assert!(!ci.contains("--crate"), "ci.yml narrows the fuzz smoke");
+    assert_eq!(ci_job_env("FUZZ_SHARD"), "${{ matrix.shard }}");
+    let shard_lines: Vec<&str> = ci
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("shard: ["))
+        .collect();
+    assert_eq!(shard_lines.len(), 1, "ci.yml has one fuzz shard list");
+    let shards: Vec<String> = shard_lines[0]
+        .trim_end_matches(']')
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').to_owned())
+        .collect();
+    let n = shards.len();
+    let want: Vec<String> = (0..n).map(|i| format!("{i}/{n}")).collect();
+    assert_eq!(shards, want, "the fuzz shards are 0/N to N-1/N");
+    let projects = |args: &[&str]| -> Vec<String> {
+        let out = std::process::Command::new("bash")
+            .arg(repo_root().join("tools/fuzz-all.sh"))
+            .arg("--projects")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "fuzz-all.sh --projects {args:?}: {out:?}"
+        );
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    };
+    let mut all = projects(&[]);
+    all.sort();
+    let mut manifests = 0usize;
+    for top in ["crates", "tools"] {
+        for e in fs::read_dir(repo_root().join(top)).unwrap().flatten() {
+            if e.path().join("fuzz/Cargo.toml").is_file() {
+                manifests += 1;
+            }
+        }
+    }
+    assert_eq!(all.len(), manifests, "fuzz-all.sh misses a fuzz project");
+    let mut sharded = Vec::new();
+    for s in &shards {
+        sharded.extend(projects(&["--shard", s]));
+    }
+    sharded.sort();
+    assert_eq!(
+        sharded, all,
+        "the shards hold every fuzz project exactly once"
+    );
+}
