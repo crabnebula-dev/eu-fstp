@@ -125,20 +125,23 @@ The CI test job runs the workspace in parallel parts. With the authorisation mat
 
 The test job runs in one of two tiers. Every other CI job is the same in both.
 
-- **Light**, on every push and pull request, and on a manual run without `full`. The `matrix-*` parts stop at their first step. Every other part skips the teeth tests and caps every property at 32 cases.
+- **Light**, on every push and pull request, and on a manual run without `full`. The `matrix-*` parts and the `m-activate` part stop at their first step. Every other part skips the teeth tests and the matrix layout self-checks, and caps every property at 32 cases.
 - **Full**, on a manual run with the `full` input ticked (Actions, workflow "ci", "Run workflow"). Every part runs every test, and every property runs at its own case count. It takes about three hours.
 
 A milestone closes, and a release ships, only on a green full run. A green light run never closes a milestone or ships a release.
 
 ### Rules
 
-- The light tier leaves out only the declared heavy classes: the authorisation matrices (the `matrix-*` parts) and the teeth tests. A teeth test is a test whose name holds `_teeth_`. Each plants a known bug and proves a check catches it.
+- The light tier leaves out only the declared heavy classes. Two are whole parts: the authorisation matrices (the `matrix-*` parts) and the exhaustive M-ACTIVATE model checks of I-66 and I-67 (the `m-activate` part). Two are libtest skips in `LIGHT_SKIP`:
+  - `_teeth_`, the teeth tests. A teeth test is a test whose function name holds `_teeth_`. Each plants a known bug and proves a check catches it.
+  - `matrix::tests::q34_`, the three matrix layout self-checks of the fstp-api-testkit library: `q34_covering_matrix_keeps_every_op_principal_state_and_session`, `q34_direct_matrix_runs_the_full_policy_product` and `q34_full_product_groups_partition_the_cells`. They ran 240 s to 421 s each. The module path keeps `q34_http_matrix_runs_the_covering_array` out of the class.
+- I-66 and I-67 are proved on every full run. The M-ACTIVATE checks ran 11 to 29 minutes a binary on CI (runs 43873124657 and 43853477946), so the light tier leaves them out (Daniel, 2026-11-16).
 - The light skips go to libtest and to `test-gate` alike, as the job variable `LIGHT_SKIP`. So `test-gate` never calls a skipped teeth test missing or stale.
 - The case cap is the variable `FSTP_PROP_MAX_CASES` of `fstp-prop`, set from the job variable `LIGHT_PROP_MAX_CASES`. It lowers a larger count and never raises a smaller one. `FSTP_PROP_CASES` would raise small counts too, so the light tier does not use it.
 - A case count that a stated claim fixes is a floor that no variable lowers, so the light tier keeps it. The floors on 2026-11-16 are the two cross-implementation round trips of ADR-004 test vector plan item 4 (1 000 key pairs per run, through `fstp_prop::Config::min_cases`). The I-90 claim run keeps 1000 inputs each way through its own floor in `i90_claim_mldsa_differential.rs`.
 - The full tier adds no skip and no cap to any part. An unknown tier fails the step.
-- The exhaustive model checks (tests named `*_m_*`, and the M-ACTIVATE part) run on both tiers at the same size. Each must finish under its tripwire, so they have no smaller light setting.
-- `teeth_m3_registry` checks both tiers: `ci_light_tier_skips_only_the_declared_heavy_classes` and `ci_full_tier_adds_no_skip_and_no_case_cap`. A new heavy class needs an amendment here and an entry in that file's `LIGHT_HEAVY_CLASSES`.
+- The other exhaustive model checks (tests named `*_m_*`) run on both tiers at the same size. Each must finish under its tripwire, so they have no smaller light setting.
+- `teeth_m3_registry` checks both tiers. `ci_light_tier_skips_only_the_declared_heavy_classes` checks that the light skips hold only `LIGHT_HEAVY_CLASSES`, and that the light tier stops exactly the `matrix-*` parts and `m-activate`. `ci_full_tier_adds_no_skip_and_no_case_cap` checks that the full tier adds nothing. A new heavy class needs an amendment here and an entry in `LIGHT_HEAVY_CLASSES`.
 
 ### Runs before the tiers
 
