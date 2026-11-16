@@ -21,7 +21,11 @@
 //!   isolation part;
 //! - a test runs in no CI test part or in more than one, a
 //!   `crates/fstp-celltest/tests/*.rs` file runs in no part, or a
-//!   library's doc tests do not run in exactly one part.
+//!   library's doc tests do not run in exactly one part;
+//! - the light CI tier skips a test outside its declared heavy classes
+//!   (the teeth tests), or stops a part other than the authorisation
+//!   matrices;
+//! - the full CI tier adds a skip or a case cap to any part.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -1251,7 +1255,9 @@ fn w4_isolation_part_runs_each_isolation_test_and_no_other_part_does() {
 }
 
 /// Every invariant and requirement test outside the testkits runs in
-/// exactly one CI test part (Daniel, 2026-11-16). The parts split the
+/// exactly one CI test part (Daniel, 2026-11-16). This is the full tier,
+/// which adds nothing to the parts' filters and skips
+/// (`ci_full_tier_adds_no_skip_and_no_case_cap`). The parts split the
 /// workspace by package, by test binary and by libtest filter, and a
 /// libtest skip matches its substring in every binary of its part. So
 /// no part runs a test twice, and no skip or missing `--test` name
@@ -1365,4 +1371,276 @@ fn ci_part_glob_reads_cargo_target_patterns() {
     assert!(glob("a*b*c", "a_x_b_y_c"));
     assert!(!glob("a*b*c", "a_x_c"));
     assert!(!glob("ab*ba", "aba"));
+}
+
+// ---------------------------------------------------------------------------
+// The CI tiers (Daniel, 2026-11-16, ADR-003). The light tier runs on every
+// push and pull request, the full tier on a manual run with `full` ticked.
+
+/// The heavy classes that the light tier may leave out, as libtest
+/// substrings of a test name. `_teeth_` is the teeth tests: each plants a
+/// known bug and proves a check catches it. The full tier runs them all.
+const LIGHT_HEAVY_CLASSES: &[&str] = &["_teeth_"];
+
+/// The property case cap of the light tier (Daniel, 2026-11-16).
+const LIGHT_PROP_MAX_CASES: &str = "32";
+
+const CI_YML: &str = ".github/workflows/ci.yml";
+const DECIDE_STEP: &str = "Decide the tier and whether this part runs";
+const TEST_STEP: &str = "cargo test, then the known-red gate";
+
+/// The value that `ci.yml` gives `key` at the indent of the test job's
+/// environment. It must be set exactly once.
+fn ci_job_env(key: &str) -> String {
+    let prefix = format!("      {key}: ");
+    let hits: Vec<String> = read(CI_YML)
+        .lines()
+        .filter_map(|l| l.strip_prefix(prefix.as_str()))
+        .map(|v| v.trim().trim_matches('"').to_owned())
+        .collect();
+    assert_eq!(hits.len(), 1, "ci.yml sets {key} {} times", hits.len());
+    hits[0].clone()
+}
+
+/// The step of the test job named `name`: its `env` entries and the
+/// trimmed lines of its `run: |` script.
+fn ci_step(name: &str) -> (BTreeMap<String, String>, Vec<String>) {
+    let ci = read(CI_YML);
+    let lines: Vec<&str> = ci.lines().collect();
+    let want = format!("- name: {name}");
+    let at: Vec<usize> = (0..lines.len())
+        .filter(|&i| lines[i].trim() == want)
+        .collect();
+    assert_eq!(at.len(), 1, "ci.yml has {} steps named {name}", at.len());
+    let step = indent(lines[at[0]]);
+    let mut env = BTreeMap::new();
+    let mut script = Vec::new();
+    let mut i = at[0] + 1;
+    while i < lines.len() {
+        let l = lines[i];
+        if !l.trim().is_empty() && indent(l) <= step {
+            break;
+        }
+        i += 1;
+        if l.trim() == "run: |" {
+            let body = indent(l);
+            while i < lines.len() && (lines[i].trim().is_empty() || indent(lines[i]) > body) {
+                script.push(lines[i].trim().to_owned());
+                i += 1;
+            }
+            break;
+        }
+        if l.trim() == "env:" {
+            let body = indent(l);
+            while i < lines.len() && !lines[i].trim().is_empty() && indent(lines[i]) > body {
+                let (k, v) = lines[i].trim().split_once(": ").unwrap();
+                env.insert(k.to_owned(), v.trim().to_owned());
+                i += 1;
+            }
+        }
+    }
+    assert!(!script.is_empty(), "ci.yml: step {name} has no run script");
+    (env, script)
+}
+
+/// The script lines of the arm `arm)` of the `case "$TIER"` in the test
+/// step, up to and including its `;;`.
+fn tier_arm<'a>(script: &'a [String], arm: &str) -> &'a [String] {
+    let open = format!("{arm})");
+    let at: Vec<usize> = (0..script.len())
+        .filter(|&i| script[i].starts_with(open.as_str()))
+        .collect();
+    assert_eq!(at.len(), 1, "the test step has {} arms {open}", at.len());
+    let end = (at[0]..script.len())
+        .find(|&i| script[i].ends_with(";;"))
+        .unwrap_or_else(|| panic!("the arm {open} has no ;;"));
+    &script[at[0]..=end]
+}
+
+/// CI tiers (Daniel, 2026-11-16): the light tier leaves out only the
+/// declared heavy classes. Every light skip lies inside a class, so it
+/// drops no test whose name lacks one. No module or source path holds a
+/// class, so a class matches only test function names. The light skips
+/// drop at least 250 teeth tests across the workspace and the testkits,
+/// so the class is not empty. The only parts the light tier stops are
+/// the `matrix-*` parts, and each runs only authorisation matrix tests.
+#[test]
+fn ci_light_tier_skips_only_the_declared_heavy_classes() {
+    let skips: Vec<String> = ci_job_env("LIGHT_SKIP")
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    assert!(!skips.is_empty(), "LIGHT_SKIP is empty");
+    let in_class = |name: &str| LIGHT_HEAVY_CLASSES.iter().any(|c| name.contains(c));
+    let mut bad = Vec::new();
+    for s in &skips {
+        if !in_class(s) {
+            bad.push(format!("the light skip {s} is in no heavy class"));
+        }
+    }
+    let mut files = Vec::new();
+    rust_files(&repo_root().join("crates"), &mut files);
+    rust_files(&repo_root().join("tools"), &mut files);
+    for f in &files {
+        // A test binary's file name is not part of its test paths.
+        if !matches!(target_of(f).1, Target::Test(_)) && in_class(f) {
+            bad.push(format!("{f}: a module path holds a heavy class"));
+        }
+        for line in read(f).lines() {
+            let s = line.trim_start();
+            let s = s.strip_prefix("pub ").unwrap_or(s);
+            if let Some(m) = s.strip_prefix("mod ")
+                && in_class(m)
+            {
+                bad.push(format!("{f}: the module {m} holds a heavy class"));
+            }
+        }
+    }
+    let mut dropped = 0usize;
+    for (file, name) in workspace_tests() {
+        if skips.iter().any(|s| name.contains(s.as_str())) {
+            dropped += 1;
+            if !in_class(&name) {
+                bad.push(format!("{file}: {name} is dropped and in no heavy class"));
+            }
+        }
+    }
+    let (_, decide) = ci_step(DECIDE_STEP);
+    let stops: Vec<&String> = decide.iter().filter(|l| l.contains("run=false")).collect();
+    assert_eq!(
+        stops.len(),
+        1,
+        "the decide step stops parts twice: {decide:#?}"
+    );
+    assert!(
+        decide
+            .iter()
+            .any(|l| l == r#"if [[ "$PART" == matrix-* && "$tier" != full ]]; then"#),
+        "the light tier stops other parts than matrix-*: {decide:#?}"
+    );
+    let parts = ci_parts();
+    let matrix: Vec<&Part> = parts
+        .iter()
+        .filter(|p| p.name.starts_with("matrix-"))
+        .collect();
+    assert!(matrix.len() >= 3, "too few matrix parts");
+    for p in matrix {
+        for s in &p.selections {
+            let only_matrix = !s.workspace
+                && s.packages == ["fstp-api-testkit"]
+                && !s.bins
+                && !s.doc
+                && s.tests.iter().all(|t| t.contains("matrix"))
+                && (!s.lib
+                    || (!p.filters.is_empty() && p.filters.iter().all(|f| f.contains("matrix"))));
+            if !only_matrix || !s.names_targets() {
+                bad.push(format!(
+                    "{}: runs more than the matrix tests: {s:?}",
+                    p.name
+                ));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+    assert!(dropped >= 250, "the light skips drop only {dropped} tests");
+}
+
+/// CI tiers (Daniel, 2026-11-16): the full tier is a manual run with the
+/// one input `full` ticked, and it runs every part with its own filters
+/// and skips and every property at its own case count. The light skips
+/// and the case cap sit only in the light arm of the test step, the full
+/// arm adds nothing, and an unknown tier fails the step. So the
+/// exactly-once checks above hold for the full tier.
+#[test]
+fn ci_full_tier_adds_no_skip_and_no_case_cap() {
+    let ci = read(CI_YML);
+    let lines: Vec<&str> = ci.lines().collect();
+    let inputs = lines
+        .iter()
+        .position(|l| l.trim() == "inputs:")
+        .expect("ci.yml has no workflow_dispatch inputs");
+    let names: Vec<&str> = lines[inputs + 1..]
+        .iter()
+        .take_while(|l| l.trim().is_empty() || indent(l) > indent(lines[inputs]))
+        .filter(|l| indent(l) == indent(lines[inputs]) + 2)
+        .map(|l| l.trim().trim_end_matches(':'))
+        .collect();
+    assert_eq!(names, ["full"], "the manual run takes the one input full");
+    let (decide_env, decide) = ci_step(DECIDE_STEP);
+    assert_eq!(
+        decide_env.get("WANT_FULL").map(String::as_str),
+        Some("${{ github.event_name == 'workflow_dispatch' && inputs.full }}")
+    );
+    assert!(
+        decide
+            .iter()
+            .any(|l| l == r#"if [[ "$WANT_FULL" == true ]]; then tier=full; else tier=light; fi"#),
+        "{decide:#?}"
+    );
+    let (test_env, script) = ci_step(TEST_STEP);
+    assert_eq!(
+        test_env.get("TIER").map(String::as_str),
+        Some("${{ steps.part.outputs.tier }}")
+    );
+    let full = tier_arm(&script, "full");
+    assert_eq!(full.len(), 1, "the full arm is one line: {full:#?}");
+    assert!(
+        full[0].starts_with("full) echo ")
+            && !full[0].contains("+=")
+            && !full[0].contains("export"),
+        "the full arm adds nothing: {full:#?}"
+    );
+    let light = tier_arm(&script, "light");
+    assert!(
+        light.iter().any(|l| l
+            == r#"for s in $LIGHT_SKIP; do libtest+=(--skip "$s"); gate+=(--skip "$s"); done"#),
+        "{light:#?}"
+    );
+    assert!(
+        light
+            .iter()
+            .any(|l| l == r#"export FSTP_PROP_MAX_CASES="$LIGHT_PROP_MAX_CASES""#),
+        "{light:#?}"
+    );
+    assert!(
+        script
+            .iter()
+            .any(|l| l == r#"*) echo "unknown tier '$TIER'"; exit 1 ;;"#),
+        "an unknown tier must fail the step: {script:#?}"
+    );
+    // Every selection change outside the light arm is a part's own.
+    let own = [
+        r#"for f in $TEST_FILTER; do libtest+=("$f"); gate+=(--filter "$f"); done"#,
+        r#"for s in $TEST_SKIP; do libtest+=(--skip "$s"); gate+=(--skip "$s"); done"#,
+    ];
+    let mut bad = Vec::new();
+    for l in &script {
+        if light.contains(l) || own.contains(&l.as_str()) {
+            continue;
+        }
+        if l.contains("libtest+=") || l.contains("gate+=") || l.contains("--skip") {
+            bad.push(format!(
+                "the test step changes the selection outside the light arm: {l}"
+            ));
+        }
+        if l.contains("LIGHT_") {
+            bad.push(format!(
+                "the test step reads a light setting outside the light arm: {l}"
+            ));
+        }
+    }
+    // No other line of ci.yml sets an fstp-prop variable.
+    for l in &lines {
+        let s = l.trim();
+        if s.starts_with('#') || !s.contains("FSTP_PROP_") {
+            continue;
+        }
+        if !light.iter().any(|x| x == s) {
+            bad.push(format!(
+                "ci.yml sets FSTP_PROP_* outside the light arm: {s}"
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+    assert_eq!(ci_job_env("LIGHT_PROP_MAX_CASES"), LIGHT_PROP_MAX_CASES);
 }
