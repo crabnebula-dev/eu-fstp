@@ -559,7 +559,14 @@ fn r_sw_02_local_witness_refuses_a_revoked_cell_after_restart() {
     kept.register(&s);
     let (n, link) = three_records(&s, &gone);
     let file_before = std::fs::read(gone.chain_file(&s)).unwrap();
+    // The client's handshake ends before the witness reads the cell from
+    // its certificate. One answered request makes the connection open on
+    // both ends, so the revocation below meets an open connection.
     let mut c = Conn::open(&s, &gone.ca, "cell-witness").unwrap();
+    assert!(
+        matches!(log_of(&mut c, &s, &gone), WireReply::Log(_)),
+        "the cell was served before its revocation"
+    );
     s.rt.block_on(s.witness.revoke_cell(gone.id)).unwrap();
     s.rt.block_on(s.witness.revoke_cell(gone.id)).unwrap();
     assert_eq!(
