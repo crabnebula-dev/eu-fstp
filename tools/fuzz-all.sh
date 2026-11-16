@@ -5,9 +5,15 @@
 # Cargo.lock is out of date or changes during the run, because cargo-fuzz
 # has no --locked option.
 #
-# Usage: tools/fuzz-all.sh [-j N] [--crate NAME]... <seconds>
-#        tools/fuzz-all.sh --list
+# Usage: tools/fuzz-all.sh [-j N] [--crate NAME]... [--shard I/N] <seconds>
+#        tools/fuzz-all.sh [--crate NAME]... [--shard I/N] --list
+#        tools/fuzz-all.sh [--crate NAME]... [--shard I/N] --projects
 #        tools/fuzz-all.sh --print-toolchain
+#
+# --shard I/N keeps the fuzz projects whose index in the sorted list of
+# all projects is I modulo N, with 0 <= I < N. The N shards of one N
+# together hold every project exactly once, so they run every target
+# (TH-26). --projects prints the selected projects without calling cargo.
 #
 # Each target runs from its crate directory as
 #   cargo +<toolchain> fuzz run <target> <corpus> fuzz/seeds/<target> -- \
@@ -52,6 +58,7 @@ parallel=1
 seconds=""
 mode="run"
 crates=()
+shard=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -65,7 +72,13 @@ while [[ $# -gt 0 ]]; do
       crates+=("$2")
       shift 2
       ;;
+    --shard)
+      [[ $# -ge 2 ]] || die "--shard needs a value"
+      shard="$2"
+      shift 2
+      ;;
     --list) mode="list"; shift ;;
+    --projects) mode="projects"; shift ;;
     --print-toolchain) mode="toolchain"; shift ;;
     -h | --help) usage; exit 0 ;;
     -*) die "unknown option $1" ;;
@@ -94,14 +107,27 @@ fi
 # Discover fuzz projects: crates/<crate>/fuzz and tools/<tool>/fuzz.
 # deps-check fails on a cargo project anywhere else. Each project is named
 # after its crate directory, which must be unique.
+# The glob order is the shard order, so it must not depend on the locale.
+shard_index=0
+shard_count=1
+if [[ -n "$shard" ]]; then
+  [[ "$shard" =~ ^([0-9]+)/([0-9]+)$ ]] || die "--shard must be I/N"
+  shard_index="${BASH_REMATCH[1]}"
+  shard_count="${BASH_REMATCH[2]}"
+  ((shard_count >= 1 && shard_index < shard_count)) || die "--shard needs 0 <= I < N"
+fi
+LC_COLLATE=C
 projects=()
 declare -A project_dir=()
+index=-1
 for manifest in "$repo_root"/crates/*/fuzz/Cargo.toml "$repo_root"/tools/*/fuzz/Cargo.toml; do
   [[ -f "$manifest" ]] || continue
   crate_dir="$(dirname "$(dirname "$manifest")")"
   name="$(basename "$crate_dir")"
   [[ -z "${project_dir[$name]:-}" ]] || die "two fuzz projects are named $name"
   project_dir[$name]="${crate_dir#"$repo_root"/}"
+  index=$((index + 1))
+  ((index % shard_count == shard_index)) || continue
   if [[ ${#crates[@]} -gt 0 ]]; then
     keep=0
     for c in "${crates[@]}"; do [[ "$c" == "$name" ]] && keep=1; done
@@ -110,6 +136,11 @@ for manifest in "$repo_root"/crates/*/fuzz/Cargo.toml "$repo_root"/tools/*/fuzz/
   projects+=("$name")
 done
 [[ ${#projects[@]} -gt 0 ]] || die "no fuzz projects found under crates/*/fuzz or tools/*/fuzz"
+
+if [[ "$mode" == "projects" ]]; then
+  printf '%s\n' "${projects[@]}"
+  exit 0
+fi
 
 # Prove that each lockfile is current before cargo-fuzz touches it. cargo
 # metadata --locked fails instead of rewriting a stale lockfile.
@@ -161,7 +192,7 @@ if [[ -n "${FSTP_FUZZ_WORK:-}" ]]; then
 fi
 logs="${FSTP_FUZZ_LOGS:-$(mktemp -d)}"
 mkdir -p "$logs"
-echo "fuzz-all: ${#pairs[@]} targets in ${#projects[@]} projects, ${seconds}s each, toolchain $toolchain, -j $parallel"
+echo "fuzz-all: ${#pairs[@]} targets in ${#projects[@]} projects (shard ${shard:-all}), ${seconds}s each, toolchain $toolchain, -j $parallel"
 echo "fuzz-all: logs in $logs"
 echo "fuzz-all: target directory $CARGO_TARGET_DIR"
 

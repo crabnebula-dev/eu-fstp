@@ -14,7 +14,8 @@
 #                direct matrix tests in shards. Each part is gated
 #                by the known-red list in ci/known-red.txt (tools/test-gate
 #                --partial)
-#   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
+#   fuzz-smoke   every fuzz target on the pinned nightly (TH-26), in four
+#                shards: 15 s per target on the light tier, 60 s on the full
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
 #   e2e-demo     the demo Playwright project against fstp-e2e-cell, on the
@@ -723,16 +724,40 @@ jobs:
           tools/demo/run.sh stop || true
           if [ -f "$FSTP_DEMO_STATE/cell.log" ]; then tail -n 200 "$FSTP_DEMO_STATE/cell.log"; fi
 
+  # TH-26: every fuzz target runs on both tiers (Daniel, 2026-11-16). The
+  # light tier runs each for FUZZ_LIGHT_SECONDS, the full tier for
+  # FUZZ_FULL_SECONDS. Four shards split the 66 fuzz projects by index
+  # (tools/fuzz-all.sh --shard), and together they hold every project
+  # once. In one job, CI run 43873124657 spent about 12.6 minutes building
+  # and 50 minutes fuzzing 202 targets at 60 s.
   fuzz-smoke:
-    name: fuzz smoke (60 s per target)
+    name: fuzz smoke (${{ matrix.shard }})
     needs: deps-check
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0/4", "1/4", "2/4", "3/4"]
     env:
+      FUZZ_SHARD: ${{ matrix.shard }}
+      FUZZ_FULL_SECONDS: "60"
+      FUZZ_LIGHT_SECONDS: "15"
       # One target directory shared by every fuzz project avoids rebuilding
       # the common crates once per project.
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/fuzz
     steps:
+      # The tier rule of the test job: full only on a manual run with the
+      # full box ticked.
+      - name: Decide the fuzz tier and the time per target
+        id: fuzz
+        env:
+          WANT_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+        run: |
+          set -euo pipefail
+          if [[ "$WANT_FULL" == true ]]; then tier=full; seconds="$FUZZ_FULL_SECONDS"; else tier=light; seconds="$FUZZ_LIGHT_SECONDS"; fi
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "fuzz smoke $FUZZ_SHARD: $tier tier, $seconds s per target"
       - name: Check out with plain git
         env:
           JOB_TOKEN: ${{ github.token }}
@@ -761,5 +786,8 @@ jobs:
           rustc "+$nightly" --version
           cargo install cargo-fuzz --version 0.13.2 --locked
           cargo fuzz --version
-      - name: Run every fuzz target for 60 seconds
-        run: tools/fuzz-all.sh -j "$(nproc)" 60
+      - name: Run every fuzz target of this shard
+        env:
+          FUZZ_SECONDS: ${{ steps.fuzz.outputs.seconds }}
+        run: |
+          tools/fuzz-all.sh -j "$(nproc)" --shard "$FUZZ_SHARD" "$FUZZ_SECONDS"

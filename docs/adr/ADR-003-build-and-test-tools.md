@@ -123,10 +123,10 @@ The CI test job runs the workspace in parallel parts. With the authorisation mat
 
 ### Decision
 
-The test job runs in one of two tiers. Every other CI job is the same in both.
+The test job and the fuzz smoke run in one of two tiers. Every other CI job is the same in both.
 
-- **Light**, on every push and pull request, and on a manual run without `full`. The `matrix-*` parts and the `m-activate` part stop at their first step. Every other part skips the teeth tests and the matrix layout self-checks, and caps every property at 32 cases.
-- **Full**, on a manual run with the `full` input ticked (Actions, workflow "ci", "Run workflow"). Every part runs every test, and every property runs at its own case count. It takes about three hours.
+- **Light**, on every push and pull request, and on a manual run without `full`. The `matrix-*` parts and the `m-activate` part stop at their first step. Every other part skips the teeth tests and the matrix layout self-checks, and caps every property at 32 cases. The fuzz smoke runs every fuzz target for 15 s.
+- **Full**, on a manual run with the `full` input ticked (Actions, workflow "ci", "Run workflow"). Every part runs every test, and every property runs at its own case count. The fuzz smoke runs every fuzz target for 60 s. It takes about three hours.
 
 A milestone closes, and a release ships, only on a green full run. A green light run never closes a milestone or ships a release.
 
@@ -140,8 +140,9 @@ A milestone closes, and a release ships, only on a green full run. A green light
 - The case cap is the variable `FSTP_PROP_MAX_CASES` of `fstp-prop`, set from the job variable `LIGHT_PROP_MAX_CASES`. It lowers a larger count and never raises a smaller one. `FSTP_PROP_CASES` would raise small counts too, so the light tier does not use it.
 - A case count that a stated claim fixes is a floor that no variable lowers, so the light tier keeps it. The floors on 2026-11-16 are the two cross-implementation round trips of ADR-004 test vector plan item 4 (1 000 key pairs per run, through `fstp_prop::Config::min_cases`). The I-90 claim run keeps 1000 inputs each way through its own floor in `i90_claim_mldsa_differential.rs`.
 - The full tier adds no skip and no cap to any part. An unknown tier fails the step.
+- The fuzz smoke runs every fuzz target on both tiers (TH-26). The tiers differ only in the time per target: `FUZZ_FULL_SECONDS` (60) and `FUZZ_LIGHT_SECONDS` (15). The light tier may shorten the time and never drops a target. Four shards (`tools/fuzz-all.sh --shard I/4`) split the fuzz projects by index, and together they hold every project once.
 - The other exhaustive model checks (tests named `*_m_*`) run on both tiers at the same size. Each must finish under its tripwire, so they have no smaller light setting.
-- `teeth_m3_registry` checks both tiers. `ci_light_tier_skips_only_the_declared_heavy_classes` checks that the light skips hold only `LIGHT_HEAVY_CLASSES`, and that the light tier stops exactly the `matrix-*` parts and `m-activate`. `ci_full_tier_adds_no_skip_and_no_case_cap` checks that the full tier adds nothing. A new heavy class needs an amendment here and an entry in `LIGHT_HEAVY_CLASSES`.
+- `teeth_m3_registry` checks both tiers. `ci_light_tier_skips_only_the_declared_heavy_classes` checks that the light skips hold only `LIGHT_HEAVY_CLASSES`, and that the light tier stops exactly the `matrix-*` parts and `m-activate`. `ci_full_tier_adds_no_skip_and_no_case_cap` checks that the full tier adds nothing. `ci_fuzz_smoke_runs_every_target_on_both_tiers` checks the fuzz times, that no `--crate` narrows the run, and that the shards hold every fuzz project exactly once. A new heavy class needs an amendment here and an entry in `LIGHT_HEAVY_CLASSES`.
 
 ### Runs before the tiers
 
