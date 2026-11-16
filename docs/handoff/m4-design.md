@@ -1455,6 +1455,14 @@ The fallback, if measured time exceeds 30 minutes of wall time, first adds shard
 | `i84_m_parity` | Model M-PARITY |
 | `i84_teeth_mcp_only_shortcut_is_caught` | Teeth: an alternative dispatcher skips the dry run for one tool |
 
+Built by lane m4/parity (2026-11-16):
+
+- `i84_m_parity` and `i84_m_parity_on_the_reference` are in `crates/fstp-api-testkit/tests/i84_m_parity.rs`. The model is `crates/fstp-api-testkit/src/mc/parity_model.rs`. Its runner on the matrix harness worlds is `crates/fstp-api-testkit/src/harness/parity.rs`. The exhaustive run explores 662 states on both backends.
+- Universe as built: the lead and a programme manager, the states from the open call through DRAFT, SUBMITTED and STAGE1 to STAGE2, SuperSAFE with P-77 at both values, and every operation with a tool once per channel. Each call runs on a clean world, so the model fixes the order of calls within a state.
+- Reading of the pending property: where the web refuses a pending exposure, MCP must give the same refusal from the dry run (section 3.7, step 5), never a pending action. The D6 P-75 difference is the only one admitted for direct exposures.
+- `i84_teeth_mcp_only_shortcut_is_caught` and its `_on_the_reference` twin are in the same file. The shortcut skips the dry run for `fstp_submit_proposal` in test code only.
+- `i84_roles_reevaluated_per_call` and `i84_roles_reevaluated_per_call_two_calls` are in `crates/fstp-api-testkit/tests/i84_roles_reevaluated_per_call.rs`. Every call goes through `fstp_mcp::McpServer::call_tool`.
+
 **I-85**
 
 | Test | Kind |
