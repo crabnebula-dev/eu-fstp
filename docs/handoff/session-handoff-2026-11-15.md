@@ -37,7 +37,7 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | Wizard | Planned rows email at once; Operations invitees accept role-only terms |
 | Cell routes | AddPasskey digest over the command id accepted; identity release stays lead-only |
 | P-41 reminder | A timeline event kind at the end of P-41 per action, and a mailbox message to tenant admins linking to the erasure request |
-| CI tiers | Light on every push and PR: no matrix parts, no teeth tests (`_teeth_`), every property capped at 32 cases, stated minimums kept. Full on a manual run with `full` ticked: everything at full size, about three hours. A milestone closes, and a release ships, only on a green full run (Daniel, 2026-11-16, ADR-003) |
+| CI tiers | Light on every push and PR: no matrix parts, no M-ACTIVATE part, no teeth tests (`_teeth_`), no q34 matrix self-checks (`matrix::tests::q34_`), every property capped at 32 cases, stated minimums kept. Full on a manual run with `full` ticked: everything at full size, about three hours, so every full run proves I-66 and I-67. A milestone closes, and a release ships, only on a green full run (Daniel, 2026-11-16, ADR-003) |
 
 ## Lanes at the time of handoff
 
