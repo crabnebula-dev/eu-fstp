@@ -17,8 +17,11 @@
 //! - every registered teeth test of an invariant is on the known-red list;
 //! - a model of design section 14.2 has no measured count, is not bounded
 //!   by its tripwire, or has a teeth mutant that is not registered;
-//! - the multi-cell isolation CI part and the workspace part do not run
-//!   each isolation test exactly once between them.
+//! - an isolation test runs in a CI part other than the multi-cell
+//!   isolation part;
+//! - a test runs in no CI test part or in more than one, a
+//!   `crates/fstp-celltest/tests/*.rs` file runs in no part, or a
+//!   library's doc tests do not run in exactly one part.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -909,56 +912,224 @@ fn w4_every_m3_model_is_measured_bounded_and_has_registered_teeth() {
 }
 
 // ---------------------------------------------------------------------------
-// The multi-cell isolation CI part (design sections 14.4 and 14.8).
+// The CI test parts: the multi-cell isolation part (design sections 14.4
+// and 14.8) and the parts of fstp-celltest (Daniel, 2026-11-16).
 
-/// The libtest words of one matrix entry of the CI test job.
+/// One matrix entry of the CI test job.
 #[derive(Debug, Default)]
 struct Part {
-    packages: Vec<String>,
+    name: String,
+    /// The cargo selections of `packages`, separated by `;`, which the
+    /// part runs one after another.
+    selections: Vec<Selection>,
     filters: Vec<String>,
     skips: Vec<String>,
 }
 
-/// The matrix entry `part` of `.github/workflows/ci.yml`, in either the
-/// block or the inline form the file uses.
-fn ci_part(part: &str) -> Part {
-    let ci = read(".github/workflows/ci.yml");
-    let words = |v: &str| v.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
-    let mut out = Part::default();
-    let mut lines = ci.lines().peekable();
-    while let Some(line) = lines.next() {
-        let s = line.trim();
-        if let Some(inline) = s.strip_prefix("- {").and_then(|r| r.strip_suffix('}')) {
-            let fields: BTreeMap<&str, &str> = inline
-                .split(", ")
-                .filter_map(|f| f.trim().split_once(": "))
-                .collect();
-            if fields.get("part") == Some(&part) {
-                out.packages = words(fields.get("packages").unwrap_or(&""));
-                out.filters = words(fields.get("filter").unwrap_or(&""));
-                out.skips = words(fields.get("skip").unwrap_or(&""));
-                return out;
+/// One cargo test target selection.
+#[derive(Debug, Default)]
+struct Selection {
+    workspace: bool,
+    packages: Vec<String>,
+    excludes: Vec<String>,
+    /// The `--test` names. A `*` matches any run of characters, as in
+    /// cargo's target patterns.
+    tests: Vec<String>,
+    lib: bool,
+    bins: bool,
+    doc: bool,
+}
+
+/// What a source file belongs to within its package.
+#[derive(Debug, PartialEq, Eq)]
+enum Target {
+    /// `src/` outside the binaries: the library and its unit tests.
+    Lib,
+    /// `src/main.rs` and `src/bin/`.
+    Bin,
+    /// `tests/<name>.rs`: the integration test binary `<name>`.
+    Test(String),
+    /// A module under `tests/<dir>/`, part of whichever test binary
+    /// includes it.
+    TestModule,
+    /// The doc tests of the library.
+    Doc,
+    /// Anything else, such as a build script.
+    Other,
+}
+
+impl Selection {
+    /// Reads the cargo words of one selection. A word the check does not
+    /// know fails it, so a new kind of selection cannot slip past.
+    fn parse(words: &[&str]) -> Selection {
+        let mut s = Selection::default();
+        let mut it = words.iter();
+        while let Some(&w) = it.next() {
+            let mut value = || {
+                (*it.next()
+                    .unwrap_or_else(|| panic!("ci.yml: {w} without a value")))
+                .to_owned()
+            };
+            match w {
+                "--workspace" => s.workspace = true,
+                "-p" | "--package" => s.packages.push(value()),
+                "--exclude" => s.excludes.push(value()),
+                "--test" => s.tests.push(value()),
+                "--lib" => s.lib = true,
+                "--bins" => s.bins = true,
+                "--doc" => s.doc = true,
+                other => panic!("ci.yml: this check does not know the cargo word {other}"),
             }
-        } else if s == format!("- part: {part}") {
-            while let Some(next) = lines.peek() {
-                let n = next.trim();
+        }
+        s
+    }
+
+    /// Whether the selection names its targets. Without, cargo runs the
+    /// library, binaries, test binaries and doc tests of each package.
+    fn names_targets(&self) -> bool {
+        !self.tests.is_empty() || self.lib || self.bins || self.doc
+    }
+
+    fn has_package(&self, package: &str) -> bool {
+        if self.workspace {
+            !self.excludes.iter().any(|e| e == package)
+        } else {
+            self.packages.iter().any(|p| p == package)
+        }
+    }
+
+    /// Whether the selection runs `target` of `package`.
+    fn runs(&self, package: &str, target: &Target) -> bool {
+        if !self.has_package(package) {
+            return false;
+        }
+        if !self.names_targets() {
+            return *target != Target::Other;
+        }
+        match target {
+            Target::Lib => self.lib,
+            Target::Bin => self.bins,
+            Target::Doc => self.doc,
+            Target::Test(name) => self.tests.iter().any(|p| glob(p, name)),
+            Target::TestModule | Target::Other => false,
+        }
+    }
+}
+
+/// Whether `name` matches the cargo target pattern `pattern`, in which
+/// `*` matches any run of characters. The parts use no other wildcard.
+fn glob(pattern: &str, name: &str) -> bool {
+    assert!(
+        !pattern.contains(['?', '[', ']', '{', '}']),
+        "ci.yml: the pattern {pattern} uses a wildcard this check does not read"
+    );
+    let mut pieces = pattern.split('*');
+    let first = pieces.next().unwrap();
+    let Some(mut rest) = name.strip_prefix(first) else {
+        return false;
+    };
+    let pieces: Vec<&str> = pieces.collect();
+    let Some((last, middle)) = pieces.split_last() else {
+        return rest.is_empty();
+    };
+    for piece in middle {
+        match rest.find(piece) {
+            Some(i) => rest = &rest[i + piece.len()..],
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
+}
+
+/// The leading spaces of a line.
+fn indent(line: &str) -> usize {
+    line.len() - line.trim_start_matches(' ').len()
+}
+
+/// Every matrix entry of the CI test job in `.github/workflows/ci.yml`,
+/// in the inline or the block form, with folded (`>-`) values.
+fn ci_parts() -> Vec<Part> {
+    let ci = read(".github/workflows/ci.yml");
+    let lines: Vec<&str> = ci.lines().collect();
+    let mut out: Vec<Part> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let s = lines[i].trim();
+        i += 1;
+        let mut fields: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(inline) = s.strip_prefix("- {").and_then(|r| r.strip_suffix('}')) {
+            for f in inline.split(", ") {
+                if let Some((k, v)) = f.trim().split_once(": ") {
+                    fields.insert(k.to_owned(), v.trim().to_owned());
+                }
+            }
+        } else if let Some(name) = s.strip_prefix("- part: ") {
+            fields.insert("part".to_owned(), name.trim().to_owned());
+            while i < lines.len() {
+                let n = lines[i].trim();
                 if n.starts_with("- ") || n.starts_with('#') || n.is_empty() {
                     break;
                 }
-                if let Some((k, v)) = n.split_once(": ") {
-                    match k {
-                        "packages" => out.packages = words(v),
-                        "filter" => out.filters = words(v),
-                        "skip" => out.skips = words(v),
-                        _ => {}
+                let key_indent = indent(lines[i]);
+                i += 1;
+                let Some((k, v)) = n.split_once(':') else {
+                    continue;
+                };
+                let mut v = v.trim().to_owned();
+                if v == ">-" || v == ">" {
+                    let mut folded = Vec::new();
+                    while i < lines.len()
+                        && !lines[i].trim().is_empty()
+                        && indent(lines[i]) > key_indent
+                    {
+                        folded.push(lines[i].trim());
+                        i += 1;
                     }
+                    v = folded.join(" ");
                 }
-                lines.next();
+                fields.insert(k.to_owned(), v);
             }
-            return out;
         }
+        let Some(name) = fields.get("part") else {
+            continue;
+        };
+        let words = |k: &str| -> Vec<String> {
+            fields
+                .get(k)
+                .map(|v| v.split_whitespace().map(str::to_owned).collect())
+                .unwrap_or_default()
+        };
+        let selections: Vec<Selection> = fields
+            .get("packages")
+            .map(String::as_str)
+            .unwrap_or("")
+            .split(';')
+            .map(|s| s.split_whitespace().collect::<Vec<_>>())
+            .filter(|w| !w.is_empty())
+            .map(|w| Selection::parse(&w))
+            .collect();
+        assert!(
+            !selections.is_empty(),
+            "ci.yml: part {name} selects nothing"
+        );
+        assert!(
+            out.iter().all(|p| &p.name != name),
+            "ci.yml: two parts are named {name}"
+        );
+        out.push(Part {
+            name: name.clone(),
+            selections,
+            filters: words("filter"),
+            skips: words("skip"),
+        });
     }
-    panic!("ci.yml has no test part {part}");
+    for want in ["workspace", "celltest", "isolation-multi-cell", "devstack"] {
+        assert!(
+            out.iter().any(|p| p.name == want),
+            "ci.yml has no test part {want}"
+        );
+    }
+    out
 }
 
 fn selects(filters: &[String], skips: &[String], name: &str) -> bool {
@@ -966,64 +1137,109 @@ fn selects(filters: &[String], skips: &[String], name: &str) -> bool {
         && !skips.iter().any(|s| name.contains(s.as_str()))
 }
 
+/// The package that `<top>/<dir>/Cargo.toml` names.
+fn package_name(root: &str) -> String {
+    read(&format!("{root}/Cargo.toml"))
+        .lines()
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("name = \"")
+                .and_then(|r| r.strip_suffix('"'))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| panic!("{root}/Cargo.toml names no package"))
+}
+
+/// The package root and target of a source file, from its path
+/// relative to the repository root (`crates/<dir>/...` or
+/// `tools/<dir>/...`).
+fn target_of(file: &str) -> (String, Target) {
+    let mut parts = file.splitn(3, '/');
+    let (top, dir, rest) = (
+        parts.next().unwrap(),
+        parts.next().unwrap(),
+        parts.next().unwrap_or(""),
+    );
+    let target = if rest == "src/main.rs" || rest.starts_with("src/bin/") {
+        Target::Bin
+    } else if rest.starts_with("src/") {
+        Target::Lib
+    } else if let Some(t) = rest.strip_prefix("tests/") {
+        match t.strip_suffix(".rs") {
+            Some(name) if !name.contains('/') => Target::Test(name.to_owned()),
+            _ => Target::TestModule,
+        }
+    } else {
+        Target::Other
+    };
+    (format!("{top}/{dir}"), target)
+}
+
+/// The testkits run in parts of their own. Their matrix shards run one
+/// test name each, under a different `FSTP_MATRIX_SHARD`, so the
+/// exactly-once rule does not apply to them.
+fn in_testkit(file: &str) -> bool {
+    file.starts_with("crates/fstp-api-testkit/") || file.starts_with("crates/fstp-domain-testkit/")
+}
+
+/// The parts that run test `name` of `package`'s `target`.
+fn parts_running(parts: &[Part], package: &str, target: &Target, name: &str) -> Vec<String> {
+    parts
+        .iter()
+        .filter(|p| p.selections.iter().any(|s| s.runs(package, target)))
+        .filter(|p| selects(&p.filters, &p.skips, name))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// Every test of the workspace outside the testkits, with the file that
+/// defines it and the parts that run it.
+fn placements(parts: &[Part]) -> Vec<(String, String, Vec<String>)> {
+    let mut packages: BTreeMap<String, String> = BTreeMap::new();
+    workspace_tests()
+        .into_iter()
+        .filter(|(file, _)| !in_testkit(file))
+        .map(|(file, name)| {
+            let (root, target) = target_of(&file);
+            let package = packages
+                .entry(root.clone())
+                .or_insert_with(|| package_name(&root))
+                .clone();
+            let runs = parts_running(parts, &package, &target, &name);
+            (file, name, runs)
+        })
+        .collect()
+}
+
 /// I-19, I-20, I-80, I-82, I-83 (design sections 14.4 and 14.8, W4): the
 /// `isolation-multi-cell` CI part runs every `t_iso_*` and `t_db_iso_*`
 /// test, the `i80_root_canary_*` scans and the process-mode isolation
-/// tests. The workspace part skips exactly those, so each runs once and
-/// no skip drops a test that the isolation part does not run.
+/// tests, and no other part runs any of them.
 #[test]
-fn w4_isolation_part_and_workspace_part_run_each_isolation_test_once() {
-    let iso = ci_part("isolation-multi-cell");
-    let ws = ci_part("workspace");
-    // The devstack part (M3 exit audit section 7, item 7) runs
-    // slice_devstack after compiling the auth pages, and the workspace
-    // part skips it. It counts like the other parts: each test runs once.
-    let dev = ci_part("devstack");
-    let test_bins = |packages: &[String]| {
-        let mut bins = BTreeSet::new();
-        let mut it = packages.iter();
-        while let Some(w) = it.next() {
-            if w == "--test" {
-                bins.insert(format!("{CT}{}.rs", it.next().unwrap()));
-            }
-        }
-        bins
-    };
-    let bins = test_bins(&iso.packages);
-    let dev_bins = test_bins(&dev.packages);
+fn w4_isolation_part_runs_each_isolation_test_and_no_other_part_does() {
+    let parts = ci_parts();
+    let iso = parts
+        .iter()
+        .find(|p| p.name == "isolation-multi-cell")
+        .unwrap();
     assert!(
-        iso.packages
-            .starts_with(&["-p".to_owned(), "fstp-celltest".to_owned()])
+        iso.selections
+            .iter()
+            .all(|s| !s.workspace && s.packages == ["fstp-celltest"]),
+        "the isolation part runs fstp-celltest binaries only: {iso:?}"
     );
     let mut bad = Vec::new();
     let mut isolated = Vec::new();
-    for (file, name) in workspace_tests() {
-        // The testkits run in parts of their own, which these skips do
-        // not touch.
-        if file.starts_with("crates/fstp-api-testkit/")
-            || file.starts_with("crates/fstp-domain-testkit/")
-        {
-            continue;
-        }
-        let in_iso = bins.contains(&file) && selects(&iso.filters, &iso.skips, &name);
-        let in_ws = selects(&ws.filters, &ws.skips, &name);
-        let in_dev = dev_bins.contains(&file) && selects(&dev.filters, &dev.skips, &name);
+    for (file, name, runs) in placements(&parts) {
         let isolation = name.starts_with("t_iso_")
             || name.starts_with("t_db_iso_")
             || name.starts_with("i80_root_canary_");
-        let parts = usize::from(in_iso) + usize::from(in_ws) + usize::from(in_dev);
-        if parts > 1 {
-            bad.push(format!("{file}: {name} runs in more than one part"));
-        }
-        if parts == 0 {
-            bad.push(format!("{file}: {name} runs in no part"));
-        }
-        if isolation && !in_iso {
+        if isolation && runs != ["isolation-multi-cell"] {
             bad.push(format!(
-                "{file}: {name} is an isolation test outside the isolation part"
+                "{file}: {name} is an isolation test and runs in {runs:?}"
             ));
         }
-        if in_iso {
+        if runs.iter().any(|r| r == "isolation-multi-cell") {
             isolated.push(name);
         }
     }
@@ -1032,4 +1248,121 @@ fn w4_isolation_part_and_workspace_part_run_each_isolation_test_once() {
         isolated.len() >= 10,
         "the isolation part selects too few tests: {isolated:?}"
     );
+}
+
+/// Every invariant and requirement test outside the testkits runs in
+/// exactly one CI test part (Daniel, 2026-11-16). The parts split the
+/// workspace by package, by test binary and by libtest filter, and a
+/// libtest skip matches its substring in every binary of its part. So
+/// no part runs a test twice, and no skip or missing `--test` name
+/// drops one.
+#[test]
+fn ci_test_parts_run_each_test_exactly_once() {
+    let parts = ci_parts();
+    let mut bad = Vec::new();
+    let mut counted = 0usize;
+    for (file, name, runs) in placements(&parts) {
+        counted += 1;
+        match runs.len() {
+            1 => {}
+            0 => bad.push(format!("{file}: {name} runs in no part")),
+            _ => bad.push(format!("{file}: {name} runs in the parts {runs:?}")),
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+    assert!(counted > 1000, "the check read too few tests: {counted}");
+}
+
+/// The fstp-celltest parts name their binaries one by one, so a new test
+/// file must be named too (Daniel, 2026-11-16). Every
+/// `crates/fstp-celltest/tests/*.rs` runs in at least one part, whether
+/// or not this check reads a test in it. Every `--test` pattern of a
+/// part matches a file, and every library's doc tests run in exactly one
+/// part without a libtest filter.
+#[test]
+fn ci_every_celltest_file_and_doc_test_set_runs_in_a_part() {
+    let parts = ci_parts();
+    let mut bad = Vec::new();
+    let mut files: Vec<String> = fs::read_dir(repo_root().join(CT))
+        .unwrap()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let stem = name.strip_suffix(".rs")?;
+            e.path().is_file().then(|| stem.to_owned())
+        })
+        .collect();
+    files.sort();
+    assert!(files.len() >= 50, "too few celltest files: {files:?}");
+    for f in &files {
+        let target = Target::Test(f.clone());
+        let runs: Vec<&str> = parts
+            .iter()
+            .filter(|p| {
+                p.selections
+                    .iter()
+                    .any(|s| s.runs("fstp-celltest", &target))
+            })
+            .map(|p| p.name.as_str())
+            .collect();
+        if runs.is_empty() {
+            bad.push(format!("{CT}{f}.rs runs in no part"));
+        }
+    }
+    for p in &parts {
+        for s in &p.selections {
+            if s.packages != ["fstp-celltest"] {
+                continue;
+            }
+            for pattern in &s.tests {
+                if !files.iter().any(|f| glob(pattern, f)) {
+                    bad.push(format!("{}: --test {pattern} matches no file", p.name));
+                }
+            }
+        }
+    }
+    let mut libraries = Vec::new();
+    for top in ["crates", "tools"] {
+        for e in fs::read_dir(repo_root().join(top)).unwrap().flatten() {
+            let root = format!("{top}/{}", e.file_name().to_string_lossy());
+            if e.path().join("src/lib.rs").is_file() && !in_testkit(&format!("{root}/")) {
+                libraries.push(package_name(&root));
+            }
+        }
+    }
+    assert!(libraries.iter().any(|l| l == "fstp-celltest"));
+    for lib in &libraries {
+        let runs: Vec<&Part> = parts
+            .iter()
+            .filter(|p| p.selections.iter().any(|s| s.runs(lib, &Target::Doc)))
+            .collect();
+        match runs.as_slice() {
+            [p] if p.filters.is_empty() => {}
+            [p] => bad.push(format!(
+                "{lib}: doc tests run under the filters of {}",
+                p.name
+            )),
+            _ => bad.push(format!(
+                "{lib}: doc tests run in {:?}",
+                runs.iter().map(|p| &p.name).collect::<Vec<_>>()
+            )),
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The pattern reader the parts rely on.
+#[test]
+fn ci_part_glob_reads_cargo_target_patterns() {
+    assert!(glob("i79_recovery", "i79_recovery"));
+    assert!(!glob("i79_recovery", "i79_recovery_x"));
+    assert!(glob("review_*", "review_w1b_strength"));
+    assert!(glob("review_*", "review_"));
+    assert!(!glob("review_*", "i79_review_x"));
+    assert!(glob("t_*", "t_iso_i19"));
+    assert!(!glob("t_*", "teeth_m3_registry"));
+    assert!(glob("*_world", "seam_world"));
+    assert!(glob("a*b*c", "a_x_b_y_c"));
+    assert!(!glob("a*b*c", "a_x_c"));
+    assert!(!glob("ab*ba", "aba"));
 }

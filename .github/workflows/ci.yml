@@ -8,8 +8,10 @@
 #   deps-check   dependency allowlist, no-Python, fuzz-target and layering gates
 #   fmt-clippy   rustfmt and clippy -D warnings on the workspace and every fuzz project
 #   test         cargo test with a real PostgreSQL 16 in parallel parts: the
-#                workspace in three, the multi-cell isolation tests, and the
-#                HTTP and direct matrix tests in shards. Each part is gated
+#                workspace without fstp-celltest, fstp-celltest in four
+#                parts, the multi-cell isolation tests, the dev stack, the
+#                testkits, the M-ACTIVATE checks, and the HTTP, MCP and
+#                direct matrix tests in shards. Each part is gated
 #                by the known-red list in ci/known-red.txt (tools/test-gate
 #                --partial). The matrix parts run only on a manual
 #                run with the matrix input set (Daniel, 2026-11-16)
@@ -124,25 +126,62 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # packages: the cargo test target selection. filter and skip: the
+        # packages: the cargo test target selection. Selections separated
+        # by ";" run one after another into one log. filter and skip: the
         # libtest filters, which test-gate repeats so it judges the same
         # selection. shard: FSTP_MATRIX_SHARD for the matrix tests.
         include:
           - part: workspace
-            packages: --workspace --exclude fstp-api-testkit --exclude fstp-domain-testkit
-            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell slice_devstack_
-            timeout: 180
+            packages: --workspace --exclude fstp-api-testkit --exclude fstp-domain-testkit --exclude fstp-celltest
+            timeout: 60
+          # fstp-celltest in four parts (Daniel, 2026-11-16). In the
+          # workspace part its binaries ran 76 minutes one after another
+          # (CI run 43825968860). Each part names its binaries with --test,
+          # a * matching any run of characters. The test times from that
+          # run are about 19 minutes per part. teeth_m3_registry checks
+          # that every test file, test and doc-test set runs in a part,
+          # and that each test runs in exactly one part.
+          # i79_recovery 999 s, i90_composite_verify 123 s.
+          - { part: celltest-recovery, packages: -p fstp-celltest --test i79_recovery --test i90_composite_verify, timeout: 60 }
+          # i77_login 885 s, i81_backups 240 s.
+          - { part: celltest-login, packages: -p fstp-celltest --test i77_login --test i81_backups, timeout: 60 }
+          # r_lg_04_sessions_and_devices 624 s, i78_stepup 242 s,
+          # i38_egress 213 s, r_nf_m3 73 s.
+          - { part: celltest-sessions, packages: -p fstp-celltest --test r_lg_04_sessions_and_devices --test i78_stepup --test i38_egress --test r_nf_m3, timeout: 60 }
+          # Every other binary, the unit tests and the doc tests: about
+          # 1,160 s. slice_devstack runs in the devstack part. The skips
+          # leave the isolation tests to the isolation part.
+          - part: celltest
+            packages: >-
+              -p fstp-celltest --lib --bins
+              --test adr* --test fstp_vault_* --test harness_* --test review_*
+              --test seam_* --test sod_* --test t_* --test th_* --test w0_*
+              --test i16_funds --test i17_identity_release --test i18_*
+              --test i19_boundary --test i20_tenants --test i24_audit_chain
+              --test i27_canary --test i33_bank_reference --test i39_*
+              --test i75_hybrids --test i80_custody --test i81_shred
+              --test i82_role_plan --test i83_placement
+              --test i90_claim_mldsa_differential --test i90_every_verifier
+              --test int3_route_admissions --test m3_cell_vault_tickets
+              --test m6egr_mail_relay --test pg_crash --test r_cr_*
+              --test r_id_03_documents --test r_nf_08_q_a_classes
+              --test r_nf_09_cell_to_cp_link --test r_sw_02_cell_erasure
+              --test seeded_vault_chain --test slice_http --test slice_world
+              --test teeth_m3_registry --test w1a_world
+              ; -p fstp-celltest --doc
+            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell
+            timeout: 60
           # I-19, I-20, I-80, I-82, I-83: the isolation (multi-cell) job of
           # m3-design sections 14.4 and 14.8, as a part of its own. It runs
           # every t_iso_* and t_db_iso_* test, the i80_root_canary_* scans,
           # the other process-mode memory scan and the process-mode I-19
-          # test. The workspace part skips the same tests, and
+          # test. The celltest part skips the same tests, and
           # teeth_m3_registry checks that each runs in exactly one part.
           - { part: isolation-multi-cell, packages: -p fstp-celltest --test t_iso_i19 --test t_iso_i20 --test t_db_iso_i82 --test i83_placement --test i80_custody --test i19_boundary, filter: t_iso_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell, timeout: 60 }
           # W3b, M3 exit audit section 7 item 7: slice_devstack starts
           # fstp-devstack, which serves the compiled auth pages. This part
           # compiles them with the pinned Node.js and tsc first (ADR-003),
-          # and the workspace part skips the test.
+          # and no celltest part names the binary.
           - { part: devstack, packages: -p fstp-celltest --test slice_devstack, timeout: 60 }
           - part: domain-testkit
             packages: -p fstp-domain-testkit
@@ -321,15 +360,22 @@ jobs:
         if: steps.part.outputs.run == 'true'
         run: |
           set -uo pipefail
-          read -ra packages <<< "$TEST_PACKAGES"
           libtest=()
           gate=(--partial)
           for f in $TEST_FILTER; do libtest+=("$f"); gate+=(--filter "$f"); done
           for s in $TEST_SKIP; do libtest+=(--skip "$s"); gate+=(--skip "$s"); done
           if [ -n "$TEST_SHARD" ]; then export FSTP_MATRIX_SHARD="$TEST_SHARD"; fi
           if [ -n "${TEST_THREADS:-}" ]; then export RUST_TEST_THREADS="$TEST_THREADS"; fi
-          echo "cargo test ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
-          cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee "$RUNNER_TEMP/cargo-test.log" || true
+          # cargo cannot mix --doc with other targets, so a part may hold
+          # several selections, separated by ";". read keeps each * as
+          # it is, and cargo matches it against the target names.
+          : > "$RUNNER_TEMP/cargo-test.log"
+          IFS=';' read -ra selections <<< "$TEST_PACKAGES"
+          for selection in "${selections[@]}"; do
+            read -ra packages <<< "$selection"
+            echo "cargo test ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
+            cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log" || true
+          done
           cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "${gate[@]}" "$RUNNER_TEMP/cargo-test.log"
       # I-80, Q27: the Linux-only process-memory scans ran in the isolation
       # run above, on the ext4 key volume. Their outcome is gated by
