@@ -154,6 +154,11 @@ impl Error {
     fn io(context: &str, e: &io::Error) -> Self {
         Self::new(format!("{context}: {e}"))
     }
+
+    /// This error after `context`.
+    pub(crate) fn context(&self, context: &str) -> Self {
+        Self::new(format!("{context}: {}", self.message))
+    }
 }
 
 impl fmt::Display for Error {
@@ -169,6 +174,52 @@ impl fmt::Debug for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// The error of a `psql` run that exited with a failure: its exit status
+/// and its standard error.
+fn psql_failed(out: &std::process::Output) -> Error {
+    Error::new(format!(
+        "psql failed ({}): {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
+/// How the steps of [`PgServer::psql_steps`] share their session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepSession {
+    /// The steps run one after the other in one session, as statements
+    /// sent over one connection do. A setting that one step makes stays
+    /// for the next.
+    Shared,
+    /// `DISCARD ALL` runs before each step after the first. Each step then
+    /// starts as a new session would: as the session user, with default
+    /// settings, and without temporary objects, prepared statements or
+    /// advisory locks. A step that leaves a transaction block open fails,
+    /// since `DISCARD ALL` refuses to run inside one.
+    Reset,
+}
+
+/// The failure of [`PgServer::psql_steps`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct StepError {
+    /// The step that failed, counted from 0. `None` when `psql` failed
+    /// before the first step began or after the last one ended.
+    pub step: Option<usize>,
+    /// What failed, with `psql`'s standard error.
+    pub error: Error,
+}
+
+impl fmt::Display for StepError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.step {
+            Some(i) => write!(f, "step {i}: {}", self.error),
+            None => fmt::Display::fmt(&self.error, f),
+        }
+    }
+}
+
+impl std::error::Error for StepError {}
 
 /// How the server treats TLS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -436,6 +487,95 @@ impl PgServer {
     /// Runs `sql` like [`PgServer::psql`] and returns the output bytes as
     /// they are, untrimmed.
     fn psql_raw(&self, dbname: &str, sql: &str) -> Result<Vec<u8>, Error> {
+        let out = self.run_psql(dbname, sql)?;
+        if !out.status.success() {
+            return Err(psql_failed(&out));
+        }
+        Ok(out.stdout)
+    }
+
+    /// Runs the SQL texts `steps` in order with one `psql` process as the
+    /// superuser in database `dbname`, and returns the output of each
+    /// step, trimmed as [`PgServer::psql`] trims it. For test setup only.
+    ///
+    /// A step is one or more statements. `psql` sends each statement on
+    /// its own, outside any transaction block the step does not open
+    /// itself, and stops at the first error, as [`PgServer::psql`] does.
+    /// Errors are verbose, so a refusal names its SQLSTATE. A line with
+    /// `;` alone ends each step, so an unterminated last statement never
+    /// joins the next step.
+    ///
+    /// `session` says whether the steps share their session state
+    /// ([`StepSession`]). The SQL reaches `psql` through its standard
+    /// input only, as for [`PgServer::psql`].
+    ///
+    /// # Errors
+    ///
+    /// A [`StepError`] with `psql`'s standard error. It names the step
+    /// that failed when `psql` had started it.
+    pub fn psql_steps(
+        &self,
+        dbname: &str,
+        session: StepSession,
+        steps: &[&str],
+    ) -> Result<Vec<String>, StepError> {
+        let unplaced = |error| StepError { step: None, error };
+        // A random marker line before each step tells which step ran
+        // last. No output line of a step can be expected to equal it.
+        let marker = format!("fstp-pgtest-step-{}", random_hex(16).map_err(unplaced)?);
+        let mut script = String::from("\\set VERBOSITY verbose\n");
+        for (i, step) in steps.iter().enumerate() {
+            if i > 0 && session == StepSession::Reset {
+                script.push_str("DISCARD ALL;\n");
+            }
+            script.push_str(&format!("\\echo {marker} {i}\n{step}\n;\n"));
+        }
+        script.push_str(&format!("\\echo {marker} end\n"));
+        let out = self.run_psql(dbname, &script).map_err(unplaced)?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut outputs: Vec<String> = Vec::with_capacity(steps.len());
+        let mut current: Option<usize> = None;
+        let mut ended = false;
+        let mut lines: Vec<&str> = Vec::new();
+        for line in text.lines() {
+            let Some(next) = line
+                .strip_prefix(marker.as_str())
+                .and_then(|l| l.strip_prefix(' '))
+            else {
+                lines.push(line);
+                continue;
+            };
+            if current.is_some() {
+                outputs.push(lines.join("\n").trim().to_owned());
+            }
+            lines.clear();
+            current = if next == "end" {
+                ended = true;
+                None
+            } else {
+                next.parse().ok()
+            };
+        }
+        if !out.status.success() {
+            return Err(StepError {
+                step: current,
+                error: psql_failed(&out),
+            });
+        }
+        if !ended || outputs.len() != steps.len() {
+            return Err(unplaced(Error::new(format!(
+                "psql ended after {} of {} steps",
+                outputs.len(),
+                steps.len()
+            ))));
+        }
+        Ok(outputs)
+    }
+
+    /// Runs `sql` with `psql` as the superuser in database `dbname`, as
+    /// [`PgServer::psql`] describes, and returns its output and exit
+    /// status, whether or not it succeeded.
+    fn run_psql(&self, dbname: &str, sql: &str) -> Result<std::process::Output, Error> {
         let mut cmd = self.superuser_client("psql");
         cmd.args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1"])
             .args(["-h", HOST, "-p", &self.port.to_string(), "-U", SUPERUSER])
@@ -455,19 +595,17 @@ impl PgServer {
             (writer.join(), out)
         });
         let out = out.map_err(|e| Error::io("cannot run psql", &e))?;
+        // psql stops reading at the first error, so the rest of a long
+        // script meets a closed pipe. Its own failure says more.
+        if !out.status.success() {
+            return Ok(out);
+        }
         match written {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(Error::io("cannot write the SQL to psql", &e)),
             Err(_) => return Err(Error::new("the thread writing to psql failed")),
         }
-        if !out.status.success() {
-            return Err(Error::new(format!(
-                "psql failed ({}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
-        }
-        Ok(out.stdout)
+        Ok(out)
     }
 
     /// The data of every table, large object and populated materialized

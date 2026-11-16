@@ -508,3 +508,42 @@ fn r_nf_09_d2_role_login_conn_params_trust_the_cluster_ca() {
         (ca_pem(server), who.cert_pem.clone(), "params_r1".to_owned())
     );
 }
+
+/// R-NF-09, D2, lane fastworld: `create_login_roles` mints one login per
+/// role in one `psql` run, and each logs its own role in.
+#[test]
+fn r_nf_09_d2_batch_minted_roles_each_log_in() {
+    let server = PgServer::shared_named("alpha", OU).unwrap();
+    let logins = server.create_login_roles(&["batch_a", "batch_b"]).unwrap();
+    let roles: Vec<&str> = logins.iter().map(|l| l.role.as_str()).collect();
+    assert_eq!(roles, ["batch_a", "batch_b"]);
+    assert_ne!(logins[0].password, logins[1].password);
+    server
+        .create_database_for("batch_db", &["batch_a", "batch_b"])
+        .unwrap();
+    for who in &logins {
+        assert_eq!(login_as(server, who, "batch_db").unwrap(), who.role);
+    }
+}
+
+/// Lane fastworld: a batch stops at the first role it cannot create and
+/// names it. The roles before it stay created, as with one call per role.
+#[test]
+fn batch_role_creation_names_the_role_that_failed() {
+    let server = PgServer::shared_named("alpha", OU).unwrap();
+    server.create_login_role("batch_taken").unwrap();
+    let err = server
+        .create_login_roles(&["batch_first", "batch_taken", "batch_never"])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cannot create the role batch_taken"), "{err}");
+    assert!(err.contains("42710"), "{err}");
+    let present = server
+        .psql(
+            "postgres",
+            "SELECT string_agg(rolname, ',' ORDER BY rolname) FROM pg_roles \
+             WHERE rolname IN ('batch_first', 'batch_never')",
+        )
+        .unwrap();
+    assert_eq!(present, "batch_first");
+}

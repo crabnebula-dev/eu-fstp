@@ -91,5 +91,6 @@ pub mod tls;
 
 pub use crate::named::RoleLogin;
 pub use crate::server::{
-    ConnParams, DUMP_LOCK_WAIT, Error, PgServer, Role, ServerOptions, ServerTls,
+    ConnParams, DUMP_LOCK_WAIT, Error, PgServer, Role, ServerOptions, ServerTls, StepError,
+    StepSession,
 };
