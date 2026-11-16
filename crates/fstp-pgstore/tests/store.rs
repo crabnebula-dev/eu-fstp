@@ -608,7 +608,9 @@ fn wait_for_advisory_lock(db: &CellDb) {
     let start = Instant::now();
     while db.count(
         "SELECT count(*) FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND granted \
-         AND classid = 0 AND objid = 1 AND objsubid = 1;",
+         AND classid = 0 AND objid = 1 AND objsubid = 1 \
+         AND database = (SELECT oid FROM pg_catalog.pg_database \
+         WHERE datname = pg_catalog.current_database());",
     ) == 0
     {
         assert!(
