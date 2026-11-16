@@ -33,6 +33,8 @@ pub struct CrawlWorld {
     vault: CanaryVault,
     /// The audit entries written before the crawl.
     audit_from: usize,
+    /// Teeth only: whether the mutant read model is planted.
+    mutant: bool,
 }
 
 impl std::fmt::Debug for CrawlWorld {
@@ -61,7 +63,16 @@ impl CrawlWorld {
             state,
             vault: vault.clone(),
             audit_from,
+            mutant: false,
         })
+    }
+
+    /// Teeth only: plants a mutant read model. Every completed read adds
+    /// a vault field to its data: the caller's vault identity number, as
+    /// a read model that joined a vault row would. The mutant lives in this
+    /// test crate only and changes no production code.
+    pub fn plant_identity_field_mutant(&mut self) {
+        self.mutant = true;
     }
 
     /// The MCP server over this world's core.
@@ -128,7 +139,13 @@ impl CrawlWorld {
                     Some(a) => self.bearer(a),
                 };
                 let server = self.w.mcp.as_ref().ok_or("no MCP server")?;
-                let r = block_on(server.call_tool(surface, cred, tool.name, &args));
+                let mut r = block_on(server.call_tool(surface, cred, tool.name, &args));
+                if self.mutant
+                    && is_read(op.name)
+                    && let (Ok(v), Some(t)) = (&mut r, account.and_then(|a| self.vault.tag(a)))
+                {
+                    add_vault_field(v, t.raw());
+                }
                 out.push(answer(format!("{who:?} {surface:?} {}", tool.name), &r));
             }
         }
@@ -208,5 +225,30 @@ fn answer(at: String, r: &Result<Value, fstp_mcp::RpcError>) -> CrawlAnswer {
             text: format!("{}: {}", e.code, e.message),
             completed: false,
         },
+    }
+}
+
+/// The mutant read model of the teeth test: the `data` of a completed
+/// read gains the member `identity` with the vault identity number `n`.
+/// In an array of rows, the first row gains it.
+fn add_vault_field(v: &mut Value, n: u64) {
+    let Some(sc) = v.as_object_mut() else { return };
+    if sc.get("isError").and_then(Value::as_bool) == Some(true) {
+        return;
+    }
+    let Some(data) = sc
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+        .and_then(|s| s.get_mut("data"))
+    else {
+        return;
+    };
+    let row = match data {
+        Value::Object(o) => Some(o),
+        Value::Array(a) => a.iter_mut().find_map(Value::as_object_mut),
+        _ => None,
+    };
+    if let Some(o) = row {
+        let _ = o.insert("identity", Value::String(n.to_string()));
     }
 }

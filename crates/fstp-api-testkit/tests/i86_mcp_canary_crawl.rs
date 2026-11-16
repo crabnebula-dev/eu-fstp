@@ -263,3 +263,26 @@ fn i86_canary_crawl_over_every_tool_role_and_state() {
         "a state where no tool completed: {completed:?}"
     );
 }
+
+/// I-86 teeth: a mutant read model adds a vault field. The mutant is
+/// planted in test code only: in NEGOTIATION, every completed MCP read
+/// gains the member `identity` with the caller's vault identity number.
+/// The crawl must report it.
+#[test]
+fn i86_teeth_identity_field_leak_is_caught() {
+    let vault = cast_vault();
+    let state = StateProfile::Proposal(StateTag::Negotiation);
+    let mut w =
+        CrawlWorld::new(state, &vault).unwrap_or_else(|e| panic!("the world of {state:?}: {e}"));
+    w.plant_identity_field_mutant();
+    let answers = w.crawl().unwrap_or_else(|e| panic!("crawl {state:?}: {e}"));
+    let caught = leaks_of(
+        &vault,
+        state,
+        answers.iter().map(|a| (a.at.as_str(), a.text.as_str())),
+    );
+    assert!(
+        caught.iter().any(|l| l.contains("identity of")),
+        "I-86 teeth: the crawl missed a read model that carries a vault identity"
+    );
+}
