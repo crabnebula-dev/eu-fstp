@@ -20,7 +20,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::certs::{CertError, ClusterCa, is_identifier};
-use crate::server::{ConnParams, Error, PgServer, ServerTls, StartPlan, random_hex, start_planned};
+use crate::server::{
+    ConnParams, Error, PgServer, ServerTls, StartPlan, StepSession, random_hex, start_planned,
+};
 
 /// A login role minted on a named server: its random password and a
 /// client certificate from the server's cluster CA, CN equal to the role.
@@ -84,6 +86,9 @@ const REPLICATION: &str = "replication";
 
 /// How long a `pg_hba.conf` reload may take.
 const RELOAD_WAIT: Duration = Duration::from_secs(20);
+
+/// How long to wait between two checks for a `pg_hba.conf` reload.
+const RELOAD_POLL: Duration = Duration::from_millis(5);
 
 /// The state only a named server has.
 pub(crate) struct NamedState {
@@ -237,31 +242,55 @@ impl PgServer {
     /// Fails for a name outside the grammar, an existing role, or a server
     /// without a cluster CA.
     pub fn create_login_role(&self, role: &str) -> Result<RoleLogin, Error> {
+        let mut logins = self.create_login_roles(&[role])?;
+        logins
+            .pop()
+            .ok_or_else(|| Error::new(format!("no login for the role {role:?}")))
+    }
+
+    /// [`PgServer::create_login_role`] for each of `roles`, in order, with
+    /// one `psql` process ([`PgServer::psql_steps`]). Each `CREATE ROLE`
+    /// runs on its own, so the roles before a failing one stay created, as
+    /// they would with one call per role.
+    ///
+    /// # Errors
+    ///
+    /// As [`PgServer::create_login_role`]. A failing `CREATE ROLE` names
+    /// its role.
+    pub fn create_login_roles(&self, roles: &[&str]) -> Result<Vec<RoleLogin>, Error> {
         let named = self.named_state()?;
-        if !is_hba_name(role) {
+        if let Some(role) = roles.iter().find(|r| !is_hba_name(r)) {
             return Err(Error::new(format!("invalid role name {role:?}")));
         }
-        let issued = named
-            .ca
-            .issue_role(role)
-            .map_err(|e| cert_error("cannot issue the role certificate", &e))?;
-        let password = random_hex(24)?;
-        // The role name follows the grammar and the password is hex, so
-        // neither needs quoting. The statement goes to psql's standard
-        // input only, since it holds the password.
-        self.psql(
-            "postgres",
-            &format!(
+        let mut logins = Vec::with_capacity(roles.len());
+        let mut statements = Vec::with_capacity(roles.len());
+        for role in roles {
+            let issued = named
+                .ca
+                .issue_role(role)
+                .map_err(|e| cert_error("cannot issue the role certificate", &e))?;
+            let password = random_hex(24)?;
+            // The role name follows the grammar and the password is hex,
+            // so neither needs quoting. The statement goes to psql's
+            // standard input only, since it holds the password.
+            statements.push(format!(
                 "CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                  NOREPLICATION NOBYPASSRLS PASSWORD '{password}'"
-            ),
-        )?;
-        Ok(RoleLogin {
-            role: role.to_owned(),
-            password,
-            cert_pem: issued.cert_pem,
-            key_pem: issued.key_pem,
-        })
+            ));
+            logins.push(RoleLogin {
+                role: (*role).to_owned(),
+                password,
+                cert_pem: issued.cert_pem,
+                key_pem: issued.key_pem,
+            });
+        }
+        let steps: Vec<&str> = statements.iter().map(String::as_str).collect();
+        self.psql_steps("postgres", StepSession::Shared, &steps)
+            .map_err(|e| match e.step.and_then(|i| roles.get(i)) {
+                Some(role) => e.error.context(&format!("cannot create the role {role}")),
+                None => e.error,
+            })?;
+        Ok(logins)
     }
 
     /// Creates the database `dbname`, revokes CONNECT from PUBLIC, grants
@@ -278,15 +307,22 @@ impl PgServer {
         if !is_hba_name(dbname) {
             return Err(Error::new(format!("invalid database name {dbname:?}")));
         }
-        for role in roles {
-            if !is_hba_name(role) {
-                return Err(Error::new(format!("invalid role name {role:?}")));
-            }
+        if let Some(role) = roles.iter().find(|r| !is_hba_name(r)) {
+            return Err(Error::new(format!("invalid role name {role:?}")));
+        }
+        if !roles.is_empty() {
+            // One query for every role. The names follow the grammar, so
+            // they need no quoting.
+            let list = roles
+                .iter()
+                .map(|r| format!("'{r}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
             let known = self.psql(
                 "postgres",
-                &format!("SELECT count(*) FROM pg_roles WHERE rolname = '{role}'"),
+                &format!("SELECT rolname FROM pg_roles WHERE rolname IN ({list})"),
             )?;
-            if known != "1" {
+            if let Some(role) = roles.iter().find(|r| !known.lines().any(|k| k == **r)) {
                 return Err(Error::new(format!("no role {role:?} on this server")));
             }
         }
@@ -364,23 +400,60 @@ impl PgServer {
     /// Writes `hba` as `pg_hba.conf`, reloads the server and waits until
     /// the reload took effect. The caller holds the lines lock.
     fn write_hba_and_reload(&self, hba: &str) -> Result<(), Error> {
-        let before = self.psql("postgres", "SELECT pg_conf_load_time()")?;
         let path = self.dir().join("data").join("pg_hba.conf");
         std::fs::write(&path, hba)
             .map_err(|e| Error::new(format!("cannot write {}: {e}", path.display())))?;
-        let errors = self.psql(
-            "postgres",
-            "SELECT count(*) FROM pg_hba_file_rules WHERE error IS NOT NULL",
-        )?;
+        let (before, errors) = self.check_hba_and_reload()?;
         if errors != "0" {
             return Err(Error::new(format!(
                 "the new pg_hba.conf has {errors} bad lines"
             )));
         }
-        self.psql("postgres", "SELECT pg_reload_conf()")?;
-        // Each psql run is a new backend, forked after the postmaster
-        // finished any reload it had started, so a new load time means the
-        // new lines are in force.
+        self.await_reload(&before)
+    }
+
+    /// Checks the `pg_hba.conf` on disk and reloads the server's
+    /// configuration when every line loads, in one statement. It returns
+    /// the load time the session saw before the reload and the number of
+    /// lines that do not load. With such lines nothing reloads.
+    ///
+    /// The session started after the caller wrote the file, and a session
+    /// takes in a reload only between statements. The load time it
+    /// returns is thus no later than the last load before this reload.
+    /// Lane fastworld: one `psql` run for what took three.
+    ///
+    /// # Errors
+    ///
+    /// The `psql` error, or output of an unexpected shape.
+    pub fn check_hba_and_reload(&self) -> Result<(String, String), Error> {
+        let out = self.psql(
+            "postgres",
+            "SELECT pg_conf_load_time(), e.n, \
+             CASE WHEN e.n = 0 THEN pg_reload_conf() ELSE false END \
+             FROM (SELECT count(*) AS n FROM pg_hba_file_rules WHERE error IS NOT NULL) e",
+        )?;
+        let mut cols = out.split('|');
+        match (cols.next(), cols.next(), cols.next(), cols.next()) {
+            (Some(before), Some(errors), Some(_), None) => {
+                Ok((before.to_owned(), errors.to_owned()))
+            }
+            _ => Err(Error::new(format!(
+                "unexpected output of the pg_hba.conf check: {out:?}"
+            ))),
+        }
+    }
+
+    /// Waits until a new session sees a configuration load time other than
+    /// `before`, the time [`PgServer::check_hba_and_reload`] returned.
+    ///
+    /// Each psql run is a new backend, forked after the postmaster
+    /// finished any reload it had started, so a new load time means the
+    /// new lines are in force. It polls every 5 ms, for at most 20 s.
+    ///
+    /// # Errors
+    ///
+    /// The `psql` error, or a reload that did not take effect in time.
+    pub fn await_reload(&self, before: &str) -> Result<(), Error> {
         let start = Instant::now();
         loop {
             let now = self.psql("postgres", "SELECT pg_conf_load_time()")?;
@@ -390,7 +463,7 @@ impl PgServer {
             if start.elapsed() >= RELOAD_WAIT {
                 return Err(Error::new("the server did not reload pg_hba.conf"));
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(RELOAD_POLL);
         }
     }
 }

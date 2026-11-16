@@ -42,7 +42,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use fstp_control::pg::{CellDatabase, CellSubnet, HBA_REJECT_LINES, RolePlan, render_hba};
-use fstp_control::pgagent::{AgentScope, DbIdent, PgagentJob};
+use fstp_control::pgagent::{AgentScope, DbIdent, PgagentJob, Statement};
 use fstp_control::placement::{Cluster, ClusterId, Placement};
 use fstp_cp_proto::{CellId, RoleName};
 use fstp_pgtest::RoleLogin;
@@ -1127,6 +1127,16 @@ impl World {
     ///   placement marker that the I-83 start checks read included. No
     ///   grant follows outside the plan.
     ///
+    /// Reading of lane fastworld: the statements and their order stay as
+    /// above. Only the number of `psql` processes that carry them shrinks
+    /// ([`fstp_pgtest::PgServer::psql_steps`]). A job's run of statements
+    /// with one target shares one session, as `fstp_control::agent` keeps
+    /// one session per database for a job ([`run_job`]). A migration set
+    /// runs in one process, with `DISCARD ALL` before each migration, so
+    /// each starts as a new session would ([`migrate`]). Every statement
+    /// still runs on its own, outside a transaction block, and the first
+    /// failure stops the step and names it.
+    ///
     /// # Cells
     ///
     /// Both cell databases provision completely, steps 4 to 7, with
@@ -1778,23 +1788,78 @@ fn superuser_sql(
 
 /// Runs `job` on `cluster` as `fstp-pgagent` would: its statements come
 /// only from `AgentScope::statements` for the cluster's kind (ADR-011,
-/// I-83), and each runs as the superuser in its target database. A
-/// `CREATE DATABASE` whose database exists already is done.
+/// I-83), and each runs as the superuser in its target database, in their
+/// order. A `CREATE DATABASE` whose database exists already is done.
+///
+/// Lane fastworld: like `fstp_control::agent`, which keeps one session
+/// per database for a job, a run of statements with one target shares
+/// one `psql` session ([`fstp_pgtest::PgServer::psql_steps`]). Each
+/// statement still runs on its own, outside a transaction block, and the
+/// first failure stops the job. A statement that may find its database
+/// done runs alone, so only its own SQLSTATE is read. A failure names the
+/// job and the statement.
 fn run_job(cluster: &ClusterHandle, job: &PgagentJob) -> Result<(), WorldError> {
     let what = format!("the job {job:?}");
     let scope = AgentScope::new(cluster.kind()).map_err(|e| step_failed(cluster, &what, &e))?;
     let statements = scope
         .statements(job)
         .map_err(|e| step_failed(cluster, &what, &e))?;
-    for s in statements {
-        match superuser_sql(cluster, &s.target.database_name(), &s.sql) {
-            Ok(_) => {}
-            Err(e)
-                if s.done_if_duplicate_database && e.to_string().contains(DUPLICATE_DATABASE) => {}
-            Err(e) => return Err(step_failed(cluster, &what, &e)),
+    let n = statements.len();
+    let named = |(s, k): (&Statement, usize)| {
+        format!("{what}, statement {k} of {n} ({})", statement_label(&s.sql))
+    };
+    // Runs of statements with one target, counted from 1. A statement
+    // that may find its database done forms a run of its own.
+    let mut runs: Vec<Vec<(&Statement, usize)>> = Vec::new();
+    for (s, k) in statements.iter().zip(1..) {
+        match runs.last_mut() {
+            Some(run)
+                if !s.done_if_duplicate_database
+                    && run.first().is_some_and(|(f, _)| {
+                        f.target == s.target && !f.done_if_duplicate_database
+                    }) =>
+            {
+                run.push((s, k));
+            }
+            _ => runs.push(vec![(s, k)]),
         }
     }
+    for run in runs {
+        let Some(&(first, k)) = run.first() else {
+            continue;
+        };
+        let db = first.target.database_name();
+        if first.done_if_duplicate_database {
+            match superuser_sql(cluster, &db, &first.sql) {
+                Ok(_) => {}
+                Err(e) if e.to_string().contains(DUPLICATE_DATABASE) => {}
+                Err(e) => return Err(step_failed(cluster, &named((first, k)), &e)),
+            }
+            continue;
+        }
+        let sql: Vec<&str> = run.iter().map(|(s, _)| s.sql.as_str()).collect();
+        cluster
+            .server()
+            .psql_steps(&db, fstp_pgtest::StepSession::Shared, &sql)
+            .map_err(|e| match e.step.and_then(|i| run.get(i)) {
+                Some(&at) => step_failed(cluster, &named(at), &e.error),
+                None => step_failed(cluster, &format!("{what}, in {db}"), &e.error),
+            })?;
+    }
     Ok(())
+}
+
+/// A statement's text as an error names it: its first line up to the
+/// first quote, at most 120 characters. A literal that a statement
+/// quotes, such as a password, never appears.
+fn statement_label(sql: &str) -> String {
+    let line = sql.trim_start().lines().next().unwrap_or_default();
+    let head = line.split('\'').next().unwrap_or_default().trim_end();
+    let mut label: String = head.chars().take(120).collect();
+    if label.len() < line.len() {
+        label.push_str(" ...");
+    }
+    label
 }
 
 /// Runs `sql` in `dbname` as the role `role`, through `SET ROLE` in a
@@ -1823,19 +1888,50 @@ fn placement_kind(db: CellDatabase) -> u8 {
     }
 }
 
-/// Whether the migrated database `dbname` defines the placement table
-/// and the grant function that step 7 uses. Both migration sets define
-/// them (`fstp_pgstore::MIGRATIONS` and `fstp_vault::MIGRATIONS`, design
-/// section 4.6), so a database without them failed its migrations.
-fn has_meta(cluster: &ClusterHandle, dbname: &str) -> Result<bool, WorldError> {
-    let have = superuser_sql(
-        cluster,
-        dbname,
-        "SELECT to_regclass('fstp_meta.placement') IS NOT NULL \
-         AND to_regprocedure('fstp_meta.apply_grant(text, text, text)') IS NOT NULL",
-    )
-    .map_err(|e| step_failed(cluster, "the fstp_meta check", &e))?;
-    Ok(have == "t")
+/// The check whether a migrated database defines the placement table
+/// and the grant function that step 7 uses ([`migrate`]).
+const HAS_META: &str = "SELECT to_regclass('fstp_meta.placement') IS NOT NULL \
+     AND to_regprocedure('fstp_meta.apply_grant(text, text, text)') IS NOT NULL";
+
+/// Runs the migration set `set` in `dbname` as the role `role`, each
+/// migration as [`sql_as`] would, then returns whether the migrated
+/// database defines the placement table and the grant function that
+/// step 7 uses. Both migration sets define them (`fstp_pgstore::MIGRATIONS`
+/// and `fstp_vault::MIGRATIONS`, design section 4.6), so a database
+/// without them failed its migrations.
+///
+/// Lane fastworld: one `psql` process runs the whole set and the check.
+/// `DISCARD ALL` before each migration and before the check gives each
+/// the state of a new superuser session, as one `psql` run per migration
+/// did ([`fstp_pgtest::StepSession::Reset`]). Each migration still sets
+/// its role first, and the check runs as the superuser. A failure names
+/// the migration.
+fn migrate(
+    cluster: &ClusterHandle,
+    dbname: &str,
+    role: &str,
+    set: &[fstp_migrate::Migration],
+) -> Result<bool, WorldError> {
+    let scripts: Vec<String> = set
+        .iter()
+        .map(|m| format!("SET ROLE \"{role}\";\n{}", m.sql))
+        .collect();
+    let mut steps: Vec<&str> = scripts.iter().map(String::as_str).collect();
+    steps.push(HAS_META);
+    let outputs = cluster
+        .server()
+        .psql_steps(dbname, fstp_pgtest::StepSession::Reset, &steps)
+        .map_err(|e| {
+            let what = match e.step.map(|i| set.get(i)) {
+                Some(Some(m)) => {
+                    format!("{dbname} as {role}, migration {} {}", m.version, m.name)
+                }
+                Some(None) => "the fstp_meta check".to_owned(),
+                None => format!("{dbname} as {role}, the migration set"),
+            };
+            step_failed(cluster, &what, &e.error)
+        })?;
+    Ok(outputs.last().is_some_and(|have| have == "t"))
 }
 
 /// The cluster install's replication role (design section 4.1, G22, Q4).
@@ -1889,27 +1985,31 @@ fn drop_cell(cluster: &ClusterHandle, cell: CellId) -> Result<(), WorldError> {
         return Ok(());
     };
     let what = "the drop of a failed start's cell";
-    superuser_sql(
-        cluster,
-        "postgres",
-        &format!(
-            "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-            DbIdent::new(db, cell).render()
-        ),
-    )
-    .map_err(|e| step_failed(cluster, what, &e))?;
+    let mut statements = vec![format!(
+        "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+        DbIdent::new(db, cell).render()
+    )];
     let plan =
         fstp_control::pg::cell_role_plan(cell).map_err(|e| step_failed(cluster, what, &e))?;
     for r in plan.roles.iter().filter(|r| r.database == db) {
         let name = fstp_control::pg::role_name(db, cell, r.role)
             .map_err(|e| step_failed(cluster, what, &e))?;
-        superuser_sql(
-            cluster,
-            "postgres",
-            &format!("DROP ROLE IF EXISTS \"{name}\""),
-        )
-        .map_err(|e| step_failed(cluster, what, &e))?;
+        statements.push(format!("DROP ROLE IF EXISTS \"{name}\""));
     }
+    // Lane fastworld: one psql run, each statement on its own and in
+    // order, stopping at the first failure.
+    let steps: Vec<&str> = statements.iter().map(String::as_str).collect();
+    cluster
+        .server()
+        .psql_steps("postgres", fstp_pgtest::StepSession::Shared, &steps)
+        .map_err(|e| {
+            let at = e
+                .step
+                .and_then(|i| steps.get(i))
+                .copied()
+                .unwrap_or_default();
+            step_failed(cluster, &format!("{what}: {at}"), &e.error)
+        })?;
     Ok(())
 }
 
@@ -1949,9 +2049,6 @@ fn harness_subnet() -> Result<CellSubnet, fstp_control::ControlError> {
     CellSubnet::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 32)
 }
 
-/// How long a `pg_hba.conf` reload may take.
-const HBA_RELOAD_WAIT: Duration = Duration::from_secs(20);
-
 /// Installs the `pg_hba.conf` of `cluster` that the production renderer
 /// `fstp_control::pg::render_hba` gives for the cells in `state`, from
 /// [`harness_subnet`], and waits until the server has reloaded it (I-82,
@@ -1985,38 +2082,16 @@ fn install_hba(cluster: &ClusterHandle, state: &ClusterState) -> Result<(), Worl
         return Ok(());
     }
     let server = cluster.server();
-    let before = server
-        .psql("postgres", "SELECT pg_conf_load_time()")
-        .map_err(|e| fail(&e))?;
     std::fs::write(&path, &text).map_err(|e| fail(&e))?;
-    let errors = server
-        .psql(
-            "postgres",
-            "SELECT count(*) FROM pg_hba_file_rules WHERE error IS NOT NULL",
-        )
-        .map_err(|e| fail(&e))?;
+    // Lane fastworld: one psql run checks the lines, takes the load time
+    // and reloads only when every line loads. Then each poll is a new
+    // backend, forked after the postmaster finished any reload it had
+    // started, so a new load time means the new lines are in force.
+    let (before, errors) = server.check_hba_and_reload().map_err(|e| fail(&e))?;
     if errors != "0" {
         return Err(fail(&format!("{errors} lines do not load")));
     }
-    server
-        .psql("postgres", "SELECT pg_reload_conf()")
-        .map_err(|e| fail(&e))?;
-    // Each psql run is a new backend, forked after the postmaster finished
-    // any reload it had started, so a new load time means the new lines
-    // are in force.
-    let start = Instant::now();
-    loop {
-        let now = server
-            .psql("postgres", "SELECT pg_conf_load_time()")
-            .map_err(|e| fail(&e))?;
-        if now != before {
-            return Ok(());
-        }
-        if start.elapsed() >= HBA_RELOAD_WAIT {
-            return Err(fail(&"the server did not reload pg_hba.conf"));
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    server.await_reload(&before).map_err(|e| fail(&e))
 }
 
 /// `rendered` with each accepting line of `current` that it lacks and
@@ -2135,13 +2210,24 @@ fn provision_cell(
         };
         // Step 6 of design section 9.2, played by the harness: each
         // role's own credential.
-        for r in plan.roles.iter().filter(|r| r.database == db) {
-            let name = role(r.role)?;
-            let login = cluster
-                .server()
-                .create_login_role(&name)
-                .map_err(|e| step_failed(cluster, "the role credential", &e))?;
-            logins.insert((db, r.role), login);
+        // Lane fastworld: one psql run creates them all, in plan order.
+        let planned: Vec<RoleName> = plan
+            .roles
+            .iter()
+            .filter(|r| r.database == db)
+            .map(|r| r.role)
+            .collect();
+        let names = planned
+            .iter()
+            .map(|r| role(*r))
+            .collect::<Result<Vec<_>, _>>()?;
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let created = cluster
+            .server()
+            .create_login_roles(&names)
+            .map_err(|e| step_failed(cluster, "the role credential", &e))?;
+        for (r, login) in planned.into_iter().zip(created) {
+            logins.insert((db, r), login);
         }
         let connect = plan
             .hba
@@ -2165,10 +2251,7 @@ fn provision_cell(
             run_job(cluster, job)?;
         }
         let migrator = role(RoleName::Migrator)?;
-        for m in migrations_of(db) {
-            sql_as(cluster, &dbname, &migrator, m.sql)?;
-        }
-        if !has_meta(cluster, &dbname)? {
+        if !migrate(cluster, &dbname, &migrator, migrations_of(db))? {
             return Err(step_failed(
                 cluster,
                 &dbname,
@@ -5178,6 +5261,21 @@ impl CellHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lane fastworld: a failing job statement is named by its first line,
+    /// cut before any quoted literal.
+    #[test]
+    fn statement_label_names_a_statement_without_its_literals() {
+        assert_eq!(
+            statement_label("GRANT CONNECT ON DATABASE \"c_x\" TO \"c_x_app\""),
+            "GRANT CONNECT ON DATABASE \"c_x\" TO \"c_x_app\""
+        );
+        assert_eq!(
+            statement_label("\n ALTER ROLE r PASSWORD 'SCRAM-SHA-256$4096:secret'\nmore"),
+            "ALTER ROLE r PASSWORD ..."
+        );
+        assert_eq!(statement_label(&"x".repeat(200)).len(), 124);
+    }
 
     #[test]
     fn wal_record_view_removes_page_headers() {

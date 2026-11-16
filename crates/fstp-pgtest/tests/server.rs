@@ -566,3 +566,102 @@ fn dump_data_refuses_a_missing_database() {
     let server = PgServer::shared().unwrap();
     assert!(server.dump_data("fstp_no_such_database").is_err());
 }
+
+/// Lane fastworld: `psql_steps` returns each step's output in order and
+/// runs every statement of a step on its own, outside a transaction
+/// block, so `CREATE DATABASE` may sit in a step.
+#[test]
+fn psql_steps_return_each_output_and_run_statements_alone() {
+    let server = PgServer::shared().unwrap();
+    let name = format!("steps_{}", std::process::id());
+    let create = format!("SELECT 0;\nCREATE DATABASE {name}");
+    let drop = format!("DROP DATABASE {name};");
+    let out = server
+        .psql_steps(
+            "postgres",
+            fstp_pgtest::StepSession::Shared,
+            &["SELECT 1", &create, "SELECT 2;\nSELECT 3;", &drop],
+        )
+        .unwrap();
+    assert_eq!(out, ["1", "0", "2\n3", ""]);
+}
+
+/// Lane fastworld: the first failure stops the run and names its step.
+/// The steps before it took effect, and the steps after it never ran.
+#[test]
+fn psql_steps_stop_at_the_first_failure_and_name_its_step() {
+    let server = PgServer::shared().unwrap();
+    let db = server.fresh_database().unwrap().dbname;
+    let err = server
+        .psql_steps(
+            &db,
+            fstp_pgtest::StepSession::Shared,
+            &[
+                "CREATE TABLE before_failure (x int)",
+                "SELECT 1;\nSELECT * FROM no_such_table;\nCREATE TABLE in_failing_step (x int)",
+                "CREATE TABLE after_failure (x int)",
+            ],
+        )
+        .unwrap_err();
+    assert_eq!(err.step, Some(1), "{err}");
+    assert!(err.to_string().contains("42P01"), "{err}");
+    let tables = server
+        .psql(
+            &db,
+            "SELECT string_agg(relname, ',' ORDER BY relname) FROM pg_class \
+             WHERE relname IN ('before_failure', 'in_failing_step', 'after_failure')",
+        )
+        .unwrap();
+    assert_eq!(tables, "before_failure");
+}
+
+/// Lane fastworld: a step without a final semicolon never joins the next
+/// step.
+#[test]
+fn psql_steps_end_an_unterminated_statement_with_its_step() {
+    let server = PgServer::shared().unwrap();
+    let out = server
+        .psql_steps(
+            "postgres",
+            fstp_pgtest::StepSession::Shared,
+            &["SELECT 4 -- no semicolon", "SELECT 5"],
+        )
+        .unwrap();
+    assert_eq!(out, ["4", "5"]);
+}
+
+/// Lane fastworld: in a shared session a setting stays for the next step.
+/// With `Reset` each step starts as a new session would, as the session
+/// user and with default settings.
+#[test]
+fn psql_steps_reset_gives_each_step_a_new_session_state() {
+    let server = PgServer::shared().unwrap();
+    let steps = [
+        "SET application_name = 'step_zero'; SET ROLE fstp_app",
+        "SELECT current_setting('application_name') || ',' || current_user",
+    ];
+    let shared = server
+        .psql_steps("postgres", fstp_pgtest::StepSession::Shared, &steps)
+        .unwrap();
+    assert_eq!(shared[1], "step_zero,fstp_app");
+    let reset = server
+        .psql_steps("postgres", fstp_pgtest::StepSession::Reset, &steps)
+        .unwrap();
+    assert_eq!(reset[1], format!("fstp-pgtest,{}", server.superuser()));
+}
+
+/// Lane fastworld: with `Reset`, a step that leaves a transaction block
+/// open fails as that step, rather than running the next step inside it.
+#[test]
+fn psql_steps_reset_refuses_a_step_that_leaves_a_transaction_open() {
+    let server = PgServer::shared().unwrap();
+    let err = server
+        .psql_steps(
+            "postgres",
+            fstp_pgtest::StepSession::Reset,
+            &["SELECT 1", "BEGIN; SELECT 2", "SELECT 3"],
+        )
+        .unwrap_err();
+    assert_eq!(err.step, Some(1), "{err}");
+    assert!(err.to_string().contains("DISCARD ALL"), "{err}");
+}
