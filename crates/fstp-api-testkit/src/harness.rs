@@ -5211,3 +5211,7 @@ mod audit_tests;
 #[cfg(test)]
 #[path = "harness_team.rs"]
 mod team_tests;
+
+/// Lane m4/parity: the runner of M-PARITY, one MCP cell and its web twin
+/// with the web confirmation of a pending action (I-84).
+pub mod parity;
