@@ -57,7 +57,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use fstp_api_core::decode::{Method as ApiMethod, decode_public_page, decode_route, decode_tool};
+use fstp_api_core::decode::{
+    Method as ApiMethod, decode_public_page, decode_request, decode_route, decode_tool,
+};
 use fstp_api_core::meta::Scope;
 use fstp_api_core::port::{AgentClientId, LoginMethod, PendingId, api_core};
 use fstp_api_core::{ApiCore, ApiError, Credential, OpResult, RequestHead};
@@ -3988,7 +3990,8 @@ enum Transport {
     /// The HTTP routes of `fstp-web` over `fstp_rt::duplex`.
     Http,
     /// MCP cells through `fstp_mcp::McpServer::call_tool`, and web cells
-    /// as [`Transport::Http`] sends them.
+    /// as [`Transport::Http`] sends them. A public research tool has no
+    /// web cell, so its web twin (I-84) goes through [`research_twin`].
     Mcp,
 }
 
@@ -4152,6 +4155,7 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
     let send = |w: &mut Built| -> Result<Reply, ChannelFault> {
         match (transport, mcp) {
             (Transport::Mcp, true) => mcp_call(w, cell.op, &req, &cred),
+            (Transport::Mcp, false) if research_tool(cell.op) => research_twin(w, cell.op, &req),
             (Transport::Mcp, false) => http_call(w, &req, &cred),
             (_, true) => {
                 let tool = fstp_access::op(cell.op)
@@ -4208,6 +4212,43 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
         Reply::Http(status, body) => observed_of_http(status, &body),
         Reply::Mcp(r, tool) => observed_of_mcp(&r, tool),
     }
+}
+
+/// Whether `op` is a public research tool: a public operation with no
+/// page under `/p`, so the matrix gives it MCP cells only (M4 design
+/// section 3.10, "Routes").
+fn research_tool(op: &str) -> bool {
+    crate::reference::authz::REFERENCE_OPS
+        .iter()
+        .any(|r| r.name == op && r.public && !r.page)
+}
+
+/// The web twin of an MCP cell of a public research tool (I-84, R-MC-04).
+/// No web route serves the tool, so the twin is the same operation and
+/// request through the API core as the web would dispatch it: decoded
+/// with no tool by `decode_request`'s direct path, and dispatched with no
+/// credential, as the `/p` router dispatches every public operation.
+fn research_twin(w: &mut Built, op: &str, req: &Request) -> Result<Reply, ChannelFault> {
+    let index = fstp_access::OPS
+        .iter()
+        .position(|o| o.name == op)
+        .and_then(|i| u8::try_from(i).ok())
+        .ok_or_else(|| ChannelFault::Setup(format!("{op}: no direct selector")))?;
+    let mut bytes = vec![0u8, index];
+    bytes.extend_from_slice(&req.tool_args());
+    let r = match decode_request(&bytes) {
+        Ok(o) if o.name() == op => {
+            block_on(w.core.dispatch(Credential::None, &RequestHead::new(), o))
+        }
+        Ok(o) => {
+            return Err(ChannelFault::Setup(format!(
+                "{op}: the direct path decoded {}",
+                o.name()
+            )));
+        }
+        Err(e) => Err(e),
+    };
+    Ok(Reply::Direct(Box::new(r)))
 }
 
 /// The observed outcome of a `tools/call` result (lane W3c). A completed

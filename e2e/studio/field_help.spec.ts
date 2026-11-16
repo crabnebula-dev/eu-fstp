@@ -193,7 +193,9 @@ test.describe('field help', () => {
     const a2 = await Seat.signIn(browser, suiteCell(), A2);
     const errors = watch(a2.page);
     try {
-      await a2.page.locator('#home-work a[data-work="setup"]').click();
+      // SA-12: the home also links the wizard of each draft of the
+      // tenant, so pick the link that starts a new programme.
+      await a2.page.locator('#home-work a[data-work="setup"][href="/app/setup/new"]').click();
       await readyAt(a2.page, /^\/app\/setup\/new$/);
       await toggleHelp(a2.page, 'Programme name', 'wizard stage 1');
       expect(errors(), 'no console error').toEqual([]);

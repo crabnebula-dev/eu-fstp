@@ -11,9 +11,13 @@
 //!   `channel_policy` makes of its web twin. The web twin is the same
 //!   operation, principal, state and policy row through the web, in a
 //!   passkey session with a fresh step-up where the operation is
-//!   high-risk. A channel denial must match exactly. `Prepare` must give a
-//!   pending action, or the same guard refusal the web gives. `Execute`
-//!   must give exactly the web outcome, the refusal rule included.
+//!   high-risk. A public research tool has no page under `/p`, so its
+//!   twin is the same operation through the API core as the web would
+//!   dispatch it, with no tool and no credential (the harness's
+//!   `research_twin`). A channel denial must match exactly. `Prepare`
+//!   must give a pending action, or the same guard refusal the web gives.
+//!   `Execute` must give exactly the web outcome, the refusal rule
+//!   included.
 //!
 //! Status: red. `matrix::mcp_channel` refuses until the harness gives it
 //! a transport through `fstp_mcp::McpServer` (a harness seam).
@@ -188,4 +192,60 @@ fn i84_parity_rule_self_test() {
     assert!(parity(Expected::Allow, &guard, &other).is_err());
     assert!(parity(Expected::Allow, &done, &Observed::Pending).is_err());
     assert!(parity(Expected::Deny(AuthClass::Actor), &other, &other).is_ok());
+}
+
+/// I-84, R-MC-04, I-87: the focused reproduction of CI run 43773491368,
+/// where the MCP cells of the public research tools broke parity. These
+/// three tools have no page under `/p` (M4 design section 3.10,
+/// "Routes"), so the matrix gives them MCP cells only. Their web twin is
+/// the same operation through the API core as the web decodes and
+/// dispatches it, with no tool and the credential the `/p` router passes,
+/// none. Every MCP cell must give exactly that outcome. The run takes the
+/// first policy row of each state, and is not vacuous: some cells
+/// complete and some are refused.
+#[test]
+fn i84_r_mc_04_public_research_tools_keep_parity_with_their_web_twin() {
+    let filter =
+        matrix::OpFilter::parse("public.deadlines,public.eligibility,public.list_open_calls")
+            .unwrap();
+    let m = matrix::matrix().unwrap().narrowed(&filter).unwrap();
+    let mut states = Vec::new();
+    let groups: Vec<_> = m
+        .groups()
+        .into_iter()
+        .filter(|(s, _)| {
+            let first = !states.contains(s);
+            states.push(*s);
+            first
+        })
+        .collect();
+    let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut channel = Parity {
+        inner: matrix::mcp_channel().unwrap(),
+        reference: fstp_api_testkit::reference::authz::authz_reference().unwrap(),
+        failures: std::sync::Arc::clone(&failures),
+    };
+    let (mut completed, mut other) = (0usize, 0usize);
+    for (state, policy) in groups {
+        for cell in m.group_cells(state, policy) {
+            assert!(matches!(cell.session.channel, Via::Mcp { .. }), "{cell:?}");
+            match channel.observe(&cell).unwrap() {
+                Observed::Completed => completed += 1,
+                _ => other += 1,
+            }
+        }
+    }
+    assert!(
+        completed > 0 && other > 0,
+        "{completed} completed, {other} other"
+    );
+    let f = failures
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(
+        f.is_empty(),
+        "{} MCP cells break parity with their web twin:\n{}",
+        f.len(),
+        f.join("\n")
+    );
 }
