@@ -6,30 +6,29 @@ CrabNebula Ltd operates the hosted service. The same codebase also builds a self
 
 ## Status
 
-Status on 2026-11-15. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. Several milestones were built in parallel so the whole process could be shown end to end. A milestone closes only when its exit criteria pass in CI. M0 to M2 are closed. The others below are built, but none is closed yet. The next full CI run on `main` decides M3 to M6 and M9.
+Status on 2026-11-16, from CI run 43853477946 on 9acb87d1 while its workspace part still runs. Built milestone by milestone, as `SPEC/09-milestones.md` sets out. Several milestones were built in parallel so the whole process could be shown end to end. A milestone closes only when its exit criteria pass in CI. M0 to M2 are closed. M3 to M6 and M9 are built, and every part of CI that decides them has passed except the workspace part and the MCP matrix. Both are described below.
 
 | Milestone | Content | Built | Exit criteria |
 | --- | --- | --- | --- |
 | M0 | Specification freeze for v1 | Done | Closed |
 | M1 | Rust foundations: HTTP, JSON, PostgreSQL wire protocol, migrations, property harness, model checker | Done | Closed |
 | M2 | Domain core: state machine, policy engine, separation of duties, scoring | Done | Closed at domain level |
-| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Built, including backups, recovery with the I-79 evidence record, break-glass, and cell erasure for production: witness revocation, one batch approval per operator, sign keys in `fstp-keyd`, and route tables that remote edges poll. All 22 devstack browser specs pass | Not closed. Every exit invariant is decided and built. The last full CI run (3821f85c) failed `t_iso_i20` (one identifier shared across tenants), which a fix lane is on. See `docs/handoff/m3-exit-audit.md` |
-| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built. Since 2026-11-13, also built: the setup gate (ADR-021), "Create a programme" (the wizard) and the Programme editor, the I-67 override (ADR-022), the coordinator unmask (ADR-023), the audit log, the page gate (SA-09), team and member pages with display names (SA-11), set-up by tenant admins (SA-12) and field help (SA-13) | Not closed. I-66 and I-67 pass, including the M-ACTIVATE model checks in CI (3821f85c). The authorisation matrix is the last open criterion. In CI on 3821f85c, the HTTP and MCP channels failed about 0.55% of cells in seven operations. Fixes for all seven are merged and wait on the next CI run |
-| M5 | Contracts and payment requests in record-only mode, grant completion, funder reports | Built, plus the P-41 retention reminder and the erasures page | The cycle reaches PAID in the demo. The I-30 to I-33 tests pass in the workspace part. Waits on a green workspace part |
-| M6 | Timeline engine, dispatcher, email, and the in-app mailbox | Built | The I-25 to I-27 tests, including the crash-injection tests, run in the workspace part. Waits on a green workspace part |
+| M3 | Cell runtime, control plane, authentication, key custody, identity vault, audit log, update and licence services | Built, including backups, recovery with the I-79 evidence record, break-glass, and cell erasure for production: witness revocation, one batch approval per operator, sign keys in `fstp-keyd`, and route tables that remote edges poll. All 22 devstack browser specs pass | Not closed yet. The isolation part passed on 9acb87d1, including `t_iso_i20` and the I-80 memory scans. The workspace part decides the rest. See `docs/handoff/m3-exit-audit.md` |
+| M4 | Tenant onboarding, programme creator, applicant, reviewer, committee and IRC interfaces, MCP server, public research tools, and the journey UI | Built. Since 2026-11-13, also built: the setup gate (ADR-021), "Create a programme" (the wizard) and the Programme editor, the I-67 override (ADR-022), the coordinator unmask (ADR-023), the audit log, the page gate (SA-09), team and member pages with display names (SA-11), set-up by tenant admins (SA-12) and field help (SA-13) | Not closed yet. On 9acb87d1: I-66 and I-67 with the M-ACTIVATE checks, the api-testkit part, all 479 demo browser specs and all 4 HTTP matrix shards passed. The direct matrix shards still run. The 8 MCP shards failed on one case: with P-75 off, MCP refuses `review.read_content` and the web reads, as change D6 decides. The parity rule now admits exactly that case (a4d85be2). It needs one manual matrix run to confirm |
+| M5 | Contracts and payment requests in record-only mode, grant completion, funder reports | Built, plus the P-41 retention reminder and the erasures page | The cycle reaches PAID in the demo. The I-30 to I-33 tests run in the workspace part, which decides the milestone |
+| M6 | Timeline engine, dispatcher, email, and the in-app mailbox | Built | The I-25 to I-27 tests, including the crash-injection tests, run in the workspace part, which decides the milestone |
 | M7 | Assessor, pre-check, evaluation harness, synthetic corpus | Built | The I-10, I-11 and I-21 tests exist. No evaluation run against a live model has been reported, so the thresholds are not yet met |
 | M8 | Matrix and WhatsApp | Deferred (B-03, B-05) | None while deferred |
-| M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | Built, plus P-57 reporting periods, the P-79 milestone opt-in, tenant copies of funder profiles, the programme footer in `/app/`, operator rotation of the notice key, and funder profile reads for all programme staff | Waits on a green workspace part. `docs/handoff/m9-exit-audit.md` maps each invariant to its tests. I-74 stays open until the Mythos confirmation |
+| M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | Built, plus P-57 reporting periods, the P-79 milestone opt-in, tenant copies of funder profiles, the programme footer in `/app/`, operator rotation of the notice key, and funder profile reads for all programme staff | The workspace part decides the milestone. `docs/handoff/m9-exit-audit.md` maps each invariant to its tests. I-74 stays open until the Mythos confirmation |
 | M10 | Hardening on a Mythos-tier model | Not started | Daniel decided on 2026-11-15 to run it on Claude Mythos 5.2 once phase 1 development is done. Design in `docs/handoff/m10-m12-design.md` |
 | M11 | Pilot with SuperSAFE and a second programme | Not started | Waits on the parties' approval |
 | M12 | Calibration with consented real proposals | Consent records and per-corpus metrics (`fstp-calib`) only | Needs real consented proposals |
 
-The last full CI run on `main` (3821f85c, 2026-11-15) passed these parts: deps-check, fmt and clippy, fuzz smoke, the web tests, the SBOM job, the api-testkit, domain-testkit, devstack and M-ACTIVATE parts, and all 16 direct and HTTP matrix shards against the known-red list. Three parts were red:
-- **Workspace part.** 5,363 tests passed and 6 failed. Three of the failures are fixed on `main`. A fix lane is on the other three: two I-52 Guide-digest tests after the P-57 reporting periods, and the print ban in the devstack code.
-- **Isolation part.** `t_iso_i20`.
-- **Demo browser suite.** 470 specs passed and 3 failed.
+CI run 43853477946 on 9acb87d1 (2026-11-16) has passed these parts so far: deps-check, fmt and clippy, fuzz smoke, the web tests, the SBOM job, the demo browser suite (479 specs), and the api-testkit, domain-testkit, devstack, isolation and M-ACTIVATE parts. All 4 HTTP matrix shards passed, and 5 of the 12 direct matrix shards have passed so far. The MCP matrix failed only on the D6 case in the M4 row. The workspace part was still running when this was written.
 
-`ci/known-red.txt` now lists only the two authorisation matrix tests. It listed 16 on the morning of 2026-11-15, and 79 on 2026-11-13.
+The previous run (a0e126cc) also failed two workspace tests and one browser spec. All three were races in the tests, not product faults, and are fixed on `main` (04bd3264, 7f152b69, 9acb87d1).
+
+`ci/known-red.txt` is empty. It listed 16 tests on the morning of 2026-11-15, and 79 on 2026-11-13.
 
 The direct, HTTP and MCP authorisation matrices run about three hours. Since 2026-11-16 they run only on a manual CI run (Actions, "ci", "Run workflow", with the `matrix` box ticked). Push and pull request runs skip them, and the per-operation agreement tests of the api-testkit part still run.
 
@@ -39,8 +38,7 @@ Built: the cell runtime with its routes, engine, record store and signing; the c
 
 Open:
 
-- `t_iso_i20`: key the shared identifier per cell (fix lane).
-- I-80: the Linux memory scans run in the isolation part. They confirm once that part is green.
+- The workspace part of the current CI run.
 - Production gaps recorded in `docs/handoff/m3-exit-audit.md` section 8. The production `fstp-cell` does not yet serve `/app/` or host the API core. The cell does not yet send `NegotiationOpened` to its vault. `Workspaces` has no PostgreSQL port yet.
 
 ### Demo
