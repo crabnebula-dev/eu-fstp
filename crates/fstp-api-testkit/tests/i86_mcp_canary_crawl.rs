@@ -188,10 +188,11 @@ use fstp_api_testkit::harness::canary_crawl::{CrawlAnswer, CrawlWorld, cast_vaul
 use fstp_api_testkit::reference::authz::StateProfile;
 use fstp_domain::StateTag;
 
-/// What the crawl of one state left: the answers.
+/// What the crawl of one state left: the answers and the captured logs.
 struct StateCrawl {
     state: StateProfile,
     answers: Vec<CrawlAnswer>,
+    logs: Vec<(String, String)>,
 }
 
 /// The crawl over every state profile of the matrix, run once per test
@@ -206,7 +207,11 @@ fn full_crawl() -> &'static (CanaryVault, Vec<StateCrawl>) {
                 let mut w = CrawlWorld::new(state, &vault)
                     .unwrap_or_else(|e| panic!("the world of {state:?}: {e}"));
                 let answers = w.crawl().unwrap_or_else(|e| panic!("crawl {state:?}: {e}"));
-                StateCrawl { state, answers }
+                StateCrawl {
+                    state,
+                    answers,
+                    logs: w.logs(),
+                }
             })
             .collect();
         (vault, crawls)
@@ -261,6 +266,34 @@ fn i86_canary_crawl_over_every_tool_role_and_state() {
     assert!(
         completed.iter().all(|(_, n)| *n > 0),
         "a state where no tool completed: {completed:?}"
+    );
+}
+
+/// I-86, R-NF-02: the same scan over the logs the cell wrote during the
+/// crawl of every state: every audit entry, which records each MCP call
+/// and refusal, and every ledger record the calls appended. No canary
+/// appears in any of them.
+///
+/// Seam: neither `fstp-mcp` nor `fstp-api-core` writes an `fstp_obs` log
+/// event or metric, so the audit log and the ledger are the logs of this
+/// path. `fstp_obs` events take no free text by construction (R-NF-02).
+#[test]
+fn i86_no_canary_in_logs_or_metrics() {
+    let (vault, crawls) = full_crawl();
+    let mut leaks = Vec::new();
+    let mut lines = 0usize;
+    for c in crawls {
+        lines += c.logs.len();
+        leaks.extend(leaks_of(
+            vault,
+            c.state,
+            c.logs.iter().map(|(at, t)| (at.as_str(), t.as_str())),
+        ));
+    }
+    assert!(leaks.is_empty(), "R-NF-02 leaks:\n{}", leaks.join("\n"));
+    assert!(
+        lines > 0,
+        "the crawl wrote no log line: the scan judged nothing"
     );
 }
 
