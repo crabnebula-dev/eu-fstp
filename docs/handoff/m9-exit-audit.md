@@ -75,3 +75,9 @@ Supporting rows of section 4.1:
 - The open questions of the P lanes, F1 and C2, and M9 finish sections of `m9-design.md`.
 - `erasure_runner::i24_cell_erasure_runner_records_a_key_op_for_each_custody_change` is in `ci/known-red.txt` with a conflict raised to Daniel. Creating the notice companion key makes no custody call, so it adds no key record either way.
 - The Playwright specs, including the new branding spec, run outside CI. Should a CI job run them?
+
+## Closed in CI (2026-11-16)
+
+M9 closed in CI run 43853477946 on `9acb87d1`. Every exit invariant above (I-41 to I-44, I-68 to I-70 and I-90) runs in a part or job that passed: the workspace part (5,400 passed, none failed), the api-testkit part, the `web` job and the `fuzz-smoke` job. `ci/known-red.txt` was empty. The demo Playwright specs, the branding spec included, now run in CI in the `e2e (Playwright, demo)` job, and all 479 passed.
+
+Still open, but not exit criteria: the items under "Not claimed", I-74 above all, and the interim decisions listed above.

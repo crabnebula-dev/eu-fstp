@@ -128,3 +128,9 @@ Open after these decisions:
 
 - **Retention reminder (P-41).** Decided by Daniel on 2026-11-15 (late). Retention starts at the confirmation of the grant's last payment request, with no new act. A timeline event fires at that date plus P-41 years, and a mailbox message reminds the tenant admins. It links to a new page, `/app/admin/erasures`, where a tenant admin lists past erasures, sees grants whose retention ended and requests an erasure with its cause (ADR-007), with step-up. Built by lane m5/retention: `fstp_domain::retention`, the timeline kind `RETENTION_END` (code 11), the mailbox notice `admin.retention_ended`, and the operations `admin.erasures` and `admin.request_erasure` behind the page. Its interim readings are in `crates/fstp-domain/src/retention.rs` and `crates/fstp-api-core/src/erasure.rs`.
 - **Staff read route.** No HTTP route serves a staff read yet. `gate::admit_break_glass` and `Admitted::break_glass_log` are the entry points for it, with the operator content views (M4). The cell pins only the operator ticket key (`operator_key`) today; design section 9 lists a staff assertion key beside it, which the route will pass as `pinned_key`.
+
+## 10. Closed in CI (2026-11-16)
+
+M3 closed in CI run 43853477946 on `9acb87d1`. Every M3 exit criterion runs in a part that passed: the workspace part (5,400 passed, none failed) and the `isolation-multi-cell` part, including both Linux I-80 memory scans. `ci/known-red.txt` was empty. I-79 and I-80, the two rows marked "Confirm in CI" in section 1, are confirmed. The hosting provider stays named in ADR-005.
+
+Still open, but not exit criteria: the production gaps in section 8, R-HS-01 (L-15), and the release gate I-74 (section 6).
