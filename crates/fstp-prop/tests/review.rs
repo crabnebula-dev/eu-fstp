@@ -24,8 +24,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use fstp_prop::{
-    Config, ENV_CASES, ENV_REPLAY, ENV_REPLAY_FILE, ENV_SEED, Failure, FailureKind, Gen,
-    MAX_REPLAY_ENV_LEN, Outcome, StateMachine, check_with, commands_for, format_replay,
+    Config, ENV_CASES, ENV_MAX_CASES, ENV_REPLAY, ENV_REPLAY_FILE, ENV_SEED, Failure, FailureKind,
+    Gen, MAX_REPLAY_ENV_LEN, Outcome, StateMachine, check_with, commands_for, format_replay,
     prop_assert, run, run_machine,
 };
 
@@ -332,7 +332,13 @@ fn run_child(vars: &[(&str, &str)]) -> Output {
         "--nocapture",
         "--test-threads=1",
     ]);
-    for var in [ENV_CASES, ENV_SEED, ENV_REPLAY, ENV_REPLAY_FILE] {
+    for var in [
+        ENV_CASES,
+        ENV_MAX_CASES,
+        ENV_SEED,
+        ENV_REPLAY,
+        ENV_REPLAY_FILE,
+    ] {
         cmd.env_remove(var);
     }
     for (k, v) in vars {
@@ -400,6 +406,11 @@ fn review_prop_selftest_env_gap() {
 
     // Without variables, the defaults apply.
     assert_eq!(child_values(&run_child(&[])).len(), 256);
+
+    // The cap of the light CI tier lowers the count and never raises it.
+    assert_eq!(child_values(&run_child(&[(ENV_MAX_CASES, "5")])).len(), 5);
+    let capped = run_child(&[(ENV_CASES, "3"), (ENV_MAX_CASES, "5")]);
+    assert_eq!(child_values(&capped).len(), 3);
 
     // Replay from the variable.
     let out = run_child(&[(ENV_REPLAY, "2a")]);

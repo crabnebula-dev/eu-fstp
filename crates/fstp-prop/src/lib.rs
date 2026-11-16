@@ -29,9 +29,13 @@
 //! | Variable | Effect |
 //! | --- | --- |
 //! | `FSTP_PROP_CASES` | Number of valid cases (default 256) |
+//! | `FSTP_PROP_MAX_CASES` | Upper bound on the number of valid cases, applied after `FSTP_PROP_CASES` |
 //! | `FSTP_PROP_SEED` | Seed, decimal or `0x` hex |
 //! | `FSTP_PROP_REPLAY` | Replay one choice sequence, in the format of [`format_replay`] |
 //! | `FSTP_PROP_REPLAY_FILE` | Replay the choice sequence stored in this file |
+//!
+//! Neither case variable lowers the count below [`Config::min_cases`], which a
+//! test sets only where a stated claim fixes its count.
 //!
 //! A set variable must be well formed, or the check panics with the reason.
 //! An empty `FSTP_PROP_REPLAY` replays the empty sequence, which is the case
@@ -165,7 +169,7 @@ pub use generator::Gen;
 pub use replay::{ReplayLimits, ReplayParseError, format_replay, parse_replay, parse_replay_with};
 pub use runner::{
     Config, ConfigError, DEFAULT_CASES, DEFAULT_MAX_CHOICES, DEFAULT_MAX_SHRINK_STEPS, ENV_CASES,
-    ENV_REPLAY, ENV_REPLAY_FILE, ENV_SEED, Failure, FailureKind, MAX_DISCARD_RATIO,
+    ENV_MAX_CASES, ENV_REPLAY, ENV_REPLAY_FILE, ENV_SEED, Failure, FailureKind, MAX_DISCARD_RATIO,
     MAX_REPLAY_ENV_LEN, Outcome, check, check_with, run, seed_for_name,
 };
 pub use state::{
