@@ -26,11 +26,13 @@
 # CI tiers (Daniel, 2026-11-16, ADR-003). The test job runs in one of two
 # tiers. Every other job is the same in both.
 #   light  every push and pull request, and a manual run without `full`.
-#          The matrix parts stop at their first step. Every other part
-#          skips the teeth tests (names holding LIGHT_SKIP, `_teeth_`),
-#          and caps each property at LIGHT_PROP_MAX_CASES (32) cases
-#          through FSTP_PROP_MAX_CASES. A test with a stated minimum
-#          count keeps it (fstp_prop::Config::min_cases)
+#          The matrix parts and the m-activate part stop at their first
+#          step. Every other part skips the tests that LIGHT_SKIP names:
+#          the teeth tests (`_teeth_`) and the matrix layout self-checks
+#          (`matrix::tests::q34_`). It also caps each property at
+#          LIGHT_PROP_MAX_CASES (32) cases through FSTP_PROP_MAX_CASES. A
+#          test with a stated minimum count keeps it
+#          (fstp_prop::Config::min_cases)
 #   full   a manual run with `full` ticked: every part, every test, and
 #          every property at its own case count. About three hours. A
 #          milestone closes, and a release ships, only on a green full run
@@ -134,8 +136,9 @@ jobs:
   # 2026-11-06). Each part builds only what it runs, and test-gate judges
   # it in partial mode against its own log. On the full tier the parts
   # together run every test of the workspace once, and the direct matrix
-  # once over its shards. The light tier leaves out the matrix parts and
-  # the teeth tests, and caps the property case counts.
+  # once over its shards. The light tier leaves out the matrix parts, the
+  # m-activate part, the teeth tests and the matrix layout self-checks,
+  # and caps the property case counts.
   test:
     name: tests (${{ matrix.part }})
     needs: deps-check
@@ -208,10 +211,14 @@ jobs:
             packages: -p fstp-api-testkit
             skip: t_authz_matrix_direct t_authz_matrix_http i66_m_activate i67_m_activate i84_t_authz_matrix_mcp_equals_channel_policy_of_web
             timeout: 90
-          # I-66 and I-67: the M-ACTIVATE model checks run 4 to 7 minutes each.
-          # Before lane m4/mactivate-mem they peaked at about 20 GB and lost
-          # their runners. Since then each peaks under 2 GB (measured
-          # 2026-11-13). They keep a part of their own for their run time.
+          # I-66 and I-67: the exhaustive M-ACTIVATE model checks. On CI run
+          # 43873124657 the i66_m_activate binary ran 657 s and i67_m_activate
+          # 958 s (its Sybil check alone 958 s, i67_m_activate 662 s). On run
+          # 43853477946 they ran 1,186 s and 1,726 s. Before lane
+          # m4/mactivate-mem they peaked at about 20 GB and lost their
+          # runners. Since then each peaks under 2 GB (measured 2026-11-13).
+          # They keep a part of their own, which runs only on the full tier
+          # (Daniel, 2026-11-16), so every full run proves I-66 and I-67.
           - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate --test i67_m_activate, timeout: 120 }
           # I-84: the MCP channel matrix. Inside the api-testkit part it ran
           # past 75 minutes on 2026-11-13 and the part was cancelled at 90, so
@@ -259,12 +266,15 @@ jobs:
       TEST_THREADS: ${{ matrix.threads }}
       # The light tier (Daniel, 2026-11-16). LIGHT_SKIP holds the libtest
       # skips that only the light tier adds, to libtest and test-gate
-      # alike: the teeth tests, each of which plants a known bug and
-      # proves a check catches it. LIGHT_PROP_MAX_CASES caps every fstp-prop
+      # alike. `_teeth_`: the teeth tests, each of which plants a known bug
+      # and proves a check catches it. `matrix::tests::q34_`: the three
+      # matrix layout self-checks of the fstp-api-testkit library, which ran
+      # 240 s to 421 s each. LIGHT_PROP_MAX_CASES caps every fstp-prop
       # property through FSTP_PROP_MAX_CASES. teeth_m3_registry checks that
-      # LIGHT_SKIP drops nothing but teeth tests and that the full tier
+      # LIGHT_SKIP drops nothing outside its declared classes and that the
+      # full tier
       # adds no skip and no cap.
-      LIGHT_SKIP: _teeth_
+      LIGHT_SKIP: _teeth_ matrix::tests::q34_
       LIGHT_PROP_MAX_CASES: "32"
       # ADR-003 record, as in the web job. The devstack part compiles the
       # auth pages that slice_devstack and the dev stack serve.
@@ -274,9 +284,10 @@ jobs:
     steps:
       # The tier (Daniel, 2026-11-16): full on a manual run with the full
       # box ticked, light on every other run. The authorisation matrices
-      # (direct, HTTP and MCP, parts matrix-*) run about three hours, so
-      # on the light tier each matrix part stops here. The per-operation
-      # agreement tests of the api-testkit part still run.
+      # (direct, HTTP and MCP, parts matrix-*) run about three hours, and
+      # the M-ACTIVATE model checks (part m-activate) 11 to 29 minutes. On
+      # the light tier each of these parts stops here (Daniel, 2026-11-16).
+      # The per-operation agreement tests of the api-testkit part still run.
       - name: Decide the tier and whether this part runs
         id: part
         env:
@@ -286,8 +297,8 @@ jobs:
           set -euo pipefail
           if [[ "$WANT_FULL" == true ]]; then tier=full; else tier=light; fi
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
-          if [[ "$PART" == matrix-* && "$tier" != full ]]; then
-            echo "$PART: skipped. The matrices run only on a full run (manual, with the full box ticked)."
+          if [[ ( "$PART" == matrix-* || "$PART" == m-activate ) && "$tier" != full ]]; then
+            echo "$PART: skipped. The matrices and M-ACTIVATE run only on a full run (manual, with the full box ticked)."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "$PART: runs on the $tier tier."

@@ -23,8 +23,8 @@
 //!   `crates/fstp-celltest/tests/*.rs` file runs in no part, or a
 //!   library's doc tests do not run in exactly one part;
 //! - the light CI tier skips a test outside its declared heavy classes
-//!   (the teeth tests), or stops a part other than the authorisation
-//!   matrices;
+//!   (the teeth tests and the matrix layout self-checks), or stops a part
+//!   other than the authorisation matrices and M-ACTIVATE;
 //! - the full CI tier adds a skip or a case cap to any part.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -1378,9 +1378,29 @@ fn ci_part_glob_reads_cargo_target_patterns() {
 // push and pull request, the full tier on a manual run with `full` ticked.
 
 /// The heavy classes that the light tier may leave out, as libtest
-/// substrings of a test name. `_teeth_` is the teeth tests: each plants a
-/// known bug and proves a check catches it. The full tier runs them all.
-const LIGHT_HEAVY_CLASSES: &[&str] = &["_teeth_"];
+/// substrings of a test path. The full tier runs them all.
+///
+/// - `_teeth_`: the teeth tests. Each plants a known bug and proves a
+///   check catches it. The class matches test function names only.
+/// - `matrix::tests::q34_`: the matrix layout self-checks of the
+///   fstp-api-testkit library, exactly [`Q34_SELF_CHECKS`] (Daniel,
+///   2026-11-16). A bare `q34_` would also drop
+///   `q34_http_matrix_runs_the_covering_array`.
+const LIGHT_HEAVY_CLASSES: &[&str] = &["_teeth_", "matrix::tests::q34_"];
+
+/// The libtest paths of the class `matrix::tests::q34_`, all in
+/// `crates/fstp-api-testkit/src/matrix.rs`. They ran 240 s to 421 s each
+/// in CI run 43853477946.
+const Q34_SELF_CHECKS: &[&str] = &[
+    "matrix::tests::q34_covering_matrix_keeps_every_op_principal_state_and_session",
+    "matrix::tests::q34_direct_matrix_runs_the_full_policy_product",
+    "matrix::tests::q34_full_product_groups_partition_the_cells",
+];
+
+/// The parts that the light tier stops at their first step: every
+/// `matrix-*` part and the part `m-activate` (Daniel, 2026-11-16).
+const LIGHT_STOPPED_PARTS: &str =
+    r#"if [[ ( "$PART" == matrix-* || "$PART" == m-activate ) && "$tier" != full ]]; then"#;
 
 /// The property case cap of the light tier (Daniel, 2026-11-16).
 const LIGHT_PROP_MAX_CASES: &str = "32";
@@ -1457,13 +1477,96 @@ fn tier_arm<'a>(script: &'a [String], arm: &str) -> &'a [String] {
     &script[at[0]..=end]
 }
 
+/// The module path that libtest puts before a test function of `file`
+/// whose `fn` line is `at`: the modules of the file's place in its crate,
+/// then the inline `mod` blocks around the line, found by indentation. A
+/// test binary's own file name is not part of its paths. It does not
+/// follow `#[path]` attributes. On 2026-11-16 it gave 6,747 paths exactly
+/// as libtest printed them in CI run 43853477946. The rest differ only in
+/// module prefixes that `#[path]` sets, and no heavy class can hide there:
+/// the light check also refuses any `mod` name that holds a class.
+fn module_path(file: &str, lines: &[&str], at: usize) -> Vec<String> {
+    let rest = file.splitn(3, '/').nth(2).unwrap_or("");
+    let mut path: Vec<String> = Vec::new();
+    let within = match target_of(file).1 {
+        Target::Lib => rest.strip_prefix("src/"),
+        // `src/bin/<name>/<module>.rs`: the binary's own modules.
+        Target::Bin => rest
+            .strip_prefix("src/bin/")
+            .and_then(|r| r.split_once('/'))
+            .map(|(_, r)| r),
+        Target::TestModule => rest
+            .strip_prefix("tests/")
+            .and_then(|r| r.split_once('/'))
+            .map(|(_, r)| r),
+        _ => None,
+    };
+    if let Some(within) = within {
+        let stem = within.strip_suffix(".rs").unwrap_or(within);
+        for seg in stem.split('/') {
+            if !matches!(seg, "lib" | "main" | "mod") {
+                path.push(seg.to_owned());
+            }
+        }
+    }
+    let mut inline = Vec::new();
+    let mut level = indent(lines[at]);
+    for line in lines[..at].iter().rev() {
+        if level == 0 {
+            break;
+        }
+        // Only a `mod` opener changes the level, so a string literal that
+        // continues at column 0 does not end the search.
+        let s = line.trim();
+        let s = s.strip_prefix("pub ").unwrap_or(s);
+        let s = s.strip_prefix("pub(crate) ").unwrap_or(s);
+        if let Some(m) = s.strip_prefix("mod ").and_then(|m| m.strip_suffix(" {"))
+            && indent(line) < level
+        {
+            inline.push(m.to_owned());
+            level = indent(line);
+        }
+    }
+    inline.reverse();
+    path.extend(inline);
+    path
+}
+
+/// Every `#[test]` of the workspace and the testkits: the file, the
+/// function name and the libtest path.
+fn workspace_test_paths() -> Vec<(String, String, String)> {
+    let mut files = Vec::new();
+    rust_files(&repo_root().join("crates"), &mut files);
+    rust_files(&repo_root().join("tools"), &mut files);
+    files.sort();
+    let mut out = Vec::new();
+    for f in files {
+        let text = read(&f);
+        let lines: Vec<&str> = text.lines().collect();
+        for i in 0..lines.len() {
+            let Some(name) = fn_name(lines[i]) else {
+                continue;
+            };
+            if !attributes(&lines, i).iter().any(|a| a == "#[test]") {
+                continue;
+            }
+            let mut path = module_path(&f, &lines, i);
+            path.push(name.to_owned());
+            out.push((f.clone(), name.to_owned(), path.join("::")));
+        }
+    }
+    out
+}
+
 /// CI tiers (Daniel, 2026-11-16): the light tier leaves out only the
 /// declared heavy classes. Every light skip lies inside a class, so it
-/// drops no test whose name lacks one. No module or source path holds a
-/// class, so a class matches only test function names. The light skips
-/// drop at least 250 teeth tests across the workspace and the testkits,
-/// so the class is not empty. The only parts the light tier stops are
-/// the `matrix-*` parts, and each runs only authorisation matrix tests.
+/// drops no test whose libtest path lacks one. `_teeth_` matches test
+/// function names only and drops at least 250 tests across the workspace
+/// and the testkits. `matrix::tests::q34_` drops exactly the three
+/// matrix layout self-checks. The parts the light tier stops are exactly
+/// the `matrix-*` parts, each of which runs only authorisation matrix
+/// tests, and `m-activate`, which runs only the I-66 and I-67 M-ACTIVATE
+/// binaries.
 #[test]
 fn ci_light_tier_skips_only_the_declared_heavy_classes() {
     let skips: Vec<String> = ci_job_env("LIGHT_SKIP")
@@ -1471,39 +1574,65 @@ fn ci_light_tier_skips_only_the_declared_heavy_classes() {
         .map(str::to_owned)
         .collect();
     assert!(!skips.is_empty(), "LIGHT_SKIP is empty");
-    let in_class = |name: &str| LIGHT_HEAVY_CLASSES.iter().any(|c| name.contains(c));
+    let in_class = |path: &str| LIGHT_HEAVY_CLASSES.iter().any(|c| path.contains(c));
     let mut bad = Vec::new();
     for s in &skips {
         if !in_class(s) {
             bad.push(format!("the light skip {s} is in no heavy class"));
         }
     }
+    // No module name, whether a file or inline or under `#[path]`, holds
+    // the last segment of a class (`_teeth_`, `q34_`), so a class reaches a
+    // test only through its function name or the paths checked below.
+    let last: Vec<&str> = LIGHT_HEAVY_CLASSES
+        .iter()
+        .map(|c| c.rsplit("::").next().unwrap_or(c))
+        .collect();
     let mut files = Vec::new();
     rust_files(&repo_root().join("crates"), &mut files);
     rust_files(&repo_root().join("tools"), &mut files);
     for f in &files {
-        // A test binary's file name is not part of its test paths.
-        if !matches!(target_of(f).1, Target::Test(_)) && in_class(f) {
+        if !matches!(target_of(f).1, Target::Test(_)) && last.iter().any(|c| f.contains(c)) {
             bad.push(format!("{f}: a module path holds a heavy class"));
         }
         for line in read(f).lines() {
             let s = line.trim_start();
             let s = s.strip_prefix("pub ").unwrap_or(s);
+            let s = s.strip_prefix("pub(crate) ").unwrap_or(s);
             if let Some(m) = s.strip_prefix("mod ")
-                && in_class(m)
+                && last.iter().any(|c| m.contains(c))
             {
                 bad.push(format!("{f}: the module {m} holds a heavy class"));
             }
         }
     }
-    let mut dropped = 0usize;
-    for (file, name) in workspace_tests() {
-        if skips.iter().any(|s| name.contains(s.as_str())) {
-            dropped += 1;
-            if !in_class(&name) {
-                bad.push(format!("{file}: {name} is dropped and in no heavy class"));
+    let tests = workspace_test_paths();
+    assert!(tests.len() > 1000, "the check read too few tests");
+    let mut teeth = 0usize;
+    let mut q34 = Vec::new();
+    for (file, name, path) in &tests {
+        if path.contains("_teeth_") {
+            teeth += 1;
+            if !name.contains("_teeth_") {
+                bad.push(format!("{file}: {path} is teeth by its module path only"));
             }
         }
+        if path.contains("matrix::tests::q34_") {
+            q34.push(format!("{file}: {path}"));
+        }
+        if skips.iter().any(|s| path.contains(s.as_str())) && !in_class(path) {
+            bad.push(format!("{file}: {path} is dropped and in no heavy class"));
+        }
+    }
+    let want_q34: Vec<String> = Q34_SELF_CHECKS
+        .iter()
+        .map(|p| format!("crates/fstp-api-testkit/src/matrix.rs: {p}"))
+        .collect();
+    q34.sort();
+    if q34 != want_q34 {
+        bad.push(format!(
+            "matrix::tests::q34_ matches {q34:#?}, not {want_q34:#?}"
+        ));
     }
     let (_, decide) = ci_step(DECIDE_STEP);
     let stops: Vec<&String> = decide.iter().filter(|l| l.contains("run=false")).collect();
@@ -1513,36 +1642,47 @@ fn ci_light_tier_skips_only_the_declared_heavy_classes() {
         "the decide step stops parts twice: {decide:#?}"
     );
     assert!(
-        decide
-            .iter()
-            .any(|l| l == r#"if [[ "$PART" == matrix-* && "$tier" != full ]]; then"#),
-        "the light tier stops other parts than matrix-*: {decide:#?}"
+        decide.iter().any(|l| l == LIGHT_STOPPED_PARTS),
+        "the light tier stops other parts than matrix-* and m-activate: {decide:#?}"
     );
     let parts = ci_parts();
-    let matrix: Vec<&Part> = parts
+    let stopped: Vec<&Part> = parts
         .iter()
-        .filter(|p| p.name.starts_with("matrix-"))
+        .filter(|p| p.name.starts_with("matrix-") || p.name == "m-activate")
         .collect();
-    assert!(matrix.len() >= 3, "too few matrix parts");
-    for p in matrix {
+    assert!(stopped.len() >= 4, "too few stopped parts");
+    for p in stopped {
         for s in &p.selections {
-            let only_matrix = !s.workspace
-                && s.packages == ["fstp-api-testkit"]
-                && !s.bins
-                && !s.doc
-                && s.tests.iter().all(|t| t.contains("matrix"))
-                && (!s.lib
-                    || (!p.filters.is_empty() && p.filters.iter().all(|f| f.contains("matrix"))));
-            if !only_matrix || !s.names_targets() {
-                bad.push(format!(
-                    "{}: runs more than the matrix tests: {s:?}",
-                    p.name
-                ));
+            let only = if p.name == "m-activate" {
+                !s.workspace
+                    && s.packages == ["fstp-api-testkit"]
+                    && !s.lib
+                    && !s.bins
+                    && !s.doc
+                    && s.tests == ["i66_m_activate", "i67_m_activate"]
+                    && p.filters.is_empty()
+            } else {
+                !s.workspace
+                    && s.packages == ["fstp-api-testkit"]
+                    && !s.bins
+                    && !s.doc
+                    && s.tests.iter().all(|t| t.contains("matrix"))
+                    && (!s.lib
+                        || (!p.filters.is_empty()
+                            && p.filters.iter().all(|f| f.contains("matrix"))))
+                    && s.names_targets()
+            };
+            if !only {
+                bad.push(format!("{}: runs more than its heavy tests: {s:?}", p.name));
             }
         }
     }
+    assert!(
+        parts.iter().any(|p| p.name == "m-activate"),
+        "ci.yml has no part m-activate"
+    );
     assert!(bad.is_empty(), "{bad:#?}");
-    assert!(dropped >= 250, "the light skips drop only {dropped} tests");
+    assert!(teeth >= 250, "the teeth class holds only {teeth} tests");
 }
 
 /// CI tiers (Daniel, 2026-11-16): the full tier is a manual run with the
