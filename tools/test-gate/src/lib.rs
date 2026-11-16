@@ -506,6 +506,42 @@ test result: ok. 1 passed
         assert!(check_partial(&run, &l, &select(&["o"], &["ne"])).is_empty());
     }
 
+    /// CI tiers (Daniel, 2026-11-16): the light tier adds the skip
+    /// `_teeth_` to a part's own skips. A listed teeth test that the light
+    /// tier skipped is not stale, in a top-level test or a module path.
+    /// The full tier adds no skip, so the same entry is stale there when
+    /// it did not run. A listed test outside the teeth class is judged on
+    /// both tiers.
+    #[test]
+    fn known_red_partial_light_tier_teeth_skip_is_not_stale() {
+        let run = read_run(
+            "     Running tests/i79.rs (target/debug/deps/i79-0c)\n\
+             test i79_m_recover ... ok\n\
+             test result: ok. 1 passed\n\
+                  Running unittests src/lib.rs (target/debug/deps/fstp_c-0d)\n\
+             test mc::tests::i26_m_dispatch_ok ... ok\n\
+             test result: ok. 1 passed\n",
+        );
+        let teeth = list(
+            "i79::i79_teeth_one_staff_ticket_is_caught | s | l\n\
+             fstp_c::mc::tests::i26_m_dispatch_teeth_unfenced_is_caught | s | l",
+        );
+        let light = select(&[], &["t_iso_", "_teeth_"]);
+        let full = select(&[], &["t_iso_"]);
+        assert!(check_partial(&run, &teeth, &light).is_empty());
+        assert_eq!(
+            check_partial(&run, &teeth, &full),
+            vec![
+                Problem::Stale("fstp_c::mc::tests::i26_m_dispatch_teeth_unfenced_is_caught".into()),
+                Problem::Stale("i79::i79_teeth_one_staff_ticket_is_caught".into()),
+            ]
+        );
+        let other = list("i79::i79_registered_teeth | s | l");
+        let stale = vec![Problem::Stale("i79::i79_registered_teeth".into())];
+        assert_eq!(check_partial(&run, &other, &light), stale);
+        assert_eq!(check_partial(&run, &other, &full), stale);
+    }
+
     /// CI shards: the partial gate keeps every other rule. A failure not
     /// listed, a listed test that passes, a crash, a compile error, an
     /// empty run and an ambiguous key each still fail it, whatever the
