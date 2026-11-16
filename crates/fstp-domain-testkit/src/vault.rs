@@ -452,6 +452,25 @@ impl GroundTruth {
         self.commit([account].into_iter().collect());
     }
 
+    /// Renames identity `from` to `to` in every fact that names it: the
+    /// accounts, the relations and the exclusions. Every fact keeps its
+    /// meaning. The I-86 canary vault uses it to give a built world
+    /// distinctive identity numbers (lane m4/i86).
+    pub fn rename_identity(&mut self, from: IdentityTag, to: IdentityTag) {
+        let changed = self.accounts_of(&[from]);
+        let swap = |t: IdentityTag| if t == from { to } else { t };
+        for t in self.identity_of.values_mut() {
+            *t = swap(*t);
+        }
+        self.relations = self
+            .relations
+            .iter()
+            .map(|(a, b, r)| (swap(*a), swap(*b), *r))
+            .collect();
+        self.excluded = self.excluded.iter().map(|(t, c)| (swap(*t), *c)).collect();
+        self.commit(changed);
+    }
+
     // -- removals -------------------------------------------------------------
 
     /// Ends the relation `relation` between identities `a` and `b`, in

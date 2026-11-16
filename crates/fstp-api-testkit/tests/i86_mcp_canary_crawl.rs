@@ -1,29 +1,30 @@
 //! I-86: no identity attribute, bank detail or vault value in any MCP
-//! result (M4 design sections 3.8 and 8.4, TH-61).
+//! result (M4 design sections 3.8 and 8.4, TH-61, R-NF-02).
 //!
-//! The canary crawl plants canaries where the cell keeps identity data,
-//! then calls every tool of `fstp_api_core::meta::tools()` through
-//! `fstp_mcp::McpServer` for every world account, with every scope, on
-//! both surfaces, in the I-85 world with PX in DRAFT and with PX
-//! submitted. No canary may appear in any result, error or tool list.
+//! Two crawls live here. Both call every tool of
+//! `fstp_api_core::meta::tools()` through `fstp_mcp::McpServer` and
+//! refuse any canary in any result, error or tool list.
+//!
+//! - `i86_canary_crawl_over_every_tool_and_principal`: the I-85 world,
+//!   every world account with every scope on both surfaces, with PX in
+//!   DRAFT and with PX submitted.
+//! - `i86_canary_crawl_over_every_tool_role_and_state` (lane m4/i86): the
+//!   matrix worlds of `harness::canary_crawl`, every matrix principal in
+//!   every state profile, NEGOTIATION included, with the arguments the
+//!   matrix sends. The canary vault of `fstp_api_testkit::canary` gives
+//!   the whole cast canary identity numbers and canary login emails.
+//!   `i86_no_canary_in_logs_or_metrics` scans the logs of that run, and
+//!   `i86_teeth_identity_field_leak_is_caught` plants a mutant read model.
 //!
 //! The canaries, all synthetic:
 //!
-//! - every account's vault identity tag is set to a distinctive number,
-//!   searched as decimal and as hexadecimal text;
-//! - no fake port holds an email or a name: an invitation email goes to
-//!   M3 only once a port takes it (`dispatch/tenant.rs`), so emails join
-//!   the canaries with that port;
+//! - every account's vault identity is a distinctive number, searched as
+//!   decimal and as hexadecimal text;
+//! - every account of the matrix cast has a canary login email under
+//!   `canary.invalid` in the accounts port;
 //! - bank details have no M4 port, so the crawl also refuses any string
 //!   of IBAN shape: two capital letters, two digits, then 11 to 30
 //!   capitals or digits.
-//!
-//! Seam: the design asks for the crawl in every proposal state,
-//! NEGOTIATION included. Those states exist only in the matrix harness's
-//! worlds, which have no MCP transport yet (`matrix::mcp_channel`). This
-//! file covers the states the I-85 world reaches.
-//!
-//! Status: red until `fstp_mcp::McpServer` exists.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -174,4 +175,91 @@ fn i86_canary_predicates_self_test() {
     let k = canaries();
     assert!(k.iter().any(|c| c == &TAG_BASE.to_string()));
     assert_eq!(k.len(), 3 * ACCOUNTS.len());
+}
+
+// ---------------------------------------------------------------------------
+// Lane m4/i86: the crawl over every state of the matrix worlds.
+// ---------------------------------------------------------------------------
+
+use std::sync::OnceLock;
+
+use fstp_api_testkit::canary::CanaryVault;
+use fstp_api_testkit::harness::canary_crawl::{CrawlAnswer, CrawlWorld, cast_vault};
+use fstp_api_testkit::reference::authz::StateProfile;
+use fstp_domain::StateTag;
+
+/// What the crawl of one state left: the answers.
+struct StateCrawl {
+    state: StateProfile,
+    answers: Vec<CrawlAnswer>,
+}
+
+/// The crawl over every state profile of the matrix, run once per test
+/// binary: the crawl test and the log test judge the same run.
+fn full_crawl() -> &'static (CanaryVault, Vec<StateCrawl>) {
+    static CRAWL: OnceLock<(CanaryVault, Vec<StateCrawl>)> = OnceLock::new();
+    CRAWL.get_or_init(|| {
+        let vault = cast_vault();
+        let crawls = StateProfile::all()
+            .into_iter()
+            .map(|state| {
+                let mut w = CrawlWorld::new(state, &vault)
+                    .unwrap_or_else(|e| panic!("the world of {state:?}: {e}"));
+                let answers = w.crawl().unwrap_or_else(|e| panic!("crawl {state:?}: {e}"));
+                StateCrawl { state, answers }
+            })
+            .collect();
+        (vault, crawls)
+    })
+}
+
+/// The leaks of `texts` under `vault`, one line each.
+fn leaks_of<'a>(
+    vault: &CanaryVault,
+    state: StateProfile,
+    texts: impl Iterator<Item = (&'a str, &'a str)>,
+) -> Vec<String> {
+    texts
+        .flat_map(|(at, text)| {
+            vault
+                .leaks_in(text)
+                .into_iter()
+                .map(move |l| format!("{state:?} {at}: {l}"))
+        })
+        .collect()
+}
+
+/// I-86, TH-61, R-NG-01: the canary vault gives every account of the
+/// matrix cast a canary identity number and a canary login email, and the
+/// scan refuses bank-shaped canaries and any IBAN shape. Every tool is
+/// called for every matrix principal in every state profile of the
+/// matrix: onboarding, programme and call states, and the 16 proposal
+/// states with NEGOTIATION included. No canary appears in any MCP result,
+/// error or tool list. Every state has completed calls, so the crawl
+/// judged real answers.
+#[test]
+fn i86_canary_crawl_over_every_tool_role_and_state() {
+    let (vault, crawls) = full_crawl();
+    let mut leaks = Vec::new();
+    let mut completed = Vec::new();
+    for c in crawls {
+        leaks.extend(leaks_of(
+            vault,
+            c.state,
+            c.answers.iter().map(|a| (a.at.as_str(), a.text.as_str())),
+        ));
+        completed.push((c.state, c.answers.iter().filter(|a| a.completed).count()));
+    }
+    assert!(leaks.is_empty(), "I-86 leaks:\n{}", leaks.join("\n"));
+    assert_eq!(completed.len(), StateProfile::all().len());
+    assert!(
+        completed
+            .iter()
+            .any(|(s, n)| *s == StateProfile::Proposal(StateTag::Negotiation) && *n > 0),
+        "no tool completed in NEGOTIATION: {completed:?}"
+    );
+    assert!(
+        completed.iter().all(|(_, n)| *n > 0),
+        "a state where no tool completed: {completed:?}"
+    );
 }

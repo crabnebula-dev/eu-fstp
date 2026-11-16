@@ -5211,3 +5211,7 @@ mod audit_tests;
 #[cfg(test)]
 #[path = "harness_team.rs"]
 mod team_tests;
+
+/// Lane m4/i86: the I-86 canary crawl over the matrix worlds.
+#[path = "harness_canary.rs"]
+pub mod canary_crawl;
