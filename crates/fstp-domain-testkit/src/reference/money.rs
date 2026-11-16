@@ -1742,6 +1742,7 @@ pub fn money_verdict(cx: &MoneyCx<'_>, actor: Actor, cmd: &Command) -> MoneyVerd
             supersedes,
             tasks,
             content,
+            text,
         } => money_plan(
             cx,
             actor,
@@ -1751,6 +1752,7 @@ pub fn money_verdict(cx: &MoneyCx<'_>, actor: Actor, cmd: &Command) -> MoneyVerd
             *supersedes,
             tasks,
             *content,
+            *text,
         ),
         Command::ProposeAmendment {
             amendment,
@@ -2347,12 +2349,16 @@ fn money_plan(
     supersedes: Option<PlanVersionId>,
     tasks: &[Task],
     content: fstp_domain::id::ContentDigest,
+    text: Option<fstp_domain::id::TextRef>,
 ) -> MoneyVerdict {
     let Some(a) = account(actor) else {
         return refuse("plans are the lead's");
     };
     if !cx.lead(a, proposal) {
         return refuse("plans are the lead's");
+    }
+    if text.is_some_and(|t| t.digest() != content) {
+        return refuse("the plan names a text with another digest");
     }
     let open = match origin {
         PlanOrigin::Negotiated => cx.state(proposal) == Some(StateTag::Negotiation),
@@ -2412,6 +2418,7 @@ fn money_plan(
             supersedes,
             tasks: tasks.to_vec(),
             content,
+            text,
         },
     )))
 }

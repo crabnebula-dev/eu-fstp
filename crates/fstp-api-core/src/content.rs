@@ -48,7 +48,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fstp_domain::id::{AccountId, ContentDigest, ProposalId, TextRef};
+use fstp_domain::id::{AccountId, ProposalId, TextRef};
 
 /// The longest title, in bytes (interim, pending Daniel).
 pub(crate) const TITLE_LIMIT: usize = 300;
@@ -149,10 +149,6 @@ pub(crate) struct ContentStore {
     acknowledged: BTreeSet<(AccountId, ProposalId)>,
     /// The counted pre-check requests (M7 design section 4, P-23).
     prechecks: Vec<PrecheckRequest>,
-    /// The work plan text recorded through this core, by the content
-    /// digest a plan names (lane m4/author-reads). The ledger keeps the
-    /// digest only, so this link is the memory of the cell process.
-    plan_texts: BTreeMap<ContentDigest, TextRef>,
 }
 
 impl ContentStore {
@@ -240,20 +236,6 @@ impl ContentStore {
         if self.texts.contains_key(&r.id().raw()) || self.texts.len() < MAX_TEXTS {
             self.texts.insert(r.id().raw(), text.to_owned());
         }
-    }
-
-    /// Remembers `r` as the work plan text of every plan that names its
-    /// digest (lane m4/author-reads). A full store leaves it out, so the
-    /// plan read gives no text rather than a wrong one.
-    pub(crate) fn remember_plan_text(&mut self, r: TextRef) {
-        if self.plan_texts.contains_key(&r.digest()) || self.plan_texts.len() < MAX_TEXTS {
-            self.plan_texts.insert(r.digest(), r);
-        }
-    }
-
-    /// The work plan text recorded through this core with digest `d`.
-    pub(crate) fn plan_text(&self, d: ContentDigest) -> Option<TextRef> {
-        self.plan_texts.get(&d).copied()
     }
 
     /// The text this core stored under `r`.

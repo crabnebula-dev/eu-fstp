@@ -17,6 +17,7 @@ fn plan(origin: PlanOrigin) -> Command {
         supersedes: None,
         tasks: Vec::new(),
         content: ContentDigest::from_bytes([1; 32]),
+        text: None,
     }
 }
 

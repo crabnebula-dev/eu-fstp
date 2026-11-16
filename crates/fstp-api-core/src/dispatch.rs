@@ -1007,20 +1007,7 @@ async fn store_texts<P: Seams>(
             .await
             .map_err(|e| port_failed(e, "text"))?;
         let r = forms::text_ref(r.0, s);
-        {
-            let mut content = lock(&call.st.content);
-            content.remember(r, s);
-            // Lane m4/author-reads: the plan names this text by its digest
-            // only, so the team's plan read finds it here (R-SB-01).
-            if path == "description"
-                && matches!(
-                    form.derive,
-                    forms::Derive::PlanForm | forms::Derive::RevisionForm
-                )
-            {
-                content.remember_plan_text(r);
-            }
-        }
+        lock(&call.st.content).remember(r, s);
         out.insert(path, r);
     }
     Ok(out)
@@ -4141,11 +4128,13 @@ fn placed(entries: &[ThreadEntry]) -> Vec<(u32, ThreadEntry)> {
 /// The plan the team recorded, read back (`proposal.get_plan`, R-SB-01,
 /// ADR-006; lane m4/author-reads): the head of the plan chain of `p`, or
 /// `None` before its first plan. The structure and the total come from
-/// the ledger. The work plan text comes from the text recorded with the
-/// plan in this cell process, read under the read's clearance and
-/// checked against the plan's digest. A plan this process did not record
-/// has no text in the reply, never an empty one. A proposal the journal
-/// does not know fails the read closed.
+/// the ledger. The plan names its stored work plan text (ADR-007; Daniel,
+/// 2026-11-16), so the text reads back after a restart: it is read
+/// through the text store under the read's clearance and checked against
+/// the plan's digest. An erased text reads as erased, with the day of its
+/// erasure, never as a missing one. A plan that names no text has no text
+/// in the reply, never an empty one. A text the store cannot give fails
+/// the read closed, and so does a proposal the journal does not know.
 async fn own_plan<P: Seams>(
     call: &Call<'_, P>,
     p: ProposalId,
@@ -4181,10 +4170,9 @@ async fn own_plan<P: Seams>(
         PlanOrigin::Negotiated => "negotiated",
         PlanOrigin::Amendment => "amendment",
     };
-    let held = lock(&call.st.content).plan_text(v.content);
-    let text = match held {
-        Some(r) => Some(stored_text(call, r, clearance).await?),
-        None => None,
+    let (text, text_erased) = match v.text {
+        Some(r) => plan_text(call, r, clearance).await?,
+        None => (None, None),
     };
     Ok(Some(crate::views::PlanView {
         plan: plan.raw(),
@@ -4192,7 +4180,31 @@ async fn own_plan<P: Seams>(
         tasks,
         total: v.total.map(|t| t.amount().to_string()),
         text,
+        text_erased,
     }))
+}
+
+/// The work plan text `r` of a plan (R-SB-01, ADR-007): `(Some(text),
+/// None)` while it is stored, or `(None, Some(day))` once the erasure log
+/// names it, from the day its erasure was requested. The log is read
+/// first, so no copy held in this process outlives an erasure. A store
+/// that keeps no log, or a text it cannot give, fails the read closed.
+async fn plan_text<P: Seams>(
+    call: &Call<'_, P>,
+    r: TextRef,
+    clearance: &fstp_access::ReadClearance,
+) -> Result<(Option<String>, Option<String>), ApiError> {
+    use crate::port::TextStore as _;
+    let log = call
+        .ports
+        .texts()
+        .erasures()
+        .await
+        .map_err(|e| call.refuse(port_failed(e, "ADR-007")))?;
+    if let Some(row) = log.iter().find(|row| row.text.0 == r.id().raw()) {
+        return Ok((None, Some(utc_day(row.requested_at))));
+    }
+    Ok((Some(stored_text(call, r, clearance).await?), None))
 }
 
 /// The caller's notices (R-EV-04, R-IR-02): the outcome of each proposal

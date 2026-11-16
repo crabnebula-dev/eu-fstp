@@ -3633,6 +3633,7 @@ fn m5_granted(
             supersedes: Some(fstp_domain::id::PlanVersionId::from_raw(plan)),
             tasks,
             content: fstp_domain::id::ContentDigest::from_bytes([9; 32]),
+            text: None,
         },
     )?;
     let amendment = fstp_domain::id::AmendmentId::from_raw(seed.id());

@@ -276,6 +276,7 @@ test("r_sb_01_plan_part_names_a_missing_plan_and_a_missing_text", async () => {
     tasks: [[{ amount: "5.00", start: QUESTIONS[0]!.asked, due: QUESTIONS[0]!.asked }]],
     total: undefined,
     text: undefined,
+    textErased: undefined,
   };
   const el = applicationSection(p, plan, { workspace, plan: { ok: true, value: { plan: bare } }, stage2: null });
   assert(el !== null, "the section");
@@ -429,4 +430,32 @@ test("r_sb_01_r_ev_05_decoders_refuse_malformed_bodies", () => {
   const bad = { ...PLAN_BODY.plan, tasks: [{ milestones: [{ amount: "1,000", start: "2027-01-04", due: "2027-03-31" }] }] };
   eq(decodePlan({ plan: bad }), null, "a malformed amount");
   eq(decodePlan({ plan: { ...PLAN_BODY.plan, text: 7 } }), null, "a text that is not a string");
+  const erased = { ...PLAN_BODY.plan, text: undefined, text_erased: "2026-11-16" };
+  eq(decodePlan({ plan: erased })?.plan?.textErased?.text, "2026-11-16", "an erased text decodes with its day");
+  eq(decodePlan({ plan: erased })?.plan?.text, undefined, "no text beside its erasure");
+  eq(decodePlan({ plan: { ...PLAN_BODY.plan, text_erased: "2026-11-16" } }), null, "a text beside its erasure");
+  eq(decodePlan({ plan: { ...erased, text_erased: "2026-11-16T10:00:00Z" } }), null, "an erasure with a time of day");
+});
+
+/**
+ * R-SB-01, ADR-007 (Daniel, 2026-11-16): a plan whose work plan text was
+ * erased says so with the day the erasure was requested. It never shows
+ * the text and never reads as a text the cell does not hold.
+ */
+test("r_sb_01_adr007_plan_part_names_an_erased_text_as_erased", async () => {
+  freshDom();
+  const p = info("STAGE1", "lead");
+  const plan = applicationPlan("lead", "STAGE1");
+  const workspace = { ok: true, value: WORKSPACE } as const;
+  const erased = decodePlan({ plan: { ...PLAN_BODY.plan, text: undefined, text_erased: "2026-11-16" } });
+  assert(erased !== null && erased.plan !== null, "the body decodes");
+  const el = applicationSection(p, plan, { workspace, plan: { ok: true, value: erased }, stage2: null });
+  assert(el !== null, "the section");
+  const root = asFake(el);
+  const line = byId(root, "application-plan-text-erased");
+  assert(line !== undefined, "the erasure is named");
+  const wording = APPLICANT_LABELS["application.plan.text_erased"] ?? "";
+  assert(wording !== "" && (line.textContent ?? "").startsWith(wording), "the erased wording");
+  eq(byId(root, "application-plan-text-missing"), undefined, "not read as missing");
+  eq(byId(root, "application-plan-text"), undefined, "no text element");
 });

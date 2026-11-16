@@ -10,7 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_domain::command::{Actor, Command};
-use fstp_domain::id::{ContentDigest, MilestoneId, PlanVersionId};
+use fstp_domain::id::{ContentDigest, MilestoneId, PlanVersionId, TextId, TextRef};
 use fstp_domain::proposal::{EthicsDeclaration, Milestone, NoticeVersion, PlanOrigin, Task};
 use fstp_domain::record::{PlanVersionRecorded, Record};
 use fstp_domain::rules::{Row, StateTag};
@@ -73,6 +73,7 @@ fn r_sb_01_submission_types_hold_no_identity_or_payment_fields() {
         supersedes: _,
         tasks: plan_tasks,
         content: _,
+        text: _,
     } = &plan.cmd
     else {
         panic!("not a RecordPlanVersion");
@@ -122,6 +123,7 @@ fn r_sb_01_submission_types_hold_no_identity_or_payment_fields() {
             supersedes: None,
             tasks: tasks(&[MilestoneId::from_raw(1)]).unwrap(),
             content: ContentDigest::from_bytes([0; 32]),
+            text: None,
         }),
         Record::ProposalCreated {
             proposal: PR4,
@@ -145,6 +147,7 @@ fn r_sb_01_submission_types_hold_no_identity_or_payment_fields() {
                 supersedes: _,
                 tasks: _,
                 content: _,
+                text: _,
             })
             | Record::ProposalCreated {
                 proposal: _,
@@ -267,6 +270,7 @@ fn r_sb_01_submit_needs_a_complete_plan_of_the_proposal() {
             supersedes: None,
             tasks: Vec::new(),
             content: ContentDigest::from_bytes([1; 32]),
+            text: None,
         },
     );
     if run_records(&mut s, &empty, T0).unwrap().is_ok() {
@@ -386,4 +390,55 @@ fn superseding(mut step: Step, plan: PlanVersionId) -> Step {
         *supersedes = Some(plan);
     }
     step
+}
+
+/// `step` naming a stored work plan text with id 9000 and digest
+/// `digest`, or the plan's own digest when `digest` is `None`.
+fn naming_text(mut step: Step, digest: Option<ContentDigest>) -> Step {
+    if let Command::RecordPlanVersion { content, text, .. } = &mut step.cmd {
+        *text = Some(TextRef::new(
+            TextId::from_raw(9_000),
+            digest.unwrap_or(*content),
+        ));
+    }
+    step
+}
+
+/// R-SB-01, ADR-007 (Daniel, 2026-11-16: the plan text reads back after a
+/// restart): a plan names its stored work plan text beside the text's
+/// digest. A reference whose digest is not the plan's is refused. A
+/// matching one is recorded, and the projection gives it back through
+/// `fstp_domain::view::plan_version`.
+#[test]
+fn r_sb_01_adr007_plan_names_a_text_with_its_own_digest() {
+    let mut s = start();
+    let plan = PlanVersionId::from_raw(80_011);
+    let step = || {
+        superseding(
+            record_plan(L4, plan, PR4, &[MilestoneId::from_raw(80_111)]).unwrap(),
+            plan_of(PR4),
+        )
+    };
+    let other = naming_text(step(), Some(ContentDigest::from_bytes([0xee; 32])));
+    assert!(
+        run_records(&mut s, &other, T0).unwrap().is_err(),
+        "a plan named a text with another digest"
+    );
+    let named = naming_text(step(), None);
+    let Command::RecordPlanVersion { content, text, .. } = &named.cmd else {
+        panic!("not a RecordPlanVersion");
+    };
+    let (content, text) = (*content, *text);
+    let records = run_records(&mut s, &named, T0)
+        .unwrap()
+        .unwrap_or_else(|r| panic!("RecordPlanVersion refused: {r}"));
+    assert!(records.iter().any(|r| matches!(
+        r,
+        Record::PlanVersionRecorded(p) if p.plan == plan && p.text == text
+    )));
+    let view = fstp_domain::view::plan_version(&s.state().core, PR4, plan).unwrap();
+    assert_eq!(view.content, content);
+    assert_eq!(view.text, text);
+    let seeded = fstp_domain::view::plan_version(&s.state().core, PR1, plan_of(PR1)).unwrap();
+    assert_eq!(seeded.text, None, "a plan that names no text gives none");
 }

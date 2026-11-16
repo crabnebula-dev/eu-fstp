@@ -57,7 +57,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::command::{Command, Ctx};
 use crate::engine::{FoldError, PolicyScope};
-use crate::id::{CallId, ContentDigest, MilestoneId, PlanVersionId, ProposalId};
+use crate::id::{CallId, ContentDigest, MilestoneId, PlanVersionId, ProposalId, TextRef};
 use crate::oracle::{Answers, Query};
 use crate::proposal::{EthicsDeclaration, NoticeVersion, PlanOrigin, Task};
 use crate::record::{PlanVersionRecorded, Record, Transitioned};
@@ -89,6 +89,8 @@ pub(crate) struct Plan {
     pub(crate) tasks: Vec<Task>,
     /// Digest of the plan text held outside the domain.
     pub(crate) content: ContentDigest,
+    /// The stored work plan text, whose digest is `content` (ADR-007).
+    pub(crate) text: Option<TextRef>,
 }
 
 /// What a submission recorded.
@@ -384,12 +386,18 @@ fn check_plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Re
         supersedes,
         tasks,
         content,
+        text,
     } = cmd
     else {
         return Err(wrong_row());
     };
     let current = proposal_state(state, *proposal).ok_or_else(unknown)?;
     require_lead(state, *proposal, ctx)?;
+    // The plan names the stored text whose fingerprint it holds
+    // (ADR-007; Daniel, 2026-11-16).
+    if text.is_some_and(|t| t.digest() != *content) {
+        return Err(invalid());
+    }
     if state.used_ids.contains(UsedId::PlanVersion(*plan)) {
         return Err(reused());
     }
@@ -425,6 +433,7 @@ fn check_plan(state: &State, cmd: &Command, ctx: &Ctx) -> Result<Vec<Record>, Re
         supersedes: *supersedes,
         tasks: tasks.clone(),
         content: *content,
+        text: *text,
     })])
 }
 
@@ -581,6 +590,9 @@ pub(crate) fn apply(state: &mut State, record: &Record) -> Result<(), FoldError>
 /// Folds one plan version.
 fn fold_plan(state: &mut State, p: &PlanVersionRecorded) -> Result<(), FoldError> {
     proposal_state(state, p.proposal).ok_or(FoldError::UnknownEntity)?;
+    if p.text.is_some_and(|t| t.digest() != p.content) {
+        return Err(FoldError::Inconsistent);
+    }
     if state.used_ids.contains(UsedId::PlanVersion(p.plan))
         || state.proposals.intake.plans.contains_key(&p.plan)
     {
@@ -618,6 +630,7 @@ fn fold_plan(state: &mut State, p: &PlanVersionRecorded) -> Result<(), FoldError
             superseded: false,
             tasks: p.tasks.clone(),
             content: p.content,
+            text: p.text,
         },
     );
     Ok(())

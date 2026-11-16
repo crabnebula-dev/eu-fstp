@@ -427,6 +427,7 @@ fn correction(base: &Base, kind: Kind, target: Target) -> Record {
                     ],
                 }],
                 content: digest,
+                text: None,
             })
         }
     }

@@ -979,6 +979,7 @@ mod tests {
             supersedes: Some(PlanVersionId::from_raw(70)),
             tasks: Vec::new(),
             content: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+            text: None,
         });
         j.fold(&revision, &state, now);
         assert_eq!(j.latest_plan(p), Ok(Some(PlanVersionId::from_raw(71))));
@@ -1078,6 +1079,7 @@ mod tests {
                     supersedes: None,
                     tasks: Vec::new(),
                     content: fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+                    text: None,
                 }),
             ),
             entry(

@@ -89,7 +89,7 @@ tagged_enum! {
     money {
         DraftCall { call, programme, opens, deadline, deadline_zone, budget, text },
         EditCall { call, opens, deadline, deadline_zone, budget, text },
-        RecordPlanVersion { plan, proposal, origin, supersedes, tasks, content },
+        RecordPlanVersion { plan, proposal, origin, supersedes, tasks, content, text },
         DetermineAmount { decision, proposal, agreed, deductions },
         RequestPayment { request, grant, kind, lines, replaces },
         AcceptLine { request, line, approved, reason },

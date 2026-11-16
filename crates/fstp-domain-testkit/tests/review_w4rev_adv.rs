@@ -50,6 +50,7 @@ fn review_plan_total_outside_the_money_range_is_refused() {
                 milestones: vec![huge(91_101), huge(91_102)],
             }],
             content: ContentDigest::from_bytes([9; 32]),
+            text: None,
         },
     );
     let recorded = run_records(&mut s, &record, T0).unwrap();

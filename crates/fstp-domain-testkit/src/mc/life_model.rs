@@ -263,6 +263,7 @@ pub fn revision_plan(
                 milestones: vec![milestone(milestone_id)?],
             }],
             content: ContentDigest::from_bytes(digest),
+            text: None,
         },
     ))
 }

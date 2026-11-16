@@ -1875,7 +1875,8 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// A `proposal.get_plan` reply (lane m4/author-reads): one task with
-    /// one milestone, with its total and text, or with neither.
+    /// one milestone, with its total and text, or with no total and an
+    /// erased text (ADR-007).
     fn plan_view(full: bool) -> crate::views::PlanView {
         crate::views::PlanView {
             plan: 31,
@@ -1887,6 +1888,7 @@ pub(crate) mod reply_shape_tests {
             }]],
             total: full.then(|| "1500.50".to_owned()),
             text: full.then(|| "A synthetic work plan.".to_owned()),
+            text_erased: (!full).then(|| "2026-07-01".to_owned()),
         }
     }
 

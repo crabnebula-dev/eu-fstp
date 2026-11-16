@@ -110,6 +110,7 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "application.plan.total": "The platform computed the plan total: {amount} EUR.",
   "application.plan.text_missing":
     "The platform does not hold the work plan text of this plan version here, so it cannot be shown.",
+  "application.plan.text_erased": "The work plan text of this plan version was erased. Its erasure was requested on",
   "application.copy": "The applicant lead can request a copy of the application by email from this page.",
 
   "workspace.title": "Proposal workspace",

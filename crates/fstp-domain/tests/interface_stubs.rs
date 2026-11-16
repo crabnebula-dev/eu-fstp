@@ -980,6 +980,7 @@ fn sample(kind: CommandKind) -> Command {
             supersedes: None,
             tasks,
             content: ContentDigest::from_bytes([7; 32]),
+            text: None,
         },
         K::Submit => Command::Submit {
             proposal,

@@ -237,6 +237,7 @@ pub fn record_plan(
             supersedes: None,
             tasks: tasks(milestones)?,
             content: ContentDigest::from_bytes(digest),
+            text: None,
         },
     ))
 }

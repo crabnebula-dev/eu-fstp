@@ -57,6 +57,9 @@ pub struct PlanVersionView<'a> {
     pub tasks: &'a [crate::proposal::Task],
     /// The digest of the plan text held outside the domain.
     pub content: crate::id::ContentDigest,
+    /// The stored work plan text whose digest is `content` (ADR-007), or
+    /// `None` when the plan names none (Daniel, 2026-11-16).
+    pub text: Option<crate::id::TextRef>,
     /// The total of its milestone amounts, or `None` when the sum fails
     /// (ADR-006).
     pub total: Option<fstp_money::NonNegAmount>,
@@ -74,6 +77,7 @@ pub fn plan_version(
         origin: p.origin,
         tasks: &p.tasks,
         content: p.content,
+        text: p.text,
         total: crate::proposal::intake::plan_total(p),
     })
 }

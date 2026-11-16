@@ -5,8 +5,10 @@
 //! The read gives the head of the proposal's plan chain, read-only: its
 //! id, its origin, its tasks with each milestone's amount and days, and
 //! the total the cell summed. The work plan text is held outside the
-//! domain, which keeps its digest only. The read gives it when the cell
-//! holds the text recorded with that plan, and leaves it out otherwise,
+//! domain. The plan record names it by its reference beside its digest
+//! (ADR-007; Daniel, 2026-11-16: "fix now", so the text reads back after
+//! restarts and in seeded scenes). The read gives the stored text, says
+//! when it was erased, and leaves it out for a plan that names none,
 //! never showing an empty or a changed text in its place.
 //!
 //! Every account and text is synthetic.
@@ -152,12 +154,13 @@ fn r_sb_01_lead_reads_back_the_plan_recorded_through_the_page() {
     assert_eq!(m.get("due").and_then(Value::as_str), Some("1970-06-30"));
 }
 
-/// R-SB-01, ADR-007, lane m4/author-reads: after a restart the read
-/// still gives the plan's structure and total from the ledger. The link
-/// from the plan to its text is the memory of the cell process only, so
-/// the text is left out, never shown empty.
+/// R-SB-01, ADR-007 (Daniel, 2026-11-16: the plan text must read back
+/// after a restart): the plan record names its stored text, so a
+/// restarted cell, whose API core holds nothing in memory, reads back the
+/// structure, the total and the work plan text. This test pinned the
+/// omission of the text before that decision.
 #[test]
-fn r_sb_01_plan_read_after_a_restart_keeps_the_structure_and_leaves_the_text_out() {
+fn r_sb_01_plan_read_after_a_restart_reads_the_text_back() {
     let c = cell();
     let p = new_draft(&c);
     record(&c, p, "1000.00", "SYNTHETIC WORK PLAN");
@@ -165,12 +168,18 @@ fn r_sb_01_plan_read_after_a_restart_keeps_the_structure_and_leaves_the_text_out
     let v = body(read(&again, LEAD, p));
     let plan = plan_of(&v);
     assert_eq!(plan.get("total").and_then(Value::as_str), Some("1000.00"));
-    assert_eq!(plan.get("text"), None, "no text in place of the plan's");
+    assert_eq!(
+        plan.get("text").and_then(Value::as_str),
+        Some("SYNTHETIC WORK PLAN"),
+        "the text the plan names, read through the text store"
+    );
+    assert_eq!(plan.get("text_erased"), None);
 }
 
-/// R-SB-01: a plan seeded into the ledger, whose text this cell never
-/// stored, reads with its structure and no text. A draft with no plan
-/// reads as `{"plan": null}`.
+/// R-SB-01, ADR-007: a plan seeded into the ledger in the form recorded
+/// before plans named their text reads with its structure and no text,
+/// and is not taken for an erased one. A draft with no plan reads as
+/// `{"plan": null}`.
 #[test]
 fn r_sb_01_plan_read_of_a_seeded_plan_and_of_a_draft_with_none() {
     let c = cell();
@@ -181,6 +190,7 @@ fn r_sb_01_plan_read_of_a_seeded_plan_and_of_a_draft_with_none() {
         Some(px_plan().raw().to_string().as_str())
     );
     assert_eq!(plan.get("text"), None);
+    assert_eq!(plan.get("text_erased"), None);
     let p = new_draft(&c);
     let v = body(read(&c, LEAD, p));
     assert_eq!(v.to_compact(), r#"{"plan":null}"#);
@@ -195,5 +205,62 @@ fn r_ac_01_plan_read_refuses_outsiders() {
     assert!(
         matches!(r, Err(ApiError::Refused { .. })),
         "an outsider read the plan: {r:?}"
+    );
+}
+
+/// Erases every text of `p` in the text store, as a tenant admin's
+/// request does once the API core checked it (ADR-007).
+fn erase_texts_of(c: &FakeCell, p: u128) {
+    use fstp_api_core::port::{ErasureCause, StepUpProof, StepUpRef, TextStore as _};
+    let at = c.ports.clock.read();
+    let proof = StepUpProof {
+        step_up: StepUpRef(1),
+        action: fstp_api_core::ActionDigest([0; 32]),
+    };
+    fstp_rt::future::block_on(c.ports.texts.request_erasure(
+        fstp_api_testkit::fake::fixture::ADMIN,
+        ErasureCause::ErasureRequest,
+        fstp_domain::id::ProposalId::from_raw(p),
+        at,
+        proof,
+    ))
+    .expect("the store erases the proposal's texts");
+}
+
+/// R-SB-01, ADR-007 ("after erasure, a `TextRef` resolves to the text's
+/// entry in the erasure log, never to the text"): once the plan's text
+/// is erased, the read says so with the day of the request. It never
+/// gives the text, not even from the memory of the process that stored
+/// it, and never reads as a text the cell does not hold. After a restart
+/// it reads the same.
+#[test]
+fn r_sb_01_adr007_erased_plan_text_reads_as_erased() {
+    let c = cell();
+    let p = new_draft(&c);
+    record(&c, p, "1000.00", "SYNTHETIC WORK PLAN TO ERASE");
+    erase_texts_of(&c, p);
+    let day = {
+        let v = body(read(&c, LEAD, p));
+        let plan = plan_of(&v);
+        assert_eq!(plan.get("text"), None, "an erased text was shown");
+        assert!(
+            !v.to_compact().contains("SYNTHETIC WORK PLAN TO ERASE"),
+            "the erased text leaked: {}",
+            v.to_compact()
+        );
+        assert_eq!(plan.get("total").and_then(Value::as_str), Some("1000.00"));
+        plan.get("text_erased")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("the erasure is not named: {}", v.to_compact()))
+            .to_owned()
+    };
+    assert_eq!(day.len(), 10, "a UTC day: {day}");
+    let again = c.restarted().unwrap();
+    let v = body(read(&again, LEAD, p));
+    let plan = plan_of(&v);
+    assert_eq!(plan.get("text"), None);
+    assert_eq!(
+        plan.get("text_erased").and_then(Value::as_str),
+        Some(day.as_str())
     );
 }

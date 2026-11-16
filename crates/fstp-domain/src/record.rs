@@ -237,6 +237,12 @@ pub struct PlanVersionRecorded {
     pub tasks: Vec<Task>,
     /// Digest of the plan text held outside the domain.
     pub content: ContentDigest,
+    /// The stored work plan text (ADR-007), whose digest is `content`
+    /// (Daniel, 2026-11-16: the plan text reads back after a restart).
+    /// `None` for a plan recorded before plans named their text, or
+    /// through a form that stored none. An erased text keeps its
+    /// reference, which then resolves to its erasure-log entry.
+    pub text: Option<TextRef>,
 }
 
 /// A score, or a correction of one (design section 2.9).

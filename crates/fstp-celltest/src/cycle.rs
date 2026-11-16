@@ -1322,6 +1322,7 @@ impl<'w> Cycle<'w> {
                     }],
                 }],
                 content: ContentDigest::from_bytes(digest),
+                text: None,
             },
         )?;
         self.current = Some(Run {

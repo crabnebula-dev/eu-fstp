@@ -198,12 +198,15 @@ export function planPart(plan: PlanRead | null): HTMLElement {
       body.push(h("p", { id: "application-plan-total" }, [t("application.plan.total", { amount: plan.total })]));
     }
     body.push(h("h4", { id: "application-plan-text-heading" }, [t("plan.description")]));
+    // ADR-007: an erased text reads as erased, never as a missing one.
     body.push(
-      plan.text === undefined
-        ? h("p", { id: "application-plan-text-missing" }, [t("application.plan.text_missing")])
-        : plan.text.trim() === ""
-          ? h("p", { id: "application-plan-text" }, [h("em", {}, [t("application.empty")])])
-          : h("p", { id: "application-plan-text", class: "fstp-text" }, [plan.text]),
+      plan.textErased !== undefined
+        ? h("p", { id: "application-plan-text-erased" }, [t("application.plan.text_erased"), " ", dayTime(plan.textErased)])
+        : plan.text === undefined
+          ? h("p", { id: "application-plan-text-missing" }, [t("application.plan.text_missing")])
+          : plan.text.trim() === ""
+            ? h("p", { id: "application-plan-text" }, [h("em", {}, [t("application.empty")])])
+            : h("p", { id: "application-plan-text", class: "fstp-text" }, [plan.text]),
     );
   }
   return h("section", { id: "application-plan", "aria-labelledby": "application-plan-heading" }, [

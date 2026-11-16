@@ -258,6 +258,16 @@ fn command(b: &mut Bytes<'_>) -> Option<Core> {
             supersedes: if b.bool() { Some(plan(b.id())) } else { None },
             tasks: Vec::new(),
             content: ContentDigest::from_bytes([b.u8(); 32]),
+            // The digest a named text carries may differ from `content`,
+            // which the domain refuses (ADR-007).
+            text: if b.bool() {
+                Some(TextRef::new(
+                    TextId::from_raw(b.id()),
+                    ContentDigest::from_bytes([b.u8(); 32]),
+                ))
+            } else {
+                None
+            },
         },
         12 => Core::Submit {
             proposal: proposal(b.id()),
