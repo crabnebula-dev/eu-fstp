@@ -3,9 +3,9 @@
  * convention). Each test drives the tsc build of `web/src` in Chromium
  * against an in-memory fake of `/api/v1`, so it needs no e2e stack.
  *
- * The generated operation table in this worktree is the W0 stub, which
- * holds no operation. The fake serves its own `gen/api.js` with the
- * operations each test needs, named as design section 2.2 names them.
+ * The fake serves its own operation table with the operations each test
+ * needs, named as design section 2.2 names them, over the rest of the
+ * built `gen/api.js` (`fake_api.ts` `fulfilGenerated`).
  *
  * Build first: web/node_modules/.bin/tsc -p web
  */
@@ -14,6 +14,7 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { REVIEW_PAGES, REVIEW_UI } from '../contract';
+import { fulfilGenerated } from './fake_api';
 import { webDir } from './harness';
 
 const ORIGIN = 'http://judging.test';
@@ -53,11 +54,7 @@ async function serve(page: Page, ops: readonly FakeOp[], answers: Answers): Prom
       await route.fulfill({ contentType: 'text/javascript', body: ENTRY });
       return;
     }
-    if (p === '/dist/gen/api.js') {
-      await route.fulfill({
-        contentType: 'text/javascript',
-        body: `export const OPERATIONS = ${JSON.stringify(ops.map((o) => ({ ...o, base: 'api' })))};\n`,
-      });
+    if (await fulfilGenerated(route, p, ops, dist)) {
       return;
     }
     if (p.startsWith('/dist/')) {

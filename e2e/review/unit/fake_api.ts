@@ -2,9 +2,10 @@
  * A fake of `/api/v1` for the page specs in this folder. It serves the
  * tsc build of `web/src` in Chromium, so the specs need no e2e stack.
  *
- * The generated operation table in this worktree is the W0 stub, which
- * holds no operation. The fake serves its own `gen/api.js` with the
- * operations each spec needs, named as M4 design section 2.2 names them.
+ * The fake serves its own `gen/api.js` with the operations each spec
+ * needs, named as M4 design section 2.2 names them. It re-exports every
+ * other name of the built `gen/api.js`, since the pages' modules import
+ * more than the table (`home/session.ts` imports VALIDATORS).
  *
  * Build first: web/node_modules/.bin/tsc -p web
  */
@@ -30,6 +31,33 @@ export type Answers = Readonly<Record<string, unknown>>;
 export interface SeenRequest {
   readonly key: string;
   readonly body: string;
+}
+
+/** Where the fake serves the built `gen/api.js` that its own table re-exports. */
+const GENERATED = '/dist/gen/api.generated.js';
+
+/**
+ * Answers a request for the generated module, if `p` names it, and says
+ * whether it did. `/dist/gen/api.js` is the fake table `ops`. Every other
+ * name of the generated module (VALIDATORS, PAGES and the rest) comes
+ * from the build in `dist`, so a page module that imports one still
+ * links. A local export wins over a star export of the same name.
+ */
+export async function fulfilGenerated(route: Route, p: string, ops: readonly FakeOp[], dist: string): Promise<boolean> {
+  if (p === '/dist/gen/api.js') {
+    await route.fulfill({
+      contentType: 'text/javascript',
+      body:
+        `export * from ${JSON.stringify(GENERATED)};\n` +
+        `export const OPERATIONS = ${JSON.stringify(ops.map((o) => ({ ...o, base: 'api' })))};\n`,
+    });
+    return true;
+  }
+  if (p === GENERATED) {
+    await route.fulfill({ contentType: 'text/javascript', body: readFileSync(join(dist, 'gen', 'api.js'), 'utf8') });
+    return true;
+  }
+  return false;
 }
 
 const SHELL =
@@ -63,11 +91,7 @@ export async function serve(page: Page, ops: readonly FakeOp[], answers: Answers
       await route.fulfill({ contentType: 'text/javascript', body: ENTRY });
       return;
     }
-    if (p === '/dist/gen/api.js') {
-      await route.fulfill({
-        contentType: 'text/javascript',
-        body: `export const OPERATIONS = ${JSON.stringify(ops.map((o) => ({ ...o, base: 'api' })))};\n`,
-      });
+    if (await fulfilGenerated(route, p, ops, dist)) {
       return;
     }
     if (p.startsWith('/dist/')) {
