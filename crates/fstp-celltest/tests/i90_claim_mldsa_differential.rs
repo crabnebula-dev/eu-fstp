@@ -2,7 +2,8 @@
 //! sections 1.1 and 3, lane C1, I-90, T-CR-MLDSA, TH-68).
 //!
 //! Each direction runs on at least [`CLAIM_CASES`] random inputs. A larger
-//! `FSTP_PROP_CASES` raises the count, and a smaller one never lowers it.
+//! `FSTP_PROP_CASES` raises the count. A smaller one, or the cap
+//! `FSTP_PROP_MAX_CASES` of the light CI tier, never lowers it.
 //!
 //! Implementations, for the exit report:
 //! - code under test: moduletto at the pinned commit `6c1ae92`, reached

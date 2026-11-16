@@ -13,8 +13,7 @@
 #                testkits, the M-ACTIVATE checks, and the HTTP, MCP and
 #                direct matrix tests in shards. Each part is gated
 #                by the known-red list in ci/known-red.txt (tools/test-gate
-#                --partial). The matrix parts run only on a manual
-#                run with the matrix input set (Daniel, 2026-11-16)
+#                --partial)
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
@@ -23,6 +22,20 @@
 #                part of the test matrix, so test-gate never judges it
 #   sbom         the CycloneDX 1.6 SBOM from deps-check, written twice and
 #                compared byte for byte (R-NF-07, ADR-003)
+#
+# CI tiers (Daniel, 2026-11-16, ADR-003). The test job runs in one of two
+# tiers. Every other job is the same in both.
+#   light  every push and pull request, and a manual run without `full`.
+#          The matrix parts stop at their first step. Every other part
+#          skips the teeth tests (names holding LIGHT_SKIP, `_teeth_`),
+#          and caps each property at LIGHT_PROP_MAX_CASES (32) cases
+#          through FSTP_PROP_MAX_CASES. A test with a stated minimum
+#          count keeps it (fstp_prop::Config::min_cases)
+#   full   a manual run with `full` ticked: every part, every test, and
+#          every property at its own case count. About three hours. A
+#          milestone closes, and a release ships, only on a green full run
+# Start a full run under Actions, workflow "ci", "Run workflow", with the
+# `full` box ticked. teeth_m3_registry checks both tiers.
 #
 # Every job that builds or runs code needs deps-check, so no crate outside
 # the allowlist is compiled before the gate has passed. The deps-check job
@@ -37,8 +50,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      matrix:
-        description: Run the direct, HTTP and MCP authorisation matrices (about three hours)
+      full:
+        description: >-
+          Full run: the authorisation matrices, every teeth test and every
+          property at its full case count (about three hours). Required to
+          close a milestone or ship a release
         type: boolean
         default: false
 
@@ -116,8 +132,10 @@ jobs:
 
   # The tests run as parallel parts, each on its own runner (Daniel,
   # 2026-11-06). Each part builds only what it runs, and test-gate judges
-  # it in partial mode against its own log. Together the parts run every
-  # test of the workspace once, and the direct matrix once over its shards.
+  # it in partial mode against its own log. On the full tier the parts
+  # together run every test of the workspace once, and the direct matrix
+  # once over its shards. The light tier leaves out the matrix parts and
+  # the teeth tests, and caps the property case counts.
   test:
     name: tests (${{ matrix.part }})
     needs: deps-check
@@ -239,28 +257,40 @@ jobs:
       TEST_SKIP: ${{ matrix.skip }}
       TEST_SHARD: ${{ matrix.shard }}
       TEST_THREADS: ${{ matrix.threads }}
+      # The light tier (Daniel, 2026-11-16). LIGHT_SKIP holds the libtest
+      # skips that only the light tier adds, to libtest and test-gate
+      # alike: the teeth tests, each of which plants a known bug and
+      # proves a check catches it. LIGHT_PROP_MAX_CASES caps every fstp-prop
+      # property through FSTP_PROP_MAX_CASES. teeth_m3_registry checks that
+      # LIGHT_SKIP drops nothing but teeth tests and that the full tier
+      # adds no skip and no cap.
+      LIGHT_SKIP: _teeth_
+      LIGHT_PROP_MAX_CASES: "32"
       # ADR-003 record, as in the web job. The devstack part compiles the
       # auth pages that slice_devstack and the dev stack serve.
       NODE_VERSION: "24.11.1"
       NPM_VERSION: "11.6.2"
       NODE_SHA256: "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8"
     steps:
-      # The authorisation matrices (direct, HTTP and MCP, parts matrix-*)
-      # run about three hours. They run only on a manual run with the
-      # matrix box ticked (Daniel, 2026-11-16). On every other run each
-      # matrix part stops here, and the per-operation agreement tests of
-      # the api-testkit part still run.
-      - name: Decide whether this part runs
+      # The tier (Daniel, 2026-11-16): full on a manual run with the full
+      # box ticked, light on every other run. The authorisation matrices
+      # (direct, HTTP and MCP, parts matrix-*) run about three hours, so
+      # on the light tier each matrix part stops here. The per-operation
+      # agreement tests of the api-testkit part still run.
+      - name: Decide the tier and whether this part runs
         id: part
         env:
           PART: ${{ matrix.part }}
-          WANT_MATRIX: ${{ github.event_name == 'workflow_dispatch' && inputs.matrix }}
+          WANT_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
         run: |
           set -euo pipefail
-          if [[ "$PART" == matrix-* && "$WANT_MATRIX" != true ]]; then
-            echo "$PART: skipped. The matrices run only on a manual run with the matrix box ticked."
+          if [[ "$WANT_FULL" == true ]]; then tier=full; else tier=light; fi
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          if [[ "$PART" == matrix-* && "$tier" != full ]]; then
+            echo "$PART: skipped. The matrices run only on a full run (manual, with the full box ticked)."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
+            echo "$PART: runs on the $tier tier."
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Check out with plain git
@@ -355,15 +385,28 @@ jobs:
       # test not on the list, on a listed test that passes, on a crashed
       # test binary and on a compile error. In partial mode it calls a
       # listed test stale only when its binary ran here and this part's
-      # libtest filters select it.
+      # libtest filters select it. The light tier adds its skips to
+      # libtest and test-gate alike, so a skipped teeth test is neither
+      # missing nor stale.
       - name: cargo test, then the known-red gate
         if: steps.part.outputs.run == 'true'
+        env:
+          TIER: ${{ steps.part.outputs.tier }}
         run: |
           set -uo pipefail
           libtest=()
           gate=(--partial)
           for f in $TEST_FILTER; do libtest+=("$f"); gate+=(--filter "$f"); done
           for s in $TEST_SKIP; do libtest+=(--skip "$s"); gate+=(--skip "$s"); done
+          case "$TIER" in
+            full) echo "full tier: no light skip, every property at its own case count" ;;
+            light)
+              for s in $LIGHT_SKIP; do libtest+=(--skip "$s"); gate+=(--skip "$s"); done
+              export FSTP_PROP_MAX_CASES="$LIGHT_PROP_MAX_CASES"
+              echo "light tier: skips $LIGHT_SKIP, properties capped at $FSTP_PROP_MAX_CASES cases"
+              ;;
+            *) echo "unknown tier '$TIER'"; exit 1 ;;
+          esac
           if [ -n "$TEST_SHARD" ]; then export FSTP_MATRIX_SHARD="$TEST_SHARD"; fi
           if [ -n "${TEST_THREADS:-}" ]; then export RUST_TEST_THREADS="$TEST_THREADS"; fi
           # cargo cannot mix --doc with other targets, so a part may hold

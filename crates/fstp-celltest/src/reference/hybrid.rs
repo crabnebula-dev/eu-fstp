@@ -1298,12 +1298,13 @@ mod tests {
 
     /// ADR-004 test vector plan item 4: production encapsulates to a key
     /// pair the reference generated with the aws-lc-rs oracles, and the
-    /// reference decapsulates to the same secret. 1 000 key pairs per run.
+    /// reference decapsulates to the same secret. At least 1 000 key pairs
+    /// per run: the count is a floor that no `FSTP_PROP_*` variable lowers.
     #[test]
     fn t_cr_hybrid_cross_implementation_round_trip_production_to_reference() {
         check_with(
             "t_cr_hybrid_cross_implementation_round_trip_production_to_reference",
-            Config::default().with_cases(1000),
+            Config::default().with_min_cases(1000),
             |_g| {
                 let kp = RefKeyPair::generate().unwrap();
                 let pk = HybridPublicKey::from_bytes(kp.public_key()).unwrap();
@@ -1318,12 +1319,12 @@ mod tests {
 
     /// ADR-004 test vector plan item 4, the reverse: the reference
     /// encapsulates to a production key pair, and production decapsulates
-    /// to the same secret. 1 000 key pairs per run.
+    /// to the same secret. At least 1 000 key pairs per run, as above.
     #[test]
     fn t_cr_hybrid_cross_implementation_round_trip_reference_to_production() {
         check_with(
             "t_cr_hybrid_cross_implementation_round_trip_reference_to_production",
-            Config::default().with_cases(1000),
+            Config::default().with_min_cases(1000),
             |_g| {
                 let sk = hybrid_kem::generate().unwrap();
                 let (ct, theirs) = encapsulate(&sk.public().to_bytes()).unwrap();

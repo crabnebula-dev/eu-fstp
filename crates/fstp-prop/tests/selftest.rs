@@ -829,6 +829,51 @@ fn selftest_env_overrides_parse_strictly() {
     }
 }
 
+/// The light CI tier (Daniel, 2026-11-16): `FSTP_PROP_MAX_CASES` caps the
+/// case count after `FSTP_PROP_CASES` and never raises it, and neither
+/// variable lowers the count below `min_cases`, the floor of a stated
+/// claim such as ADR-004 test vector plan item 4.
+#[test]
+fn selftest_max_cases_caps_and_min_cases_holds() {
+    let vars = |pairs: &'static [(&'static str, &'static str)]| {
+        move |k: &str| {
+            pairs
+                .iter()
+                .find(|(name, _)| *name == k)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    };
+    let cases = |cfg: Config, pairs: &'static [(&'static str, &'static str)]| {
+        cfg.try_with_vars(vars(pairs)).unwrap().cases
+    };
+    let max = &[("FSTP_PROP_MAX_CASES", "32")][..];
+    assert_eq!(cases(Config::default(), max), 32);
+    assert_eq!(cases(Config::default().with_cases(2_048), max), 32);
+    assert_eq!(cases(Config::default().with_cases(12), max), 12);
+    let both = &[("FSTP_PROP_CASES", "500"), ("FSTP_PROP_MAX_CASES", "40")][..];
+    assert_eq!(cases(Config::default(), both), 40);
+    let floor = Config::default().with_min_cases(1000);
+    assert_eq!(floor.cases, 1000);
+    assert_eq!(floor.min_cases, 1000);
+    assert_eq!(cases(floor.clone(), &[]), 1000);
+    assert_eq!(cases(floor.clone(), max), 1000);
+    assert_eq!(cases(floor.clone(), &[("FSTP_PROP_CASES", "10")]), 1000);
+    assert_eq!(cases(floor, &[("FSTP_PROP_CASES", "4000")]), 4000);
+    assert_eq!(Config::default().with_min_cases(8).cases, 256);
+    assert_eq!(Config::default().min_cases, 0);
+    // A zero count is still refused, so a cap cannot hide it.
+    assert_eq!(cases(Config::default().with_cases(0), max), 0);
+    for bad in [
+        &[("FSTP_PROP_MAX_CASES", "0")][..],
+        &[("FSTP_PROP_MAX_CASES", "few")][..],
+        &[("FSTP_PROP_MAX_CASES", "-1")][..],
+    ] {
+        let err = Config::default().try_with_vars(vars(bad)).unwrap_err();
+        assert_eq!(err.var, "FSTP_PROP_MAX_CASES");
+        assert!(!err.to_string().is_empty());
+    }
+}
+
 /// A property that fails only on its first run is reported as flaky, not passed.
 #[test]
 fn selftest_flaky_property_is_reported() {

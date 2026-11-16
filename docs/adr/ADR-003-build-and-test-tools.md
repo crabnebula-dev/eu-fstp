@@ -114,3 +114,28 @@ tsc and Playwright run on Node.js, and Playwright installs through npm. The Deci
 | SBOM generator | In-house, `deps-check sbom` (`tools/deps-check/src/sbom.rs`). CycloneDX 1.6 JSON through `fstp-json`, no third-party tool. Node.js and npm are listed as build-time components. `TODO(legal)`: whether the CRA implementing acts name a format (M9 design D5) | The `sbom` job in `.github/workflows/ci.yml`, which passes the Node.js and npm pins above | 2026-11-06 |
 
 The tsc and Playwright rows in the record table above are filled at first use as before.
+
+## CI tiers (Daniel, 2026-11-16)
+
+### Context
+
+The CI test job runs the workspace in parallel parts. With the authorisation matrices, every teeth test and every property at its full case count, one run takes about three hours. Most of that time is in a few heavy classes of test. A push or pull request needs a faster answer.
+
+### Decision
+
+The test job runs in one of two tiers. Every other CI job is the same in both.
+
+- **Light**, on every push and pull request, and on a manual run without `full`. The `matrix-*` parts stop at their first step. Every other part skips the teeth tests and caps every property at 32 cases.
+- **Full**, on a manual run with the `full` input ticked (Actions, workflow "ci", "Run workflow"). Every part runs every test, and every property runs at its own case count. It takes about three hours.
+
+A milestone closes, and a release ships, only on a green full run. A green light run never closes a milestone or ships a release.
+
+### Rules
+
+- The light tier leaves out only the declared heavy classes: the authorisation matrices (the `matrix-*` parts) and the teeth tests. A teeth test is a test whose name holds `_teeth_`. Each plants a known bug and proves a check catches it.
+- The light skips go to libtest and to `test-gate` alike, as the job variable `LIGHT_SKIP`. So `test-gate` never calls a skipped teeth test missing or stale.
+- The case cap is the variable `FSTP_PROP_MAX_CASES` of `fstp-prop`, set from the job variable `LIGHT_PROP_MAX_CASES`. It lowers a larger count and never raises a smaller one. `FSTP_PROP_CASES` would raise small counts too, so the light tier does not use it.
+- A case count that a stated claim fixes is a floor that no variable lowers, so the light tier keeps it. The floors on 2026-11-16 are the two cross-implementation round trips of ADR-004 test vector plan item 4 (1 000 key pairs per run, through `fstp_prop::Config::min_cases`). The I-90 claim run keeps 1000 inputs each way through its own floor in `i90_claim_mldsa_differential.rs`.
+- The full tier adds no skip and no cap to any part. An unknown tier fails the step.
+- The exhaustive model checks (tests named `*_m_*`, and the M-ACTIVATE part) run on both tiers at the same size. Each must finish under its tripwire, so they have no smaller light setting.
+- `teeth_m3_registry` checks both tiers: `ci_light_tier_skips_only_the_declared_heavy_classes` and `ci_full_tier_adds_no_skip_and_no_case_cap`. A new heavy class needs an amendment here and an entry in that file's `LIGHT_HEAVY_CLASSES`.

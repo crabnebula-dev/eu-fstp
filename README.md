@@ -30,7 +30,7 @@ The previous run (a0e126cc) also failed two workspace tests and one browser spec
 
 `ci/known-red.txt` is empty. It listed 16 tests on the morning of 2026-11-15, and 79 on 2026-11-13.
 
-The direct, HTTP and MCP authorisation matrices run about three hours. Since 2026-11-16 they run only on a manual CI run (Actions, "ci", "Run workflow", with the `matrix` box ticked). Push and pull request runs skip them, and the per-operation agreement tests of the api-testkit part still run.
+CI runs the tests in two tiers (Daniel, 2026-11-16). The light tier runs on every push and pull request. It skips the direct, HTTP and MCP authorisation matrices and the teeth tests (tests named `*_teeth_*`, each of which plants a known bug and proves a check catches it). It also caps every property test at 32 cases. A test whose case count is part of a stated claim keeps its minimum, such as the 1000 inputs of the I-90 claim run. The per-operation agreement tests of the api-testkit part still run. The full tier runs everything at full size: the matrices, every teeth test and every property at its own case count, in about three hours. A milestone closes, and a release ships, only on a green full run. To start one, open Actions, choose the workflow "ci", click "Run workflow", tick `full` and run it on the branch.
 
 ### M3: open after closure
 

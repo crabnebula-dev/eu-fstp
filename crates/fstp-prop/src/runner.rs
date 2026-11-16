@@ -25,6 +25,11 @@ pub const MAX_DISCARD_RATIO: u64 = 10;
 
 /// Environment variable that overrides [`Config::cases`].
 pub const ENV_CASES: &str = "FSTP_PROP_CASES";
+/// Environment variable that caps [`Config::cases`] after [`ENV_CASES`]: a
+/// larger count drops to it, and a smaller one stays. The light CI tier
+/// sets it to run every property at reduced size (Daniel, 2026-11-16).
+/// It never lowers the count below [`Config::min_cases`].
+pub const ENV_MAX_CASES: &str = "FSTP_PROP_MAX_CASES";
 /// Environment variable that overrides [`Config::seed`]. Decimal or `0x` hex.
 pub const ENV_SEED: &str = "FSTP_PROP_SEED";
 /// Environment variable that sets [`Config::replay`], in the format of
@@ -56,6 +61,11 @@ pub struct Config {
     /// It must be at least 1. A run with `cases = 0` would pass without
     /// testing anything, so it fails with [`FailureKind::InvalidConfig`].
     pub cases: u32,
+    /// Least number of valid cases, which no environment variable lowers.
+    /// Set it with [`Config::with_min_cases`] only where a stated claim fixes
+    /// the count, such as ADR-004 test vector plan item 4. The default 0
+    /// sets no floor.
+    pub min_cases: u32,
     /// Seed for random generation. `None` derives it from the property name
     /// with [`seed_for_name`], so runs are deterministic by default.
     pub seed: Option<u64>,
@@ -72,6 +82,7 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             cases: DEFAULT_CASES,
+            min_cases: 0,
             seed: None,
             max_shrink_steps: DEFAULT_MAX_SHRINK_STEPS,
             max_choices: DEFAULT_MAX_CHOICES,
@@ -129,9 +140,13 @@ impl Config {
     /// Applies overrides read through `lookup`, which maps a variable name to
     /// its value. A set variable must be well formed. Never panics.
     ///
-    /// The variables are [`ENV_CASES`], [`ENV_SEED`], [`ENV_REPLAY`] and
-    /// [`ENV_REPLAY_FILE`]. Setting both replay variables is an error. The
-    /// replay file is read here, bounded by the default [`ReplayLimits`].
+    /// The variables are [`ENV_CASES`], [`ENV_MAX_CASES`], [`ENV_SEED`],
+    /// [`ENV_REPLAY`] and [`ENV_REPLAY_FILE`]. Setting both replay variables
+    /// is an error. The replay file is read here, bounded by the default
+    /// [`ReplayLimits`].
+    ///
+    /// The case count is [`ENV_CASES`] or the configured count, then capped
+    /// by [`ENV_MAX_CASES`], then raised to [`Config::min_cases`].
     pub fn try_with_vars(
         mut self,
         lookup: impl Fn(&str) -> Option<String>,
@@ -148,6 +163,14 @@ impl Config {
                 Err(e) => return Err(error(ENV_CASES, &v, e.to_string())),
             }
         }
+        if let Some(v) = lookup(ENV_MAX_CASES) {
+            match v.trim().parse::<u32>() {
+                Ok(0) => return Err(error(ENV_MAX_CASES, &v, "must be at least 1".to_owned())),
+                Ok(n) => self.cases = self.cases.min(n),
+                Err(e) => return Err(error(ENV_MAX_CASES, &v, e.to_string())),
+            }
+        }
+        self.cases = self.cases.max(self.min_cases);
         if let Some(v) = lookup(ENV_SEED) {
             let t = v.trim();
             let parsed = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
@@ -183,6 +206,15 @@ impl Config {
     /// Returns `self` with [`Config::cases`] set.
     pub fn with_cases(mut self, cases: u32) -> Config {
         self.cases = cases;
+        self
+    }
+
+    /// Returns `self` with [`Config::min_cases`] set to `cases`, and
+    /// [`Config::cases`] raised to it when lower. [`ENV_CASES`] and
+    /// [`ENV_MAX_CASES`] never take the count below it.
+    pub fn with_min_cases(mut self, cases: u32) -> Config {
+        self.min_cases = cases;
+        self.cases = self.cases.max(cases);
         self
     }
 
