@@ -11,7 +11,8 @@
 #                workspace in three, the multi-cell isolation tests, and the
 #                HTTP and direct matrix tests in shards. Each part is gated
 #                by the known-red list in ci/known-red.txt (tools/test-gate
-#                --partial)
+#                --partial). The matrix parts run only on a manual
+#                run with the matrix input set (Daniel, 2026-11-16)
 #   fuzz-smoke   every fuzz target for 60 seconds on the pinned nightly (TH-26)
 #   web          the pinned Node.js, tsc, the in-house web tests and fuzz harness,
 #                and the generated API types (ADR-003, ADR-014)
@@ -33,6 +34,11 @@ on:
     branches: [master, main, "batch/**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      matrix:
+        description: Run the direct, HTTP and MCP authorisation matrices (about three hours)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -200,7 +206,26 @@ jobs:
       NPM_VERSION: "11.6.2"
       NODE_SHA256: "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8"
     steps:
+      # The authorisation matrices (direct, HTTP and MCP, parts matrix-*)
+      # run about three hours. They run only on a manual run with the
+      # matrix box ticked (Daniel, 2026-11-16). On every other run each
+      # matrix part stops here, and the per-operation agreement tests of
+      # the api-testkit part still run.
+      - name: Decide whether this part runs
+        id: part
+        env:
+          PART: ${{ matrix.part }}
+          WANT_MATRIX: ${{ github.event_name == 'workflow_dispatch' && inputs.matrix }}
+        run: |
+          set -euo pipefail
+          if [[ "$PART" == matrix-* && "$WANT_MATRIX" != true ]]; then
+            echo "$PART: skipped. The matrices run only on a manual run with the matrix box ticked."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Check out with plain git
+        if: steps.part.outputs.run == 'true'
         env:
           JOB_TOKEN: ${{ github.token }}
         run: |
@@ -217,6 +242,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git log -1 --format='checked out %H %s'
       - name: Install the toolchain from rust-toolchain.toml
+        if: steps.part.outputs.run == 'true'
         run: |
           set -euo pipefail
           rustup --version
@@ -226,12 +252,14 @@ jobs:
       # The runner image ships toolchains this job never uses. Removing them
       # leaves room for the test binaries.
       - name: Free disk space
+        if: steps.part.outputs.run == 'true'
         run: |
           set -euo pipefail
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
       - name: Install PostgreSQL 16 if absent
+        if: steps.part.outputs.run == 'true'
         run: |
           set -euo pipefail
           pg_bin=/usr/lib/postgresql/16/bin
@@ -250,6 +278,7 @@ jobs:
       # assurance here. The guard i81_note_linux_ci_key_volume_reports_full
       # fails when this variable is unset in Linux CI.
       - name: ext4 key volume for the file custody tests
+        if: steps.part.outputs.run == 'true'
         run: |
           set -euo pipefail
           img="$RUNNER_TEMP/keyvol.img"
@@ -289,6 +318,7 @@ jobs:
       # listed test stale only when its binary ran here and this part's
       # libtest filters select it.
       - name: cargo test, then the known-red gate
+        if: steps.part.outputs.run == 'true'
         run: |
           set -uo pipefail
           read -ra packages <<< "$TEST_PACKAGES"

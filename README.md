@@ -31,6 +31,8 @@ The last full CI run on `main` (3821f85c, 2026-11-15) passed these parts: deps-c
 
 `ci/known-red.txt` now lists only the two authorisation matrix tests. It listed 16 on the morning of 2026-11-15, and 79 on 2026-11-13.
 
+The direct, HTTP and MCP authorisation matrices run about three hours. Since 2026-11-16 they run only on a manual CI run (Actions, "ci", "Run workflow", with the `matrix` box ticked). Push and pull request runs skip them, and the per-operation agreement tests of the api-testkit part still run.
+
 ### M3: what is open
 
 Built: the cell runtime with its routes, engine, record store and signing; the control plane with its run loops, operator login and cell link; `fstp-pgagent`, which applies the role plan; signup, passkeys, magic links, step-up and recovery; the login email index; the identity vault with its audit chain; the witness with a local file store for self-hosted cells; key custody through `fstp-keyd`; backups sealed with the hybrid KEM; cell erasure; and a test world that runs the call cycle from signup to GRANTED over HTTP. ML-DSA-65 comes from moduletto and runs in CI with its ACVP vectors.

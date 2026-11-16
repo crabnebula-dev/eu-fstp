@@ -37,6 +37,7 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | Wizard | Planned rows email at once; Operations invitees accept role-only terms |
 | Cell routes | AddPasskey digest over the command id accepted; identity release stays lead-only |
 | P-41 reminder | A timeline event kind at the end of P-41 per action, and a mailbox message to tenant admins linking to the erasure request |
+| Authorisation matrices in CI | Direct, HTTP and MCP matrices (24 shards, about three hours) run only on a manual CI run with the `matrix` box ticked (Daniel, 2026-11-16). Push and PR runs skip them; the per-operation agreement tests still run |
 
 ## Lanes at the time of handoff
 
