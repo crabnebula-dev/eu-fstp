@@ -22,7 +22,7 @@ use fstp_celltest::egress::Peer;
 use fstp_celltest::mc::place_model::db;
 use fstp_celltest::scan::{CellDump, PublicConstants, StoreSet, shared_identifiers};
 use fstp_celltest::world::{
-    ClusterHandle, ClusterKind, CycleScript, DbMode, VaultLayout, World, WorldSpec,
+    ClusterHandle, ClusterKind, CycleScript, DbMode, VaultLayout, World, WorldDatabase, WorldSpec,
 };
 use fstp_migrate::catalogue::{ColumnClass, TableClass, TableSpec};
 
@@ -35,6 +35,31 @@ fn world(cells: u8, self_hosted: bool, process_mode: bool) -> World {
         process_mode,
     })
     .unwrap_or_else(|e| panic!("the world did not start: {e}"))
+}
+
+/// The cell databases of `w` itself. The clusters are shared by every
+/// world of this test binary, so `World::databases` also lists the
+/// databases of worlds that other tests run at the same time, such as one
+/// created but not yet migrated (CI run 43825968860).
+fn own_cell_databases(w: &World) -> Vec<WorldDatabase> {
+    let mut names = BTreeSet::new();
+    for i in 0..=u8::MAX {
+        let Some(c) = w.cell(i) else { break };
+        names.insert(c.app_database());
+        names.insert(c.vault_database());
+    }
+    let own: Vec<WorldDatabase> = w
+        .databases()
+        .unwrap()
+        .into_iter()
+        .filter(|d| names.contains(&d.name))
+        .collect();
+    assert_eq!(
+        own.len(),
+        names.len(),
+        "every cell database of the world is listed"
+    );
+    own
 }
 
 fn agent_clusters(w: &World) -> Vec<&ClusterHandle> {
@@ -888,7 +913,7 @@ fn r_nf_08_aborted_append_never_reuses_a_nonce() {
         .unwrap_or_else(|e| panic!("the cycle did not run: {e}"));
     let sets = db::migration_sets();
     let (mut seals, mut unread) = (Vec::new(), Vec::new());
-    for d in w.databases().unwrap() {
+    for d in own_cell_databases(&w) {
         let set = match d.name.get(..2) {
             Some("c_") => "app",
             Some("v_") => "vault",
@@ -1148,11 +1173,8 @@ fn r_nf_08_teeth_caller_nonce_api_is_caught() {
 #[test]
 fn r_nf_09_every_internal_link_requires_a_client_certificate() {
     let w = world(1, false, false);
-    let own: BTreeSet<(String, String)> = w
-        .databases()
-        .unwrap()
+    let own: BTreeSet<(String, String)> = own_cell_databases(&w)
         .into_iter()
-        .filter(|d| d.name.starts_with("c_") || d.name.starts_with("v_"))
         .map(|d| (d.cluster, d.name))
         .collect();
     assert!(!own.is_empty(), "the world has cell databases");
