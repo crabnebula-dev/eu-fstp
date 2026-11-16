@@ -124,9 +124,15 @@ jobs:
           done
       - name: clippy (workspace)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Each fuzz project is a workspace of its own, with its own target
+      # directory by default, so the shared workspace crates compiled 66
+      # times (about 22 minutes). One shared target directory compiles each
+      # crate once per set of features. Measured locally on 4 projects: 49 s
+      # with separate directories, 26 s with one shared directory.
       - name: clippy (fuzz projects)
         run: |
           set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/fuzz-clippy-target"
           for m in crates/*/fuzz/Cargo.toml tools/*/fuzz/Cargo.toml; do
             echo "clippy $m"
             cargo clippy --manifest-path "$m" --all-targets --locked -- -D warnings

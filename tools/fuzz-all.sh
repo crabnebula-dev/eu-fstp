@@ -22,6 +22,12 @@
 #                        $FSTP_FUZZ_WORK/<crate>/<target> instead of
 #                        <crate dir>/fuzz/corpus/<target>
 #   FSTP_FUZZ_LOGS       directory for per-target logs (default: a temp dir)
+#   CARGO_TARGET_DIR     one target directory for every fuzz project
+#                        (default: <repo>/target/fuzz). Each project is a
+#                        workspace of its own, so without one shared
+#                        directory the common crates compile once per
+#                        project. cargo fuzz build and cargo fuzz run both
+#                        read it, so run finds what build compiled.
 set -euo pipefail
 
 # The nightly toolchain recorded in ADR-003. CI installs exactly this one.
@@ -38,6 +44,7 @@ die() {
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo_root/target/fuzz}"
 toolchain="${FSTP_FUZZ_TOOLCHAIN:-$FUZZ_TOOLCHAIN}"
 rss_mb="${FSTP_FUZZ_RSS_MB:-2048}"
 input_timeout="${FSTP_FUZZ_TIMEOUT:-30}"
@@ -156,6 +163,7 @@ logs="${FSTP_FUZZ_LOGS:-$(mktemp -d)}"
 mkdir -p "$logs"
 echo "fuzz-all: ${#pairs[@]} targets in ${#projects[@]} projects, ${seconds}s each, toolchain $toolchain, -j $parallel"
 echo "fuzz-all: logs in $logs"
+echo "fuzz-all: target directory $CARGO_TARGET_DIR"
 
 # Build each project once, sequentially, so parallel runs never compile.
 for name in "${projects[@]}"; do
