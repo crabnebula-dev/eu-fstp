@@ -1496,6 +1496,13 @@ The fallback, if measured time exceeds 30 minutes of wall time, first adds shard
 | `i87_m_public` | Model M-PUBLIC |
 | `i87_teeth_tool_reads_state_directly_is_caught`, `i87_teeth_filter_skipped_for_feed_is_caught` | Teeth |
 
+Built by lane m4/i87 (2026-11-16):
+
+- M-PUBLIC (`crates/fstp-api-testkit/src/mc/public_model.rs`) now also checks, in every production state, that the feed equals the pages and that the funded, finished and programme tools answer only their page data.
+- Both teeth are in `crates/fstp-api-testkit/tests/i87_teeth_m_public.rs`. Each plants a test-kit `Fault` that reads the core state around `public_view_with`. No production switch exists.
+- `t_authz_denial_has_no_effect` is in `crates/fstp-api-testkit/tests/t_authz_denial_has_no_effect.rs`. It samples 256 denied cells at the SuperSAFE row through `harness::EffectProbe`.
+- Open: `i87_two_cells_never_cross` is not built. The M3 multi-cell harness starts `fstp-cell`, which mounts neither `fstp-web` nor `ApiCore`. Its cells serve no `/p` page, feed or public tool, so the test has nothing to compare there yet.
+
 ### 8.5 Models
 
 | Model | Universe | Properties | Witnesses |
