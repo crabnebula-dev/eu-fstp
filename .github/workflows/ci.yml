@@ -311,6 +311,32 @@ jobs:
             echo "$PART: runs on the $tier tier."
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
+      # The runner image ships toolchains this job never uses. Removing them
+      # leaves room for the test binaries: on 2026-10-26 a build with full
+      # debug info filled the disk (374e2c99). The removal took 75 to 127 s
+      # on every part. On CI run 43873124657 every part started with 85 GB
+      # free, and the removal freed 22 GB more. With at least 40 GB free it
+      # now runs in the background while cargo test builds: a build cannot
+      # write 40 GB in two minutes. With less free it runs here, before
+      # anything else, as before. "Disk clean-up finished" checks it.
+      - name: Free disk space
+        if: steps.part.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          df -h /
+          dirs=(/usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL)
+          free_gb="$(df --output=avail -BG / | tail -n 1 | tr -dc 0-9)"
+          if (( free_gb >= 40 )); then
+            echo "$free_gb GB free: the unused toolchains go in the background"
+            nohup bash -c 'sudo rm -rf "$@"; echo "$?" > "$RUNNER_TEMP/free-disk.rc"' free-disk "${dirs[@]}" \
+              > "$RUNNER_TEMP/free-disk.log" 2>&1 &
+            echo "$!" > "$RUNNER_TEMP/free-disk.pid"
+          else
+            echo "$free_gb GB free: the unused toolchains go first"
+            sudo rm -rf "${dirs[@]}"
+            echo 0 > "$RUNNER_TEMP/free-disk.rc"
+            df -h /
+          fi
       - name: Check out with plain git
         if: steps.part.outputs.run == 'true'
         env:
@@ -336,15 +362,6 @@ jobs:
           rustup toolchain install --no-self-update || rustup show
           rustc --version
           cargo --version
-      # The runner image ships toolchains this job never uses. Removing them
-      # leaves room for the test binaries.
-      - name: Free disk space
-        if: steps.part.outputs.run == 'true'
-        run: |
-          set -euo pipefail
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
       - name: Install PostgreSQL 16 if absent
         if: steps.part.outputs.run == 'true'
         run: |
@@ -438,6 +455,20 @@ jobs:
             cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log" || true
           done
           cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "${gate[@]}" "$RUNNER_TEMP/cargo-test.log"
+      # The background removal of "Free disk space" must have finished and
+      # succeeded. It waits on the removal's own PID for at most 300 s. The
+      # disk use after the tests is the data for any later change here.
+      - name: Disk clean-up finished
+        if: always() && steps.part.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/free-disk.pid" ]; then
+            pid="$(cat "$RUNNER_TEMP/free-disk.pid")"
+            for _ in $(seq 1 300); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+            cat "$RUNNER_TEMP/free-disk.log"
+          fi
+          test "$(cat "$RUNNER_TEMP/free-disk.rc")" = 0
+          df -h /
       # I-80, Q27: the Linux-only process-memory scans ran in the isolation
       # run above, on the ext4 key volume. Their outcome is gated by
       # test-gate. This step fails when either did not run at all.
