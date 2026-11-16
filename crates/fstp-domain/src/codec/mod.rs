@@ -8,7 +8,10 @@
 //!
 //! - Every object is decoded against its schema. An unknown member or a
 //!   missing member is refused. An optional value is always present, as
-//!   `null` when absent.
+//!   `null` when absent. The one exception is a member added to a record
+//!   after its form was published, such as the `text` of a plan version
+//!   (Daniel, 2026-11-16). It is absent when it holds no value and never
+//!   `null`, so records stored before it decode unchanged.
 //! - Ids, `Seq`, vault epochs, timestamps and ratio terms are canonical
 //!   decimal strings, because RFC 8785 numbers are exact only up to 2^53.
 //!   A leading zero, a sign on an unsigned value, `-0`, space, a fraction

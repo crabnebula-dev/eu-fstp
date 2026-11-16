@@ -787,9 +787,12 @@ pub struct PlanView {
     pub tasks: Vec<Vec<PlanMilestoneView>>,
     /// The total the cell summed, when the sum fits (ADR-006).
     pub total: Option<String>,
-    /// The work plan text, when the cell holds the text recorded with
-    /// this plan. Never an empty text in place of it.
+    /// The work plan text the plan names, while it is stored (ADR-007).
+    /// Never an empty text in place of it.
     pub text: Option<String>,
+    /// The UTC day the erasure of the work plan text was requested, once
+    /// the erasure log names it (ADR-007). Then `text` is `None`.
+    pub text_erased: Option<String>,
 }
 
 impl ToJson for PlanView {
@@ -824,6 +827,9 @@ impl ToJson for PlanView {
         }
         if let Some(t) = &self.text {
             members.push(("text", Value::from(t.as_str())));
+        }
+        if let Some(d) = &self.text_erased {
+            members.push(("text_erased", Value::from(d.as_str())));
         }
         object(members)
     }

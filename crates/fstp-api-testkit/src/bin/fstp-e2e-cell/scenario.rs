@@ -335,6 +335,14 @@ fn narrative(s: &Seeded) -> String {
     format!("{}\n\n{body}{canary}", s.summary)
 }
 
+/// The work plan text of `s` (R-SB-01), stored beside its plan.
+fn work_plan(s: &Seeded) -> String {
+    format!(
+        "Synthetic work plan for \"{}\": one task with one milestone, from design to a tested release.",
+        s.title
+    )
+}
+
 /// A domain text reference to `text` stored under `id`.
 fn text_ref(id: u128, text: &str) -> TextRef {
     TextRef::new(
@@ -778,6 +786,9 @@ async fn draft(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
             deliverables: Vec::new(),
         };
         let content = narrative(s);
+        // Daniel, 2026-11-16: the plan names its stored work plan text, so
+        // the team reads it back on the proposal page (R-SB-01, ADR-007).
+        let text = seed.private_text(s.proposal, &work_plan(s)).await?;
         seed.by(
             s.lead,
             Core::RecordPlanVersion {
@@ -788,7 +799,8 @@ async fn draft(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
                 tasks: vec![Task {
                     milestones: vec![milestone],
                 }],
-                content: ContentDigest::from_bytes(fstp_crypto::sha256(content.as_bytes())),
+                content: text.digest(),
+                text: Some(text),
             },
         )?;
         let id = s.proposal.raw().to_string();
@@ -1944,6 +1956,39 @@ mod tests {
             command: 1_000,
             cookies: BTreeMap::new(),
         }
+    }
+
+    /// R-SB-01, ADR-007 (Daniel, 2026-11-16: the plan text reads back in
+    /// seeded scenes): the STAGE1 seed records its plan through the
+    /// ledger with its stored work plan text named, so the lead's plan
+    /// read gives that text.
+    #[test]
+    fn r_sb_01_seeded_plan_reads_with_its_text() {
+        let (inner, v) = block_on(build_applicant(&info(), At::Stage1)).unwrap();
+        let p = seeded_proposal(&v);
+        let lead = lead_of(&inner, p);
+        let s = PROPOSALS
+            .iter()
+            .find(|s| s.proposal == p)
+            .unwrap_or_else(|| panic!("no seed of {p:?}"));
+        let mut seed = seeder(&inner);
+        let reply = block_on(seed.api(
+            lead,
+            ApiMethod::Get,
+            &format!("/proposals/{}/plan", p.raw()),
+            &Value::Null,
+        ))
+        .unwrap_or_else(|e| panic!("the plan read: {e}"));
+        let plan = reply
+            .get("plan")
+            .unwrap_or_else(|| panic!("no plan: {}", reply.to_compact()));
+        assert_eq!(
+            plan.get("text").and_then(Value::as_str),
+            Some(work_plan(s).as_str()),
+            "{}",
+            reply.to_compact()
+        );
+        assert!(plan.get("text_erased").is_none());
     }
 
     /// R-EV-05, NOTE 1 (design section 2.2 J4): in stage 2 the lead

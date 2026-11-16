@@ -784,14 +784,20 @@ export interface PlanRead {
   readonly tasks: readonly (readonly PlanMilestone[])[];
   /** The total the cell summed, or `undefined` when it sent none. */
   readonly total: string | undefined;
-  /** The work plan text, or `undefined` when the cell does not hold it. */
+  /** The work plan text the plan names, or `undefined` when it names none or the text was erased. */
   readonly text: string | undefined;
+  /**
+   * The day the erasure of the work plan text was requested, once it was
+   * erased (ADR-007), else `undefined`. Never set beside `text`.
+   */
+  readonly textErased: Day | undefined;
 }
 
 /**
  * `proposal.get_plan`: `{plan: null}` before the first plan, else `{plan:
  * {plan, origin, tasks: [{milestones: [{amount, start, due}]}], total?,
- * text?}}`. The outer value is `null` for no plan yet, so a decoded
+ * text?, text_erased?}}`. A body with both `text` and `text_erased` is
+ * refused. The outer value is `null` for no plan yet, so a decoded
  * `null` means a refused body: the result wraps it.
  */
 export function decodePlan(v: unknown): { readonly plan: PlanRead | null } | null {
@@ -811,6 +817,8 @@ export function decodePlan(v: unknown): { readonly plan: PlanRead | null } | nul
   const origin = text(p, "origin");
   const total = optAmount(p, "total");
   const t = member(p, "text");
+  const erasedRaw = member(p, "text_erased");
+  const erased = erasedRaw === undefined ? undefined : dayOf(erasedRaw);
   const tasks = list(member(p, "tasks"), (x) => {
     const task = rec(x);
     return task === null
@@ -827,11 +835,26 @@ export function decodePlan(v: unknown): { readonly plan: PlanRead | null } | nul
         });
   });
   const known = PLAN_ORIGINS.find((x) => x === origin);
-  if (plan === null || known === undefined || tasks === null || total === null || (t !== undefined && typeof t !== "string")) {
+  if (
+    plan === null ||
+    known === undefined ||
+    tasks === null ||
+    total === null ||
+    (t !== undefined && typeof t !== "string") ||
+    erased === null ||
+    (t !== undefined && erased !== undefined)
+  ) {
     return null;
   }
   return Object.freeze({
-    plan: Object.freeze({ plan, origin: known, tasks, total, text: typeof t === "string" ? t : undefined }),
+    plan: Object.freeze({
+      plan,
+      origin: known,
+      tasks,
+      total,
+      text: typeof t === "string" ? t : undefined,
+      textErased: erased,
+    }),
   });
 }
 

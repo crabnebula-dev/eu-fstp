@@ -4554,6 +4554,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           } }, optional: false },
           "total": { schema: { kind: "amount" }, optional: true },
           "text": { schema: { kind: "string" }, optional: true },
+          "text_erased": { schema: { kind: "string" }, optional: true },
         },
       } }, optional: false },
     },

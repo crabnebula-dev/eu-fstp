@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use fstp_json::{FromJson, FromJsonError, Object, ToJson, Value};
 use fstp_money::{Currency, NonNegAmount, Percent, Ratio};
 
-use super::wire::{Cx, Fields, Flat, R, Wire, flat_struct, tagged_enum};
+use super::wire::{Cx, Fields, Flat, R, Wire, flat_struct, flat_wire, put_added, tagged_enum};
 use crate::decision::{Basis, EffectiveScoreSet, Stage1Closed};
 use crate::grant::GrantDecided;
 use crate::id::VaultEpoch;
@@ -89,14 +89,48 @@ flat_struct!(ConflictDetected {
 });
 flat_struct!(AssignmentReleased { assignment, cause });
 flat_struct!(ContentRead { account, proposal });
-flat_struct!(PlanVersionRecorded {
-    plan,
-    proposal,
-    origin,
-    supersedes,
-    tasks,
-    content,
-});
+/// A plan version. Its `text` member was added after the record was
+/// first published (Daniel, 2026-11-16), so it is an added member of
+/// [`Flat::ADDED`]: a plan stored before it decodes with no text, and a
+/// plan with no text is written in that same form.
+impl Flat for PlanVersionRecorded {
+    const NAMES: &'static [&'static str] = &[
+        "plan",
+        "proposal",
+        "origin",
+        "supersedes",
+        "tasks",
+        "content",
+    ];
+    const ADDED: &'static [&'static str] = &["text"];
+
+    fn put_into(&self, o: &mut Object) {
+        let _ = o.insert("plan", self.plan.put());
+        let _ = o.insert("proposal", self.proposal.put());
+        let _ = o.insert("origin", self.origin.put());
+        let _ = o.insert("supersedes", self.supersedes.put());
+        let _ = o.insert("tasks", self.tasks.put());
+        let _ = o.insert("content", self.content.put());
+        put_added(o, "text", self.text.as_ref());
+    }
+
+    fn take_from(f: &Fields<'_>, cx: Cx) -> R<Self> {
+        Ok(PlanVersionRecorded {
+            plan: f.get("plan", cx)?,
+            proposal: f.get("proposal", cx)?,
+            origin: f.get("origin", cx)?,
+            supersedes: f.get("supersedes", cx)?,
+            tasks: f.get("tasks", cx)?,
+            content: f.get("content", cx)?,
+            text: f.added("text", cx)?,
+        })
+    }
+
+    fn flat_currency(&self) -> Option<Currency> {
+        self.tasks.currency()
+    }
+}
+flat_wire!(PlanVersionRecorded);
 flat_struct!(ScoreRecorded {
     key,
     values,

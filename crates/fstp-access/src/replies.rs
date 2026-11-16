@@ -144,6 +144,9 @@ const PLAN_VIEW: Shape = Shape::Object(&[
     ),
     opt("total", Shape::Amount),
     opt("text", Shape::String),
+    // ADR-007 (Daniel, 2026-11-16): the day the erasure of the work plan
+    // text was requested, in place of the text once it is erased.
+    opt("text_erased", Shape::String),
 ]);
 
 /// The finding kinds, as the pre-check reply spells them.
@@ -1225,7 +1228,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
     // R-SB-01, ADR-006 (lane m4/author-reads): the head of the plan chain
     // the team recorded, or `null` before the first plan. Each milestone
     // has its amount and its start and due days. The total is the cell's
-    // sum. The work plan text is left out when the cell does not hold it.
+    // sum. The work plan text is left out when the plan names none, and
+    // `text_erased` takes its place once it is erased (ADR-007).
     (
         "proposal.get_plan",
         Shape::Object(&[m("plan", Shape::Nullable(&PLAN_VIEW))]),

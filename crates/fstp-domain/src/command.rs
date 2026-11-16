@@ -316,6 +316,9 @@ pub enum Command {
         tasks: Vec<Task>,
         /// Digest of the plan text held outside the domain.
         content: ContentDigest,
+        /// The stored work plan text whose digest is `content` (ADR-007),
+        /// or `None` when none was stored.
+        text: Option<TextRef>,
     },
     /// Submit a draft (DRAFT to SUBMITTED).
     Submit {

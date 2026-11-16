@@ -495,6 +495,7 @@ impl Script {
                 milestones: vec![milestone],
             }],
             content: digest,
+            text: None,
         }))?;
         Ok(())
     }

@@ -66,6 +66,13 @@ pub(crate) trait Flat: Sized {
     /// The member names, one per field.
     const NAMES: &'static [&'static str];
 
+    /// The members added after the struct's form was first published
+    /// (design section 5.1, ADR-007). Each holds an optional value. It is
+    /// absent when the value is absent, so a record stored before the
+    /// member existed decodes unchanged, and it is never `null`, so each
+    /// value keeps one spelling. Read them with [`Fields::added`].
+    const ADDED: &'static [&'static str] = &[];
+
     /// Adds one member per field to `o`.
     fn put_into(&self, o: &mut Object);
 
@@ -92,6 +99,27 @@ impl<'a> Fields<'a> {
         let v = self.value(k)?;
         T::take(v, cx).map_err(|e| e.at_field(k))
     }
+
+    /// The added member `k` of [`Flat::ADDED`], decoded: `None` when it
+    /// is absent. A `null` member is refused, as absence is the only
+    /// spelling of no value.
+    pub(crate) fn added<T: Wire>(&self, k: &'static str, cx: Cx) -> R<Option<T>> {
+        match self.0.get(k) {
+            None => Ok(None),
+            Some(Value::Null) => {
+                Err(FromJsonError::invalid("an added member is absent, never null").at_field(k))
+            }
+            Some(v) => T::take(v, cx).map(Some).map_err(|e| e.at_field(k)),
+        }
+    }
+}
+
+/// Adds the added member `k` to `o` when `x` holds a value (see
+/// [`Flat::ADDED`]).
+pub(crate) fn put_added<T: Wire>(o: &mut Object, k: &'static str, x: Option<&T>) {
+    if let Some(x) = x {
+        let _ = o.insert(k, x.put());
+    }
 }
 
 fn missing(k: &'static str) -> FromJsonError {
@@ -107,8 +135,18 @@ pub(crate) fn object(v: &Value) -> R<&Object> {
 /// The object inside `v`, whose member names are exactly the names in
 /// `groups`. An unknown member is refused without its name (R-NF-02).
 pub(crate) fn fields<'a>(v: &'a Value, groups: &[&[&'static str]]) -> R<Fields<'a>> {
+    fields_with(v, groups, &[])
+}
+
+/// [`fields`], where the members named in `added` may also be present
+/// (see [`Flat::ADDED`]). They are not required.
+pub(crate) fn fields_with<'a>(
+    v: &'a Value,
+    groups: &[&[&'static str]],
+    added: &[&'static str],
+) -> R<Fields<'a>> {
     let o = object(v)?;
-    let known = |k: &str| groups.iter().any(|g| g.contains(&k));
+    let known = |k: &str| groups.iter().any(|g| g.contains(&k)) || added.contains(&k);
     if o.keys().any(|k| !known(k)) {
         return Err(FromJsonError::new(FromJsonErrorKind::UnknownField));
     }
@@ -437,8 +475,11 @@ macro_rules! flat_wire {
                 v: &fstp_json::Value,
                 cx: $crate::codec::wire::Cx,
             ) -> $crate::codec::wire::R<Self> {
-                let f =
-                    $crate::codec::wire::fields(v, &[<$t as $crate::codec::wire::Flat>::NAMES])?;
+                let f = $crate::codec::wire::fields_with(
+                    v,
+                    &[<$t as $crate::codec::wire::Flat>::NAMES],
+                    <$t as $crate::codec::wire::Flat>::ADDED,
+                )?;
                 <$t as $crate::codec::wire::Flat>::take_from(&f, cx)
             }
 
@@ -615,13 +656,18 @@ macro_rules! tagged_enum {
                     return Ok($e::$tv(f.get(stringify!($tf), cx)?));
                 } )*
                 $( if tag == stringify!($nv) {
-                    let f = fields(v, &[&[TAG], <$nt as $crate::codec::wire::Flat>::NAMES])?;
+                    let f = $crate::codec::wire::fields_with(
+                        v,
+                        &[&[TAG], <$nt as $crate::codec::wire::Flat>::NAMES],
+                        <$nt as $crate::codec::wire::Flat>::ADDED,
+                    )?;
                     return Ok($e::$nv(<$nt as $crate::codec::wire::Flat>::take_from(&f, cx)?));
                 } )*
                 $( if tag == stringify!($nmv) {
-                    let f = fields(
+                    let f = $crate::codec::wire::fields_with(
                         v,
                         &[&[TAG, CURRENCY], <$nmt as $crate::codec::wire::Flat>::NAMES],
+                        <$nmt as $crate::codec::wire::Flat>::ADDED,
                     )?;
                     let c = f.get(CURRENCY, Cx::NONE)?;
                     let x = <$nmt as $crate::codec::wire::Flat>::take_from(&f, Cx::with(c))?;

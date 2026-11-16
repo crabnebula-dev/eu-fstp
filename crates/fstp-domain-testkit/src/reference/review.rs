@@ -1123,13 +1123,17 @@ pub fn verdict(
             origin,
             supersedes,
             tasks,
-            ..
+            content,
+            text,
         } => {
             let Some(life) = rev.proposals.get(proposal) else {
                 return refuse("unknown proposal");
             };
             if !active_lead(view, rev, actor, *proposal, now) {
                 return refuse("actor");
+            }
+            if text.is_some_and(|t| t.digest() != *content) {
+                return refuse("the plan names a text with another digest");
             }
             if rev.plans.contains_key(plan) {
                 return refuse("plan id reused");
@@ -1860,6 +1864,7 @@ pub fn expected(
             supersedes,
             tasks,
             content,
+            text,
         } => audit(vec![Record::PlanVersionRecorded(
             fstp_domain::record::PlanVersionRecorded {
                 plan: *plan,
@@ -1868,6 +1873,7 @@ pub fn expected(
                 supersedes: *supersedes,
                 tasks: tasks.clone(),
                 content: *content,
+                text: *text,
             },
         )]),
         Command::Submit {

@@ -172,6 +172,7 @@ fn review_cut_off_budget_differs_from_ranking_view() {
             supersedes: Some(plan_of(PR1)),
             tasks,
             content: fstp_domain::id::ContentDigest::from_bytes(digest),
+            text: None,
         },
     ))
     .unwrap_or_else(|e| panic!("the revision of 2000.00: {e}"));

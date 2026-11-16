@@ -1356,10 +1356,16 @@ fn plan_form(
                 return Err(bad());
             }
         }
+        // A tool stores no text through the codec form, so its plan names
+        // none (ADR-007). The form admits no `text` member to name one.
+        let _ = o.insert("text", Value::Null);
         return Ok(());
     };
     let digest = text.get("digest").cloned().ok_or_else(bad)?;
     let _ = o.insert("content", digest);
+    // Daniel, 2026-11-16: the plan names the stored text beside its
+    // digest, so the text reads back after a restart (ADR-007).
+    let _ = o.insert("text", Value::Object(text));
     // A plan of a proposal in STAGE2 is its stage 2 revision (R-EV-05).
     // Every other page plan is the plan of the submission, which the
     // domain admits in DRAFT only.

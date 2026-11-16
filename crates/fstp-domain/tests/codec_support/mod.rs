@@ -1755,6 +1755,7 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
             },
             tasks: tasks(g, d)?,
             content: digest(g),
+            text: opt_text(g, d),
         },
         CommandKind::Submit => Command::Submit {
             proposal: id(g, d, ProposalId::from_raw),
@@ -2122,6 +2123,7 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             },
             tasks: tasks(g, d)?,
             content: digest(g),
+            text: opt_text(g, d),
         }),
         RecordTag::Submitted => Record::Submitted {
             proposal: id(g, d, ProposalId::from_raw),

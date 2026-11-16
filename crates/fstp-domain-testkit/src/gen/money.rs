@@ -752,6 +752,7 @@ pub fn money_plan(
             supersedes,
             tasks: plan_tasks(milestones)?,
             content: ContentDigest::from_bytes(digest),
+            text: None,
         },
     ))
 }

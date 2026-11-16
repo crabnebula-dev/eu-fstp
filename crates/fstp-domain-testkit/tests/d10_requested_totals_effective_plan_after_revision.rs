@@ -76,6 +76,7 @@ fn d10_requested_totals_effective_plan_after_revision() {
                 ],
             }],
             content: ContentDigest::from_bytes([0x10; 32]),
+            text: None,
         },
     );
     s.run(&plan).unwrap_or_else(|e| panic!("{e}"));

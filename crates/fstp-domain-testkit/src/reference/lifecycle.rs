@@ -2569,6 +2569,7 @@ fn revision_plan(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
         supersedes,
         tasks,
         content,
+        text,
     } = ask.cmd
     else {
         return Err("not a plan".to_owned());
@@ -2576,6 +2577,9 @@ fn revision_plan(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
     let a = account(ask).ok_or("a plan comes from the lead")?;
     if !cx.lead(a, *proposal, ask.now) {
         return Err("a plan comes from the lead with an active Applicant binding".to_owned());
+    }
+    if text.is_some_and(|t| t.digest() != *content) {
+        return Err("the plan names a text with another digest".to_owned());
     }
     open_round(cx, *proposal, ask.now)?;
     let p = cx.life.proposals.get(proposal).ok_or("unknown proposal")?;
@@ -2614,6 +2618,7 @@ fn revision_plan(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
                 supersedes: *supersedes,
                 tasks: tasks.clone(),
                 content: *content,
+                text: *text,
             },
         ))],
         ..Expect::default()
