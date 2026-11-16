@@ -57,7 +57,10 @@ test.describe('J4 respond', () => {
       }
       expect(await item.innerText(), `question ${i} shows no time of day`).not.toMatch(/\b\d{1,2}:\d{2}\b/);
     }
-    const html = await page.content();
+    // The hidden list holds account ids as plain decimals, such as "212".
+    // The content hashes in asset names are hex and can hold the same
+    // digits by chance, so only those names are left out of the check.
+    const html = (await page.content()).replace(/\/app\/assets\/[0-9a-f]{64}\.[a-z0-9]+/g, '/app/assets/HASH');
     for (const h of stage2.hidden) {
       expect(html, 'no reviewer identity on the page').not.toContain(h);
     }
