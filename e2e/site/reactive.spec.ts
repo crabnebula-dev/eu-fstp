@@ -67,6 +67,10 @@ test.describe('R-NF-03 reactive pages', () => {
     await clickTo(page, page.locator(SITE.workLink('assignments')).first(), /^\/app\/me\/assignments$/, 'home to my assignments');
     const link = page.locator(`main a[href="/app/assignments/${a}"]`).first();
     const rowOf = () => page.locator('main tr, main li').filter({ has: page.locator(`a[href="/app/assignments/${a}"]`) }).first();
+    // The row's text is read once its link shows: a link the page gate
+    // still holds hidden is left out of `innerText`, so a later read would
+    // differ for that reason alone.
+    await expect(link).toBeVisible();
     const before = (await rowOf().innerText()).replace(/\s+/g, ' ').trim();
 
     await clickTo(page, link, new RegExp(`^/app/assignments/${a}$`), 'assignments to the assignment of x');
