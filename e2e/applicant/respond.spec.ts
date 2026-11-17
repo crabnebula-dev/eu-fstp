@@ -58,9 +58,14 @@ test.describe('J4 respond', () => {
       expect(await item.innerText(), `question ${i} shows no time of day`).not.toMatch(/\b\d{1,2}:\d{2}\b/);
     }
     // The hidden list holds account ids as plain decimals, such as "212".
-    // The content hashes in asset names are hex and can hold the same
-    // digits by chance, so only those names are left out of the check.
-    const html = (await page.content()).replace(/\/app\/assets\/[0-9a-f]{64}\.[a-z0-9]+/g, '/app/assets/HASH');
+    // The content hashes in asset names and the seeded reviewer handles
+    // are hex and can hold the same digits by chance (CI run 44073887881:
+    // handle R-6973c211 and account 211), so only those are left out.
+    const withoutHandles = (s: string): string =>
+      stage2.handles.reduce((acc, h) => acc.split(h).join('R-HANDLE'), s);
+    const html = withoutHandles(
+      (await page.content()).replace(/\/app\/assets\/[0-9a-f]{64}\.[a-z0-9]+/g, '/app/assets/HASH'),
+    );
     for (const h of stage2.hidden) {
       expect(html, 'no reviewer identity on the page').not.toContain(h);
     }
@@ -69,7 +74,7 @@ test.describe('J4 respond', () => {
     expect(reads.length, 'the page read the thread').toBeGreaterThan(0);
     for (const r of traffic.received) {
       for (const h of stage2.hidden) {
-        expect(r.body, `${r.path} carries no reviewer identity`).not.toContain(h);
+        expect(withoutHandles(r.body), `${r.path} carries no reviewer identity`).not.toContain(h);
       }
     }
   });
