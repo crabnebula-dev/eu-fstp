@@ -43,6 +43,9 @@ test.describe('J4 respond', () => {
     await page.goto(`${origin}${APP.stage2(proposal)}`);
 
     const items = page.locator(`${AUI.stage2.questions} > li`);
+    // One question per seeded handle. Waiting for the full count, not the
+    // first item, so the loop below never counts a list still being built.
+    await expect(items).toHaveCount(stage2.handles.length);
     await expect(items.first()).toBeVisible();
     const n = await items.count();
     for (let i = 0; i < n; i++) {

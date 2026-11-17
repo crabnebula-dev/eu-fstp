@@ -118,7 +118,7 @@ test.describe('R-NF-03 applicant pages', () => {
     expect(await visibleErrorTexts(d.page, AUI.submit.ethics), 'the ethics group names its error').not.toEqual([]);
 
     await summary.locator(`a[href="${AUI.submit.noticeRead}"]`).click();
-    expect(await d.page.evaluate(() => document.activeElement?.id)).toBe('submit-notice-read');
+    await expect(d.page.locator(AUI.submit.noticeRead)).toBeFocused();
     expect(traffic.to('POST', API.submission(d.proposal)), 'nothing was sent').toEqual([]);
   });
 
