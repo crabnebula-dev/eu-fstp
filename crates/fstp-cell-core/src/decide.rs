@@ -49,6 +49,10 @@
 //!   the proposal was submitted to, and `SameIdentityAsAny` for the actor
 //!   and the lead. It issues the ticket only on a no to both (I-18, design
 //!   section 6.6 step 3).
+//! - A country write ticket (`IssueCountryTicket`) goes to the actor,
+//!   which must hold a current lead binding on a proposal in DRAFT, as
+//!   `fstp-api-core` admits `proposal.state_country` (R-NG-01, lane
+//!   m4/country). The ticket scope is the proposal's programme.
 //! - A release ticket goes to a tenant admin or an Operations holder of
 //!   the programme, for a proposal in NEGOTIATION, GRANTED,
 //!   IN_EXECUTION, COMPLETED or TERMINATED (I-17, design section 6.5).
@@ -104,6 +108,10 @@ pub(crate) enum Who {
 
 /// The write kind of a guardian consent (ADR-009 "Write kinds").
 pub const WRITE_KIND_GUARDIAN_CONSENT: u16 = 4;
+
+/// The write kind of a stated P-17 country (ADR-009 "Write kinds",
+/// overview NOTE 6).
+pub const WRITE_KIND_COUNTRY_STATED: u16 = 1;
 
 /// The erasure causes of design section 5.6, as closed codes: retention
 /// expiry (P-41), an erasure request, a cell erasure, and a completed
@@ -1812,6 +1820,62 @@ fn counts_at(b: &fstp_domain::roles::Binding, now: Timestamp) -> bool {
     b.active_at(now) && b.scheduled_end.is_none_or(|e| now < e)
 }
 
+/// `proposal.state_country` on the cell (R-NG-01, overview NOTE 6, lane
+/// m4/country): a `country_stated` write ticket for the lead of a draft.
+///
+/// The rules are those of `fstp-api-core` for the operation. The actor
+/// must hold an Applicant (lead) binding on the proposal. An account with
+/// no such binding gets the actor refusal. A former lead, whose binding
+/// ended, and a proposal outside DRAFT get the input refusal. The record
+/// names the ticket id, the kind, the proposal and the lead, and never
+/// a country: the browser sends the country to the vault origin.
+fn country_ticket(
+    s: &CellState,
+    proposal: u128,
+    actor: AccountId,
+    now: Timestamp,
+    command: Option<[u8; 16]>,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    use fstp_domain::roles::BindingScope;
+    let p = ProposalId::from_raw(proposal);
+    let core = &s.engine().core;
+    s.proposal(p).ok_or_else(unknown)?;
+    let lead_of = |b: &fstp_domain::roles::Binding| {
+        b.account == actor
+            && b.role == Role::Applicant
+            && matches!(b.scope, BindingScope::Proposal { proposal: x, .. } if x == p)
+    };
+    let active = core
+        .roster()
+        .bindings()
+        .any(|(_, b)| lead_of(b) && counts_at(b, now));
+    if !active {
+        let former = core.roster().ended().any(|(_, e)| lead_of(&e.binding));
+        return Err(if former {
+            refuse(RuleRef::Input, RefusalReason::WrongState)
+        } else {
+            wrong_actor()
+        });
+    }
+    if fstp_domain::view::proposal_state(core, p) != Some(StateTag::Draft) {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    let kind = WRITE_KIND_COUNTRY_STATED;
+    let mut payload = Vec::with_capacity(18);
+    payload.extend_from_slice(&kind.to_be_bytes());
+    payload.extend_from_slice(&proposal.to_be_bytes());
+    let id = derive_id(b"write", command, actor, now.micros(), &payload);
+    if s.ticket_issued(id) {
+        return Err(reused());
+    }
+    Ok(vec![CellRecord::Release(ReleaseRecord::TicketIssued {
+        id,
+        kind,
+        proposal,
+        holder: actor,
+    })])
+}
+
 fn decide_release(
     s: &CellState,
     cmd: &ReleaseCommand,
@@ -1894,9 +1958,13 @@ fn decide_release(
             }
             // The other kinds of ADR-009 need a writer rule each, and the
             // command names no proposal or scope yet. Until then they are
-            // refused (fail closed), as is any code outside the list.
+            // refused (fail closed), as is any code outside the list. A
+            // country names its proposal: `IssueCountryTicket`.
             _ => Err(invalid()),
         },
+        ReleaseCommand::IssueCountryTicket { proposal } => {
+            country_ticket(s, *proposal, actor, now, command)
+        }
         // No relationship form is defined yet, so every relationship is
         // refused (fail closed).
         ReleaseCommand::RecordRelationship { .. } => Err(invalid()),

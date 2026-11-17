@@ -409,12 +409,15 @@ pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, Strin
                 receipt: id32(g),
             }
         }),
-        "release" => CellCommand::Release(match g.u8_in(0..=3) {
+        "release" => CellCommand::Release(match g.u8_in(0..=4) {
             0 => ReleaseCommand::IssueReleaseTicket {
                 proposal: u128::from(g.u64()),
             },
             1 => ReleaseCommand::IssueWriteTicket { kind: g.u16() },
             2 => ReleaseCommand::IssueDownloadTicket {
+                proposal: u128::from(g.u64()),
+            },
+            3 => ReleaseCommand::IssueCountryTicket {
                 proposal: u128::from(g.u64()),
             },
             _ => ReleaseCommand::RecordRelationship {
