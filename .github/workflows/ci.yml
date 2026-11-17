@@ -188,7 +188,7 @@ jobs:
               --test i19_boundary --test i20_tenants --test i24_audit_chain
               --test i27_canary --test i33_bank_reference --test i39_*
               --test i75_hybrids --test i80_custody --test i81_shred
-              --test i82_role_plan --test i83_placement
+              --test i82_role_plan --test i83_placement --test i86_declared_country
               --test i90_claim_mldsa_differential --test i90_every_verifier
               --test int3_route_admissions --test m3_cell_vault_tickets
               --test m6egr_mail_relay --test pg_crash --test r_cr_*

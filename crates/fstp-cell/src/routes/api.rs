@@ -351,7 +351,11 @@ fn canonical_u128(s: &str) -> Option<u128> {
 
 /// The command of a vault ticket request: `{command_id, kind, proposal?,
 /// stepup?}`. `kind` is `release` or `download`, which need `proposal`,
-/// or `write:<kind label>` of ADR-009, which takes none. A `download` is
+/// or `write:<kind label>` of ADR-009, which takes none. The one write
+/// that names a proposal is `write:country_stated`: the lead states the
+/// P-17 country of a draft (`proposal.state_country`, R-NG-01). The
+/// ticket opens the vault origin's write page, and the browser sends the
+/// country there, so the cell never receives it. A `download` is
 /// `IssueDownloadTicket`, the high-risk action `IdentityDownload`
 /// (ADR-008, design section 8.7), so the gate asks for its step-up.
 /// A decoded vault ticket request.
@@ -387,6 +391,9 @@ fn decode_ticket(bytes: &[u8]) -> Result<TicketRequest, BodyRefusal> {
                 .ok_or(BodyRefusal::Member("kind"))?;
             ReleaseCommand::IssueWriteTicket { kind: w.code() }
         }
+        // `proposal.state_country` (R-NG-01, overview NOTE 6, lane
+        // m4/country): the lead's country write names its draft.
+        ("write:country_stated", Some(proposal)) => ReleaseCommand::IssueCountryTicket { proposal },
         (_, Some(_)) => return Err(BodyRefusal::Member("proposal")),
     };
     Ok(TicketRequest {

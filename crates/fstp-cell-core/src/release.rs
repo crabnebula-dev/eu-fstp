@@ -25,6 +25,15 @@ pub enum ReleaseCommand {
         /// The write kind.
         kind: u16,
     },
+    /// Issue a `country_stated` write ticket to the lead of a draft, for
+    /// that proposal's programme (`proposal.state_country`, R-NG-01,
+    /// overview NOTE 6, lane m4/country). The browser then sends the
+    /// country to the vault origin under it, so the cell never receives
+    /// the country (design section 6.5 "Write tickets").
+    IssueCountryTicket {
+        /// The proposal the lead states the country for.
+        proposal: u128,
+    },
     /// Record a relationship (system).
     RecordRelationship {
         /// The relationship, canonical.

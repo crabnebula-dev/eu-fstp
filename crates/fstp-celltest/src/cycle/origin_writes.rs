@@ -47,6 +47,11 @@ use crate::world::HttpRequest;
 /// The prefix of a vault origin write step.
 pub const PREFIX: &str = "vault-origin:write:";
 
+/// The prefix of the step `state-country:<text>`: the lead of the current
+/// draft states the P-17 country through the cell's own country write
+/// ticket (lane m4/country).
+pub const STATE_COUNTRY_PREFIX: &str = "state-country:";
+
 /// The step names a write kind the cycle cannot write on the vault origin
 /// yet.
 pub const ORIGIN_KIND_SEAM: &str = "fstp_celltest::cycle vault-origin:write: the step writes only country_stated on the vault origin yet; a name, email, phone or document canary is a value of the next applicant, and the other ADR-009 write kinds need a writer rule per kind in the cell (fstp_cell_core decide_release refuses every write ticket kind but guardian_consent)";
@@ -184,6 +189,56 @@ impl Cycle<'_> {
         self.post_write(step, &claims, &fact)
     }
 
+    /// `state-country:<text>`: the lead of the current draft states the
+    /// P-17 country as the cell serves `proposal.state_country` (R-NG-01,
+    /// overview NOTE 6, lane m4/country). The lead's session asks
+    /// `POST /api/v1/vault-tickets` for a `write:country_stated` ticket
+    /// that names the draft. The cell decides and signs it. The fact then
+    /// goes to the vault origin under that ticket, so the cell never sees
+    /// the country. The code is [`country_code`] of `text`.
+    pub(super) fn state_country(&mut self, step: &str) -> Result<(), NotImplemented> {
+        let text = step
+            .strip_prefix(STATE_COUNTRY_PREFIX)
+            .filter(|t| !t.is_empty())
+            .ok_or(NotImplemented::new(UNKNOWN_STEP_SEAM))?;
+        let run = self.run_of()?;
+        let (lead, cookie, proposal) = (run.lead, run.cookie.clone(), run.proposal);
+        let lead = self.account(step, lead)?;
+        let state = self.state()?;
+        let programme = state
+            .proposal(proposal)
+            .and_then(|(call, _)| fstp_domain::programme::call(&state.engine().core, call))
+            .map(|c| c.programme())
+            .ok_or_else(|| Self::refused(step, "the draft's programme", None))?;
+        let command_id = fstp_crypto::random_array::<16>()
+            .map_err(|_| Self::refused(step, "the command id", None))?;
+        let body = format!(
+            "{{\"command_id\":\"{}\",\"kind\":\"write:country_stated\",\"proposal\":\"{}\"}}",
+            crate::canary::lower_hex(&command_id),
+            proposal.raw()
+        );
+        let reply = self.client.call(
+            "POST",
+            "/api/v1/vault-tickets",
+            Some(&cookie),
+            body.as_bytes(),
+        )?;
+        if !reply.ok() {
+            return Err(Self::refused(step, "the country ticket", Some(&reply)));
+        }
+        let ticket = fstp_json::parse(&reply.body)
+            .ok()
+            .and_then(|v| v.get("ticket").and_then(|t| t.as_str()).map(str::to_owned))
+            .and_then(|hex| fstp_cell::http::body::hex_vec(&hex, fstp_vault_proto::MAX_TICKET_LEN))
+            .ok_or_else(|| Self::refused(step, "the country ticket", Some(&reply)))?;
+        let fact = Fact::CountryStated {
+            account: WireAccount(lead.raw()),
+            programme: WireProgramme(programme.raw()),
+            country: country_code(text),
+        };
+        self.post_signed(step, ticket, &fact)
+    }
+
     /// Posts the write of `fact` under a ticket of `claims` to the vault
     /// origin, as the vault origin's page does.
     fn post_write(
@@ -196,6 +251,13 @@ impl Cycle<'_> {
         let ticket = cell
             .sign_ticket(claims)
             .map_err(|_| Self::refused(step, "the write ticket", None))?;
+        self.post_signed(step, ticket, fact)
+    }
+
+    /// Posts the write of `fact` under the signed ticket `ticket` to the
+    /// vault origin, as the vault origin's page does.
+    fn post_signed(&self, step: &str, ticket: Vec<u8>, fact: &Fact) -> Result<(), NotImplemented> {
+        let cell = self.client.cell();
         let body = fact
             .body_value()
             .and_then(|v| fstp_vault_proto::json::to_canonical(&v))

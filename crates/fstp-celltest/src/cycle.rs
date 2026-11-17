@@ -74,6 +74,9 @@
 //!   a write on the vault origin under a write ticket, or a value of the
 //!   next applicant for a kind the M3 vault origin takes no write of
 //!   ([`origin_writes`], lane m3/cycle-steps).
+//! - `state-country:<text>`: the lead of the current draft asks the cell
+//!   for its country write ticket and writes the country on the vault
+//!   origin under it (`proposal.state_country`, R-NG-01, lane m4/country).
 //!
 //! Lane F-CYCLE3: the cell clock moves to the call's opening and past its
 //! deadline, and every session is renewed by passkey after a move
@@ -163,7 +166,7 @@ pub const SIGNUP_SEAM: &str = "fstp_celltest::cycle signup: POST /auth/signup fa
 /// issues (lane m3/cell-routes), but `decide` has a writer rule for the
 /// guardian consent write only, so a verification or a country write is
 /// refused before any ticket exists.
-pub const VERIFY_IDENTITY_SEAM: &str = "fstp_celltest::cycle verify-identity: POST /api/v1/verifications is refused, since fstp_cell_core::decide has no writer rule for VerificationRecorded or CountryStated tickets yet (design section 6.5)";
+pub const VERIFY_IDENTITY_SEAM: &str = "fstp_celltest::cycle verify-identity: POST /api/v1/verifications is refused, since fstp_cell_core::decide has no writer rule for VerificationRecorded tickets yet, and a CountryStated ticket goes only to the lead of a draft through the state-country step (design section 6.5)";
 
 /// The former seam of `submit-proposal` and the evaluation steps, closed
 /// by lane F-CYCLE3.
@@ -187,7 +190,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, judging:read-every-route, drafting:read-every-route, vault-origin:write:<canary> and vault-origin:write:<kind>:<text>, the value steps <kind>:<text> and authenticator:<hex>, and the self-hosted steps seed:<kind>:<text>, restart, licence-refresh, licence-refresh:<outcome>, update-check, services-down:<fault>, services-up, submit, stage1, stage2, irc-review, request-payment, release-payment, notify, export, catalogue-to-granted, payment-commands, enqueue-outbox and export-entry-point); the cell erasure step of other tests is not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, judging:read-every-route, drafting:read-every-route, vault-origin:write:<canary> and vault-origin:write:<kind>:<text>, state-country:<text>, the value steps <kind>:<text> and authenticator:<hex>, and the self-hosted steps seed:<kind>:<text>, restart, licence-refresh, licence-refresh:<outcome>, update-check, services-down:<fault>, services-up, submit, stage1, stage2, irc-review, request-payment, release-payment, notify, export, catalogue-to-granted, payment-commands, enqueue-outbox and export-entry-point); the cell erasure step of other tests is not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -666,6 +669,8 @@ impl<'w> Cycle<'w> {
                 self.read_every_route(step, fstp_domain::roles::Group::Drafting)
             }
             s if s.starts_with(origin_writes::PREFIX) => self.vault_origin_write(s),
+            // Lane m4/country: `proposal.state_country` through the cell.
+            s if s.starts_with(origin_writes::STATE_COUNTRY_PREFIX) => self.state_country(s),
             // Lane m3/licence-update ([`self_hosted`]).
             s if self_hosted::is_step(s) => self.self_hosted_step(s),
             _ => Err(NotImplemented::new(UNKNOWN_STEP_SEAM)),

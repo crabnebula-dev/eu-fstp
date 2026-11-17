@@ -1498,6 +1498,16 @@ Built by lane m4/i86:
 - The teeth mutant is a hook of the test crate. It adds the caller's vault identity to the data of every completed read. No production code changed.
 - `i86_declared_country_never_reaches_app_tables` is open. No production adapter serves `proposal.state_country` over a PostgreSQL cell, and the cell's routes have no `/proposals/{proposal}/vault/country`. The fake-port test `r_ng_01_stated_country_reaches_only_the_vault` (`i86_r_ng_01_vault_only_statements.rs`) drives the operation instead.
 
+Built by lane m4/country (2026-11-17):
+
+- The production cell serves `proposal.state_country` as a country write ticket, not as `PUT /proposals/{x}/vault/country`. `overview.md` "The vault origin" and M3 design section 6.5 "Write tickets" say the browser sends the P-17 country to the vault origin, so the application never receives it. A cell route that took the country in its body would break that.
+- The lead's session asks `POST /api/v1/vault-tickets` with `{command_id, kind: "write:country_stated", proposal}`. No route was added, so `routes::table()` stays exactly M3 section 8.7.
+- The cell command `ReleaseCommand::IssueCountryTicket { proposal }` (`fstp-cell-core`) applies the rules of `fstp-api-core`: an actor refusal for anyone without a current lead binding on the proposal, and an input refusal for a former lead or a proposal outside DRAFT. No step-up, as in the registry.
+- The cell records `TicketIssued { id, kind 1, proposal, holder }` and signs a ticket scoped to the proposal's programme. It holds no country. The vault origin stores the fact `CountryStated` sealed, as for every write. `fstp-vault-proto` is unchanged.
+- The cycle step `state-country:<text>` (`crates/fstp-celltest/src/cycle/origin_writes.rs`) drives the route and the origin write. The code is the 1 to 999 code drawn from the text.
+- `i86_declared_country_never_reaches_app_tables` is in `crates/fstp-celltest/tests/i86_declared_country.rs`, in the `celltest` CI part. It scans every relation file and the logical dump of the application and control-plane databases for the canonical write body, its `"country":<code>,` member and the canary text. Non-vacuity: the issue record, the vault's newest facts and one sealed kind 1 row in `vault.fact`. The same file holds the rule test `r_ng_01_country_ticket_only_for_the_lead_of_a_draft`, its teeth and the scan teeth.
+- Open, for Daniel: the vault grammar holds a 1 to 999 code, while `fstp-api-core` takes an alpha-2 code. The registry route of the operation still names a body the production cell does not take.
+
 **I-87**
 
 | Test | Kind |
@@ -1827,7 +1837,7 @@ Every test below is green in CI, each model run is exhaustive, and each teeth te
 | I-67 | `i67_approver_is_never_a_builder`, `i67_core_guard_refuses_builder_even_if_creator_does_not`, `i67_sybil_builder_and_approver_refused`, `i67_unverified_builder_or_approver_refused`, `i67_preview_vault_answers_are_recorded` | `i67_m_activate` | `i67_teeth_builder_approval_is_caught` | Q1, Q2, Q31 |
 | I-84 | `i84_t_authz_matrix_mcp_equals_channel_policy_of_web`, `i84_every_tool_has_a_web_route`, `i84_adapters_cannot_name_engine_types`, `i84_principal_has_no_public_fields`, `i84_one_tool_table`, `i84_applicant_reads_own_proposal_through_mcp_with_p75_off`, `i84_audit_entries_match_modulo_channel_and_client`, `i84_mcp_audit_records_refusals_too`, `i84_roles_reevaluated_per_call` | `i84_m_parity` | `i84_teeth_mcp_only_shortcut_is_caught` | Q8, Q42 |
 | I-85 | `i85_every_high_risk_op_prepares_through_mcp`, `i85_every_high_risk_tool_is_prepare_only`, `i85_prepared_publication_completes_only_after_web_confirmation`, `i85_p77_draft_only_binding_ops_prepare`, `i85_domain_refuses_high_risk_via_mcp_when_dispatch_is_bypassed`, `i85_confirmation_needs_fresh_digest_bound_step_up`, `i85_confirmation_replays_stored_request`, `i85_concurrent_confirmations_execute_once` | `i85_m_prep` | `i85_teeth_confirm_without_digest_check_is_caught` | Q32, M3 step-up |
-| I-86 | `i86_mcp_cannot_reach_vault_types`, `i86_identity_types_are_not_mcp_safe`, `i86_canary_crawl_over_every_tool_role_and_state`, `i86_no_canary_in_logs_or_metrics`, `i86_declared_country_never_reaches_app_tables` (open, section 8.4) | none | `i86_teeth_identity_field_leak_is_caught` | Q14, Q15 |
+| I-86 | `i86_mcp_cannot_reach_vault_types`, `i86_identity_types_are_not_mcp_safe`, `i86_canary_crawl_over_every_tool_role_and_state`, `i86_no_canary_in_logs_or_metrics`, `i86_declared_country_never_reaches_app_tables` (PostgreSQL test built by lane m4/country, `crates/fstp-celltest/tests/i86_declared_country.rs`) | none | `i86_teeth_identity_field_leak_is_caught` | Q14, Q15 |
 | I-87 | `i87_public_tools_equal_public_view`, `i87_feed_equals_pages`, `i87_page_render_trace_equals_view_leaves`, `i87_every_view_leaf_reaches_its_page`, `i87_equal_views_give_equal_page_bytes`, `i87_authenticated_public_tools_equal_public_endpoint`, `i87_two_cells_never_cross` | `i87_m_public` | `i87_teeth_tool_reads_state_directly_is_caught`, `i87_teeth_filter_skipped_for_feed_is_caught` | Q27 |
 
 Every fuzz target of section 9, Rust and TypeScript, exists and runs in CI (Q33).
