@@ -103,7 +103,7 @@ test.describe('M7 AI assessment click-through', () => {
       await expect(latest, 'the run is listed').toBeVisible();
       await expect(latest).toHaveAttribute('data-state', 'done');
       const findings = latest.locator('li.precheck-finding');
-      expect(await findings.count(), 'the run has findings').toBeGreaterThan(0);
+      await expect(findings, 'the run has findings').not.toHaveCount(0);
       await expect(latest.locator('li.precheck-finding[data-kind="completeness"]').first()).toBeVisible();
       await expect(
         latest.locator('li.precheck-finding[data-kind="completeness"] .precheck-element[data-element="team_experience"]'),
@@ -148,7 +148,7 @@ test.describe('M7 AI assessment click-through', () => {
       await expect(panel.locator('.ai-disclosure')).toContainText('AI system');
       await expect(panel.locator('.ai-disclosure')).toContainText('Synthetic assessor (demo)');
       const items = panel.locator('li.finding');
-      expect(await items.count(), 'the assessor left findings').toBeGreaterThan(0);
+      await expect(items, 'the assessor left findings').not.toHaveCount(0);
       const first = items.first();
       const id = await first.getAttribute('data-finding');
       await first.getByRole('button', { name: /^Agree with finding 1$/ }).click();
