@@ -17,6 +17,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { DemoPage, HOME, NAV_UI, enrolFromLink, expectHome, newPerson, personOf, settle } from '../navigation/support';
+import { apiReads, gateSettled } from './support';
 
 
 /** Clicks the home link of `kind`, waits for the page's reads, and returns the API reads that failed. */
@@ -27,11 +28,16 @@ async function openFromHome(page: Page, kind: string): Promise<string[]> {
     if (u.pathname.startsWith('/api/') && r.status() >= 400) failed.push(`${r.status()} ${u.pathname}`);
   };
   page.on('response', onResponse);
-  await page.locator(NAV_UI.workLink(kind as never)).first().click();
-  await page.waitForURL((u) => u.pathname !== HOME);
-  await settle(page);
-  await page.waitForLoadState('networkidle');
-  page.off('response', onResponse);
+  const reads = apiReads(page);
+  try {
+    await page.locator(NAV_UI.workLink(kind as never)).first().click();
+    await page.waitForURL((u) => u.pathname !== HOME);
+    await settle(page);
+    await reads.idle();
+  } finally {
+    reads.stop();
+    page.off('response', onResponse);
+  }
   return failed;
 }
 
@@ -81,6 +87,9 @@ for (const { kind, named, required } of PAGES) {
       const m1 = personOf(await demo.people(), 'm1', 'review_stage1');
       await enrolFromLink(p, m1.link);
       await expectHome(p, 'M1 in review stage1 (J1)');
+      // A link the gate has not answered for is in the page but may still
+      // go, so the count waits for every answer.
+      await gateSettled(p.page);
       const linked = (await p.page.locator(NAV_UI.workLink(kind as never)).count()) > 0;
       if (required) {
         expect(linked, `M1's home page links the ${kind} page`).toBe(true);

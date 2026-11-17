@@ -84,6 +84,8 @@ test.describe('I-67 second approver', () => {
     const origin = t.cell.origin;
     const a1 = t.a1.page;
     await a1.goto(`${origin}${APP.approvals}`);
+    // The inbox renders after its read: the absent approval is checked then.
+    await expect(a1.locator('main[data-ready="true"]')).toBeVisible();
     await expect(a1.locator(`${APPROVAL_UI.item(p)} [data-action="approve"]`)).toHaveCount(0);
 
     const draft = await readDraft(a1, origin, p);
@@ -147,6 +149,9 @@ test.describe('I-67 second approver', () => {
 
     const a2 = t.a2.page;
     await a2.goto(`${origin}${APP.approvals}`);
+    // The inbox renders after its read. Counting before that would skip
+    // the refused approval below without trying it.
+    await expect(a2.locator('main[data-ready="true"]')).toBeVisible();
     const approve = a2.locator(`${APPROVAL_UI.item(p)} [data-action="approve"]`);
     if ((await approve.count()) > 0) {
       await refusedApproval(a2, origin, p);

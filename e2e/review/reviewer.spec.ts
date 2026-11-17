@@ -83,7 +83,10 @@ test.describe('J6 assigned reviewers', () => {
     await expect(r2.locator(REVIEW_UI.status)).toBeVisible();
 
     await r2.reload();
+    // The page reads before it renders. Until then nothing is on it, so
+    // the checks of what is absent wait for the read first.
     await expect(r2.locator('main')).toBeVisible();
+    await expect(r2.locator('main [aria-busy="true"]')).toHaveCount(0);
     await expect(r2.locator(REVIEW_UI.content)).toHaveCount(0);
     await expect(r2.locator(REVIEW_UI.score.form)).toHaveCount(0);
     await expect(r2.locator('body')).not.toContainText(s.content_canary);
@@ -154,6 +157,9 @@ test.describe('J6 assigned reviewers', () => {
 
     await openPage(r1, cell.origin, REVIEW_PAGES.assignment(a));
     await r1.locator(REVIEW_UI.score.correct).click();
+    // The click reads the sheet again and renders the correction form,
+    // with the reason field. Edits made before that render are dropped.
+    await expect(r1.locator(REVIEW_UI.score.reason)).toBeVisible();
     const field = r1.locator(REVIEW_UI.score.input(first.id));
     const before = await field.inputValue();
     const after = before === '0' ? '1' : '0';
@@ -229,6 +235,7 @@ test.describe('J6 assigned reviewers', () => {
     for (const page of [r1, r2]) {
       await page.reload();
       await expect(page.locator('main')).toBeVisible();
+      await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
       await expect(page.locator(REVIEW_UI.stage2.question)).toHaveCount(0);
       await expect(page.locator(REVIEW_UI.stage2.ask)).toHaveCount(0);
     }

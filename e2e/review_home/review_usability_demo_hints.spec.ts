@@ -22,6 +22,7 @@
 
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { DemoPage, HOME, NAV_UI, classify, enrolFromLink, expectHome, newPerson, personOf, settle } from '../navigation/support';
+import { apiReads, gateSettled } from './support';
 
 /** The hint line under the person with `key` on the demo page. */
 async function hintOf(demo: DemoPage, key: string): Promise<string> {
@@ -74,16 +75,23 @@ async function followHint(
     await p.page.locator(NAV_UI.workLink(kind)).first().click();
     await p.page.waitForURL((u) => u.pathname !== HOME);
     await settle(p.page);
+    // Only links the gate kept count as listed work.
+    await gateSettled(p.page);
     const hrefs = await p.page
       .locator('main a[href]')
       .evaluateAll((as) => as.map((a) => a.getAttribute('href') ?? ''));
     const first = hrefs.find((h) => item.test(h));
     expect(first, `${key}'s ${kind} page lists a piece of work, as the hint says`).toBeDefined();
     const list = new URL(p.page.url()).pathname;
-    await p.page.locator(`main a[href="${first ?? ''}"]`).first().click();
-    await p.page.waitForURL((u) => u.pathname !== list);
-    await settle(p.page);
-    await p.page.waitForLoadState('networkidle');
+    const reads = apiReads(p.page);
+    try {
+      await p.page.locator(`main a[href="${first ?? ''}"]`).first().click();
+      await p.page.waitForURL((u) => u.pathname !== list);
+      await settle(p.page);
+      await reads.idle();
+    } finally {
+      reads.stop();
+    }
     return { hint, opened: p.page.url(), refusals: await alerts(p.page) };
   } finally {
     await p.context.close();

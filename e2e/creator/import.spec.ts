@@ -75,6 +75,9 @@ async function upload(m1: Person, origin: string, p: string): Promise<void> {
 async function proposals(page: Page): Promise<Shown[]> {
   const items = page.locator(`${IMPORT_UI.proposals} ${IMPORT_UI.item}`);
   const out: Shown[] = [];
+  // The list renders after its read, as after the reload below. Counting
+  // before that would find no proposal and check nothing.
+  await expect(page.locator('main[data-ready="true"]')).toBeVisible();
   const n = await items.count();
   for (let i = 0; i < n; i++) {
     const item = items.nth(i);

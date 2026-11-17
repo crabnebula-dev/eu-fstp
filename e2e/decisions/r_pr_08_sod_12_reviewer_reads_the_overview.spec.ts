@@ -21,6 +21,10 @@ async function click(page: Page, selector: string, path: RegExp): Promise<void> 
   await link.click();
   await page.waitForURL((u) => path.test(u.pathname));
   await expect(page.locator('main h1').first()).toBeVisible();
+  // The heading shows while the page still reads. The checks that a link
+  // is absent wait for the read, and for the gate's answer on each link.
+  await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
+  await expect(page.locator('a[data-page-gate]')).toHaveCount(0);
 }
 
 test.describe('the assigned reviewer after NEGOTIATION', () => {

@@ -135,8 +135,10 @@ test.describe('J8 IRC', () => {
     await declareNone(i2, seeded, 'v', 'i2');
     await i2.locator(REVIEW_UI.irc.validate).check();
     // The last validation may be refused under I-18 or recorded without a
-    // transition. Either way v never enters NEGOTIATION.
-    await i2.locator(REVIEW_UI.irc.submit).click();
+    // transition. Either way v never enters NEGOTIATION. The reload waits
+    // for the cell's answer, so it cannot cancel the request unsent.
+    const last = await clickWrite(i2, REVIEW_UI.irc.submit, /\/review$/);
+    expect(last, 'the cell answers the last validation, refused or recorded').toBeLessThan(500);
     await i2.reload();
     await expectState(i2, 'IRC_REVIEW');
 
