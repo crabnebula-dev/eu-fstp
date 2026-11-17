@@ -1510,6 +1510,9 @@ pub struct Built {
     head: fstp_ledger::Seq,
     /// Whether a cell changed the world.
     dirty: bool,
+    /// The tables of the world right before a cell is sent, when a
+    /// probe asked for them (`t_authz_denial_has_no_effect`).
+    probe: Option<Option<Tables>>,
 }
 
 impl std::fmt::Debug for Built {
@@ -2728,6 +2731,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         ranked: reached.ranked,
         head,
         dirty: false,
+        probe: None,
     })
 }
 
@@ -4185,6 +4189,9 @@ fn run_on(w: &mut Built, cell: &Cell, transport: Transport) -> Result<Observed, 
             (Transport::Http, false) => http_call(w, &req, &cred),
         }
     };
+    if w.probe.is_some() {
+        w.probe = Some(Some(tables(w, cell)));
+    }
     let mut reply = send(w)?;
     if !mcp
         && cell.session.step_up != StepUp::Absent
@@ -4598,6 +4605,149 @@ impl Harness {
         McpChannel {
             runner: Runner::new(Transport::Mcp),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The effect of a denial (`t_authz_denial_has_no_effect`, design section 8.3)
+// ---------------------------------------------------------------------------
+
+/// The tables of a world that a denial must leave unchanged (M4 design
+/// section 8.3): the ledger head, the workspaces, the caller's pending
+/// actions and the token table.
+///
+/// The outbox of the fake cell keeps no table of its own. Its notices are
+/// a function of the ledger (`FakeOutbox`), so the ledger head covers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tables {
+    /// The ledger head.
+    pub ledger_head: String,
+    /// Every workspace slot.
+    pub workspaces: String,
+    /// The caller's `pending.list` answer, or its refusal. Anonymous
+    /// callers have none.
+    pub pending: Option<String>,
+    /// Every issued token, grant and revocation.
+    pub tokens: String,
+}
+
+impl Tables {
+    /// The names of the tables that differ from `other`.
+    pub fn changed(&self, other: &Tables) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.ledger_head != other.ledger_head {
+            out.push("ledger head");
+        }
+        if self.workspaces != other.workspaces {
+            out.push("workspaces");
+        }
+        if self.pending != other.pending {
+            out.push("pending actions");
+        }
+        if self.tokens != other.tokens {
+            out.push("tokens");
+        }
+        out
+    }
+}
+
+/// The tables of `w` as `cell`'s caller sees them. The pending actions
+/// are read through `pending.list` with a fresh passkey session of the
+/// caller, on the web channel, so the read itself is the harness's own.
+fn tables(w: &Built, cell: &Cell) -> Tables {
+    let pending = account_of(cell.who).map(|a| {
+        let login = w.ports.sessions.login(a, LoginMethod::Passkey);
+        let key = Cell {
+            op: "pending.list",
+            who: cell.who,
+            state: cell.state,
+            policy: cell.policy,
+            session: crate::reference::authz::Session {
+                login: Some(Login::Passkey),
+                step_up: StepUp::Absent,
+                channel: Via2::Web,
+            },
+        };
+        let r = request_of(&key, w, Some(login.session.raw())).and_then(|req| {
+            decode_web(req.method, &req.path, &req.body_bytes()).map_err(|e| format!("{e:?}"))
+        });
+        match r {
+            Ok(op) => format!(
+                "{:?}",
+                block_on(w.core.dispatch(
+                    Credential::SessionCookie(login.cookie.clone()),
+                    &RequestHead::new(),
+                    op
+                ))
+            ),
+            Err(e) => format!("pending.list did not decode: {e}"),
+        }
+    });
+    Tables {
+        ledger_head: format!("{:?}", w.ports.engine.head()),
+        workspaces: format!("{:?}", w.ports.workspaces),
+        pending,
+        tokens: format!("{:?}", w.ports.tokens),
+    }
+}
+
+/// A direct channel that also reports which tables a cell changed: the
+/// tables right before the cell is sent, against the tables after its
+/// reply (`t_authz_denial_has_no_effect`). Each cell runs on a clean
+/// world of the matrix harness, as the direct channel runs it.
+pub struct EffectProbe {
+    runner: Runner,
+}
+
+impl std::fmt::Debug for EffectProbe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EffectProbe")
+    }
+}
+
+impl EffectProbe {
+    /// A probe with its own world cache.
+    pub fn new() -> EffectProbe {
+        EffectProbe {
+            runner: Runner::new(Transport::Direct),
+        }
+    }
+
+    /// Runs `cell` through dispatch on a clean world, and gives its
+    /// outcome with the names of the tables it changed.
+    ///
+    /// # Errors
+    ///
+    /// A world that did not build, or a cell the harness could not send.
+    pub fn run(&mut self, cell: &Cell) -> Result<(Observed, Vec<&'static str>), ChannelFault> {
+        let key = WorldKey::of(cell);
+        let w = self
+            .runner
+            .world(key)
+            .map_err(|e| ChannelFault::Setup(format!("world {key:?}: {e}")))?;
+        w.probe = Some(None);
+        let result = run_on(w, cell, Transport::Direct);
+        let before = w.probe.take().flatten();
+        let after = tables(w, cell);
+        let changed = before.as_ref().map(|b| b.changed(&after));
+        // A cell that changed a table, completed or is pending leaves a
+        // world the next cell must not share.
+        if changed.as_ref().is_none_or(|c| !c.is_empty())
+            || w.ports.engine.head() != w.head
+            || !matches!(&result, Ok(o) if !matches!(o, Observed::Completed | Observed::Pending))
+        {
+            w.dirty = true;
+        }
+        let observed = result?;
+        let changed = changed
+            .ok_or_else(|| ChannelFault::Setup(format!("{}: the cell was never sent", cell.op)))?;
+        Ok((observed, changed))
+    }
+}
+
+impl Default for EffectProbe {
+    fn default() -> EffectProbe {
+        EffectProbe::new()
     }
 }
 

@@ -7,9 +7,10 @@
 //! equals the reference filter of `public-transparency.md`. Witnesses: a
 //! full-level finished grant, and an aggregate at exactly P-54.
 //!
-//! Status: `i87_m_public` is red. The W0 stub of
-//! `fstp_public::public_view_with` refuses with
-//! `PublicError::NotImplemented`. The reference twin is green.
+//! On production, two more properties hold in every state: the feed holds
+//! exactly the dynamic text of the public pages (`i87_feed_equals_pages`
+//! at state level), and the funded, finished and programme tools answer
+//! only their page data. `i87_teeth_m_public.rs` plants a fault in each.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

@@ -32,6 +32,9 @@
 //! P-50, P-51 and P-54 at two values each. PD keeps a full choice, so a
 //! proposal before GRANTED always has one. Every state checks the
 //! production view against the reference.
+//! It also checks the feed and the funded, finished and programme tools
+//! against the dynamic text the production pages write. A teeth test can
+//! plant a [`Fault`] in those surfaces through [`PublicModel::with_fault`].
 //!
 //! # The Guide world
 //!
@@ -40,7 +43,7 @@
 //! suites bind the published Guide over it. Every id and text is
 //! synthetic.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::State;
 use fstp_domain::id::{AccountId, CallId, PolicyVersionId, ProposalId, TextId};
@@ -682,10 +685,25 @@ pub enum PublicAction {
     },
 }
 
+/// A fault a teeth test plants in the public surfaces the model checks
+/// (I-87, M4 design section 8.4). It lives here, in the test kit, and
+/// never in production: the faulty surface is built in this file around
+/// the production view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// The feed is built from the grants the core state holds, read
+    /// around the filter of `public_view_with`.
+    FeedSkipsFilter,
+    /// The funded and finished tools read the core state directly,
+    /// around `public_view_with`.
+    ToolReadsState,
+}
+
 /// The M-PUBLIC model.
 #[derive(Debug)]
 pub struct PublicModel {
     backend: Backend,
+    fault: Option<Fault>,
     /// The facts per stage.
     facts: Vec<BTreeMap<ProposalId, Facts>>,
     /// The production core state per stage and parameter index, keyed by
@@ -731,6 +749,7 @@ impl PublicModel {
         }
         Ok(PublicModel {
             backend,
+            fault: None,
             facts,
             states,
             now,
@@ -808,6 +827,221 @@ impl PublicModel {
         }
         Ok(())
     }
+
+    /// The model with the teeth fault `fault` in its public surfaces.
+    pub fn with_fault(backend: Backend, fault: Fault) -> Result<PublicModel, NotImplemented> {
+        let mut m = PublicModel::new(backend)?;
+        m.fault = Some(fault);
+        Ok(m)
+    }
+
+    /// The production core state of `s`.
+    fn core_of(&self, s: &PublicState) -> Result<&State, String> {
+        self.states
+            .get(&(s.stage, s.params))
+            .ok_or_else(|| format!("no production state for {s:?}"))
+    }
+
+    /// The feed the cell answers in `s`, over the production `view`.
+    fn feed_answer(&self, s: &PublicState, view: &PublicView) -> Result<Value, String> {
+        let source = if self.fault == Some(Fault::FeedSkipsFilter) {
+            around_the_filter(self.core_of(s)?, view)
+        } else {
+            view.clone()
+        };
+        fstp_public::feed::feed(&source).map_err(|e| e.to_string())
+    }
+
+    /// The answer of the public tool for `part` in `s`, over `view`.
+    fn tool_answer(
+        &self,
+        s: &PublicState,
+        view: &PublicView,
+        part: fstp_public::PublicPart,
+    ) -> Result<Value, String> {
+        let source = if self.fault == Some(Fault::ToolReadsState) {
+            around_the_filter(self.core_of(s)?, view)
+        } else {
+            view.clone()
+        };
+        let q = fstp_public::PublicQuery { part, search: None };
+        fstp_public::tools::select(&source, &q).map_err(|e| e.to_string())
+    }
+
+    /// I-87 `i87_feed_equals_pages` on the state of `s`: with P-52 on,
+    /// the feed holds exactly the dynamic text the public pages of the
+    /// production view write. The pages come from the view alone, so a
+    /// feed that reads around the filter shows a leaf no page shows.
+    pub fn feed_equals_pages(&self, s: &PublicState) -> Result<(), String> {
+        if self.backend != Backend::Production {
+            return Ok(());
+        }
+        let view = self.view(s)?;
+        let mut pages = BTreeSet::new();
+        for page in traced_pages(&view) {
+            pages.extend(page_text(&view, &page)?);
+        }
+        let feed = json_leaves(&self.feed_answer(s, &view)?);
+        if feed == pages {
+            Ok(())
+        } else {
+            Err(format!(
+                "I-87: in the feed only {:?}; on the pages only {:?}",
+                feed.difference(&pages).collect::<Vec<_>>(),
+                pages.difference(&feed).collect::<Vec<_>>()
+            ))
+        }
+    }
+
+    /// I-87, design section 8.5 "each tool equals its page data", on the
+    /// state of `s`: the funded and finished tools answer exactly the
+    /// dynamic text of their page, besides the programme name every page
+    /// writes. The programme tool answers only text of the programme
+    /// page.
+    pub fn tools_equal_pages(&self, s: &PublicState) -> Result<(), String> {
+        use fstp_public::{PublicPage, PublicPart};
+        if self.backend != Backend::Production {
+            return Ok(());
+        }
+        let view = self.view(s)?;
+        for (part, page) in [
+            (PublicPart::Funded, PublicPage::Funded),
+            (PublicPart::Finished, PublicPage::Finished),
+        ] {
+            let mut tool = json_leaves(&self.tool_answer(s, &view, part.clone())?);
+            let _ = tool.insert(view.programme.name.clone());
+            let text = page_text(&view, &page)?;
+            if tool != text {
+                return Err(format!(
+                    "I-87: {part:?} tool only {:?}; {page:?} page only {:?}",
+                    tool.difference(&text).collect::<Vec<_>>(),
+                    text.difference(&tool).collect::<Vec<_>>()
+                ));
+            }
+        }
+        let tool = json_leaves(&self.tool_answer(s, &view, PublicPart::Programme)?);
+        let text = page_text(&view, &PublicPage::Programme)?;
+        let extra: Vec<&String> = tool.difference(&text).collect();
+        if extra.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "I-87: the programme tool answers {extra:?}, which its page lacks"
+            ))
+        }
+    }
+}
+
+/// The chrome of the model's pages: no stylesheet and no footer, so every
+/// dynamic text node comes from the view.
+fn model_chrome() -> fstp_public::Chrome {
+    fstp_public::Chrome {
+        stylesheet: None,
+        funder: None,
+    }
+}
+
+/// Every public page of `view` that has a trace.
+fn traced_pages(view: &PublicView) -> Vec<fstp_public::PublicPage> {
+    use fstp_public::PublicPage;
+    let mut out = vec![PublicPage::Programme];
+    out.extend(
+        view.open_calls
+            .iter()
+            .map(|c| PublicPage::Call(c.id.clone())),
+    );
+    out.push(PublicPage::Funded);
+    out.push(PublicPage::Finished);
+    out
+}
+
+/// The dynamic text nodes the production renderer writes for `page`.
+fn page_text(
+    view: &PublicView,
+    page: &fstp_public::PublicPage,
+) -> Result<BTreeSet<String>, String> {
+    use fstp_html::{TraceEvent, TracePlace};
+    let (_, trace) = fstp_public::render_traced(view, page, &model_chrome())
+        .map_err(|e| format!("{page:?}: {e}"))?;
+    Ok(trace
+        .into_iter()
+        .filter_map(|e| match e {
+            TraceEvent::Dynamic {
+                place: TracePlace::Text,
+                value,
+            } => Some(value),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The members of a feed or tool answer that are not text leaves, as the
+/// `fstp-public` page tests read them: enum tokens, the slug, flags and a
+/// Guide's own document.
+const NOT_LEAVES: [&str; 6] = ["level", "status", "slug", "feed", "version", "html"];
+
+/// Every string and number of `v`, numbers as their lexeme, outside the
+/// members [`NOT_LEAVES`] names.
+fn json_leaves(v: &Value) -> BTreeSet<String> {
+    fn collect(v: &Value, out: &mut BTreeSet<String>) {
+        match v {
+            Value::String(s) => {
+                let _ = out.insert(s.clone());
+            }
+            Value::Number(n) => {
+                let _ = out.insert(n.to_string());
+            }
+            Value::Array(a) => a.iter().for_each(|x| collect(x, out)),
+            Value::Object(o) => {
+                for (k, x) in o.iter() {
+                    if !NOT_LEAVES.contains(&k) {
+                        collect(x, out);
+                    }
+                }
+            }
+            Value::Null | Value::Bool(_) => {}
+        }
+    }
+    let mut out = BTreeSet::new();
+    collect(v, &mut out);
+    out
+}
+
+/// The teeth mutant's source (I-87): `view` with its grants replaced by
+/// every proposal the core state holds from GRANTED on, read directly
+/// from `core` around `public_view_with`. It ignores the minor flag
+/// (I-42), the grantee's choice and the phase maxima (I-43). Test code
+/// only.
+fn around_the_filter(core: &State, view: &PublicView) -> PublicView {
+    let mut out = view.clone();
+    out.funded.clear();
+    out.finished.clear();
+    for p in PROPOSALS {
+        let status = match fstp_domain::view::proposal_state(core, p) {
+            Some(StateTag::Granted) => GrantStatus::Granted,
+            Some(StateTag::InExecution) => GrantStatus::InExecution,
+            Some(StateTag::Completed) => GrantStatus::Completed,
+            _ => continue,
+        };
+        let [title, summary, grantee] = choice_texts(p);
+        let grant = PublicGrant {
+            call: CALL.raw().to_string(),
+            level: Level::ProjectAndGrantee,
+            status,
+            title,
+            summary,
+            grantee: Some(grantee),
+            amount: None,
+            deliverables: Vec::new(),
+            milestones: Vec::new(),
+        };
+        if status == GrantStatus::Completed {
+            out.finished.push(grant);
+        } else {
+            out.funded.push(grant);
+        }
+    }
+    out
 }
 
 /// The parameters of the index triple `i`. P-52 stays on.
@@ -891,13 +1125,25 @@ impl Model for PublicModel {
     }
 }
 
+/// The M-PUBLIC property that the feed equals the pages (I-87).
+pub const FEED_EQUALS_PAGES: &str = "I-87 M-PUBLIC feed equals pages";
+/// The M-PUBLIC property that each tool equals its page data (I-87).
+pub const TOOLS_EQUAL_PAGES: &str = "I-87 M-PUBLIC tools equal pages";
+
 /// The properties of M-PUBLIC over `model`: the filter in every state,
-/// and the witnesses of design section 8.5, a full-level finished grant
+/// the feed and the tools against the pages in every state, and the
+/// witnesses of design section 8.5, a full-level finished grant
 /// and an aggregate at exactly P-54.
 pub fn m_public_properties(model: &PublicModel) -> Vec<Property<'_, PublicModel>> {
     vec![
         Property::always_with("I-87 M-PUBLIC filter", move |s: &PublicState| {
             model.holds(s)
+        }),
+        Property::always_with(FEED_EQUALS_PAGES, move |s: &PublicState| {
+            model.feed_equals_pages(s)
+        }),
+        Property::always_with(TOOLS_EQUAL_PAGES, move |s: &PublicState| {
+            model.tools_equal_pages(s)
         }),
         Property::reachable("full-level finished grant", move |s: &PublicState| {
             model
