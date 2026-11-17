@@ -13,7 +13,7 @@
  * everything, or a body the cell cannot decode, cannot pass.
  */
 
-import { expect, type APIRequestContext, type Page, type Request } from '@playwright/test';
+import { expect, type APIRequestContext, type Page, type Request, type Response } from '@playwright/test';
 import {
   type Answer,
   type CellEndpoints,
@@ -241,12 +241,57 @@ export function watchWrites(page: Page, path: RegExp): { readonly seen: () => nu
   return { seen: () => n };
 }
 
-/** Clicks `selector` and returns the status of the write it makes to `path`. */
+/**
+ * How long after its click a write must have left the page. The pages
+ * send a write straight from the click handler, so this bounds only a
+ * click that sends nothing, not the cell's answer.
+ */
+const WRITE_SENT_WITHIN_MS = 10_000;
+
+/**
+ * Clicks `selector` and returns the status of the write it makes to `path`.
+ *
+ * A click can legitimately send nothing: the page refused the form before
+ * any request, or a re-render reset a control the step chose before it
+ * (CI runs 44100079149, 44100123474). Such a click fails here within
+ * `WRITE_SENT_WITHIN_MS` and names the page's alerts and field errors,
+ * instead of waiting for a response until the test timeout.
+ */
 export async function clickWrite(page: Page, selector: string, path: RegExp): Promise<number> {
-  const [res] = await Promise.all([
-    page.waitForResponse((r) => isWrite(r.request(), path)),
-    page.locator(selector).click(),
-  ]);
+  let found: (r: Request) => void = () => undefined;
+  const first = new Promise<Request>((resolve) => {
+    found = resolve;
+  });
+  const onRequest = (r: Request): void => {
+    if (isWrite(r, path)) found(r);
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let sent: Request | null;
+  page.on('request', onRequest);
+  try {
+    await page.locator(selector).click();
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), WRITE_SENT_WITHIN_MS);
+    });
+    sent = await Promise.race([first, late]);
+  } finally {
+    clearTimeout(timer);
+    page.off('request', onRequest);
+  }
+  if (sent === null) {
+    const shown = await page
+      .locator('[role="alert"], [aria-invalid="true"]')
+      .evaluateAll((es) =>
+        es.map((e) => `${e.id === '' ? e.tagName.toLowerCase() : `#${e.id}`}: ${(e.textContent ?? '').trim()}`),
+      )
+      .catch(() => [] as string[]);
+    throw new Error(
+      `clicking ${selector} sent no write to ${path} within ${WRITE_SENT_WITHIN_MS / 1000} s; ` +
+        `the page shows: ${shown.length === 0 ? 'no alert and no field error' : shown.join(' | ')}`,
+    );
+  }
+  const res = await sent.response();
+  if (res === null) throw new Error(`the write ${sent.method()} ${new URL(sent.url()).pathname} got no response`);
   return res.status();
 }
 
@@ -342,17 +387,60 @@ export function expectAccepted(a: Answer, what: string): void {
 // Canaries (I-17, R-IR-03)
 // ---------------------------------------------------------------------------
 
-/** Every API response body `page` receives, for the canary scans. */
-export function watchResponses(page: Page): { readonly bodies: () => readonly string[] } {
+/** The API response bodies a page received, as `watchResponses` collects them. */
+export interface WatchedResponses {
+  readonly bodies: () => readonly string[];
+  /** Waits until every body seen so far has been read. */
+  readonly settle: () => Promise<void>;
+}
+
+/**
+ * Every API response body `page` receives, for the canary scans.
+ *
+ * A body is read once its request has finished, so the whole body is in
+ * the browser, as `applicant/support.ts` `Traffic` does. Reading on
+ * 'response' could still be pending when a scan ran, so the scan missed
+ * that body, or could wait forever on a body a navigation cut short. A
+ * later navigation can evict a finished body before it is read ("No
+ * resource with given identifier"). Such a body is skipped, as before.
+ */
+export function watchResponses(page: Page): WatchedResponses {
   const bodies: string[] = [];
-  page.on('response', (r) => {
-    if (!new URL(r.url()).pathname.startsWith('/api/v1/')) return;
-    r.text().then(
-      (t) => bodies.push(t),
-      () => undefined,
+  const pending: Promise<void>[] = [];
+  const unread = new Set<string>();
+  page.on('requestfinished', (q: Request) => {
+    const path = new URL(q.url()).pathname;
+    if (!path.startsWith('/api/v1/')) return;
+    const label = `${q.method()} ${path}`;
+    unread.add(label);
+    pending.push(
+      q.response().then(
+        async (r: Response | null) => {
+          const body = r === null ? null : await r.text().catch(() => null);
+          if (body !== null) bodies.push(body);
+          unread.delete(label);
+        },
+        () => {
+          unread.delete(label);
+        },
+      ),
     );
   });
-  return { bodies: () => bodies };
+  const settle = async (): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`response bodies still unread after 20 s: ${[...unread].join(', ')}`)),
+        20_000,
+      );
+    });
+    try {
+      await Promise.race([Promise.all(pending), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  return { bodies: () => bodies, settle };
 }
 
 /**
@@ -363,9 +451,12 @@ export async function expectNoCanary(
   page: Page,
   canaries: readonly string[],
   label: string,
-  responses?: { readonly bodies: () => readonly string[] },
+  responses?: WatchedResponses,
 ): Promise<void> {
   expect(canaries.length, `${label}: the scan has canaries`).toBeGreaterThan(0);
+  // Every body the page received so far is in the scan, not only those
+  // whose read happened to finish first.
+  await responses?.settle();
   const seen = await page.evaluate(() => {
     const values = Array.from(document.querySelectorAll('input, textarea, select')).map(
       (e) => (e as HTMLInputElement).value,
