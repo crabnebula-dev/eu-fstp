@@ -195,6 +195,10 @@ test.describe('J5 FSTP coordinator', () => {
       await expect(row.locator(REVIEW_UI.board.close(p.id))).toBeVisible();
     }
     expect(await clickWrite(c1, REVIEW_UI.board.close(x.id), /\/stage1-close$/)).toBeLessThan(300);
+    // The board reads itself again after each close. Waiting for x's new
+    // row keeps that read from landing after the next close and showing w
+    // as it stood before it.
+    await expect(c1.locator(REVIEW_UI.board.row(x.id))).not.toHaveAttribute('data-state', 'STAGE1');
     expect(await clickWrite(c1, REVIEW_UI.board.close(w.id), /\/stage1-close$/)).toBeLessThan(300);
     // x scores strictly above P-02 and w does not (I-08).
     await expect(c1.locator(REVIEW_UI.board.row(x.id))).toHaveAttribute('data-state', 'STAGE2');
