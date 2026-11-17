@@ -160,9 +160,14 @@ const propsByTest = new Map<string, number>();
  * passed on unchanged, so a missing module stays red for that reason.
  */
 export function forAll<T>(gen: (r: Rng) => T, check: (t: T) => void, runs = 256): void {
-  const title = test.info().titlePath.join(' > ');
-  const n = (propsByTest.get(title) ?? 0) + 1;
-  propsByTest.set(title, n);
+  const info = test.info();
+  const title = info.titlePath.join(' > ');
+  // One count per run of the test. A repeat (`--repeat-each`) or a retry
+  // in the same worker is a new run with the same title, so keying by
+  // the title alone failed every repeat after the first.
+  const run = `${info.testId}#${info.repeatEachIndex}#${info.retry}`;
+  const n = (propsByTest.get(run) ?? 0) + 1;
+  propsByTest.set(run, n);
   if (n > 1) {
     throw new Error(`${title} runs more than one property; one forAll per test`);
   }
