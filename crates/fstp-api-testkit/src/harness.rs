@@ -5215,3 +5215,6 @@ mod team_tests;
 /// Lane m4/parity: the runner of M-PARITY, one MCP cell and its web twin
 /// with the web confirmation of a pending action (I-84).
 pub mod parity;
+/// Lane m4/i86: the I-86 canary crawl over the matrix worlds.
+#[path = "harness_canary.rs"]
+pub mod canary_crawl;

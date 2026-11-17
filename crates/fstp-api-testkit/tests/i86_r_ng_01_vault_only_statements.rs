@@ -250,3 +250,45 @@ fn r_ng_01_affiliations_are_one_strict_member() {
         "the vault received nothing"
     );
 }
+
+/// R-NG-01, I-86 (lane m4/i86): the M4 `proposal.state_country` operation
+/// sends the P-17 country to the vault port only. The cell appends
+/// nothing, stores no text and answers `accepted` alone. The canary
+/// country `XQ` is a user-assigned ISO 3166-1 code that names no real
+/// country. The PostgreSQL twin of this test is
+/// `i86_declared_country_never_reaches_app_tables`, open: no production
+/// adapter serves this operation over a PostgreSQL cell yet.
+#[test]
+fn r_ng_01_stated_country_reaches_only_the_vault() {
+    let c = cell();
+    let p = draft(&c);
+    let lead = c.login(LEAD, LoginMethod::Passkey);
+    let before = outside(&c);
+    let reply = c.web(
+        &lead,
+        decode_route(
+            Method::Put,
+            &format!("/proposals/{}/vault/country", p.raw()),
+            br#"{"country":"XQ"}"#,
+        ),
+    );
+    assert!(
+        matches!(
+            reply,
+            Ok(OpResult::Done {
+                body: ReadModel::Accepted,
+                seq: None
+            })
+        ),
+        "the statement: {reply:?}"
+    );
+    reaches_only_the_vault(&c, &before, &reply, &["XQ", "[88, 81]"]);
+    assert!(
+        c.ports
+            .vault
+            .intake()
+            .contains(&(IntakeKind::Country, LEAD, p)),
+        "the vault received the country: {:?}",
+        c.ports.vault.intake()
+    );
+}
