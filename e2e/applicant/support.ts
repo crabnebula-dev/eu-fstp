@@ -51,6 +51,7 @@ import {
   syntheticEmail,
   type CellEndpoints,
 } from '../playwright.config';
+import { settle } from '../navigation/support';
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -494,11 +495,17 @@ export async function seededPerson(person: () => Promise<Page>, origin: string, 
 // Journey steps
 // ---------------------------------------------------------------------------
 
-/** Waits until the proposal page shows `state` in `#proposal-state`. */
+/**
+ * Waits until the proposal page shows `state` in `#proposal-state`, and
+ * until the page has finished its reads. The page shows the state before
+ * it reads the application, and only then adds the withdraw and copy
+ * controls. So a check that a control is absent must wait for the end.
+ */
 export async function expectState(page: Page, origin: string, proposal: string, state: State): Promise<void> {
   await page.goto(`${origin}${APP.proposal(proposal)}`);
   await expect(page.locator(AUI.proposal.state)).toHaveAttribute('data-state', state);
   await expect(page.locator(AUI.proposal.state)).not.toHaveText('');
+  await settle(page);
 }
 
 /**

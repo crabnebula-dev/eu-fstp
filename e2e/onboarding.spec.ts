@@ -52,6 +52,15 @@ import {
 
 test.describe.configure({ timeout: 600_000 });
 
+/**
+ * Waits until an onboarding page has drawn itself from its reads. Until
+ * then the step navigation holds no status, so a read of it sees "" for
+ * every step, and the step's form may not be there yet.
+ */
+async function drawn(page: Page): Promise<void> {
+  await expect(page.locator('main[data-ready="true"]')).toBeVisible();
+}
+
 /** The status of `step` as `GET /api/v1/admin/onboarding/{step}` answers it. */
 async function apiStatus(page: Page, origin: string, step: (typeof ONBOARDING_STEPS)[number]): Promise<unknown> {
   return okJson(await call(page, origin, 'GET', API.onboardingStep(step)), `GET onboarding ${step}`)['status'];
@@ -69,10 +78,12 @@ test.describe('R-TN-01 onboarding', () => {
     const { a1, a1Account } = await firstAdmin(person, control);
     const page = a1.page;
     await page.goto(`${origin}${APP.onboarding('organisation')}`);
+    await drawn(page);
     expect(Object.keys(await navStatuses(page)), 'the steps in the order of the spec table').toEqual([...ONBOARDING_STEPS]);
 
     for (const [i, step] of ONBOARDING_STEPS.entries()) {
       await page.goto(`${origin}${APP.onboarding(step)}`);
+      await drawn(page);
       const before = await navStatuses(page);
       expect(before[step], `${step} is open once the steps before it validated`).toMatch(/^(open|saved)$/);
       for (const later of ONBOARDING_STEPS.slice(i + 1)) {
@@ -404,12 +415,17 @@ async function eachOnboardingPage(
   const origin = control.cell.origin;
   const { a1 } = await firstAdmin(person, control);
   const page = a1.page;
+  // Each check runs on the page drawn from its reads, so it sees every
+  // control rather than the frame before the reads answered.
   await page.goto(`${origin}${APP.identity}`);
+  await drawn(page);
   await check(page, 'identity');
   await page.goto(`${origin}${APP.onboarding('channels')}`);
+  await drawn(page);
   await check(page, 'locked step');
   for (const step of ONBOARDING_STEPS) {
     await page.goto(`${origin}${APP.onboarding(step)}`);
+    await drawn(page);
     await check(page, `${step} open`);
     if (step === 'payments') {
       await page.locator(`${ONBOARDING_UI.p20}[value="${ONBOARDING_VALUES.p20}"]`).check();
@@ -431,5 +447,6 @@ async function eachOnboardingPage(
     await check(page, `${step} validated`);
   }
   await page.goto(`${origin}${APP.onboardingSummary}`);
+  await drawn(page);
   await check(page, 'summary');
 }

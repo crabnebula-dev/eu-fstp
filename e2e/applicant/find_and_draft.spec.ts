@@ -10,6 +10,7 @@
 
 import { expect } from '@playwright/test';
 import { call, test } from '../playwright.config';
+import { settle } from '../navigation/support';
 import {
   API,
   APP,
@@ -184,7 +185,9 @@ test.describe('J4 find a call and draft', () => {
 
     for (const path of [APP.workspace(proposal), APP.proposal(proposal), APP.submit(proposal)]) {
       await page.goto(`${origin}${path}`);
-      await expect(page.locator('main')).toBeVisible();
+      // The page shows `main` before its reads answer. Wait for the text to
+      // be on the page, or the checks below look at a page without it.
+      await settle(page);
       expect(await page.evaluate(() => (window as { __fstpXss?: unknown }).__fstpXss), `${path}: no payload ran`).toBe(
         undefined,
       );
@@ -212,6 +215,10 @@ test.describe('J4 find a call and draft', () => {
     const traffic = new Traffic(page);
     const proposal = await startProposal(page, origin, s.call);
     await page.goto(`${origin}${APP.eligibility(proposal)}`);
+    // The form is built once the proposal read answers, and `evaluateAll`
+    // does not wait for it: right after the load it can see no option.
+    await settle(page);
+    await expect(page.locator(AUI.eligibility.country)).toBeVisible();
 
     const options = await page
       .locator(`${AUI.eligibility.country} option`)
@@ -243,7 +250,9 @@ test.describe('J4 find a call and draft', () => {
       APP.proposals,
     ]) {
       await page.goto(`${origin}${path}`);
-      await expect(page.locator('main')).toBeVisible();
+      // Every read of the page has answered, so the checks below see the
+      // whole page and the traffic holds each read's body.
+      await settle(page);
       expect(await page.locator('body').innerText(), `${path} never shows the affiliations`).not.toContain(affiliation);
       expect(await page.content(), `${path} holds no affiliation text`).not.toContain(affiliation);
     }
