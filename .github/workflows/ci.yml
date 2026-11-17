@@ -197,15 +197,16 @@ jobs:
               --test seeded_vault_chain --test slice_http --test slice_world
               --test teeth_m3_registry --test w1a_world
               ; -p fstp-celltest --doc
-            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell
+            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross
             timeout: 60
-          # I-19, I-20, I-80, I-82, I-83: the isolation (multi-cell) job of
+          # I-19, I-20, I-80, I-82, I-83, I-87: the isolation (multi-cell) job of
           # m3-design sections 14.4 and 14.8, as a part of its own. It runs
           # every t_iso_* and t_db_iso_* test, the i80_root_canary_* scans,
           # the other process-mode memory scan and the process-mode I-19
-          # test. The celltest part skips the same tests, and
-          # teeth_m3_registry checks that each runs in exactly one part.
-          - { part: isolation-multi-cell, packages: -p fstp-celltest --test t_iso_i19 --test t_iso_i20 --test t_db_iso_i82 --test i83_placement --test i80_custody --test i19_boundary, filter: t_iso_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell, timeout: 60 }
+          # test, and the I-87 two-cell test (TH-06). The celltest part skips
+          # the same tests, and teeth_m3_registry checks that each runs in
+          # exactly one part.
+          - { part: isolation-multi-cell, packages: -p fstp-celltest --test t_iso_i19 --test t_iso_i20 --test t_iso_i87 --test t_db_iso_i82 --test i83_placement --test i80_custody --test i19_boundary, filter: t_iso_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross, timeout: 60 }
           # W3b, M3 exit audit section 7 item 7: slice_devstack starts
           # fstp-devstack, which serves the compiled auth pages. This part
           # compiles them with the pinned Node.js and tsc first (ADR-003),
