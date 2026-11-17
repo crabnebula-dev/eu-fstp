@@ -378,12 +378,20 @@ export async function reach(p: Person, work: Work, who: string): Promise<void> {
     await expectNav(p, `${who}, ${here}`);
     if (work.target.test(here)) break;
     expect(hop, `${who}: reaches ${work.target} within ${MAX_HOPS} clicks; stopped at ${here}`).toBeLessThan(MAX_HOPS);
-    const i = await page.locator('main a[href]').evaluateAll((as, src) => {
-      const re = new RegExp(src);
-      return as.findIndex(
-        (a) => a instanceof HTMLAnchorElement && a.getClientRects().length > 0 && re.test(new URL(a.href).pathname),
-      );
-    }, work.target.source);
+    // A list page renders its links hidden until the page gate answers for
+    // each one (SA-09 rule 6, `shell/gate.ts`), so a single read can fall
+    // between the render and the answer. Read again until a link shows.
+    const visibleLink = (): Promise<number> =>
+      page.locator('main a[href]').evaluateAll((as, src) => {
+        const re = new RegExp(src);
+        return as.findIndex(
+          (a) => a instanceof HTMLAnchorElement && a.getClientRects().length > 0 && re.test(new URL(a.href).pathname),
+        );
+      }, work.target.source);
+    await expect
+      .poll(visibleLink, { message: `${who}: ${here} has a visible link to ${work.target}` })
+      .toBeGreaterThanOrEqual(0);
+    const i = await visibleLink();
     expect(i, `${who}: ${here} has a visible link to ${work.target}`).toBeGreaterThanOrEqual(0);
     await clickAway(page, page.locator('main a[href]').nth(i), here);
   }

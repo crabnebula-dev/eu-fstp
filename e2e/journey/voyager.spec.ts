@@ -175,7 +175,8 @@ test.describe('voyager surface', () => {
       await clickTo(page, /^Activity$/, new RegExp(`^/app/proposals/${X.id}/activity$`), 'proposal page');
       await expect(page.locator('main h1')).toHaveText('Activity log');
       const entries = page.locator('main ol.diary > li');
-      expect(await entries.count(), 'the log lists the route so far').toBeGreaterThanOrEqual(3);
+      // The h1 shows before the log is read, so the count is polled, not read once.
+      await expect.poll(() => entries.count(), { message: 'the log lists the route so far' }).toBeGreaterThanOrEqual(3);
       // The scene records reviewer questions after the move, so the move is
       // listed but is not the newest entry. Newest first is checked on every
       // entry's machine time instead (I-93).

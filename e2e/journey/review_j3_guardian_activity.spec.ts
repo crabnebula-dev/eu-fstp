@@ -15,7 +15,7 @@
 import { expect, type Browser, type Page } from '@playwright/test';
 import { test } from '../playwright.config';
 import { HOME, settle } from '../navigation/support';
-import { FrontDoor, suiteCell, watchProblems, type PageProblem } from '../site/contract';
+import { FrontDoor, gatePending, suiteCell, watchProblems, type PageProblem } from '../site/contract';
 
 test.use({ navigationTimeout: 30_000, actionTimeout: 30_000 });
 
@@ -47,18 +47,33 @@ test.describe('review j3: guardian click-through', () => {
     const { page } = who;
     try {
       const activity = 'main a[href^="/app/proposals/"][href$="/activity"]';
-      const onHome = await page.locator(activity).count();
 
       // The guardian's work item on the home page leads to the guardian page.
       const guardianLink = page.locator('main a[href^="/app/proposals/"][href$="/guardian"]').first();
       await expect(guardianLink, 'the home page links the guardian page').toBeVisible();
+      // Counted once the home page shows its work and the page gate has
+      // answered for every link, since a closed page's link is removed.
+      await gatePending(page);
+      const onHome = await page.locator(activity).count();
       const guardianHref = (await guardianLink.getAttribute('href')) ?? '';
       const proposal = /^\/app\/proposals\/(\d+)\/guardian$/.exec(guardianHref)?.[1] ?? '';
       expect(proposal, 'the guardian page names a proposal').not.toBe('');
       await guardianLink.click();
       await page.waitForURL((u) => u.pathname === guardianHref);
       await settle(page);
-      const onGuardianPage = await page.locator(activity).count();
+      // The guardian page may still render once `settle` passes, so its
+      // links are counted until the rule holds, not read once.
+      let onGuardianPage = 0;
+      await expect
+        .poll(
+          async () => {
+            if ((await page.locator('a[data-page-gate]').count()) > 0) return 0;
+            onGuardianPage = await page.locator(activity).count();
+            return onHome + onGuardianPage;
+          },
+          { message: 'click-through rule: the home page or the guardian page links the activity log' },
+        )
+        .toBeGreaterThan(0);
 
       // The log holds the guardian's own step, so it is the guardian's work.
       await page.goto(new URL(`/app/proposals/${proposal}/activity`, page.url()).href);

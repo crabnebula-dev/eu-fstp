@@ -259,6 +259,10 @@ export interface Seen {
 /** What the page shows now. */
 export async function seen(page: Page): Promise<Seen> {
   await settle(page);
+  // `innerText` leaves out a link the page gate has not answered for yet,
+  // and a closed page's link goes once it answers. So the main text is
+  // read once the gate is done, or two reads of one page could differ.
+  await gatePending(page);
   return { path: pathOf(page), h1: await h1Text(page), main: await mainText(page), title: await page.title() };
 }
 

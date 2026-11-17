@@ -91,6 +91,9 @@ test.describe('coordinator unmask', () => {
     // The auditor's view is the audit read; the coordinator's own unmasks
     // are not on the coordinator's app pages.
     await page.goto(`${cell.origin}/app/proposals/${proposal}/parties`);
+    // The negative check passes at once on a page that still loads, so it
+    // waits for the parties table first.
+    await expect(page.locator('#parties-table')).toBeVisible();
     await expect(page.locator('main')).not.toContainText('Synthetic applicant');
     await c1.close();
 
