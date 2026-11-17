@@ -113,7 +113,10 @@ test.describe('J7 committee', () => {
     await expect(r4.locator(REVIEW_UI.round.cast)).toHaveCount(0);
     await expect(r4.locator(REVIEW_UI.round.delegate)).toHaveCount(0);
 
-    // No delegation to a recused member is offered (NOTE 8).
+    // No delegation to a recused member is offered (NOTE 8). R1's round
+    // page renders after its read, so the options are read once it shows
+    // the delegation form, not from a page still loading.
+    await expect(r1.locator(REVIEW_UI.round.delegateTo)).toBeVisible();
     const options = await r1.locator(`${REVIEW_UI.round.delegateTo} option`).allInnerTexts();
     expect(options.map((o) => o.trim())).not.toContain(s.people.r4.label);
 
