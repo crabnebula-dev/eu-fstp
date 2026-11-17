@@ -129,8 +129,15 @@ test.describe('J5 FSTP coordinator', () => {
 
     await openPage(c1, cell.origin, REVIEW_PAGES.assignments(x.id));
     const assign = async (who: 'r1' | 'r2' | 'r4'): Promise<void> => {
-      await c1.locator(REVIEW_UI.assign.reviewer).selectOption({ label: s.people[who].label });
+      const label = s.people[who].label;
+      await c1.locator(REVIEW_UI.assign.reviewer).selectOption({ label });
       expect(await clickWrite(c1, REVIEW_UI.assign.submit, /\/assignments$/)).toBeLessThan(300);
+      // The page re-renders after the write and drops the assignee from
+      // the select. A choice made before that re-render is reset, and the
+      // next click then sends nothing (CI runs 44100079149, 44100123474).
+      await expect(
+        c1.locator(`${REVIEW_UI.assign.reviewer} option`).filter({ hasText: new RegExp(`^${label}$`) }),
+      ).toHaveCount(0);
     };
     // R1 and R4 share organisation O1, so P-39 = 2 is not met yet.
     await assign('r1');
