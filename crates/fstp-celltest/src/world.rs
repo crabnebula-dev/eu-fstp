@@ -665,6 +665,26 @@ impl CellHandle {
             .map_err(|e| WorldError::Store(format!("the vault rekey: {e}")))
     }
 
+    /// The P-17 country code the cell's vault holds for `account` in
+    /// `programme`, if any
+    /// ([`crate::seeded_vault::SeededVault::country_of`], lane m4/country).
+    ///
+    /// # Errors
+    ///
+    /// A cell that runs no vault, or a failed vault call.
+    pub fn vault_country(
+        &self,
+        account: fstp_domain::id::AccountId,
+        programme: fstp_domain::id::ProgrammeId,
+    ) -> Result<Option<u16>, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        rt.services
+            .rt
+            .block_on(running.vault.country_of(account.raw(), programme.raw()))
+            .map_err(WorldError::Store)
+    }
+
     /// Seeds the synthetic vault fact `fact` from `source` into the cell's
     /// seeded vault ([`crate::seeded_vault::SeededVault::seed_vault_fact`]).
     ///

@@ -571,6 +571,25 @@ impl SeededVault {
         }
     }
 
+    /// The P-17 country code that `account` stated for `programme` in the
+    /// vault's newest facts, if any (lane m4/country). A read only: the
+    /// call writes no journal.
+    ///
+    /// # Errors
+    ///
+    /// Never fails for a read. The `Result` is the shared call's.
+    pub async fn country_of(&self, account: u128, programme: u128) -> Result<Option<u16>, String> {
+        self.shared
+            .run(|v, _| {
+                v.state().latest().country_of(
+                    fstp_vault_proto::WireAccount(account),
+                    fstp_vault_proto::WireProgramme(programme),
+                )
+            })
+            .await
+            .map_err(|()| "the vault call failed".to_owned())
+    }
+
     /// Every seeded write so far.
     pub fn seed_log(&self) -> SeedLog {
         self.shared.log().clone()
