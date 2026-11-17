@@ -46,6 +46,9 @@ test('review_fidelity_r_nf_03_keyboard_flow_sign_in_helper_uses_no_pointer', asy
       for (const t of ['pointerdown', 'mousedown']) window.addEventListener(t, bump, true);
     });
     await p.page.goto(a1.link);
+    // The page renders its button after load. Tabbing before that could
+    // use up every press on a page without it.
+    await expect(p.page.locator(UI.invite.register)).toBeVisible();
     await tabTo(p.page, UI.invite.register);
     await p.page.keyboard.press('Enter');
     await expectSignedIn(p.page, p.origin);
