@@ -397,8 +397,29 @@ test.describe('R-JV screens match the approved prototypes', () => {
       const { page, facts } = await s.reach({ person, request, browser });
       await expect(page.locator('main'), `${s.screen}: a main landmark`).toBeVisible();
       await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
-      const h1s = (await page.locator('main h1').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
-      const h2s = (await page.locator('main h2').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+      const texts = async (sel: string): Promise<string[]> =>
+        (await page.locator(sel).allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+      // A page may add a heading after its busy marker goes, such as a
+      // section filled by a second read, so the headings are read again
+      // until the expected ones show. The checks below then run on a fresh
+      // read and fail with their own messages, so the wait itself never fails.
+      await expect
+        .poll(
+          async () => {
+            const h1n = await texts('main h1');
+            const h2n = await texts('main h2');
+            return (
+              h1n.length === 1 &&
+              (s.h1 === null || h1n.some((t) => builtMatches(s.h1 as Heading, t, facts))) &&
+              s.h2.every((h) => h2n.some((t) => builtMatches(h, t, facts)))
+            );
+          },
+          { message: `${s.screen}: the h1 and h2 headings show` },
+        )
+        .toBe(true)
+        .catch(() => undefined);
+      const h1s = await texts('main h1');
+      const h2s = await texts('main h2');
       expect(h1s.length, `${s.screen}: one h1`).toBe(1);
       if (s.h1 !== null) {
         const h1 = s.h1;
