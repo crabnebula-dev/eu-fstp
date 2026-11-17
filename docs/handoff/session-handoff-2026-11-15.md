@@ -38,6 +38,11 @@ ADRs and SPEC amendments on main: ADR-021 (setup gate until activation), ADR-022
 | Cell routes | AddPasskey digest over the command id accepted; identity release stays lead-only |
 | P-41 reminder | A timeline event kind at the end of P-41 per action, and a mailbox message to tenant admins linking to the erasure request |
 | CI tiers | Light on every push and PR: no matrix parts, no M-ACTIVATE part, no teeth tests (`_teeth_`), no q34 matrix self-checks (`matrix::tests::q34_`), every property capped at 32 cases, stated minimums kept. Full on a manual run with `full` ticked: everything at full size, about three hours, so every full run proves I-66 and I-67. A milestone closes, and a release ships, only on a green full run (Daniel, 2026-11-16, ADR-003) |
+| M4 design gaps | Build the key gaps of section 14, then close M4 (Daniel, 2026-11-16). Lanes built M-PARITY, the I-86 canary crawl, the M-PUBLIC teeth and `t_authz_denial_has_no_effect` |
+| I-87 across cells | The production cell serves the public routes itself (`routes::public_table()`), so `i87_two_cells_never_cross` runs on the M3 multi-cell harness |
+| I-86 country | `proposal.state_country` goes to the vault through a country write ticket. The cell never holds the country. `i86_declared_country_never_reaches_app_tables` runs on PostgreSQL |
+| Public text class | Copy at publication: when a call is published, the cell copies its title, P-09 wording and Guide texts into a public class keyed by call. The public view reads only that class (Daniel, 2026-11-17). Built after M4 |
+| M4 closed | On 2026-11-17 in full CI run 44115329811 on `0a54b50d`. `docs/handoff/m4-exit-audit.md` lists what stays open |
 
 ## Lanes at the time of handoff
 
