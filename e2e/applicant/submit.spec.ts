@@ -10,6 +10,7 @@
 
 import { expect } from '@playwright/test';
 import { syntheticEmail, test } from '../playwright.config';
+import { settle } from '../navigation/support';
 import {
   API,
   APP,
@@ -48,7 +49,9 @@ test.describe('J4 submit', () => {
       ['proposal', APP.proposal(d.proposal), true],
     ] as const) {
       await d.page.goto(`${origin}${path}`);
-      await expect(d.page.locator('main')).toBeVisible();
+      // The form is built once the page's reads answer. A scan right after
+      // the load can see no control, or only some of them.
+      await settle(d.page);
       if (form) {
         expect((await controlsOf(d.page)).length, `${label}: the scan sees the form`).toBeGreaterThan(0);
       }
@@ -155,7 +158,8 @@ test.describe('J4 submit', () => {
     await expectState(d.page, origin, d.proposal, 'SUBMITTED');
     for (const path of [APP.proposal(d.proposal), APP.submit(d.proposal), APP.proposals]) {
       await d.page.goto(`${origin}${path}`);
-      await expect(d.page.locator('main')).toBeVisible();
+      // The whole page, after its reads, so the check is not made too early.
+      await settle(d.page);
       expect(await d.page.content(), `${path} shows no date of birth`).not.toContain(dob);
     }
     await traffic.settle();
@@ -184,7 +188,9 @@ test.describe('J4 submit', () => {
     const traffic = new Traffic(d.page);
     await control.advanceClock(d.call.until_deadline_micros + SECOND_MICROS);
     await d.page.goto(`${origin}${APP.submit(d.proposal)}`);
-    await expect(d.page.locator('main')).toBeVisible();
+    // Whether the page offers the confirm button is known only once its
+    // reads answered. Counting earlier always finds none.
+    await settle(d.page);
     const confirm = d.page.locator(AUI.submit.confirm);
     if ((await confirm.count()) > 0 && (await confirm.isEnabled())) {
       await d.page.locator(AUI.submit.noticeRead).check();

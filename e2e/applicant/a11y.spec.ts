@@ -15,6 +15,7 @@
 
 import { expect, type Page } from '@playwright/test';
 import { test } from '../playwright.config';
+import { settle } from '../navigation/support';
 import {
   API,
   APP,
@@ -34,7 +35,8 @@ import {
 /** Visits `path` and returns the page's structure problems. */
 async function problemsAt(page: Page, origin: string, label: string, path: string): Promise<string[]> {
   await page.goto(`${origin}${path}`);
-  await expect(page.locator('main')).toBeVisible();
+  // The checks see the page once its reads answered, with every control.
+  await settle(page);
   return structureProblems(page, label);
 }
 
