@@ -647,8 +647,11 @@ export class Traffic {
       this.pending.push(
         q.response().then(
           async (r: Response | null) => {
-            if (r !== null) {
-              const body = await r.text();
+            // A later navigation can evict the body before it is read
+            // ("No resource with given identifier"). Such a body is
+            // skipped, as the 'response' reader before this change did.
+            const body = r === null ? null : await r.text().catch(() => null);
+            if (r !== null && body !== null) {
               this.received.push({ method: q.method(), path: u.pathname, status: r.status(), body });
             }
             this.unread.delete(label);

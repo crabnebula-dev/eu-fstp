@@ -5,7 +5,8 @@
 //! - the text never exceeds the byte limit;
 //! - the text holds no control character other than a line feed;
 //! - a smaller limit gives a prefix of the text under a larger one;
-//! - a canary inside a script, style or comment never reaches the text.
+//! - a canary inside a script, style or comment adds no copy of itself to
+//!   the text.
 
 #![no_main]
 
@@ -38,8 +39,14 @@ fuzz_target!(|data: &[u8]| {
                 format!("<style>{canary}</style>{html}"),
                 format!("<!--{canary}-->{html}"),
             ] {
+                // The visible text may spell the canary itself once its
+                // control characters are dropped (CI run 44047706424), so
+                // the hidden part must add no copy of it.
                 let t = html_to_text(&wrapped, 1 << 20);
-                assert!(!t.text.contains(canary), "hidden content leaked");
+                assert!(
+                    t.text.matches(canary).count() <= wide.text.matches(canary).count(),
+                    "hidden content leaked"
+                );
             }
         }
     }
