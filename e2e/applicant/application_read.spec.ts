@@ -16,19 +16,32 @@
  * `StackMissing`. Every person and text is synthetic.
  */
 
-import { expect, type Page } from '@playwright/test';
+import { expect, type Page, type Request } from '@playwright/test';
 import { test } from '../playwright.config';
 import { HOME, settle } from '../navigation/support';
 import { APP, freshCell, must, seededPerson } from './support';
 
-/** Records each API call of `page` that answered 400 or more. */
-function failedReads(page: Page): () => string[] {
+/**
+ * Records each API call of `page` that answered 400 or more, and counts
+ * the API calls still open. A call that ends without an answer (aborted)
+ * counts as closed, since it can record no refusal.
+ */
+function failedReads(page: Page): { readonly failed: () => string[]; readonly open: () => number } {
   const failed: string[] = [];
+  const open = new Set<Request>();
+  page.on('request', (q) => {
+    if (new URL(q.url()).pathname.startsWith('/api/')) open.add(q);
+  });
+  const done = (q: Request): void => {
+    open.delete(q);
+  };
+  page.on('requestfinished', done);
+  page.on('requestfailed', done);
   page.on('response', (r) => {
     const u = new URL(r.url());
     if (u.pathname.startsWith('/api/') && r.status() >= 400) failed.push(`${r.status()} ${u.pathname}`);
   });
-  return () => failed;
+  return { failed: () => failed, open: () => open.size };
 }
 
 /** The visible alert texts of the page. */
@@ -65,7 +78,7 @@ test.describe('the application on the proposal page', () => {
       await settle(page);
     }
 
-    const failed = failedReads(page);
+    const reads = failedReads(page);
     const own = page.locator(`#home-work a[data-work="proposal"][href="${APP.proposal(proposal)}"]`);
     await expect(own, 'the home page links the lead to the proposal').toHaveCount(1);
     await own.click();
@@ -93,8 +106,11 @@ test.describe('the application on the proposal page', () => {
     await expect(plan.locator('#application-plan-text'), 'the seeded work plan text').toContainText('Synthetic work plan for');
     await expect(plan.locator('#application-plan-text-missing')).toHaveCount(0);
     await expect(plan.locator('#application-plan-text-erased')).toHaveCount(0);
-    await page.waitForLoadState('networkidle');
-    expect(failed(), 'the proposal page reads without a refusal').toEqual([]);
+    // Every API call of the page has answered. 'networkidle' gave no such
+    // wait: the client router keeps the document, whose load state was
+    // reached long before, so it resolved at once.
+    await expect.poll(() => reads.open(), { message: 'every read of the page answered' }).toBe(0);
+    expect(reads.failed(), 'the proposal page reads without a refusal').toEqual([]);
     expect(await alerts(page), 'the proposal page shows no refusal').toEqual([]);
   });
 });
