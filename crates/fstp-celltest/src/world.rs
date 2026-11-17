@@ -3995,6 +3995,7 @@ fn start_cell(
     let options = fstp_cell::process::StartOptions {
         clock: clock.commit_clock(),
         creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
+        public_texts: std::sync::Arc::new(fstp_cell::public::NoPublicTexts),
         proof_mail: std::sync::Arc::new(mail.clone()),
         operator_key: Some(operator.0.public_key().to_bytes().to_vec()),
         // P-70: the world's tenant enables magic links, as the auth

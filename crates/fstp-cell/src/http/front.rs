@@ -26,7 +26,8 @@
 //! route. `GET` of each page path serves the shell, and `GET` under the
 //! asset routes serves a loaded module or stylesheet by name.
 //!
-//! Every response then carries the cell CSP of design section 11.2,
+//! Every response then carries the cell CSP of design section 11.2, or
+//! for a path under `/p/` the public CSP of M4 design section 3.10,
 //! `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
 //! `Cache-Control: no-store`. No response carries an
 //! `Access-Control-Allow-*` field, so no other origin may read one.
@@ -56,11 +57,16 @@ use fstp_webauthn::RelyingParty;
 
 use crate::http::pages::Pages;
 use crate::routes::{
-    Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, page_table, serve_route, table,
+    Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, page_table, public_table, serve_route,
+    table,
 };
 
 /// The CSP of the cell origin, verbatim from design section 11.2.
 pub const CELL_CSP: &str = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+
+/// The CSP of every `/p` response, verbatim from M4 design section 3.10:
+/// a public page loads no script and submits no form (R-PB-04).
+pub const PUBLIC_CSP: &str = "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The fixed body of `GET /healthz`.
 pub const HEALTH_BODY: &[u8] = b"ok\n";
@@ -294,7 +300,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         // without them serves exactly the section 8.7 table.
         let pages_rows: &'static [Route] = if serve_pages { page_table() } else { &[] };
         let mut router = Router::new();
-        for route in table().iter().chain(pages_rows) {
+        for route in table().iter().chain(public_table()).chain(pages_rows) {
             if route.access() == Access::Loopback || route.access() == Access::Unserved {
                 continue;
             }
@@ -323,6 +329,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         let started = Instant::now();
         let method = obs_method(&req.method);
         let home = goes_home(&req);
+        let public = is_public_path(req.target.path());
         let (mut resp, rule) = match self.precheck(&req) {
             Some(refused) => refused,
             None => (self.inner.router.handle(req).await, None),
@@ -337,7 +344,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 .log
                 .log(event(method, UNROUTED, &resp, outcome, started));
         }
-        secure(&mut resp);
+        secure(&mut resp, public);
         resp
     }
 
@@ -432,9 +439,20 @@ fn see_home() -> Response {
 
 /// Sets the response fields every tunnel response carries, replacing any
 /// a handler set, and removes every CORS grant.
-fn secure(resp: &mut Response) {
+/// Whether `path` lies under `/p/`, the public surface (M4 design
+/// section 3.10, lane m4/cellpub).
+fn is_public_path(path: &str) -> bool {
+    path.starts_with("/p/")
+}
+
+fn secure(resp: &mut Response, public: bool) {
+    // R-PB-04, TH-37: a public answer never sets a cookie.
+    if public {
+        resp.headers.remove("set-cookie");
+    }
+    let csp = if public { PUBLIC_CSP } else { CELL_CSP };
     for (name, value) in [
-        ("content-security-policy", CELL_CSP),
+        ("content-security-policy", csp),
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),
         ("cache-control", "no-store"),

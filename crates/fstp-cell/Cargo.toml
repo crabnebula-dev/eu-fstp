@@ -49,6 +49,10 @@ fstp-pgwire.workspace = true
 fstp-witness.workspace = true
 # M6 lane L6-DISP: the dispatch worker of the dispatcher task.
 fstp-dispatch.workspace = true
+# Lane m4/cellpub: the public view, its pages, feed and tools (I-87), and
+# the funder profiles of the page footer (I-69).
+fstp-public.workspace = true
+fstp-report.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

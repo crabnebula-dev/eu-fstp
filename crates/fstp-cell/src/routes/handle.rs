@@ -392,6 +392,7 @@ async fn dispatch<B: Backend>(
         (Endpoint::Verifications, Some(c)) => api::verifications(ctx, req, &c).await,
         (Endpoint::AuditAnchors, Some(c)) => api::anchors(ctx, &c).await,
         (Endpoint::Erasures, Some(c)) => api::erasures(ctx, &c).await,
+        (Endpoint::Public(op), _) => public(ctx, req, op).await,
         // A session route without a caller, the health route on the
         // tunnel, or an unserved route: never served.
         _ => Reply::refuse(StatusCode::NOT_FOUND, None, "route"),
@@ -507,5 +508,49 @@ pub(crate) fn needs_route_input(c: &CellCommand) -> bool {
     match c {
         CellCommand::Auth(a) => !fstp_cell_core::route_inputs(a).is_empty(),
         _ => false,
+    }
+}
+
+/// One public operation (`crate::public`, I-87, R-PB-04, lane
+/// m4/cellpub). It reads no cookie and changes nothing: the view comes
+/// from the engine head of this cell and its texts from this cell's own
+/// public text source. A page answers as HTML and the feed and the tools
+/// as JSON. A page before the organisation's activation answers the plain
+/// "not published yet" page with the refusal's status (ADR-021).
+async fn public<B: Backend>(ctx: &Ctx<B>, req: &Request, op: crate::public::PublicOp) -> Reply {
+    use crate::public::{NOT_PUBLISHED, PublicAnswer, PublicOp, PublicRefusal};
+    let state = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(e) => return unavailable(e),
+    };
+    let source = ctx.backend.public_texts();
+    let slug = req.param("slug").unwrap_or_default();
+    let answer = crate::public::read(
+        state.engine(),
+        source.as_ref(),
+        ctx.backend.now(),
+        op,
+        slug,
+        req.param("call"),
+    )
+    .await;
+    let status = |r: PublicRefusal| {
+        StatusCode::from_u16(r.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+    };
+    let page = !matches!(
+        op,
+        PublicOp::Feed | PublicOp::OpenCalls | PublicOp::Deadlines | PublicOp::Eligibility
+    );
+    match answer {
+        Ok(PublicAnswer::Page(html)) => {
+            Reply::fixed(StatusCode::OK, "text/html; charset=utf-8", html.as_bytes())
+        }
+        Ok(PublicAnswer::Json(json)) => Reply::fixed(StatusCode::OK, JSON, json.as_bytes()),
+        Err(PublicRefusal::Setup) if page => Reply::fixed(
+            status(PublicRefusal::Setup),
+            "text/html; charset=utf-8",
+            NOT_PUBLISHED.as_bytes(),
+        ),
+        Err(r) => Reply::fixed(status(r), JSON, r.body().as_bytes()),
     }
 }

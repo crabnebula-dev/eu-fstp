@@ -149,6 +149,9 @@ pub enum Endpoint {
     /// `GET /assets/auth/pages/{file}`: a compiled page module
     /// ([`page_table`]).
     PageModule,
+    /// `GET /p/...`: a public page, the feed or a public tool
+    /// (`crate::public`, I-87, lane m4/cellpub).
+    Public(crate::public::PublicOp),
     /// No handler: a route built with `Route::new` alone.
     Unserved,
 }
@@ -239,6 +242,7 @@ pub const CEREMONY_BODY_LIMIT: usize = 320 * 1024;
 /// The body limit of the API routes that take a command.
 pub const API_BODY_LIMIT: usize = crate::http::COMMAND_BODY_LIMIT;
 
+use crate::public::PublicOp as P;
 use Access as A;
 use Endpoint as E;
 use HighRiskAction as H;
@@ -441,6 +445,96 @@ pub fn table() -> &'static [Route] {
     &TABLE
 }
 
+/// The anonymous public surface of M4 design section 3.10 (I-87, lane
+/// m4/cellpub): the `/p` pages, the feed and the public research tools
+/// (`crate::public`). Each is a `GET` with no body, no session and no
+/// state change, so its risk class is `Normal` and its access class
+/// `Public`. Like every route, each row names its risk class (I-78).
+static PUBLIC_TABLE: [Route; 9] = [
+    Route::served(
+        "GET",
+        "/p/{slug}/",
+        Normal,
+        A::Public,
+        E::Public(P::Programme),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/calls/{call}",
+        Normal,
+        A::Public,
+        E::Public(P::Call),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/calls/{call}/guide",
+        Normal,
+        A::Public,
+        E::Public(P::Guide),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/funded",
+        Normal,
+        A::Public,
+        E::Public(P::Funded),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/finished",
+        Normal,
+        A::Public,
+        E::Public(P::Finished),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/feed.json",
+        Normal,
+        A::Public,
+        E::Public(P::Feed),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/calls",
+        Normal,
+        A::Public,
+        E::Public(P::OpenCalls),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/deadlines",
+        Normal,
+        A::Public,
+        E::Public(P::Deadlines),
+        0,
+    ),
+    Route::served(
+        "GET",
+        "/p/{slug}/eligibility",
+        Normal,
+        A::Public,
+        E::Public(P::Eligibility),
+        0,
+    ),
+];
+
+/// The public routes, with their classes (M4 design section 3.10).
+///
+/// They are not rows of [`table`], which stays exactly M3 design section
+/// 8.7. Daniel decided on 2026-11-17 that the production cell serves the
+/// public surface itself, so every front serves these rows through the
+/// same shared checks as every other route.
+pub fn public_table() -> &'static [Route] {
+    &PUBLIC_TABLE
+}
+
 /// The routes of the compiled auth pages of design section 11.2
 /// (`crate::http::pages`). Each is a `GET` with no body, no session and
 /// no state change, so its risk class is `Normal` and its access class
@@ -549,5 +643,45 @@ mod tests {
             t.endpoint(),
             Endpoint::PageShell | Endpoint::PageAsset | Endpoint::PageModule
         )));
+    }
+
+    /// I-78, I-87, R-PB-04, M4 design section 3.10: the public routes are
+    /// exactly the `/p` routes of section 3.10 and the three tool routes of
+    /// the registry that no page uses. Each is a public `GET` of risk class
+    /// `Normal` with no body and a public endpoint, and none is a row of
+    /// [`table`] or of [`page_table`].
+    #[test]
+    fn i87_public_routes_are_public_gets_outside_the_section_8_7_table() {
+        let want = [
+            "/p/{slug}/",
+            "/p/{slug}/calls/{call}",
+            "/p/{slug}/calls/{call}/guide",
+            "/p/{slug}/funded",
+            "/p/{slug}/finished",
+            "/p/{slug}/feed.json",
+            "/p/{slug}/calls",
+            "/p/{slug}/deadlines",
+            "/p/{slug}/eligibility",
+        ];
+        let got: Vec<&str> = public_table().iter().map(|r| r.path).collect();
+        assert_eq!(got, want);
+        for r in public_table() {
+            assert_eq!(r.parts(), ("GET", r.path, RiskClass::Normal), "{}", r.path);
+            assert_eq!(r.access(), Access::Public, "{}", r.path);
+            assert!(!r.access().needs_session(), "{}", r.path);
+            assert_eq!(r.body_limit(), 0, "{}", r.path);
+            assert!(matches!(r.endpoint(), Endpoint::Public(_)), "{}", r.path);
+            assert!(
+                table().iter().chain(page_table()).all(|t| t.path != r.path),
+                "{} is also a row of another table",
+                r.path
+            );
+        }
+        assert!(
+            table()
+                .iter()
+                .chain(page_table())
+                .all(|t| !matches!(t.endpoint(), Endpoint::Public(_)))
+        );
     }
 }

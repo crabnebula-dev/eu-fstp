@@ -192,6 +192,13 @@ pub trait Backend: Send + Sync + 'static {
         None
     }
 
+    /// The source of the texts a public view may show (`crate::public`,
+    /// I-87, R-PB-03). The default holds no public text, so every call
+    /// and grant that needs one is hidden.
+    fn public_texts(&self) -> Arc<dyn crate::public::PublicTextSource> {
+        Arc::new(crate::public::NoPublicTexts)
+    }
+
     /// The state folded to the engine's head.
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send;
 
