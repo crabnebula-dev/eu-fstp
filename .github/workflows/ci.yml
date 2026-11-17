@@ -755,6 +755,11 @@ jobs:
         run: |
           tools/demo/run.sh stop || true
           if [ -f "$FSTP_DEMO_STATE/cell.log" ]; then tail -n 200 "$FSTP_DEMO_STATE/cell.log"; fi
+          # A failed spec leaves error-context.md (the page snapshot and the
+          # failing step); print it, since CI keeps no artifacts.
+          find . -path ./target -prune -o -name error-context.md -print | while read -r f; do
+            echo "== $f"; head -n 120 "$f"
+          done
 
   # TH-26: every fuzz target runs on both tiers (Daniel, 2026-11-16). The
   # light tier runs each for FUZZ_LIGHT_SECONDS, the full tier for

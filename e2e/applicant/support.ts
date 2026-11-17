@@ -634,23 +634,53 @@ export class Traffic {
       const u = new URL(r.url());
       this.sent.push({ method: r.method(), origin: u.origin, path: u.pathname, body: r.postData() });
     });
-    page.on('response', (r: Response) => {
-      const u = new URL(r.url());
+    // The body is read once the request has finished, so the whole body is
+    // in the browser. Reading it on 'response' could wait forever when a
+    // navigation cut the body short (the r_ng_01 timeouts on 50a958f7 and
+    // in CI run 44042450780). A request a navigation aborts emits
+    // 'requestfailed' instead; its body never fully reached the page.
+    page.on('requestfinished', (q: Request) => {
+      const u = new URL(q.url());
       if (!u.pathname.startsWith('/api/')) return;
+      const label = `${q.method()} ${u.pathname}`;
+      this.unread.add(label);
       this.pending.push(
-        r.text().then(
-          (body) => {
-            this.received.push({ method: r.request().method(), path: u.pathname, status: r.status(), body });
+        q.response().then(
+          async (r: Response | null) => {
+            if (r !== null) {
+              const body = await r.text();
+              this.received.push({ method: q.method(), path: u.pathname, status: r.status(), body });
+            }
+            this.unread.delete(label);
           },
-          () => undefined,
+          () => {
+            this.unread.delete(label);
+          },
         ),
       );
     });
   }
 
-  /** Waits until every response body seen so far has been read. */
+  private readonly unread = new Set<string>();
+
+  /**
+   * Waits until every response body seen so far has been read. Fails
+   * after 20 s and names the bodies still unread, rather than running
+   * into the test timeout with no clue.
+   */
   async settle(): Promise<void> {
-    await Promise.all(this.pending);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`response bodies still unread after 20 s: ${[...this.unread].join(', ')}`)),
+        20_000,
+      );
+    });
+    try {
+      await Promise.race([Promise.all(this.pending), late]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** The requests to `path` with `method`. */
