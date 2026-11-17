@@ -949,7 +949,7 @@ impl<'w> Cycle<'w> {
             creator(CreatorCommand::SaveFields {
                 programme: P1,
                 base: head,
-                fields: save_of(&synthetic_spec()?),
+                fields: save_of(&self.programme_spec()?),
                 clear: Vec::new(),
             }),
             false,
@@ -1028,7 +1028,7 @@ impl<'w> Cycle<'w> {
         let (Some(manager), Some(drafter)) = (self.manager.clone(), self.drafter.clone()) else {
             return Err(NotImplemented::new(NO_PROGRAMME));
         };
-        let call = CallId::from_raw(self.calls.saturating_add(1));
+        let call = CallId::from_raw(self.first_call().saturating_add(self.calls));
         let approval = if self.calls == 0 {
             CALL_APPROVAL
         } else {
@@ -1080,6 +1080,70 @@ impl<'w> Cycle<'w> {
         )?;
         self.call = true;
         self.calls = self.calls.saturating_add(1);
+        self.publish_texts(STEP, call)
+    }
+
+    /// The id of the cell's first call: [`CALL`], or the one a test named
+    /// ([`crate::world_public::WorldPublic::set_identity`]).
+    fn first_call(&self) -> u128 {
+        self.client
+            .cell()
+            .public()
+            .identity()
+            .map_or(CALL.raw(), |i| i.first_call)
+    }
+
+    /// The synthetic spec of the cycle's programme, with the name and
+    /// slug a test named ([`crate::world_public`]).
+    fn programme_spec(&self) -> Result<ProgrammeSpec, NotImplemented> {
+        let mut spec = synthetic_spec()?;
+        if let Some(id) = self.client.cell().public().identity() {
+            let failed = || NotImplemented::new(STEP_REFUSED);
+            let string = |s: &str| fstp_json::Value::from(s).to_compact();
+            for (field, value) in [
+                (FieldId::ProgrammeName, string(&id.name)),
+                (FieldId::PublicSlug, string(&id.slug)),
+            ] {
+                spec.set(
+                    fstp_programme::decode_field_value(field, value.as_bytes())
+                        .map_err(|_| failed())?,
+                );
+            }
+        }
+        Ok(spec)
+    }
+
+    /// Marks the texts of the published call `call` public in the world
+    /// cell (lane m4/cellpub, [`crate::world_public`]): its title and the
+    /// P-09 wording of its frozen policy, each a synthetic text that names
+    /// the programme and the call.
+    fn publish_texts(&self, step: &str, call: CallId) -> Result<(), NotImplemented> {
+        let state = self.state()?;
+        let view = state
+            .engine()
+            .core
+            .calls()
+            .get(call)
+            .ok_or_else(|| Self::refused(step, "the published call", None))?;
+        let name = self
+            .client
+            .cell()
+            .public()
+            .identity()
+            .map_or_else(|| "SuperSAFE".to_owned(), |i| i.name);
+        let public = self.client.cell().public();
+        public.publish(
+            view.text().id(),
+            &format!("{name} synthetic call {}", call.raw()),
+        );
+        if let Some(frozen) = view.frozen() {
+            for (i, k) in frozen.values().p09.0.iter().enumerate() {
+                public.publish(
+                    k.text.id(),
+                    &format!("{name} synthetic eligibility rule {}", i.saturating_add(1)),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1088,7 +1152,10 @@ impl<'w> Cycle<'w> {
 
     /// The current call: the latest one published ([`CALL`] first).
     fn call_id(&self) -> CallId {
-        CallId::from_raw(self.calls.max(1))
+        CallId::from_raw(
+            self.first_call()
+                .saturating_add(self.calls.max(1).saturating_sub(1)),
+        )
     }
 
     /// A fresh synthetic id.

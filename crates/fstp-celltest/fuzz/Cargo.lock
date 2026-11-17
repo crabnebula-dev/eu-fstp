@@ -204,7 +204,9 @@ dependencies = [
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgwire",
+ "fstp-public",
  "fstp-release",
+ "fstp-report",
  "fstp-rt",
  "fstp-smtp",
  "fstp-timeline",
@@ -606,6 +608,18 @@ dependencies = [
 [[package]]
 name = "fstp-prop"
 version = "0.1.0"
+
+[[package]]
+name = "fstp-public"
+version = "0.1.0"
+dependencies = [
+ "fstp-domain",
+ "fstp-guide",
+ "fstp-html",
+ "fstp-json",
+ "fstp-money",
+ "fstp-programme",
+]
 
 [[package]]
 name = "fstp-release"

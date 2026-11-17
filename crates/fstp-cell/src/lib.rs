@@ -51,6 +51,7 @@ pub mod engine;
 pub mod http;
 pub mod mail;
 pub mod process;
+pub mod public;
 pub mod routes;
 pub mod shell;
 pub mod tasks;

@@ -1508,7 +1508,7 @@ Built by lane m4/i86:
 | `i87_every_view_leaf_reaches_its_page` | Every leaf carries a unique canary, and each appears on its page |
 | `i87_equal_views_give_equal_page_bytes` | Property |
 | `i87_authenticated_public_tools_equal_public_endpoint` | Both endpoints |
-| `i87_two_cells_never_cross` | Isolation, M3 harness (T-ISO) |
+| `i87_two_cells_never_cross` | Isolation, M3 harness (T-ISO). Built by lane m4/cellpub in `crates/fstp-celltest/tests/t_iso_i87.rs` |
 | `i41_i42_i43_p54_public_view_filters_hold_in_every_state` | Supporting property; claimed in M9 |
 | `i87_m_public` | Model M-PUBLIC |
 | `i87_teeth_tool_reads_state_directly_is_caught`, `i87_teeth_filter_skipped_for_feed_is_caught` | Teeth |
@@ -1518,7 +1518,18 @@ Built by lane m4/i87 (2026-11-16):
 - M-PUBLIC (`crates/fstp-api-testkit/src/mc/public_model.rs`) now also checks, in every production state, that the feed equals the pages and that the funded, finished and programme tools answer only their page data.
 - Both teeth are in `crates/fstp-api-testkit/tests/i87_teeth_m_public.rs`. Each plants a test-kit `Fault` that reads the core state around `public_view_with`. No production switch exists.
 - `t_authz_denial_has_no_effect` is in `crates/fstp-api-testkit/tests/t_authz_denial_has_no_effect.rs`. It samples 256 denied cells at the SuperSAFE row through `harness::EffectProbe`.
-- Open: `i87_two_cells_never_cross` is not built. The M3 multi-cell harness starts `fstp-cell`, which mounts neither `fstp-web` nor `ApiCore`. Its cells serve no `/p` page, feed or public tool, so the test has nothing to compare there yet.
+- Was open: `i87_two_cells_never_cross` was not built, since the cells of the M3 multi-cell harness served no `/p` page, feed or public tool. Lane m4/cellpub closed it (below).
+
+Built by lane m4/cellpub (2026-11-17):
+
+- Daniel decided that the production cell serves the public surface itself. `fstp-cell` now depends on `fstp-public` and `fstp-report`. No deps-check rule lists the dependencies of `fstp-cell`, so no allowed edge changed, and the gate passes.
+- `crates/fstp-cell/src/public.rs` builds one `PublicView` per request through `fstp_public::public_view_with`, over the core state of the cell's own engine head. Its steps mirror `fstp-api-core/src/dispatch/public.rs`: the slug rule, the draft identity, the public texts, the stored Guide with its corrigenda, the brand sheet and the funder footer.
+- Routes: `routes::public_table()`, beside the section 8.7 table, which stays unchanged. Each row is a `GET` of risk class `Normal` and access class `Public`, with no body and no session. They are `/p/{slug}/`, `/p/{slug}/calls/{call}`, `/p/{slug}/calls/{call}/guide`, `/p/{slug}/funded`, `/p/{slug}/finished` and `/p/{slug}/feed.json`. A `/p` answer carries the section 3.10 CSP and no cookie.
+- Public tools: the cell serves no MCP endpoint. The tools answer `select` over the view as JSON on the registry routes that no page uses: `/p/{slug}/calls`, `/p/{slug}/deadlines` and `/p/{slug}/eligibility`. The other five tools get no JSON route in the cell. Their answers hold only the data of their pages (M-PUBLIC).
+- Differences from the web adapter: a page links no platform stylesheet, since the cell serves no web assets. A path no route matches answers the cell router's empty 404. A cell whose ledger holds no tenant part is gated by programme activation only, since the cell has no M4 organisation port.
+- Open for Daniel: the cell text store has no public text class. A sealed text carries no mark that it may be shown in public, and the command route lets a client name any text id. So the production source `NoPublicTexts` holds no public text, and a production cell shows its programme pages with no open call. A test world passes `fstp_celltest::world_public::WorldPublic`, one per cell, which the cycle's `publish-call` fills with the synthetic title and P-09 wording of its call.
+- `i87_two_cells_never_cross` (`crates/fstp-celltest/tests/t_iso_i87.rs`) runs in the `isolation-multi-cell` CI part.
+- Not built: `t_iso_public_rate_limit_keys_are_per_cell` (section 8.6). The cell's public routes keep no rate limit and no cache.
 
 ### 8.5 Models
 

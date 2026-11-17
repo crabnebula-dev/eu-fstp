@@ -156,6 +156,8 @@ pub struct PgBackend<R: Runtime> {
     operator_key: Option<Vec<u8>>,
     /// The vault ticket key (ADR-004 purpose `Ticket`).
     ticket: Option<Arc<fstp_crypto::sig::Ed25519SigningKey>>,
+    /// The source of the texts a public view may show (`crate::public`).
+    public_texts: Arc<dyn crate::public::PublicTextSource>,
     /// What the routes keep between two steps of a ceremony (module
     /// documentation).
     pending: Mutex<Pending>,
@@ -208,6 +210,7 @@ impl<R: Runtime> PgBackend<R> {
             mode: None,
             operator_key: None,
             ticket: None,
+            public_texts: Arc::new(crate::public::NoPublicTexts),
             pending: Mutex::new(Pending::default()),
         })
     }
@@ -264,6 +267,17 @@ impl<R: Runtime> PgBackend<R> {
         key: Option<Arc<fstp_crypto::sig::Ed25519SigningKey>>,
     ) -> PgBackend<R> {
         self.ticket = key;
+        self
+    }
+
+    /// The same backend over the public text source `texts`
+    /// (`crate::public`, lane m4/cellpub).
+    #[must_use]
+    pub fn with_public_texts(
+        mut self,
+        texts: Arc<dyn crate::public::PublicTextSource>,
+    ) -> PgBackend<R> {
+        self.public_texts = texts;
         self
     }
 
@@ -336,6 +350,10 @@ impl<R: Runtime> PgBackend<R> {
 }
 
 impl<R: Runtime> Backend for PgBackend<R> {
+    fn public_texts(&self) -> Arc<dyn crate::public::PublicTextSource> {
+        Arc::clone(&self.public_texts)
+    }
+
     fn ticket_key(&self) -> Option<Arc<fstp_crypto::sig::Ed25519SigningKey>> {
         self.ticket.clone()
     }
