@@ -102,18 +102,20 @@ test.describe('programme set-up scene', () => {
       await expect(report.locator('li[data-severity="warning"][data-acknowledged="false"]')).toHaveCount(0);
       await expect(page.locator(CREATOR_UI.requestActivation)).toBeEnabled();
 
-      for (const id of [CREATOR_UI.previewGuide, CREATOR_UI.previewPublic, CREATOR_UI.previewContract]) {
-        const region = page.locator(id);
-        await expect(region, `${id} shows text`).not.toHaveText('');
-        await expect(region, `${id} is available`).not.toContainText('This preview is not available.');
-        await expect(region, `${id} reads the built draft`).not.toContainText(UNSET);
-      }
       await expect(page.locator(CREATOR_UI.previewGuide)).toContainText('SuperSAFE');
       await expect(page.locator(CREATOR_UI.previewPublic)).toContainText('SuperSAFE');
       const contract = page.locator(CREATOR_UI.previewContract);
       await expect(contract).toContainText('Sub-grant agreement for proposal [proposal: set for each grant]');
       for (const marker of PER_GRANT) {
         await expect(contract, `the contract preview marks ${marker}`).toContainText(marker);
+      }
+      // The negative checks pass at once on a preview that still loads, so
+      // they run after the positive ones have waited for the built text.
+      for (const id of [CREATOR_UI.previewGuide, CREATOR_UI.previewPublic, CREATOR_UI.previewContract]) {
+        const region = page.locator(id);
+        await expect(region, `${id} shows text`).not.toHaveText('');
+        await expect(region, `${id} is available`).not.toContainText('This preview is not available.');
+        await expect(region, `${id} reads the built draft`).not.toContainText(UNSET);
       }
       problems.push(...(await structureProblems(page, 'review')), ...(await contrastBothThemes(page, 'review')));
 
