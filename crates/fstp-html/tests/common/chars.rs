@@ -60,16 +60,63 @@ pub(crate) fn is_typed(e: &HtmlError) -> bool {
 /// same-origin path or an `https:` URL. It holds only ASCII graphic
 /// characters and no backslash, so no browser rewrites it into another
 /// origin. A path starts with one `/`. An `https:` URL starts with
-/// `https://` and a host character.
+/// `https://` and a host.
+///
+/// Issue 6 L21: the reference follows the grammar of the frontend
+/// `safeUrl` (`web/src/core/dom.ts`), so the writer accepts no URL the
+/// frontend refuses. Each `%` is followed by two hex digits. The host is
+/// lower-case LDH labels, with an optional port of one to five digits and
+/// no userinfo. A host whose last label is all digits, or `0x` and hex
+/// digits, is an IPv4 form and is unsafe. The frontend's fragment-only
+/// link stays unsafe here, which is stricter.
 pub(crate) fn is_safe_url(u: &str) -> bool {
     if u.is_empty() || !u.bytes().all(|b| (0x21..=0x7e).contains(&b) && b != b'\\') {
         return false;
     }
-    if let Some(rest) = u.strip_prefix("https://") {
-        return rest.as_bytes().first().is_some_and(|&b| b != b'/');
+    // Every `%` opens a two-digit hex escape.
+    let bytes = u.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'%' {
+            let pair = bytes.get(i + 1..i + 3);
+            if !pair.is_some_and(|p| p.iter().all(u8::is_ascii_hexdigit)) {
+                return false;
+            }
+        }
     }
-    let b = u.as_bytes();
-    b.first() == Some(&b'/') && b.get(1).is_none_or(|&c| c != b'/')
+    if let Some(rest) = u.strip_prefix("https://") {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        return safe_authority(authority);
+    }
+    bytes.first() == Some(&b'/') && bytes.get(1).is_none_or(|&c| c != b'/')
+}
+
+/// The authority rule of the frontend `safeUrl`, written from its text.
+fn safe_authority(authority: &str) -> bool {
+    let mut parts = authority.splitn(2, ':');
+    let host = parts.next().unwrap_or("");
+    if let Some(port) = parts.next()
+        && (port.is_empty() || port.len() > 5 || !port.bytes().all(|c| c.is_ascii_digit()))
+    {
+        return false;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    let ldh = |l: &&str| {
+        let alnum = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+        !l.is_empty()
+            && l.starts_with(alnum)
+            && l.ends_with(alnum)
+            && l.chars().all(|c| alnum(c) || c == '-')
+    };
+    if !labels.iter().all(ldh) {
+        return false;
+    }
+    let last = labels.last().copied().unwrap_or("");
+    let digits = last.chars().all(|c| c.is_ascii_digit());
+    let hex = last.strip_prefix("0x").is_some_and(|h| {
+        h.chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    });
+    !digits && !hex
 }
 
 /// Fragments that break naive escaping in some context.
