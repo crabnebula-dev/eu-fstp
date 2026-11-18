@@ -64,9 +64,11 @@
 //!   digest, the session strength of the stored operation and a fresh dry
 //!   run, in that order, before it consumes a step-up proof. It claims the
 //!   action before its first await.
-//! - A bearer token that resolves to no grant is anonymous and keeps no
-//!   rate counter of its own. The public rate-limit key of Q19 will limit
-//!   such calls once it exists.
+//! - A bearer token that resolves to no grant (unknown, revoked or
+//!   expired) is refused with `Unauthenticated`, rule `token` (ADR-013:
+//!   401), and keeps no rate counter. A call with no credential is
+//!   anonymous, and its calls are charged to the peer key of the request
+//!   head (ADR-024, M7), shared when the listener passes none.
 //!
 //! Interim readings of lane m4disp, pending Daniel:
 //!
@@ -474,9 +476,9 @@ async fn resolve<P: Seams>(
                 Err(PortError::Refused) => Ok(anonymous(false)),
             }
         }
-        // A token with no grant is anonymous and keeps no counter of its
+        // A token with no grant is refused (ADR-013) and keeps no counter of its
         // own, so fresh random tokens allocate nothing (design section 3.7
-        // step 4). Its calls are limited as anonymous calls are.
+        // step 4).
         Credential::Bearer(token) => match ports.grant(token, now).await {
             Ok(g) => match Principal::mcp(&g, &admins_of(ports, state, g.account), state, now) {
                 Ok(p) => Ok(Caller {
@@ -485,10 +487,13 @@ async fn resolve<P: Seams>(
                     agent: Some(AgentClientId::from_raw(g.agent.raw())),
                     token: Some(fstp_crypto::sha256(token)),
                 }),
-                Err(_) => Ok(anonymous(true)),
+                // Issue 6 open question, H-23, ADR-013: an invalid, revoked
+                // or expired token gets 401, so it is no anonymous caller.
+                // Only a call with no credential is anonymous.
+                Err(_) => Err(ApiError::refused(ErrorCode::Unauthenticated, "token")),
             },
             Err(PortError::Unavailable) => Err(ApiError::refused(ErrorCode::Unavailable, "token")),
-            Err(PortError::Refused) => Ok(anonymous(true)),
+            Err(PortError::Refused) => Err(ApiError::refused(ErrorCode::Unauthenticated, "token")),
         },
     }
 }
@@ -555,6 +560,9 @@ struct Call<'a, P: Seams> {
     /// SA-09: a call the page gate builds to judge a read without
     /// running it. It writes no audit entry, since nothing is read.
     quiet: bool,
+    /// The peer of the call, for the limit of calls with no account
+    /// (ADR-024). Memory only.
+    peer: crate::PeerKey,
 }
 
 impl<P: Seams> Call<'_, P> {
@@ -743,6 +751,7 @@ pub(crate) async fn run<P: Seams>(
         now,
         state,
         quiet: false,
+        peer: head.peer(),
     };
     let result = steps(&call, &op).await;
     // R-MC-03: a call through an agent client joins the caller's
@@ -922,10 +931,17 @@ fn rate_limits<P: Seams>(call: &Call<'_, P>) -> Result<(), ApiError> {
     if let Some(c) = call.caller.agent {
         keys.push((Key::Client(c), rate::PER_CLIENT));
     }
-    if lock(&call.st.rates).take_all(&keys, call.now) {
-        Ok(())
-    } else {
-        Err(call.refuse(ApiError::refused(ErrorCode::RateLimited, "rate")))
+    // M7, H-01, ADR-024: a call with no account is charged to its peer.
+    if call.account().is_none() {
+        keys.push((Key::Peer(call.peer), rate::PER_PEER_ANONYMOUS));
+    }
+    let taken = lock(&call.st.rates).take_all_noting(&keys, call.now);
+    match taken {
+        Ok(()) => Ok(()),
+        // ADR-024: the first refusal of a key in a window is audited,
+        // later ones are not. The entry names the rule, never the peer.
+        Err(true) => Err(call.refuse(ApiError::refused(ErrorCode::RateLimited, "rate"))),
+        Err(false) => Err(ApiError::refused(ErrorCode::RateLimited, "rate")),
     }
 }
 

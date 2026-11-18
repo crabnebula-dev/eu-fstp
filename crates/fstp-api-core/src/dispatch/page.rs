@@ -322,6 +322,7 @@ fn body_admits<P: Seams>(
                 now,
                 state: Arc::clone(state),
                 quiet: true,
+                peer: crate::PeerKey::shared(),
             };
             if kind == ReadKind::GetJourney {
                 super::journey::journey(&call, p, rule).is_ok()
