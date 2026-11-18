@@ -194,7 +194,7 @@ async fn app_fallback(s: &Shared, req: &Request) -> Response {
     }
     let admission = match &s.backend {
         Backend::Core(core) => match api::credential(&req.headers) {
-            Ok(cred) => core.page(cred, &RequestHead::new(), path).await,
+            Ok(cred) => core.page(cred, &api::head(req), path).await,
             // A tossed cookie or a bearer field opens no page. The
             // visitor signs in again, as with no session.
             Err(_) => match fstp_api_core::page_without_session(path) {
@@ -332,10 +332,7 @@ async fn public(backend: &Backend, assets: &AssetSet, req: &Request) -> Response
     // ADR-021 decision 3: the feed is data, so only a page answers the
     // setup gate's refusal in words.
     let page = op.name() != "public.feed";
-    match core
-        .dispatch(Credential::None, &RequestHead::new(), op)
-        .await
-    {
+    match core.dispatch(Credential::None, &api::head(req), op).await {
         Ok(OpResult::Done { body, .. }) => match body.public_page() {
             Some(html) => Response::with_body(
                 StatusCode::OK,
@@ -388,9 +385,10 @@ impl WebRouter {
         let surface = Surface::of(req.target.path());
         let page = surface.serves_pages() && fstp_http::is_page_navigation(&req);
         let path = req.target.path().to_owned();
+        let head = api::head(&req);
         let resp = self.by_surface(surface, req).await;
         if page && matches!(resp.status.as_u16(), 400 | 404) {
-            return self.unknown_page(surface, &path).await;
+            return self.unknown_page(surface, &path, &head).await;
         }
         resp
     }
@@ -401,9 +399,9 @@ impl WebRouter {
     /// under `/p/{slug}/` goes to that programme's public home
     /// `/p/{slug}/` when it exists. The API and the machine routes never
     /// get here, so they keep their JSON answers.
-    async fn unknown_page(&self, surface: Surface, path: &str) -> Response {
+    async fn unknown_page(&self, surface: Surface, path: &str, head: &RequestHead) -> Response {
         if surface == Surface::Public
-            && let Some(home) = self.public_home(path).await
+            && let Some(home) = self.public_home(path, head).await
         {
             return see_other(&home);
         }
@@ -413,7 +411,7 @@ impl WebRouter {
     /// The public home `/p/{slug}/` of the programme `path` names, when
     /// the cell serves it: its page answers, or the setup gate of ADR-021
     /// answers its "not published yet" page.
-    async fn public_home(&self, path: &str) -> Option<String> {
+    async fn public_home(&self, path: &str, head: &RequestHead) -> Option<String> {
         let Backend::Core(core) = &self.shared.backend else {
             return None;
         };
@@ -423,10 +421,7 @@ impl WebRouter {
             return None;
         }
         let op = decode_public_page(&home).ok()?;
-        match core
-            .dispatch(Credential::None, &RequestHead::new(), op)
-            .await
-        {
+        match core.dispatch(Credential::None, head, op).await {
             Ok(OpResult::Done { .. }) => Some(home),
             Err(e) if e.is_setup_refusal() => Some(home),
             _ => None,
