@@ -120,6 +120,19 @@ pub enum AuthCommand {
         /// The credential id.
         credential: Vec<u8>,
     },
+    /// Mark a credential suspect after its sign count went down (ADR-008
+    /// "Sign counts", issue 6 L10, H-21). Only the cell itself issues it,
+    /// as a system actor, when the verifier reports the regression at a
+    /// login or a step-up. No session issues it: a caller could otherwise
+    /// mark another account's passkey. Its record is
+    /// [`AuthRecord::CredentialSuspect`], which holds the account and the
+    /// credential id only.
+    MarkCredentialSuspect {
+        /// The account that owns the credential.
+        account: AccountId,
+        /// The credential id.
+        credential: Vec<u8>,
+    },
     /// Grant a step-up for one action digest.
     GrantStepUp {
         /// The session.

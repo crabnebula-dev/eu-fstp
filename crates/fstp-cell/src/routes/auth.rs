@@ -271,6 +271,37 @@ pub(crate) async fn login_options<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Re
     Reply::json(StatusCode::OK, &Value::Object(o))
 }
 
+/// Records `CredentialSuspect` for `credential` of `account` (ADR-008
+/// "Sign counts", issue 6 L10). The cell issues `MarkCredentialSuspect` as
+/// the system task `LoginVerifier`. A refusal, such as a credential that is
+/// suspect already, and a fault are not shown: the caller refuses the login
+/// or step-up as it did before. The record holds the account and the
+/// credential id only, never a client address.
+async fn record_suspect<B: Backend>(ctx: &Ctx<B>, account: AccountId, credential: &[u8]) {
+    let Ok(suffix) = random::<8>() else {
+        return;
+    };
+    let Ok(s) = ctx.backend.state().await else {
+        return;
+    };
+    let action = Action::Command(CellCommand::Auth(
+        fstp_auth::AuthCommand::MarkCredentialSuspect {
+            account,
+            credential: credential.to_vec(),
+        },
+    ));
+    let Ok(admitted) = fstp_cell_core::gate::admit_system(
+        &s,
+        action,
+        fstp_cell_core::SystemTask::LoginVerifier,
+        fstp_cell_core::system_command_id(suffix),
+        ctx.backend.now(),
+    ) else {
+        return;
+    };
+    let _ = ctx.backend.execute(admitted).await;
+}
+
 /// `POST /auth/passkey/login` (Public, I-77): verifies the assertion over
 /// the login challenge and opens a passkey session.
 pub(crate) async fn login<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
@@ -319,9 +350,14 @@ pub(crate) async fn login<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
         Err(LoginRefusal::Method(_) | LoginRefusal::NoUserVerification) => {
             return login_refused(Rule::I77);
         }
-        // A regressed sign count should record `CredentialSuspect`. No
-        // auth command records it yet, so the login is refused only.
-        Err(LoginRefusal::Assertion(_) | LoginRefusal::CredentialSuspect) => {
+        // ADR-008 "Sign counts", issue 6 L10: a signed regression records
+        // `CredentialSuspect` as the cell's own system task, and the login
+        // is refused as for any other assertion failure.
+        Err(LoginRefusal::CredentialSuspect) => {
+            record_suspect(ctx, account, &credential).await;
+            return login_refused(Rule::Adr008);
+        }
+        Err(LoginRefusal::Assertion(_)) => {
             return login_refused(Rule::Adr008);
         }
     };
@@ -1207,9 +1243,9 @@ pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Cal
 /// names it.
 ///
 /// A gate refusal of the session answers through `denied`, and a refusal
-/// of the step-up itself is 403 under I-78. A regressed sign count should
-/// record `CredentialSuspect`, as at login. No auth command records it
-/// yet, so it is refused only. An admission that names another command
+/// of the step-up itself is 403 under I-78. A regressed sign count records
+/// `CredentialSuspect`, as at login ([`record_suspect`]), and is refused as
+/// before. An admission that names another command
 /// id, session or digest than this route asked for is refused with 500,
 /// before the engine. The new sign count is stored before the commit.
 #[allow(
@@ -1229,6 +1265,16 @@ async fn grant_stepup<B: Backend>(
         match admit_verified_stepup(s, &caller.view, request, assertion, count, now) {
             Ok(x) => x,
             Err(RouteDeny::Gate(d)) => return denied(d),
+            Err(RouteDeny::StepUp(fstp_auth::stepup::StepUpDeny::CredentialSuspect)) => {
+                if let Some(owner) = s
+                    .auth()
+                    .credential(&assertion.credential_id)
+                    .map(|c| c.account)
+                {
+                    record_suspect(ctx, owner, &assertion.credential_id).await;
+                }
+                return stepup_refused();
+            }
             Err(_) => return stepup_refused(),
         };
     let names_this_grant = matches!(

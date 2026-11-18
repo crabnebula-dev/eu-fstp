@@ -867,6 +867,7 @@ fn system_only(c: &CellCommand) -> bool {
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
             | CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. })
+            | CellCommand::Auth(fstp_auth::AuthCommand::MarkCredentialSuspect { .. })
     )
 }
 
@@ -1633,6 +1634,10 @@ pub fn admit_system(
         (
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. }),
+        ) => true,
+        (
+            SystemTask::LoginVerifier,
+            CellCommand::Auth(fstp_auth::AuthCommand::MarkCredentialSuspect { .. }),
         ) => true,
         (
             SystemTask::ContractPort,
