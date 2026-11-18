@@ -5,8 +5,10 @@
 //! to 7 are model calls through `fstp_infer`, with the stripped text only
 //! in data parts. Stage 7 also runs a deterministic scanner over the
 //! stage 1 marks and over text addressed to an assessor. Stage 8 validates
-//! each reply and locates its evidence. Any failed call fails the whole
-//! assessment, which then stays pending (R-NF-10).
+//! each reply and locates its evidence. [`Pipeline::assess`] fails on the
+//! first failed call and the assessment then stays pending (R-NF-10).
+//! [`Pipeline::assess_partial`] keeps what was found and reports the
+//! refusals (issue 6 M3, H-03).
 
 use core::fmt;
 
@@ -190,15 +192,17 @@ impl Prepared {
             if q.is_empty() {
                 continue;
             }
-            let Some(part) = self.parts.iter().find(|p| p.label == *label) else {
-                continue;
-            };
-            let Some(a) = part.stripped.as_data().find(q) else {
-                continue;
-            };
-            let located = part
-                .original_span(a, a.saturating_add(q.len()))
-                .and_then(|(s, e)| part.pointer(s, e));
+            // L19: every part with the label is searched, the first that
+            // holds the quote wins.
+            let located = self
+                .parts
+                .iter()
+                .filter(|p| p.label == *label)
+                .find_map(|part| {
+                    let a = part.stripped.as_data().find(q)?;
+                    part.original_span(a, a.saturating_add(q.len()))
+                        .and_then(|(s, e)| part.pointer(s, e))
+                });
             if let Some(p) = located
                 && !evidence.contains(&p)
             {
@@ -394,37 +398,116 @@ impl<T: Transport, M: NameMask> Pipeline<'_, T, M> {
     /// # Errors
     ///
     /// Returns an [`AssessError`] for the first stage that failed. The
-    /// assessment then stays pending and nothing is published.
+    /// assessment then stays pending and nothing is published. A caller
+    /// that must not lose the deterministic integrity findings, or must
+    /// reach a visible outcome when a reply is refused, uses
+    /// [`Pipeline::assess_partial`].
     pub async fn assess(&self, job: &Job) -> Result<Assessment, AssessError> {
-        let prepared = prepare(self.mask, job).await?;
+        let p = self.run(job, true).await;
+        if let Some(e) = p.error {
+            return Err(e);
+        }
+        if let Some((_, e)) = p.refused.first() {
+            return Err(AssessError::Output(*e));
+        }
+        Ok(p.assessment)
+    }
+
+    /// As [`Pipeline::assess`], but bounded (issue 6 M3, H-03). A reply
+    /// the validator refuses is dropped whole, as I-10 requires, and the
+    /// later stages still run. An inference or mask failure stops the run.
+    /// In both cases the findings found so far, the deterministic stage 7
+    /// integrity findings included, stay in the result, so applicant
+    /// content cannot keep an assessment pending or hide its own
+    /// integrity findings. The caller records `refused` and `error` as
+    /// the visible outcome.
+    pub async fn assess_partial(&self, job: &Job) -> PartialAssessment {
+        self.run(job, false).await
+    }
+
+    async fn run(&self, job: &Job, stop_on_refusal: bool) -> PartialAssessment {
         let mut out = Assessment {
             findings: Vec::new(),
             dropped: 0,
             replies: Vec::new(),
         };
+        let mut refused = Vec::new();
+        let prepared = match prepare(self.mask, job).await {
+            Ok(p) => p,
+            Err(e) => {
+                return PartialAssessment {
+                    assessment: out,
+                    refused,
+                    error: Some(e),
+                };
+            }
+        };
+        // Stage 7, deterministic part, before any model call: no later
+        // failure loses these findings.
+        let scan = prepared.integrity_scan();
         let data = prepared.data(false);
-        let elements = self.rubric.required();
-
-        let i = Instruction::new(Stage::Completeness.prompt()).elements(elements);
-        self.call(Stage::Completeness, i, data.clone(), &prepared, &mut out)
-            .await?;
+        let mut calls: Vec<(Stage, Instruction, Vec<DataPart>)> = Vec::new();
+        let i = Instruction::new(Stage::Completeness.prompt()).elements(self.rubric.required());
+        calls.push((Stage::Completeness, i, data.clone()));
         for c in &self.criteria {
             let i = Instruction::new(Stage::Quality.prompt()).criterion(*c);
-            self.call(Stage::Quality, i, data.clone(), &prepared, &mut out)
-                .await?;
+            calls.push((Stage::Quality, i, data.clone()));
         }
-        let i = Instruction::new(Stage::Claims.prompt());
-        self.call(Stage::Claims, i, data.clone(), &prepared, &mut out)
-            .await?;
+        calls.push((
+            Stage::Claims,
+            Instruction::new(Stage::Claims.prompt()),
+            data.clone(),
+        ));
         if prepared.parts.iter().any(PreparedPart::is_source) {
-            let i = Instruction::new(Stage::Verify.prompt());
-            self.call(Stage::Verify, i, prepared.data(true), &prepared, &mut out)
-                .await?;
+            calls.push((
+                Stage::Verify,
+                Instruction::new(Stage::Verify.prompt()),
+                prepared.data(true),
+            ));
         }
-        let i = Instruction::new(Stage::Integrity.prompt());
-        self.call(Stage::Integrity, i, data, &prepared, &mut out)
-            .await?;
-        out.findings.extend(prepared.integrity_scan());
-        Ok(out)
+        calls.push((
+            Stage::Integrity,
+            Instruction::new(Stage::Integrity.prompt()),
+            data,
+        ));
+        let mut error = None;
+        for (stage, instruction, data) in calls {
+            match self
+                .call(stage, instruction, data, &prepared, &mut out)
+                .await
+            {
+                Ok(()) => {}
+                Err(AssessError::Output(e)) => {
+                    refused.push((stage, e));
+                    if stop_on_refusal {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
+        }
+        out.findings.extend(scan);
+        PartialAssessment {
+            assessment: out,
+            refused,
+            error,
+        }
     }
+}
+
+/// The result of [`Pipeline::assess_partial`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartialAssessment {
+    /// What the run produced: findings of every accepted reply and the
+    /// deterministic integrity findings.
+    pub assessment: Assessment,
+    /// The stages whose reply the validator refused whole, with the
+    /// reason. No content of a refused reply is in `assessment`.
+    pub refused: Vec<(Stage, OutputError)>,
+    /// The failure that stopped the run, if any: a mask or inference
+    /// failure.
+    pub error: Option<AssessError>,
 }

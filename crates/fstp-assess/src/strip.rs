@@ -99,6 +99,7 @@ impl SyntheticNameMask {
     pub fn find(&self, text: &str) -> Vec<NameSpan> {
         let lower = text.to_ascii_lowercase();
         let mut found: Vec<NameSpan> = Vec::new();
+        let mut taken = Disjoint::default();
         let mut needles: Vec<(String, u32)> = Vec::new();
         for (i, name) in self.team.iter().enumerate() {
             let person = u32::try_from(i).unwrap_or(u32::MAX);
@@ -112,7 +113,8 @@ impl SyntheticNameMask {
         }
         for (needle, person) in needles {
             for (start, end) in whole_words(&lower, &needle) {
-                if !found.iter().any(|f| f.start < end && start < f.end) {
+                if !taken.overlaps(start, end) {
+                    taken.insert(start, end);
                     found.push(NameSpan { start, end, person });
                 }
             }
@@ -182,6 +184,27 @@ pub struct Hit {
     pub end: usize,
     /// The numbering key: the value, or the person index for names.
     key: String,
+}
+
+/// Accepted spans that never overlap, with an overlap test in logarithmic
+/// time (issue 6 L20). The test is the one the quadratic scans made:
+/// `h.start < end && start < h.end` for some accepted `h`. The spans are
+/// disjoint, so only the accepted span with the greatest start below
+/// `end` can overlap.
+#[derive(Default)]
+struct Disjoint(BTreeMap<usize, usize>);
+
+impl Disjoint {
+    fn overlaps(&self, start: usize, end: usize) -> bool {
+        self.0
+            .range(..end)
+            .next_back()
+            .is_some_and(|(_, e)| start < *e)
+    }
+
+    fn insert(&mut self, start: usize, end: usize) {
+        self.0.insert(start, end);
+    }
 }
 
 fn byte(s: &[u8], i: usize) -> u8 {
@@ -313,6 +336,12 @@ fn phones(s: &[u8]) -> Vec<(usize, usize)> {
                 } else {
                     break;
                 }
+                // More than 15 digits never matches: stop here, so a long
+                // run of digits and spaces costs a bounded scan per start
+                // (issue 6 L20).
+                if digits > 15 {
+                    break;
+                }
             }
             let min = if plus { 7 } else { 9 };
             if digits >= min && digits <= 15 && !word_char(byte(s, end)) {
@@ -411,6 +440,7 @@ fn handles(text: &str, team: &[String]) -> Vec<(usize, usize)> {
 pub fn detect(text: &str, team_handles: &[String]) -> Vec<Hit> {
     let s = text.as_bytes();
     let mut hits: Vec<Hit> = Vec::new();
+    let mut taken = Disjoint::default();
     let groups = [
         (PiiClass::Iban, ibans(s)),
         (PiiClass::Email, emails(s)),
@@ -423,9 +453,10 @@ pub fn detect(text: &str, team_handles: &[String]) -> Vec<Hit> {
             let Some(value) = text.get(start..end) else {
                 continue;
             };
-            if hits.iter().any(|h| h.start < end && start < h.end) {
+            if taken.overlaps(start, end) {
                 continue;
             }
+            taken.insert(start, end);
             let key = if class == PiiClass::Handle {
                 value.trim_start_matches('@').to_ascii_lowercase()
             } else {
@@ -448,15 +479,17 @@ pub fn detect(text: &str, team_handles: &[String]) -> Vec<Hit> {
 /// caller fails closed when the port gave spans it could not use.
 pub(crate) fn name_hits(text: &str, spans: &[NameSpan]) -> Option<Vec<Hit>> {
     let mut hits: Vec<Hit> = Vec::new();
+    let mut taken = Disjoint::default();
     let mut sorted = spans.to_vec();
     sorted.sort();
     for n in sorted {
         if n.start >= n.end || text.get(n.start..n.end).is_none() {
             return None;
         }
-        if hits.iter().any(|h| h.start < n.end && n.start < h.end) {
+        if taken.overlaps(n.start, n.end) {
             continue;
         }
+        taken.insert(n.start, n.end);
         hits.push(Hit {
             class: PiiClass::Person,
             start: n.start,
@@ -487,4 +520,50 @@ pub(crate) fn apply(text: &str, hits: &[Hit], ph: &mut Placeholders) -> (String,
     out.push_str(rest);
     map.push_copy(rest.len());
     (out, map)
+}
+
+#[cfg(test)]
+mod issue6_l20 {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test code")]
+
+    use super::*;
+
+    /// The quadratic overlap test the scans used.
+    fn brute(accepted: &[(usize, usize)], start: usize, end: usize) -> bool {
+        accepted.iter().any(|(s, e)| *s < end && start < *e)
+    }
+
+    /// Issue 6 L20: the logarithmic overlap test answers as the brute
+    /// force one over pseudo-random spans.
+    #[test]
+    fn issue6_l20_disjoint_overlap_matches_the_quadratic_test() {
+        let mut x = 0x1234_5678_u64;
+        let mut next = move |m: u64| {
+            x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            usize::try_from((x >> 33) % m).unwrap()
+        };
+        let mut d = Disjoint::default();
+        let mut acc: Vec<(usize, usize)> = Vec::new();
+        for _ in 0..4000 {
+            let start = next(2000);
+            let end = start + 1 + next(12);
+            assert_eq!(d.overlaps(start, end), brute(&acc, start, end));
+            if !brute(&acc, start, end) {
+                d.insert(start, end);
+                acc.push((start, end));
+            }
+        }
+    }
+
+    /// Issue 6 L20: 64 KiB of digit groups, and of many emails, scan in
+    /// bounded time and find what they hold.
+    #[test]
+    fn issue6_l20_large_texts_scan_in_bounded_time() {
+        let t0 = std::time::Instant::now();
+        let digits = "0 ".repeat(32 * 1024);
+        let _ = detect(&digits, &[]);
+        let mails = "a@b.cc ".repeat(9000);
+        assert_eq!(detect(&mails, &[]).len(), 9000);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5));
+    }
 }
