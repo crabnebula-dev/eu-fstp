@@ -112,12 +112,15 @@ pub(crate) fn write_new(
 ) -> Result<(), KeydError> {
     use std::io::Write as _;
     let p = path(volume, chain, epoch);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&p)
-        .map_err(|_| KeydError::Io("create an epoch file"))?;
+    let mut file = crate::volume::private(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true),
+    )
+    .open(&p)
+    .map_err(|_| KeydError::Io("create an epoch file"))?;
+    crate::volume::fix_file_mode(&file)?;
     file.write_all(bytes)
         .map_err(|_| KeydError::Io("write an epoch file"))?;
     file.sync_all()

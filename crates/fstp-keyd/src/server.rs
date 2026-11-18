@@ -78,9 +78,53 @@ pub(crate) struct Server {
     table: TableStore,
     roots: BTreeMap<RootHandle, (RootMaterial, aead::Key)>,
     usage: UsageLog,
+    /// Records written in the current window, per client code: the window
+    /// start, the count, and whether the first refusal was logged.
+    windows: BTreeMap<u8, (Instant, u32, bool)>,
+    log_max: u64,
+    rate_max: u32,
 }
 
 impl Server {
+    /// Whether a request of client `client` and operation `op` may write
+    /// a usage record (L13, ADR-024). It refuses a request over the
+    /// per-client rate, and every request but create and destroy at the
+    /// size bound. Twice the size bound refuses create and destroy too,
+    /// so the log is never unbounded. A refusal writes no record except
+    /// the first of a client in a window.
+    pub(crate) fn admit(&mut self, client: u8, op: u8) -> bool {
+        let size = self.usage.len();
+        let over_size = if usage::exempt_from_bound(op) {
+            size >= self.log_max.saturating_mul(2)
+        } else {
+            size >= self.log_max
+        };
+        let now = Instant::now();
+        let window = Duration::from_secs(usage::USAGE_WINDOW_SECS);
+        let entry = self.windows.entry(client).or_insert((now, 0, false));
+        if now.duration_since(entry.0) >= window {
+            *entry = (now, 0, false);
+        }
+        let over_rate = !usage::exempt_from_bound(op) && entry.1 >= self.rate_max;
+        if !over_size && !over_rate {
+            entry.1 = entry.1.saturating_add(1);
+            return true;
+        }
+        let first = !entry.2;
+        entry.2 = true;
+        if first && !over_size {
+            // The first refusal of a client in a window leaves one record.
+            let _ = self.usage.append_from(
+                client,
+                RequestId([0u8; 16]),
+                op,
+                None,
+                Refusal::LimitReached.code(),
+            );
+        }
+        false
+    }
+
     /// Opens the key volume under `passphrase`, creating an empty key
     /// table on first start.
     pub(crate) fn open(volume: &Path, passphrase: &Passphrase) -> Result<Server, KeydError> {
@@ -90,6 +134,9 @@ impl Server {
             table,
             roots: BTreeMap::new(),
             usage: UsageLog::open(volume)?,
+            windows: BTreeMap::new(),
+            log_max: usage::USAGE_LOG_MAX_BYTES,
+            rate_max: usage::USAGE_RECORDS_PER_CLIENT_MINUTE,
         })
     }
 
@@ -106,6 +153,9 @@ impl Server {
     /// [`Refusal::NotPermitted`] (ADR-004 part 2, R-NF-08). Every request
     /// is logged with its outcome and client.
     pub(crate) fn handle_as(&mut self, role: ClientRole, request: &Request) -> Response {
+        if !self.admit(role.code(), op_and_root(request).0) {
+            return Response::Refused(Refusal::LimitReached);
+        }
         if role.permits(request) {
             return self.serve_logged(role.code(), request);
         }
@@ -569,6 +619,8 @@ pub fn serve_sockets_from(
         }
         Err(e) => return Err(e),
     };
+    // H-22: owner and mode of the volume, before any key file is read.
+    crate::volume::check_private_volume(key_volume, choice.mode == DeploymentMode::Development)?;
     let server = Server::open(key_volume, &passphrase)?;
     drop(passphrase);
     log(&LogEvent::KeyCustodyStarted {
@@ -890,13 +942,15 @@ fn serve_connection(
                 Ok(request) => server.handle_as(role, &request),
                 Err(_) => {
                     let id = RequestId([0u8; 16]);
-                    let _ = server.usage.append_from(
-                        role.code(),
-                        id,
-                        0,
-                        None,
-                        Refusal::BadRequest.code(),
-                    );
+                    if server.admit(role.code(), usage::OP_USAGE) {
+                        let _ = server.usage.append_from(
+                            role.code(),
+                            id,
+                            0,
+                            None,
+                            Refusal::BadRequest.code(),
+                        );
+                    }
                     Response::Refused(Refusal::BadRequest)
                 }
             }
@@ -947,6 +1001,64 @@ mod tests {
                 Err(KeydError::Volume(_))
             ));
         }
+    }
+
+    /// Issue 6 L13 (ADR-024 "Key daemon usage log"): a client over the
+    /// per-client rate is refused, the log stops growing at its size
+    /// bound, and create and destroy are still served at the bound.
+    #[test]
+    fn issue6_l13_usage_log_is_bounded_per_client_and_in_size() {
+        let dir = scratch("l13");
+        let mut s = Server::open(&dir, &pass()).unwrap();
+        let root = create(&mut s, Chain::App, 1);
+        let wrap_req = |k: u8| Request::Wrap {
+            id: ID,
+            root,
+            aad: b"aad".to_vec(),
+            key: Box::new(Zeroizing::new([k; 32])),
+        };
+        // Rate: three records per window, then a refusal.
+        s.rate_max = 3;
+        s.windows.clear();
+        let mut served = 0;
+        for k in 0..6 {
+            if let Response::Wrapped(_) = s.handle_as(ClientRole::Cell, &wrap_req(k)) {
+                served += 1;
+            }
+        }
+        assert_eq!(served, 3);
+        // Another client has its own budget.
+        assert!(matches!(
+            s.handle_as(ClientRole::Vault, &wrap_req(9)),
+            Response::Refused(Refusal::NotPermitted)
+        ));
+        let len = s.usage.len();
+        let _ = s.handle_as(ClientRole::Cell, &wrap_req(7));
+        assert_eq!(s.usage.len(), len, "a refused request wrote a record");
+        // Size: at the bound, wrap is refused and create and destroy serve.
+        s.rate_max = u32::MAX;
+        s.log_max = s.usage.len();
+        assert_eq!(
+            s.handle_as(ClientRole::Cell, &wrap_req(8)),
+            Response::Refused(Refusal::LimitReached)
+        );
+        let h2 = RootHandle {
+            chain: Chain::App,
+            epoch: Epoch(2),
+        };
+        let made = s.handle_as(
+            ClientRole::Cell,
+            &Request::CreateRoot {
+                id: ID,
+                cell: None,
+                chain: Chain::App,
+                epoch: Epoch(2),
+            },
+        );
+        assert!(matches!(made, Response::Root(_)), "{made:?}");
+        let gone = s.handle_as(ClientRole::Cell, &Request::Destroy { id: ID, root: h2 });
+        assert!(matches!(gone, Response::Destroyed(_)), "{gone:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn scratch(name: &str) -> PathBuf {
