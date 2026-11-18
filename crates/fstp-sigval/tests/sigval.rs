@@ -238,3 +238,210 @@ fn th_26_der_length_reader_is_bounded() {
     assert_eq!(der_tlv_len(&[0x30, 0x05, 0]), None);
     assert_eq!(der_tlv_len(&[]), None);
 }
+
+// ---- Issue 6 M1 (H-15): the rest of RFC 5280 section 6 over parsed fields.
+
+mod chain_rules {
+    use super::*;
+    use der::asn1::{BitString, ObjectIdentifier, OctetString};
+    use der::{Decode, Encode};
+    use fstp_sigval::validate_chain;
+    use x509_cert::Certificate;
+    use x509_cert::ext::Extension;
+    use x509_cert::ext::pkix::{BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages};
+
+    const KU: &str = "2.5.29.15";
+    const BC: &str = "2.5.29.19";
+    const EKU: &str = "2.5.29.37";
+
+    /// Re-issues `der` after `f` edited it, signed by `key`.
+    fn mutate(der: &[u8], key: &EcdsaP256KeyPair, f: impl FnOnce(&mut Certificate)) -> Vec<u8> {
+        let mut c = Certificate::from_der(der).unwrap();
+        f(&mut c);
+        let tbs = c.tbs_certificate.to_der().unwrap();
+        c.signature = BitString::from_bytes(&key.sign(&tbs).unwrap()).unwrap();
+        c.to_der().unwrap()
+    }
+
+    fn set_ext(c: &mut Certificate, oid: &str, critical: bool, value: Vec<u8>) {
+        let id = ObjectIdentifier::new_unwrap(oid);
+        let exts = c.tbs_certificate.extensions.get_or_insert_with(Vec::new);
+        exts.retain(|e| e.extn_id != id);
+        exts.push(Extension {
+            extn_id: id,
+            critical,
+            extn_value: OctetString::new(value).unwrap(),
+        });
+    }
+
+    fn ku(flags: KeyUsages) -> Vec<u8> {
+        KeyUsage(flags.into()).to_der().unwrap()
+    }
+
+    struct Keys {
+        root_key: EcdsaP256KeyPair,
+        root: Vec<u8>,
+        signer_key: EcdsaP256KeyPair,
+    }
+
+    fn keys() -> Keys {
+        let root_key = EcdsaP256KeyPair::generate().unwrap();
+        let root = cert(
+            &root_key,
+            &root_key,
+            "Synthetic CA",
+            "Synthetic CA",
+            CertKind::Ca,
+            (NOW - 86_400, NOW + 86_400 * 365),
+        );
+        Keys {
+            root_key,
+            root,
+            signer_key: EcdsaP256KeyPair::generate().unwrap(),
+        }
+    }
+
+    fn signer(k: &Keys, issuer_key: &EcdsaP256KeyPair, issuer: &str) -> Vec<u8> {
+        cert(
+            &k.signer_key,
+            issuer_key,
+            issuer,
+            "Synthetic Signer",
+            CertKind::Client,
+            (NOW - 60, NOW + 86_400),
+        )
+    }
+
+    /// Validates `signer` against an anchor `root` and a pool.
+    fn run(root: &[u8], signer: &[u8], pool: &[Vec<u8>]) -> Result<u8, SigvalError> {
+        let list = FakeTrustedList {
+            anchors: vec![TrustAnchor {
+                certificate: root.to_vec(),
+                qualified: false,
+            }],
+            revocations: vec![],
+        };
+        validate_chain(signer, pool, NOW, &list).map(|(_, n)| n)
+    }
+
+    /// A signer EKU that allows signing a document.
+    fn email_eku() -> Vec<u8> {
+        ExtendedKeyUsage(vec![ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.4")])
+            .to_der()
+            .unwrap()
+    }
+
+    #[test]
+    fn issue6_m1_h15_issuer_key_usage_needs_key_cert_sign() {
+        let k = keys();
+        let s = mutate(&signer(&k, &k.root_key, "Synthetic CA"), &k.root_key, |c| {
+            set_ext(c, EKU, false, email_eku());
+        });
+        assert_eq!(run(&k.root, &s, &[]), Ok(2));
+        let bad_root = mutate(&k.root, &k.root_key, |c| {
+            set_ext(c, KU, true, ku(KeyUsages::DigitalSignature));
+        });
+        let s = mutate(&signer(&k, &k.root_key, "Synthetic CA"), &k.root_key, |c| {
+            set_ext(c, EKU, false, email_eku());
+        });
+        assert_eq!(run(&bad_root, &s, &[]), Err(SigvalError::IssuerKeyUsage));
+    }
+
+    #[test]
+    fn issue6_m1_h15_path_len_constraint_is_enforced() {
+        let k = keys();
+        let int_key = EcdsaP256KeyPair::generate().unwrap();
+        let int = mutate(
+            &cert(
+                &int_key,
+                &int_key,
+                "Synthetic Int",
+                "Synthetic Int",
+                CertKind::Ca,
+                (NOW - 86_400, NOW + 86_400 * 300),
+            ),
+            &k.root_key,
+            |c| {
+                c.tbs_certificate.issuer = Certificate::from_der(&k.root)
+                    .unwrap()
+                    .tbs_certificate
+                    .subject;
+            },
+        );
+        let s = mutate(&signer(&k, &int_key, "Synthetic Int"), &int_key, |c| {
+            set_ext(c, EKU, false, email_eku());
+        });
+        // The builder's root says pathLen 0: one intermediate is too many.
+        assert_eq!(
+            run(&k.root, &s, std::slice::from_ref(&int)),
+            Err(SigvalError::PathLength)
+        );
+        let root1 = mutate(&k.root, &k.root_key, |c| {
+            let bc = BasicConstraints {
+                ca: true,
+                path_len_constraint: Some(1),
+            };
+            set_ext(c, BC, true, bc.to_der().unwrap());
+        });
+        // The intermediate's own pathLen 0 allows the signer below it.
+        assert_eq!(run(&root1, &s, &[int]), Ok(3));
+    }
+
+    #[test]
+    fn issue6_m1_h15_signer_key_usage() {
+        let k = keys();
+        let base = signer(&k, &k.root_key, "Synthetic CA");
+        let with = |ku_flags: Option<KeyUsages>, eku: Vec<u8>| {
+            mutate(&base, &k.root_key, |c| {
+                if let Some(f) = ku_flags {
+                    set_ext(c, KU, true, ku(f));
+                }
+                set_ext(c, EKU, false, eku);
+            })
+        };
+        assert_eq!(
+            run(
+                &k.root,
+                &with(Some(KeyUsages::NonRepudiation), email_eku()),
+                &[]
+            ),
+            Ok(2)
+        );
+        assert_eq!(
+            run(
+                &k.root,
+                &with(Some(KeyUsages::KeyEncipherment), email_eku()),
+                &[]
+            ),
+            Err(SigvalError::SignerPurpose)
+        );
+        // Extended key usage is not checked (see TODO(legal) in the crate).
+        assert_eq!(run(&k.root, &base, &[]), Ok(2));
+    }
+
+    #[test]
+    fn issue6_m1_h15_unprocessed_critical_extensions_are_refused() {
+        let k = keys();
+        let s = mutate(&signer(&k, &k.root_key, "Synthetic CA"), &k.root_key, |c| {
+            set_ext(c, EKU, false, email_eku());
+        });
+        // certificatePolicies (2.5.29.32), critical, on the signer.
+        let crit_signer = mutate(&s, &k.root_key, |c| {
+            set_ext(c, "2.5.29.32", true, vec![0x30, 0x00]);
+        });
+        assert_eq!(
+            run(&k.root, &crit_signer, &[]),
+            Err(SigvalError::CriticalExtension)
+        );
+        // Non-critical unknown extensions stay allowed.
+        let plain = mutate(&s, &k.root_key, |c| {
+            set_ext(c, "2.5.29.32", false, vec![0x30, 0x00]);
+        });
+        assert_eq!(run(&k.root, &plain, &[]), Ok(2));
+        // nameConstraints (2.5.29.30), critical, on the CA: not enforced, so refused.
+        let nc_root = mutate(&k.root, &k.root_key, |c| {
+            set_ext(c, "2.5.29.30", true, vec![0x30, 0x00]);
+        });
+        assert_eq!(run(&nc_root, &s, &[]), Err(SigvalError::CriticalExtension));
+    }
+}
