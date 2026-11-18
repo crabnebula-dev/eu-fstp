@@ -21,6 +21,12 @@ pub const DEFAULT_MIN_SCRAM_ITERATIONS: NonZeroU32 = match NonZeroU32::new(4096)
     None => NonZeroU32::MIN,
 };
 
+/// The default client-side statement timeout (issue 6 L5, interim, pending
+/// Daniel). It equals `fstp_control::agent::STATEMENT_TIMEOUT`. A caller
+/// that runs longer statements, such as a large migration, sets its own
+/// with [`Config::statement_timeout`]; `None` removes the bound.
+pub const DEFAULT_STATEMENT_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// A password for SCRAM or, when explicitly allowed, cleartext
 /// authentication.
 ///
@@ -421,7 +427,8 @@ impl Config {
     /// `tls`, and the client certificate in `tls` is presented on every
     /// connection (D2, R-NF-09). Its CN must equal `user`.
     ///
-    /// Defaults: connect timeout 10 seconds, no statement timeout, cancel
+    /// Defaults: connect timeout 10 seconds, statement timeout
+    /// [`DEFAULT_STATEMENT_TIMEOUT`], cancel
     /// grace 5 seconds, 256 cached statements, SCRAM only, default
     /// [`Limits`].
     ///
@@ -454,7 +461,7 @@ impl Config {
             tls_server_name: None,
             require_auth: RequireAuth::default(),
             connect_timeout: Some(Duration::from_secs(10)),
-            statement_timeout: None,
+            statement_timeout: Some(DEFAULT_STATEMENT_TIMEOUT),
             cancel_grace: Duration::from_secs(5),
             statement_cache_capacity: 256,
             limits: Limits::default(),
@@ -508,6 +515,12 @@ impl Config {
     pub fn statement_timeout(mut self, timeout: Option<Duration>) -> Config {
         self.statement_timeout = timeout;
         self
+    }
+
+    /// The statement timeout this configuration sets, if any.
+    #[must_use]
+    pub fn configured_statement_timeout(&self) -> Option<Duration> {
+        self.statement_timeout
     }
 
     /// How long recovery after a statement timeout may take.

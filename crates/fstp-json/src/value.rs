@@ -128,6 +128,29 @@ impl Value {
         self.as_array().and_then(|a| a.get(index))
     }
 
+    /// Whether any string or member name in this value holds U+0000
+    /// (an escaped `\u0000`). The parser accepts it, as RFC 8259 does, but
+    /// PostgreSQL text refuses it. A path that stores JSON-derived text in
+    /// PostgreSQL calls this first (issue 6 L4). It walks with its own stack,
+    /// so a deep value cannot overflow the call stack.
+    pub fn contains_nul(&self) -> bool {
+        let mut stack = vec![self];
+        while let Some(v) = stack.pop() {
+            match v {
+                Value::String(t) if t.contains('\0') => return true,
+                Value::Array(a) => stack.extend(a.iter()),
+                Value::Object(o) => {
+                    if o.keys().any(|k| k.contains('\0')) {
+                        return true;
+                    }
+                    stack.extend(o.values());
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Compares two values exactly: same member order, same number lexemes.
     pub fn identical(&self, other: &Value) -> bool {
         eq_deep(self, other, true)

@@ -207,13 +207,67 @@ pub struct Credentials {
     password: String,
 }
 
+/// The longest user name or password, in bytes (RFC 4616 section 2: each
+/// field of AUTH PLAIN is at most 255 octets).
+pub const MAX_CREDENTIAL_LEN: usize = 255;
+
+/// Why a user name or password cannot go into AUTH PLAIN.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialsError {
+    /// Empty, or longer than [`MAX_CREDENTIAL_LEN`].
+    Length,
+    /// A NUL, CR or LF byte, which would split the AUTH PLAIN fields or
+    /// the command line.
+    Byte,
+}
+
+impl fmt::Display for CredentialsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            CredentialsError::Length => "credential is empty or too long",
+            CredentialsError::Byte => "credential holds NUL, CR or LF",
+        })
+    }
+}
+
+impl std::error::Error for CredentialsError {}
+
+fn credential_ok(v: &str) -> Result<(), CredentialsError> {
+    if v.is_empty() || v.len() > MAX_CREDENTIAL_LEN {
+        return Err(CredentialsError::Length);
+    }
+    if v.bytes().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+        return Err(CredentialsError::Byte);
+    }
+    Ok(())
+}
+
 impl Credentials {
-    /// A user name and password.
+    /// A user name and password, unchecked. [`SmtpClient`] refuses to send
+    /// with a pair [`Credentials::try_new`] would refuse. New code uses
+    /// [`Credentials::try_new`].
     pub fn new(username: &str, password: &str) -> Self {
         Credentials {
             username: username.to_owned(),
             password: password.to_owned(),
         }
+    }
+
+    /// A user name and password that AUTH PLAIN can carry (issue 6 L8).
+    ///
+    /// # Errors
+    ///
+    /// [`CredentialsError`] when either is empty or longer than
+    /// [`MAX_CREDENTIAL_LEN`] bytes, or holds NUL, CR or LF.
+    pub fn try_new(username: &str, password: &str) -> Result<Self, CredentialsError> {
+        credential_ok(username)?;
+        credential_ok(password)?;
+        Ok(Credentials::new(username, password))
+    }
+
+    fn check(&self) -> Result<(), CredentialsError> {
+        credential_ok(&self.username)?;
+        credential_ok(&self.password)
     }
 }
 
@@ -335,6 +389,9 @@ impl SmtpClient {
         if eight_bit && !has("8BITMIME", None) {
             return Err(SmtpError::Unsupported("8BITMIME"));
         }
+        self.credentials
+            .check()
+            .map_err(|_| SmtpError::Unsupported("valid AUTH PLAIN credentials"))?;
         let plain =
             PlainCredentials::new("", &self.credentials.username, &self.credentials.password);
         s.command(

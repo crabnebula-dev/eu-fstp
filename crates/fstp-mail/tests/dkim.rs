@@ -149,7 +149,15 @@ fn adr_001_dkim_rsa_signature_checks_against_hand_built_input() {
         .collect();
     let tag = |n: &str| tags.iter().find(|(k, _)| k == n).unwrap().1.clone();
     let mut input = String::new();
+    let mut seen: Vec<String> = Vec::new();
     for name in tag("h").split(':') {
+        // RFC 6376 section 5.4.2: each name takes the next field from the
+        // bottom; this message has one field of each name, and a name
+        // listed beyond its occurrences (oversigning) adds nothing.
+        if seen.iter().any(|s| s == name) {
+            continue;
+        }
+        seen.push(name.to_owned());
         let v = parsed.header(name).unwrap_or("");
         let v: Vec<&str> = v.split_whitespace().collect();
         input.push_str(&format!(
@@ -222,4 +230,49 @@ fn dkim_dns_record_names_key() {
         ed.public_key().unwrap(),
         DkimPublicKey::Ed25519(_)
     ));
+}
+
+/// Issue 6 L7, RFC 6376 section 5.4: `From`, `To` and `Subject` are listed
+/// one more time than they occur, the signature still verifies, and a
+/// second `From` added afterwards breaks it.
+#[test]
+fn issue6_l7_dkim_oversigns_from_to_and_subject() {
+    let mut cfg = common::config();
+    let DkimKey::Rsa(k) = rsa_signer().key() else {
+        panic!("rsa key expected")
+    };
+    let spki = k.spki_der().unwrap();
+    let copy = RsaPkcs1Sha256KeyPair::from_pkcs8(&k.pkcs8_der().unwrap()).unwrap();
+    cfg.dkim = vec![DkimSigner::new("tenant-a.example", "m6rsa", DkimKey::Rsa(copy)).unwrap()];
+    let owned = fstp_prop_free_message();
+    let raw = compose(&cfg, &owned.message()).unwrap();
+    let parsed = parse(&raw).unwrap();
+    let sig = parsed.header("DKIM-Signature").unwrap().to_owned();
+    let h: String = sig
+        .split(';')
+        .find_map(|t| t.trim().strip_prefix("h="))
+        .unwrap()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let names: Vec<&str> = h.split(':').collect();
+    for n in ["from", "to", "subject"] {
+        let listed = names.iter().filter(|x| **x == n).count();
+        let occurs = raw
+            .split(|b| *b == b'\n')
+            .take_while(|l| !l.is_empty() && *l != b"\r")
+            .filter(|l| {
+                l.len() > n.len()
+                    && l[..n.len()].eq_ignore_ascii_case(n.as_bytes())
+                    && l[n.len()] == b':'
+            })
+            .count();
+        assert_eq!(listed, occurs + 1, "{n} in h={h}");
+    }
+    let key = DkimPublicKey::Rsa(spki);
+    dkim_verify(&raw, "tenant-a.example", "m6rsa", &key).unwrap();
+    // A second From in front of the signed fields is not covered.
+    let mut forged = b"From: attacker@example.invalid\r\n".to_vec();
+    forged.extend_from_slice(&raw);
+    assert!(dkim_verify(&forged, "tenant-a.example", "m6rsa", &key).is_err());
 }

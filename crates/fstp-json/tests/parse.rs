@@ -680,3 +680,20 @@ fn value_from_str_uses_default_limits() {
     );
     assert!("[1,]".parse::<Value>().is_err());
 }
+
+/// Issue 6 L4: the parser keeps accepting an escaped NUL, and
+/// `Value::contains_nul` finds it in a string, a member name and a nested
+/// value, so a path that stores text in PostgreSQL can refuse it.
+#[test]
+fn issue6_l4_contains_nul_finds_an_escaped_nul_anywhere() {
+    for doc in [
+        &b"\"a\\u0000b\""[..],
+        b"{\"k\\u0000\":1}",
+        b"[1,[{\"a\":[\"x\\u0000\"]}]]",
+    ] {
+        assert!(ok(doc).contains_nul(), "{doc:?}");
+    }
+    for doc in [&b"\"ab\""[..], b"{\"k\":[1,true,null,\"\\u001f\"]}"] {
+        assert!(!ok(doc).contains_nul(), "{doc:?}");
+    }
+}
