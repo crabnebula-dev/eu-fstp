@@ -28,7 +28,9 @@
 //!
 //! Every response then carries the cell CSP of design section 11.2, or
 //! for a path under `/p/` the public CSP of M4 design section 3.10,
-//! `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+//! `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+//! `Strict-Transport-Security`, `Cross-Origin-Opener-Policy`,
+//! `Cross-Origin-Resource-Policy` (L17) and
 //! `Cache-Control: no-store`. No response carries an
 //! `Access-Control-Allow-*` field, so no other origin may read one.
 //!
@@ -295,6 +297,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 enabled: cfg.enabled,
                 pages,
             },
+            limits: crate::routes::limits::Limits::default(),
         });
         // The page rows are served only when pages are loaded, so a front
         // without them serves exactly the section 8.7 table.
@@ -445,6 +448,10 @@ fn is_public_path(path: &str) -> bool {
     path.starts_with("/p/")
 }
 
+/// The HSTS value of `fstp_web::HSTS`. Interim, pending Daniel: one year,
+/// no subdomains.
+const HSTS: &str = "max-age=31536000";
+
 fn secure(resp: &mut Response, public: bool) {
     // R-PB-04, TH-37: a public answer never sets a cookie.
     if public {
@@ -456,6 +463,10 @@ fn secure(resp: &mut Response, public: bool) {
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),
         ("cache-control", "no-store"),
+        // L17, ADR-014, as `fstp-web` sends them.
+        ("strict-transport-security", HSTS),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("cross-origin-resource-policy", "same-origin"),
     ] {
         let _ = resp.headers.try_insert(name, value);
     }

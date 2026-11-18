@@ -21,6 +21,7 @@ mod api;
 mod auth;
 pub mod backend;
 mod handle;
+pub(crate) mod limits;
 /// Test only: the in-memory backend and the local cell. Built only with
 /// the `memory` feature, which no shipped build enables, so the
 /// `fstp-cell` binary never contains a `LocalCell` (design section 14.3).

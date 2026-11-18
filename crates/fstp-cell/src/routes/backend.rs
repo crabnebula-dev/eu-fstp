@@ -156,6 +156,12 @@ pub struct ErasureRow {
     pub programme: Option<u128>,
 }
 
+/// The most login and registration challenges a backend holds (ADR-024,
+/// M8, H-21). Interim, pending Daniel. A challenge older than
+/// [`crate::routes::CHALLENGE_US`] is purged when the next one is stored.
+/// At the bound, storing a challenge fails closed.
+pub const MAX_CHALLENGES: usize = 4096;
+
 /// What the routes need from the cell runtime.
 pub trait Backend: Send + Sync + 'static {
     /// The cell clock, UTC microseconds.
@@ -311,6 +317,21 @@ pub trait Backend: Send + Sync + 'static {
         account: AccountId,
         token: [u8; 32],
     ) -> impl Future<Output = Result<(), BackendFault>> + Send;
+
+    /// The decoy of one storing step of a magic-link request for an address
+    /// that holds no account, or that may get no link (L12, issue 6).
+    /// `step` 0 stands for [`Backend::put_token`] and 1 for
+    /// [`Backend::send_magic_link`]. It does the read side of that step and
+    /// writes and sends nothing, so a known and an unknown address take the
+    /// same steps. The provided body does nothing.
+    fn magic_link_decoy(
+        &self,
+        token: [u8; 32],
+        step: u8,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (token, step);
+        std::future::ready(Ok(()))
+    }
 
     /// Sends the email proof `token` of a self-registration to `email`
     /// through the cell's proof mail port (`crate::mail`). The provided

@@ -494,6 +494,32 @@ impl<R: Runtime> Backend for PgBackend<R> {
 
     async fn put_challenge(&self, row: ChallengeRow) -> Result<(), BackendFault> {
         let mut c = self.app.get().await.map_err(fault)?;
+        // ADR-024, M8: purge the expired, then hold at most the cap. A
+        // step-up challenge also ends at its freshness bound, which is the
+        // same lifetime, so no live challenge is purged.
+        let cutoff = row
+            .issued_at
+            .micros()
+            .saturating_sub(crate::routes::CHALLENGE_US);
+        c.execute(
+            "DELETE FROM auth.challenge WHERE issued_at < $1",
+            &[&cutoff],
+        )
+        .await
+        .map_err(fault)?;
+        let held = c
+            .query("SELECT count(*) FROM auth.challenge", &[])
+            .await
+            .map_err(fault)?;
+        let held = match held.as_slice() {
+            [r] => r.get::<i64>(0).map_err(fault)?,
+            _ => return Err(BackendFault::Unavailable),
+        };
+        let cap = i64::try_from(crate::routes::backend::MAX_CHALLENGES).map_err(fault)?;
+        if held >= cap {
+            c.release();
+            return Err(BackendFault::Unavailable);
+        }
         c.execute(
             "INSERT INTO auth.challenge (id, session_id, purpose, action_digest, challenge, issued_at) VALUES ($1, $2, $3, $4, $5, $6)",
             &[
@@ -771,6 +797,28 @@ impl<R: Runtime> Backend for PgBackend<R> {
             }
             _ => Err(BackendFault::Unavailable),
         }
+    }
+
+    async fn magic_link_decoy(&self, token: [u8; 32], step: u8) -> Result<(), BackendFault> {
+        // L12: the read side of the storing step, so the request costs a
+        // database round trip in each step for any address. It writes
+        // nothing and sends nothing.
+        let mut c = self.app.get().await.map_err(fault)?;
+        if step == 0 {
+            c.query(
+                "SELECT 1 FROM auth.token WHERE token_hash = $1",
+                &[&token.to_vec()],
+            )
+            .await
+            .map_err(fault)?;
+        } else {
+            let _ = self
+                .login_index()?
+                .login_email(AccountId::from_raw(0))
+                .await;
+        }
+        c.release();
+        Ok(())
     }
 
     async fn send_magic_link(

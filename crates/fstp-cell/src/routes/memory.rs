@@ -66,6 +66,8 @@ struct Mem {
     tokens: BTreeMap<[u8; 32], TokenRow>,
     outbox: Vec<(AccountId, [u8; 32])>,
     proofs: Vec<(String, [u8; 32])>,
+    /// The steps of magic-link requests, for the L12 test.
+    trail: Vec<&'static str>,
 }
 
 impl Mem {
@@ -174,6 +176,20 @@ impl MemoryBackend {
         self.with(|m| m.challenges.get(&id).cloned()).ok().flatten()
     }
 
+    /// The steps the magic-link path took since the last call, oldest
+    /// first (L12, issue 6): `state`, `put_token`, `send_magic_link`, and
+    /// the decoys of the last two as `decoy_put_token` and
+    /// `decoy_send_magic_link`. The trail is emptied.
+    pub fn take_magic_trail(&self) -> Vec<&'static str> {
+        self.with(|m| std::mem::take(&mut m.trail))
+            .unwrap_or_default()
+    }
+
+    /// How many challenges the backend holds.
+    pub fn challenge_count(&self) -> usize {
+        self.with(|m| m.challenges.len()).unwrap_or_default()
+    }
+
     /// Every record of the ledger, in order.
     pub fn records(&self) -> Vec<CellRecord> {
         self.with(|m| {
@@ -266,7 +282,10 @@ impl Backend for MemoryBackend {
     }
 
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send {
-        ready(self.with(Mem::state))
+        ready(self.with(|m| {
+            m.trail.push("state");
+            m.state()
+        }))
     }
 
     fn execute(
@@ -326,9 +345,22 @@ impl Backend for MemoryBackend {
         &self,
         row: ChallengeRow,
     ) -> impl Future<Output = Result<(), BackendFault>> + Send {
-        ready(self.with(|m| {
-            m.challenges.insert(row.id, row);
-        }))
+        ready(
+            self.with(|m| {
+                // ADR-024, M8: purge the expired, then hold at most the cap.
+                let cutoff = row
+                    .issued_at
+                    .micros()
+                    .saturating_sub(crate::routes::CHALLENGE_US);
+                m.challenges.retain(|_, c| c.issued_at.micros() >= cutoff);
+                if m.challenges.len() >= crate::routes::backend::MAX_CHALLENGES {
+                    return Err(BackendFault::Unavailable);
+                }
+                m.challenges.insert(row.id, row);
+                Ok(())
+            })
+            .and_then(|r| r),
+        )
     }
 
     fn challenge(
@@ -371,6 +403,7 @@ impl Backend for MemoryBackend {
 
     fn put_token(&self, row: TokenRow) -> impl Future<Output = Result<(), BackendFault>> + Send {
         ready(self.with(|m| {
+            m.trail.push("put_token");
             m.tokens.insert(row.digest, row);
         }))
     }
@@ -399,7 +432,25 @@ impl Backend for MemoryBackend {
         account: AccountId,
         token: [u8; 32],
     ) -> impl Future<Output = Result<(), BackendFault>> + Send {
-        ready(self.with(|m| m.outbox.push((account, token))))
+        ready(self.with(|m| {
+            m.trail.push("send_magic_link");
+            m.outbox.push((account, token));
+        }))
+    }
+
+    fn magic_link_decoy(
+        &self,
+        token: [u8; 32],
+        step: u8,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = token;
+        ready(self.with(|m| {
+            m.trail.push(if step == 0 {
+                "decoy_put_token"
+            } else {
+                "decoy_send_magic_link"
+            });
+        }))
     }
 
     fn send_signup_proof(

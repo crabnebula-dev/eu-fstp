@@ -349,23 +349,31 @@ fn magic_accepted() -> Reply {
 /// about which emails hold accounts. A fault after the account lookup is
 /// not shown either.
 ///
-/// Open point, pending Daniel: the bytes are uniform, but the work is
-/// not. For a known account the route also writes the token row and the
-/// outbox row, so a database backend answers later. That gap could show
-/// which emails hold accounts. Magic links work only in tests until M6
-/// delivers email (ADR-008), so the gap matters from M6 on. The proposed
-/// fix is one backend call that writes one outbox job for every request
-/// and resolves the account off the request path.
+/// L12, issue 6: the work is uniform too. A known and an unknown address
+/// run the same steps in the same order ([`issue_magic_link`]): read the
+/// state, draw a token, store a token row, hand the link on. An unknown
+/// address, or a refusal by the rules, runs the decoy of each storing
+/// step ([`Backend::magic_link_decoy`]), which does the read side of the
+/// step and writes nothing. No early return skips a costly step.
+///
+/// ADR-024, M8: the per-peer limit sits in the dispatcher. The per-target
+/// limit sits here. It is charged for every address, known or not, and a
+/// request over it gets the same reply and runs no step, so the answer
+/// tells nothing about the account.
 pub(crate) async fn magic_request<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
     let email = match decode_email(&req.body) {
         Ok(e) => e,
         Err(r) => return bad_body(r),
     };
+    let within = ctx.limits.mail_target(
+        crate::routes::limits::target_digest(&email),
+        ctx.backend.now().micros(),
+    );
     let account = match ctx.backend.login_account(email).await {
         Ok(a) => a,
         Err(f) => return unavailable(f),
     };
-    if let Some(account) = account {
+    if within {
         // Errors on this path are not shown (uniform reply).
         let _ = issue_magic_link(ctx, account).await;
     }
@@ -382,27 +390,50 @@ fn decode_email(bytes: &[u8]) -> Result<String, BodyRefusal> {
     Ok(email.to_owned())
 }
 
-/// Issues and sends a magic link to `account` if the rule allows it.
-async fn issue_magic_link<B: Backend>(ctx: &Ctx<B>, account: AccountId) -> Result<(), ()> {
-    let s = ctx.backend.state().await.map_err(|_| ())?;
+/// Issues and sends a magic link to `account` if it exists and the rule
+/// allows it. Every case runs the same four steps (L12): state, token,
+/// token row, send. A case that issues nothing runs the decoys.
+async fn issue_magic_link<B: Backend>(ctx: &Ctx<B>, account: Option<AccountId>) -> Result<(), ()> {
+    let state = ctx.backend.state().await;
     let now = ctx.backend.now();
-    may_issue_magic_link(
-        holds(&s, account, now),
-        &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
-    )
-    .map_err(|_| ())?;
-    let token = random::<32>().map_err(|_| ())?;
-    let row = TokenRow {
-        digest: fstp_crypto::sha256(&token),
-        kind: TokenKind::MagicLink,
-        account,
-        issued_at: now,
+    let allowed = match (&state, account) {
+        (Ok(s), Some(a)) => may_issue_magic_link(
+            holds(s, a, now),
+            &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
+        )
+        .is_ok(),
+        // The rule still runs for an unknown address, with no holdings.
+        (Ok(s), None) => {
+            let _ = may_issue_magic_link(
+                false,
+                &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
+            );
+            false
+        }
+        (Err(_), _) => false,
     };
-    ctx.backend.put_token(row).await.map_err(|_| ())?;
-    ctx.backend
-        .send_magic_link(account, token)
-        .await
-        .map_err(|_| ())
+    let token = random::<32>();
+    match (account, allowed, token) {
+        (Some(account), true, Ok(token)) => {
+            let row = TokenRow {
+                digest: fstp_crypto::sha256(&token),
+                kind: TokenKind::MagicLink,
+                account,
+                issued_at: now,
+            };
+            ctx.backend.put_token(row).await.map_err(|_| ())?;
+            ctx.backend
+                .send_magic_link(account, token)
+                .await
+                .map_err(|_| ())
+        }
+        (_, _, token) => {
+            let token = token.unwrap_or([0u8; 32]);
+            let _ = ctx.backend.magic_link_decoy(token, 0).await;
+            let _ = ctx.backend.magic_link_decoy(token, 1).await;
+            Err(())
+        }
+    }
 }
 
 /// The confirm page of `GET /auth/magic` when the front serves no compiled
@@ -1833,11 +1864,17 @@ pub(crate) async fn recovery_request<B: Backend>(ctx: &Ctx<B>, req: &Request) ->
         Ok(e) => e,
         Err(r) => return bad_body(r),
     };
+    // ADR-024, M8: the per-target limit. The per-peer limit sits in the
+    // dispatcher. The charge is the same for every address.
+    let within = ctx.limits.mail_target(
+        crate::routes::limits::target_digest(&email),
+        ctx.backend.now().micros(),
+    );
     let account = match ctx.backend.login_account(email).await {
         Ok(a) => a,
         Err(f) => return unavailable(f),
     };
-    if let Some(account) = account {
+    if let (true, Some(account)) = (within, account) {
         // Errors on this path are not shown (uniform reply).
         let _ = open_recovery(ctx, account).await;
     }
