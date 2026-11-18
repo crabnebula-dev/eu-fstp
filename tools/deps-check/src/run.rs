@@ -25,6 +25,7 @@ use crate::repo::{self, ProjectDir};
 use crate::report::{self, ContextSummary, Finding, Report};
 use crate::runtime;
 use crate::sbom;
+use crate::shipped_features;
 use crate::tier_b;
 use crate::web_scan;
 
@@ -618,6 +619,10 @@ pub fn run() -> ExitCode {
             findings.extend(layering_m3::check(c.meta));
             findings.extend(layering_m4::check(c.meta));
             findings.extend(runtime::check(c.meta));
+            // All-features contexts enable every feature by design.
+            if !c.all_features {
+                findings.extend(shipped_features::check(c.meta));
+            }
         }
     }
 

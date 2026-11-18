@@ -45,6 +45,10 @@
 //!    is a source scan: only `fstp-crypto` names moduletto, `mldsa` or
 //!    `mlkem`, and inside it only the hybrid's own files do.
 //!
+//! The test-cell guard (`shipped_features`, issue 6): no shipped binary
+//! package reaches a crate with the feature `test-cell` enabled, and none
+//! links a test-only crate outside dev-dependencies.
+//!
 //! Run it from the repository root with `cargo run -p deps-check --locked`.
 //! `--print-allowlist` prints an allowlist generated from the current graph,
 //! keeping existing notes, for review before it replaces the file.
@@ -76,6 +80,7 @@ mod report;
 mod run;
 mod runtime;
 mod sbom;
+mod shipped_features;
 mod tier_b;
 mod web_scan;
 
