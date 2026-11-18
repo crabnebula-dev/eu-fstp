@@ -51,6 +51,34 @@ pub const MAX_REPLIES: usize = 64;
 /// The most retrieval log entries one result may carry.
 pub const MAX_RETRIEVALS: usize = 64;
 
+/// The most refused-reply entries one result may carry.
+pub const MAX_REFUSED: usize = 64;
+
+/// The stage names a `refused` entry may carry (`fstp_assess::Stage::as_str`).
+const REFUSED_STAGES: [&str; 5] = ["completeness", "quality", "claims", "verify", "integrity"];
+/// The refusal codes a `refused` entry may carry
+/// (`fstp_assess::OutputError::code`).
+const REFUSED_CODES: [&str; 8] = [
+    "json",
+    "unknown_member",
+    "shape",
+    "score_like",
+    "criterion",
+    "element",
+    "kind",
+    "too_long",
+];
+
+/// One reply the assessor's validator refused whole (I-10, H-03). Stage
+/// name and code only: no content of the reply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RefusedStage {
+    /// The stage name.
+    pub stage: &'static str,
+    /// The refusal code.
+    pub code: &'static str,
+}
+
 /// Why a result line was refused. No variant carries result content
 /// (R-NF-02).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +163,9 @@ pub enum Intake {
         replies: Vec<UntrustedText>,
         /// The retrieval log, kept as data for the trace.
         retrievals: Vec<Value>,
+        /// The replies the assessor's validator refused whole. Their
+        /// content is not in `findings` or `replies`.
+        refused: Vec<RefusedStage>,
     },
     /// The job stayed pending (R-NF-10).
     Pending(PendingCause),
@@ -183,13 +214,14 @@ fn list<'a>(
     Ok(a)
 }
 
-const DONE: [&str; 6] = [
+const DONE: [&str; 7] = [
     "status",
     "job",
     "findings",
     "dropped",
     "replies",
     "retrievals",
+    "refused",
 ];
 const PENDING: [&str; 3] = ["status", "job", "error"];
 const REFUSED: [&str; 3] = ["status", "line", "error"];
@@ -265,15 +297,38 @@ pub fn decode_result(line: &[u8], job: &JobLine) -> Result<Intake, IntakeError> 
                         .ok_or(IntakeError::Shape("retrievals"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let refused = match o.get("refused") {
+                None => Vec::new(),
+                Some(_) => list(o, "refused", MAX_REFUSED)?
+                    .iter()
+                    .map(refused_stage)
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
             Ok(Intake::Done {
                 findings,
                 dropped,
                 replies,
                 retrievals,
+                refused,
             })
         }
         _ => Err(IntakeError::Shape("status")),
     }
+}
+
+fn refused_stage(v: &Value) -> Result<RefusedStage, IntakeError> {
+    let o = object(v, &["stage", "code"])?;
+    let stage = str_of(o, "stage")?;
+    let code = str_of(o, "code")?;
+    let stage = REFUSED_STAGES
+        .iter()
+        .find(|s| **s == stage)
+        .ok_or(IntakeError::Shape("refused"))?;
+    let code = REFUSED_CODES
+        .iter()
+        .find(|c| **c == code)
+        .ok_or(IntakeError::Shape("refused"))?;
+    Ok(RefusedStage { stage, code })
 }
 
 fn finding(v: &Value, job: &JobLine) -> Result<IntakeFinding, IntakeError> {

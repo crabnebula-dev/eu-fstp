@@ -9,7 +9,11 @@
 //!   null), `element` (rubric tag or null), `severity`, `statement` and
 //!   `evidence`, in the evidence codec of `fstp-findings`. A submission
 //!   span is in offsets of the text the job sent. The cell maps it back
-//!   to the original text, which never left the cell;
+//!   to the original text, which never left the cell.//!   When the validator refused one or more replies (I-10), the line also
+//!   has `refused`: a list of `{"code", "stage"}` objects, one per refused
+//!   reply, with a stable stage name and refusal code and no content.
+//!   `findings` and `replies` hold only what passed. A line with no
+//!   refusal has no `refused` member (issue 6 M3, H-03);
 //! - `pending`: `job` and `error` (`mask`, `infer`, `output` or
 //!   `protocol`). No finding is made up (R-NF-10);
 //! - `refused`: `line` and `error`, the [`QueueError`] code, for a line
@@ -196,12 +200,19 @@ impl<T: Transport, Q: Retrieval> Assessor<T, Q> {
             parts,
             handles: Vec::new(),
         };
-        let a = match pipeline.assess(&assess_job).await {
-            Ok(a) => a,
-            Err(AssessError::Mask) => return pending(job.job, "mask"),
-            Err(AssessError::Infer(_)) => return pending(job.job, "infer"),
-            Err(AssessError::Output(_)) => return pending(job.job, "output"),
-        };
+        // H-03: a refused reply is dropped whole and listed; it does not
+        // keep the job pending. A mask or inference failure is transient:
+        // the job answers "pending", the findings found so far are dropped
+        // and the cell retries the whole job.
+        let partial = pipeline.assess_partial(&assess_job).await;
+        match partial.error {
+            None => {}
+            Some(AssessError::Mask) => return pending(job.job, "mask"),
+            Some(AssessError::Infer(_)) => return pending(job.job, "infer"),
+            Some(AssessError::Output(_)) => return pending(job.job, "output"),
+        }
+        let refused_stages = partial.refused;
+        let a = partial.assessment;
         let mut o = Object::new();
         o.insert("status", status("done"));
         o.insert("job", id_json(job.job));
@@ -220,6 +231,24 @@ impl<T: Transport, Q: Retrieval> Assessor<T, Q> {
             ),
         );
         o.insert("retrievals", Value::Array(log));
+        // Only a refusal adds the member, so a clean line is unchanged.
+        // It holds stage names and codes, never reply or applicant text.
+        if !refused_stages.is_empty() {
+            o.insert(
+                "refused",
+                Value::Array(
+                    refused_stages
+                        .iter()
+                        .map(|(stage, e)| {
+                            let mut r = Object::new();
+                            r.insert("stage", Value::String(stage.as_str().to_owned()));
+                            r.insert("code", Value::String(e.code().to_owned()));
+                            Value::Object(r)
+                        })
+                        .collect(),
+                ),
+            );
+        }
         Value::Object(o)
     }
 }
