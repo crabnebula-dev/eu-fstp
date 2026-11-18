@@ -19,7 +19,10 @@
 //!   `notifications/initialized`.
 //! - A session carries no right. Each `/mcp` request is judged by its own
 //!   bearer token, so a refreshed token keeps its session. The table
-//!   holds at most [`MAX_SESSIONS`] sessions and evicts the oldest.
+//!   holds at most [`MAX_SESSIONS`] sessions per table and evicts the oldest.
+//!   Authenticated and anonymous sessions have separate tables, and one
+//!   peer holds at most [`MAX_ANONYMOUS_PER_PEER`] anonymous sessions
+//!   (ADR-024, M4).
 //! - On `/mcp`, `initialize` and `tools/list` judge the token through
 //!   `ApiCore::tool_rights`, and a tool call inside `ApiCore::dispatch`.
 //!   Roles are evaluated again on every request. A token that resolves to
@@ -34,7 +37,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fstp_api_core::meta::{self, ToolDef};
-use fstp_api_core::{ApiCore, ApiError, Credential, ErrorCode, OpResult, RequestHead, ToolRights};
+use fstp_api_core::{
+    ApiCore, ApiError, Credential, ErrorCode, OpResult, PeerKey, RequestHead, ToolRights,
+};
 use fstp_http::{Headers, Method, Request, Response, StatusCode};
 use fstp_json::{Object, ToJson, Value};
 
@@ -46,8 +51,12 @@ use crate::{McpError, McpHeaders, McpMessage, Surface};
 /// The MCP revision the server speaks: the ADR-013 floor.
 pub const FLOOR_REVISION: &str = "2025-06-18";
 
-/// The most sessions the table holds.
+/// The most sessions each table holds.
 pub(crate) const MAX_SESSIONS: usize = 4096;
+
+/// The most anonymous sessions one peer holds (ADR-024, interim: 64 of
+/// 4096, pending Daniel).
+pub(crate) const MAX_ANONYMOUS_PER_PEER: usize = 64;
 
 /// The configuration of one tenant's MCP server.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,34 +76,63 @@ struct Session {
     surface: Surface,
     initialized: bool,
     opened: u64,
+    /// The peer that opened an anonymous session (ADR-024), in memory
+    /// only. `None` on an authenticated session.
+    peer: Option<PeerKey>,
 }
 
 /// The sessions, keyed by the labelled digest of their id, so the table
 /// never holds an id (design section 3.8).
+///
+/// Issue 6 M4, H-23, ADR-024: authenticated sessions (`/mcp`) and
+/// anonymous sessions (`/mcp/public`) live in separate tables, so an
+/// anonymous open never evicts an authenticated session. One peer holds
+/// at most [`MAX_ANONYMOUS_PER_PEER`] anonymous sessions and evicts its
+/// own oldest beyond that.
 #[derive(Debug, Default)]
 struct Sessions {
-    by_digest: BTreeMap<[u8; 32], Session>,
+    authenticated: BTreeMap<[u8; 32], Session>,
+    anonymous: BTreeMap<[u8; 32], Session>,
     next: u64,
 }
 
 impl Sessions {
-    fn open(&mut self, digest: [u8; 32], surface: Surface) {
-        if self.by_digest.len() >= MAX_SESSIONS
-            && let Some(oldest) = self
-                .by_digest
-                .iter()
-                .min_by_key(|(_, s)| s.opened)
-                .map(|(k, _)| *k)
-        {
-            let _ = self.by_digest.remove(&oldest);
+    fn table(&mut self, surface: Surface) -> &mut BTreeMap<[u8; 32], Session> {
+        match surface {
+            Surface::Mcp => &mut self.authenticated,
+            Surface::Public => &mut self.anonymous,
         }
+    }
+
+    fn open(&mut self, digest: [u8; 32], surface: Surface, peer: PeerKey) {
         self.next = self.next.saturating_add(1);
-        let _ = self.by_digest.insert(
+        let opened = self.next;
+        let peer = (surface == Surface::Public).then_some(peer);
+        let table = self.table(surface);
+        if let Some(p) = peer {
+            let mine = table.values().filter(|s| s.peer == Some(p)).count();
+            if mine >= MAX_ANONYMOUS_PER_PEER
+                && let Some(oldest) = table
+                    .iter()
+                    .filter(|(_, s)| s.peer == Some(p))
+                    .min_by_key(|(_, s)| s.opened)
+                    .map(|(k, _)| *k)
+            {
+                let _ = table.remove(&oldest);
+            }
+        }
+        if table.len() >= MAX_SESSIONS
+            && let Some(oldest) = table.iter().min_by_key(|(_, s)| s.opened).map(|(k, _)| *k)
+        {
+            let _ = table.remove(&oldest);
+        }
+        let _ = table.insert(
             digest,
             Session {
                 surface,
                 initialized: false,
-                opened: self.next,
+                opened,
+                peer,
             },
         );
     }
@@ -196,10 +234,17 @@ impl McpServer {
 
     /// Serves one HTTP request to the endpoint of `surface`.
     pub async fn serve(&self, surface: Surface, req: Request) -> Response {
-        match self.step(surface, &req) {
+        self.serve_from(surface, req, PeerKey::shared()).await
+    }
+
+    /// Like [`McpServer::serve`], with the peer the listener holds
+    /// (ADR-024). The peer limits anonymous sessions and anonymous calls.
+    /// With no peer, `serve` uses the shared key.
+    pub async fn serve_from(&self, surface: Surface, req: Request, peer: PeerKey) -> Response {
+        match self.step(surface, &req, peer) {
             Step::Reply(r) => r,
             Step::Initialize { id, version, cred } => match self.rights(cred).await {
-                Ok(_) => self.initialize(surface, &id, &version),
+                Ok(_) => self.initialize(surface, &id, &version, peer),
                 Err(e) => self.refused_token(e, &id),
             },
             Step::List { id, cred } => match self.rights(cred).await {
@@ -212,7 +257,9 @@ impl McpServer {
                 name,
                 arguments,
             } => {
-                let called = self.call(surface, cred, &name, arguments.as_bytes()).await;
+                let called = self
+                    .call(surface, cred, &name, arguments.as_bytes(), peer)
+                    .await;
                 if called.unauthenticated && surface == Surface::Mcp {
                     return self.challenge(StatusCode::UNAUTHORIZED, Some("invalid_token"));
                 }
@@ -223,7 +270,7 @@ impl McpServer {
 
     /// The transport alone: every rule, with a tool call answered -32603.
     pub(crate) fn transport_only(&self, surface: Surface, req: &Request) -> Response {
-        match self.step(surface, req) {
+        match self.step(surface, req, PeerKey::shared()) {
             Step::Reply(r) => r,
             Step::Initialize { id, .. } | Step::List { id, .. } | Step::Call { id, .. } => {
                 rpc_reply(&id, Err(RpcError::INTERNAL))
@@ -290,10 +337,19 @@ impl McpServer {
         name: &str,
         arguments: &[u8],
     ) -> Result<Value, RpcError> {
-        self.call(surface, cred, name, arguments).await.result
+        self.call(surface, cred, name, arguments, PeerKey::shared())
+            .await
+            .result
     }
 
-    async fn call(&self, surface: Surface, cred: Credential, name: &str, args: &[u8]) -> Called {
+    async fn call(
+        &self,
+        surface: Surface,
+        cred: Credential,
+        name: &str,
+        args: &[u8],
+        peer: PeerKey,
+    ) -> Called {
         let rpc = |e: RpcError| Called {
             result: Err(e),
             unauthenticated: false,
@@ -321,7 +377,10 @@ impl McpServer {
             return rpc(RpcError::INTERNAL);
         };
         let class = meta::classification(tool);
-        let built = match core.dispatch(cred, &RequestHead::new(), op).await {
+        let built = match core
+            .dispatch(cred, &RequestHead::new().with_peer(peer), op)
+            .await
+        {
             Ok(OpResult::Done { body, .. }) => McpResponse::new(class, &body).call_result(),
             Ok(OpResult::Pending(r)) => {
                 McpResponse::new(class, &fstp_api_core::pending::PendingAnswer(r)).call_result()
@@ -378,7 +437,7 @@ impl McpServer {
     }
 
     /// Runs every transport rule on `req`.
-    fn step(&self, surface: Surface, req: &Request) -> Step {
+    fn step(&self, surface: Surface, req: &Request, peer: PeerKey) -> Step {
         let reply = Step::Reply;
         if req.method == Method::GET {
             return reply(not_allowed());
@@ -454,7 +513,7 @@ impl McpServer {
                 ));
             }
             return match surface {
-                Surface::Public => reply(self.initialize(surface, &id, &version)),
+                Surface::Public => reply(self.initialize(surface, &id, &version, peer)),
                 Surface::Mcp => Step::Initialize { id, version, cred },
             };
         }
@@ -476,7 +535,7 @@ impl McpServer {
         }
         let initialized = {
             let mut table = self.sessions();
-            match table.by_digest.get_mut(&digest) {
+            match table.table(surface).get_mut(&digest) {
                 Some(s) if s.surface == surface => {
                     if msg == McpMessage::Initialized {
                         s.initialized = true;
@@ -534,7 +593,13 @@ impl McpServer {
 
     /// `initialize`: a new session, the negotiated revision, the tools
     /// capability and the white-labelled `serverInfo` (TH-63, Q43).
-    fn initialize(&self, surface: Surface, id: &JsonRpcId, requested: &str) -> Response {
+    fn initialize(
+        &self,
+        surface: Surface,
+        id: &JsonRpcId,
+        requested: &str,
+        peer: PeerKey,
+    ) -> Response {
         let Some(raw) = meta::draw_session_id() else {
             return status_rpc(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -542,7 +607,8 @@ impl McpServer {
                 RpcError::INTERNAL,
             );
         };
-        self.sessions().open(meta::session_digest(&raw), surface);
+        self.sessions()
+            .open(meta::session_digest(&raw), surface, peer);
         let version = if requested == FLOOR_REVISION {
             requested
         } else {
@@ -575,9 +641,9 @@ impl McpServer {
         }
         let digest = meta::session_digest(&raw);
         let mut table = self.sessions();
-        match table.by_digest.get(&digest) {
+        match table.table(surface).get(&digest) {
             Some(s) if s.surface == surface => {
-                let _ = table.by_digest.remove(&digest);
+                let _ = table.table(surface).remove(&digest);
                 Response::new(StatusCode::NO_CONTENT)
             }
             _ => status_rpc(StatusCode::NOT_FOUND, None, RpcError::NO_SESSION),
@@ -782,6 +848,29 @@ mod tests {
         assert_eq!(unhex16(hex(&b).as_bytes()), Some(b));
         assert_eq!(unhex16(b"00"), None);
         assert_eq!(unhex16(b"0000000000000000000000000000000g"), None);
+    }
+
+    /// Issue 6 M4, H-23, ADR-024: anonymous opens never evict an
+    /// authenticated session, and one peer holds at most its share of the
+    /// anonymous table, evicting only its own oldest.
+    #[test]
+    fn issue6_m4_anonymous_sessions_never_evict_authenticated_ones() {
+        let mut t = Sessions::default();
+        let auth = [0xaa; 32];
+        t.open(auth, Surface::Mcp, PeerKey::shared());
+        let a = PeerKey::from_ip("192.0.2.1".parse().unwrap());
+        let b = PeerKey::from_ip("192.0.2.2".parse().unwrap());
+        let bs = [0xbb; 32];
+        t.open(bs, Surface::Public, b);
+        for i in 0..(MAX_SESSIONS * 2) {
+            let mut d = [0u8; 32];
+            d[..8].copy_from_slice(&(i as u64).to_be_bytes());
+            t.open(d, Surface::Public, a);
+        }
+        assert!(t.authenticated.contains_key(&auth));
+        assert!(t.anonymous.contains_key(&bs), "another peer is untouched");
+        let mine = t.anonymous.values().filter(|s| s.peer == Some(a)).count();
+        assert_eq!(mine, MAX_ANONYMOUS_PER_PEER);
     }
 
     /// H-23: the media type rules.
