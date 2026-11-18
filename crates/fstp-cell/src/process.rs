@@ -528,6 +528,11 @@ pub struct StartOptions {
     /// due without moving the cell's own time, which would end its
     /// sessions (P-72).
     pub release_clock: Option<crate::engine::CommitClock>,
+    /// The rate limits of the public auth routes and of `PutText`
+    /// (ADR-024). The default holds the interim values. A test world
+    /// passes wider ones, since all its clients share one loopback
+    /// address and so one peer key.
+    pub auth_limits: crate::routes::AuthLimits,
 }
 
 impl Default for StartOptions {
@@ -544,6 +549,7 @@ impl Default for StartOptions {
             crabnebula: None,
             licence: None,
             release_clock: None,
+            auth_limits: crate::routes::AuthLimits::default(),
         }
     }
 }
@@ -599,6 +605,7 @@ where
         crabnebula,
         licence,
         release_clock,
+        auth_limits,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -724,6 +731,7 @@ where
         cell,
         host: host.clone(),
         enabled: login_methods,
+        limits: auth_limits,
     };
     let log = Arc::new(StderrLog);
     let front = match pages {

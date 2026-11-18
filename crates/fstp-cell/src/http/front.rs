@@ -126,6 +126,9 @@ pub struct FrontConfig {
     /// The login methods the tenant enables (P-70). Passkeys are always
     /// enabled.
     pub enabled: EnabledMethods,
+    /// The rate limits of the public auth routes and of `PutText`
+    /// (ADR-024). The default holds the interim values.
+    pub limits: crate::routes::AuthLimits,
 }
 
 /// Why a front could not be built.
@@ -297,7 +300,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 enabled: cfg.enabled,
                 pages,
             },
-            limits: crate::routes::limits::Limits::default(),
+            limits: crate::routes::limits::Limits::new(cfg.limits),
         });
         // The page rows are served only when pages are loaded, so a front
         // without them serves exactly the section 8.7 table.

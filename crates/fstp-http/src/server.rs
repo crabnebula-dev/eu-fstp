@@ -142,8 +142,11 @@ impl fmt::Debug for EventHook {
     }
 }
 
-/// ADR-024 interim value: connections one peer may hold, of 1024.
-const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 64;
+/// ADR-024 interim value: connections one peer may hold, of 1024. A browser
+/// opens up to six connections per host, so 64 let about ten browsers behind
+/// one address in. The full CI run of 2026-11-18 met that bound with eight
+/// signed-in browser contexts.
+const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 256;
 
 /// ADR-024 interim value: total lifetime of one connection.
 const DEFAULT_MAX_CONNECTION_LIFETIME: Duration = Duration::from_secs(600);

@@ -17,11 +17,11 @@ use fstp_domain::id::AccountId;
 
 /// A count of calls within a sliding window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Limit {
+pub struct Limit {
     /// The most calls the window admits.
-    pub(crate) count: usize,
+    pub count: usize,
     /// The window length, in microseconds.
-    pub(crate) window_us: i64,
+    pub window_us: i64,
 }
 
 const MINUTE_US: i64 = 60_000_000;
@@ -51,6 +51,33 @@ pub(crate) const PUT_TEXT_PER_ACCOUNT: Limit = Limit {
     count: 120,
     window_us: MINUTE_US,
 };
+
+/// The limit values of one cell front (ADR-024). The default holds the
+/// interim values above, and the production cell starts with it. A test
+/// world whose clients all share the loopback address passes its own
+/// values through `crate::process::StartOptions`, and says so there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthLimits {
+    /// Login start and finish, per peer.
+    pub login_per_peer: Limit,
+    /// Magic-link and recovery requests, per peer.
+    pub mail_per_peer: Limit,
+    /// Magic-link and recovery requests, per target address digest.
+    pub mail_per_target: Limit,
+    /// `PutText`, per account.
+    pub put_text_per_account: Limit,
+}
+
+impl Default for AuthLimits {
+    fn default() -> AuthLimits {
+        AuthLimits {
+            login_per_peer: LOGIN_PER_PEER,
+            mail_per_peer: MAIL_PER_PEER,
+            mail_per_target: MAIL_PER_TARGET,
+            put_text_per_account: PUT_TEXT_PER_ACCOUNT,
+        }
+    }
+}
 
 /// Most keys the counters hold. At the bound, after a sweep, a new key is
 /// refused, so memory stays bounded under a flood of distinct keys.
@@ -109,10 +136,19 @@ struct State {
 /// The counters of one cell front.
 #[derive(Default)]
 pub(crate) struct Limits {
+    values: AuthLimits,
     state: Mutex<State>,
 }
 
 impl Limits {
+    /// Counters that enforce `values`.
+    pub(crate) fn new(values: AuthLimits) -> Limits {
+        Limits {
+            values,
+            state: Mutex::default(),
+        }
+    }
+
     fn charge(&self, key: Key, limit: Limit, now_us: i64) -> bool {
         let mut st = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         // Sweep keys idle for longer than the longest window, once a minute.
@@ -140,24 +176,28 @@ impl Limits {
 
     /// Charges a login start or finish to `peer`.
     pub(crate) fn login(&self, peer: Peer, now_us: i64) -> bool {
-        self.charge(Key::Login(peer), LOGIN_PER_PEER, now_us)
+        self.charge(Key::Login(peer), self.values.login_per_peer, now_us)
     }
 
     /// Charges a magic-link or recovery request to `peer`.
     pub(crate) fn mail_peer(&self, peer: Peer, now_us: i64) -> bool {
-        self.charge(Key::Mail(peer), MAIL_PER_PEER, now_us)
+        self.charge(Key::Mail(peer), self.values.mail_per_peer, now_us)
     }
 
     /// Charges a magic-link or recovery request to the digest of its
     /// target address. The charge is the same whether or not the address
     /// holds an account.
     pub(crate) fn mail_target(&self, digest: [u8; 32], now_us: i64) -> bool {
-        self.charge(Key::Target(digest), MAIL_PER_TARGET, now_us)
+        self.charge(Key::Target(digest), self.values.mail_per_target, now_us)
     }
 
     /// Charges a `PutText` to `account`.
     pub(crate) fn put_text(&self, account: AccountId, now_us: i64) -> bool {
-        self.charge(Key::PutText(account), PUT_TEXT_PER_ACCOUNT, now_us)
+        self.charge(
+            Key::PutText(account),
+            self.values.put_text_per_account,
+            now_us,
+        )
     }
 }
 

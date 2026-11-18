@@ -40,7 +40,7 @@ The design names these limits and no values. The values below are a first readin
 | --- | --- |
 | API calls per peer with no account | 120 per minute |
 | MCP anonymous sessions per peer | 64 of 4096 |
-| HTTP connections per peer | 64 of 1024 |
+| HTTP connections per peer | 256 of 1024 |
 | HTTP connection total lifetime | 10 minutes |
 | Login start and finish per peer | 30 per minute |
 | Magic-link and recovery requests per peer | 10 per minute |
@@ -58,10 +58,13 @@ The design names these limits and no values. The values below are a first readin
 - The audit rule for rate refusals applies to every rate limit of the API core, not only the peer key.
 - `PutText` has the per-account rate limit only. The command carries no owning object and no size, so the ownership rule and the daily size bound wait on a design decision.
 - No production listener mounts the MCP server or the OAuth registration route yet. Each takes the peer through `McpServer::serve_from` and `RateKey::from_ip` once mounted.
+- The limits of the public auth routes and of `PutText` are a start option of the cell (`StartOptions::auth_limits`). The production default holds the interim values. The test world lifts them, since all its clients share the loopback address.
+- The full CI run of 2026-11-18 met two interim values. The login limit of 30 per minute refused the test world, which signs in from one address. The connection share of 64 refused a Playwright spec with eight signed-in browser contexts. The share is now 256, since a browser opens up to six connections per host.
 
 ## Consequences
 
 - An office behind one address shares one peer budget for anonymous calls. Signed-in calls are charged per account and session, so sign-in lifts the shared bound.
+- The same office shares the login limit and the connection share. Thirty logins per minute and 256 connections bound how many people behind one address can work at once. Daniel sets the final values.
 - The audit log no longer holds one row per rate-refused call. This narrows the design's reading of I-24 for rate refusals only. I-24 itself (tamper evidence) is unchanged. Daniel accepted the narrowing on 2026-11-18.
 - A cell behind the edge sees the client address only through the tunnel header. A listener without that header falls back to the shared key.
 - Every bound has a regression test named after its finding in issue 6.

@@ -37,6 +37,7 @@ pub use backend::{
     TokenKind, TokenRow,
 };
 pub(crate) use handle::{CellCfg, Ctx, Outcome, Rule, serve_route};
+pub use limits::{AuthLimits, Limit};
 
 use fstp_cell_core::gate::HighRiskAction;
 
