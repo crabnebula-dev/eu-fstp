@@ -570,3 +570,30 @@ pub fn complete(
     }
     Ok(completion_records(c.case, c.holder, path, r))
 }
+
+/// The agent grants of the cell, as recovery sees them (issue 6 M5,
+/// H-21). The cell implements it over the OAuth server, which this crate
+/// does not depend on.
+pub trait AgentGrants {
+    /// Revokes every agent grant of `account`: every refresh and access
+    /// token, and every unredeemed authorisation code. Returns how many
+    /// grants it ended.
+    fn revoke_all_agents(&mut self, account: AccountId) -> usize;
+}
+
+/// [`complete`], and on success revokes every agent grant of the holder
+/// through `agents` (I-79, issue 6 M5, H-21). A refused completion
+/// revokes nothing. Production code calls this and not [`complete`], so a
+/// recovered account keeps no agent token the old holder obtained.
+pub fn complete_revoking(
+    c: &Case,
+    roster: &RosterView,
+    tenant: &TenantView,
+    mode: Deployment,
+    r: &Revocation<'_>,
+    agents: &mut dyn AgentGrants,
+) -> Result<Vec<AuthRecord>, RecoveryDeny> {
+    let records = complete(c, roster, tenant, mode, r)?;
+    let _ended = agents.revoke_all_agents(c.holder);
+    Ok(records)
+}
