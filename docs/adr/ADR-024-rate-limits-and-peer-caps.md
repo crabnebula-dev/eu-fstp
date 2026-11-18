@@ -1,6 +1,6 @@
 # ADR-024: Rate limits and per-peer caps
 
-Status: Proposed, pending Daniel's acceptance. Drafted 2026-11-17 for issue 6 (fast-pass security review of 2026-11-12).
+Status: Accepted in part by Daniel on 2026-11-18: the audit rule for rate refusals, and the per-account rate limit as the whole of the `PutText` fix for now. The interim values stay pending. Drafted 2026-11-17 for issue 6 (fast-pass security review of 2026-11-12).
 
 The number is the next free one after ADR-023.
 
@@ -62,12 +62,12 @@ The design names these limits and no values. The values below are a first readin
 ## Consequences
 
 - An office behind one address shares one peer budget for anonymous calls. Signed-in calls are charged per account and session, so sign-in lifts the shared bound.
-- The audit log no longer holds one row per rate-refused call. This narrows the design's reading of I-24 for rate refusals only. I-24 itself (tamper evidence) is unchanged. Daniel decides whether the narrowing stands.
+- The audit log no longer holds one row per rate-refused call. This narrows the design's reading of I-24 for rate refusals only. I-24 itself (tamper evidence) is unchanged. Daniel accepted the narrowing on 2026-11-18.
 - A cell behind the edge sees the client address only through the tunnel header. A listener without that header falls back to the shared key.
 - Every bound has a regression test named after its finding in issue 6.
 
 ## Open points for Daniel
 
 - Accept or change each interim value.
-- Accept the audit narrowing for rate refusals, or choose a counted summary entry per window.
+- The owning-object rule and the daily size bound of `PutText` (M9) stay open as a design item. Daniel decided on 2026-11-18 that the rate limit is enough for now.
 - The `TODO(legal)` of ADR-009 on client addresses (Q19) covers the peer key here too.
