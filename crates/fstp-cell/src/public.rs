@@ -39,9 +39,9 @@
 //!   (`fstp_public::guide::corrigenda_text_refs`). They are copied at the
 //!   first copy after the record, under the corrected call.
 //! - A text is read from the cell's own text store only while the ledger
-//!   holds it as live (`TextPut`, no erasure). A text that is not live or
-//!   does not open is not copied, and the copy is tried again after the
-//!   next commit.
+//!   holds it as live (`TextPut` or `OwnedTextPut`, no erasure). A text
+//!   that is not live or does not open is not copied, and the copy is
+//!   tried again after the next commit.
 //!
 //! So no text reaches a view unless a published call names it (R-PB-03),
 //! and each cell holds its own class, filled from its own store (I-87,

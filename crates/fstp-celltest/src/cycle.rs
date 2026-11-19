@@ -1143,7 +1143,7 @@ impl<'w> Cycle<'w> {
     }
 
     /// Stores the texts call `call` will make public in the cell's own
-    /// text store, each with its `PutText` by `session` (lane m4/pubtext,
+    /// text store, each with its `PutOwnedText` by `session` (lane m4/pubtext,
     /// [`crate::world_public`]): its title `title` and the P-09 wording of
     /// the programme's head policy, which the publication freezes. Each is
     /// a synthetic text that names the programme and the call. A text the
@@ -1177,6 +1177,7 @@ impl<'w> Cycle<'w> {
                 ));
             }
         }
+        let drafter = self.account(step, STAFF_DRAFTER)?;
         let cell = self.client.cell();
         for (id, text) in texts {
             let raw = id.raw().to_be_bytes();
@@ -1187,13 +1188,17 @@ impl<'w> Cycle<'w> {
                 eprintln!("fstp_celltest::cycle {step}: the call text is not stored: {e}");
                 continue;
             }
-            self.command(
-                step,
-                "PutText",
-                session,
-                CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id: raw }),
-                false,
-            )?;
+            // ADR-025, issue 6 M9: the session route takes texts with an
+            // owner the caller may write. Account is the only owner form
+            // yet, so a call text is owned by the drafter who puts it.
+            let len = u32::try_from(text.len())
+                .map_err(|_| Self::refused(step, "a call text length", None))?;
+            let put = CellCommand::Text(fstp_cell_core::text::TextCommand::PutOwnedText {
+                id: raw,
+                owner: fstp_cell_core::text::TextOwner::Account(drafter),
+                len,
+            });
+            self.command(step, "PutOwnedText", session, put, false)?;
         }
         Ok(())
     }

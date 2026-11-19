@@ -105,6 +105,12 @@ fn issue6_m9_h01_text_bytes_are_bounded_per_account_per_day() {
         ));
     }
     let s = state(&batches);
+    // An owned text is live like any other, so the public text class of
+    // lane m4/pubtext copies it once a published call names it.
+    assert_eq!(
+        s.text([10; 16]),
+        Some(fstp_cell_core::state::TextStatus::Live)
+    );
     assert!(
         decide(&s, &put(1, A, 1), A, NOON).is_err(),
         "the day is full"
