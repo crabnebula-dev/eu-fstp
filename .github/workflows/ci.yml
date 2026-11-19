@@ -363,19 +363,30 @@ jobs:
           rustup toolchain install --no-self-update || rustup show
           rustc --version
           cargo --version
-      - name: Install PostgreSQL 16 if absent
+      # The PostgreSQL build is pinned, so every runner answers alike. Runner
+      # images move to a new minor version over some days, and a new minor
+      # version can add an SQLSTATE code (16.16 added 22P07). To move the
+      # pin, change PG_PACKAGE_VERSION and regenerate the SQLSTATE table
+      # (crates/fstp-pgwire/tools/gen-sqlstate.sh) in the same commit.
+      - name: Install the pinned PostgreSQL 16
         if: steps.part.outputs.run == 'true'
+        env:
+          PG_PACKAGE_VERSION: 16.16-1.pgdg24.04+1
         run: |
           set -euo pipefail
           pg_bin=/usr/lib/postgresql/16/bin
-          missing=0
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "$pg_bin/$b" ] || missing=1
-          done
-          if [ "$missing" = 1 ]; then
+          have="$(dpkg-query -W -f='${Version}' postgresql-16 2>/dev/null || true)"
+          if [ "$have" != "$PG_PACKAGE_VERSION" ]; then
+            echo "postgresql-16 is '$have', the pin is '$PG_PACKAGE_VERSION'"
             sudo apt-get update -q
-            sudo apt-get install -y -q --no-install-recommends postgresql-16
+            sudo apt-get install -y -q --no-install-recommends --allow-downgrades \
+              "postgresql-16=$PG_PACKAGE_VERSION" \
+              "postgresql-client-16=$PG_PACKAGE_VERSION" \
+              || { echo "the pinned PostgreSQL build is not in this runner's apt sources: move the pin"; exit 1; }
           fi
+          have="$(dpkg-query -W -f='${Version}' postgresql-16)"
+          [ "$have" = "$PG_PACKAGE_VERSION" ] \
+            || { echo "postgresql-16 is '$have' after the install, the pin is '$PG_PACKAGE_VERSION'"; exit 1; }
           "$pg_bin/postgres" --version
           echo "FSTP_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
       # I-81 NOTE (2026-11-01), Q-F: the fstp-keyd and file custody tests
