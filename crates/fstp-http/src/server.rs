@@ -102,6 +102,10 @@ pub enum ServerEvent {
         /// Which deadline.
         phase: TimeoutPhase,
     },
+    /// A connection was closed unanswered because its peer already held
+    /// its share of the connection slots (ADR-024). The event carries no
+    /// address.
+    PeerLimited,
     /// A handler panicked. The client got 500.
     HandlerPanicked,
     /// A handler's response could not be serialized. The client got 500.
@@ -138,6 +142,15 @@ impl fmt::Debug for EventHook {
     }
 }
 
+/// ADR-024 interim value: connections one peer may hold, of 1024. A browser
+/// opens up to six connections per host, so 64 let about ten browsers behind
+/// one address in. The full CI run of 2026-11-18 met that bound with eight
+/// signed-in browser contexts.
+const DEFAULT_MAX_CONNECTIONS_PER_PEER: usize = 256;
+
+/// ADR-024 interim value: total lifetime of one connection.
+const DEFAULT_MAX_CONNECTION_LIFETIME: Duration = Duration::from_secs(600);
+
 /// Server settings.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -159,6 +172,15 @@ pub struct ServerConfig {
     pub write_timeout: Duration,
     /// Most connections served at once. Zero accepts no connection at all.
     pub max_connections: usize,
+    /// Most connections one peer holds at once (ADR-024, H-05). The peer
+    /// is the address the listener reports: the socket address, or the
+    /// tunnel header address where the listener reads one. An IPv6 peer
+    /// counts by its /64 prefix. A connection over the share is closed
+    /// without a reply. Zero disables the per-peer share.
+    pub max_connections_per_peer: usize,
+    /// Total lifetime of a connection (ADR-024, H-05). Once it has passed,
+    /// the server closes the connection when the current response ends.
+    pub max_connection_lifetime: Duration,
     /// Most requests on one connection before it is closed.
     pub max_requests_per_connection: u64,
     /// Size of each socket read, in bytes.
@@ -183,6 +205,8 @@ impl Default for ServerConfig {
             idle_timeout: Duration::from_secs(60),
             write_timeout: Duration::from_secs(30),
             max_connections: 1024,
+            max_connections_per_peer: DEFAULT_MAX_CONNECTIONS_PER_PEER,
+            max_connection_lifetime: DEFAULT_MAX_CONNECTION_LIFETIME,
             max_requests_per_connection: 1000,
             read_buffer_size: 16 * 1024,
             linger_timeout: Duration::from_secs(2),
@@ -271,7 +295,71 @@ impl Drop for Permit {
     }
 }
 
+/// The peer key of ADR-024: an IPv4 address whole, an IPv6 address by its
+/// /64 prefix. It lives in memory only and has no `Debug` output.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PeerKey(u128);
+
+impl PeerKey {
+    fn of(addr: &SocketAddr) -> PeerKey {
+        match addr.ip() {
+            std::net::IpAddr::V4(v4) => PeerKey(u128::from(u32::from(v4))),
+            std::net::IpAddr::V6(v6) => {
+                // Bit 127 marks V6 so that no V4 key can equal it.
+                PeerKey((u128::from(v6) >> 64) | (1u128 << 127))
+            }
+        }
+    }
+}
+
+/// Live connections per peer.
+#[derive(Default)]
+struct PeerCounts {
+    map: Mutex<std::collections::HashMap<PeerKey, usize>>,
+}
+
+/// One connection of a peer. Dropping it gives the share back.
+struct PeerShare {
+    counts: Arc<PeerCounts>,
+    key: PeerKey,
+}
+
+impl PeerCounts {
+    /// Takes a share for `peer`, or `None` when it holds `max` already.
+    /// `max == 0` disables the limit.
+    fn take(self: &Arc<Self>, peer: &SocketAddr, max: usize) -> Option<PeerShare> {
+        let key = PeerKey::of(peer);
+        let mut m = self.map.lock().unwrap_or_else(PoisonError::into_inner);
+        let n = m.entry(key).or_insert(0);
+        if max != 0 && *n >= max {
+            return None;
+        }
+        *n = n.saturating_add(1);
+        Some(PeerShare {
+            counts: self.clone(),
+            key,
+        })
+    }
+}
+
+impl Drop for PeerShare {
+    fn drop(&mut self) {
+        let mut m = self
+            .counts
+            .map
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(n) = m.get_mut(&self.key) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                m.remove(&self.key);
+            }
+        }
+    }
+}
+
 struct Shared<R, H> {
+    peers: Arc<PeerCounts>,
     rt: R,
     config: ServerConfig,
     handler: H,
@@ -359,6 +447,7 @@ impl<R: Runtime, H: Handler> Server<R, H> {
         let shared = Arc::new(Shared {
             rt: self.rt.clone(),
             slots: Slots::new(self.config.max_connections),
+            peers: Arc::default(),
             config: self.config,
             handler: self.handler,
             registry: registry.clone(),
@@ -451,10 +540,22 @@ async fn accept_loop<R: Runtime, H: Handler, L: Listener>(
         };
         match accepted {
             Ok((conn, peer)) => {
+                let Some(share) = shared
+                    .peers
+                    .take(&peer, shared.config.max_connections_per_peer)
+                else {
+                    // Over the peer's share: close without a reply. The
+                    // permit returns to the pool.
+                    drop(conn);
+                    drop(permit);
+                    shared.emit(ServerEvent::PeerLimited);
+                    continue;
+                };
                 let conn_signal = signal.clone();
                 let s = shared.clone();
                 let task = shared.rt.spawn(async move {
                     let _permit = permit;
+                    let _share = share;
                     handle_connection(&s, conn, peer, &conn_signal).await;
                     drop(conn_signal);
                 });
@@ -535,6 +636,7 @@ struct ConnDriver<'a, R, H, C> {
     cert: Option<Arc<[u8]>>,
     signal: &'a ShutdownSignal,
     requests: u64,
+    opened: Instant,
 }
 
 /// A fixed label for a method. Extension method names are chosen by the
@@ -570,7 +672,13 @@ impl<'a, R: Runtime, H: Handler, C: Connection> ConnDriver<'a, R, H, C> {
             cert,
             signal,
             requests: 0,
+            opened: Instant::now(),
         }
+    }
+
+    /// Whether the connection has outlived its total lifetime.
+    fn expired(&self) -> bool {
+        self.opened.elapsed() >= self.s.config.max_connection_lifetime
     }
 
     /// Serves requests until the connection closes. Returns the number of
@@ -686,7 +794,7 @@ impl<'a, R: Runtime, H: Handler, C: Connection> ConnDriver<'a, R, H, C> {
         let cfg = &s.config;
         // Wait for the first byte of the next request.
         if self.decoder.is_idle() {
-            if self.signal.is_triggered() {
+            if self.signal.is_triggered() || self.expired() {
                 return Next::Close;
             }
             let wait = if self.requests == 0 {
@@ -694,6 +802,10 @@ impl<'a, R: Runtime, H: Handler, C: Connection> ConnDriver<'a, R, H, C> {
             } else {
                 cfg.idle_timeout
             };
+            let wait = wait.min(
+                cfg.max_connection_lifetime
+                    .saturating_sub(self.opened.elapsed()),
+            );
             let read = race(
                 self.signal.notified(),
                 timeout(&self.s.rt, wait, self.io.read(&mut self.buf)),
@@ -764,6 +876,7 @@ impl<'a, R: Runtime, H: Handler, C: Connection> ConnDriver<'a, R, H, C> {
             && !resp.wants_close()
             && !resp.status.is_informational()
             && !self.signal.is_triggered()
+            && !self.expired()
             && self.requests < self.s.config.max_requests_per_connection;
         let resp = if resp.status.is_informational() {
             // A handler cannot send an interim response as the final one.
@@ -845,4 +958,31 @@ fn finalize(mut resp: Response, keep_alive: bool, version: Version) -> Response 
         resp.headers.insert(n, v);
     }
     resp
+}
+
+#[cfg(test)]
+mod peer_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+
+    /// Issue 6 M6, H-05, ADR-024: IPv6 peers count by /64, IPv4 whole,
+    /// and the share returns on drop.
+    #[test]
+    fn issue6_m6_peer_key_groups_ipv6_by_prefix() {
+        let counts: Arc<PeerCounts> = Arc::default();
+        let a: SocketAddr = "[2001:db8:1:2::1]:1".parse().unwrap();
+        let b: SocketAddr = "[2001:db8:1:2:ffff::9]:2".parse().unwrap();
+        let c: SocketAddr = "[2001:db8:1:3::1]:3".parse().unwrap();
+        let s1 = counts.take(&a, 2).unwrap();
+        let _s2 = counts.take(&b, 2).unwrap();
+        assert!(counts.take(&a, 2).is_none(), "same /64 shares one budget");
+        assert!(counts.take(&c, 2).is_some(), "another /64 is unaffected");
+        drop(s1);
+        assert!(counts.take(&a, 2).is_some());
+        let v4a: SocketAddr = "10.0.0.1:1".parse().unwrap();
+        let v4b: SocketAddr = "10.0.0.2:1".parse().unwrap();
+        let _x = counts.take(&v4a, 1).unwrap();
+        assert!(counts.take(&v4a, 1).is_none());
+        assert!(counts.take(&v4b, 1).is_some());
+    }
 }

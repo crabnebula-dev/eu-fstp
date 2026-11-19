@@ -1022,3 +1022,18 @@ fn review_pg_begin_dropped_by_caller_unowned_tx() {
         },
     );
 }
+
+/// Issue 6 L5: the default configuration has a finite statement timeout,
+/// and the setter still removes or replaces it.
+#[test]
+fn issue6_l5_default_statement_timeout_is_finite() {
+    let cfg = config();
+    assert_eq!(
+        cfg.configured_statement_timeout(),
+        Some(fstp_pgwire::DEFAULT_STATEMENT_TIMEOUT)
+    );
+    assert_eq!(
+        cfg.statement_timeout(None).configured_statement_timeout(),
+        None
+    );
+}

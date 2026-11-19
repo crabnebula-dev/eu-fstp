@@ -32,6 +32,11 @@ pub const SIGNED_HEADERS: [&str; 10] = [
     "x-fstp-template",
 ];
 
+/// The header fields [`sign`] oversigns (RFC 6376 section 5.4): each is
+/// listed in `h=` one more time than it occurs, so a later `From`, `To` or
+/// `Subject` added in transit breaks the signature (issue 6 L7).
+const OVERSIGNED: [&str; 3] = ["from", "to", "subject"];
+
 /// The most DKIM-Signature fields [`verify`] looks at.
 const MAX_SIGNATURES: usize = 8;
 
@@ -255,11 +260,20 @@ fn split_message(raw: &[u8]) -> Result<(Vec<HeaderField>, &[u8]), MailError> {
 pub fn sign(raw: &[u8], signer: &DkimSigner) -> Result<Vec<u8>, MailError> {
     let (fields, body) = split_message(raw)?;
     let bh = base64_encode(&fstp_crypto::sha256(&canon_body_relaxed(body)));
-    let h: Vec<String> = SIGNED_HEADERS
-        .iter()
-        .filter(|n| fields.iter().any(|f| f.name.eq_ignore_ascii_case(n)))
-        .map(|n| (*n).to_owned())
-        .collect();
+    let mut h: Vec<String> = Vec::new();
+    for n in SIGNED_HEADERS {
+        let count = fields
+            .iter()
+            .filter(|f| f.name.eq_ignore_ascii_case(n))
+            .count();
+        let listed = if OVERSIGNED.contains(&n) {
+            // Every occurrence, and one more that must stay absent.
+            count.saturating_add(1)
+        } else {
+            count.min(1)
+        };
+        h.extend(std::iter::repeat_n(n.to_owned(), listed));
+    }
     let value = format!(
         " v=1; a={}; c=relaxed/relaxed; d={}; s={};\r\n\th={};\r\n\tbh={bh};\r\n\tb=",
         signer.key.algorithm(),

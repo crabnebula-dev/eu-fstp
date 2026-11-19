@@ -27,8 +27,8 @@ pub use config::{ConfigError, ConfigInput, Provider, config_id};
 pub use extract::{Extracted, Mark, MarkKind, extract_text, is_hidden, mark_kind};
 pub use fstp_findings::UntrustedText;
 pub use pipeline::{
-    AssessError, AssessedFinding, Assessment, Job, Pipeline, Prepared, PreparedPart,
-    SubmissionPart, prepare,
+    AssessError, AssessedFinding, Assessment, Job, PartialAssessment, Pipeline, Prepared,
+    PreparedPart, SubmissionPart, prepare,
 };
 pub use rubric::{RUBRIC_V1, Rubric};
 pub use span::SpanMap;

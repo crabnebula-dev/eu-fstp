@@ -271,6 +271,37 @@ pub(crate) async fn login_options<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Re
     Reply::json(StatusCode::OK, &Value::Object(o))
 }
 
+/// Records `CredentialSuspect` for `credential` of `account` (ADR-008
+/// "Sign counts", issue 6 L10). The cell issues `MarkCredentialSuspect` as
+/// the system task `LoginVerifier`. A refusal, such as a credential that is
+/// suspect already, and a fault are not shown: the caller refuses the login
+/// or step-up as it did before. The record holds the account and the
+/// credential id only, never a client address.
+async fn record_suspect<B: Backend>(ctx: &Ctx<B>, account: AccountId, credential: &[u8]) {
+    let Ok(suffix) = random::<8>() else {
+        return;
+    };
+    let Ok(s) = ctx.backend.state().await else {
+        return;
+    };
+    let action = Action::Command(CellCommand::Auth(
+        fstp_auth::AuthCommand::MarkCredentialSuspect {
+            account,
+            credential: credential.to_vec(),
+        },
+    ));
+    let Ok(admitted) = fstp_cell_core::gate::admit_system(
+        &s,
+        action,
+        fstp_cell_core::SystemTask::LoginVerifier,
+        fstp_cell_core::system_command_id(suffix),
+        ctx.backend.now(),
+    ) else {
+        return;
+    };
+    let _ = ctx.backend.execute(admitted).await;
+}
+
 /// `POST /auth/passkey/login` (Public, I-77): verifies the assertion over
 /// the login challenge and opens a passkey session.
 pub(crate) async fn login<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
@@ -319,9 +350,14 @@ pub(crate) async fn login<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
         Err(LoginRefusal::Method(_) | LoginRefusal::NoUserVerification) => {
             return login_refused(Rule::I77);
         }
-        // A regressed sign count should record `CredentialSuspect`. No
-        // auth command records it yet, so the login is refused only.
-        Err(LoginRefusal::Assertion(_) | LoginRefusal::CredentialSuspect) => {
+        // ADR-008 "Sign counts", issue 6 L10: a signed regression records
+        // `CredentialSuspect` as the cell's own system task, and the login
+        // is refused as for any other assertion failure.
+        Err(LoginRefusal::CredentialSuspect) => {
+            record_suspect(ctx, account, &credential).await;
+            return login_refused(Rule::Adr008);
+        }
+        Err(LoginRefusal::Assertion(_)) => {
             return login_refused(Rule::Adr008);
         }
     };
@@ -349,23 +385,31 @@ fn magic_accepted() -> Reply {
 /// about which emails hold accounts. A fault after the account lookup is
 /// not shown either.
 ///
-/// Open point, pending Daniel: the bytes are uniform, but the work is
-/// not. For a known account the route also writes the token row and the
-/// outbox row, so a database backend answers later. That gap could show
-/// which emails hold accounts. Magic links work only in tests until M6
-/// delivers email (ADR-008), so the gap matters from M6 on. The proposed
-/// fix is one backend call that writes one outbox job for every request
-/// and resolves the account off the request path.
+/// L12, issue 6: the work is uniform too. A known and an unknown address
+/// run the same steps in the same order ([`issue_magic_link`]): read the
+/// state, draw a token, store a token row, hand the link on. An unknown
+/// address, or a refusal by the rules, runs the decoy of each storing
+/// step ([`Backend::magic_link_decoy`]), which does the read side of the
+/// step and writes nothing. No early return skips a costly step.
+///
+/// ADR-024, M8: the per-peer limit sits in the dispatcher. The per-target
+/// limit sits here. It is charged for every address, known or not, and a
+/// request over it gets the same reply and runs no step, so the answer
+/// tells nothing about the account.
 pub(crate) async fn magic_request<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
     let email = match decode_email(&req.body) {
         Ok(e) => e,
         Err(r) => return bad_body(r),
     };
+    let within = ctx.limits.mail_target(
+        crate::routes::limits::target_digest(&email),
+        ctx.backend.now().micros(),
+    );
     let account = match ctx.backend.login_account(email).await {
         Ok(a) => a,
         Err(f) => return unavailable(f),
     };
-    if let Some(account) = account {
+    if within {
         // Errors on this path are not shown (uniform reply).
         let _ = issue_magic_link(ctx, account).await;
     }
@@ -382,27 +426,50 @@ fn decode_email(bytes: &[u8]) -> Result<String, BodyRefusal> {
     Ok(email.to_owned())
 }
 
-/// Issues and sends a magic link to `account` if the rule allows it.
-async fn issue_magic_link<B: Backend>(ctx: &Ctx<B>, account: AccountId) -> Result<(), ()> {
-    let s = ctx.backend.state().await.map_err(|_| ())?;
+/// Issues and sends a magic link to `account` if it exists and the rule
+/// allows it. Every case runs the same four steps (L12): state, token,
+/// token row, send. A case that issues nothing runs the decoys.
+async fn issue_magic_link<B: Backend>(ctx: &Ctx<B>, account: Option<AccountId>) -> Result<(), ()> {
+    let state = ctx.backend.state().await;
     let now = ctx.backend.now();
-    may_issue_magic_link(
-        holds(&s, account, now),
-        &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
-    )
-    .map_err(|_| ())?;
-    let token = random::<32>().map_err(|_| ())?;
-    let row = TokenRow {
-        digest: fstp_crypto::sha256(&token),
-        kind: TokenKind::MagicLink,
-        account,
-        issued_at: now,
+    let allowed = match (&state, account) {
+        (Ok(s), Some(a)) => may_issue_magic_link(
+            holds(s, a, now),
+            &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
+        )
+        .is_ok(),
+        // The rule still runs for an unknown address, with no holdings.
+        (Ok(s), None) => {
+            let _ = may_issue_magic_link(
+                false,
+                &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
+            );
+            false
+        }
+        (Err(_), _) => false,
     };
-    ctx.backend.put_token(row).await.map_err(|_| ())?;
-    ctx.backend
-        .send_magic_link(account, token)
-        .await
-        .map_err(|_| ())
+    let token = random::<32>();
+    match (account, allowed, token) {
+        (Some(account), true, Ok(token)) => {
+            let row = TokenRow {
+                digest: fstp_crypto::sha256(&token),
+                kind: TokenKind::MagicLink,
+                account,
+                issued_at: now,
+            };
+            ctx.backend.put_token(row).await.map_err(|_| ())?;
+            ctx.backend
+                .send_magic_link(account, token)
+                .await
+                .map_err(|_| ())
+        }
+        (_, _, token) => {
+            let token = token.unwrap_or([0u8; 32]);
+            let _ = ctx.backend.magic_link_decoy(token, 0).await;
+            let _ = ctx.backend.magic_link_decoy(token, 1).await;
+            Err(())
+        }
+    }
 }
 
 /// The confirm page of `GET /auth/magic` when the front serves no compiled
@@ -1176,9 +1243,9 @@ pub(crate) async fn stepup<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Cal
 /// names it.
 ///
 /// A gate refusal of the session answers through `denied`, and a refusal
-/// of the step-up itself is 403 under I-78. A regressed sign count should
-/// record `CredentialSuspect`, as at login. No auth command records it
-/// yet, so it is refused only. An admission that names another command
+/// of the step-up itself is 403 under I-78. A regressed sign count records
+/// `CredentialSuspect`, as at login ([`record_suspect`]), and is refused as
+/// before. An admission that names another command
 /// id, session or digest than this route asked for is refused with 500,
 /// before the engine. The new sign count is stored before the commit.
 #[allow(
@@ -1198,6 +1265,16 @@ async fn grant_stepup<B: Backend>(
         match admit_verified_stepup(s, &caller.view, request, assertion, count, now) {
             Ok(x) => x,
             Err(RouteDeny::Gate(d)) => return denied(d),
+            Err(RouteDeny::StepUp(fstp_auth::stepup::StepUpDeny::CredentialSuspect)) => {
+                if let Some(owner) = s
+                    .auth()
+                    .credential(&assertion.credential_id)
+                    .map(|c| c.account)
+                {
+                    record_suspect(ctx, owner, &assertion.credential_id).await;
+                }
+                return stepup_refused();
+            }
             Err(_) => return stepup_refused(),
         };
     let names_this_grant = matches!(
@@ -1833,11 +1910,17 @@ pub(crate) async fn recovery_request<B: Backend>(ctx: &Ctx<B>, req: &Request) ->
         Ok(e) => e,
         Err(r) => return bad_body(r),
     };
+    // ADR-024, M8: the per-target limit. The per-peer limit sits in the
+    // dispatcher. The charge is the same for every address.
+    let within = ctx.limits.mail_target(
+        crate::routes::limits::target_digest(&email),
+        ctx.backend.now().micros(),
+    );
     let account = match ctx.backend.login_account(email).await {
         Ok(a) => a,
         Err(f) => return unavailable(f),
     };
-    if let Some(account) = account {
+    if let (true, Some(account)) = (within, account) {
         // Errors on this path are not shown (uniform reply).
         let _ = open_recovery(ctx, account).await;
     }

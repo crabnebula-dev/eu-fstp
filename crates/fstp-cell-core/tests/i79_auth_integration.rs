@@ -1167,3 +1167,103 @@ fn i79_approval_without_step_up_is_refused() {
         Err(refused(RuleRef::I78, RefusalReason::GuardFailed))
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue 6 L10, ADR-008 "Sign counts".
+
+/// Issue 6 L10, H-21, ADR-008 "Sign counts": `MarkCredentialSuspect` is the
+/// login verifier's command. No account decides it, so a session never
+/// marks another account's passkey (and never its own). The verifier marks
+/// a known credential of its account once, refuses an unknown credential or
+/// another owner, and refuses a repeat, so a second regression adds no
+/// record. The gate admits it under no session.
+#[test]
+fn issue6_l10_mark_credential_suspect_is_the_login_verifiers_alone() {
+    use fstp_cell_core::{SystemCtx, SystemTask, decide, decide_system};
+    let cred = [0x5E, 9];
+    let s = replay_each(&[registered(A, &cred)]).unwrap();
+    let mark = |account: AccountId, credential: &[u8]| {
+        CellCommand::Auth(AuthCommand::MarkCredentialSuspect {
+            account,
+            credential: credential.to_vec(),
+        })
+    };
+    let wrong_actor = refused(RuleRef::Actor, RefusalReason::WrongActor);
+    // Every account actor, the owner and another one, is refused.
+    for actor in [A, ADMIN, ADMIN_2] {
+        let x = CellCtx {
+            actor,
+            at: T0.micros(),
+        };
+        assert_eq!(
+            decide(&s, &mark(A, &cred), &x, &Answers::default()),
+            Err(wrong_actor.clone()),
+            "{actor:?}"
+        );
+    }
+    // Every task but the login verifier is refused.
+    let id = fstp_cell_core::system_command_id([1; 8]);
+    for task in [
+        SystemTask::Timeline,
+        SystemTask::Provisioning,
+        SystemTask::ErasureRunner,
+        SystemTask::ContractPort,
+        SystemTask::PaymentPort,
+    ] {
+        let x = SystemCtx {
+            task,
+            at: T0.micros(),
+        };
+        assert_eq!(
+            decide_system(&s, &mark(A, &cred), &x, id, &Answers::default()),
+            Err(wrong_actor.clone()),
+            "{task:?}"
+        );
+    }
+    let x = SystemCtx {
+        task: SystemTask::LoginVerifier,
+        at: T0.micros(),
+    };
+    let run = |c: &CellCommand| decide_system(&s, c, &x, id, &Answers::default());
+    // Unknown credential, and a credential of another account.
+    let unknown = refused(RuleRef::Input, RefusalReason::UnknownEntity);
+    assert_eq!(run(&mark(A, &[0x5E, 0xFF])), Err(unknown.clone()));
+    assert_eq!(run(&mark(ADMIN, &cred)), Err(unknown));
+    // The credential's owner: one record, naming the account and the id.
+    let records = run(&mark(A, &cred)).unwrap();
+    assert_eq!(
+        records,
+        vec![auth(AuthRecord::CredentialSuspect {
+            account: A,
+            credential: cred.to_vec(),
+        })]
+    );
+    // Folded, a repeat is refused: the ledger does not grow.
+    let s2 = replay_each(&[registered(A, &cred), records[0].clone()]).unwrap();
+    assert!(s2.auth().credential(&cred).is_some_and(|c| c.suspect));
+    assert_eq!(
+        decide_system(&s2, &mark(A, &cred), &x, id, &Answers::default()),
+        Err(refused(RuleRef::Input, RefusalReason::IdReused))
+    );
+    // No session reaches it through the gate.
+    let session = passkey(A);
+    let denied = admit_plain(&s, &session, Action::Command(mark(A, &cred)), T0);
+    assert_eq!(denied.map(|_| ()), Err(Deny::NotPermitted));
+    // The system admission accepts it for the verifier only.
+    let a = gate::admit_system(
+        &s,
+        Action::Command(mark(A, &cred)),
+        SystemTask::LoginVerifier,
+        id,
+        T0,
+    );
+    assert!(a.is_ok());
+    let b = gate::admit_system(
+        &s,
+        Action::Command(mark(A, &cred)),
+        SystemTask::Timeline,
+        id,
+        T0,
+    );
+    assert!(b.is_err());
+}

@@ -1246,3 +1246,82 @@ fn review_client_early_error_response_lost() {
         h.shutdown(Duration::from_secs(2)).await.unwrap();
     });
 }
+
+/// Issue 6 M6, H-05, ADR-024: one peer cannot hold every connection slot.
+/// The third connection of a peer with a share of two is closed unanswered,
+/// and a slot freed by the peer is usable again.
+#[test]
+fn issue6_m6_one_peer_cannot_hold_every_connection_slot() {
+    let rt = rt();
+    rt.block_on(async {
+        let probe = Arc::new(Probe::default());
+        let (mut cfg, events) = test_config();
+        cfg.max_connections_per_peer = 2;
+        let h = start(&rt, cfg, &probe).await;
+        let mut a = connect(&rt, &h).await;
+        let mut b = connect(&rt, &h).await;
+        for c in [&mut a, &mut b] {
+            c.write_all(b"GET /hello HTTP/1.1\r\nHost: a\r\n\r\n")
+                .await
+                .unwrap();
+            read_responses(&rt, c, &[Method::GET]).await;
+        }
+        let mut c = connect(&rt, &h).await;
+        let _ = c.write_all(b"GET /hello HTTP/1.1\r\nHost: a\r\n\r\n").await;
+        let wire = read_to_eof(&rt, &mut c, Duration::from_secs(5)).await;
+        assert!(wire.is_empty(), "over-share connection got a reply");
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| matches!(e, ServerEvent::PeerLimited))
+        );
+        drop(a);
+        // The share comes back once the server sees the close.
+        let mut served = false;
+        for _ in 0..50 {
+            let mut d = connect(&rt, &h).await;
+            let _ = d.write_all(b"GET /hello HTTP/1.1\r\nHost: a\r\n\r\n").await;
+            let mut buf = [0u8; 16];
+            if let Ok(Ok(n)) = timeout(&rt, Duration::from_millis(200), d.read(&mut buf)).await
+                && n > 0
+            {
+                served = true;
+                break;
+            }
+        }
+        assert!(served, "freed share was never usable again");
+        h.shutdown(Duration::from_secs(5)).await.unwrap();
+    });
+}
+
+/// Issue 6 M6, H-05, ADR-024: a connection has a total lifetime. After it
+/// the server closes the connection once the current response ends.
+#[test]
+fn issue6_m6_connection_total_lifetime_ends_a_kept_alive_connection() {
+    let rt = rt();
+    rt.block_on(async {
+        let probe = Arc::new(Probe::default());
+        let (mut cfg, _) = test_config();
+        cfg.max_connection_lifetime = Duration::from_millis(300);
+        let h = start(&rt, cfg, &probe).await;
+        let mut a = connect(&rt, &h).await;
+        a.write_all(b"GET /hello HTTP/1.1\r\nHost: a\r\n\r\n")
+            .await
+            .unwrap();
+        let rs = read_responses(&rt, &mut a, &[Method::GET]).await;
+        assert_ne!(header(&rs[0], "connection"), Some("close"));
+        rt.sleep(Duration::from_millis(400)).await;
+        a.write_all(b"GET /hello HTTP/1.1\r\nHost: a\r\n\r\n")
+            .await
+            .unwrap_or(());
+        let wire = read_to_eof(&rt, &mut a, Duration::from_secs(5)).await;
+        // Either the connection was closed already, or the reply says so.
+        if !wire.is_empty() {
+            let text = String::from_utf8_lossy(&wire).to_ascii_lowercase();
+            assert!(text.contains("connection: close"), "{text}");
+        }
+        h.shutdown(Duration::from_secs(5)).await.unwrap();
+    });
+}

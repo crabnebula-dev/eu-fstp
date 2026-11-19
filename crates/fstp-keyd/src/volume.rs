@@ -325,6 +325,126 @@ fn host_assurance(_canonical: &Path) -> Assurance {
     Assurance::Reduced(ReducedReason::HostUnchecked)
 }
 
+/// The mode of every key volume file: owner read and write only (H-22).
+pub(crate) const PRIVATE_FILE_MODE: u32 = 0o600;
+
+/// Sets mode 0600 on a file that `opts` creates (H-22). The mode applies
+/// only to a new file; an old file is fixed by [`fix_file_mode`].
+pub(crate) fn private(opts: &mut std::fs::OpenOptions) -> &mut std::fs::OpenOptions {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        opts.mode(PRIVATE_FILE_MODE)
+    }
+    #[cfg(not(unix))]
+    {
+        opts
+    }
+}
+
+/// Makes an open key volume file owner-only, whatever mode it had.
+pub(crate) fn fix_file_mode(file: &std::fs::File) -> Result<(), KeydError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))
+            .map_err(|_| KeydError::Io("restrict a key volume file"))?;
+    }
+    #[cfg(not(unix))]
+    let _ = file;
+    Ok(())
+}
+
+/// Whether `name` is a file `fstp-keyd` keeps on the key volume.
+fn is_volume_file(name: &str) -> bool {
+    name == crate::table::TABLE_FILE || name == crate::usage::USAGE_FILE || name.ends_with(".key")
+}
+
+/// The start check of the key volume directory and its files (H-22).
+///
+/// The directory must be owned by the daemon's user and closed to group
+/// and other. Every key volume file must be owner-only. ADR-004 is silent
+/// on modes, so a start in production mode refuses a wider directory or
+/// file, and in development mode tightens it to 0700 or 0600 instead.
+/// A directory of another owner is refused in both modes.
+///
+/// std has no `geteuid`, so the daemon's user is read from a probe file it
+/// creates in the directory.
+///
+/// # Errors
+///
+/// [`KeydError::Volume`] naming the rule, or [`KeydError::Io`].
+#[cfg(unix)]
+pub(crate) fn check_private_volume(volume: &Path, tighten: bool) -> Result<(), KeydError> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    let meta = std::fs::metadata(volume).map_err(|_| KeydError::Io("read the key volume"))?;
+    if !meta.is_dir() {
+        return Err(KeydError::Volume("the key volume is not a directory"));
+    }
+    let probe = volume.join(format!(".owner-probe-{}", std::process::id()));
+    let own = {
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .map_err(|_| KeydError::Io("probe the key volume owner"))?;
+        let uid = f.metadata().map(|m| m.uid());
+        drop(f);
+        let _ = std::fs::remove_file(&probe);
+        uid.map_err(|_| KeydError::Io("probe the key volume owner"))?
+    };
+    if meta.uid() != own {
+        return Err(KeydError::Volume(
+            "the key volume directory is not owned by the daemon user",
+        ));
+    }
+    if meta.mode() & 0o077 != 0 {
+        if !tighten {
+            return Err(KeydError::Volume(
+                "the key volume directory is open to group or other; chmod 700 it",
+            ));
+        }
+        std::fs::set_permissions(volume, std::fs::Permissions::from_mode(0o700))
+            .map_err(|_| KeydError::Io("restrict the key volume directory"))?;
+    }
+    for entry in std::fs::read_dir(volume).map_err(|_| KeydError::Io("list the key volume"))? {
+        let entry = entry.map_err(|_| KeydError::Io("list the key volume"))?;
+        let name = entry.file_name();
+        if !name.to_str().is_some_and(is_volume_file) {
+            continue;
+        }
+        let m = std::fs::symlink_metadata(entry.path())
+            .map_err(|_| KeydError::Io("read a key volume file"))?;
+        if !m.is_file() {
+            return Err(KeydError::Volume("a key volume file is not a regular file"));
+        }
+        if m.uid() != own {
+            return Err(KeydError::Volume(
+                "a key volume file is not owned by the daemon user",
+            ));
+        }
+        if m.mode() & 0o077 != 0 {
+            if !tighten {
+                return Err(KeydError::Volume(
+                    "a key volume file is open to group or other; chmod 600 it",
+                ));
+            }
+            std::fs::set_permissions(
+                entry.path(),
+                std::fs::Permissions::from_mode(PRIVATE_FILE_MODE),
+            )
+            .map_err(|_| KeydError::Io("restrict a key volume file"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Other hosts have no owner and mode check.
+#[cfg(not(unix))]
+pub(crate) fn check_private_volume(_volume: &Path, _tighten: bool) -> Result<(), KeydError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "test code")]
@@ -426,5 +546,70 @@ mod tests {
         ] {
             assert!(decode_mountinfo(bad).is_err(), "{bad:?}");
         }
+    }
+
+    fn private_dir(name: &str, mode: u32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        let d = std::env::temp_dir().join(format!("fstp-keyd-h22-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(mode)).unwrap();
+        d
+    }
+
+    fn mode_of(p: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    /// Issue 6 M2 (H-22): a wide volume directory or key file is refused
+    /// in production mode and tightened in development mode.
+    #[cfg(unix)]
+    #[test]
+    fn issue6_m2_h22_volume_directory_and_files_must_be_private() {
+        let d = private_dir("check", 0o755);
+        assert!(check_private_volume(&d, false).is_err());
+        assert!(check_private_volume(&d, true).is_ok());
+        assert_eq!(mode_of(&d), 0o700);
+        let f = d.join(crate::table::TABLE_FILE);
+        std::fs::write(&f, b"x").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        assert!(check_private_volume(&d, false).is_err());
+        assert!(check_private_volume(&d, true).is_ok());
+        assert_eq!(mode_of(&f), 0o600);
+        assert!(check_private_volume(&d, false).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Issue 6 M2 (H-22): files the daemon creates are 0600, and an old
+    /// wider epoch file is fixed when it is replaced.
+    #[cfg(unix)]
+    #[test]
+    fn issue6_m2_h22_created_key_files_are_owner_only() {
+        use fstp_custody::{Chain, Epoch};
+        let d = private_dir("create", 0o700);
+        let p = crate::epoch::path(&d, Chain::App, Epoch(1));
+        crate::epoch::write_new(&d, Chain::App, Epoch(1), b"abc").unwrap();
+        assert_eq!(mode_of(&p), 0o600);
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o666)).unwrap();
+        }
+        crate::epoch::write_new(&d, Chain::App, Epoch(1), b"abc").unwrap();
+        assert_eq!(mode_of(&p), 0o600);
+        let log = crate::usage::UsageLog::new(&d);
+        log.append_from(
+            crate::usage::CLIENT_NONE,
+            fstp_custody::keyd::RequestId([1; 16]),
+            1,
+            None,
+            0,
+        )
+        .unwrap();
+        assert_eq!(mode_of(&d.join(crate::usage::USAGE_FILE)), 0o600);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

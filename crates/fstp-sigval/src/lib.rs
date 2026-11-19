@@ -18,6 +18,10 @@
 //! Tier B formats crates. Production trusted-list access refuses with a
 //! typed error until a real source lands (M5 design 12.1, Q2).
 //!
+//! Issuer and signer rules (H-15, RFC 5280 section 6 over the parsed
+//! fields): keyCertSign, pathLenConstraint, signer keyUsage, and refusal of critical extensions not processed. Name
+//! constraints are not enforced: a critical one is refused as unprocessed.
+//!
 //! `TODO(legal)`: which signature and seal levels the SuperSAFE MoU needs,
 //! and which qualified-certificate statements a qualified signature must
 //! carry. The fake list marks its test CA as qualified.
@@ -27,7 +31,7 @@ use fstp_pdf::object::{Object, Ref};
 use fstp_pdf::{IncrementError, ParseError, PdfFile, verify_increment};
 use fstp_pki::cms::{CmsError, decode_signed_data, verify_signature};
 use x509_cert::Certificate;
-use x509_cert::ext::pkix::BasicConstraints;
+use x509_cert::ext::pkix::{BasicConstraints, KeyUsage, KeyUsages};
 
 /// Most certificates on one path, the anchor included.
 pub const MAX_PATH: usize = 8;
@@ -178,6 +182,16 @@ pub enum SigvalError {
     SignerMismatch,
     /// The trusted list could not answer; validation fails closed.
     Trust(TrustError),
+    /// An issuer carries keyUsage without `keyCertSign` (RFC 5280 4.2.1.3).
+    IssuerKeyUsage,
+    /// An issuer's `pathLenConstraint` is shorter than the path below it.
+    PathLength,
+    /// The signer's keyUsage does not allow signing a document.
+    SignerPurpose,
+    /// A certificate carries a critical extension this validator does not
+    /// process, or a critical name constraints extension (not enforced,
+    /// so refused).
+    CriticalExtension,
 }
 
 impl std::fmt::Display for SigvalError {
@@ -245,6 +259,94 @@ fn unix(t: x509_cert::time::Time) -> i64 {
 fn valid_at(c: &Certificate, at: i64) -> bool {
     let v = &c.tbs_certificate.validity;
     unix(v.not_before) <= at && at <= unix(v.not_after)
+}
+
+/// Critical extensions the validator processes: basicConstraints,
+/// keyUsage, extKeyUsage, subjectKeyIdentifier, authorityKeyIdentifier and
+/// subjectAltName (names are not used). Any other critical extension is
+/// refused, as RFC 5280 section 4.2 requires of a validator that cannot
+/// process it. Policy extensions and name constraints are not processed.
+const PROCESSED_CRITICAL: [der::asn1::ObjectIdentifier; 6] = [
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.19"),
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.15"),
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.37"),
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.14"),
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.35"),
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.17"),
+];
+
+/// Refuses a certificate with a critical extension not in
+/// [`PROCESSED_CRITICAL`].
+fn check_critical(c: &Certificate) -> Result<(), SigvalError> {
+    let exts = c.tbs_certificate.extensions.as_deref().unwrap_or(&[]);
+    if exts
+        .iter()
+        .any(|e| e.critical && !PROCESSED_CRITICAL.contains(&e.extn_id))
+    {
+        return Err(SigvalError::CriticalExtension);
+    }
+    Ok(())
+}
+
+/// The issuer rules of RFC 5280 section 6.1.4 over the parsed fields:
+/// keyUsage `keyCertSign` when keyUsage is present, and
+/// `pathLenConstraint` against `below`, the number of intermediate
+/// certificates between this CA and the signer. Self-issued certificates
+/// are counted too, which is stricter than the RFC.
+fn check_issuer(c: &Certificate, below: usize) -> Result<(), SigvalError> {
+    check_critical(c)?;
+    if let Ok(Some((_, KeyUsage(flags)))) = c.tbs_certificate.get::<KeyUsage>() {
+        if !flags.contains(KeyUsages::KeyCertSign) {
+            return Err(SigvalError::IssuerKeyUsage);
+        }
+    } else if c
+        .tbs_certificate
+        .extensions
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .any(|e| e.extn_id == const_oid_key_usage())
+    {
+        // Present but undecodable: fail closed.
+        return Err(SigvalError::IssuerKeyUsage);
+    }
+    if let Ok(Some((
+        _,
+        BasicConstraints {
+            path_len_constraint: Some(max),
+            ..
+        },
+    ))) = c.tbs_certificate.get::<BasicConstraints>()
+        && below > usize::from(max)
+    {
+        return Err(SigvalError::PathLength);
+    }
+    Ok(())
+}
+
+fn const_oid_key_usage() -> der::asn1::ObjectIdentifier {
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.15")
+}
+
+/// The signer rules: keyUsage `digitalSignature` or `nonRepudiation`
+/// when present.
+fn check_signer(c: &Certificate) -> Result<(), SigvalError> {
+    check_critical(c)?;
+    let exts = c.tbs_certificate.extensions.as_deref().unwrap_or(&[]);
+    if exts.iter().any(|e| e.extn_id == const_oid_key_usage()) {
+        let Ok(Some((_, KeyUsage(flags)))) = c.tbs_certificate.get::<KeyUsage>() else {
+            return Err(SigvalError::SignerPurpose);
+        };
+        if !flags.contains(KeyUsages::DigitalSignature)
+            && !flags.contains(KeyUsages::NonRepudiation)
+        {
+            return Err(SigvalError::SignerPurpose);
+        }
+    }
+    // TODO(legal): extended key usage of the signer is not checked. The
+    // fake QTSP of fstp-contract issues clientAuth-only signers, so a check
+    // here needs a product decision on the accepted purposes first.
+    Ok(())
 }
 
 fn is_ca(c: &Certificate) -> bool {
@@ -316,6 +418,7 @@ pub fn validate_chain(
         .collect();
     let pool: Vec<Certificate> = pool.iter().filter_map(|d| parse(d).ok()).collect();
     let mut current = parse(signer_der)?;
+    check_signer(&current)?;
     for depth in 1..MAX_PATH {
         if !valid_at(&current, at) {
             return Err(SigvalError::OutsideValidity);
@@ -331,6 +434,7 @@ pub fn validate_chain(
                 if !is_ca(cert) {
                     return Err(SigvalError::NotCa);
                 }
+                check_issuer(cert, depth.saturating_sub(1))?;
                 let len = u8::try_from(depth.saturating_add(1)).unwrap_or(u8::MAX);
                 return Ok((anchor.clone(), len));
             }
@@ -348,6 +452,7 @@ pub fn validate_chain(
         if !is_ca(&issuer) {
             return Err(SigvalError::NotCa);
         }
+        check_issuer(&issuer, depth.saturating_sub(1))?;
         current = issuer;
     }
     Err(SigvalError::Untrusted)
@@ -379,6 +484,9 @@ pub fn validate_cms(
     verify_signature(&d.signed_attributes, &d.signature, &d.signer_certificate)
         .map_err(SigvalError::Cms)?;
     let (anchor, path_len) = validate_chain(&d.signer_certificate, &d.certificates, at, trust)?;
+    // TODO(legal): the qualified level comes only from the anchor flag of the
+    // trusted list. Which qualified-certificate statements a qualified
+    // signature must carry is a legal rule (L14, issue 6).
     let level = if anchor.qualified {
         Level::Qualified
     } else {

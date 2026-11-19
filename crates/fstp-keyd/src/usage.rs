@@ -46,6 +46,23 @@ pub(crate) const OP_USAGE: u8 = UsageOp::Usage.code();
 pub(crate) const OP_DESTROY_SIGN_KEY: u8 = UsageOp::DestroySignKey.code();
 pub(crate) const OP_CREATE_SIGN_KEY: u8 = UsageOp::CreateSignKey.code();
 
+/// Interim size bound of the usage log, in bytes (L13, ADR-024 "Key daemon
+/// usage log"; pending Daniel). At it the daemon refuses every request but
+/// create and destroy. 64 MiB holds about 1.6 million records.
+pub(crate) const USAGE_LOG_MAX_BYTES: u64 = 64 << 20;
+/// Interim bound of usage records one client writes per minute (L13,
+/// ADR-024; pending Daniel). ADR-024 says "per client connection"; each
+/// connection carries one request, so the bound counts per client socket.
+pub(crate) const USAGE_RECORDS_PER_CLIENT_MINUTE: u32 = 6_000;
+/// The window of [`USAGE_RECORDS_PER_CLIENT_MINUTE`].
+pub(crate) const USAGE_WINDOW_SECS: u64 = 60;
+
+/// Whether `op` is a create or a destroy. These stay served at the size
+/// bound, so a full log cannot stop erasure (I-81) or a new epoch.
+pub(crate) const fn exempt_from_bound(op: u8) -> bool {
+    op == OP_CREATE || op == OP_DESTROY || op == OP_CREATE_SIGN_KEY || op == OP_DESTROY_SIGN_KEY
+}
+
 /// Outcome codes: 0 served, otherwise the refusal code.
 pub(crate) const OUTCOME_SERVED: u8 = 0;
 
@@ -79,6 +96,11 @@ fn intact(rec: &[u8; RECORD_LEN]) -> bool {
 }
 
 impl UsageLog {
+    /// The size of the log file in bytes, zero if it does not exist.
+    pub(crate) fn len(&self) -> u64 {
+        std::fs::metadata(&self.path).map_or(0, |m| m.len())
+    }
+
     /// The usage log of `volume`, without touching the file.
     pub(crate) fn new(volume: &Path) -> UsageLog {
         UsageLog {
@@ -134,11 +156,10 @@ impl UsageLog {
             outcome,
             client,
         });
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&self.path)
-            .map_err(|_| KeydError::Io("open the usage log"))?;
+        let mut file =
+            crate::volume::private(std::fs::OpenOptions::new().append(true).create(true))
+                .open(&self.path)
+                .map_err(|_| KeydError::Io("open the usage log"))?;
         cut_partial(&file)?;
         file.write_all(&rec)
             .map_err(|_| KeydError::Io("append to the usage log"))?;

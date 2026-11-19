@@ -60,9 +60,79 @@ pub const PER_CLIENT: Limit = Limit {
     window_micros: 60_000_000,
 };
 
+/// Calls per peer with no account (ADR-024, M7, H-01). Interim, pending
+/// Daniel: 120 per minute. Every call that resolves to no account is
+/// charged here, on the web and on MCP alike.
+pub const PER_PEER_ANONYMOUS: Limit = Limit {
+    count: 120,
+    window_micros: 60_000_000,
+};
+
+/// The client address a call came from, reduced to what a rate limit
+/// needs (ADR-024, ADR-009).
+///
+/// An IPv4 address counts whole. An IPv6 address counts by its /64
+/// prefix. An IPv4-mapped IPv6 address counts as its IPv4 address. A
+/// listener that holds no address uses [`PeerKey::shared`], one key for
+/// all such callers, so the limit still applies. The key lives in memory
+/// only: its `Debug` prints no address, and it has no `Display` and no
+/// serialisation.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PeerKey {
+    /// A tag (0 shared, 4 IPv4, 6 IPv6) and up to eight address bytes.
+    bytes: [u8; 9],
+}
+
+impl PeerKey {
+    /// The one key of every caller whose address is unknown.
+    pub const fn shared() -> PeerKey {
+        PeerKey { bytes: [0; 9] }
+    }
+
+    /// The key of `addr`: whole for IPv4, the /64 prefix for IPv6.
+    pub fn from_ip(addr: std::net::IpAddr) -> PeerKey {
+        let mut bytes = [0u8; 9];
+        match addr.to_canonical() {
+            std::net::IpAddr::V4(v4) => {
+                bytes[0] = 4;
+                for (slot, b) in bytes.iter_mut().skip(1).zip(v4.octets()) {
+                    *slot = b;
+                }
+            }
+            std::net::IpAddr::V6(v6) => {
+                bytes[0] = 6;
+                for (slot, b) in bytes.iter_mut().skip(1).zip(v6.octets().iter().take(8)) {
+                    *slot = *b;
+                }
+            }
+        }
+        PeerKey { bytes }
+    }
+}
+
+impl Default for PeerKey {
+    fn default() -> PeerKey {
+        PeerKey::shared()
+    }
+}
+
+impl std::fmt::Debug for PeerKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PeerKey(..)")
+    }
+}
+
+impl From<std::net::IpAddr> for PeerKey {
+    fn from(addr: std::net::IpAddr) -> PeerKey {
+        PeerKey::from_ip(addr)
+    }
+}
+
 /// What one counter counts.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Key {
+    /// The calls of one peer that resolve to no account (ADR-024).
+    Peer(PeerKey),
     /// An account's calls.
     Account(AccountId),
     /// A web session's calls.
@@ -89,6 +159,9 @@ pub(crate) const SWEEP_INTERVAL_MICROS: i64 = 1_000_000;
 pub(crate) struct Rates {
     /// The hit times of each key, oldest first.
     hits: BTreeMap<Key, VecDeque<Timestamp>>,
+    /// The time of the last refusal audited for each key, so only the
+    /// first refusal of a key in a window is audited (ADR-024).
+    noted: BTreeMap<Key, i64>,
     /// The longest window any key was charged against.
     longest_window: i64,
     /// The earliest time of the next sweep.
@@ -120,6 +193,7 @@ impl Rates {
         let floor = now.micros().saturating_sub(self.longest_window);
         self.hits
             .retain(|_, q| q.back().is_some_and(|t| t.micros() > floor));
+        self.noted.retain(|_, t| *t > floor);
         self.next_sweep = now.micros().saturating_add(SWEEP_INTERVAL_MICROS);
     }
 
@@ -139,6 +213,7 @@ impl Rates {
     }
 
     /// Checks every `(key, limit)` and counts each one only if all admit.
+    #[cfg(test)]
     pub(crate) fn take_all(&mut self, keys: &[(Key, Limit)], now: Timestamp) -> bool {
         if !keys.iter().all(|(k, l)| self.admits(k, *l, now)) {
             return false;
@@ -147,6 +222,31 @@ impl Rates {
             self.hit(k.clone(), *l, now);
         }
         true
+    }
+
+    /// Like [`Rates::take_all`], and on a refusal says whether it is the
+    /// first refusal of the refusing key within that key's window, the
+    /// only one that is audited (ADR-024).
+    pub(crate) fn take_all_noting(
+        &mut self,
+        keys: &[(Key, Limit)],
+        now: Timestamp,
+    ) -> Result<(), bool> {
+        let refusing = keys.iter().find(|(k, l)| !self.admits(k, *l, now));
+        let Some((key, limit)) = refusing else {
+            for (k, l) in keys {
+                self.hit(k.clone(), *l, now);
+            }
+            return Ok(());
+        };
+        let floor = now.micros().saturating_sub(limit.window_micros);
+        let first = self.noted.get(key).is_none_or(|t| *t <= floor);
+        if first {
+            // Held as long as the longest window, so the sweep keeps it.
+            self.longest_window = self.longest_window.max(limit.window_micros);
+            self.noted.insert(key.clone(), now.micros());
+        }
+        Err(first)
     }
 
     /// The number of keys held, for the bounded-memory tests.
@@ -229,6 +329,54 @@ mod tests {
             !r.admits(&kept, Limit { count: 1, ..l }, later),
             "the kept hit still counts"
         );
+    }
+}
+
+#[cfg(test)]
+mod issue6_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use std::net::IpAddr;
+
+    /// Issue 6 M7, H-01, ADR-024: an IPv6 address counts by its /64, an
+    /// IPv4 address whole, and the `Debug` text holds no address.
+    #[test]
+    fn issue6_m7_peer_key_uses_the_64_prefix_and_hides_the_address() {
+        let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+        let c: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+        assert_eq!(PeerKey::from_ip(a), PeerKey::from_ip(b));
+        assert_ne!(PeerKey::from_ip(a), PeerKey::from_ip(c));
+        let v4: IpAddr = "192.0.2.7".parse().unwrap();
+        let mapped: IpAddr = "::ffff:192.0.2.7".parse().unwrap();
+        assert_eq!(PeerKey::from_ip(v4), PeerKey::from_ip(mapped));
+        assert_ne!(PeerKey::from_ip(v4), PeerKey::shared());
+        let text = format!("{:?}", PeerKey::from_ip(v4));
+        assert!(!text.contains("192") && !text.contains('7'), "{text}");
+    }
+
+    /// Issue 6 M7, H-01, ADR-024: a peer is limited, another is not, and
+    /// only the first refusal of a key in a window is reported for audit.
+    #[test]
+    fn issue6_m7_peer_limit_is_per_peer_and_audits_first_refusal_only() {
+        let mut r = Rates::default();
+        let l = Limit {
+            count: 2,
+            window_micros: 1_000_000,
+        };
+        let p1 = Key::Peer(PeerKey::from_ip("192.0.2.1".parse().unwrap()));
+        let p2 = Key::Peer(PeerKey::from_ip("192.0.2.2".parse().unwrap()));
+        let t = Timestamp::from_micros(10);
+        assert_eq!(r.take_all_noting(&[(p1.clone(), l)], t), Ok(()));
+        assert_eq!(r.take_all_noting(&[(p1.clone(), l)], t), Ok(()));
+        assert_eq!(r.take_all_noting(&[(p1.clone(), l)], t), Err(true));
+        assert_eq!(r.take_all_noting(&[(p1.clone(), l)], t), Err(false));
+        assert_eq!(r.take_all_noting(&[(p2.clone(), l)], t), Ok(()));
+        let later = Timestamp::from_micros(2_000_000);
+        assert_eq!(r.take_all_noting(&[(p1.clone(), l)], later), Ok(()));
+        assert_eq!(r.take_all_noting(&[(p1.clone(), l)], later), Ok(()));
+        assert_eq!(r.take_all_noting(&[(p1, l)], later), Err(true));
     }
 }
 

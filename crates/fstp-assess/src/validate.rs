@@ -51,6 +51,17 @@ impl Stage {
         }
     }
 
+    /// The stable name of the stage, as a result line spells it.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Stage::Completeness => "completeness",
+            Stage::Quality => "quality",
+            Stage::Claims => "claims",
+            Stage::Verify => "verify",
+            Stage::Integrity => "integrity",
+        }
+    }
+
     fn allows(self, kind: FindingKind) -> bool {
         kind == FindingKind::Integrity
             || matches!(
@@ -81,6 +92,23 @@ pub enum OutputError {
     Kind,
     /// A statement or quote is too long, or there are too many entries.
     TooLong,
+}
+
+impl OutputError {
+    /// The stable code of the refusal, as a result line spells it. It
+    /// names the rule and never carries output content.
+    pub const fn code(self) -> &'static str {
+        match self {
+            OutputError::Json => "json",
+            OutputError::UnknownMember => "unknown_member",
+            OutputError::Shape(_) => "shape",
+            OutputError::ScoreLike => "score_like",
+            OutputError::Criterion => "criterion",
+            OutputError::Element => "element",
+            OutputError::Kind => "kind",
+            OutputError::TooLong => "too_long",
+        }
+    }
 }
 
 impl fmt::Display for OutputError {

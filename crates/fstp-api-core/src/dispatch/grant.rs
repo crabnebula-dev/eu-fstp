@@ -608,7 +608,12 @@ fn contract_param(call_state: &EngineState, op: &Op) -> Result<(ContractId, Prop
     let id = forms::id_param(&op.request, "contract")
         .map(ContractId::from_raw)
         .ok_or_else(bad)?;
-    let c = call_state.contracts.contract(id).ok_or_else(not_found)?;
+    // Issue 6 L18: an unknown id and a known contract the caller may not
+    // act on get the one refusal (`actor`), as an unknown proposal does
+    // (`actor_first` in `dispatch.rs`), so the answer reveals no contract.
+    // Each caller checks the actor rule right after this, before any input
+    // rule.
+    let c = call_state.contracts.contract(id).ok_or_else(actor)?;
     Ok((id, c.proposal()))
 }
 
@@ -924,10 +929,6 @@ async fn sign<P: Seams>(
     account: AccountId,
 ) -> Result<OpResult, ApiError> {
     let (contract, _) = contract_param(&call.state, op)?;
-    let route = str_member(op, "route")
-        .ok()
-        .and_then(route_of)
-        .ok_or_else(bad)?;
     let c = call
         .state
         .contracts
@@ -941,6 +942,11 @@ async fn sign<P: Seams>(
         .ok_or_else(actor)?
         .field
         .clone();
+    // The input rule comes after the actor rule (issue 6 L18).
+    let route = str_member(op, "route")
+        .ok()
+        .and_then(route_of)
+        .ok_or_else(bad)?;
     let base_digest = *v.revisions().last().ok_or_else(wrong_state)?;
     let version = v.number;
     let Some(signing) = call.st.signing.clone() else {

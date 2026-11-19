@@ -194,6 +194,16 @@ impl Request {
         self.context.peer_addr
     }
 
+    /// This request with `addr` as its peer address. A server driver sets
+    /// the address itself. This is for in-process callers that stand in
+    /// for the driver, such as tests (ADR-024). The address is never
+    /// logged.
+    #[must_use]
+    pub fn with_peer_addr(mut self, addr: SocketAddr) -> Request {
+        self.context.peer_addr = Some(addr);
+        self
+    }
+
     /// DER of the client's end-entity certificate under mutual TLS
     /// (R-NF-09), set by the server driver.
     #[must_use]

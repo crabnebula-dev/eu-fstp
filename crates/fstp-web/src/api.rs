@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use fstp_api_core::decode::{Method as ApiMethod, decode_route};
-use fstp_api_core::{ApiCore, ApiError, Credential, RequestHead};
+use fstp_api_core::{ApiCore, ApiError, Credential, PeerKey, RequestHead};
 use fstp_http::{Headers, Method, Request, Response, StatusCode};
 use fstp_json::ToJson;
 
@@ -167,7 +167,7 @@ async fn call_core(core: &ApiCore, cred: Credential, req: Request) -> Response {
         Ok(op) => op,
         Err(e) => return api_error(e),
     };
-    match core.dispatch(cred, &RequestHead::new(), op).await {
+    match core.dispatch(cred, &head(&req), op).await {
         Ok(r) => {
             let status = StatusCode::from_u16(r.http_status()).unwrap_or(StatusCode::OK);
             Response::with_body(
@@ -177,6 +177,16 @@ async fn call_core(core: &ApiCore, cred: Credential, req: Request) -> Response {
             )
         }
         Err(e) => api_error(e),
+    }
+}
+
+/// The request head of `req` for the API core. It carries the peer the
+/// listener holds, so a call with no account is charged per peer (ADR-024,
+/// issue 6 M7, H-01). With no peer address the shared key is charged.
+pub(crate) fn head(req: &Request) -> RequestHead {
+    match req.peer_addr() {
+        Some(addr) => RequestHead::new().with_peer(PeerKey::from_ip(addr.ip())),
+        None => RequestHead::new(),
     }
 }
 

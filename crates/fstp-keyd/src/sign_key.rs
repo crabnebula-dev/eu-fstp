@@ -160,12 +160,15 @@ pub(crate) fn open(
 /// a live key table entry, so nothing opens it.
 pub(crate) fn write_new(volume: &Path, name: SignKeyName, bytes: &[u8]) -> Result<(), KeydError> {
     use std::io::Write as _;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path(volume, name))
-        .map_err(|_| KeydError::Io("create a sign-key file"))?;
+    let mut file = crate::volume::private(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true),
+    )
+    .open(path(volume, name))
+    .map_err(|_| KeydError::Io("create a sign-key file"))?;
+    crate::volume::fix_file_mode(&file)?;
     file.write_all(bytes)
         .map_err(|_| KeydError::Io("write a sign-key file"))?;
     file.sync_all()

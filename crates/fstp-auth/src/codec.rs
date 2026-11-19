@@ -726,6 +726,12 @@ impl ToJson for AuthCommand {
             } => Obj::new("RevokeCredential")
                 .account("account", *account)
                 .bytes("credential", credential),
+            AuthCommand::MarkCredentialSuspect {
+                account,
+                credential,
+            } => Obj::new("MarkCredentialSuspect")
+                .account("account", *account)
+                .bytes("credential", credential),
             AuthCommand::GrantStepUp {
                 session,
                 action_digest,
@@ -763,6 +769,13 @@ impl FromJson for AuthCommand {
             "RevokeCredential" => {
                 let o = exactly(v, &["account", "credential"])?;
                 AuthCommand::RevokeCredential {
+                    account: account(o, "account")?,
+                    credential: credential(o, "credential")?,
+                }
+            }
+            "MarkCredentialSuspect" => {
+                let o = exactly(v, &["account", "credential"])?;
+                AuthCommand::MarkCredentialSuspect {
                     account: account(o, "account")?,
                     credential: credential(o, "credential")?,
                 }

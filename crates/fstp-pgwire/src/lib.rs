@@ -112,8 +112,8 @@ pub use crate::client::{
     CancelToken, Client, IsolationLevel, RowStream, Transaction, TransactionOptions,
 };
 pub use crate::config::{
-    AuthMethod, ClientTls, Config, DEFAULT_MIN_SCRAM_ITERATIONS, Limits, MAX_NAME_LEN,
-    MAX_PASSWORD_LEN, Password, RequireAuth, ServerCheck,
+    AuthMethod, ClientTls, Config, DEFAULT_MIN_SCRAM_ITERATIONS, DEFAULT_STATEMENT_TIMEOUT, Limits,
+    MAX_NAME_LEN, MAX_PASSWORD_LEN, Password, RequireAuth, ServerCheck,
 };
 pub use crate::error::{DbError, Error, ErrorKind};
 pub use crate::proto::backend::TransactionStatus;

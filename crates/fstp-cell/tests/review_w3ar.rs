@@ -196,6 +196,7 @@ fn review_i17_vault_ticket_501_commits_no_issue_record() {
             enabled: EnabledMethods {
                 methods: vec![LoginMethod::Passkey],
             },
+            limits: fstp_cell::routes::AuthLimits::default(),
         },
         Arc::clone(&spy),
         Arc::new(MemoryLog::default()),

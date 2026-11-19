@@ -56,6 +56,8 @@ pub(crate) enum Rule {
     Th05,
     /// TH-26: a body over its limit or malformed.
     Th26,
+    /// ADR-024: a rate limit.
+    Adr024,
     /// The spec rule of a domain refusal.
     Spec(&'static str),
 }
@@ -72,6 +74,7 @@ impl Rule {
             Rule::I78 => "I-78",
             Rule::Th05 => "TH-05",
             Rule::Th26 => "TH-26",
+            Rule::Adr024 => "ADR-024",
             Rule::Spec(s) => s,
         }
     }
@@ -105,6 +108,8 @@ pub(crate) struct Ctx<B> {
     pub(crate) backend: Arc<B>,
     /// The configuration.
     pub(crate) cfg: CellCfg,
+    /// The rate counters of the public routes (ADR-024).
+    pub(crate) limits: crate::routes::limits::Limits,
 }
 
 /// The caller of a session route: its session row and gate view.
@@ -317,6 +322,9 @@ async fn shared_checks<B: Backend>(ctx: &Ctx<B>, route: &'static Route, req: Req
     if req.body.len() > route.body_limit() {
         return Reply::refuse(StatusCode::CONTENT_TOO_LARGE, Some(Rule::Th26), "too_large");
     }
+    if let Some(refused) = rate_limited(ctx, route.endpoint(), &req) {
+        return refused;
+    }
     let caller = if route.access().needs_session() {
         match caller(ctx, &req).await {
             Ok(c) => Some(c),
@@ -326,6 +334,22 @@ async fn shared_checks<B: Backend>(ctx: &Ctx<B>, route: &'static Route, req: Req
         None
     };
     dispatch(ctx, route, &req, caller).await
+}
+
+/// ADR-024, issue 6 M8, H-21, TH-21: the per-peer limits of the public
+/// auth routes. A refusal depends on the peer alone, so it tells nothing
+/// about any address or account. The per-target limits sit in the
+/// magic-link and recovery handlers, which hold the address.
+fn rate_limited<B: Backend>(ctx: &Ctx<B>, endpoint: Endpoint, req: &Request) -> Option<Reply> {
+    use crate::routes::limits::Peer;
+    let peer = Peer::of(req.peer_addr());
+    let now = ctx.backend.now().micros();
+    let ok = match endpoint {
+        Endpoint::PasskeyLoginOptions | Endpoint::PasskeyLogin => ctx.limits.login(peer, now),
+        Endpoint::MagicRequest | Endpoint::RecoveryRequest => ctx.limits.mail_peer(peer, now),
+        _ => true,
+    };
+    (!ok).then(|| Reply::refuse(StatusCode::TOO_MANY_REQUESTS, Some(Rule::Adr024), "rate"))
 }
 
 /// Looks up the caller's session (step 4 of the module documentation).

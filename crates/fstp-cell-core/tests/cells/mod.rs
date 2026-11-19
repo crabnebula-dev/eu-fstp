@@ -194,7 +194,11 @@ pub(crate) fn auth_record(g: &mut Gen) -> AuthRecord {
 
 /// An auth command of a variant drawn from all of its variants.
 pub(crate) fn auth_command(g: &mut Gen) -> AuthCommand {
-    match g.u8_in(0..=7) {
+    match g.u8_in(0..=8) {
+        8 => AuthCommand::MarkCredentialSuspect {
+            account: account(g),
+            credential: credential(g),
+        },
         0 => AuthCommand::RegisterCredential {
             account: account(g),
             credential: credential(g),

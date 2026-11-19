@@ -62,6 +62,7 @@ use fstp_ledger::Seq;
 
 pub use model::ReadModel;
 pub use pending::{PendingReceipt, PendingStatus, PendingView};
+pub use rate::PeerKey;
 
 /// Why a call failed. It maps a domain refusal to a stable code, the rule
 /// text and, where the rule asks for it, the refusal's closed detail of
@@ -310,13 +311,29 @@ pub enum Credential {
 /// (Q19).
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct RequestHead {
-    _private: (),
+    peer: PeerKey,
 }
 
 impl RequestHead {
-    /// A head with no header the dispatch reads.
+    /// A head with no header the dispatch reads. Its calls with no
+    /// account are charged against the shared peer key (ADR-024).
     pub fn new() -> RequestHead {
-        RequestHead { _private: () }
+        RequestHead {
+            peer: PeerKey::shared(),
+        }
+    }
+
+    /// This head with the peer the listener holds (ADR-024, M7, H-01).
+    /// A call with no account is charged against this peer's key.
+    #[must_use]
+    pub fn with_peer(mut self, peer: PeerKey) -> RequestHead {
+        self.peer = peer;
+        self
+    }
+
+    /// The peer key of this head (memory only, never logged).
+    pub(crate) fn peer(&self) -> PeerKey {
+        self.peer
     }
 }
 

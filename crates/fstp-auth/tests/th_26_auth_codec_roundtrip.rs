@@ -146,7 +146,11 @@ fn record(g: &mut Gen) -> AuthRecord {
 }
 
 fn command(g: &mut Gen) -> AuthCommand {
-    match g.u8_in(0..=7) {
+    match g.u8_in(0..=8) {
+        8 => AuthCommand::MarkCredentialSuspect {
+            account: account(g),
+            credential: credential(g),
+        },
         0 => AuthCommand::RegisterCredential {
             account: account(g),
             credential: credential(g),

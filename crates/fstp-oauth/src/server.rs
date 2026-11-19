@@ -104,6 +104,36 @@ impl RateKey {
     pub const fn from_raw(raw: u64) -> RateKey {
         RateKey(raw)
     }
+
+    /// The key of every source whose address is unknown (ADR-024: a
+    /// surface with no client address charges one shared key).
+    pub const fn shared() -> RateKey {
+        RateKey(u64::MAX - 1)
+    }
+
+    /// The key of the client address `addr` (ADR-024, L9): an IPv4
+    /// address whole, an IPv6 address by its /64 prefix. It is the first
+    /// eight bytes of a labelled SHA-256, so the key holds no address. It
+    /// lives in memory only.
+    pub fn from_ip(addr: std::net::IpAddr) -> RateKey {
+        let mut input: Vec<u8> = b"fstp-oauth registration peer v1\0".to_vec();
+        match addr.to_canonical() {
+            std::net::IpAddr::V4(v4) => {
+                input.push(4);
+                input.extend_from_slice(&v4.octets());
+            }
+            std::net::IpAddr::V6(v6) => {
+                input.push(6);
+                input.extend(v6.octets().iter().take(8));
+            }
+        }
+        let digest = fstp_crypto::sha256(&input);
+        let mut raw = [0u8; 8];
+        for (slot, b) in raw.iter_mut().zip(digest) {
+            *slot = b;
+        }
+        RateKey(u64::from_be_bytes(raw))
+    }
 }
 
 /// The session of [`AuthorizationServer::authorize`], shared by every
@@ -1468,6 +1498,26 @@ impl AuthorizationServer {
         n
     }
 
+    /// Ends every grant of `account` at once, for every client: every
+    /// family, so its access and refresh tokens, and every unredeemed code.
+    /// Account recovery calls it on completion (I-79, issue 6 M5, H-21).
+    /// Returns how many families it revoked.
+    pub fn revoke_all_agents(&mut self, account: Account, _now: Micros) -> usize {
+        let mut n = 0usize;
+        for fam in self.families.values_mut() {
+            if fam.account == account && !fam.revoked {
+                fam.revoked = true;
+                n = n.saturating_add(1);
+            }
+        }
+        for c in self.codes.values_mut() {
+            if c.account == account && c.state == CodeState::Fresh {
+                c.state = CodeState::Burned;
+            }
+        }
+        n
+    }
+
     /// [`AuthorizationServer::revoke_agent`] for the client numbered
     /// `client`, as the API core's `Tokens::revoke` names it. An unknown
     /// number revokes nothing.
@@ -2085,6 +2135,49 @@ mod tests {
         assert!(s.agents_of(Account::from_raw(7), 1).is_empty());
         let header = format!("Bearer {}", json_str(&r, "access_token"));
         assert!(s.authenticate(Some(header.as_bytes()), MCP, 1).is_err());
+    }
+
+    /// Issue 6 L9, ADR-013, ADR-024: the registration key is per peer
+    /// (/64 for IPv6), one peer cannot fill the table past its limit, and
+    /// another peer still registers.
+    #[test]
+    fn issue6_l9_registration_is_limited_per_peer_key() {
+        let a = RateKey::from_ip("2001:db8:1:2::1".parse().unwrap());
+        let a2 = RateKey::from_ip("2001:db8:1:2:ffff::7".parse().unwrap());
+        let b = RateKey::from_ip("192.0.2.9".parse().unwrap());
+        assert_eq!(a, a2);
+        assert_ne!(a, b);
+        assert_ne!(b, RateKey::shared());
+        let (mut s, _) = server();
+        let body = br#"{"redirect_uris":["https://a.example/cb"]}"#;
+        let max = s.config().registration_max;
+        for _ in 0..max {
+            assert_eq!(s.register(a, body, 0).status, 201);
+        }
+        assert_eq!(s.register(a2, body, 0).status, 429);
+        assert_eq!(s.register(b, body, 0).status, 201);
+    }
+
+    /// Issue 6 M5, H-21, I-79: revoking every agent grant of an account
+    /// ends its access token and refuses its refresh token, and leaves
+    /// another account's grant alone.
+    #[test]
+    fn issue6_m5_revoke_all_agents_ends_access_and_refresh_tokens() {
+        let (mut s, id) = server();
+        let r = grant(&mut s, &id, 0, LoginMethod::Passkey);
+        assert_eq!(r.status, 200);
+        assert_eq!(s.revoke_all_agents(Account::from_raw(8), 1), 0);
+        let header = format!("Bearer {}", json_str(&r, "access_token"));
+        assert!(s.authenticate(Some(header.as_bytes()), MCP, 1).is_ok());
+        assert_eq!(s.revoke_all_agents(Account::from_raw(7), 1), 1);
+        assert!(s.authenticate(Some(header.as_bytes()), MCP, 1).is_err());
+        assert!(s.agents_of(Account::from_raw(7), 1).is_empty());
+        let body = format!(
+            "grant_type=refresh_token&client_id={id}&refresh_token={}",
+            json_str(&r, "refresh_token")
+        );
+        let again = s.token(body.as_bytes(), 2);
+        assert_eq!(again.status, 400, "the refresh token is refused");
     }
 
     /// ADR-013 (Strength row): a grant keeps the consenting method, and a

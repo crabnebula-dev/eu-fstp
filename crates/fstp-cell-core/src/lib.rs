@@ -202,6 +202,12 @@ pub enum SystemTask {
     /// through `fstp_cell::process::RunningCell::payment_checks`. No
     /// request handler reaches it, and claims built on it say so.
     PaymentPort,
+    /// The login verifier (ADR-008 "Sign counts", issue 6 L10): the cell
+    /// itself, when `fstp_webauthn` reports a sign-count regression at a
+    /// login or a step-up. It issues `MarkCredentialSuspect` only. The
+    /// route that saw the regression refuses the login or step-up as
+    /// before, and the mark is a ledger record of the cell's own.
+    LoginVerifier,
 }
 
 /// The context a system task's command runs in.

@@ -1136,9 +1136,7 @@ fn keep_one_per_slot(
 /// Creates the table file with `bytes` and fsyncs it.
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), KeydError> {
     use std::io::Write as _;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    let mut file = crate::volume::private(std::fs::OpenOptions::new().write(true).create_new(true))
         .open(path)
         .map_err(|_| KeydError::Io("create the key table"))?;
     file.write_all(bytes)

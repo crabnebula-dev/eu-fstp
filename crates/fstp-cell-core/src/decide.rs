@@ -384,9 +384,10 @@ fn system_ctx(task: SystemTask, now: Timestamp, command: Option<[u8; 16]>) -> Ct
     let cause = match task {
         SystemTask::ContractPort => SystemCause::ContractPort,
         SystemTask::PaymentPort => SystemCause::PaymentPort,
-        SystemTask::ErasureRunner | SystemTask::Timeline | SystemTask::Provisioning => {
-            SystemCause::Timeline
-        }
+        SystemTask::ErasureRunner
+        | SystemTask::Timeline
+        | SystemTask::Provisioning
+        | SystemTask::LoginVerifier => SystemCause::Timeline,
     };
     Ctx {
         now,
@@ -773,6 +774,32 @@ fn decide_system(
         (SystemTask::Timeline, CellCommand::Timeline(cmd)) => {
             decide_timeline(s, cmd, now, command, inputs, answers)
         }
+        (
+            SystemTask::LoginVerifier,
+            CellCommand::Auth(fstp_auth::AuthCommand::MarkCredentialSuspect {
+                account,
+                credential,
+            }),
+        ) => {
+            // ADR-008 "Sign counts": the credential exists and is the
+            // account's. A credential already marked is refused, so a
+            // second regression grows the ledger by nothing.
+            let Some(c) = s.auth().credential(credential) else {
+                return Err(unknown());
+            };
+            if c.account != *account {
+                return Err(unknown());
+            }
+            if c.suspect {
+                return Err(reused());
+            }
+            Ok(vec![CellRecord::Auth(
+                fstp_auth::AuthRecord::CredentialSuspect {
+                    account: *account,
+                    credential: credential.clone(),
+                },
+            )])
+        }
         // No relationship form and no operator ticket form is defined yet,
         // so both are refused (fail closed).
         (
@@ -939,7 +966,10 @@ pub fn route_inputs(c: &fstp_auth::AuthCommand) -> &'static [RouteInput] {
             RouteInput::SessionRows,
             RouteInput::DeploymentMode,
         ],
-        C::GrantStepUp { .. } | C::ProveRecoveryEmail { .. } | C::ApproveRecovery { .. } => &[],
+        C::GrantStepUp { .. }
+        | C::ProveRecoveryEmail { .. }
+        | C::ApproveRecovery { .. }
+        | C::MarkCredentialSuspect { .. } => &[],
     }
 }
 
@@ -1027,6 +1057,9 @@ fn decide_auth(
     let actor = call.actor;
     let now = call.now;
     match cmd {
+        // Only the login verifier marks a credential (`decide_system`).
+        // A session never does, so no caller marks another account's key.
+        C::MarkCredentialSuspect { .. } => Err(wrong_actor()),
         C::RegisterCredential {
             account,
             credential,

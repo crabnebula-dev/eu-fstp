@@ -4040,6 +4040,13 @@ fn start_cell(
         )),
         licence: Some(release.first.clone()),
         release_clock: Some(release.clock()),
+        // ADR-024: every client of the world connects from loopback, so
+        // all of them share one peer key. The world's suites sign in far
+        // more often than one peer may. The world lifts every limit, so no
+        // suite depends on an interim value.
+        // The limits themselves are tested on the cell front
+        // (`fstp-cell/tests/issue6_auth_limits.rs`).
+        auth_limits: world_auth_limits(),
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,
@@ -5434,5 +5441,20 @@ mod review_tests {
             !report.hits.is_empty(),
             "a canary inside a compressed value is invisible to World::stores"
         );
+    }
+}
+
+/// The auth limits of a world cell: wide enough that no suite meets one
+/// (ADR-024). See the note where the world builds its start options.
+fn world_auth_limits() -> fstp_cell::routes::AuthLimits {
+    let wide = fstp_cell::routes::Limit {
+        count: usize::MAX,
+        window_us: 60_000_000,
+    };
+    fstp_cell::routes::AuthLimits {
+        login_per_peer: wide,
+        mail_per_peer: wide,
+        mail_per_target: wide,
+        put_text_per_account: wide,
     }
 }
