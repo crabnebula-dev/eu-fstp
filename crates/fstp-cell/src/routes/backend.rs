@@ -157,7 +157,7 @@ pub struct ErasureRow {
 }
 
 /// The most login and registration challenges a backend holds (ADR-024,
-/// M8, H-21). Interim, pending Daniel. A challenge older than
+/// M8, H-21). A challenge older than
 /// [`crate::routes::CHALLENGE_US`] is purged when the next one is stored.
 /// At the bound, storing a challenge fails closed.
 pub const MAX_CHALLENGES: usize = 4096;

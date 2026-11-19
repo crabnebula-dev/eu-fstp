@@ -1069,6 +1069,40 @@ fn finding_command_json(c: &FindingCommand) -> Value {
                 ),
             ],
         ),
+        // Issue 6 M3: the re-run request and the refused stages, as stage
+        // and code names from the two closed lists.
+        FindingCommand::RequestRerun { call, proposal } => tagged(
+            "RequestRerun",
+            vec![
+                ("call", dec_u128(call.raw())),
+                ("proposal", dec_u128(proposal.raw())),
+            ],
+        ),
+        FindingCommand::RecordRefusals {
+            call,
+            proposal,
+            refused,
+        } => tagged(
+            "RecordRefusals",
+            vec![
+                ("call", dec_u128(call.raw())),
+                ("proposal", dec_u128(proposal.raw())),
+                (
+                    "refused",
+                    Value::Array(
+                        refused
+                            .iter()
+                            .map(|r| {
+                                let mut o = Object::with_capacity(2);
+                                o.insert("stage", Value::String(r.stage.as_str().to_owned()));
+                                o.insert("code", Value::String(r.code.as_str().to_owned()));
+                                Value::Object(o)
+                            })
+                            .collect::<Array>(),
+                    ),
+                ),
+            ],
+        ),
     }
 }
 
@@ -1112,6 +1146,43 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
                 config: LlmConfigId::from_raw(u128_from(o, "config")?),
                 config_model: ModelRef(model),
                 findings,
+            })
+        }
+        "RequestRerun" => {
+            fields(o, &["call", "proposal"])?;
+            Ok(FindingCommand::RequestRerun {
+                call: CallId::from_raw(u128_from(o, "call")?),
+                proposal: fstp_domain::id::ProposalId::from_raw(u128_from(o, "proposal")?),
+            })
+        }
+        "RecordRefusals" => {
+            fields(o, &["call", "proposal", "refused"])?;
+            let list = member(o, "refused")?
+                .as_array()
+                .ok_or_else(|| FromJsonError::invalid("not a list").at_field("refused"))?;
+            if list.len() > fstp_findings::MAX_REFUSED {
+                return Err(FromJsonError::invalid("too many").at_field("refused"));
+            }
+            let mut refused = Vec::with_capacity(list.len());
+            for (i, r) in list.iter().enumerate() {
+                let bad = |e: FromJsonError| e.at_index(i).at_field("refused");
+                let ro = r
+                    .as_object()
+                    .ok_or_else(|| bad(FromJsonError::invalid("not an object")))?;
+                fields(ro, &["stage", "code"]).map_err(bad)?;
+                let stage = member(ro, "stage").map_err(bad)?.as_str();
+                let code = member(ro, "code").map_err(bad)?.as_str();
+                refused.push(
+                    stage
+                        .zip(code)
+                        .and_then(|(s, c)| fstp_findings::RefusedStage::parse(s, c))
+                        .ok_or_else(|| bad(FromJsonError::invalid("not a refused stage")))?,
+                );
+            }
+            Ok(FindingCommand::RecordRefusals {
+                call: CallId::from_raw(u128_from(o, "call")?),
+                proposal: fstp_domain::id::ProposalId::from_raw(u128_from(o, "proposal")?),
+                refused,
             })
         }
         _ => Err(unknown_variant()),

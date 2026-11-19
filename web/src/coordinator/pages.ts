@@ -593,7 +593,7 @@ async function mountBoard(env: PageEnv, params: Readonly<Record<string, string>>
     const waiting = board.data.filter((r) => r.state === "STAGE1").length;
     const ranked = board.data.some((r) => AFTER_SELECTION.has(r.state) && r.state !== "STAGE2");
     // M7 lane L-UI: findings pending or a count per proposal, never a statement.
-    const assessment = await findingsStatusSection(env, call);
+    const assessment = await findingsStatusSection(env, call, f);
     f.show([
       h("h2", { id: "board-summary" }, [
         t.label("coord.board.summary", { selected: String(selected), not_selected: String(notSelected) }),

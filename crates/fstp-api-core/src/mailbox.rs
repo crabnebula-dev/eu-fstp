@@ -72,11 +72,18 @@ pub enum MailKind {
     /// late): a notice for every programme manager, linking to the funder
     /// reports page.
     ReportPeriodEnded,
+    /// A passkey of the caller's account was disabled after its sign count
+    /// went down (ADR-008, Daniel, 2026-11-19).
+    NoticePasskeyDisabled,
+    /// A passkey of some account was disabled, and no mail relay sends the
+    /// email (ADR-008, 2026-11-19): a notice for every tenant admin. It
+    /// names the event only, never the account (I-86).
+    AdminPasskeyDisabled,
 }
 
 impl MailKind {
     /// Every kind, in the order the mailbox lists them.
-    pub const ALL: [MailKind; 23] = [
+    pub const ALL: [MailKind; 25] = [
         MailKind::PendingConfirm,
         MailKind::ContractSign,
         MailKind::PaymentReview,
@@ -100,6 +107,8 @@ impl MailKind {
         MailKind::RoleGranted,
         MailKind::AdminRetentionEnded,
         MailKind::ReportPeriodEnded,
+        MailKind::NoticePasskeyDisabled,
+        MailKind::AdminPasskeyDisabled,
     ];
 
     /// The kind as the wire spells it (`fstp_access::MAILBOX_KINDS`).
@@ -128,6 +137,8 @@ impl MailKind {
             MailKind::RoleGranted => "role.granted",
             MailKind::AdminRetentionEnded => "admin.retention_ended",
             MailKind::ReportPeriodEnded => "report.period_ended",
+            MailKind::NoticePasskeyDisabled => "notice.passkey_disabled",
+            MailKind::AdminPasskeyDisabled => "admin.passkey_disabled",
         }
     }
 
@@ -142,6 +153,8 @@ impl MailKind {
                 | MailKind::RoleGranted
                 | MailKind::AdminRetentionEnded
                 | MailKind::ReportPeriodEnded
+                | MailKind::NoticePasskeyDisabled
+                | MailKind::AdminPasskeyDisabled
         )
     }
 
@@ -172,6 +185,9 @@ impl MailKind {
             MailKind::InvitationOpen | MailKind::RoleGranted => ReadKind::ListMyRoles,
             MailKind::AdminRetentionEnded => ReadKind::ListErasures,
             MailKind::ReportPeriodEnded => ReadKind::ListReports,
+            // The caller's own account page reads as the home page does.
+            MailKind::NoticePasskeyDisabled => ReadKind::ListMyRoles,
+            MailKind::AdminPasskeyDisabled => ReadKind::ListErasures,
         }
     }
 
@@ -217,6 +233,8 @@ pub const MAILBOX_ROUTES: &[(MailKind, &str)] = &[
         MailKind::ReportPeriodEnded,
         "/app/programmes/{programme}/reports",
     ),
+    (MailKind::NoticePasskeyDisabled, "/app/"),
+    (MailKind::AdminPasskeyDisabled, "/app/"),
 ];
 
 /// The ids a message names. Only those its page needs are set.
@@ -247,11 +265,14 @@ pub struct MailRefs {
     pub binding: Option<u128>,
     /// The invitation (MB-Q3).
     pub invitation: Option<u128>,
+    /// The ordinal of a flagging event of a disabled passkey, from 1
+    /// (ADR-008, 2026-11-19). Part of the id only.
+    pub passkey: Option<u128>,
 }
 
 impl MailRefs {
     /// The members as the wire names them, with their values.
-    fn members(&self) -> [(&'static str, Option<u128>); 11] {
+    fn members(&self) -> [(&'static str, Option<u128>); 12] {
         [
             ("proposal", self.proposal),
             ("call", self.call),
@@ -264,6 +285,7 @@ impl MailRefs {
             ("question", self.question),
             ("binding", self.binding),
             ("invitation", self.invitation),
+            ("passkey", self.passkey),
         ]
     }
 
@@ -485,6 +507,7 @@ pub(crate) fn samples() -> MailboxView {
         question: Some(9),
         binding: Some(10),
         invitation: Some(11),
+        passkey: Some(12),
     };
     MailboxView::new(
         MailKind::ALL
@@ -520,6 +543,7 @@ mod tests {
             question: Some(19),
             binding: Some(20),
             invitation: Some(21),
+            passkey: Some(22),
         }
     }
 
@@ -619,6 +643,7 @@ mod tests {
                     "question",
                     "binding",
                     "invitation",
+                    "passkey",
                     "read",
                 ]
                 .contains(k),

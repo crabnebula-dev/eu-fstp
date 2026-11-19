@@ -125,6 +125,10 @@ export interface FindingsStatus {
   readonly proposal: string;
   readonly status: "pending" | "ready";
   readonly findings: number;
+  /** How many stages the validator dropped (issue 6 M3). A number only. */
+  readonly refused: number;
+  /** Whether the coordinator may run the assessment again now. */
+  readonly rerun: "available" | "in_flight" | "used_up";
 }
 
 /** The `assess.findings_status` reply, or null. */
@@ -134,14 +138,15 @@ export function decodeFindingsStatus(v: unknown): readonly FindingsStatus[] | nu
   }
   const out: FindingsStatus[] = [];
   for (const x of v) {
-    if (!isObject(x) || !exactly(x, ["proposal", "status", "findings"])) {
+    if (!isObject(x) || !exactly(x, ["proposal", "status", "findings", "refused", "rerun"])) {
       return null;
     }
     const status = oneOf(x["status"], ["pending", "ready"] as const);
-    if (!isId(x["proposal"]) || status === null || !isCount(x["findings"])) {
+    const rerun = oneOf(x["rerun"], ["available", "in_flight", "used_up"] as const);
+    if (!isId(x["proposal"]) || status === null || !isCount(x["findings"]) || !isCount(x["refused"]) || rerun === null) {
       return null;
     }
-    out.push(Object.freeze({ proposal: x["proposal"], status, findings: x["findings"] }));
+    out.push(Object.freeze({ proposal: x["proposal"], status, findings: x["findings"], refused: x["refused"], rerun }));
   }
   return Object.freeze(out);
 }
@@ -308,4 +313,59 @@ export function canRun(v: PrecheckView): boolean {
 export function instantText(micros: string): string {
   const ms = Number(BigInt(micros) / 1000n);
   return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+// ---------------------------------------------------------------------------
+// review.findings_refusals
+// ---------------------------------------------------------------------------
+
+/** The stage names of the assessor's pipeline (issue 6 M3, H-03). */
+export const REFUSED_STAGES = ["completeness", "quality", "claims", "verify", "integrity"] as const;
+/** The refusal codes of the output validator (issue 6 M3, H-03). */
+export const REFUSED_CODES = [
+  "json",
+  "unknown_member",
+  "shape",
+  "score_like",
+  "criterion",
+  "element",
+  "kind",
+  "too_long",
+] as const;
+
+export type RefusedStageName = (typeof REFUSED_STAGES)[number];
+export type RefusedCode = (typeof REFUSED_CODES)[number];
+
+/**
+ * One stage the validator dropped. An identifier outside its allowlist
+ * is kept as "unknown", so the page shows a generic label and never the
+ * received text (I-10, TH-01).
+ */
+export interface RefusedStage {
+  readonly stage: RefusedStageName | "unknown";
+  readonly code: RefusedCode | "unknown";
+}
+
+/**
+ * The `review.findings_refusals` reply, or null. The decoder is closed:
+ * each entry has exactly `stage` and `code`, both strings. Nothing else
+ * is kept.
+ */
+export function decodeRefusedStages(v: unknown): readonly RefusedStage[] | null {
+  if (!Array.isArray(v)) {
+    return null;
+  }
+  const out: RefusedStage[] = [];
+  for (const x of v) {
+    if (!isObject(x) || !exactly(x, ["stage", "code"]) || typeof x["stage"] !== "string" || typeof x["code"] !== "string") {
+      return null;
+    }
+    out.push(
+      Object.freeze({
+        stage: oneOf(x["stage"], REFUSED_STAGES) ?? "unknown",
+        code: oneOf(x["code"], REFUSED_CODES) ?? "unknown",
+      }),
+    );
+  }
+  return Object.freeze(out);
 }

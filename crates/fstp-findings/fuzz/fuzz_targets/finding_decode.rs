@@ -25,7 +25,9 @@ use libfuzzer_sys::fuzz_target;
 fn statements(record: &FindingRecord) -> Vec<Vec<u8>> {
     match record {
         FindingRecord::Recorded(f) => vec![f.statement.as_data().as_bytes().to_vec()],
-        FindingRecord::Marked { .. } => Vec::new(),
+        FindingRecord::Marked { .. }
+        | FindingRecord::RerunRequested { .. }
+        | FindingRecord::RefusalsRecorded { .. } => Vec::new(),
         FindingRecord::Regenerated { findings, .. } => findings
             .iter()
             .map(|f| f.statement.as_data().as_bytes().to_vec())

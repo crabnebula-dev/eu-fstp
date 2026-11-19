@@ -994,6 +994,7 @@ dependencies = [
 name = "fstp-timeline"
 version = "0.1.0"
 dependencies = [
+ "fstp-auth",
  "fstp-cell-core",
  "fstp-crypto",
  "fstp-domain",
@@ -1003,6 +1004,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-mail",
  "fstp-prop",
+ "fstp-webauthn",
 ]
 
 [[package]]

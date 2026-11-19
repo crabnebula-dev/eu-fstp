@@ -60,8 +60,8 @@ pub const PER_CLIENT: Limit = Limit {
     window_micros: 60_000_000,
 };
 
-/// Calls per peer with no account (ADR-024, M7, H-01). Interim, pending
-/// Daniel: 120 per minute. Every call that resolves to no account is
+/// Calls per peer with no account (ADR-024, M7, H-01): 120 per
+/// minute. Every call that resolves to no account is
 /// charged here, on the web and on MCP alike.
 pub const PER_PEER_ANONYMOUS: Limit = Limit {
     count: 120,

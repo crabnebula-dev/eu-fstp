@@ -1,6 +1,6 @@
 # ADR-024: Rate limits and per-peer caps
 
-Status: Accepted in part by Daniel on 2026-11-18: the audit rule for rate refusals, and the per-account rate limit as the whole of the `PutText` fix for now. The interim values stay pending. Drafted 2026-11-17 for issue 6 (fast-pass security review of 2026-11-12).
+Status: Accepted by Daniel. On 2026-11-18: the audit rule for rate refusals, and the per-account rate limit as the whole of the `PutText` fix for now. On 2026-11-19: every value below, as built. Drafted 2026-11-17 for issue 6 (fast-pass security review of 2026-11-12).
 
 The number is the next free one after ADR-023.
 
@@ -32,9 +32,9 @@ One rule serves every surface: each resource an unauthenticated party can consum
 | OAuth registration | Registration is limited per peer key. The total cap stays | L9 |
 | Key daemon usage log | Usage records are limited per client connection, and the log has a size bound. At the bound the daemon refuses usage-writing requests and still serves create and destroy | L13 |
 
-### Interim values, pending Daniel
+### Values
 
-The design names these limits and no values. The values below are a first reading. Each is one named constant beside its counter.
+The design names these limits and no values. Daniel accepted the values below on 2026-11-19, as built. Each is one named constant beside its counter, so a later change is one line and its test.
 
 | Limit | Value |
 | --- | --- |
@@ -64,13 +64,12 @@ The design names these limits and no values. The values below are a first readin
 ## Consequences
 
 - An office behind one address shares one peer budget for anonymous calls. Signed-in calls are charged per account and session, so sign-in lifts the shared bound.
-- The same office shares the login limit and the connection share. Thirty logins per minute and 256 connections bound how many people behind one address can work at once. Daniel sets the final values.
+- The same office shares the login limit and the connection share. Thirty logins per minute and 256 connections bound how many people behind one address can work at once. Daniel accepted these values on 2026-11-19.
 - The audit log no longer holds one row per rate-refused call. This narrows the design's reading of I-24 for rate refusals only. I-24 itself (tamper evidence) is unchanged. Daniel accepted the narrowing on 2026-11-18.
 - A cell behind the edge sees the client address only through the tunnel header. A listener without that header falls back to the shared key.
 - Every bound has a regression test named after its finding in issue 6.
 
 ## Open points for Daniel
 
-- Accept or change each interim value.
 - The owning-object rule and the daily size bound of `PutText` (M9) stay open as a design item. Daniel decided on 2026-11-18 that the rate limit is enough for now.
 - The `TODO(legal)` of ADR-009 on client addresses (Q19) covers the peer key here too.

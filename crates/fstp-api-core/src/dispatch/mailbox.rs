@@ -40,6 +40,7 @@ pub(super) fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> MailboxV
     payments(call, account, &mut out);
     notices(call, account, &mut out);
     people(call, account, &mut out);
+    passkeys(call, account, &mut out);
     out.retain(|m| admitted(call, m));
     let mut view = MailboxView::new(out);
     // MB-Q1, ADR-020: each notice carries the caller's own read mark.
@@ -77,6 +78,39 @@ fn admitted<P: Seams>(call: &Call<'_, P>, m: &MailItem) -> bool {
         target: target(m),
     };
     fstp_access::authorize_read(&op, &call.caller.p, &call.state, call.now).is_ok()
+}
+
+/// ADR-008, decided 2026-11-19: one notice per flagging event of a disabled
+/// passkey. The holder of the passkey gets `notice.passkey_disabled` in their
+/// own mailbox and no other. A tenant admin gets `admin.passkey_disabled` for
+/// each event while no mail relay sends the email. It names the ordinal and
+/// never the account (I-86). Both are notices (MB-D2).
+fn passkeys<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailItem>) {
+    use crate::port::Accounts as _;
+    let flags = call.ports.accounts().disabled_passkeys();
+    let relay = call
+        .state
+        .tenant
+        .state()
+        .is_some_and(|t| t.mail_relay().is_some());
+    let tell_admin = call.caller.p.tenant_admin() && !relay;
+    for (owner, ordinal) in flags {
+        let at = |kind| {
+            MailItem::new(
+                kind,
+                MailRefs {
+                    passkey: Some(u128::from(ordinal)),
+                    ..refs()
+                },
+            )
+        };
+        if owner == account {
+            out.push(at(MailKind::NoticePasskeyDisabled));
+        }
+        if tell_admin {
+            out.push(at(MailKind::AdminPasskeyDisabled));
+        }
+    }
 }
 
 fn refs() -> MailRefs {

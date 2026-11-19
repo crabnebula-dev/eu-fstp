@@ -34,6 +34,29 @@ export const FINDINGS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "rev.findings.marked": "Your mark is recorded.",
   "rev.findings.item": "Finding {n}",
 
+  // Issue 6 M3 (I-10, H-03): the notice of stages the validator dropped.
+  // Stage names and codes come from fixed lists, and each has a fixed label
+  // here. No model output is shown.
+  "rev.findings.refused.one": "One check of the AI assessor was dropped, so some findings may be missing.",
+  "rev.findings.refused.other": "{count} checks of the AI assessor were dropped, so some findings may be missing.",
+  "rev.findings.refused.lead": "The dropped checks are listed below. Their output is not shown. The FSTP coordinator can run the assessment again.",
+  "rev.findings.refused.item": "{stage}: {reason} (code: {code})",
+  "refused.stage.completeness": "Completeness check",
+  "refused.stage.quality": "Quality assessment",
+  "refused.stage.claims": "Claim extraction",
+  "refused.stage.verify": "Claim verification",
+  "refused.stage.integrity": "Integrity check",
+  "refused.stage.unknown": "A check",
+  "refused.code.json": "its reply could not be read",
+  "refused.code.unknown_member": "its reply had a field that is not allowed",
+  "refused.code.shape": "its reply had the wrong form",
+  "refused.code.score_like": "its reply read like a score",
+  "refused.code.criterion": "its reply named a criterion outside the call",
+  "refused.code.element": "its reply named an element outside the rubric",
+  "refused.code.kind": "its reply named a finding type that is not allowed",
+  "refused.code.too_long": "its reply was too long",
+  "refused.code.unknown": "the reason is not known to this page",
+
   "coord.findings.heading": "AI assessment",
   "coord.findings.lead": "Counts only. Reviewers read the findings themselves.",
   "coord.findings.caption": "Assessor findings by proposal",
@@ -45,6 +68,14 @@ export const FINDINGS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "coord.findings.none": "No submitted proposal yet.",
   "coord.findings.unavailable": "The assessment status cannot be shown now.",
   "coord.findings.proposal": "Proposal {id}",
+  // Issue 6 M3: the coordinator sees how many checks were dropped and can run the assessment again.
+  "coord.findings.refused_one": "One check was dropped.",
+  "coord.findings.refused_other": "{count} checks were dropped.",
+  "coord.findings.rerun": "Run the assessment again",
+  "coord.findings.rerun_named": "Run the assessment of proposal {id} again",
+  "coord.findings.rerun_started": "The assessment ran again.",
+  "coord.findings.rerun_in_flight": "The assessment is running again.",
+  "coord.findings.rerun_used_up": "The assessment has run again three times. No more runs are left.",
 
   "pre.title": "Check my draft",
   "pre.link": "Check my draft",

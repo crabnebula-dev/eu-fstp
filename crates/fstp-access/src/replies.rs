@@ -110,6 +110,24 @@ const fn opt(name: &'static str, shape: Shape) -> Member {
 /// section 7): the in-memory synthetic model of a demo cell, or a model.
 const ASSESSOR_NAMES: &[&str] = &["synthetic", "model"];
 
+/// The stage names a refused-stage notice may carry, as
+/// `fstp_assess::Stage::as_str` spells them (issue 6 M3, I-10, H-03).
+pub const REFUSED_STAGE_NAMES: &[&str] =
+    &["completeness", "quality", "claims", "verify", "integrity"];
+
+/// The refusal codes a refused-stage notice may carry, as
+/// `fstp_assess::OutputError::code` spells them (issue 6 M3, I-10, H-03).
+pub const REFUSED_STAGE_CODES: &[&str] = &[
+    "json",
+    "unknown_member",
+    "shape",
+    "score_like",
+    "criterion",
+    "element",
+    "kind",
+    "too_long",
+];
+
 /// The rubric v1 element tags (M7 design section 2, reading 1).
 const RUBRIC_ELEMENTS: &[&str] = &[
     "problem",
@@ -226,6 +244,10 @@ pub const MAILBOX_KINDS: &[&str] = &[
     // P-57 (Daniel, 2026-11-15 late): a reporting period ended and its
     // report is due.
     "report.period_ended",
+    // ADR-008 (Daniel, 2026-11-19): a passkey was disabled. The holder's
+    // notice, and the tenant admins' notice when no relay sends the email.
+    "notice.passkey_disabled",
+    "admin.passkey_disabled",
 ];
 
 /// The erasure causes of ADR-007, as the wire names them (lane
@@ -1346,6 +1368,16 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("assessor", Shape::Enum(ASSESSOR_NAMES)),
         ])),
     ),
+    // Issue 6 M3, I-10, H-03: the stages the output validator dropped from
+    // the assessment of the reviewer's proposal. Closed enums of stage
+    // names and refusal codes, so no model or submission text can fit.
+    (
+        "review.findings_refusals",
+        Shape::Array(&Shape::Object(&[
+            m("stage", Shape::Enum(REFUSED_STAGE_NAMES)),
+            m("code", Shape::Enum(REFUSED_STAGE_CODES)),
+        ])),
+    ),
     // M7 design section 7: per submitted proposal, pending or ready and
     // a count. No statement, kind or severity (I-10).
     (
@@ -1354,6 +1386,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("proposal", Shape::Id),
             m("status", Shape::Enum(&["pending", "ready"])),
             m("findings", Shape::Int),
+            // Issue 6 M3: how many stages the validator dropped, and
+            // whether the coordinator may run the assessment again.
+            m("refused", Shape::Int),
+            m("rerun", Shape::Enum(&["available", "in_flight", "used_up"])),
         ])),
     ),
     // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.
@@ -1529,6 +1565,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     // MB-Q3: the role binding and the invitation.
                     opt("binding", Shape::Id),
                     opt("invitation", Shape::Id),
+                    // ADR-008: the ordinal of a disabled passkey's flagging event.
+                    opt("passkey", Shape::Id),
                     opt("since", Shape::Id),
                     opt("due", Shape::Id),
                     opt("proposal", Shape::Id),

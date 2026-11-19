@@ -21,6 +21,10 @@
 //!
 //! - `POST /test/precheck`: one run of the fake pre-check provider
 //!   ([`crate::precheck`], Q38 C).
+//! - `POST /test/assessor/refuse {proposal, stage, code}`: records one
+//!   dropped assessment stage of a proposal of call 1, as the assessor
+//!   would after the validator refused a reply (issue 6 M3). The stage and
+//!   the code must be on the fixed lists. For the notice and re-run specs.
 //! - `GET /demo` and its links: the demo page for a person ([`crate::demo`]).
 //!
 //! A request that carries `Origin`, or a `Sec-Fetch-Site` other than
@@ -156,6 +160,7 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
         (false, "/test/scenario/grant") => scenario::postgrant::control(site, &req).await,
         (false, "/test/scenario/setup") => scenario::setup::control(site).await,
         (false, "/test/precheck") => crate::precheck::handle(),
+        (false, "/test/assessor/refuse") => refuse_stage(site, &req),
         _ => wire::not_found(),
     }
 }
@@ -263,6 +268,36 @@ fn verify(site: &Site, req: &Request) -> Response {
         return wire::refuse(StatusCode::NOT_FOUND, "same_identity_as");
     }
     wire::ok_empty()
+}
+
+/// `POST /test/assessor/refuse`: one dropped stage of a proposal of call 1
+/// (issue 6 M3, I-10, H-03). Test only: this binary is never shipped.
+fn refuse_stage(site: &Site, req: &Request) -> Response {
+    let Some(body) = wire::body(req) else {
+        return wire::bad("body");
+    };
+    let Some(proposal) = dec_member(&body, "proposal").and_then(|n| u128::try_from(n).ok()) else {
+        return wire::bad("proposal");
+    };
+    let (Some(stage), Some(code)) = (str_member(&body, "stage"), str_member(&body, "code")) else {
+        return wire::bad("stage");
+    };
+    let Some(refused) = fstp_findings::RefusedStage::parse(stage, code) else {
+        return wire::bad("stage");
+    };
+    let inner = site.inner();
+    inner.ports.clock.advance(1_000_000);
+    let now = inner.ports.clock.read();
+    match crate::assess::record_refusals(
+        &inner,
+        now,
+        fstp_domain::id::CallId::from_raw(1),
+        fstp_domain::id::ProposalId::from_raw(proposal),
+        vec![refused],
+    ) {
+        Ok(()) => wire::json(StatusCode::OK, &obj(vec![("recorded", true.into())])),
+        Err(e) => wire::refuse(StatusCode::CONFLICT, &e),
+    }
 }
 
 #[cfg(test)]

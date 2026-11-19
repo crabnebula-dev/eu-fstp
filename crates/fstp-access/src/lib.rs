@@ -57,7 +57,8 @@ pub use registry::{
 };
 pub use replies::{
     BRAND_PAIR_NAMES, ENTRY_KIND_NAMES, ERASURE_CAUSES, INVITED_ROLES, MAILBOX_KINDS, Member,
-    REPLIES, STATE_NAMES, Shape, TEAM_ROLES, invitable, reply, role_wire_name,
+    REFUSED_STAGE_CODES, REFUSED_STAGE_NAMES, REPLIES, STATE_NAMES, Shape, TEAM_ROLES, invitable,
+    reply, role_wire_name,
 };
 
 pub use setup::{

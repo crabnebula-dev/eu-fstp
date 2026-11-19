@@ -824,7 +824,9 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         }
         OpKind::Tenant(kind) => tenant::command(call, op, kind).await,
         OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(call, op).await,
-        // `Record` and `Regenerate` are the assessor's, through no route.
+        OpKind::Finding(fstp_access::FindingKind::RequestRerun) => finding_rerun(call, op).await,
+        // `Record`, `Regenerate` and `RecordRefusals` are the assessor's,
+        // through no route.
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
             "a finding command that only the assessor issues",
         ))),
@@ -875,6 +877,85 @@ async fn finding_mark<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult,
         }),
         Err(e) => Err(call.refuse(exec_failed(e))),
     }
+}
+
+/// `assess.rerun` (issue 6 M3, I-10, I-11): the call's FSTP coordinator
+/// asks for the assessment of a proposal to run again. The engine judges
+/// who may ask and applies the bounds, one in flight and three in all, so
+/// a refused request runs nothing. The request is one ledger record and
+/// one audit entry through `execute`. Then the port starts the run, which
+/// records its result as the system and ends the run in flight.
+async fn finding_rerun<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiError> {
+    let Some(account) = call.account() else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+    };
+    let p = proposal_param(call, op)?;
+    let c = call_of(&call.state, p)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+    let cmd = Command::Finding(fstp_engine::FindingCommand::RequestRerun {
+        call: c,
+        proposal: p,
+    });
+    let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
+    let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
+    // The engine judges the caller first. A caller who may not ask is
+    // refused for the actor, and learns nothing of the port or the content.
+    dry_run(call, account, &cmd, ctx)
+        .await
+        .map_err(|e| call.refuse(e))?;
+    // The port is checked before the command runs, so no request is
+    // recorded for a job that cannot start (the way pre-check answers
+    // "unavailable").
+    let job = rerun_job(call, c, p)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Unavailable, "I-10")))?;
+    let meta = ExecMeta {
+        via: call.caller.via(),
+        session: call.caller.session,
+        agent: call.caller.agent,
+        op: OpName(call.spec.name),
+        request: call.digest,
+        step_up: None,
+        pending: None,
+        second_tenant_admin: None,
+    };
+    let seq = call
+        .ports
+        .engine()
+        .execute(cmd, ctx, meta)
+        .await
+        .map_err(|e| call.refuse(exec_failed(e)))?;
+    // The port runs the assessment and records the result as the system.
+    if let Some(port) = call.ports.precheck() {
+        crate::port::Precheck::start_rerun(port, p, job)
+            .await
+            .map_err(|e| call.refuse(port_failed(e, "assessor")))?;
+    }
+    Ok(OpResult::Done {
+        body: ReadModel::Accepted,
+        seq: Some(seq),
+    })
+}
+
+/// The job the port starts for a re-run of `p`: the pin and the content the
+/// proposal was submitted with. `None` when there is no port that can re-run,
+/// no pin or no content, in which case nothing is executed.
+fn rerun_job<P: Seams>(
+    call: &Call<'_, P>,
+    c: CallId,
+    p: ProposalId,
+) -> Option<crate::port::PrecheckSnapshot> {
+    let port = call.ports.precheck()?;
+    if !crate::port::Precheck::can_rerun(port) {
+        return None;
+    }
+    let w = lock(&call.st.content).submitted(p).cloned()?;
+    let pin = precheck::assessment_pin(call, c)?;
+    Some(crate::port::PrecheckSnapshot {
+        pin,
+        title: fstp_findings::UntrustedText::new(w.title),
+        summary: fstp_findings::UntrustedText::new(w.summary),
+        narrative: fstp_findings::UntrustedText::new(w.narrative),
+    })
 }
 
 /// The refusal of a channel denial.
@@ -1900,6 +1981,10 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             };
             let a = assignment_param(call, op, "assignment")?;
             ReadModel::Findings(findings(call, a, viewer)?)
+        }
+        ReadKind::GetFindingsRefusals => {
+            let a = assignment_param(call, op, "assignment")?;
+            ReadModel::FindingsRefusals(precheck::refused_stages(call, a)?)
         }
         ReadKind::GetStage2Thread => {
             let a = assignment_param(call, op, "assignment")?;

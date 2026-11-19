@@ -369,6 +369,16 @@ async fn caller<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Result<Caller, Reply
         .await
         .map_err(unavailable)?
         .ok_or_else(|| no_session(Rule::Th05))?;
+    // ADR-008, decided 2026-11-19: a session opened with a passkey that
+    // was flagged suspect has ended. It is refused as a session that does
+    // not exist, so the answer tells nothing of the flag. Sessions of the
+    // account's other passkeys continue.
+    if let Some(credential) = row.credential.as_deref() {
+        let s = ctx.backend.state().await.map_err(unavailable)?;
+        if s.auth().credential(credential).is_some_and(|c| c.suspect) {
+            return Err(no_session(Rule::Th05));
+        }
+    }
     let view = SessionView {
         id: row.id,
         account: row.account,

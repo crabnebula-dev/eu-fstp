@@ -113,6 +113,9 @@ pub enum ReadKind {
     GetScoreSheet,
     GetStage2Thread,
     GetFindings,
+    /// Issue 6 M3: the stages the validator dropped from the assessment of
+    /// the reviewer's proposal, names and codes only.
+    GetFindingsRefusals,
     GetRankingView,
     GetCutOffRound,
     ListMyIrcCases,
@@ -231,7 +234,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 77] = [
+    pub const ALL: [ReadKind; 78] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -247,6 +250,7 @@ impl ReadKind {
         ReadKind::GetScoreSheet,
         ReadKind::GetStage2Thread,
         ReadKind::GetFindings,
+        ReadKind::GetFindingsRefusals,
         ReadKind::GetRankingView,
         ReadKind::GetCutOffRound,
         ReadKind::ListMyIrcCases,
@@ -565,6 +569,11 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     ),
     (
         ReadKind::GetFindings,
+        ReadRule::FindingsReader,
+        &[StateTag::Stage1, StateTag::Stage2],
+    ),
+    (
+        ReadKind::GetFindingsRefusals,
         ReadRule::FindingsReader,
         &[StateTag::Stage1, StateTag::Stage2],
     ),

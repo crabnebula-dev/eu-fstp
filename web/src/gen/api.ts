@@ -191,8 +191,10 @@ export type OpName =
   | "stage2.no_questions"
   | "review.rank"
   | "review.findings"
+  | "review.findings_refusals"
   | "assess.findings_status"
   | "review.mark_finding"
+  | "assess.rerun"
   | "committee.ranking"
   | "committee.open_round"
   | "committee.round"
@@ -438,8 +440,10 @@ export interface OpParams {
   readonly "stage2.no_questions": { readonly "assignment": string };
   readonly "review.rank": { readonly "assignment": string };
   readonly "review.findings": { readonly "assignment": string };
+  readonly "review.findings_refusals": { readonly "assignment": string };
   readonly "assess.findings_status": { readonly "call": string };
   readonly "review.mark_finding": { readonly "finding": string };
+  readonly "assess.rerun": { readonly "proposal": string };
   readonly "committee.ranking": { readonly "call": string };
   readonly "committee.open_round": { readonly "call": string };
   readonly "committee.round": { readonly "round": string };
@@ -658,8 +662,10 @@ export const OP_NAMES: readonly OpName[] = [
   "stage2.no_questions",
   "review.rank",
   "review.findings",
+  "review.findings_refusals",
   "assess.findings_status",
   "review.mark_finding",
+  "assess.rerun",
   "committee.ranking",
   "committee.open_round",
   "committee.round",
@@ -2660,6 +2666,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: { name: "fstp_get_findings", scope: "findings:read", prepareOnly: false },
   },
   {
+    name: "review.findings_refusals",
+    method: "GET",
+    path: "/assignments/{assignment}/findings-refusals",
+    base: "api",
+    segments: [{ kind: "literal", text: "assignments" }, { kind: "param", name: "assignment" }, { kind: "literal", text: "findings-refusals" }],
+    params: ["assignment"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "assess.findings_status",
     method: "GET",
     path: "/calls/{call}/findings-status",
@@ -2680,6 +2700,20 @@ export const OPERATIONS: readonly Operation[] = [
     base: "api",
     segments: [{ kind: "literal", text: "findings" }, { kind: "param", name: "finding" }, { kind: "literal", text: "mark" }],
     params: ["finding"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "assess.rerun",
+    method: "POST",
+    path: "/proposals/{proposal}/assessment-rerun",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "assessment-rerun" }],
+    params: ["proposal"],
     body: true,
     highRisk: false,
     binding: true,
@@ -4668,12 +4702,21 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "assessor": { schema: { kind: "enum", values: ["synthetic", "model"] }, optional: false },
     },
   } },
+  "review.findings_refusals": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "stage": { schema: { kind: "enum", values: ["completeness", "quality", "claims", "verify", "integrity"] }, optional: false },
+      "code": { schema: { kind: "enum", values: ["json", "unknown_member", "shape", "score_like", "criterion", "element", "kind", "too_long"] }, optional: false },
+    },
+  } },
   "assess.findings_status": { kind: "array", items: {
     kind: "object",
     fields: {
       "proposal": { schema: { kind: "id" }, optional: false },
       "status": { schema: { kind: "enum", values: ["pending", "ready"] }, optional: false },
       "findings": { schema: { kind: "int" }, optional: false },
+      "refused": { schema: { kind: "int" }, optional: false },
+      "rerun": { schema: { kind: "enum", values: ["available", "in_flight", "used_up"] }, optional: false },
     },
   } },
   "review.stage2_thread": {
@@ -4804,13 +4847,14 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         kind: "object",
         fields: {
           "id": { schema: { kind: "string" }, optional: false },
-          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted", "admin.retention_ended", "report.period_ended"] }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted", "admin.retention_ended", "report.period_ended", "notice.passkey_disabled", "admin.passkey_disabled"] }, optional: false },
           "action": { schema: { kind: "bool" }, optional: false },
           "href": { schema: { kind: "string" }, optional: false },
           "read": { schema: { kind: "bool" }, optional: true },
           "question": { schema: { kind: "id" }, optional: true },
           "binding": { schema: { kind: "id" }, optional: true },
           "invitation": { schema: { kind: "id" }, optional: true },
+          "passkey": { schema: { kind: "id" }, optional: true },
           "since": { schema: { kind: "id" }, optional: true },
           "due": { schema: { kind: "id" }, optional: true },
           "proposal": { schema: { kind: "id" }, optional: true },

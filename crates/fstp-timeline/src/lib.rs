@@ -107,6 +107,12 @@ pub mod kind {
     /// (ADR-004; Daniel, 2026-11-15 late: the operator rotates it by hand,
     /// and the platform reminds the operator when a year is up).
     pub const SIGNER_ROTATION_DUE: u16 = 14;
+    /// A passkey was flagged suspect and is disabled (ADR-008, Daniel,
+    /// 2026-11-19). Sourced by the flag's ordinal (big-endian `u64` from
+    /// 1, the position of the `CredentialSuspect` record among them), due
+    /// at the first tick that sees it. It fires once, with one email to the
+    /// holder when the tenant has a mail relay and none otherwise.
+    pub const PASSKEY_DISABLED: u16 = 15;
 }
 
 /// A level 2 signing key is due for replacement this long after its
@@ -285,6 +291,18 @@ pub fn derive(s: &CellState, now: Timestamp) -> BTreeMap<EventId, Derived> {
     }
     for d in signer_events(t, s.signer_generations()) {
         put(d);
+    }
+    for (i, _) in s.auth().suspect_flags().iter().enumerate() {
+        let ordinal = u64::try_from(i).map_or(u64::MAX, |n| n.saturating_add(1));
+        let source = ordinal.to_be_bytes().to_vec();
+        put(Derived {
+            kind: kind::PASSKEY_DISABLED,
+            lead: 0,
+            due: scheduled_due(t, kind::PASSKEY_DISABLED, &source, 0).unwrap_or(now.micros()),
+            source,
+            source_version: 0,
+            offset_minutes: 0,
+        });
     }
     out
 }
@@ -539,6 +557,21 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
         // operator rotates the key by hand, with step-up, through the
         // control plane (`fstp_control::api::CpApiRequest::RotateNoticeKey`).
         kind::SIGNER_ROTATION_DUE => Vec::new(),
+        // ADR-008, 2026-11-19: one email to the holder of the flagged
+        // passkey, when the tenant has a relay.
+        kind::PASSKEY_DISABLED => {
+            let ordinal = u64::from_be_bytes(e.source.as_slice().try_into().ok()?);
+            let at = usize::try_from(ordinal.checked_sub(1)?).ok()?;
+            let holder = *s.auth().suspect_flags().get(at)?;
+            passkey_disabled_drafts(holder, mail_relay_set(s))
+                .into_iter()
+                .map(|(to, template, bindings)| Draft {
+                    to,
+                    template,
+                    bindings,
+                })
+                .collect()
+        }
         k => {
             let cmd = sweep::due(s.engine(), now)
                 .unwrap_or_default()
@@ -605,6 +638,33 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
         },
         bodies,
     })
+}
+
+/// Whether the tenant set a mail relay (ADR-018). Without one no email
+/// leaves the cell, so a notice by email is skipped.
+pub fn mail_relay_set(s: &CellState) -> bool {
+    s.engine()
+        .tenant
+        .state()
+        .is_some_and(|t| t.mail_relay().is_some())
+}
+
+/// The messages of a `PASSKEY_DISABLED` event for `holder` (ADR-008,
+/// 2026-11-19): one, to the holder's account, when the tenant has a relay,
+/// and none otherwise. It holds one link to the platform home and no
+/// other value, so no time, id, name or address reaches the email (I-27).
+pub fn passkey_disabled_drafts(
+    holder: AccountId,
+    relay: bool,
+) -> Vec<(Recipient, TemplateId, Bindings)> {
+    if !relay {
+        return Vec::new();
+    }
+    vec![(
+        Recipient::Account(holder),
+        TemplateId::PasskeyDisabled,
+        Bindings::new().with(Slot::Link, Value::Link(LinkTarget::Home)),
+    )]
 }
 
 /// The ledger sequence of an immediate event's source.

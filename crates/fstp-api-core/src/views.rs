@@ -986,6 +986,12 @@ pub struct FindingsStatusRow {
     pub status: &'static str,
     /// How many findings are recorded.
     pub findings: u64,
+    /// How many stages the validator dropped from the last assessment
+    /// (issue 6 M3, I-10). A number, never a code or a statement.
+    pub refused: u64,
+    /// Whether the coordinator may run the assessment again now:
+    /// `available`, `in_flight` or `used_up` (issue 6 M3).
+    pub rerun: &'static str,
 }
 
 impl ToJson for FindingsStatusRow {
@@ -994,6 +1000,100 @@ impl ToJson for FindingsStatusRow {
             ("proposal", dec(self.proposal)),
             ("status", Value::from(self.status)),
             ("findings", int(self.findings)),
+            ("refused", int(self.refused)),
+            ("rerun", Value::from(self.rerun)),
         ])
+    }
+}
+
+/// One stage the assessor's output validator dropped (issue 6 M3, I-10,
+/// H-03): a stage name and a refusal code, each from a fixed allowlist.
+/// No member can hold model output or submission text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RefusedStageRow {
+    /// One of [`fstp_access::REFUSED_STAGE_NAMES`].
+    pub stage: &'static str,
+    /// One of [`fstp_access::REFUSED_STAGE_CODES`].
+    pub code: &'static str,
+}
+
+impl ToJson for RefusedStageRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("stage", Value::from(self.stage)),
+            ("code", Value::from(self.code)),
+        ])
+    }
+}
+
+impl McpSafe for RefusedStageRow {}
+
+/// The rows the port's refused stages make. An entry whose stage or code
+/// is not on its allowlist is dropped, and a repeated pair shows once, so
+/// nothing but fixed identifiers reaches a reply (issue 6 M3, I-10).
+#[must_use]
+pub fn refused_rows(raw: &[fstp_findings::RefusedStage]) -> Vec<RefusedStageRow> {
+    let mut out: Vec<RefusedStageRow> = Vec::new();
+    for r in raw {
+        let stage = fstp_access::REFUSED_STAGE_NAMES
+            .iter()
+            .find(|s| **s == r.stage.as_str());
+        let code = fstp_access::REFUSED_STAGE_CODES
+            .iter()
+            .find(|c| **c == r.code.as_str());
+        if let (Some(stage), Some(code)) = (stage, code) {
+            let row = RefusedStageRow { stage, code };
+            if !out.contains(&row) {
+                out.push(row);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod refused_tests {
+    use super::*;
+    use fstp_findings::{AssessStage, RefusalCode, RefusedStage};
+
+    /// Issue 6 M3, I-10, H-03: the list reaches the read unchanged, in
+    /// order, and a repeated pair shows once.
+    #[test]
+    fn issue6_m3_allowlisted_pairs_pass_unchanged_in_order() {
+        let a = RefusedStage {
+            stage: AssessStage::Quality,
+            code: RefusalCode::ScoreLike,
+        };
+        let b = RefusedStage {
+            stage: AssessStage::Integrity,
+            code: RefusalCode::Json,
+        };
+        let rows = refused_rows(&[a, b, a]);
+        assert_eq!(
+            rows.iter().map(|r| (r.stage, r.code)).collect::<Vec<_>>(),
+            vec![("quality", "score_like"), ("integrity", "json")]
+        );
+        assert!(refused_rows(&[]).is_empty(), "no refusals, no rows");
+    }
+
+    /// Issue 6 M3, I-10, TH-01: the closed enums of the ledger record and
+    /// the reply's allowlists name the same identifiers, so nothing but
+    /// allowlisted identifiers reaches a reply, and every one of them does.
+    #[test]
+    fn issue6_m3_record_enums_and_reply_allowlists_agree() {
+        let stages: Vec<&str> = AssessStage::ALL.iter().map(|s| s.as_str()).collect();
+        let codes: Vec<&str> = RefusalCode::ALL.iter().map(|s| s.as_str()).collect();
+        assert_eq!(stages, fstp_access::REFUSED_STAGE_NAMES);
+        assert_eq!(codes, fstp_access::REFUSED_STAGE_CODES);
+        let all: Vec<RefusedStage> = AssessStage::ALL
+            .iter()
+            .flat_map(|s| {
+                RefusalCode::ALL.iter().map(|c| RefusedStage {
+                    stage: *s,
+                    code: *c,
+                })
+            })
+            .collect();
+        assert_eq!(refused_rows(&all).len(), all.len());
     }
 }

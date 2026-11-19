@@ -175,7 +175,20 @@ pub(crate) fn any_finding(g: &mut Gen) -> Finding {
 
 /// A finding record of any variant.
 pub(crate) fn any_record(g: &mut Gen) -> FindingRecord {
-    match g.u8_in(0..=2) {
+    match g.u8_in(0..=4) {
+        3 => FindingRecord::RerunRequested {
+            call: CallId::from_raw(u128_any(g)),
+            proposal: ProposalId::from_raw(u128_any(g)),
+            by: AccountId::from_raw(u128_any(g)),
+        },
+        4 => FindingRecord::RefusalsRecorded {
+            call: CallId::from_raw(u128_any(g)),
+            proposal: ProposalId::from_raw(u128_any(g)),
+            refused: g.vec(0..=4, |g| fstp_findings::RefusedStage {
+                stage: *g.pick(&fstp_findings::AssessStage::ALL),
+                code: *g.pick(&fstp_findings::RefusalCode::ALL),
+            }),
+        },
         0 => FindingRecord::Recorded(any_finding(g)),
         1 => FindingRecord::Marked {
             finding: FindingId::from_raw(u128_any(g)),
@@ -206,7 +219,9 @@ pub(crate) fn any_record(g: &mut Gen) -> FindingRecord {
 pub(crate) fn statements(record: &FindingRecord) -> Vec<String> {
     match record {
         FindingRecord::Recorded(f) => vec![f.statement.as_data().to_owned()],
-        FindingRecord::Marked { .. } => Vec::new(),
+        FindingRecord::Marked { .. }
+        | FindingRecord::RerunRequested { .. }
+        | FindingRecord::RefusalsRecorded { .. } => Vec::new(),
         FindingRecord::Regenerated { findings, .. } => findings
             .iter()
             .map(|f| f.statement.as_data().to_owned())

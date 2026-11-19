@@ -37,3 +37,7 @@ The number is the next free one after ADR-019. `docs/handoff/mailbox-design.md` 
 1. Accept the operation name, route and bounds above.
 2. Whether a mark survives a restart before lane W6. Interim reading: it does not.
 3. Whether a person may mark a notice unread again. Interim reading: no.
+
+## Amendment, 2026-11-19 (ADR-008, suspect passkeys)
+
+Two notice kinds join the mailbox: `notice.passkey_disabled` for the holder and `admin.passkey_disabled` for tenant admins. Both take read marks, and neither counts in `open`. Their message id ends in the flag ordinal, held in a new id member `passkey`.

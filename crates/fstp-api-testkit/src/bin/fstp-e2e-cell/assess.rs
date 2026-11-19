@@ -247,7 +247,10 @@ pub(crate) async fn assess(
     let Ok(lines) = link.run(&[job.line().to_line()]).await else {
         return Ok(Assessed::Pending);
     };
-    let Some(Ok(Intake::Done { findings, .. })) = lines.first().map(|l| job.intake(l)) else {
+    let Some(Ok(Intake::Done {
+        findings, refused, ..
+    })) = lines.first().map(|l| job.intake(l))
+    else {
         return Ok(Assessed::Pending);
     };
     let n = findings.len();
@@ -286,7 +289,49 @@ pub(crate) async fn assess(
             .environment(Command::Finding(FindingCommand::Record(finding)), ctx)
             .map_err(|e| format!("a finding by the assessor: {e}"))?;
     }
+    // Issue 6 M3 (I-10, H-03): the stages the validator dropped go into the
+    // ledger as stage and code only, for the notice on the findings panel.
+    let refused: Vec<fstp_findings::RefusedStage> = refused
+        .iter()
+        .filter_map(|r| fstp_findings::RefusedStage::parse(r.stage, r.code))
+        .collect();
+    if !refused.is_empty() {
+        record_refusals(inner, now, call, proposal, refused)?;
+    }
     Ok(Assessed::Recorded(n))
+}
+
+/// Records the stages the validator dropped from the assessment of
+/// `proposal` as the system (issue 6 M3, I-10, H-03).
+pub(crate) fn record_refusals(
+    inner: &Inner,
+    now: Timestamp,
+    call: CallId,
+    proposal: ProposalId,
+    refused: Vec<fstp_findings::RefusedStage>,
+) -> Result<(), String> {
+    let ctx = Ctx {
+        now,
+        actor: Actor::System(SystemCause::Timeline),
+        command: command_id(),
+        via: Via::Web,
+        tenant_admin: false,
+        second_tenant_admin: None,
+        binds_tenant_admin: false,
+    };
+    inner
+        .ports
+        .engine
+        .environment(
+            Command::Finding(FindingCommand::RecordRefusals {
+                call,
+                proposal,
+                refused,
+            }),
+            ctx,
+        )
+        .map(|_| ())
+        .map_err(|e| format!("the refused stages by the assessor: {e}"))
 }
 
 /// Assesses a proposal the seed just submitted, through the cell's link.
@@ -399,6 +444,249 @@ mod tests {
         assert!(
             all.iter()
                 .any(|f| f.proposal == w && f.kind == fstp_findings::FindingKind::Integrity)
+        );
+    }
+
+    /// Calls the API as `account` at the next second of the cell's clock.
+    fn api(
+        inner: &Inner,
+        account: fstp_domain::id::AccountId,
+        method: fstp_api_core::decode::Method,
+        path: &str,
+    ) -> Result<Value, String> {
+        use fstp_api_core::port::{AsyncEngine as _, Clock as _, LoginMethod};
+        let _ = inner.ports.engine.ledger();
+        let now =
+            Timestamp::from_micros(inner.ports.clock.now().micros().saturating_add(1_000_000));
+        inner.ports.clock.set(now);
+        let cookie = inner
+            .ports
+            .sessions
+            .login(account, LoginMethod::Passkey)
+            .cookie;
+        let op = fstp_api_core::decode::decode_route(
+            method,
+            path,
+            if method == fstp_api_core::decode::Method::Get {
+                b""
+            } else {
+                b"{}"
+            },
+        )
+        .map_err(|e| format!("{path}: {e}"))?;
+        let done = fstp_rt::future::block_on(inner.core.dispatch(
+            fstp_api_core::Credential::SessionCookie(cookie),
+            &fstp_api_core::RequestHead::new(),
+            op,
+        ));
+        match done {
+            Ok(fstp_api_core::OpResult::Done { body, .. }) => Ok(fstp_json::ToJson::to_json(&body)),
+            Ok(_) => Err("not done".to_owned()),
+            Err(e) => Err(fstp_json::ToJson::to_json(&e).to_compact()),
+        }
+    }
+
+    fn rerun(inner: &Inner, who: fstp_domain::id::AccountId, p: u128) -> Result<Value, String> {
+        api(
+            inner,
+            who,
+            fstp_api_core::decode::Method::Post,
+            &format!("/proposals/{p}/assessment-rerun"),
+        )
+    }
+
+    /// The status row of proposal `p` of call 1 as the coordinator reads it.
+    fn status(inner: &Inner, p: u128) -> Value {
+        let rows = api(
+            inner,
+            fstp_domain_testkit::r#gen::review::COORDINATOR,
+            fstp_api_core::decode::Method::Get,
+            "/calls/1/findings-status",
+        )
+        .unwrap();
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r.get("proposal").and_then(Value::as_str) == Some(&p.to_string()))
+            .cloned()
+            .unwrap()
+    }
+
+    fn count_requests(inner: &Inner, p: ProposalId) -> usize {
+        use fstp_api_core::port::AsyncEngine as _;
+        inner
+            .ports
+            .engine
+            .ledger()
+            .unwrap()
+            .iter()
+            .filter(|e| {
+                matches!(
+                    &e.record,
+                    fstp_engine::Record::Finding(fstp_findings::FindingRecord::RerunRequested { proposal, .. })
+                        if *proposal == p
+                )
+            })
+            .count()
+    }
+
+    /// I-10, H-03, issue 6 M3: only the FSTP coordinator of the call
+    /// re-runs. A reviewer, a committee member who is not assigned, and
+    /// an applicant are refused, and nothing is requested. The coordinator
+    /// is accepted and the ledger holds exactly one request per re-run,
+    /// which is the re-run's audit record.
+    #[test]
+    fn i10_h03_issue6_m3_only_the_coordinator_reruns_and_each_rerun_is_one_record() {
+        let stage = crate::scenario::ReviewAt::parse("stage1").unwrap();
+        let (inner, _) =
+            fstp_rt::future::block_on(crate::scenario::build_review(&info(), stage)).unwrap();
+        inner.ports.precheck.set_link(Link::InProcess);
+        let w = ProposalId::from_raw(1003);
+        use fstp_domain_testkit::r#gen::review::{COORDINATOR, R1};
+        assert!(rerun(&inner, R1, 1003).is_err(), "a reviewer is refused");
+        assert!(
+            rerun(&inner, applicant(), 1003).is_err(),
+            "an applicant is refused"
+        );
+        assert_eq!(count_requests(&inner, w), 0, "refusals write nothing");
+        rerun(&inner, COORDINATOR, 1003).unwrap();
+        assert_eq!(count_requests(&inner, w), 1, "one record per re-run");
+        assert_eq!(
+            status(&inner, 1003).get("rerun").and_then(Value::as_str),
+            Some("available")
+        );
+    }
+
+    fn applicant() -> fstp_domain::id::AccountId {
+        fstp_domain_testkit::r#gen::review::L1
+    }
+
+    /// I-10, H-03, issue 6 M3: at most three re-runs of a proposal, and the
+    /// fourth is refused with the status read saying "used_up".
+    #[test]
+    fn i10_h03_issue6_m3_three_reruns_in_all() {
+        let stage = crate::scenario::ReviewAt::parse("stage1").unwrap();
+        let (inner, _) =
+            fstp_rt::future::block_on(crate::scenario::build_review(&info(), stage)).unwrap();
+        inner.ports.precheck.set_link(Link::InProcess);
+        let c = fstp_domain_testkit::r#gen::review::COORDINATOR;
+        for _ in 0..3 {
+            rerun(&inner, c, 1003).unwrap();
+        }
+        assert!(rerun(&inner, c, 1003).is_err(), "the fourth is refused");
+        assert_eq!(count_requests(&inner, ProposalId::from_raw(1003)), 3);
+        assert_eq!(
+            status(&inner, 1003).get("rerun").and_then(Value::as_str),
+            Some("used_up")
+        );
+        rerun(&inner, c, 1002).unwrap();
+    }
+
+    /// I-10, H-03, issue 6 M3: a refusal list is in the ledger, the status
+    /// read counts it, a re-run replaces it, and a fold of the ledger
+    /// alone gives the same list, so a restart keeps it.
+    #[test]
+    fn i10_h03_issue6_m3_refusals_survive_the_ledger_fold_and_a_rerun_replaces_them() {
+        use fstp_api_core::port::{AsyncEngine as _, Clock as _};
+        use fstp_findings::{AssessStage, FindingStore, RefusalCode, RefusedStage};
+        let stage = crate::scenario::ReviewAt::parse("stage1").unwrap();
+        let (inner, _) =
+            fstp_rt::future::block_on(crate::scenario::build_review(&info(), stage)).unwrap();
+        inner.ports.precheck.set_link(Link::InProcess);
+        let call = CallId::from_raw(1);
+        let w = ProposalId::from_raw(1003);
+        let now = Timestamp::from_micros(inner.ports.clock.now().micros().saturating_add(500_000));
+        let dropped = vec![RefusedStage {
+            stage: AssessStage::Quality,
+            code: RefusalCode::ScoreLike,
+        }];
+        record_refusals(&inner, now, call, w, dropped.clone()).unwrap();
+        assert_eq!(inner.ports.engine.state().findings.refusals_of(w), dropped);
+        assert_eq!(
+            status(&inner, 1003).get("refused").and_then(Value::as_u64),
+            Some(1)
+        );
+        let fold = || {
+            let mut store = FindingStore::genesis();
+            for e in inner.ports.engine.ledger().unwrap() {
+                if let fstp_engine::Record::Finding(r) = e.record {
+                    store.apply(&r).unwrap();
+                }
+            }
+            store
+        };
+        assert_eq!(fold().refusals_of(w), dropped, "the ledger alone holds it");
+        rerun(
+            &inner,
+            fstp_domain_testkit::r#gen::review::COORDINATOR,
+            1003,
+        )
+        .unwrap();
+        assert!(
+            inner
+                .ports
+                .engine
+                .state()
+                .findings
+                .refusals_of(w)
+                .is_empty(),
+            "the synthetic run drops nothing, so the new list replaces the old"
+        );
+        assert!(fold().refusals_of(w).is_empty());
+        assert_eq!(
+            status(&inner, 1003).get("refused").and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            fold().reruns_of(w),
+            (1, false),
+            "the bound is in the ledger too"
+        );
+    }
+
+    /// I-10, H-03, issue 6 M3: while a re-run is in flight, a second request
+    /// of the same proposal is refused by the engine, and a coordinator of
+    /// no call and the system are refused as actors. A result ends the run
+    /// in flight and the next request is accepted. The dispatch runs a
+    /// re-run to its end in one call, so the engine is driven directly.
+    #[test]
+    fn i10_h03_issue6_m3_one_rerun_in_flight_at_a_time() {
+        use fstp_api_core::port::Clock as _;
+        let stage = crate::scenario::ReviewAt::parse("stage1").unwrap();
+        let (inner, _) =
+            fstp_rt::future::block_on(crate::scenario::build_review(&info(), stage)).unwrap();
+        let call = CallId::from_raw(1);
+        let w = ProposalId::from_raw(1003);
+        let at = std::cell::Cell::new(inner.ports.clock.now().micros());
+        let ask = |actor: Actor| {
+            at.set(at.get().saturating_add(1_000_000));
+            let ctx = Ctx {
+                now: Timestamp::from_micros(at.get()),
+                actor,
+                command: command_id(),
+                via: Via::Web,
+                tenant_admin: false,
+                second_tenant_admin: None,
+                binds_tenant_admin: false,
+            };
+            inner.ports.engine.environment(
+                Command::Finding(FindingCommand::RequestRerun { call, proposal: w }),
+                ctx,
+            )
+        };
+        let coordinator = Actor::Account(fstp_domain_testkit::r#gen::review::COORDINATOR);
+        assert!(
+            ask(Actor::System(SystemCause::Timeline)).is_err(),
+            "not the system"
+        );
+        assert!(ask(Actor::Account(fstp_domain_testkit::r#gen::review::R1)).is_err());
+        assert!(ask(coordinator).is_ok());
+        assert!(ask(coordinator).is_err(), "one in flight at a time");
+        let now = Timestamp::from_micros(at.get().saturating_add(1_000_000));
+        record_refusals(&inner, now, call, w, Vec::new()).unwrap();
+        assert!(
+            ask(coordinator).is_ok(),
+            "the result ended the run in flight"
         );
     }
 

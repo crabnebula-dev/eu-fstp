@@ -135,6 +135,9 @@ pub enum ReadModel {
     /// `review.findings`: the assessor's findings on the reviewer's
     /// proposal, with the reader's own marks (lane mrev, I-10).
     Findings(Vec<crate::views::FindingRow>),
+    /// `review.findings_refusals`: the stages the validator dropped from
+    /// the assessment of the reviewer's proposal (issue 6 M3, I-10).
+    FindingsRefusals(Vec<crate::views::RefusedStageRow>),
     /// `call.list`: the calls of a programme for the Planning Studio
     /// (lane mcreator, R-PC-03).
     Calls(Vec<StaffCallRow>),
@@ -327,6 +330,7 @@ impl ToJson for ReadModel {
             ReadModel::MailRelay(v) => v.to_json(),
             ReadModel::Precheck(v) => v.to_json(),
             ReadModel::FindingsStatus(rows) => array(rows),
+            ReadModel::FindingsRefusals(rows) => array(rows),
             ReadModel::Mailbox(v) => v.to_json(),
             ReadModel::Unmask(v) => v.to_json(),
             ReadModel::Audit(v) => v.to_json(),
@@ -1800,6 +1804,7 @@ pub(crate) mod reply_shape_tests {
             // Unshaped, see [`unshaped`]: no shape kind states a tree.
             ReadModel::RouteMap(_) => &[],
             ReadModel::Findings(_) => &["review.findings"],
+            ReadModel::FindingsRefusals(_) => &["review.findings_refusals"],
             ReadModel::Calls(_) => &["call.list"],
             // Unshaped, see [`unshaped`]: `fstp-public` pins its shapes.
             ReadModel::Guide(_) => &["calls.guide"],
@@ -2463,10 +2468,23 @@ pub(crate) mod reply_shape_tests {
                 next: None,
                 runs: Vec::new(),
             }),
+            ReadModel::FindingsRefusals(vec![
+                crate::views::RefusedStageRow {
+                    stage: "quality",
+                    code: "score_like",
+                },
+                crate::views::RefusedStageRow {
+                    stage: "integrity",
+                    code: "json",
+                },
+            ]),
+            ReadModel::FindingsRefusals(Vec::new()),
             ReadModel::FindingsStatus(vec![crate::views::FindingsStatusRow {
                 proposal: 1001,
                 status: "ready",
                 findings: 9,
+                refused: 2,
+                rerun: "available",
             }]),
             ReadModel::Mailbox(crate::mailbox::MailboxView::default()),
             ReadModel::Mailbox(crate::mailbox::samples()),
@@ -2556,7 +2574,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 56;
+    const VARIANTS: usize = 57;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2619,6 +2637,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Members(_) => 53,
             ReadModel::DisplayName(_) => 54,
             ReadModel::Plan(_) => 55,
+            ReadModel::FindingsRefusals(_) => 56,
         }
     }
 

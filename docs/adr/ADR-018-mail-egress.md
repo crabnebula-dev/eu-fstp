@@ -66,3 +66,7 @@ pub enum Destination {
 - DKIM key custody stays a seam (M6 design 5.3).
 - The address rule refuses a relay that the tenant runs on a private network next to a self-hosted cell. A self-hosted exception waits for B-06.
 - `TODO(legal)`: the tenant's relay operator as a processor of message content, and its place in the DPIA (`gdpr.md`).
+
+## Amendment, 2026-11-19 (ADR-008, suspect passkeys)
+
+A ninth template `passkey-disabled` (version 1) and the timeline event kind 15 carry the holder email of a disabled passkey. A tenant without a relay sends none. The template holds no time and no ids.

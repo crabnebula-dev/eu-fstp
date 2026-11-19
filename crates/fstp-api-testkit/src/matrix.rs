@@ -638,6 +638,10 @@ pub struct Comparison {
     pub first: Vec<Mismatch>,
     /// Failures per operation.
     pub by_op: BTreeMap<&'static str, u64>,
+    /// Whether the comparison stopped before its last cell, which only a
+    /// failing fail-fast run does. `cells` and `failures` then count the
+    /// cells that ran.
+    pub stopped_early: bool,
 }
 
 impl Comparison {
@@ -788,6 +792,9 @@ impl Comparison {
             "{} of {} cells failed; by op {:?}\n",
             self.failures, self.cells, self.by_op
         );
+        if self.stopped_early {
+            s.push_str("stopped early (fail fast): the counts cover only the cells that ran\n");
+        }
         for m in &self.first {
             s.push_str(&format!(
                 "  {} {:?} {:?} {:?} {:?}: expected {:?}, observed {:?}\n",
@@ -807,6 +814,7 @@ impl Comparison {
     pub fn merge(&mut self, other: Comparison) {
         self.cells = self.cells.saturating_add(other.cells);
         self.failures = self.failures.saturating_add(other.failures);
+        self.stopped_early |= other.stopped_early;
         for (op, n) in other.by_op {
             let e = self.by_op.entry(op).or_insert(0);
             *e = e.saturating_add(n);
@@ -835,6 +843,22 @@ pub fn threads_from_env() -> usize {
         .min(8)
 }
 
+/// Whether a grouped comparison fails fast: yes, unless
+/// `FSTP_MATRIX_FAIL_FAST` is `0`, which gives the full failure count.
+pub fn fail_fast_from_env() -> bool {
+    std::env::var("FSTP_MATRIX_FAIL_FAST").map_or(true, |v| v != "0")
+}
+
+/// The stride of the sample pass of a fail-fast comparison: the pass runs
+/// every cell whose place in its group is a multiple of this. A prime, so
+/// the sample does not follow the period of the session or actor lists.
+pub const SAMPLE_STRIDE: usize = 61;
+
+/// Whether the cell at place `k` of its group runs in `pass`.
+fn in_pass(pass: Option<bool>, k: usize) -> bool {
+    pass.is_none_or(|sample| (k.checked_rem(SAMPLE_STRIDE) == Some(0)) == sample)
+}
+
 /// Runs every cell of the groups of `shard` through channels from
 /// `make`, one per thread, and compares each with the reference of `m`.
 /// Group `i` belongs to `shard` when `i % count == index`, and each
@@ -842,12 +866,35 @@ pub fn threads_from_env() -> usize {
 /// `FSTP_MATRIX_OPS` ([`OpFilter`]) skips the cells of every other
 /// operation, so a local run of any channel checks its own operations
 /// only. Unset, every cell runs.
+///
+/// It fails fast unless `FSTP_MATRIX_FAIL_FAST` is `0`
+/// ([`compare_grouped_with`]).
 pub fn compare_grouped(
     m: &Matrix,
     make: &(dyn Fn() -> Result<Box<dyn Channel>, NotImplemented> + Sync),
     threads: usize,
     shard: Shard,
 ) -> Result<Comparison, NotImplemented> {
+    compare_grouped_with(m, make, threads, shard, fail_fast_from_env())
+}
+
+/// [`compare_grouped`] with the fail-fast choice as an argument.
+///
+/// With `fail_fast`, each thread first runs a sample of every group of
+/// its own (one cell in [`SAMPLE_STRIDE`]) and then the cells left, so a
+/// fault that touches many cells shows in the first minutes. Every thread
+/// stops once the threads together hold [`Comparison::KEPT`] failures.
+/// Only a failing comparison stops early, so a clean one has run every
+/// cell once, as without `fail_fast`.
+pub fn compare_grouped_with(
+    m: &Matrix,
+    make: &(dyn Fn() -> Result<Box<dyn Channel>, NotImplemented> + Sync),
+    threads: usize,
+    shard: Shard,
+    fail_fast: bool,
+) -> Result<Comparison, NotImplemented> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
     let filter = OpFilter::from_env()
         .map_err(|_| NotImplemented::new("FSTP_MATRIX_OPS has an empty entry"))?;
     if filter
@@ -868,6 +915,16 @@ pub fn compare_grouped(
         .map(|(g, _)| g)
         .collect();
     let threads = threads.max(1);
+    // `None`: one pass over every cell. `Some(true)`: the sample pass.
+    // `Some(false)`: the cells the sample pass left.
+    let passes: &[Option<bool>] = if fail_fast {
+        &[Some(true), Some(false)]
+    } else {
+        &[None]
+    };
+    let stop = AtomicBool::new(false);
+    let failed = AtomicUsize::new(0);
+    let (stop, failed) = (&stop, &failed);
     let results: Vec<Result<Comparison, NotImplemented>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..threads)
             .map(|t| {
@@ -875,27 +932,38 @@ pub fn compare_grouped(
                 scope.spawn(move || -> Result<Comparison, NotImplemented> {
                     let mut channel = make()?;
                     let mut out = Comparison::default();
-                    for (i, (state, policy)) in groups.iter().enumerate() {
-                        if i.checked_rem(threads) != Some(t) {
-                            continue;
-                        }
-                        for cell in m.group_cells(*state, *policy) {
-                            if !filter.holds(cell.op) {
+                    for pass in passes {
+                        for (i, (state, policy)) in groups.iter().enumerate() {
+                            if i.checked_rem(threads) != Some(t) {
                                 continue;
                             }
-                            out.cells = out.cells.saturating_add(1);
-                            let expected = m.reference.expected(&cell);
-                            let observed = channel.observe(&cell);
-                            let ok = match (&expected, &observed) {
-                                (Some(e), Ok(o)) => agrees(*e, class_of(o)),
-                                _ => false,
-                            };
-                            if !ok {
-                                out.fail(Mismatch {
-                                    cell,
-                                    expected,
-                                    observed,
-                                });
+                            let cells = m.group_cells(*state, *policy);
+                            for (k, cell) in cells.into_iter().enumerate() {
+                                if !in_pass(*pass, k) || !filter.holds(cell.op) {
+                                    continue;
+                                }
+                                if stop.load(Ordering::Relaxed) {
+                                    out.stopped_early = true;
+                                    return Ok(out);
+                                }
+                                out.cells = out.cells.saturating_add(1);
+                                let expected = m.reference.expected(&cell);
+                                let observed = channel.observe(&cell);
+                                let ok = match (&expected, &observed) {
+                                    (Some(e), Ok(o)) => agrees(*e, class_of(o)),
+                                    _ => false,
+                                };
+                                if !ok {
+                                    out.fail(Mismatch {
+                                        cell,
+                                        expected,
+                                        observed,
+                                    });
+                                    let n = failed.fetch_add(1, Ordering::Relaxed);
+                                    if fail_fast && n.saturating_add(1) >= Comparison::KEPT {
+                                        stop.store(true, Ordering::Relaxed);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1065,6 +1133,86 @@ mod tests {
         }
         assert_eq!(n, all.len(), "a cell in two groups");
         assert_eq!(grouped, all);
+    }
+
+    /// A channel that counts each cell it is asked and answers as the
+    /// reference expects, or never agrees when `wrong`.
+    struct Counting {
+        reference: AuthzReference,
+        seen: std::sync::Arc<std::sync::Mutex<BTreeMap<Cell, u32>>>,
+        wrong: bool,
+    }
+
+    impl Channel for Counting {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+
+        fn observe(&mut self, cell: &Cell) -> Result<Observed, ChannelFault> {
+            let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+            let n = seen.entry(*cell).or_insert(0u32);
+            *n = n.saturating_add(1);
+            if self.wrong {
+                return Ok(Observed::Refused(None));
+            }
+            self.reference
+                .expected(cell)
+                .map(canonical)
+                .ok_or(ChannelFault::UnknownOp(cell.op))
+        }
+    }
+
+    /// The grouped comparison of the small matrix on three threads, with
+    /// the cells its channels were asked and how often.
+    fn grouped(fail_fast: bool, wrong: bool) -> (Comparison, BTreeMap<Cell, u32>) {
+        let m = small_matrix();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+        let make = || -> Result<Box<dyn Channel>, NotImplemented> {
+            Ok(Box::new(Counting {
+                reference: reference(),
+                seen: seen.clone(),
+                wrong,
+            }))
+        };
+        let c = compare_grouped_with(&m, &make, 3, Shard::ALL, fail_fast)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let seen = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        (c, seen)
+    }
+
+    /// T-AUTHZ-MATRIX (I-84, design section 8.3): a clean fail-fast
+    /// comparison runs every cell of the matrix exactly once, as the
+    /// comparison without fail fast does. The sample pass and the pass
+    /// after it leave no cell out and run none twice.
+    #[test]
+    fn t_authz_matrix_fail_fast_clean_run_judges_every_cell_once() {
+        let all: BTreeSet<Cell> = small_matrix().cells().collect();
+        for fail_fast in [true, false] {
+            let (c, seen) = grouped(fail_fast, false);
+            assert!(c.clean(), "{}", report(&c));
+            assert!(!c.stopped_early);
+            assert_eq!(c.cells, all.len() as u64);
+            assert_eq!(seen.keys().copied().collect::<BTreeSet<_>>(), all);
+            assert!(seen.values().all(|n| *n == 1), "a cell ran twice");
+        }
+    }
+
+    /// T-AUTHZ-MATRIX (I-84): a failing fail-fast comparison stops early,
+    /// is never clean and says so in its report. Without fail fast the
+    /// same channel fails on every cell.
+    #[test]
+    fn t_authz_matrix_fail_fast_stops_a_failing_run_and_is_never_clean() {
+        let all = small_matrix().cells().count() as u64;
+        assert!(all > 4 * Comparison::KEPT as u64, "the matrix is too small");
+        let (fast, _) = grouped(true, true);
+        assert!(!fast.clean());
+        assert!(fast.stopped_early);
+        assert!(fast.failures >= Comparison::KEPT as u64);
+        assert!(fast.cells < all, "it ran {} of {all} cells", fast.cells);
+        assert!(report(&fast).contains("stopped early"));
+        let (full, _) = grouped(false, true);
+        assert!(!full.stopped_early);
+        assert_eq!((full.cells, full.failures), (all, all));
     }
 
     /// Design section 8.3 `t_authz_matrix_covers_every_rule`: every `OPS`

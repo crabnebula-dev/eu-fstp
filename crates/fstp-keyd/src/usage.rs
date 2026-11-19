@@ -46,12 +46,11 @@ pub(crate) const OP_USAGE: u8 = UsageOp::Usage.code();
 pub(crate) const OP_DESTROY_SIGN_KEY: u8 = UsageOp::DestroySignKey.code();
 pub(crate) const OP_CREATE_SIGN_KEY: u8 = UsageOp::CreateSignKey.code();
 
-/// Interim size bound of the usage log, in bytes (L13, ADR-024 "Key daemon
-/// usage log"; pending Daniel). At it the daemon refuses every request but
+/// Size bound of the usage log, in bytes (L13, ADR-024 "Key daemon usage
+/// log"). At it the daemon refuses every request but
 /// create and destroy. 64 MiB holds about 1.6 million records.
 pub(crate) const USAGE_LOG_MAX_BYTES: u64 = 64 << 20;
-/// Interim bound of usage records one client writes per minute (L13,
-/// ADR-024; pending Daniel). ADR-024 says "per client connection"; each
+/// Bound of usage records one client writes per minute (L13, ADR-024). ADR-024 says "per client connection"; each
 /// connection carries one request, so the bound counts per client socket.
 pub(crate) const USAGE_RECORDS_PER_CLIENT_MINUTE: u32 = 6_000;
 /// The window of [`USAGE_RECORDS_PER_CLIENT_MINUTE`].

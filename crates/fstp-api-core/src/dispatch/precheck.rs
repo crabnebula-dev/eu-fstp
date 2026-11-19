@@ -163,6 +163,22 @@ pub(crate) fn remaining(
     }
 }
 
+/// The call's pin for an assessment run (issue 6 M3, I-11), or `None` for a
+/// call that is not published.
+pub(crate) fn assessment_pin<P: Seams>(call: &Call<'_, P>, c: CallId) -> Option<PrecheckPin> {
+    let view = call.state.core.calls().get(c)?;
+    let (frozen, config) = (view.frozen()?, view.llm_config()?);
+    let values = frozen.values();
+    let settings = CellPorts::tenant(call.ports).settings();
+    Some(PrecheckPin {
+        call: c,
+        config,
+        model: values.p21.primary.clone(),
+        criteria: values.p01.items().iter().map(|x| x.id).collect(),
+        endpoint: settings.inference.as_ref().and_then(|i| i.endpoint.clone()),
+    })
+}
+
 /// `synthetic` when the tenant's endpoint is the demo cell's synthetic
 /// model, else `model` (M7 design section 7, R-LA-08).
 pub(crate) fn assessor_name<P: Seams>(call: &Call<'_, P>) -> &'static str {
@@ -402,6 +418,25 @@ const SUBMITTED_ON: [StateTag; 14] = [
     StateTag::Terminated,
 ];
 
+/// `review.findings_refusals`: the stages the output validator dropped
+/// from the assessment of the assignment's proposal (issue 6 M3, I-10,
+/// H-03). Stage names and codes only, each checked again against its
+/// allowlist. They come from the ledger, so a restart keeps them.
+pub(crate) fn refused_stages<P: Seams>(
+    call: &Call<'_, P>,
+    a: fstp_domain::id::AssignmentId,
+) -> Result<Vec<crate::views::RefusedStageRow>, ApiError> {
+    let assignment = call
+        .state
+        .core
+        .review()
+        .get(a)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+    Ok(crate::views::refused_rows(
+        call.state.findings.refusals_of(assignment.proposal),
+    ))
+}
+
 /// `assess.findings_status`: per submitted proposal of the call, pending
 /// or ready with a count (M7 design section 7). Never a statement.
 pub(crate) fn findings_status<P: Seams>(call: &Call<'_, P>, c: CallId) -> Vec<FindingsStatusRow> {
@@ -434,6 +469,13 @@ pub(crate) fn findings_status<P: Seams>(call: &Call<'_, P>, c: CallId) -> Vec<Fi
                 proposal: p.raw(),
                 status: if n == 0 { "pending" } else { "ready" },
                 findings: u64::try_from(n).unwrap_or(u64::MAX),
+                refused: u64::try_from(call.state.findings.refusals_of(p).len())
+                    .unwrap_or(u64::MAX),
+                rerun: match call.state.findings.check_rerun(p) {
+                    Ok(()) => "available",
+                    Err(fstp_findings::FindingRefusal::RerunInFlight { .. }) => "in_flight",
+                    Err(_) => "used_up",
+                },
             }
         })
         .collect()

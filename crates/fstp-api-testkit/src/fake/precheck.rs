@@ -27,7 +27,7 @@ use fstp_domain::id::{AccountId, ContentDigest, ProposalId, TextId, TextRef};
 use fstp_findings::{EvidenceRef, UntrustedText};
 use fstp_infer::{DataLabel, Decoding, ModelName, Protocol};
 
-use super::{FakeClock, lock};
+use super::{FakeClock, FakeEngine, lock};
 
 /// The most runs one proposal keeps.
 const MAX_RUNS: usize = 64;
@@ -39,6 +39,18 @@ pub struct FakePrecheck {
     link: Arc<Mutex<Link>>,
     runs: Arc<Mutex<BTreeMap<ProposalId, Vec<PrecheckRun>>>>,
     next: Arc<Mutex<u128>>,
+    /// The engine handle a re-run records through, as the system. The
+    /// API core issues no system command (I-84), so the provider does.
+    engine: Option<FakeEngine>,
+}
+
+/// What one run of the full assessment gave (issue 6 M3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssessmentRun {
+    /// The findings of the run, each under the call's pin (I-11).
+    pub findings: Vec<fstp_findings::Finding>,
+    /// The stages the validator dropped.
+    pub refused: Vec<fstp_findings::RefusedStage>,
 }
 
 impl FakePrecheck {
@@ -49,7 +61,74 @@ impl FakePrecheck {
             link: Arc::new(Mutex::new(Link::InProcess)),
             runs: Arc::default(),
             next: Arc::new(Mutex::new(1)),
+            engine: None,
         }
+    }
+
+    /// Gives the provider the engine handle a re-run records through.
+    #[must_use]
+    pub fn with_engine(mut self, engine: FakeEngine) -> FakePrecheck {
+        self.engine = Some(engine);
+        self
+    }
+
+    /// Records the result of an assessment of `proposal` as the system
+    /// (issue 6 M3, I-10: the only path from the assessor to domain state
+    /// is `Record` and `RecordRefusals`). A finding with the kind,
+    /// criterion and statement of one the proposal holds is skipped. A run
+    /// that gave nothing records the earlier list again, which ends the run
+    /// in flight and changes nothing else (R-NF-10).
+    fn record_run(
+        &self,
+        engine: &FakeEngine,
+        snapshot: &PrecheckSnapshot,
+        proposal: ProposalId,
+        run: Option<AssessmentRun>,
+    ) {
+        use fstp_domain::command::{Actor, Ctx, SystemCause, Via};
+        use fstp_engine::{Command, FindingCommand};
+        let call = snapshot.pin.call;
+        let state = engine.state();
+        let earlier = state.findings.refusals_of(proposal).to_vec();
+        let have: Vec<_> = state
+            .findings
+            .findings_of(call)
+            .into_iter()
+            .filter(|f| f.proposal == proposal)
+            .map(|f| (f.kind, f.criterion, f.statement.as_data().to_owned()))
+            .collect();
+        let (findings, refused) = run.map_or((Vec::new(), earlier), |r| (r.findings, r.refused));
+        let exec = |cmd: FindingCommand| {
+            static COMMANDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = COMMANDS
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .saturating_add(1);
+            let mut id = *b"fstp:fake:rerun\0";
+            for (slot, b) in id.iter_mut().skip(8).zip(n.to_be_bytes()) {
+                *slot = b;
+            }
+            let ctx = Ctx {
+                now: self.clock.now(),
+                actor: Actor::System(SystemCause::Timeline),
+                command: fstp_domain::id::CommandId::from_bytes(id),
+                via: Via::Web,
+                tenant_admin: false,
+                second_tenant_admin: None,
+                binds_tenant_admin: false,
+            };
+            let _ = engine.environment(Command::Finding(cmd), ctx);
+        };
+        for f in findings {
+            let key = (f.kind, f.criterion, f.statement.as_data().to_owned());
+            if f.call == call && f.proposal == proposal && !have.contains(&key) {
+                exec(FindingCommand::Record(f));
+            }
+        }
+        exec(FindingCommand::RecordRefusals {
+            call,
+            proposal,
+            refused,
+        });
     }
 
     /// Sends every later run through `link`, such as the child process of
@@ -175,6 +254,30 @@ pub async fn run_snapshot(
 }
 
 impl Precheck for FakePrecheck {
+    fn can_rerun(&self) -> bool {
+        self.engine.is_some()
+    }
+
+    async fn start_rerun(
+        &self,
+        proposal: ProposalId,
+        snapshot: PrecheckSnapshot,
+    ) -> Result<(), PortError> {
+        let Some(engine) = self.engine.clone() else {
+            return Err(PortError::Unavailable);
+        };
+        let run = {
+            let mut n = lock(&self.next);
+            let r = *n;
+            *n = n.saturating_add(1);
+            r
+        };
+        let link = self.link();
+        let result = assess_snapshot(&link, run, proposal, &snapshot).await;
+        self.record_run(&engine, &snapshot, proposal, result);
+        Ok(())
+    }
+
     async fn request(
         &self,
         proposal: ProposalId,
@@ -223,4 +326,76 @@ impl Precheck for FakePrecheck {
         let _ = (proposal, account);
         Err(PortError::Unavailable)
     }
+}
+
+/// Runs the full assessment of `s` through `link` (issue 6 M3, I-10,
+/// I-11): the findings under the call's pin and the stages the validator
+/// dropped, as stage and code only. `None` when the assessor could not
+/// answer or its answer was refused.
+pub async fn assess_snapshot(
+    link: &Link,
+    run: u128,
+    proposal: ProposalId,
+    s: &PrecheckSnapshot,
+) -> Option<AssessmentRun> {
+    let config = job_config(s)?;
+    let sections = [
+        (DataLabel::Title, &s.title),
+        (DataLabel::Summary, &s.summary),
+        (DataLabel::Narrative, &s.narrative),
+    ];
+    let mut parts = Vec::new();
+    for (k, (label, text)) in (1_u128..).zip(sections) {
+        if text.as_data().trim().is_empty() {
+            continue;
+        }
+        parts.push(SubmissionPart {
+            label,
+            text_ref: text_ref(run, k, text.as_data()),
+            text: text.clone(),
+        });
+    }
+    let job = CellJob::prepare(
+        run,
+        proposal,
+        config,
+        parts,
+        Vec::new(),
+        &SyntheticNameMask::new(Vec::new()),
+    )
+    .await
+    .ok()?;
+    let lines = link.run(&[job.line().to_line()]).await.ok()?;
+    let Intake::Done {
+        findings, refused, ..
+    } = job.intake(lines.first()?).ok()?
+    else {
+        return None;
+    };
+    let findings = (1_u128..)
+        .zip(findings)
+        .map(|(k, f)| fstp_findings::Finding {
+            id: fstp_findings::FindingId::from_raw(
+                70_000_000_000_u128
+                    .saturating_add(run.saturating_mul(1_000))
+                    .saturating_add(k),
+            ),
+            call: s.pin.call,
+            proposal,
+            config: s.pin.config,
+            kind: f.kind,
+            criterion: f.criterion,
+            severity: f.severity,
+            confidence: fstp_findings::Confidence::from_permille(0)
+                .unwrap_or(fstp_findings::Confidence::FULL),
+            statement: f.statement,
+            evidence: f.evidence,
+            trace: fstp_findings::TraceRef::from_raw(run),
+        })
+        .collect();
+    let refused = refused
+        .iter()
+        .filter_map(|r| fstp_findings::RefusedStage::parse(r.stage, r.code))
+        .collect();
+    Some(AssessmentRun { findings, refused })
 }

@@ -7,7 +7,7 @@
 //! error text or a metric label (ADR-009). A request with no peer address
 //! is charged to one shared key, so the limit still applies.
 //!
-//! Interim values, pending Daniel (ADR-024): one named constant each.
+//! Values accepted by Daniel on 2026-11-19 (ADR-024): one named constant each.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
@@ -27,33 +27,33 @@ pub struct Limit {
 const MINUTE_US: i64 = 60_000_000;
 const HOUR_US: i64 = 3_600_000_000;
 
-/// Login start and finish, per peer (interim: 30 per minute, ADR-024).
+/// Login start and finish, per peer (30 per minute, ADR-024).
 pub(crate) const LOGIN_PER_PEER: Limit = Limit {
     count: 30,
     window_us: MINUTE_US,
 };
 
-/// Magic-link and recovery requests, per peer (interim: 10 per minute).
+/// Magic-link and recovery requests, per peer (10 per minute).
 pub(crate) const MAIL_PER_PEER: Limit = Limit {
     count: 10,
     window_us: MINUTE_US,
 };
 
-/// Magic-link and recovery requests, per target address digest (interim:
+/// Magic-link and recovery requests, per target address digest (ADR-024:
 /// 5 per hour).
 pub(crate) const MAIL_PER_TARGET: Limit = Limit {
     count: 5,
     window_us: HOUR_US,
 };
 
-/// `PutText`, per account (interim: 120 per minute).
+/// `PutText`, per account (120 per minute).
 pub(crate) const PUT_TEXT_PER_ACCOUNT: Limit = Limit {
     count: 120,
     window_us: MINUTE_US,
 };
 
 /// The limit values of one cell front (ADR-024). The default holds the
-/// interim values above, and the production cell starts with it. A test
+/// ADR-024 values above, and the production cell starts with it. A test
 /// world whose clients all share the loopback address passes its own
 /// values through `crate::process::StartOptions`, and says so there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

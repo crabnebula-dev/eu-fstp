@@ -35,7 +35,8 @@ use fstp_json::typed::expect_object;
 use fstp_json::{Array, FromJson, FromJsonError, FromJsonErrorKind, Number, Object, ToJson, Value};
 
 use crate::finding::{
-    Confidence, EvidenceRef, Finding, FindingId, FindingKind, Mark, Severity, TraceRef,
+    AssessStage, Confidence, EvidenceRef, Finding, FindingId, FindingKind, MAX_REFUSED, Mark,
+    RefusalCode, RefusedStage, Severity, TraceRef,
 };
 use crate::record::FindingRecord;
 use crate::text::UntrustedText;
@@ -216,6 +217,49 @@ fn mark_from_name(s: &str) -> Option<Mark> {
         "disputed" => Some(Mark::Disputed),
         _ => None,
     }
+}
+
+/// The refused stages as JSON: a list of `{"code", "stage"}` objects with
+/// names from the two closed lists (issue 6 M3, I-10).
+fn refused_to_json(list: &[RefusedStage]) -> Value {
+    Value::Array(
+        list.iter()
+            .map(|r| {
+                let mut o = Object::with_capacity(2);
+                o.insert("stage", name_to_json(r.stage.as_str()));
+                o.insert("code", name_to_json(r.code.as_str()));
+                Value::Object(o)
+            })
+            .collect::<Array>(),
+    )
+}
+
+/// The refused stages from JSON. A name off its list, an extra member or
+/// a list over `MAX_REFUSED` is refused.
+fn refused_from_json(v: &Value) -> Result<Vec<RefusedStage>, FromJsonError> {
+    let a = v
+        .as_array()
+        .ok_or_else(|| FromJsonError::wrong_type("a list of refused stages", v))?;
+    if a.len() > MAX_REFUSED {
+        return Err(FromJsonError::invalid("too many refused stages"));
+    }
+    let mut out = Vec::with_capacity(a.len());
+    for (i, x) in a.iter().enumerate() {
+        let at = |e: FromJsonError| e.at_index(i);
+        let o = expect_object(x).map_err(at)?;
+        reject_unknown(o, &["stage", "code"]).map_err(at)?;
+        let stage = member(o, "stage", |m| {
+            name_from_json(m, AssessStage::parse, "a stage")
+        });
+        let code = member(o, "code", |m| {
+            name_from_json(m, RefusalCode::parse, "a refusal code")
+        });
+        out.push(RefusedStage {
+            stage: stage.map_err(at)?,
+            code: code.map_err(at)?,
+        });
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +495,22 @@ impl ToJson for FindingRecord {
                     Value::Array(findings.iter().map(ToJson::to_json).collect::<Array>()),
                 );
             }
+            FindingRecord::RerunRequested { call, proposal, by } => {
+                o.insert("record", Value::String("rerun_requested".to_owned()));
+                o.insert("call", id_to_json(call.raw()));
+                o.insert("proposal", id_to_json(proposal.raw()));
+                o.insert("by", id_to_json(by.raw()));
+            }
+            FindingRecord::RefusalsRecorded {
+                call,
+                proposal,
+                refused,
+            } => {
+                o.insert("record", Value::String("refusals_recorded".to_owned()));
+                o.insert("call", id_to_json(call.raw()));
+                o.insert("proposal", id_to_json(proposal.raw()));
+                o.insert("refused", refused_to_json(refused));
+            }
         }
         Value::Object(o)
     }
@@ -522,6 +582,22 @@ impl FromJson for FindingRecord {
                     config_model,
                     config,
                     findings,
+                })
+            }
+            "rerun_requested" => {
+                reject_unknown(o, &["record", "call", "proposal", "by"])?;
+                Ok(FindingRecord::RerunRequested {
+                    call: CallId::from_raw(member(o, "call", id_from_json)?),
+                    proposal: ProposalId::from_raw(member(o, "proposal", id_from_json)?),
+                    by: AccountId::from_raw(member(o, "by", id_from_json)?),
+                })
+            }
+            "refusals_recorded" => {
+                reject_unknown(o, &["record", "call", "proposal", "refused"])?;
+                Ok(FindingRecord::RefusalsRecorded {
+                    call: CallId::from_raw(member(o, "call", id_from_json)?),
+                    proposal: ProposalId::from_raw(member(o, "proposal", id_from_json)?),
+                    refused: member(o, "refused", refused_from_json)?,
                 })
             }
             _ => Err(FromJsonError::invalid("not a known finding record").at_field("record")),

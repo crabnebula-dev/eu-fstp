@@ -214,6 +214,7 @@ fn value_json(v: &fstp_mail::Value) -> Option<Value> {
         V::Link(l) => {
             let mut o = Object::with_capacity(2);
             let (to, id) = match l {
+                LinkTarget::Home => ("home", None),
                 LinkTarget::Notices => ("notices", None),
                 LinkTarget::Proposal(p) => ("proposal", Some(p.raw())),
                 LinkTarget::ProposalProgress(p) => ("proposal_progress", Some(p.raw())),
@@ -267,6 +268,10 @@ fn value_from(slot: Slot, v: &Value) -> Result<fstp_mail::Value, SpecError> {
                 "notices" => {
                     only(o, &["to"])?;
                     LinkTarget::Notices
+                }
+                "home" => {
+                    only(o, &["to"])?;
+                    LinkTarget::Home
                 }
                 "proposal" => LinkTarget::Proposal(ProposalId::from_raw(id(o)?)),
                 "proposal_progress" => LinkTarget::ProposalProgress(ProposalId::from_raw(id(o)?)),

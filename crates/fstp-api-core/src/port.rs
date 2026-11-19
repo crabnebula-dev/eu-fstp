@@ -801,6 +801,15 @@ pub trait Accounts: Send + Sync {
         let _ = a;
         std::future::ready(Err(PortError::Unavailable))
     }
+    /// The passkeys the cell disabled for good after a sign count went
+    /// down (ADR-008, decided 2026-11-19): the owner of each flagging
+    /// event with the event's ordinal, from 1, in ledger order. The mailbox
+    /// tells the holder of each, and the tenant admins when no mail relay
+    /// sends the email. The default is the seam of a cell that keeps no
+    /// such list: it is empty, so the mailbox shows none.
+    fn disabled_passkeys(&self) -> Vec<(AccountId, u64)> {
+        Vec::new()
+    }
 }
 
 /// The M2 oracle answers, asynchronously.
@@ -1340,6 +1349,28 @@ pub trait Precheck: Send + Sync {
         account: AccountId,
     ) -> impl Future<Output = Result<PrecheckQuota, PortError>> + Send {
         let _ = (proposal, account);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+    /// Whether this provider can run an assessment again (issue 6 M3).
+    /// Dispatch asks before it executes `assess.rerun`, so no record is
+    /// written for a job that cannot start. The default is no.
+    fn can_rerun(&self) -> bool {
+        false
+    }
+    /// Starts the re-run of the assessment of a submitted proposal on
+    /// `snapshot` (issue 6 M3, I-10, I-11). Only the coordinator's
+    /// `assess.rerun` reaches it, after the ledger holds the request. The
+    /// implementation runs the assessment and records the new findings and
+    /// the refusal list as the system through its own engine handle, which
+    /// closes the run in flight. The API core issues no system command
+    /// (I-84, rule A7). The production cell has no implementation yet.
+    fn start_rerun(
+        &self,
+        proposal: ProposalId,
+        snapshot: PrecheckSnapshot,
+    ) -> impl Future<Output = Result<(), PortError>> + Send {
+        let _ = proposal;
+        drop(snapshot);
         std::future::ready(Err(PortError::Unavailable))
     }
 }
