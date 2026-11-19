@@ -100,6 +100,9 @@ pub(crate) struct CellCfg {
     pub(crate) enabled: EnabledMethods,
     /// The compiled auth pages, when the front serves them.
     pub(crate) pages: Option<Arc<crate::http::pages::Pages>>,
+    /// The organisation port of ADR-021, for a ledger with no tenant part
+    /// (`crate::public::OrganisationPort`).
+    pub(crate) organisation: crate::public::OrganisationPort,
 }
 
 /// What a handler runs against.
@@ -128,6 +131,7 @@ pub(crate) struct Reply {
     body: Vec<u8>,
     content_type: &'static str,
     cookie: Option<HeaderValue>,
+    location: Option<HeaderValue>,
     rule: Option<Rule>,
 }
 
@@ -142,6 +146,7 @@ impl Reply {
             body: value.to_compact().into_bytes(),
             content_type: JSON,
             cookie: None,
+            location: None,
             rule: None,
         }
     }
@@ -153,7 +158,21 @@ impl Reply {
             body: body.to_vec(),
             content_type,
             cookie: None,
+            location: None,
             rule: None,
+        }
+    }
+
+    /// 303 to `location`, a same-origin path the caller built from a
+    /// constant or a checked path token. A value the header grammar
+    /// refuses gives 303 to home.
+    pub(crate) fn see_other(location: &str) -> Reply {
+        let location = HeaderValue::new(location)
+            .or_else(|_| HeaderValue::new(HOME))
+            .ok();
+        Reply {
+            location,
+            ..Reply::fixed(StatusCode::SEE_OTHER, JSON, b"")
         }
     }
 
@@ -190,6 +209,11 @@ impl Reply {
             && let Ok(name) = HeaderName::new("set-cookie")
         {
             resp.headers.append(name, c);
+        }
+        if let Some(l) = self.location
+            && let Ok(name) = HeaderName::new("location")
+        {
+            resp.headers.insert(name, l);
         }
         (resp, Outcome { rule: self.rule })
     }
@@ -340,6 +364,10 @@ async fn shared_checks<B: Backend>(ctx: &Ctx<B>, route: &'static Route, req: Req
 /// auth routes. A refusal depends on the peer alone, so it tells nothing
 /// about any address or account. The per-target limits sit in the
 /// magic-link and recovery handlers, which hold the address.
+///
+/// Exit audit item 7: the public routes are limited per peer too
+/// ([`public_rate_limited`]). The platform stylesheets are not: they are
+/// static bytes, and a browser asks for both with every page.
 fn rate_limited<B: Backend>(ctx: &Ctx<B>, endpoint: Endpoint, req: &Request) -> Option<Reply> {
     use crate::routes::limits::Peer;
     let peer = Peer::of(req.peer_addr());
@@ -347,9 +375,30 @@ fn rate_limited<B: Backend>(ctx: &Ctx<B>, endpoint: Endpoint, req: &Request) -> 
     let ok = match endpoint {
         Endpoint::PasskeyLoginOptions | Endpoint::PasskeyLogin => ctx.limits.login(peer, now),
         Endpoint::MagicRequest | Endpoint::RecoveryRequest => ctx.limits.mail_peer(peer, now),
+        Endpoint::Public(_) => return public_rate_limited(ctx, req),
         _ => true,
     };
     (!ok).then(|| Reply::refuse(StatusCode::TOO_MANY_REQUESTS, Some(Rule::Adr024), "rate"))
+}
+
+/// The body of a public request refused by its rate limit, as the API
+/// core refuses a call with no account (`fstp_api_core`, rule `rate`).
+const PUBLIC_RATE: &[u8] = br#"{"code":"rate_limited","rule":"rate"}"#;
+
+/// ADR-024, exit audit item 7: a request of a public route, or of a path
+/// under `/p/` that no route matches, is charged to its peer in this
+/// cell's counters (`crate::routes::limits::PUBLIC_PER_PEER`). A refusal
+/// answers 429 as the web adapter answers it, and is logged under
+/// ADR-024. It names no peer.
+fn public_rate_limited<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Option<Reply> {
+    let peer = crate::routes::limits::Peer::of(req.peer_addr());
+    if ctx.limits.public(peer, ctx.backend.now().micros()) {
+        return None;
+    }
+    Some(Reply {
+        rule: Some(Rule::Adr024),
+        ..Reply::fixed(StatusCode::TOO_MANY_REQUESTS, JSON, PUBLIC_RATE)
+    })
 }
 
 /// Looks up the caller's session (step 4 of the module documentation).
@@ -427,6 +476,7 @@ async fn dispatch<B: Backend>(
         (Endpoint::AuditAnchors, Some(c)) => api::anchors(ctx, &c).await,
         (Endpoint::Erasures, Some(c)) => api::erasures(ctx, &c).await,
         (Endpoint::Public(op), _) => public(ctx, req, op).await,
+        (Endpoint::SiteSheet, _) => site_sheet(req),
         // A session route without a caller, the health route on the
         // tunnel, or an unserved route: never served.
         _ => Reply::refuse(StatusCode::NOT_FOUND, None, "route"),
@@ -545,29 +595,39 @@ pub(crate) fn needs_route_input(c: &CellCommand) -> bool {
     }
 }
 
-/// One public operation (`crate::public`, I-87, R-PB-04, lane
-/// m4/cellpub). It reads no cookie and changes nothing: the view comes
-/// from the engine head of this cell and its texts from this cell's own
-/// public text source. A page answers as HTML and the feed and the tools
-/// as JSON. A page before the organisation's activation answers the plain
-/// "not published yet" page with the refusal's status (ADR-021).
+/// The media type of every HTML reply.
+const HTML: &str = "text/html; charset=utf-8";
+
+/// Home, where a browser goes for a page that does not exist (SA-09
+/// amendment).
+const HOME: &str = "/app/";
+
+/// The body of a path under `/p/` that no route matches, as the web
+/// adapter's public route decoder refuses it.
+const NO_ROUTE: &[u8] = br#"{"code":"not_found","rule":"route"}"#;
+
+/// One public operation (`crate::public`, I-87, R-PB-04, lanes
+/// m4/cellpub and m4/pubtext). It reads no cookie and changes nothing:
+/// the view comes from the engine head of this cell and its texts from
+/// this cell's own public text class. As the web adapter answers:
+///
+/// - a page answers as HTML, with the platform stylesheets linked first
+///   (`crate::http::site`), and the feed and the tools as JSON;
+/// - a page before the organisation's activation answers the "not
+///   published yet" page with the refusal's status (ADR-021);
+/// - a browser page request that is malformed or not found goes to the
+///   programme's public home, or home (SA-09 amendment).
 async fn public<B: Backend>(ctx: &Ctx<B>, req: &Request, op: crate::public::PublicOp) -> Reply {
-    use crate::public::{NOT_PUBLISHED, PublicAnswer, PublicOp, PublicRefusal};
+    use crate::http::site;
+    use crate::public::{PublicAnswer, PublicOp, PublicRefusal};
     let state = match ctx.backend.state().await {
         Ok(s) => s,
         Err(e) => return unavailable(e),
     };
     let source = ctx.backend.public_texts();
+    let read = public_read(ctx, state.engine(), source.as_ref());
     let slug = req.param("slug").unwrap_or_default();
-    let answer = crate::public::read(
-        state.engine(),
-        source.as_ref(),
-        ctx.backend.now(),
-        op,
-        slug,
-        req.param("call"),
-    )
-    .await;
+    let answer = read.op(op, slug, req.param("call")).await;
     let status = |r: PublicRefusal| {
         StatusCode::from_u16(r.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
     };
@@ -577,14 +637,100 @@ async fn public<B: Backend>(ctx: &Ctx<B>, req: &Request, op: crate::public::Publ
     );
     match answer {
         Ok(PublicAnswer::Page(html)) => {
-            Reply::fixed(StatusCode::OK, "text/html; charset=utf-8", html.as_bytes())
+            Reply::fixed(StatusCode::OK, HTML, site::public_page(&html).as_bytes())
         }
         Ok(PublicAnswer::Json(json)) => Reply::fixed(StatusCode::OK, JSON, json.as_bytes()),
+        Err(PublicRefusal::BadRequest | PublicRefusal::NotFound)
+            if fstp_http::is_page_navigation(req) =>
+        {
+            unknown_public_page(read, req.target.path()).await
+        }
         Err(PublicRefusal::Setup) if page => Reply::fixed(
             status(PublicRefusal::Setup),
-            "text/html; charset=utf-8",
-            NOT_PUBLISHED.as_bytes(),
+            HTML,
+            site::not_published().as_bytes(),
         ),
         Err(r) => Reply::fixed(status(r), JSON, r.body().as_bytes()),
     }
+}
+
+/// The public read of this cell over `state` and `source` now.
+fn public_read<'a, B: Backend>(
+    ctx: &Ctx<B>,
+    state: &'a fstp_engine::EngineState,
+    source: &'a dyn crate::public::PublicTextSource,
+) -> crate::public::PublicRead<'a> {
+    crate::public::PublicRead {
+        state,
+        source,
+        now: ctx.backend.now(),
+        organisation: ctx.cfg.organisation,
+    }
+}
+
+/// A browser page request for the public path `path` that does not exist
+/// (SA-09 amendment, as `fstp_web`'s router answers it): 303 to the
+/// public home `/p/{slug}/` of the programme the path names when the
+/// cell serves it, and otherwise 303 to home.
+async fn unknown_public_page(read: crate::public::PublicRead<'_>, path: &str) -> Reply {
+    let slug = path.strip_prefix("/p/").and_then(|p| p.split('/').next());
+    let home = match slug {
+        Some(s) => read.home(s).await,
+        None => None,
+    };
+    match home {
+        Some(h) if h != path => Reply::see_other(&h),
+        _ => Reply::see_other(HOME),
+    }
+}
+
+/// `GET /app/assets/{file}`: a platform stylesheet of the public pages,
+/// or 404 `{"code":"not_found"}` as the web adapter answers an unknown
+/// asset (`crate::http::site`).
+fn site_sheet(req: &Request) -> Reply {
+    match crate::http::site::sheet(req.target.path()) {
+        Some(css) => Reply::fixed(StatusCode::OK, crate::http::site::CSS, css),
+        None => Reply::fixed(StatusCode::NOT_FOUND, JSON, br#"{"code":"not_found"}"#),
+    }
+}
+
+/// The answer to a path no route matches (lane m4/pubtext), as the web
+/// adapter answers it:
+///
+/// - under `/p/`: a browser page request goes to the programme's public
+///   home or home ([`unknown_public_page`]), and any other request gets
+///   404 `{"code":"not_found","rule":"route"}`;
+/// - home `/app/` itself, which this front serves no shell for yet: the
+///   styled "Page not found" page with 404, which the SA-09 redirects
+///   land on (`crate::http::site::not_found`);
+/// - every other path: the router's empty 404, which the front turns into
+///   303 to home for a browser page request.
+pub(crate) async fn unrouted<B: Backend>(ctx: &Ctx<B>, req: &Request) -> (Response, Outcome) {
+    let path = req.target.path();
+    let get = req.method == fstp_http::Method::GET || req.method == fstp_http::Method::HEAD;
+    let reply = if path.starts_with("/p/") {
+        if let Some(refused) = public_rate_limited(ctx, req) {
+            refused
+        } else if get && fstp_http::is_page_navigation(req) {
+            match ctx.backend.state().await {
+                Ok(state) => {
+                    let source = ctx.backend.public_texts();
+                    unknown_public_page(public_read(ctx, state.engine(), source.as_ref()), path)
+                        .await
+                }
+                Err(e) => unavailable(e),
+            }
+        } else {
+            Reply::fixed(StatusCode::NOT_FOUND, JSON, NO_ROUTE)
+        }
+    } else if path == HOME && get {
+        Reply::fixed(
+            StatusCode::NOT_FOUND,
+            HTML,
+            crate::http::site::not_found().as_bytes(),
+        )
+    } else {
+        return (Response::new(StatusCode::NOT_FOUND), Outcome { rule: None });
+    };
+    reply.into_response()
 }

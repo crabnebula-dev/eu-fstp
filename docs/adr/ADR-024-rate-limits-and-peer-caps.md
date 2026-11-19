@@ -1,6 +1,6 @@
 # ADR-024: Rate limits and per-peer caps
 
-Status: Accepted by Daniel. On 2026-11-18: the audit rule for rate refusals, and the per-account rate limit as the whole of the `PutText` fix for now. On 2026-11-19: every value below, as built. Drafted 2026-11-17 for issue 6 (fast-pass security review of 2026-11-12).
+Status: Accepted by Daniel. On 2026-11-18: the audit rule for rate refusals, and the per-account rate limit as the whole of the `PutText` fix for now. On 2026-11-19: every value below, as built, except the cell public route limit added later that day, which is interim, pending his acceptance. Drafted 2026-11-17 for issue 6 (fast-pass security review of 2026-11-12).
 
 The number is the next free one after ADR-023.
 
@@ -34,7 +34,7 @@ One rule serves every surface: each resource an unauthenticated party can consum
 
 ### Values
 
-The design names these limits and no values. Daniel accepted the values below on 2026-11-19, as built. Each is one named constant beside its counter, so a later change is one line and its test.
+The design names these limits and no values. Daniel accepted the values below on 2026-11-19, as built, apart from the cell public route row, which is interim. Each is one named constant beside its counter, so a later change is one line and its test.
 
 | Limit | Value |
 | --- | --- |
@@ -50,6 +50,7 @@ The design names these limits and no values. Daniel accepted the values below on
 | OAuth registrations per peer | 10 per hour |
 | Key daemon usage log size | 64 MiB. Create and destroy are served until twice that |
 | Key daemon usage records per client socket | 6000 per minute |
+| Cell public routes per peer | 120 per minute. Interim, pending Daniel's acceptance (2026-11-19) |
 
 ### As built on 2026-11-17
 
@@ -59,6 +60,7 @@ The design names these limits and no values. Daniel accepted the values below on
 - `PutText` has the per-account rate limit only. The command carries no owning object and no size, so the ownership rule and the daily size bound wait on a design decision. ADR-025 proposes both (2026-11-19, pending Daniel).
 - No production listener mounts the MCP server or the OAuth registration route yet. Each takes the peer through `McpServer::serve_from` and `RateKey::from_ip` once mounted.
 - The limits of the public auth routes and of `PutText` are a start option of the cell (`StartOptions::auth_limits`). The production default holds the interim values. The test world lifts them, since all its clients share the loopback address.
+- On 2026-11-19 (exit audit item 7, lane m4/pubtext), the cell's public routes got a per-peer limit: the `/p` pages, the feed, the public tools and any path under `/p/` that no route matches. Its value, 120 per minute, is that of API calls per peer with no account, which the web adapter charges the same requests against. It is interim, pending Daniel's acceptance. A refusal answers 429 `{"code":"rate_limited","rule":"rate"}`, as the web adapter answers it, and is logged under `ADR-024`. The platform stylesheets are not charged, since a browser asks for both with every page. Each cell front keeps its own counters, so a peer one cell refuses keeps its budget on another (`t_iso_public_rate_limit_keys_are_per_cell`). The test world lifts this limit like the others, except in that test.
 - The full CI run of 2026-11-18 met two interim values. The login limit of 30 per minute refused the test world, which signs in from one address. The connection share of 64 refused a Playwright spec with eight signed-in browser contexts. The share is now 256, since a browser opens up to six connections per host.
 
 ## Consequences
@@ -73,3 +75,4 @@ The design names these limits and no values. Daniel accepted the values below on
 
 - The owning-object rule and the daily size bound of `PutText` (M9) stay open as a design item. Daniel decided on 2026-11-18 that the rate limit is enough for now. ADR-025 proposes the rule and the bound, built as interim values pending his acceptance.
 - The `TODO(legal)` of ADR-009 on client addresses (Q19) covers the peer key here too.
+- The value of the cell's public route limit, 120 per minute per peer, waits for Daniel's acceptance.

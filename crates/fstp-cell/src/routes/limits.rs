@@ -1,5 +1,6 @@
-//! Rate limits of the public auth routes and of `PutText` (ADR-024, issue 6
-//! M8 and M9, H-21, H-01, TH-21).
+//! Rate limits of the public auth routes, of `PutText` and of the public
+//! routes (ADR-024, issue 6 M8 and M9, H-21, H-01, TH-21; exit audit item
+//! 7, lane m4/pubtext).
 //!
 //! Sliding windows, as `fstp-api-core/src/rate.rs` keeps them: a refused
 //! call counts against no key, and idle keys are swept. The counters live
@@ -8,6 +9,11 @@
 //! is charged to one shared key, so the limit still applies.
 //!
 //! Values accepted by Daniel on 2026-11-19 (ADR-024): one named constant each.
+//! [`PUBLIC_PER_PEER`] is interim, pending Daniel's acceptance.
+//!
+//! The counters belong to one cell front, so each cell keeps its own keys:
+//! a peer that one cell refuses is charged nothing on another cell
+//! (`t_iso_public_rate_limit_keys_are_per_cell`).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
@@ -52,6 +58,16 @@ pub(crate) const PUT_TEXT_PER_ACCOUNT: Limit = Limit {
     window_us: MINUTE_US,
 };
 
+/// The public routes, per peer: the `/p` pages, the feed, the public tools
+/// and any path under `/p/` that no route matches (120 per minute).
+/// Interim, pending Daniel's acceptance (ADR-024): the value of "API calls
+/// per peer with no account", which the web adapter charges the same
+/// requests against (`fstp_api_core::rate::PER_PEER_ANONYMOUS`).
+pub(crate) const PUBLIC_PER_PEER: Limit = Limit {
+    count: 120,
+    window_us: MINUTE_US,
+};
+
 /// The limit values of one cell front (ADR-024). The default holds the
 /// ADR-024 values above, and the production cell starts with it. A test
 /// world whose clients all share the loopback address passes its own
@@ -66,6 +82,8 @@ pub struct AuthLimits {
     pub mail_per_target: Limit,
     /// `PutText`, per account.
     pub put_text_per_account: Limit,
+    /// The public routes, per peer.
+    pub public_per_peer: Limit,
 }
 
 impl Default for AuthLimits {
@@ -75,6 +93,7 @@ impl Default for AuthLimits {
             mail_per_peer: MAIL_PER_PEER,
             mail_per_target: MAIL_PER_TARGET,
             put_text_per_account: PUT_TEXT_PER_ACCOUNT,
+            public_per_peer: PUBLIC_PER_PEER,
         }
     }
 }
@@ -125,6 +144,7 @@ enum Key {
     Mail(Peer),
     Target([u8; 32]),
     PutText(AccountId),
+    Public(Peer),
 }
 
 #[derive(Default)]
@@ -191,6 +211,11 @@ impl Limits {
         self.charge(Key::Target(digest), self.values.mail_per_target, now_us)
     }
 
+    /// Charges a request of a public route to `peer`.
+    pub(crate) fn public(&self, peer: Peer, now_us: i64) -> bool {
+        self.charge(Key::Public(peer), self.values.public_per_peer, now_us)
+    }
+
     /// Charges a `PutText` to `account`.
     pub(crate) fn put_text(&self, account: AccountId, now_us: i64) -> bool {
         self.charge(
@@ -224,6 +249,23 @@ mod tests {
         assert!(!l.mail_peer(p, 1_000));
         assert!(!l.mail_peer(p, 2_000));
         assert!(l.mail_peer(p, MINUTE_US + 100));
+    }
+
+    /// Exit audit item 7, ADR-024: the public routes are limited per peer,
+    /// another peer is unaffected, and the public budget is apart from the
+    /// login budget of the same peer.
+    #[test]
+    fn adr024_public_routes_are_limited_per_peer() {
+        let l = Limits::default();
+        let a = Peer::of(Some(SocketAddr::from(([203, 0, 113, 1], 1))));
+        let b = Peer::of(Some(SocketAddr::from(([203, 0, 113, 2], 1))));
+        for i in 0..PUBLIC_PER_PEER.count {
+            assert!(l.public(a, i64::try_from(i).unwrap()), "call {i}");
+        }
+        assert!(!l.public(a, 1_000));
+        assert!(l.public(b, 1_000));
+        assert!(l.login(a, 1_000));
+        assert!(l.public(a, MINUTE_US + 100));
     }
 
     /// Issue 6 M8, ADR-024: IPv6 peers count by /64, other peers apart.

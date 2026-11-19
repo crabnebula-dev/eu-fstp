@@ -332,7 +332,7 @@ pub struct CellHandle {
     ticket: TicketSigner,
     /// The replies the cell gave to sessions ([`crate::responses`]).
     responses: crate::responses::ResponseLog,
-    /// The cell's public texts and identity ([`crate::world_public`]).
+    /// The cell's public identity ([`crate::world_public`]).
     public: crate::world_public::WorldPublic,
 }
 
@@ -351,7 +351,7 @@ impl CellHandle {
         &self.clock
     }
 
-    /// The cell's public texts and identity ([`crate::world_public`],
+    /// The cell's public identity ([`crate::world_public`],
     /// lane m4/cellpub).
     pub fn public(&self) -> &crate::world_public::WorldPublic {
         &self.public
@@ -1241,7 +1241,7 @@ impl World {
                 host: Some(crate::world_host::WorldHost::start(&spec)?),
             });
         }
-        World::start_in_process(spec, pages, dev, &[])
+        World::start_in_process(spec, pages, dev, &[], None)
     }
 
     /// The world of a `fstp-world-host` process ([`crate::world_host`]):
@@ -1261,7 +1261,28 @@ impl World {
                 "a hosted world runs in this process, with one custody socket per cell".to_owned(),
             ));
         }
-        World::start_in_process(spec, None, &[], custody)
+        World::start_in_process(spec, None, &[], custody, None)
+    }
+
+    /// [`World::start`] whose cells limit their public routes to `limit`
+    /// per peer (ADR-024, exit audit item 7). Every other world lifts that
+    /// limit, as it lifts the auth limits, since all its clients share the
+    /// loopback peer. `t_iso_public_rate_limit_keys_are_per_cell` starts
+    /// its world this way. The spec must not ask for process mode.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`], and a refusal of a spec in process mode.
+    pub fn start_with_public_limit(
+        spec: WorldSpec,
+        limit: fstp_cell::routes::Limit,
+    ) -> Result<World, WorldError> {
+        if spec.process_mode {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::world::World in process mode sets no public limit",
+            )));
+        }
+        World::start_in_process(spec, None, &[], &[], Some(limit))
     }
 
     fn start_in_process(
@@ -1269,6 +1290,7 @@ impl World {
         pages: Option<fstp_cell::http::pages::Pages>,
         dev: &[DevCell],
         custody: &[std::path::PathBuf],
+        public_limit: Option<fstp_cell::routes::Limit>,
     ) -> Result<World, WorldError> {
         // One world start at a time in the process (lead decision,
         // 2026-11-13, lane F-ERASE): worlds that start in parallel race
@@ -1294,10 +1316,13 @@ impl World {
                 &spec,
                 &clusters,
                 &plans,
-                pages.as_ref(),
+                WorldServe {
+                    pages: pages.as_ref(),
+                    dev,
+                    custody,
+                    public_limit,
+                },
                 &egress,
-                dev,
-                custody,
             ) {
                 Ok(started) => {
                     crate::backups::attach(&started, &clusters)?;
@@ -2173,6 +2198,23 @@ struct CellServe<'a> {
     dev: Option<&'a DevCell>,
     /// In a hosted world, the socket of the cell's custody process.
     custody: Option<&'a std::path::Path>,
+    /// The limit of the public routes per peer, when a test sets one
+    /// ([`World::start_with_public_limit`]).
+    public_limit: Option<fstp_cell::routes::Limit>,
+}
+
+/// What every cell of a world serves, and the per-cell parts by index:
+/// cell `i` takes `dev[i]` and `custody[i]` when they exist.
+#[derive(Clone, Copy)]
+struct WorldServe<'a> {
+    /// The compiled auth pages, if any.
+    pages: Option<&'a fstp_cell::http::pages::Pages>,
+    /// The fixed hosts and clock starts.
+    dev: &'a [DevCell],
+    /// In a hosted world, the sockets of the custody processes.
+    custody: &'a [std::path::PathBuf],
+    /// The limit of the public routes per peer, when a test sets one.
+    public_limit: Option<fstp_cell::routes::Limit>,
 }
 
 /// Provisions every cell of `plans`, then the service databases, then
@@ -2181,11 +2223,15 @@ fn start_cells(
     spec: &WorldSpec,
     clusters: &[ClusterHandle],
     plans: &[RolePlan],
-    pages: Option<&fstp_cell::http::pages::Pages>,
+    serve: WorldServe<'_>,
     egress: &EgressLog,
-    dev: &[DevCell],
-    custody: &[std::path::PathBuf],
 ) -> Result<Vec<CellHandle>, WorldError> {
+    let WorldServe {
+        pages,
+        dev,
+        custody,
+        public_limit,
+    } = serve;
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
     };
@@ -2206,6 +2252,7 @@ fn start_cells(
                 pages,
                 dev: dev.get(i),
                 custody: custody.get(i).map(std::path::PathBuf::as_path),
+                public_limit,
             },
             egress,
         )?);
@@ -3632,6 +3679,7 @@ fn start_cell(
         pages,
         dev,
         custody: custody_socket,
+        public_limit,
     } = serve;
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
@@ -4027,12 +4075,11 @@ fn start_cell(
             return Err(e);
         }
     };
-    // Lane m4/cellpub: the cell's own public texts ([`crate::world_public`]).
+    // Lane m4/cellpub: the cell's public identity ([`crate::world_public`]).
     let public = crate::world_public::WorldPublic::default();
     let options = fstp_cell::process::StartOptions {
         clock: clock.commit_clock(),
         creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
-        public_texts: std::sync::Arc::new(public.clone()),
         proof_mail: std::sync::Arc::new(mail.clone()),
         operator_key: Some(operator.0.public_key().to_bytes().to_vec()),
         // P-70: the world's tenant enables magic links, as the auth
@@ -4053,7 +4100,16 @@ fn start_cell(
         // suite depends on an interim value.
         // The limits themselves are tested on the cell front
         // (`fstp-cell/tests/issue6_auth_limits.rs`).
-        auth_limits: world_auth_limits(),
+        auth_limits: fstp_cell::routes::AuthLimits {
+            public_per_peer: public_limit.unwrap_or(world_auth_limits().public_per_peer),
+            ..world_auth_limits()
+        },
+        // ADR-021 "Where the answer comes from": a world cell's ledger
+        // holds no tenant part, so the organisation port answers. The
+        // world's port answers "active", as the test kit's fake port does
+        // by default, so its public pages are served. Claims built on a
+        // world cell's public pages say so.
+        organisation: fstp_cell::public::OrganisationPort { active: true },
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,
@@ -5463,5 +5519,6 @@ fn world_auth_limits() -> fstp_cell::routes::AuthLimits {
         mail_per_peer: wide,
         mail_per_target: wide,
         put_text_per_account: wide,
+        public_per_peer: wide,
     }
 }

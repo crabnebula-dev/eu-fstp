@@ -643,6 +643,7 @@ impl LocalCell {
                 methods: vec![Method::Passkey, Method::MagicLink],
             },
             limits: crate::routes::AuthLimits::default(),
+            organisation: crate::public::OrganisationPort::default(),
         };
         let front =
             Front::new(cfg, Arc::clone(&backend), Arc::clone(&log)).map_err(LocalError::Front)?;
