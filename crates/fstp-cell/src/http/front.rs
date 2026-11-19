@@ -205,14 +205,24 @@ impl<B: Backend, L: LogSink> Handler for RouteHandler<B, L> {
 }
 
 /// The handler of a path no route matches (`crate::routes::unrouted`).
-/// The front logs its event, under [`UNROUTED`].
-struct Unrouted<B> {
+/// It logs its event under [`UNROUTED`], with the rule of a refusal, such
+/// as a rate limit (ADR-024).
+struct Unrouted<B, L> {
     ctx: Arc<Ctx<B>>,
+    log: Arc<L>,
 }
 
-impl<B: Backend> Handler for Unrouted<B> {
+impl<B: Backend, L: LogSink> Handler for Unrouted<B, L> {
     async fn handle(&self, req: Request) -> Response {
-        crate::routes::unrouted(&self.ctx, &req).await.0
+        let started = Instant::now();
+        let method = obs_method(&req.method);
+        let (mut resp, outcome) = crate::routes::unrouted(&self.ctx, &req).await;
+        self.log
+            .log(event(method, UNROUTED, &resp, outcome, started));
+        if let (Ok(name), Ok(value)) = (HeaderName::new(LOGGED), HeaderValue::new("1")) {
+            resp.headers.insert(name, value);
+        }
+        resp
     }
 }
 
@@ -325,6 +335,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         let pages_rows: &'static [Route] = if serve_pages { page_table() } else { &[] };
         let mut router = Router::new().fallback(Unrouted {
             ctx: Arc::clone(&ctx),
+            log: Arc::clone(&log),
         });
         for route in table()
             .iter()

@@ -364,6 +364,10 @@ async fn shared_checks<B: Backend>(ctx: &Ctx<B>, route: &'static Route, req: Req
 /// auth routes. A refusal depends on the peer alone, so it tells nothing
 /// about any address or account. The per-target limits sit in the
 /// magic-link and recovery handlers, which hold the address.
+///
+/// Exit audit item 7: the public routes are limited per peer too
+/// ([`public_rate_limited`]). The platform stylesheets are not: they are
+/// static bytes, and a browser asks for both with every page.
 fn rate_limited<B: Backend>(ctx: &Ctx<B>, endpoint: Endpoint, req: &Request) -> Option<Reply> {
     use crate::routes::limits::Peer;
     let peer = Peer::of(req.peer_addr());
@@ -371,9 +375,30 @@ fn rate_limited<B: Backend>(ctx: &Ctx<B>, endpoint: Endpoint, req: &Request) -> 
     let ok = match endpoint {
         Endpoint::PasskeyLoginOptions | Endpoint::PasskeyLogin => ctx.limits.login(peer, now),
         Endpoint::MagicRequest | Endpoint::RecoveryRequest => ctx.limits.mail_peer(peer, now),
+        Endpoint::Public(_) => return public_rate_limited(ctx, req),
         _ => true,
     };
     (!ok).then(|| Reply::refuse(StatusCode::TOO_MANY_REQUESTS, Some(Rule::Adr024), "rate"))
+}
+
+/// The body of a public request refused by its rate limit, as the API
+/// core refuses a call with no account (`fstp_api_core`, rule `rate`).
+const PUBLIC_RATE: &[u8] = br#"{"code":"rate_limited","rule":"rate"}"#;
+
+/// ADR-024, exit audit item 7: a request of a public route, or of a path
+/// under `/p/` that no route matches, is charged to its peer in this
+/// cell's counters (`crate::routes::limits::PUBLIC_PER_PEER`). A refusal
+/// answers 429 as the web adapter answers it, and is logged under
+/// ADR-024. It names no peer.
+fn public_rate_limited<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Option<Reply> {
+    let peer = crate::routes::limits::Peer::of(req.peer_addr());
+    if ctx.limits.public(peer, ctx.backend.now().micros()) {
+        return None;
+    }
+    Some(Reply {
+        rule: Some(Rule::Adr024),
+        ..Reply::fixed(StatusCode::TOO_MANY_REQUESTS, JSON, PUBLIC_RATE)
+    })
 }
 
 /// Looks up the caller's session (step 4 of the module documentation).
@@ -684,7 +709,9 @@ pub(crate) async fn unrouted<B: Backend>(ctx: &Ctx<B>, req: &Request) -> (Respon
     let path = req.target.path();
     let get = req.method == fstp_http::Method::GET || req.method == fstp_http::Method::HEAD;
     let reply = if path.starts_with("/p/") {
-        if get && fstp_http::is_page_navigation(req) {
+        if let Some(refused) = public_rate_limited(ctx, req) {
+            refused
+        } else if get && fstp_http::is_page_navigation(req) {
             match ctx.backend.state().await {
                 Ok(state) => {
                     let source = ctx.backend.public_texts();

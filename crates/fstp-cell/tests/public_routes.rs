@@ -135,3 +135,32 @@ fn sa09_home_answers_the_styled_not_found_page() {
     assert_eq!(r.status.as_u16(), 303);
     assert_eq!(header(&r, "location"), Some(b"/app/".as_slice()));
 }
+
+/// ADR-024, exit audit item 7: a peer gets 120 public requests a minute,
+/// across the routes and unknown `/p` paths. The next answers 429 as the
+/// web adapter answers it. Another peer and the stylesheets are not
+/// charged.
+#[test]
+fn adr024_public_routes_refuse_a_peer_over_its_budget() {
+    let c = cell();
+    let from = |b: u8| std::net::SocketAddr::from(([198, 51, 100, b], 5000));
+    for i in 0..120 {
+        let path = if i % 2 == 0 {
+            "/p/supersafe/"
+        } else {
+            "/p/supersafe/nope"
+        };
+        let r = c.serve(get(path).with_peer_addr(from(1)));
+        assert_ne!(r.status.as_u16(), 429, "request {i}");
+    }
+    for path in ["/p/supersafe/", "/p/supersafe/nope"] {
+        let r = c.serve(get(path).with_peer_addr(from(1)));
+        assert_eq!(r.status.as_u16(), 429, "{path}");
+        assert_eq!(body(&r), r#"{"code":"rate_limited","rule":"rate"}"#);
+    }
+    let r = c.serve(get("/p/supersafe/").with_peer_addr(from(2)));
+    assert_eq!(r.status.as_u16(), 403);
+    let sheet = site::sheet_paths().next().unwrap();
+    let r = c.serve(get(sheet).with_peer_addr(from(1)));
+    assert_eq!(r.status.as_u16(), 200);
+}
