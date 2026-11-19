@@ -454,6 +454,7 @@ jobs:
         if: steps.part.outputs.run == 'true'
         env:
           TIER: ${{ steps.part.outputs.tier }}
+          PART: ${{ matrix.part }}
         run: |
           set -uo pipefail
           libtest=()
@@ -471,6 +472,13 @@ jobs:
           esac
           if [ -n "$TEST_SHARD" ]; then export FSTP_MATRIX_SHARD="$TEST_SHARD"; fi
           if [ -n "${TEST_THREADS:-}" ]; then export RUST_TEST_THREADS="$TEST_THREADS"; fi
+          # The matrix parts build with the `matrix` profile of Cargo.toml:
+          # optimised, with debug assertions and overflow checks kept. Each
+          # matrix fails fast (fstp_api_testkit::matrix::compare_grouped_with):
+          # a sample of every group runs first, and a failing run stops at
+          # 40 failures. A green run has judged every cell once.
+          profile=()
+          if [[ "$PART" == matrix-* ]]; then profile=(--profile matrix); fi
           # cargo cannot mix --doc with other targets, so a part may hold
           # several selections, separated by ";". read keeps each * as
           # it is, and cargo matches it against the target names.
@@ -478,8 +486,8 @@ jobs:
           IFS=';' read -ra selections <<< "$TEST_PACKAGES"
           for selection in "${selections[@]}"; do
             read -ra packages <<< "$selection"
-            echo "cargo test ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
-            cargo test "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log" || true
+            echo "cargo test ${profile[*]} ${packages[*]} -- ${libtest[*]} (shard ${TEST_SHARD:-none})"
+            cargo test "${profile[@]}" "${packages[@]}" --locked --no-fail-fast -- "${libtest[@]}" 2>&1 | tee -a "$RUNNER_TEMP/cargo-test.log" || true
           done
           cargo run -q --locked -p test-gate -- --known-red ci/known-red.txt "${gate[@]}" "$RUNNER_TEMP/cargo-test.log"
       # The background removal of "Free disk space" must have finished and

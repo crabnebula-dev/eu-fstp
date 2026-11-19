@@ -231,3 +231,11 @@ todo = "warn"
 
 [profile.release]
 overflow-checks = true
+
+# The authorisation matrix parts of CI build with this profile: optimised,
+# with the debug assertions and overflow checks of the test profile kept,
+# so the matrices judge the same checked code in less time.
+[profile.matrix]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
