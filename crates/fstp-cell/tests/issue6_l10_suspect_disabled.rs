@@ -441,3 +441,64 @@ fn issue6_l10_adr008_flagging_a_passkey_ends_its_sessions_only() {
     assert_eq!(gone.status, made_up.status);
     assert_eq!(devices(&other_session).status.as_u16(), 200);
 }
+
+/// The session rows of the seeded admin, by credential.
+fn admin_rows(c: &LocalCell) -> Vec<fstp_cell::routes::SessionRow> {
+    fstp_rt::future::block_on(c.backend().sessions_of(LOCAL_ADMIN)).unwrap()
+}
+
+/// Issue 6 L10, ADR-008, R-LG-04 (PR 11 loose end): flagging a passkey
+/// ends its sessions the way a normal end does. The flagging batch holds
+/// `SessionEnded` for each session the passkey opened, and none for a
+/// session of another passkey. So `GET /auth/sessions` lists the other
+/// session only, and the ended session is not shown as live.
+#[test]
+fn issue6_l10_r_lg_04_flagging_records_the_end_of_its_sessions() {
+    let c = LocalCell::start(CELL, HOST).unwrap();
+    let _ = c.admin_session().unwrap();
+    let cred = admin_credential(&c);
+    let mut second = Pk::new();
+    second.register(&c);
+    let other_cookie = cookie_of(&second.login(&c));
+    let rows = admin_rows(&c);
+    let flagged: Vec<[u8; 16]> = rows
+        .iter()
+        .filter(|r| r.credential.as_deref() == Some(cred.as_slice()))
+        .map(|r| r.id)
+        .collect();
+    let other: Vec<[u8; 16]> = rows
+        .iter()
+        .filter(|r| r.credential.as_deref() == Some(second.credential.as_slice()))
+        .map(|r| r.id)
+        .collect();
+    assert_eq!((flagged.len(), other.len()), (1, 1), "{rows:?}");
+    let _ = flag_admin_passkey(&c, &cred);
+    let ended: Vec<[u8; 16]> = c
+        .backend()
+        .records()
+        .into_iter()
+        .filter_map(|r| match r {
+            CellRecord::Auth(AuthRecord::SessionEnded { session }) => Some(session),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ended, flagged, "the flagged passkey's session ends, alone");
+    assert!(state(&c).auth().session_ended(flagged[0]));
+    let r = c.serve(request(
+        Method::GET,
+        "/auth/sessions",
+        Some(&other_cookie),
+        b"",
+    ));
+    assert_eq!(r.status.as_u16(), 200, "{}", text(&r));
+    let v = fstp_json::parse(&r.body).unwrap();
+    let listed: Vec<String> = v
+        .get("sessions")
+        .and_then(fstp_json::Value::as_array)
+        .unwrap()
+        .iter()
+        .filter_map(|s| s.get("id").and_then(fstp_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(listed, vec![hex(&other[0])]);
+}

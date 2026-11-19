@@ -15,7 +15,9 @@
 //!   step-up id end to end (`fstp_cell_core::stepup_id`). Its row names the
 //!   entry of the batch's `StepUpConsumed` record.
 //! - Each ended session is one `auth_log.session_end` row, which names the
-//!   entry of its `SessionEnded` record.
+//!   entry of its `SessionEnded` record. Its cause names a disabled passkey
+//!   when the batch flagged one (ADR-008, R-LG-04), and is "ended by a
+//!   record" otherwise.
 //! - Each message an `EventFired` record lists is one sealed `ops.outbox`
 //!   row, with the body the driver rendered for it (M6 design section 3.1).
 //!
@@ -152,6 +154,19 @@ pub fn side_effects(req: &AppendRequest) -> Result<fstp_pgstore::SideEffects, Ce
         }),
         _ => return Err(refuse()),
     };
+    // ADR-008, issue 6 L10, R-LG-04: the sessions the flagging of a passkey
+    // ends name the disabled passkey as their cause. Its batch holds the
+    // `CredentialSuspect` record (`fstp_cell_core::decide`).
+    let cause = if req.batch.iter().any(|r| {
+        matches!(
+            r,
+            CellRecord::Auth(fstp_auth::AuthRecord::CredentialSuspect { .. })
+        )
+    }) {
+        fstp_pgstore::SESSION_END_CREDENTIAL_DISABLED
+    } else {
+        fstp_pgstore::SESSION_END_BY_RECORD
+    };
     let sessions_ended: Vec<SessionEnd> = req
         .batch
         .iter()
@@ -160,6 +175,7 @@ pub fn side_effects(req: &AppendRequest) -> Result<fstp_pgstore::SideEffects, Ce
             CellRecord::Auth(fstp_auth::AuthRecord::SessionEnded { session }) => Some(SessionEnd {
                 session: *session,
                 record,
+                cause,
             }),
             _ => None,
         })
@@ -395,6 +411,41 @@ mod tests {
         assert!(side_effects(&request(vec![fired(1, &[])], bodies(&[]))).is_ok());
     }
 
+    /// Issue 6 L10, ADR-008, R-LG-04 (PR 11 loose end): a session that the
+    /// flagging of its passkey ends gets the cause that names the disabled
+    /// passkey. Every other ended session keeps the cause "ended by a
+    /// record".
+    #[test]
+    fn issue6_l10_r_lg_04_session_end_cause_names_the_disabled_passkey() {
+        use fstp_pgstore::{SESSION_END_BY_RECORD, SESSION_END_CREDENTIAL_DISABLED};
+        let flagged = vec![
+            CellRecord::Auth(AuthRecord::CredentialSuspect {
+                account: fstp_domain::id::AccountId::from_raw(5),
+                credential: vec![9; 16],
+            }),
+            CellRecord::Auth(AuthRecord::SessionEnded { session: [2; 16] }),
+        ];
+        let side = |s: [u8; 16]| fstp_cell_core::driver::SideEffects {
+            sessions_ended: vec![s],
+            ..Default::default()
+        };
+        let got = side_effects(&request(flagged, side([2; 16]))).unwrap();
+        assert_eq!(
+            got.sessions_ended,
+            vec![SessionEnd {
+                session: [2; 16],
+                record: 1,
+                cause: SESSION_END_CREDENTIAL_DISABLED,
+            }]
+        );
+        let plain = vec![CellRecord::Auth(AuthRecord::SessionEnded {
+            session: [3; 16],
+        })];
+        let got = side_effects(&request(plain, side([3; 16]))).unwrap();
+        assert_eq!(got.sessions_ended[0].cause, SESSION_END_BY_RECORD);
+        assert_ne!(SESSION_END_BY_RECORD, SESSION_END_CREDENTIAL_DISABLED);
+    }
+
     /// I-77, I-78, design section 5.3 step 6: each `auth_log` row names
     /// the record of the batch it belongs to. The step-up row is keyed by
     /// the step-up id, the challenge id end to end, and names its
@@ -430,10 +481,12 @@ mod tests {
                 SessionEnd {
                     session: [2; 16],
                     record: 1,
+                    cause: fstp_pgstore::SESSION_END_BY_RECORD,
                 },
                 SessionEnd {
                     session: [3; 16],
                     record: 2,
+                    cause: fstp_pgstore::SESSION_END_BY_RECORD,
                 },
             ]
         );
