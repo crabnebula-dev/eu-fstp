@@ -4046,6 +4046,12 @@ fn start_cell(
         // The limits themselves are tested on the cell front
         // (`fstp-cell/tests/issue6_auth_limits.rs`).
         auth_limits: world_auth_limits(),
+        // ADR-021 "Where the answer comes from": a world cell's ledger
+        // holds no tenant part, so the organisation port answers. The
+        // world's port answers "active", as the test kit's fake port does
+        // by default, so its public pages are served. Claims built on a
+        // world cell's public pages say so.
+        organisation: fstp_cell::public::OrganisationPort { active: true },
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,

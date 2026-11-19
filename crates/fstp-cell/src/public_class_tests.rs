@@ -120,13 +120,63 @@ fn no_corrigenda(_: ProgrammeId) -> Option<Vec<TextRef>> {
     None
 }
 
+/// A read at [`T0`] over `source`, with the organisation port answering
+/// `active`. The world's ledger holds no tenant part, so the port answers.
+fn ctx<'a>(
+    state: &'a EngineState,
+    source: &'a dyn PublicTextSource,
+    active: bool,
+) -> PublicRead<'a> {
+    PublicRead {
+        state,
+        source,
+        now: T0,
+        organisation: OrganisationPort { active },
+    }
+}
+
 /// The page or JSON body of `op` on P1 at [`T0`] over `source`.
 fn answer(state: &EngineState, source: &dyn PublicTextSource, op: PublicOp) -> String {
     let call = matches!(op, PublicOp::Call).then_some("1");
-    match block_on(read(state, source, T0, op, "1", call)) {
+    match block_on(ctx(state, source, true).op(op, "1", call)) {
         Ok(PublicAnswer::Page(p) | PublicAnswer::Json(p)) => p,
         Err(r) => panic!("{op:?} refused: {r:?}"),
     }
+}
+
+/// ADR-021, as the web adapter gates: a cell whose ledger holds no tenant
+/// part asks the organisation port. Its default answers "not active", so
+/// every public operation is refused with the setup refusal. A port that
+/// answers "active" opens them.
+#[test]
+fn adr021_no_tenant_part_fails_closed_by_default() {
+    let w = world();
+    assert!(
+        w.state().tenant.state().is_none(),
+        "non-vacuity: no tenant part"
+    );
+    assert!(!OrganisationPort::default().active);
+    for op in [PublicOp::Programme, PublicOp::Feed, PublicOp::OpenCalls] {
+        let got = block_on(ctx(w.state(), &NoPublicTexts, false).op(op, "1", None));
+        assert_eq!(got, Err(PublicRefusal::Setup), "{op:?}");
+    }
+    let open = block_on(ctx(w.state(), &NoPublicTexts, true).op(PublicOp::Programme, "1", None));
+    assert!(open.is_ok(), "{open:?}");
+}
+
+/// SA-09 amendment: the public home of a served programme is
+/// `/p/{slug}/`, also before activation, and a slug that names no
+/// programme, or no valid slug, has none.
+#[test]
+fn sa09_public_home_names_only_a_served_programme() {
+    let w = world();
+    for active in [true, false] {
+        let c = ctx(w.state(), &NoPublicTexts, active);
+        assert_eq!(block_on(c.home("1")), Some("/p/1/".to_owned()), "{active}");
+    }
+    let c = ctx(w.state(), &NoPublicTexts, true);
+    assert_eq!(block_on(c.home("nope")), None);
+    assert_eq!(block_on(c.home("Bad")), None);
 }
 
 /// R-PB-03, I-87: the class answers a text only under the call it was

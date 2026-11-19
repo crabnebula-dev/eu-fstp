@@ -528,6 +528,12 @@ pub struct StartOptions {
     /// passes wider ones, since all its clients share one loopback
     /// address and so one peer key.
     pub auth_limits: crate::routes::AuthLimits,
+    /// The organisation port of ADR-021 for a ledger that holds no
+    /// tenant part (`crate::public::OrganisationPort`). The production
+    /// default answers "not active", so the public pages answer "not
+    /// published yet" until the ledger records the activation. A test
+    /// world from before the tenant part sets it active, and says so.
+    pub organisation: crate::public::OrganisationPort,
 }
 
 impl Default for StartOptions {
@@ -544,6 +550,7 @@ impl Default for StartOptions {
             licence: None,
             release_clock: None,
             auth_limits: crate::routes::AuthLimits::default(),
+            organisation: crate::public::OrganisationPort::default(),
         }
     }
 }
@@ -599,6 +606,7 @@ where
         licence,
         release_clock,
         auth_limits,
+        organisation,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -728,6 +736,7 @@ where
         host: host.clone(),
         enabled: login_methods,
         limits: auth_limits,
+        organisation,
     };
     let log = Arc::new(StderrLog);
     let front = match pages {

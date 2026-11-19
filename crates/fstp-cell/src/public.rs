@@ -64,8 +64,20 @@
 //!   `/p/{slug}/deadlines` and `/p/{slug}/eligibility`. The cell serves
 //!   no MCP endpoint, so `/mcp/public` is not served here.
 //! - The ADR-021 setup gate reads the tenant part of the ledger. A
-//!   cell whose ledger holds no tenant part is gated by programme
-//!   activation only, since the cell has no M4 organisation port.
+//!   cell whose ledger holds no tenant part asks [`OrganisationPort`], a
+//!   start option that stands for the web adapter's `TenantConfig` port
+//!   and answers "not active" by default, so the gate fails closed as
+//!   the web adapter's does (lane m4/pubtext).
+//!
+//! # The answers on the wire (`crate::routes`, `crate::http::site`)
+//!
+//! As the web adapter's router answers them: a page links the platform
+//! stylesheets first in its head. A page before activation answers the
+//! "not published yet" page. A browser page request for a public path
+//! that is malformed or not found goes to the programme's public home,
+//! or to home `/app/` when no programme answers there (SA-09
+//! amendment). Any other request for a path under `/p/` that no route
+//! matches answers 404 `{"code":"not_found","rule":"route"}`.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -327,14 +339,31 @@ impl PublicRefusal {
     }
 }
 
-/// The plain page a `/p` page answers before the organisation is
-/// activated (ADR-021 decision 3), as the web adapter writes it with no
-/// platform stylesheet.
-pub const NOT_PUBLISHED: &str = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
-<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-<title>Not published yet</title>\n</head>\n<body>\n<main>\n<h1>Not published yet</h1>\n\
-<p>This organisation's pages are not published yet. \
-They open once its activation has been approved.</p>\n</main>\n</body>\n</html>\n";
+/// Whether the organisation is active, for a cell whose ledger holds no
+/// tenant part yet (ADR-021 "Where the answer comes from"). The web
+/// adapter asks its `TenantConfig` port then, whose default answer is
+/// "not active". The cell has no such port, so this start option stands
+/// for it, with the same fail-closed default. Once the ledger holds the
+/// tenant part, the ledger alone answers.
+///
+/// A test world from before the tenant part sets it active, as the test
+/// kit's fake port answers by default, and says so.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OrganisationPort {
+    /// The port's answer: active or not.
+    pub active: bool,
+}
+
+impl OrganisationPort {
+    /// Whether the organisation is active in `state`: the ledger's tenant
+    /// part when it holds one, else this port's answer.
+    pub fn active_in(self, state: &EngineState) -> bool {
+        state
+            .tenant
+            .state()
+            .map_or(self.active, |ts| ts.is_active())
+    }
+}
 
 /// Whether `s` is a path token: 1 to 64 of `[a-z0-9_-]`
 /// (`fstp_api_core::forms::token`).
@@ -555,21 +584,66 @@ fn answer(
     }
 }
 
-/// One public operation over the engine state `state` at `now`, reading
-/// its texts from `source` (module documentation). `slug` and `call` are
-/// the path segments as the router captured them.
+/// What one public read runs against: the engine state of the cell's
+/// head, its public text class, the instant and the organisation port.
+#[derive(Clone, Copy)]
+pub struct PublicRead<'a> {
+    /// The engine state.
+    pub state: &'a EngineState,
+    /// The public texts.
+    pub source: &'a dyn PublicTextSource,
+    /// The instant of the read.
+    pub now: Timestamp,
+    /// The organisation port of ADR-021.
+    pub organisation: OrganisationPort,
+}
+
+impl PublicRead<'_> {
+    /// One public operation (module documentation): [`read`].
+    ///
+    /// # Errors
+    ///
+    /// As [`read`].
+    pub async fn op(
+        self,
+        op: PublicOp,
+        slug: &str,
+        call: Option<&str>,
+    ) -> Result<PublicAnswer, PublicRefusal> {
+        read(self, op, slug, call).await
+    }
+
+    /// The public home `/p/{slug}/` of the programme the path segment
+    /// `slug` names, when the cell serves it: its page answers, or the
+    /// setup gate answers its "not published yet" page. A browser that
+    /// asks for a public page that does not exist goes there (SA-09
+    /// amendment), as `fstp_web`'s router sends it.
+    pub async fn home(self, slug: &str) -> Option<String> {
+        match read(self, PublicOp::Programme, slug, None).await {
+            Ok(_) | Err(PublicRefusal::Setup) => Some(format!("/p/{slug}/")),
+            Err(_) => None,
+        }
+    }
+}
+
+/// One public operation over `ctx` (module documentation). `slug` and
+/// `call` are the path segments as the router captured them.
 ///
 /// # Errors
 ///
 /// The [`PublicRefusal`] the web adapter answers for the same request.
 pub async fn read(
-    state: &EngineState,
-    source: &dyn PublicTextSource,
-    now: Timestamp,
+    ctx: PublicRead<'_>,
     op: PublicOp,
     slug: &str,
     call: Option<&str>,
 ) -> Result<PublicAnswer, PublicRefusal> {
+    let PublicRead {
+        state,
+        source,
+        now,
+        organisation,
+    } = ctx;
     if !token(slug) {
         return Err(PublicRefusal::BadRequest);
     }
@@ -582,7 +656,9 @@ pub async fn read(
         None => None,
     };
     // ADR-021: before the organisation is activated, only onboarding runs.
-    if state.tenant.state().is_some_and(|ts| !ts.is_active()) {
+    // A ledger with no tenant part asks the organisation port, which
+    // fails closed by default, as the web adapter's does.
+    if !organisation.active_in(state) {
         return Err(PublicRefusal::Setup);
     }
     let (programme, identity) = programme_of(state, slug).ok_or(PublicRefusal::NotFound)?;

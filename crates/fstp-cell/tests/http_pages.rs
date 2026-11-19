@@ -63,6 +63,7 @@ fn front(pages: Option<Pages>) -> Front<MemoryBackend, MemoryLog> {
             methods: vec![LoginMethod::Passkey],
         },
         limits: fstp_cell::routes::AuthLimits::default(),
+        organisation: fstp_cell::public::OrganisationPort::default(),
     };
     let backend = Arc::new(MemoryBackend::new());
     let log = Arc::new(MemoryLog::default());

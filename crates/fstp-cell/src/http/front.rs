@@ -16,8 +16,10 @@
 //!    session, the body, the gate.
 //! 4. A browser page request (`fstp_http::is_page_navigation`) outside
 //!    `/api/` that would answer 404 gets 303 to home, `/app/`, instead
-//!    (SA-09 amendment, Daniel 2026-11-15). `/app/` itself keeps its 404,
-//!    since this front does not serve it yet.
+//!    (SA-09 amendment, Daniel 2026-11-15). `/app/` itself answers the
+//!    styled "Page not found" page with 404, since this front serves no
+//!    shell there yet. A path under `/p/` that no route matches answers
+//!    as the web adapter answers it (`crate::routes::unrouted`).
 //!
 //! A front built with `Front::with_pages` (feature `dev-pages`, test and
 //! dev stack only) also routes the compiled auth pages
@@ -60,7 +62,7 @@ use fstp_webauthn::RelyingParty;
 use crate::http::pages::Pages;
 use crate::routes::{
     Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, page_table, public_table, serve_route,
-    table,
+    site_table, table,
 };
 
 /// The CSP of the cell origin, verbatim from design section 11.2.
@@ -129,6 +131,9 @@ pub struct FrontConfig {
     /// The rate limits of the public auth routes and of `PutText`
     /// (ADR-024). The default holds the interim values.
     pub limits: crate::routes::AuthLimits,
+    /// The organisation port of ADR-021, for a ledger with no tenant part
+    /// (`crate::public::OrganisationPort`). The default fails closed.
+    pub organisation: crate::public::OrganisationPort,
 }
 
 /// Why a front could not be built.
@@ -196,6 +201,18 @@ impl<B: Backend, L: LogSink> Handler for RouteHandler<B, L> {
             resp.headers.insert(name, value);
         }
         resp
+    }
+}
+
+/// The handler of a path no route matches (`crate::routes::unrouted`).
+/// The front logs its event, under [`UNROUTED`].
+struct Unrouted<B> {
+    ctx: Arc<Ctx<B>>,
+}
+
+impl<B: Backend> Handler for Unrouted<B> {
+    async fn handle(&self, req: Request) -> Response {
+        crate::routes::unrouted(&self.ctx, &req).await.0
     }
 }
 
@@ -299,14 +316,22 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 rp,
                 enabled: cfg.enabled,
                 pages,
+                organisation: cfg.organisation,
             },
             limits: crate::routes::limits::Limits::new(cfg.limits),
         });
         // The page rows are served only when pages are loaded, so a front
         // without them serves exactly the section 8.7 table.
         let pages_rows: &'static [Route] = if serve_pages { page_table() } else { &[] };
-        let mut router = Router::new();
-        for route in table().iter().chain(public_table()).chain(pages_rows) {
+        let mut router = Router::new().fallback(Unrouted {
+            ctx: Arc::clone(&ctx),
+        });
+        for route in table()
+            .iter()
+            .chain(public_table())
+            .chain(site_table())
+            .chain(pages_rows)
+        {
             if route.access() == Access::Loopback || route.access() == Access::Unserved {
                 continue;
             }

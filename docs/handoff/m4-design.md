@@ -1552,6 +1552,13 @@ Built by lane m4/pubtext (2026-11-19), the public text class:
 - Interim, pending Daniel: the class lives in memory, as the text store it copies from does. The grantee choices have no class yet, so the cell's funded and finished pages show no grantee choice. The `fstp-api-core` path keeps its put-time `TextClass::Public`, which already shows the same call texts.
 - Open for Daniel: an erasure of a call text after publication leaves its public copy. The command route lets a client name any text id as a call title, and the copy trusts the ids the published call names.
 
+Built by lane m4/pubtext (2026-11-19), the cell's public routes as the web adapter answers them:
+
+- Stylesheets: the cell embeds the platform sheets of `web/src/site` at build time, `tokens.css` then `ui.css`, as `web/build/pack.ts` packs them. It serves each at `/app/assets/{sha256}.css`, the web adapter's path, through the new `routes::site_table()` row. Every `/p` page, the "not published yet" page and the "Page not found" page link them first in their head (`fstp_cell::http::site`).
+- Not found: a path under `/p/` that no route matches answers 404 `{"code":"not_found","rule":"route"}`. A browser page request that is malformed or not found goes to the programme's public home `/p/{slug}/` when it answers, else to `/app/`. The cell's `/app/` answers the styled "Page not found" page with 404, in the web client's words. It holds no footer, since the footer wording is still `TODO(legal)`.
+- Gating: a ledger with no tenant part asks `fstp_cell::public::OrganisationPort`, a start option that stands for the web adapter's `TenantConfig` port (ADR-021 "Where the answer comes from"). Its default answers "not active", so a production cell without a tenant part answers "not published yet". The test world sets it active, as the test kit's fake port does.
+- Tests: `r_nf_03_platform_sheets_are_served_at_their_content_address`, `r_nf_03_public_page_links_platform_sheets_before_the_brand`, `adr021_sa09_static_pages_link_platform_sheets_and_hold_no_script`, `i78_site_route_is_a_public_get_outside_the_other_tables`, `adr021_no_tenant_part_fails_closed_by_default`, `sa09_public_home_names_only_a_served_programme`, and `crates/fstp-cell/tests/public_routes.rs`.
+
 ### 8.5 Models
 
 | Model | Universe | Properties | Witnesses |
