@@ -120,6 +120,10 @@ use fstp_programme::{Field, FieldId, FieldValue, ProgrammeSpec};
 use crate::NotImplemented;
 use crate::canary::CanaryKind;
 use crate::mc::auth_model::http::{AuthClient, Cookie, FIRST_ADMIN, Reply};
+
+/// The declared length of a stored canary text whose bytes the step does
+/// not hold (ADR-025): more than any canary text takes.
+const DECLARED_TEXT_LEN: u32 = 1024;
 use crate::reference::auth::RefMethod;
 use crate::vault_seed::SeedSource;
 
@@ -753,6 +757,24 @@ impl<'w> Cycle<'w> {
     /// The cell's clock instant.
     fn now(&self) -> i64 {
         self.client.cell().clock().now()
+    }
+
+    /// `PutOwnedText` of text `id` with `len` declared bytes, owned by the
+    /// first tenant admin's account (ADR-025, issue 6 M9).
+    fn owned_text(
+        &self,
+        step: &str,
+        id: [u8; 16],
+        len: u32,
+    ) -> Result<CellCommand, NotImplemented> {
+        let owner = self.account(step, FIRST_ADMIN)?;
+        Ok(CellCommand::Text(
+            fstp_cell_core::text::TextCommand::PutOwnedText {
+                id,
+                owner: fstp_cell_core::text::TextOwner::Account(owner),
+                len,
+            },
+        ))
     }
 
     /// The cell account of the enrolled model account `who`.
@@ -1458,7 +1480,7 @@ impl<'w> Cycle<'w> {
     /// script's proposal text value ([`Person`]) or a fresh proposal text
     /// canary of the cell. It is sealed into the cell's text store in
     /// process (`CellHandle::store_text`), since no route takes text bytes
-    /// yet. The first tenant admin records `PutText` and then `EraseTexts`
+    /// yet. The first tenant admin records `PutOwnedText` and then `EraseTexts`
     /// with cause 2, an erasure request, over HTTP. The step ends once the
     /// cell's erasure task completed the batch: the old epoch destroyed in
     /// custody and `KeyEpochDestroyed` recorded.
@@ -1487,13 +1509,10 @@ impl<'w> Cycle<'w> {
             eprintln!("fstp_celltest::cycle {STEP}: {e}");
             NotImplemented::new(STEP_REFUSED)
         })?;
-        self.command(
-            STEP,
-            "PutText",
-            &admin,
-            CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id }),
-            false,
-        )?;
+        let len =
+            u32::try_from(text.len()).map_err(|_| Self::refused(STEP, "a text length", None))?;
+        let put = self.owned_text(STEP, id, len)?;
+        self.command(STEP, "PutOwnedText", &admin, put, false)?;
         self.command(
             STEP,
             "EraseTexts",
@@ -1526,7 +1545,7 @@ impl<'w> Cycle<'w> {
     /// `erase-text` (lane F-ERASE, `crate::backups`): stores a text that
     /// stays live, then erases the oldest live text an earlier
     /// `erase-text` stored, or a second new text on the first one.
-    /// `PutText` of each new text and `EraseTexts` go over HTTP as the
+    /// `PutOwnedText` of each new text and `EraseTexts` go over HTTP as the
     /// first tenant admin. The step waits until the batch completed, and
     /// then takes the keystore snapshot that follows every erasure batch
     /// (design section 3.8).
@@ -1543,13 +1562,8 @@ impl<'w> Cycle<'w> {
             Err(e) => return Self::backup_step(STEP, Err(e)),
         };
         for id in &plan.put {
-            self.command(
-                STEP,
-                "PutText",
-                &admin,
-                CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id: *id }),
-                false,
-            )?;
+            let put = self.owned_text(STEP, *id, DECLARED_TEXT_LEN)?;
+            self.command(STEP, "PutOwnedText", &admin, put, false)?;
         }
         self.command(
             STEP,
@@ -1576,7 +1590,7 @@ impl<'w> Cycle<'w> {
     /// no account erasure command, so the account erasure is the ADR-007
     /// erasure request (cause 2) of its login email text, as
     /// `fstp-cell`'s `login_index` tests run it. The first tenant admin
-    /// records `PutText` and `EraseTexts` over HTTP. The batch erases the
+    /// records `PutOwnedText` and `EraseTexts` over HTTP. The batch erases the
     /// text and replaces the `Lookup` key, and every live address gets its
     /// digest under the new key. The step waits until the batch completed,
     /// then takes the keystore snapshot that follows every batch.
@@ -1601,14 +1615,15 @@ impl<'w> Cycle<'w> {
             }
             Err(e) => return Self::backup_step(STEP, Err(e)),
         };
-        let (_, text) = victim;
-        self.command(
-            STEP,
-            "PutText of the login email",
-            &admin,
-            CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id: text }),
-            false,
-        )?;
+        let (owner, text) = victim;
+        // ADR-025: the login email text belongs to the erased account, which
+        // the tenant admin may write. An address is at most 254 bytes.
+        let put = CellCommand::Text(fstp_cell_core::text::TextCommand::PutOwnedText {
+            id: text,
+            owner: fstp_cell_core::text::TextOwner::Account(AccountId::from_raw(owner)),
+            len: 254,
+        });
+        self.command(STEP, "PutOwnedText of the login email", &admin, put, false)?;
         self.command(
             STEP,
             "EraseTexts of the login email",

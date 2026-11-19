@@ -731,7 +731,7 @@ fn decide_unchecked(
             credential,
         }) => decide_self_registration(s, *account, credential, actor, now, inputs),
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
-        CellCommand::Text(cmd) => decide_text(s, cmd, actor),
+        CellCommand::Text(cmd) => decide_text(s, cmd, actor, now),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
         CellCommand::Ops(cmd) => decide_ops(s, cmd, actor, now),
         // `system_only` refused these above.
@@ -1712,6 +1712,7 @@ fn decide_text(
     s: &CellState,
     cmd: &TextCommand,
     actor: AccountId,
+    now: Timestamp,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     match cmd {
         TextCommand::PutText { id } => {
@@ -1719,6 +1720,31 @@ fn decide_text(
                 return Err(reused());
             }
             Ok(vec![CellRecord::Text(TextRecord::TextPut { id: *id })])
+        }
+        // Issue 6 M9, H-01, ADR-025 (interim, pending Daniel): the caller
+        // may write the owner, the declared length is bounded, and one
+        // putter's declared bytes per UTC day are bounded.
+        TextCommand::PutOwnedText { id, owner, len } => {
+            if s.text(*id).is_some() {
+                return Err(reused());
+            }
+            let crate::text::TextOwner::Account(account) = owner;
+            if *account != actor && !s.tenant().is_admin(actor) {
+                return Err(wrong_actor());
+            }
+            if *len == 0 || *len > crate::text::MAX_TEXT_LEN {
+                return Err(invalid());
+            }
+            let today = s.text_bytes_on(actor, now);
+            if today.saturating_add(u64::from(*len)) > crate::text::DAILY_TEXT_BYTES {
+                return Err(refuse(RuleRef::Input, RefusalReason::GuardFailed));
+            }
+            Ok(vec![CellRecord::Text(TextRecord::OwnedTextPut {
+                id: *id,
+                owner: *owner,
+                by: actor,
+                len: *len,
+            })])
         }
         // ADR-007 "Erasure-log entries", Daniel's decision of 2026-11-15
         // ("Tenant admin for all"): a tenant admin requests every cause,

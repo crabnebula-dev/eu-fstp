@@ -56,7 +56,7 @@ The design names these limits and no values. Daniel accepted the values below on
 - A full login challenge table answers 503 and evicts nothing.
 - A per-target refusal of a magic-link or recovery request answers like an accepted request, so it reveals no account.
 - The audit rule for rate refusals applies to every rate limit of the API core, not only the peer key.
-- `PutText` has the per-account rate limit only. The command carries no owning object and no size, so the ownership rule and the daily size bound wait on a design decision.
+- `PutText` has the per-account rate limit only. The command carries no owning object and no size, so the ownership rule and the daily size bound wait on a design decision. ADR-025 proposes both (2026-11-19, pending Daniel).
 - No production listener mounts the MCP server or the OAuth registration route yet. Each takes the peer through `McpServer::serve_from` and `RateKey::from_ip` once mounted.
 - The limits of the public auth routes and of `PutText` are a start option of the cell (`StartOptions::auth_limits`). The production default holds the interim values. The test world lifts them, since all its clients share the loopback address.
 - The full CI run of 2026-11-18 met two interim values. The login limit of 30 per minute refused the test world, which signs in from one address. The connection share of 64 refused a Playwright spec with eight signed-in browser contexts. The share is now 256, since a browser opens up to six connections per host.
@@ -71,5 +71,5 @@ The design names these limits and no values. Daniel accepted the values below on
 
 ## Open points for Daniel
 
-- The owning-object rule and the daily size bound of `PutText` (M9) stay open as a design item. Daniel decided on 2026-11-18 that the rate limit is enough for now.
+- The owning-object rule and the daily size bound of `PutText` (M9) stay open as a design item. Daniel decided on 2026-11-18 that the rate limit is enough for now. ADR-025 proposes the rule and the bound, built as interim values pending his acceptance.
 - The `TODO(legal)` of ADR-009 on client addresses (Q19) covers the peer key here too.

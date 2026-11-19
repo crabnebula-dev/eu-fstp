@@ -64,12 +64,24 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
         ) => Some((*token_digest, email)),
         (_, Some(_)) => return bad_body(BodyRefusal::Member("email")),
     };
-    // ADR-024, issue 6 M9, H-01: a session holder puts at most
-    // `PUT_TEXT_PER_ACCOUNT` texts per window. The command carries no
-    // owning object and no size, so the cell enforces the rate only.
+    // ADR-025, issue 6 M9, H-01: a session holder puts a text with an owner
+    // and a declared length, which the cell decides on. `PutText` names
+    // neither, so this route refuses it.
     if matches!(
         &command,
         CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { .. })
+    ) {
+        return Reply::refuse(
+            fstp_http::StatusCode::FORBIDDEN,
+            Some(crate::routes::Rule::Spec("ADR-025")),
+            "text",
+        );
+    }
+    // ADR-024: a session holder puts at most `PUT_TEXT_PER_ACCOUNT` texts
+    // per window.
+    if matches!(
+        &command,
+        CellCommand::Text(fstp_cell_core::text::TextCommand::PutOwnedText { .. })
     ) && !ctx
         .limits
         .put_text(caller.row.account, ctx.backend.now().micros())

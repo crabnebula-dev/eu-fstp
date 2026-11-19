@@ -516,6 +516,9 @@ pub struct CellState {
     pub(crate) auth: AuthState,
     pub(crate) tenant: TenantState,
     pub(crate) texts: BTreeMap<[u8; 16], TextStatus>,
+    /// The UTC day and the declared text bytes each account put on it, for
+    /// the latest day it put a text (issue 6 M9, ADR-025).
+    text_days: BTreeMap<AccountId, (i64, u64)>,
     erasures: BTreeMap<[u8; 16], ErasureEntry>,
     pub(crate) key_ops: u64,
     pub(crate) destroyed_epochs: BTreeSet<u64>,
@@ -549,6 +552,7 @@ impl CellState {
             auth: AuthState::default(),
             tenant: TenantState::default(),
             texts: BTreeMap::new(),
+            text_days: BTreeMap::new(),
             erasures: BTreeMap::new(),
             key_ops: 0,
             destroyed_epochs: BTreeSet::new(),
@@ -598,6 +602,15 @@ impl CellState {
     /// The status of text `id`, if it was stored.
     pub fn text(&self, id: [u8; 16]) -> Option<TextStatus> {
         self.texts.get(&id).copied()
+    }
+
+    /// The declared text bytes `account` put on the UTC day of `at`
+    /// (issue 6 M9, ADR-025).
+    pub fn text_bytes_on(&self, account: AccountId, at: Timestamp) -> u64 {
+        match self.text_days.get(&account) {
+            Some((day, bytes)) if *day == utc_day(at) => *bytes,
+            _ => 0,
+        }
     }
 
     /// The erasure-log entry of text `id`, once its erasure was requested.
@@ -1175,9 +1188,24 @@ fn fold_tenant(t: &mut TenantState, at: Timestamp, r: &TenantRecord) -> Result<(
     Ok(())
 }
 
+/// The UTC day of `at`, counted from the Unix epoch.
+pub(crate) fn utc_day(at: Timestamp) -> i64 {
+    at.micros().div_euclid(86_400_000_000)
+}
+
 fn fold_text(s: &mut CellState, at: Timestamp, r: &TextRecord) -> Result<(), FoldError> {
     let texts = &mut s.texts;
     match r {
+        TextRecord::OwnedTextPut { id, by, len, .. } => {
+            if texts.contains_key(id) {
+                return Err(duplicate());
+            }
+            texts.insert(*id, TextStatus::Live);
+            let day = utc_day(at);
+            let used = s.text_bytes_on(*by, at);
+            s.text_days
+                .insert(*by, (day, used.saturating_add(u64::from(*len))));
+        }
         TextRecord::TextPut { id } => {
             if texts.contains_key(id) {
                 return Err(duplicate());

@@ -11,7 +11,7 @@ use fstp_cell::routes::CHALLENGE_US;
 use fstp_cell::routes::backend::MAX_CHALLENGES;
 use fstp_cell::routes::memory::{DEFAULT_NOW_US, LocalCell};
 use fstp_cell_core::CellCommand;
-use fstp_cell_core::text::TextCommand;
+use fstp_cell_core::text::{TextCommand, TextOwner};
 use fstp_domain::time::Timestamp;
 use fstp_http::{Method, Request, RequestTarget, Response};
 
@@ -197,7 +197,8 @@ fn issue6_l17_cell_origin_sends_hsts_coop_and_corp() {
 }
 
 /// M9, H-01, ADR-024: an account puts at most 120 texts a minute. The
-/// command has no owning object and no size, so the cell enforces the rate.
+/// command now names an owner and a length (ADR-025), and the rate limit
+/// still applies to it.
 #[test]
 fn issue6_m9_put_text_is_rate_limited_per_account() {
     let c = cell();
@@ -206,7 +207,13 @@ fn issue6_m9_put_text_is_rate_limited_per_account() {
         let mut id = [0u8; 16];
         id[..4].copy_from_slice(&i.to_be_bytes());
         id[15] = 0x77;
-        let cmd = CellCommand::Text(TextCommand::PutText { id });
+        // ADR-025: the route takes texts with an owner. The tenant admin
+        // may own a text to any account.
+        let cmd = CellCommand::Text(TextCommand::PutOwnedText {
+            id,
+            owner: TextOwner::Account(fstp_domain::id::AccountId::from_raw(77)),
+            len: 1,
+        });
         let command = String::from_utf8(fstp_cell_core::encode_cell_command(&cmd)).unwrap();
         let mut cid = [0u8; 16];
         cid[..4].copy_from_slice(&i.to_be_bytes());
@@ -267,4 +274,40 @@ fn issue6_l12_known_and_unknown_recovery_requests_take_the_same_steps() {
     );
     assert!(opened > before, "the known address opened a case");
     assert_eq!(c.backend().records().len(), opened);
+}
+
+/// Issue 6 M9, H-01, ADR-025: the session route refuses `PutText`, which
+/// names no owner and no length, and takes `PutOwnedText` only when the
+/// caller may write the owner.
+#[test]
+fn issue6_m9_h01_session_route_refuses_a_text_without_an_owner() {
+    let c = cell();
+    let cookie = c.admin_session().unwrap();
+    let send = |cmd: CellCommand, n: u8| {
+        let command = String::from_utf8(fstp_cell_core::encode_cell_command(&cmd)).unwrap();
+        let body = format!(
+            "{{\"command\":{command},\"command_id\":\"{}\"}}",
+            hex(&[n; 16])
+        );
+        c.serve(post(
+            "/api/v1/commands",
+            Some(&cookie),
+            body.as_bytes(),
+            peer(8, 1),
+        ))
+    };
+    let bare = send(
+        CellCommand::Text(TextCommand::PutText { id: [0x61; 16] }),
+        0x91,
+    );
+    assert_eq!(code(&bare), 403);
+    let owned = send(
+        CellCommand::Text(TextCommand::PutOwnedText {
+            id: [0x62; 16],
+            owner: TextOwner::Account(fstp_domain::id::AccountId::from_raw(77)),
+            len: 12,
+        }),
+        0x92,
+    );
+    assert_eq!(code(&owned), 200);
 }
