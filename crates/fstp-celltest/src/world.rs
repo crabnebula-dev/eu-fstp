@@ -385,10 +385,17 @@ impl CellHandle {
         staff_1: [u8; 16],
         staff_2: [u8; 16],
     ) -> Result<Vec<u8>, WorldError> {
+        // Issue 6 L11: the ticket names this cell and expires one ticket
+        // lifetime after the cell's clock.
         let ticket = fstp_auth::recovery::OperatorTicket {
+            cell: self.id,
             case,
             staff_1: fstp_auth::recovery::StaffRef(staff_1),
             staff_2: fstp_auth::recovery::StaffRef(staff_2),
+            expires_at: self
+                .clock
+                .now()
+                .saturating_add(fstp_auth::recovery::TICKET_LIFETIME_US),
         };
         let signature = self
             .operator

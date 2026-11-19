@@ -34,7 +34,7 @@ use crate::limits::Limits;
 use crate::message::{BodyKind, Request, RequestHead, Response, ResponseHead};
 use crate::method::Method;
 use crate::status::StatusCode;
-use crate::target::{RequestTarget, valid_host_value};
+use crate::target::{Authority, RequestTarget, valid_host_value};
 use crate::version::{Version, VersionParse, parse_version};
 
 /// Consumed bytes are compacted away once this many accumulate.
@@ -652,6 +652,31 @@ fn check_host(version: Version, headers: &Headers) -> Result<(), K> {
     }
 }
 
+/// Issue 6 L1, H-17: an absolute-form target and the Host field must name
+/// the same host and port. Hosts compare without case, and a missing port
+/// is the scheme's default. RFC 9112 section 3.2.2 lets an origin server
+/// ignore Host for this form. Refusing a mismatch instead means no layer
+/// can route on the other value. A request with no Host (HTTP/1.0) has
+/// nothing to differ from.
+fn check_target_host(target: &RequestTarget, headers: &Headers) -> Result<(), K> {
+    let (Some(scheme), Some(authority)) = (target.scheme(), target.authority()) else {
+        return Ok(());
+    };
+    let Some(host) = headers.get("host") else {
+        return Ok(());
+    };
+    let host = std::str::from_utf8(host.as_bytes())
+        .ok()
+        .and_then(|h| Authority::parse(h).ok())
+        .ok_or(K::HostMismatch)?;
+    let port = |a: &Authority| a.port().unwrap_or(scheme.default_port());
+    if host.host().eq_ignore_ascii_case(authority.host()) && port(&host) == port(authority) {
+        Ok(())
+    } else {
+        Err(K::HostMismatch)
+    }
+}
+
 fn request_body_kind(version: Version, headers: &Headers, limits: &Limits) -> Result<BodyKind, K> {
     if headers.contains("transfer-encoding") {
         if version == Version::Http10 {
@@ -692,6 +717,7 @@ fn finish_request_head(
     limits: &Limits,
 ) -> Result<RequestHead, K> {
     check_host(line.version, &headers)?;
+    check_target_host(&line.target, &headers)?;
     let (close, ka) = connection_options(&headers)?;
     let body = request_body_kind(line.version, &headers, limits)?;
     let expect_continue = expect_continue(line.version, &headers)?;

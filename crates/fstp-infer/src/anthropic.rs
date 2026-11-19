@@ -188,6 +188,10 @@ pub fn decode_anthropic_response(body: &[u8]) -> Result<ModelReply, DecodeError>
         return Err(DecodeError::TooLarge);
     }
     let v = fstp_json::parse_with(body, &limits()).map_err(|_| DecodeError::Json)?;
+    // Issue 6 L4: a NUL never reaches a finding, the ledger or PostgreSQL text.
+    if v.contains_nul() {
+        return Err(DecodeError::Json);
+    }
     let top = object(Some(&v), "response")?;
     closed(top, &TOP)?;
     if string(top.get("type"), "type")? != "message" {

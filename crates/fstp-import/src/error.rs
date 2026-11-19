@@ -36,6 +36,9 @@ pub enum ImportError {
     /// A value is above the size, depth or node limits of an
     /// `UntrustedValue`.
     ValueOutOfBounds,
+    /// A value holds a NUL character in a string or a member name (issue 6
+    /// L4). PostgreSQL text holds no NUL, and neither may the ledger.
+    Nul,
     /// The field key names no field of the `FIELDS` table.
     UnknownField,
     /// The field is not importable (`FieldSpec::importable`).
@@ -64,6 +67,7 @@ impl fmt::Display for ImportError {
             ImportError::ValueOutOfBounds => {
                 f.write_str("the value is above the size, depth or node limits")
             }
+            ImportError::Nul => f.write_str("the value holds a NUL character"),
             ImportError::UnknownField => f.write_str("the field key names no field"),
             ImportError::NotImportable => f.write_str("the field is not importable"),
             ImportError::EvidenceCount => f.write_str("a proposal needs 1 to 8 evidence spans"),

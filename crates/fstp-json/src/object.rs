@@ -232,9 +232,11 @@ impl PartialEq for Object {
 
 impl Eq for Object {}
 
+/// Shows the shape only, like `Debug` for [`Value`]: no member name or
+/// value reaches a log (issue 6 L2, R-NF-02).
 impl fmt::Debug for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map().entries(self.iter()).finish()
+        crate::value::fmt_shape(f, "Object", self.len(), self.iter().map(|(_, v)| v))
     }
 }
 

@@ -454,6 +454,7 @@ fn line_limits() -> ParseLimits {
     ParseLimits {
         max_input_bytes: MAX_CAPTURE.saturating_mul(2).saturating_add(4096),
         max_string_bytes: MAX_CAPTURE.saturating_mul(2),
+        max_memory_bytes: 32 << 20,
         ..ParseLimits::default()
     }
 }

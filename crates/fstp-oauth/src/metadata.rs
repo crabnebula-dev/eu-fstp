@@ -89,6 +89,13 @@ fn string_subset(v: Option<&Value>, allowed: &[&str]) -> Result<(), OauthError> 
 /// `token_endpoint_auth_method` only `none`.
 pub fn decode_client_metadata(bytes: &[u8]) -> Result<ClientMetadata, OauthError> {
     let v = fstp_json::parse_with(bytes, &limits()).map_err(|_| OauthError::InvalidJson)?;
+    // Issue 6 L4: a registered client is kept in PostgreSQL text, which
+    // holds no NUL.
+    if v.contains_nul() {
+        return Err(OauthError::InvalidClientMetadata(
+            "a member holds a NUL character",
+        ));
+    }
     let o = v
         .as_object()
         .ok_or(OauthError::InvalidClientMetadata("not a JSON object"))?;
@@ -167,5 +174,25 @@ mod tests {
         );
         let body = br#"{"redirect_uris":["https://a.example/cb"],"token_endpoint_auth_method":"client_secret_basic"}"#;
         assert!(decode_client_metadata(body).is_err());
+    }
+
+    /// Issue 6 L4: client metadata with an escaped NUL in any member is
+    /// refused, since a registered client is kept in PostgreSQL text.
+    #[test]
+    fn issue6_l4_client_metadata_with_a_nul_is_refused() {
+        let body = br#"{"redirect_uris":["https://a.example/cb"],"client_name":"a\u0000b"}"#;
+        assert_eq!(
+            decode_client_metadata(body),
+            Err(OauthError::InvalidClientMetadata(
+                "a member holds a NUL character"
+            ))
+        );
+        let body = br#"{"redirect_uris":["https://a.example/cb"],"x\u0000":1}"#;
+        assert_eq!(
+            decode_client_metadata(body),
+            Err(OauthError::InvalidClientMetadata(
+                "a member holds a NUL character"
+            ))
+        );
     }
 }

@@ -100,7 +100,8 @@ impl<R: Runtime> Retrieval for ProxyClient<R> {
         }
         let limits = ParseLimits::default()
             .with_max_input_bytes(usize::try_from(MAX_ANSWER_BYTES).unwrap_or(usize::MAX))
-            .with_max_depth(4);
+            .with_max_depth(4)
+            .with_max_memory_bytes(8 << 20);
         fstp_json::parse_with(&resp.body, &limits)
             .ok()
             .and_then(|v| Outcome::from_json(&v).ok())

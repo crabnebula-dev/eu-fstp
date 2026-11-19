@@ -44,7 +44,7 @@ pub struct ModelReply {
 pub enum DecodeError {
     /// The body is larger than [`MAX_RESPONSE_BYTES`].
     TooLarge,
-    /// The body is not I-JSON.
+    /// The body is not I-JSON, or holds an escaped NUL (issue 6 L4).
     Json,
     /// An object holds a member outside the closed set.
     UnknownMember,
@@ -155,6 +155,9 @@ pub(crate) fn limits() -> ParseLimits {
         max_string_bytes: MAX_RESPONSE_BYTES,
         max_container_len: 64,
         max_nodes: 1024,
+        // A reply may hold one string of up to the whole response, more than
+        // the 1 MiB default memory limit allows (issue 6 L3).
+        max_memory_bytes: 8 << 20,
         ..ParseLimits::default()
     }
 }
@@ -210,6 +213,10 @@ pub fn decode_response(body: &[u8]) -> Result<ModelReply, DecodeError> {
         return Err(DecodeError::TooLarge);
     }
     let v = fstp_json::parse_with(body, &limits()).map_err(|_| DecodeError::Json)?;
+    // Issue 6 L4: a NUL never reaches a finding, the ledger or PostgreSQL text.
+    if v.contains_nul() {
+        return Err(DecodeError::Json);
+    }
     let top = object(Some(&v), "response")?;
     closed(top, &TOP)?;
     if string(top.get("object"), "object")? != "chat.completion" {

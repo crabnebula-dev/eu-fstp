@@ -433,6 +433,15 @@ fn tenant_record(v: &Value) -> Result<TenantRecord, FromJsonError> {
 fn text_record_json(r: &TextRecord) -> Value {
     match r {
         TextRecord::TextPut { id } => tagged("TextPut", vec![("id", hex(id))]),
+        TextRecord::OwnedTextPut { id, owner, by, len } => tagged(
+            "OwnedTextPut",
+            vec![
+                ("by", account_json(*by)),
+                ("id", hex(id)),
+                ("len", dec_u128(u128::from(*len))),
+                ("owner", owner_json(owner)),
+            ],
+        ),
         TextRecord::TextsErased { ids } => tagged("TextsErased", vec![("ids", id_list(ids))]),
         TextRecord::ErasureRequested { ids, cause, by } => tagged(
             "ErasureRequested",
@@ -452,6 +461,15 @@ fn text_record(v: &Value) -> Result<TextRecord, FromJsonError> {
             fields(o, &["id"])?;
             Ok(TextRecord::TextPut {
                 id: array_from(o, "id")?,
+            })
+        }
+        "OwnedTextPut" => {
+            fields(o, &["by", "id", "len", "owner"])?;
+            Ok(TextRecord::OwnedTextPut {
+                id: array_from(o, "id")?,
+                owner: owner_from(o)?,
+                by: account_from(o, "by")?,
+                len: len_from(o)?,
             })
         }
         "TextsErased" => {
@@ -1340,6 +1358,14 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
 fn text_command_json(c: &TextCommand) -> Value {
     match c {
         TextCommand::PutText { id } => tagged("PutText", vec![("id", hex(id))]),
+        TextCommand::PutOwnedText { id, owner, len } => tagged(
+            "PutOwnedText",
+            vec![
+                ("id", hex(id)),
+                ("len", dec_u128(u128::from(*len))),
+                ("owner", owner_json(owner)),
+            ],
+        ),
         TextCommand::EraseTexts { ids, cause } => tagged(
             "EraseTexts",
             vec![
@@ -1357,6 +1383,14 @@ fn text_command(v: &Value) -> Result<TextCommand, FromJsonError> {
             fields(o, &["id"])?;
             Ok(TextCommand::PutText {
                 id: array_from(o, "id")?,
+            })
+        }
+        "PutOwnedText" => {
+            fields(o, &["id", "len", "owner"])?;
+            Ok(TextCommand::PutOwnedText {
+                id: array_from(o, "id")?,
+                owner: owner_from(o)?,
+                len: len_from(o)?,
             })
         }
         "EraseTexts" => {
@@ -1685,6 +1719,32 @@ fn dec_u128(n: u128) -> Value {
 
 fn account_json(a: AccountId) -> Value {
     dec_u128(a.raw())
+}
+
+/// The owner of a text (ADR-025): `{"account": "<id>"}`.
+fn owner_json(owner: &crate::text::TextOwner) -> Value {
+    let crate::text::TextOwner::Account(a) = owner;
+    let mut o = Object::with_capacity(1);
+    o.insert("account", account_json(*a));
+    Value::Object(o)
+}
+
+fn owner_from(o: &Object) -> Result<crate::text::TextOwner, FromJsonError> {
+    let inner = o
+        .get("owner")
+        .and_then(Value::as_object)
+        .ok_or_else(|| FromJsonError::invalid("not an owner object").at_field("owner"))?;
+    fields(inner, &["account"]).map_err(|e| e.at_field("owner"))?;
+    account_from(inner, "account")
+        .map(crate::text::TextOwner::Account)
+        .map_err(|e| e.at_field("owner"))
+}
+
+/// A declared text length, a canonical decimal that fits `u32`.
+fn len_from(o: &Object) -> Result<u32, FromJsonError> {
+    u32::try_from(u128_from(o, "len")?).map_err(|_| {
+        FromJsonError::new(FromJsonErrorKind::OutOfRange { target: "u32" }).at_field("len")
+    })
 }
 
 /// Whether `s` is a canonical unsigned decimal: digits only, no leading

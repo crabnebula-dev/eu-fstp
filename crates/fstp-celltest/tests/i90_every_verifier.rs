@@ -217,9 +217,11 @@ fn metadata_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
 
 fn ticket(v: u8) -> OperatorTicket {
     OperatorTicket {
+        cell: [v ^ 3; 16],
         case: [v; 16],
         staff_1: StaffRef([v ^ 1; 16]),
         staff_2: StaffRef([v ^ 2; 16]),
+        expires_at: i64::from(v),
     }
 }
 

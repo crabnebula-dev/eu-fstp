@@ -23,8 +23,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use corpus::{Corpus, GENERATOR, PII_CLASSES, RUBRIC_ELEMENTS, SYLLABLES, V1_SEED, generate};
 use fstp_json::Value;
 
+/// The manifest takes more than the 1 MiB default memory limit.
 fn manifest(c: &Corpus) -> Value {
-    fstp_json::parse(c.file("manifest.json").expect("manifest.json")).unwrap()
+    let limits = fstp_json::ParseLimits::default().with_max_memory_bytes(32 << 20);
+    fstp_json::parse_with(c.file("manifest.json").expect("manifest.json"), &limits).unwrap()
 }
 
 fn items(m: &Value) -> Vec<&Value> {

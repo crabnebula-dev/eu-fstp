@@ -49,7 +49,8 @@ fn metadata() -> Value {
         .with_max_depth(64)
         .with_max_string_bytes(16 << 20)
         .with_max_container_len(1_000_000)
-        .with_max_nodes(50_000_000);
+        .with_max_nodes(50_000_000)
+        .with_max_memory_bytes(32 << 20);
     fstp_json::parse_with(&out.stdout, &limits).expect("cargo metadata prints JSON")
 }
 

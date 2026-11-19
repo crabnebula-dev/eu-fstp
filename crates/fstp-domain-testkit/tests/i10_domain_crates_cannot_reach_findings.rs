@@ -41,12 +41,15 @@ fn metadata() -> Value {
         "cargo metadata failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // As `metadata_limits` in tools/deps-check: the output takes far more
+    // than the 1 MiB default memory limit (issue 6 L3).
     let limits = ParseLimits::default()
         .with_max_input_bytes(256 << 20)
         .with_max_depth(64)
         .with_max_string_bytes(16 << 20)
         .with_max_container_len(1_000_000)
-        .with_max_nodes(50_000_000);
+        .with_max_nodes(50_000_000)
+        .with_max_memory_bytes(32 << 20);
     fstp_json::parse_with(&out.stdout, &limits).expect("cargo metadata prints JSON")
 }
 

@@ -14,13 +14,15 @@ use crate::value::{Array, Value, exact_capacity};
 
 /// Resource limits for one parse. Every limit is inclusive.
 ///
-/// The defaults suit untrusted API payloads. With them, the estimated memory
-/// of a parsed value is at most 32 MiB, eight times the default input limit
-/// (see [`ParseLimits::max_memory_bytes`]). Tools that read large trusted
-/// documents raise the limits with the `with_*` methods.
+/// The defaults suit one untrusted API payload as large as the default HTTP
+/// body limit (1 MiB). With them, the input and the estimated memory of the
+/// parsed value are both at most 1 MiB (see [`ParseLimits::max_memory_bytes`]),
+/// so a dense body cannot expand into a much larger tree (issue 6 L3). Callers
+/// that read larger or trusted documents raise the limits with the `with_*`
+/// methods.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParseLimits {
-    /// Maximum input length in bytes. Default 4 MiB.
+    /// Maximum input length in bytes. Default 1 MiB.
     pub max_input_bytes: usize,
     /// Maximum nesting depth of arrays and objects. A scalar has depth 0 and
     /// `[[]]` has depth 2. Default 128.
@@ -37,7 +39,7 @@ pub struct ParseLimits {
     /// Member names do not count. Default 1 000 000.
     pub max_nodes: usize,
     /// Maximum estimated heap memory of the parsed value, in bytes.
-    /// Default 32 MiB.
+    /// Default 1 MiB.
     ///
     /// The estimate charges:
     ///
@@ -54,22 +56,23 @@ pub struct ParseLimits {
     /// spare capacity, so peak use can reach about twice the estimate.
     ///
     /// Dense input, such as an array of one-digit numbers, costs about 33
-    /// bytes per input byte. It reaches the default limit at about 1 MiB of
-    /// input. Output of `cargo metadata` costs about 7 bytes per input byte,
-    /// so the default admits about 4 MiB of it.
+    /// bytes per input byte. It reaches the default limit at about 32 KiB of
+    /// input. A long string costs little more than its length. Output of
+    /// `cargo metadata` costs about 7 bytes per input byte, so a caller that
+    /// reads it sets a larger limit.
     pub max_memory_bytes: usize,
 }
 
 impl Default for ParseLimits {
     fn default() -> ParseLimits {
         ParseLimits {
-            max_input_bytes: 4 << 20,
+            max_input_bytes: 1 << 20,
             max_depth: 128,
             max_string_bytes: 1 << 20,
             max_number_len: 256,
             max_container_len: 100_000,
             max_nodes: 1_000_000,
-            max_memory_bytes: 32 << 20,
+            max_memory_bytes: 1 << 20,
         }
     }
 }

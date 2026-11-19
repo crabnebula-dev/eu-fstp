@@ -29,6 +29,10 @@ const ADMIN_1: AccountId = AccountId::from_raw(1);
 const ADMIN_2: AccountId = AccountId::from_raw(2);
 const APPLICANT: AccountId = AccountId::from_raw(4);
 const CASE: [u8; 16] = [0xCA; 16];
+/// The cell an operator ticket names (issue 6 L11).
+const CELL: [u8; 16] = [0xC1; 16];
+/// The instant a ticket is accepted at, in Unix microseconds.
+const NOW_US: i64 = 1_798_761_600_000_000;
 const CHALLENGE: [u8; 32] = [0x3D; 32];
 
 fn tenant(list: &[AccountId]) -> TenantView {
@@ -61,16 +65,18 @@ fn evidence(
     Evidence {
         email: path != RecoveryPath::HostConsole,
         approval: (path == RecoveryPath::SecondAdmin).then_some(approval),
-        ticket: ticket.map(|b| accept_ticket(&b, CASE, pk).unwrap()),
+        ticket: ticket.map(|b| accept_ticket(&b, CELL, CASE, NOW_US, pk).unwrap()),
         host_console: path == RecoveryPath::HostConsole,
     }
 }
 
 fn signed_ticket(key: &fstp_crypto::composite::CompositeSigningKey, context: &[u8]) -> Vec<u8> {
     let t = OperatorTicket {
+        cell: CELL,
         case: CASE,
         staff_1: StaffRef([1; 16]),
         staff_2: StaffRef([2; 16]),
+        expires_at: NOW_US + 60_000_000,
     };
     let sig = key
         .sign_with_context(&t.message(), context)
@@ -228,7 +234,10 @@ fn i79_operator_ticket_of_another_kind_is_refused() {
     let key = fstp_crypto::composite::generate().unwrap();
     let pk = key.public_key().to_bytes().to_vec();
     let bg = signed_ticket(&key, TicketKind::BreakGlass.context());
-    assert_eq!(accept_ticket(&bg, CASE, &pk), Err(TicketDeny::Signature));
+    assert_eq!(
+        accept_ticket(&bg, CELL, CASE, NOW_US, &pk),
+        Err(TicketDeny::Signature)
+    );
     let v = verify_ticket_as(&bg, &pk, TicketKind::BreakGlass).unwrap();
     assert_eq!(v.kind(), TicketKind::BreakGlass);
     assert_eq!(check_ticket(&v, CASE), Err(TicketDeny::OtherKind));

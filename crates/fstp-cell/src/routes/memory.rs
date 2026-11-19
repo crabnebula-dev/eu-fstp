@@ -66,11 +66,26 @@ struct Mem {
     tokens: BTreeMap<[u8; 32], TokenRow>,
     outbox: Vec<(AccountId, [u8; 32])>,
     proofs: Vec<(String, [u8; 32])>,
-    /// The steps of magic-link requests, for the L12 test.
+    /// The steps of magic-link and recovery requests, for the L12 tests.
+    /// It keeps at most [`MAX_TRAIL`] steps.
     trail: Vec<&'static str>,
+    /// The deployment mode of the recovery path. `None`, the default,
+    /// fails a recovery request closed, as the provided body does.
+    deployment: Option<fstp_auth::recovery::Deployment>,
 }
 
+/// The most steps the trail keeps, so a long-running cell does not grow it
+/// without bound. A test empties it before the steps it reads.
+const MAX_TRAIL: usize = 1024;
+
 impl Mem {
+    /// Records one step of a request (L12, issue 6).
+    fn note(&mut self, step: &'static str) {
+        if self.trail.len() < MAX_TRAIL {
+            self.trail.push(step);
+        }
+    }
+
     fn state(&mut self) -> Arc<CellState> {
         Arc::clone(
             self.state
@@ -126,6 +141,12 @@ impl MemoryBackend {
         self.ticket.as_ref().map(|k| k.public_key())
     }
 
+    /// Sets the deployment mode of the recovery path. `None` fails every
+    /// recovery request closed.
+    pub fn set_deployment(&self, mode: Option<fstp_auth::recovery::Deployment>) {
+        let _ = self.with(|m| m.deployment = mode);
+    }
+
     /// Sets the clock.
     pub fn set_now(&self, now: Timestamp) {
         self.now.store(now.micros(), Ordering::SeqCst);
@@ -176,10 +197,10 @@ impl MemoryBackend {
         self.with(|m| m.challenges.get(&id).cloned()).ok().flatten()
     }
 
-    /// The steps the magic-link path took since the last call, oldest
-    /// first (L12, issue 6): `state`, `put_token`, `send_magic_link`, and
-    /// the decoys of the last two as `decoy_put_token` and
-    /// `decoy_send_magic_link`. The trail is emptied.
+    /// The steps the magic-link and recovery paths took since the last
+    /// call, oldest first (L12, issue 6): `state`, `execute`, `put_token`,
+    /// `send_magic_link`, `send_recovery_proof`, and the decoys of the
+    /// storing steps with a `decoy_` prefix. The trail is emptied.
     pub fn take_magic_trail(&self) -> Vec<&'static str> {
         self.with(|m| std::mem::take(&mut m.trail))
             .unwrap_or_default()
@@ -283,7 +304,7 @@ impl Backend for MemoryBackend {
 
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send {
         ready(self.with(|m| {
-            m.trail.push("state");
+            m.note("state");
             m.state()
         }))
     }
@@ -292,6 +313,7 @@ impl Backend for MemoryBackend {
         &self,
         admitted: Admitted,
     ) -> impl Future<Output = Result<Result<Done, ExecError>, BackendFault>> + Send {
+        let _ = self.with(|m| m.note("execute"));
         ready(self.run(admitted))
     }
 
@@ -403,7 +425,7 @@ impl Backend for MemoryBackend {
 
     fn put_token(&self, row: TokenRow) -> impl Future<Output = Result<(), BackendFault>> + Send {
         ready(self.with(|m| {
-            m.trail.push("put_token");
+            m.note("put_token");
             m.tokens.insert(row.digest, row);
         }))
     }
@@ -433,7 +455,7 @@ impl Backend for MemoryBackend {
         token: [u8; 32],
     ) -> impl Future<Output = Result<(), BackendFault>> + Send {
         ready(self.with(|m| {
-            m.trail.push("send_magic_link");
+            m.note("send_magic_link");
             m.outbox.push((account, token));
         }))
     }
@@ -445,12 +467,41 @@ impl Backend for MemoryBackend {
     ) -> impl Future<Output = Result<(), BackendFault>> + Send {
         let _ = token;
         ready(self.with(|m| {
-            m.trail.push(if step == 0 {
+            m.note(if step == 0 {
                 "decoy_put_token"
             } else {
                 "decoy_send_magic_link"
             });
         }))
+    }
+
+    fn send_recovery_proof(
+        &self,
+        account: AccountId,
+        case: [u8; 16],
+        token: [u8; 32],
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (account, case, token);
+        ready(self.with(|m| m.note("send_recovery_proof")))
+    }
+
+    fn recovery_decoy(
+        &self,
+        token: [u8; 32],
+        step: u8,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = token;
+        ready(self.with(|m| {
+            m.note(match step {
+                0 => "decoy_execute",
+                1 => "decoy_put_token",
+                _ => "decoy_send_recovery_proof",
+            });
+        }))
+    }
+
+    fn deployment(&self) -> Option<fstp_auth::recovery::Deployment> {
+        self.with(|m| m.deployment).ok().flatten()
     }
 
     fn send_signup_proof(

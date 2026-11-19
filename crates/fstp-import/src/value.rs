@@ -48,6 +48,11 @@ impl UntrustedValue {
     /// is trimmed or normalised and no number lexeme is rewritten. Refused
     /// above the bounds of this module.
     pub fn new(value: &Value) -> Result<UntrustedValue, ImportError> {
+        // Issue 6 L4: a value is kept in PostgreSQL text and reaches the
+        // ledger at confirmation, so it may hold no NUL.
+        if value.contains_nul() {
+            return Err(ImportError::Nul);
+        }
         let mut nodes = 0usize;
         let sorted = sort(value, 0, &mut nodes)?;
         let text = to_compact(&sorted);

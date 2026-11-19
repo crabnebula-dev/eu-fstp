@@ -76,7 +76,8 @@ impl Stage {
 /// Why a model output was refused. No variant carries output content.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputError {
-    /// The output is not I-JSON within the limits.
+    /// The output is not I-JSON within the limits, or holds an escaped NUL
+    /// (issue 6 L4).
     Json,
     /// An object holds a member outside the schema.
     UnknownMember,
@@ -384,6 +385,10 @@ pub fn decode_output(
         return Err(OutputError::TooLong);
     }
     let v = fstp_json::parse_with(content.as_bytes(), &limits()).map_err(|_| OutputError::Json)?;
+    // Issue 6 L4: a NUL never reaches a finding, the ledger or PostgreSQL text.
+    if v.contains_nul() {
+        return Err(OutputError::Json);
+    }
     closed(&v, &TOP, "output")?;
     let list = v
         .get("findings")

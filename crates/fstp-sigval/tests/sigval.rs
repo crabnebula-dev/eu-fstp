@@ -243,12 +243,19 @@ fn th_26_der_length_reader_is_bounded() {
 
 mod chain_rules {
     use super::*;
+    use der::asn1::Ia5String;
     use der::asn1::{BitString, ObjectIdentifier, OctetString};
     use der::{Decode, Encode};
     use fstp_sigval::validate_chain;
+    use std::str::FromStr;
     use x509_cert::Certificate;
     use x509_cert::ext::Extension;
-    use x509_cert::ext::pkix::{BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages};
+    use x509_cert::ext::pkix::constraints::name::GeneralSubtree;
+    use x509_cert::ext::pkix::name::GeneralName;
+    use x509_cert::ext::pkix::{
+        BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages, NameConstraints, SubjectAltName,
+    };
+    use x509_cert::name::Name;
 
     const KU: &str = "2.5.29.15";
     const BC: &str = "2.5.29.19";
@@ -438,10 +445,252 @@ mod chain_rules {
             set_ext(c, "2.5.29.32", false, vec![0x30, 0x00]);
         });
         assert_eq!(run(&k.root, &plain, &[]), Ok(2));
-        // nameConstraints (2.5.29.30), critical, on the CA: not enforced, so refused.
+        // nameConstraints (2.5.29.30), critical, on the CA: now processed.
+        // An empty one is malformed (RFC 5280 section 4.2.1.10), so refused.
         let nc_root = mutate(&k.root, &k.root_key, |c| {
             set_ext(c, "2.5.29.30", true, vec![0x30, 0x00]);
         });
-        assert_eq!(run(&nc_root, &s, &[]), Err(SigvalError::CriticalExtension));
+        assert_eq!(run(&nc_root, &s, &[]), Err(SigvalError::NameConstraints));
+    }
+
+    // ---- Issue 6 M1: name constraints (RFC 5280 sections 4.2.1.10, 6.1).
+
+    const NC: &str = "2.5.29.30";
+    const SAN: &str = "2.5.29.17";
+
+    fn subtree(base: GeneralName) -> GeneralSubtree {
+        GeneralSubtree {
+            base,
+            minimum: 0,
+            maximum: None,
+        }
+    }
+
+    fn nc(permitted: Vec<GeneralName>, excluded: Vec<GeneralName>) -> Vec<u8> {
+        let wrap = |v: Vec<GeneralName>| {
+            (!v.is_empty()).then(|| v.into_iter().map(subtree).collect::<Vec<_>>())
+        };
+        NameConstraints {
+            permitted_subtrees: wrap(permitted),
+            excluded_subtrees: wrap(excluded),
+        }
+        .to_der()
+        .unwrap()
+    }
+
+    fn dns(s: &str) -> GeneralName {
+        GeneralName::DnsName(Ia5String::new(s).unwrap())
+    }
+
+    fn mail(s: &str) -> GeneralName {
+        GeneralName::Rfc822Name(Ia5String::new(s).unwrap())
+    }
+
+    fn dir(s: &str) -> GeneralName {
+        GeneralName::DirectoryName(Name::from_str(s).unwrap())
+    }
+
+    /// The anchor with name constraints `value`, critical or not.
+    fn constrained_root(k: &Keys, critical: bool, value: Vec<u8>) -> Vec<u8> {
+        mutate(&k.root, &k.root_key, |c| set_ext(c, NC, critical, value))
+    }
+
+    /// A signer with the subject alternative names `names`.
+    fn signer_with(k: &Keys, names: Vec<GeneralName>) -> Vec<u8> {
+        mutate(&signer(k, &k.root_key, "Synthetic CA"), &k.root_key, |c| {
+            set_ext(c, EKU, false, email_eku());
+            if !names.is_empty() {
+                set_ext(c, SAN, false, SubjectAltName(names).to_der().unwrap());
+            }
+        })
+    }
+
+    /// Issue 6 M1, H-15: directoryName constraints of the anchor bind the
+    /// subject of every certificate below it. Attribute values compare
+    /// without case, so a respelt name cannot leave an excluded subtree.
+    #[test]
+    fn issue6_m1_h15_directory_name_constraints_are_enforced() {
+        let k = keys();
+        let s = signer_with(&k, vec![]);
+        let ok = |p: Vec<GeneralName>, e: Vec<GeneralName>| {
+            run(&constrained_root(&k, true, nc(p, e)), &s, &[])
+        };
+        assert_eq!(ok(vec![dir("CN=Synthetic Signer")], vec![]), Ok(2));
+        assert_eq!(ok(vec![dir("CN=synthetic  signer")], vec![]), Ok(2));
+        assert_eq!(
+            ok(vec![dir("CN=Other Signer")], vec![]),
+            Err(SigvalError::NameConstraints)
+        );
+        assert_eq!(
+            ok(vec![], vec![dir("CN=SYNTHETIC SIGNER")]),
+            Err(SigvalError::NameConstraints)
+        );
+        // A deeper base is not a prefix of a one-RDN subject.
+        assert_eq!(
+            ok(vec![dir("CN=Synthetic Signer,O=Example")], vec![]),
+            Err(SigvalError::NameConstraints)
+        );
+        // A permitted dNSName subtree alone leaves the subject free.
+        assert_eq!(ok(vec![dns("example.org")], vec![]), Ok(2));
+    }
+
+    /// Issue 6 M1, H-15: dNSName constraints match whole labels.
+    #[test]
+    fn issue6_m1_h15_dns_name_constraints_are_enforced() {
+        let k = keys();
+        let s = signer_with(&k, vec![dns("signer.example.org")]);
+        let ok = |p: Vec<GeneralName>, e: Vec<GeneralName>| {
+            run(&constrained_root(&k, true, nc(p, e)), &s, &[])
+        };
+        assert_eq!(ok(vec![dns("example.org")], vec![]), Ok(2));
+        assert_eq!(ok(vec![dns("EXAMPLE.org")], vec![]), Ok(2));
+        assert_eq!(ok(vec![dns("signer.example.org")], vec![]), Ok(2));
+        assert_eq!(
+            ok(vec![dns("ample.org")], vec![]),
+            Err(SigvalError::NameConstraints)
+        );
+        assert_eq!(
+            ok(vec![dns("example.com")], vec![]),
+            Err(SigvalError::NameConstraints)
+        );
+        assert_eq!(
+            ok(vec![dns("example.org")], vec![dns("signer.example.org")]),
+            Err(SigvalError::NameConstraints)
+        );
+        // A signer with no dNSName meets a permitted dNSName subtree.
+        let bare = signer_with(&k, vec![]);
+        let root = constrained_root(&k, true, nc(vec![dns("example.com")], vec![]));
+        assert_eq!(run(&root, &bare, &[]), Ok(2));
+    }
+
+    /// Issue 6 M1, H-15: rfc822Name constraints name a mailbox, a host or,
+    /// with a leading dot, any host below a domain.
+    #[test]
+    fn issue6_m1_h15_rfc822_name_constraints_are_enforced() {
+        let k = keys();
+        let s = signer_with(&k, vec![mail("ada@mail.example.org")]);
+        let ok = |p: Vec<GeneralName>, e: Vec<GeneralName>| {
+            run(&constrained_root(&k, true, nc(p, e)), &s, &[])
+        };
+        assert_eq!(ok(vec![mail("ada@mail.example.org")], vec![]), Ok(2));
+        assert_eq!(ok(vec![mail("MAIL.example.org")], vec![]), Ok(2));
+        assert_eq!(ok(vec![mail(".example.org")], vec![]), Ok(2));
+        assert_eq!(
+            ok(vec![mail("example.org")], vec![]),
+            Err(SigvalError::NameConstraints)
+        );
+        assert_eq!(
+            ok(vec![mail("bob@mail.example.org")], vec![]),
+            Err(SigvalError::NameConstraints)
+        );
+        assert_eq!(
+            ok(vec![], vec![mail(".example.org")]),
+            Err(SigvalError::NameConstraints)
+        );
+    }
+
+    /// Issue 6 M1, H-15: a constraint of a name form this validator does
+    /// not enforce is refused, whatever names the signer holds. A
+    /// non-critical extension is enforced too, and a malformed one fails.
+    #[test]
+    fn issue6_m1_h15_unsupported_or_malformed_name_constraints_are_refused() {
+        let k = keys();
+        let s = signer_with(&k, vec![dns("signer.example.org")]);
+        let ip = GeneralName::IpAddress(OctetString::new(vec![10, 0, 0, 0, 255, 0, 0, 0]).unwrap());
+        let uri = GeneralName::UniformResourceIdentifier(Ia5String::new(".example.org").unwrap());
+        for (p, e) in [(vec![ip.clone()], vec![]), (vec![], vec![uri])] {
+            assert_eq!(
+                run(&constrained_root(&k, true, nc(p, e)), &s, &[]),
+                Err(SigvalError::UnsupportedNameConstraint)
+            );
+        }
+        assert_eq!(
+            run(
+                &constrained_root(&k, false, nc(vec![dns("example.com")], vec![])),
+                &s,
+                &[]
+            ),
+            Err(SigvalError::NameConstraints)
+        );
+        let with_min = NameConstraints {
+            permitted_subtrees: Some(vec![GeneralSubtree {
+                base: dns("example.org"),
+                minimum: 1,
+                maximum: None,
+            }]),
+            excluded_subtrees: None,
+        }
+        .to_der()
+        .unwrap();
+        assert_eq!(
+            run(&constrained_root(&k, true, with_min), &s, &[]),
+            Err(SigvalError::NameConstraints)
+        );
+        assert_eq!(
+            run(
+                &constrained_root(&k, true, vec![0x30, 0x03, 0x02, 0x01, 0x00]),
+                &s,
+                &[]
+            ),
+            Err(SigvalError::NameConstraints)
+        );
+    }
+
+    /// Issue 6 M1, H-15: the constraints of an intermediate bind the signer
+    /// below it, and the anchor's bind the intermediate's subject.
+    #[test]
+    fn issue6_m1_h15_intermediate_name_constraints_bind_the_path() {
+        let k = keys();
+        let root1 = mutate(&k.root, &k.root_key, |c| {
+            let bc = BasicConstraints {
+                ca: true,
+                path_len_constraint: Some(1),
+            };
+            set_ext(c, BC, true, bc.to_der().unwrap());
+        });
+        let int_key = EcdsaP256KeyPair::generate().unwrap();
+        let int_with = |value: Option<Vec<u8>>| {
+            mutate(
+                &cert(
+                    &int_key,
+                    &int_key,
+                    "Synthetic Int",
+                    "Synthetic Int",
+                    CertKind::Ca,
+                    (NOW - 86_400, NOW + 86_400 * 300),
+                ),
+                &k.root_key,
+                |c| {
+                    c.tbs_certificate.issuer = Certificate::from_der(&k.root)
+                        .unwrap()
+                        .tbs_certificate
+                        .subject;
+                    if let Some(v) = value {
+                        set_ext(c, NC, true, v);
+                    }
+                },
+            )
+        };
+        let s = mutate(&signer(&k, &int_key, "Synthetic Int"), &int_key, |c| {
+            set_ext(c, EKU, false, email_eku());
+            set_ext(
+                c,
+                SAN,
+                false,
+                SubjectAltName(vec![dns("signer.example.org")])
+                    .to_der()
+                    .unwrap(),
+            );
+        });
+        assert_eq!(run(&root1, &s, &[int_with(None)]), Ok(3));
+        let int = int_with(Some(nc(vec![dns("example.com")], vec![])));
+        assert_eq!(run(&root1, &s, &[int]), Err(SigvalError::NameConstraints));
+        let int = int_with(Some(nc(vec![dns("example.org")], vec![])));
+        assert_eq!(run(&root1, &s, std::slice::from_ref(&int)), Ok(3));
+        // The anchor permits only the signer's subject, not the intermediate's.
+        let root = mutate(&root1, &k.root_key, |c| {
+            set_ext(c, NC, true, nc(vec![dir("CN=Synthetic Signer")], vec![]));
+        });
+        assert_eq!(run(&root, &s, &[int]), Err(SigvalError::NameConstraints));
     }
 }

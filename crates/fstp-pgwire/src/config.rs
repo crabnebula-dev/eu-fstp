@@ -105,18 +105,27 @@ impl AuthMethod {
 
 /// The set of authentication methods the client accepts.
 ///
-/// The default accepts SCRAM-SHA-256-PLUS and SCRAM-SHA-256 only. Cleartext
-/// passwords and unauthenticated connections are rejected unless added
-/// explicitly. MD5, Kerberos, GSSAPI and SSPI are never supported: MD5 is
+/// The default accepts SCRAM-SHA-256-PLUS only, SCRAM with
+/// `tls-server-end-point` channel binding (issue 6 L6, ADR-005 D2). Plain
+/// SCRAM-SHA-256 is accepted only where a configuration sets it, as the
+/// managed control-plane link does ([`RequireAuth::MANAGED_CONTROL_LINK`]).
+/// Cleartext passwords and unauthenticated connections are rejected unless
+/// added explicitly. MD5, Kerberos, GSSAPI and SSPI are never supported: MD5 is
 /// broken, and the others have no implementation here.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequireAuth(u8);
 
 impl RequireAuth {
-    /// SCRAM with or without channel binding. The default.
+    /// SCRAM with or without channel binding. Never the default.
     pub const SCRAM: RequireAuth = RequireAuth(1 | 2);
-    /// SCRAM with channel binding only.
+    /// SCRAM with channel binding only. The default.
     pub const SCRAM_PLUS_ONLY: RequireAuth = RequireAuth(1);
+    /// The setting of the managed control-plane link (ADR-005, "The
+    /// managed control cluster"): SCRAM with or without channel binding.
+    /// Whether the managed service offers SCRAM-SHA-256-PLUS is verify item
+    /// V6. Until V6 is answered, this link alone accepts plain SCRAM. When
+    /// V6 confirms channel binding, this becomes `SCRAM_PLUS_ONLY`.
+    pub const MANAGED_CONTROL_LINK: RequireAuth = RequireAuth::SCRAM;
 
     /// A set with exactly the given methods.
     #[must_use]
@@ -138,8 +147,9 @@ impl RequireAuth {
 }
 
 impl Default for RequireAuth {
+    /// [`RequireAuth::SCRAM_PLUS_ONLY`] (issue 6 L6).
     fn default() -> Self {
-        RequireAuth::SCRAM
+        RequireAuth::SCRAM_PLUS_ONLY
     }
 }
 
@@ -683,7 +693,7 @@ mod tests {
 
     #[test]
     fn require_auth_sets() {
-        let d = RequireAuth::default();
+        let d = RequireAuth::SCRAM;
         assert!(d.allows(AuthMethod::ScramSha256Plus));
         assert!(d.allows(AuthMethod::ScramSha256));
         assert!(!d.allows(AuthMethod::Password));
@@ -695,5 +705,31 @@ mod tests {
             RequireAuth::only(&[AuthMethod::ScramSha256Plus]),
             RequireAuth::SCRAM_PLUS_ONLY
         );
+    }
+
+    /// Issue 6 L6, ADR-005 D2: the default accepts SCRAM with channel
+    /// binding only, and so does a new configuration. Plain SCRAM is the
+    /// explicit setting of the managed control-plane link while V6 is open.
+    #[test]
+    fn issue6_l6_default_requires_channel_binding() {
+        let d = RequireAuth::default();
+        assert_eq!(d, RequireAuth::SCRAM_PLUS_ONLY);
+        assert!(d.allows(AuthMethod::ScramSha256Plus));
+        assert!(!d.allows(AuthMethod::ScramSha256));
+        assert!(!d.allows(AuthMethod::Password));
+        assert!(!d.allows(AuthMethod::None));
+        let tls = ClientTls::new(CA, CERT, KEY).unwrap();
+        let cfg = Config::new(
+            "db.example",
+            5432,
+            "app",
+            Password::new("pw").unwrap(),
+            "c",
+            tls,
+        )
+        .unwrap();
+        assert_eq!(cfg.allowed_auth(), RequireAuth::SCRAM_PLUS_ONLY);
+        assert_eq!(RequireAuth::MANAGED_CONTROL_LINK, RequireAuth::SCRAM);
+        assert_ne!(RequireAuth::MANAGED_CONTROL_LINK, RequireAuth::default());
     }
 }

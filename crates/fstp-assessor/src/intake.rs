@@ -85,7 +85,8 @@ pub struct RefusedStage {
 pub enum IntakeError {
     /// The line is longer than [`MAX_RESULT_BYTES`].
     TooLong,
-    /// The line is not one JSON text within the limits.
+    /// The line is not one JSON text within the limits, or holds an
+    /// escaped NUL (issue 6 L4).
     Json,
     /// An object holds a member outside the result shape, such as
     /// `score` or `decision` (I-10).
@@ -246,6 +247,10 @@ pub fn decode_result(line: &[u8], job: &JobLine) -> Result<Intake, IntakeError> 
         return Err(IntakeError::TooLong);
     }
     let v = fstp_json::parse_with(line, &limits()).map_err(|_| IntakeError::Json)?;
+    // Issue 6 L4: a NUL never reaches a finding, the ledger or PostgreSQL text.
+    if v.contains_nul() {
+        return Err(IntakeError::Json);
+    }
     let top = v.as_object().ok_or(IntakeError::Shape("object"))?;
     match top.get("status").and_then(Value::as_str) {
         Some("refused") => {

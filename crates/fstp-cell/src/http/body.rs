@@ -14,6 +14,9 @@
 //! - A member named `minor` is refused at any depth (I-18, NOTE 14). The
 //!   flag never comes from a request. Names are compared after JSON
 //!   unescaping, so an escaped spelling is caught too.
+//! - An escaped NUL in any string or member name is refused (issue 6 L4).
+//!   PostgreSQL text holds no NUL, and a record that held one could not
+//!   be projected.
 //! - Each schema lists its members. A missing member and an unknown member
 //!   are refused. Byte strings are lowercase hexadecimal of their exact
 //!   length, as in the `fstp-auth` codecs.
@@ -42,6 +45,9 @@ pub enum BodyRefusal {
     NotAnObject,
     /// A member named `minor` appears somewhere in the body (I-18).
     MinorMember,
+    /// A string or member name holds an escaped NUL (issue 6 L4).
+    /// PostgreSQL text holds no NUL, so no route may store one.
+    Nul,
     /// A member that the route's schema does not list.
     UnknownMember,
     /// A schema member is missing or malformed. It names the member.
@@ -59,6 +65,7 @@ impl BodyRefusal {
             BodyRefusal::NotCanonical => "the body is not canonical JSON",
             BodyRefusal::NotAnObject => "the body is not a JSON object",
             BodyRefusal::MinorMember => "the body names a minor member",
+            BodyRefusal::Nul => "the body holds a NUL character",
             BodyRefusal::UnknownMember => "the body holds a member its schema does not list",
             BodyRefusal::Member(_) => "a schema member is missing or malformed",
             BodyRefusal::Command => "the command member is not a cell command",
@@ -106,6 +113,9 @@ pub fn object(bytes: &[u8], limit: usize) -> Result<Object, BodyRefusal> {
     }
     if names_minor(&value) {
         return Err(BodyRefusal::MinorMember);
+    }
+    if value.contains_nul() {
+        return Err(BodyRefusal::Nul);
     }
     match value {
         Value::Object(o) => Ok(o),
@@ -314,5 +324,21 @@ mod tests {
             Err(BodyRefusal::MinorMember)
         );
         assert!(object(b"{\"a\":1}", 64).is_ok());
+    }
+
+    /// Issue 6 L4: an escaped NUL anywhere in a body, in a value or a member
+    /// name, is refused with its own kind before any route reads it.
+    /// PostgreSQL text holds no NUL, and a record that held one could not
+    /// be projected.
+    #[test]
+    fn issue6_l4_object_refuses_a_nul_anywhere() {
+        for body in [
+            &b"{\"a\":\"x\\u0000\"}"[..],
+            b"{\"a\":[{\"b\":\"\\u0000\"}]}",
+            b"{\"a\\u0000\":1}",
+        ] {
+            assert_eq!(object(body, 64), Err(BodyRefusal::Nul), "{body:?}");
+        }
+        assert!(object(b"{\"a\":\"\\u001f\"}", 64).is_ok());
     }
 }

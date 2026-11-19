@@ -34,6 +34,10 @@ const ADMIN_2: AccountId = acct(2);
 const MEMBER: AccountId = acct(3);
 const APPLICANT: AccountId = acct(4);
 const CASE: [u8; 16] = [0xCA; 16];
+/// The cell an operator ticket names (issue 6 L11).
+const CELL: [u8; 16] = [0xC1; 16];
+/// The instant a ticket is accepted at, in Unix microseconds.
+const NOW_US: i64 = 1_798_761_600_000_000;
 
 fn admins(list: &[AccountId]) -> TenantView {
     TenantView {
@@ -150,9 +154,11 @@ impl Signer {
 
     fn ticket(&self, case: [u8; 16], staff: [u8; 2], tamper: bool) -> Vec<u8> {
         let t = OperatorTicket {
+            cell: CELL,
             case,
             staff_1: StaffRef([staff[0]; 16]),
             staff_2: StaffRef([staff[1]; 16]),
+            expires_at: NOW_US + 60_000_000,
         };
         let sig = self
             .key
@@ -173,22 +179,34 @@ impl Signer {
 fn i79_operator_ticket_needs_signature_case_and_two_staff() {
     let s = Signer::new();
     let pk = s.public();
-    assert!(accept_ticket(&s.ticket(CASE, [1, 2], false), CASE, &pk).is_ok());
+    assert!(accept_ticket(&s.ticket(CASE, [1, 2], false), CELL, CASE, NOW_US, &pk).is_ok());
     assert_eq!(
-        accept_ticket(&s.ticket(CASE, [1, 2], true), CASE, &pk),
+        accept_ticket(&s.ticket(CASE, [1, 2], true), CELL, CASE, NOW_US, &pk),
         Err(TicketDeny::Signature)
     );
     assert_eq!(
-        accept_ticket(&s.ticket([0xCB; 16], [1, 2], false), CASE, &pk),
+        accept_ticket(
+            &s.ticket([0xCB; 16], [1, 2], false),
+            CELL,
+            CASE,
+            NOW_US,
+            &pk
+        ),
         Err(TicketDeny::OtherCase)
     );
     assert_eq!(
-        accept_ticket(&s.ticket(CASE, [1, 1], false), CASE, &pk),
+        accept_ticket(&s.ticket(CASE, [1, 1], false), CELL, CASE, NOW_US, &pk),
         Err(TicketDeny::OneStaff)
     );
     let other = Signer::new();
     assert_eq!(
-        accept_ticket(&s.ticket(CASE, [1, 2], false), CASE, &other.public()),
+        accept_ticket(
+            &s.ticket(CASE, [1, 2], false),
+            CELL,
+            CASE,
+            NOW_US,
+            &other.public()
+        ),
         Err(TicketDeny::Signature)
     );
     assert!(matches!(

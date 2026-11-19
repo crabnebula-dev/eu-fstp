@@ -34,7 +34,8 @@ use crate::value::Value;
 /// Settings for an [`NdjsonReader`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NdjsonOptions {
-    /// Maximum bytes in one line, excluding the line ending. Default 4 MiB.
+    /// Maximum bytes in one line, excluding the line ending. Default 1 MiB,
+    /// the default input limit of [`ParseLimits`].
     pub max_line_bytes: usize,
     /// Limits applied to each line's JSON text.
     pub limits: ParseLimits,
@@ -43,7 +44,7 @@ pub struct NdjsonOptions {
 impl Default for NdjsonOptions {
     fn default() -> NdjsonOptions {
         NdjsonOptions {
-            max_line_bytes: 4 << 20,
+            max_line_bytes: 1 << 20,
             limits: ParseLimits::default(),
         }
     }

@@ -16,8 +16,8 @@ use common::{
     same_response_outcome,
 };
 use fstp_http::{
-    Framing, HeaderName, HeaderValue, Headers, Limits, Method, Request, RequestTarget, Response,
-    StatusCode, Version, encode_request, encode_response,
+    Authority, Framing, HeaderName, HeaderValue, Headers, Limits, Method, ParseErrorKind, Request,
+    RequestTarget, Response, StatusCode, Version, encode_request, encode_response,
 };
 use fstp_prop::{Gen, check, prop_assert, prop_assert_eq};
 
@@ -174,11 +174,14 @@ fn request(g: &mut Gen) -> (Request, Framing) {
     } else {
         Version::Http10
     };
-    let absolute = t.authority().is_some();
+    // Issue 6 L1: an absolute-form target and Host name the same
+    // authority, or the parser refuses the request (`HostMismatch`).
+    let absolute = t.authority().map(|a| a.as_str().to_owned());
     let mut req = Request::new(m, t);
     req.version = version;
-    if version == Version::Http11 && (!absolute || g.bool()) {
-        req.headers.try_append("Host", authority(g)).unwrap();
+    if version == Version::Http11 && (absolute.is_none() || g.bool()) {
+        let host = absolute.unwrap_or_else(|| authority(g));
+        req.headers.try_append("Host", host).unwrap();
     }
     for (n, v) in &headers(g, 6) {
         req.headers.append(n.clone(), v.clone());
@@ -234,6 +237,38 @@ fn th26_request_serialize_then_parse_round_trips() {
             got = without(&got, &["host"]);
         }
         prop_assert_eq!(got, req.headers);
+        Ok(())
+    });
+}
+
+/// Issue 6 L1, TH-26: an absolute-form target whose authority names
+/// another host or effective port than Host is refused with
+/// `HostMismatch`, over any split of the input. Hosts compare without
+/// case, and a missing port is the scheme's default.
+#[test]
+fn issue6_l1_th26_mismatching_authority_is_refused() {
+    check("issue6_l1_th26_mismatching_authority_is_refused", |g| {
+        let https = g.bool();
+        let scheme = if https { "https" } else { "http" };
+        let (target, host) = (authority(g), authority(g));
+        g.note("target", &target);
+        g.note("host", &host);
+        let (Ok(a), Ok(h)) = (Authority::parse(&target), Authority::parse(&host)) else {
+            return Err("the generator gave an invalid authority".to_owned());
+        };
+        let default = if https { 443 } else { 80 };
+        let same = a.host().eq_ignore_ascii_case(h.host())
+            && a.port().unwrap_or(default) == h.port().unwrap_or(default);
+        let wire = format!("GET {scheme}://{target}/x HTTP/1.1\r\nHost: {host}\r\n\r\n");
+        let splits = g.vec(0..=4, |g| g.usize_in(0..=wire.len()));
+        let o = decode_requests(wire.as_bytes(), &splits, Limits::default(), true);
+        if same {
+            prop_assert_eq!(o.error, None);
+            prop_assert_eq!(o.messages.len(), 1);
+        } else {
+            prop_assert_eq!(o.error, Some(ParseErrorKind::HostMismatch));
+            prop_assert!(o.messages.is_empty());
+        }
         Ok(())
     });
 }

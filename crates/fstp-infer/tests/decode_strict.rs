@@ -102,3 +102,17 @@ fn r_la_04_decoder_refuses_other_shapes() {
         );
     assert!(decode_response(optional.as_bytes()).is_ok());
 }
+
+/// Issue 6 L4: a reply whose JSON holds an escaped NUL is refused as not
+/// I-JSON for this client, so the NUL never reaches a finding, the ledger
+/// or PostgreSQL text.
+#[test]
+fn issue6_l4_a_reply_with_a_nul_is_refused() {
+    let r = decode_response(reply("a\u{0}b").as_bytes());
+    assert!(matches!(r, Err(DecodeError::Json)), "{r:?}");
+    let base = reply("{}");
+    let named = base.replacen("\"id\":\"r-1\"", "\"id\":\"r\\u0000\"", 1);
+    assert!(named != base);
+    let r = decode_response(named.as_bytes());
+    assert!(matches!(r, Err(DecodeError::Json)), "{r:?}");
+}

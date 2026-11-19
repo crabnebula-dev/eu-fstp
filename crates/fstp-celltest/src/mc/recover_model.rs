@@ -410,6 +410,10 @@ impl Production {
             return Ok(*v);
         }
         let ticket = prod::OperatorTicket {
+            // Issue 6 L11: the cell and the expiry are checked at the route
+            // (`accept_ticket`), outside this model's reference.
+            cell: [0; 16],
+            expires_at: 0,
             case: if t.case_matches {
                 PROD_CASE
             } else {

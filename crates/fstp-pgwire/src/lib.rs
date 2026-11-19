@@ -13,9 +13,11 @@
 //!   presents the role's client certificate from its [`ClientTls`], which
 //!   cannot be built without one (D2, R-NF-09). The server checks it with
 //!   `clientcert=verify-full`, so its CN must equal the role.
-//! - **SCRAM only by default.** SCRAM-SHA-256-PLUS with
-//!   `tls-server-end-point` channel binding is used when the server offers
-//!   it, otherwise SCRAM-SHA-256. The server signature is always verified.
+//! - **SCRAM with channel binding by default.** The default accepts only
+//!   SCRAM-SHA-256-PLUS with `tls-server-end-point` channel binding (issue
+//!   6 L6). Plain SCRAM-SHA-256 needs an explicit [`RequireAuth`], such as
+//!   [`RequireAuth::MANAGED_CONTROL_LINK`] while ADR-005 V6 is open. The
+//!   server signature is always verified.
 //!   Cleartext passwords and unauthenticated logins need an explicit
 //!   [`RequireAuth`]; MD5, Kerberos, GSSAPI and SSPI are never supported.
 //!   Passwords are printable ASCII, where SASLprep is the identity mapping

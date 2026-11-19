@@ -176,7 +176,13 @@ pub fn decode_manifest(bytes: &[u8]) -> Result<AssetManifest, AssetError> {
     if bytes.windows(2).any(|w| w == b"..") {
         return Err(AssetError::Manifest("the manifest holds two dots"));
     }
-    let value = fstp_json::parse(bytes).map_err(|_| AssetError::Manifest("not JSON"))?;
+    // At MAX_ASSETS entries the parsed manifest takes more than the 1 MiB
+    // default memory limit (issue 6 L3).
+    let limits = fstp_json::ParseLimits::default()
+        .with_max_input_bytes(MAX_MANIFEST_BYTES)
+        .with_max_memory_bytes(8 << 20);
+    let value =
+        fstp_json::parse_with(bytes, &limits).map_err(|_| AssetError::Manifest("not JSON"))?;
     let top = value
         .as_object()
         .ok_or(AssetError::Manifest("not a JSON object"))?;

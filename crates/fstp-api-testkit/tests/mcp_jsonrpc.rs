@@ -77,6 +77,14 @@ fn th26_jsonrpc_decode_reads_requests_and_notifications() {
             }
             text.push('}');
             g.note("text", &text);
+            // Issue 6 L4: a message with a NUL anywhere is refused as invalid.
+            if fstp_json::parse(text.as_bytes()).is_ok_and(|v| v.contains_nul()) {
+                prop_assert_eq!(
+                    decode_jsonrpc(text.as_bytes()),
+                    Err(McpError::Invalid("the message holds a NUL character"))
+                );
+                return Ok(());
+            }
             let got = decode_jsonrpc(text.as_bytes()).map_err(|e| e.to_string())?;
             let want_params = params.as_deref().map(|p| {
                 fstp_json::parse(p.as_bytes())

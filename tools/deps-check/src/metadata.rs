@@ -19,6 +19,7 @@ pub(crate) fn metadata_limits() -> ParseLimits {
         .with_max_string_bytes(16 << 20)
         .with_max_container_len(1_000_000)
         .with_max_nodes(50_000_000)
+        .with_max_memory_bytes(32 << 20)
 }
 
 /// The kind of a dependency edge.

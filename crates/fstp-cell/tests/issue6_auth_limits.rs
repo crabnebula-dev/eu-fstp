@@ -11,7 +11,7 @@ use fstp_cell::routes::CHALLENGE_US;
 use fstp_cell::routes::backend::MAX_CHALLENGES;
 use fstp_cell::routes::memory::{DEFAULT_NOW_US, LocalCell};
 use fstp_cell_core::CellCommand;
-use fstp_cell_core::text::TextCommand;
+use fstp_cell_core::text::{TextCommand, TextOwner};
 use fstp_domain::time::Timestamp;
 use fstp_http::{Method, Request, RequestTarget, Response};
 
@@ -53,6 +53,11 @@ fn hex(b: &[u8]) -> String {
 fn magic(c: &LocalCell, email: &str, from: SocketAddr) -> Response {
     let body = format!("{{\"email\":\"{email}\"}}");
     c.serve(post("/auth/magic/request", None, body.as_bytes(), from))
+}
+
+fn recovery(c: &LocalCell, email: &str, from: SocketAddr) -> Response {
+    let body = format!("{{\"email\":\"{email}\"}}");
+    c.serve(post("/auth/recovery", None, body.as_bytes(), from))
 }
 
 /// M8, H-21, TH-21, ADR-024: login start is limited per peer. The 31st
@@ -192,7 +197,8 @@ fn issue6_l17_cell_origin_sends_hsts_coop_and_corp() {
 }
 
 /// M9, H-01, ADR-024: an account puts at most 120 texts a minute. The
-/// command has no owning object and no size, so the cell enforces the rate.
+/// command now names an owner and a length (ADR-025), and the rate limit
+/// still applies to it.
 #[test]
 fn issue6_m9_put_text_is_rate_limited_per_account() {
     let c = cell();
@@ -201,7 +207,13 @@ fn issue6_m9_put_text_is_rate_limited_per_account() {
         let mut id = [0u8; 16];
         id[..4].copy_from_slice(&i.to_be_bytes());
         id[15] = 0x77;
-        let cmd = CellCommand::Text(TextCommand::PutText { id });
+        // ADR-025: the route takes texts with an owner. The tenant admin
+        // may own a text to any account.
+        let cmd = CellCommand::Text(TextCommand::PutOwnedText {
+            id,
+            owner: TextOwner::Account(fstp_domain::id::AccountId::from_raw(77)),
+            len: 1,
+        });
         let command = String::from_utf8(fstp_cell_core::encode_cell_command(&cmd)).unwrap();
         let mut cid = [0u8; 16];
         cid[..4].copy_from_slice(&i.to_be_bytes());
@@ -218,4 +230,84 @@ fn issue6_m9_put_text_is_rate_limited_per_account() {
         assert_eq!(code(&put(i)), 200, "put {i}");
     }
     assert_eq!(code(&put(120)), 429);
+}
+
+/// L12, issue 6: `POST /auth/recovery` takes the same steps in the same
+/// order for a known and an unknown address before the reply: read the
+/// state, open the case, store the token row, send the proof. The decoy of
+/// each storing step stands in the same place as the step. Only the known
+/// address opens a case.
+#[test]
+fn issue6_l12_known_and_unknown_recovery_requests_take_the_same_steps() {
+    let c = cell();
+    c.backend()
+        .set_deployment(Some(fstp_auth::recovery::Deployment::Saas));
+    let known = c.applicant_email().to_owned();
+    let before = c.backend().records().len();
+    let _ = c.backend().take_magic_trail();
+    let r1 = recovery(&c, &known, peer(6, 1));
+    let known_trail = c.backend().take_magic_trail();
+    let opened = c.backend().records().len();
+    let r2 = recovery(&c, "ghost@example.test", peer(6, 2));
+    let unknown_trail = c.backend().take_magic_trail();
+    assert_eq!(code(&r1), 202);
+    assert_eq!(code(&r2), 202);
+    assert_eq!(r1.body, r2.body);
+    let shape = |t: &[&'static str]| -> Vec<&'static str> {
+        t.iter()
+            .map(|s| s.strip_prefix("decoy_").unwrap_or(s))
+            .collect()
+    };
+    assert_eq!(shape(&known_trail), shape(&unknown_trail));
+    assert_eq!(
+        known_trail,
+        ["state", "execute", "put_token", "send_recovery_proof"]
+    );
+    assert_eq!(
+        unknown_trail,
+        [
+            "state",
+            "decoy_execute",
+            "decoy_put_token",
+            "decoy_send_recovery_proof"
+        ]
+    );
+    assert!(opened > before, "the known address opened a case");
+    assert_eq!(c.backend().records().len(), opened);
+}
+
+/// Issue 6 M9, H-01, ADR-025: the session route refuses `PutText`, which
+/// names no owner and no length, and takes `PutOwnedText` only when the
+/// caller may write the owner.
+#[test]
+fn issue6_m9_h01_session_route_refuses_a_text_without_an_owner() {
+    let c = cell();
+    let cookie = c.admin_session().unwrap();
+    let send = |cmd: CellCommand, n: u8| {
+        let command = String::from_utf8(fstp_cell_core::encode_cell_command(&cmd)).unwrap();
+        let body = format!(
+            "{{\"command\":{command},\"command_id\":\"{}\"}}",
+            hex(&[n; 16])
+        );
+        c.serve(post(
+            "/api/v1/commands",
+            Some(&cookie),
+            body.as_bytes(),
+            peer(8, 1),
+        ))
+    };
+    let bare = send(
+        CellCommand::Text(TextCommand::PutText { id: [0x61; 16] }),
+        0x91,
+    );
+    assert_eq!(code(&bare), 403);
+    let owned = send(
+        CellCommand::Text(TextCommand::PutOwnedText {
+            id: [0x62; 16],
+            owner: TextOwner::Account(fstp_domain::id::AccountId::from_raw(77)),
+            len: 12,
+        }),
+        0x92,
+    );
+    assert_eq!(code(&owned), 200);
 }

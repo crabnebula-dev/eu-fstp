@@ -57,6 +57,7 @@
 //! | Field line starting with whitespace (obs-fold) | `ObsoleteLineFolding` | 400 |
 //! | NUL, control bytes or DEL in a field value | `InvalidHeaderValue` | 400 |
 //! | HTTP/1.1 request without exactly one valid Host | `MissingHost`, `MultipleHost`, `InvalidHost` | 400 |
+//! | Absolute-form target whose authority differs from Host | `HostMismatch` | 400 |
 //! | Content-Length together with Transfer-Encoding | `ContentLengthWithTransferEncoding` | 400 |
 //! | More than one Content-Length field line | `MultipleContentLength` | 400 |
 //! | Content-Length that is not plain digits | `InvalidContentLength` | 400 |

@@ -19,7 +19,7 @@ use fstp_auth::codec::{
     decode_token, encode_auth_command, encode_auth_record, encode_operator_ticket,
     encode_session_cookie, encode_token,
 };
-use fstp_auth::recovery::{OperatorTicket, RecoveryPath, StaffRef};
+use fstp_auth::recovery::{OperatorTicket, RecoveryPath, StaffRef, TICKET_MESSAGE_LEN};
 use fstp_auth::{AuthCommand, AuthRecord};
 use fstp_domain::id::AccountId;
 use fstp_prop::{Gen, check, prop_assert, prop_assert_eq};
@@ -306,11 +306,13 @@ fn th_26_operator_ticket_round_trips_at_one_length() {
         "th_26_operator_ticket_round_trips_at_one_length",
         |g: &mut Gen| {
             let t = OperatorTicket {
+                cell: arr16(g),
                 case: arr16(g),
                 staff_1: StaffRef(arr16(g)),
                 staff_2: StaffRef(arr16(g)),
+                expires_at: g.i64(),
             };
-            let sig = g.bytes(TICKET_LEN - 48..=TICKET_LEN - 48);
+            let sig = g.bytes(TICKET_LEN - TICKET_MESSAGE_LEN..=TICKET_LEN - TICKET_MESSAGE_LEN);
             let bytes = encode_operator_ticket(&t, &sig).map_err(|e| format!("{e:?}"))?;
             prop_assert_eq!(bytes.len(), TICKET_LEN);
             let back = decode_operator_ticket(&bytes).map_err(|e| format!("{e:?}"))?;

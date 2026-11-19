@@ -582,6 +582,23 @@ pub enum RefRefusal {
     FieldUnset,
     /// P-05 above P-58 (I-50).
     CapAboveCeiling,
+    /// A proposed, confirmed or edited value holds a NUL character, which
+    /// the import boundary refuses before any rule (issue 6 L4,
+    /// `ImportError::Nul`). Nothing is recorded and the draft is unchanged.
+    NulValue,
+}
+
+impl RefValue {
+    /// Whether a string of the value holds a NUL character (issue 6 L4).
+    pub fn holds_nul(&self) -> bool {
+        let nul = |s: &String| s.contains('\0');
+        match self {
+            RefValue::Str(s) => nul(s),
+            RefValue::List(l) => l.iter().any(nul),
+            RefValue::Obj(o) => o.iter().any(|(k, v)| nul(k) || nul(v)),
+            RefValue::Int(_) | RefValue::Bool(_) | RefValue::Null => false,
+        }
+    }
 }
 
 /// The outcome of one command.
@@ -937,8 +954,25 @@ impl RefSystem {
     /// The records `cmd` appends, or why it is refused.
     pub fn decide(&self, cmd: &RefCommand) -> Result<Vec<RefEvent>, RefRefusal> {
         let d = &self.draft;
+        // Issue 6 L4: a proposal value with a NUL never reaches the import
+        // store. The boundary that builds the batch refuses it first.
+        if let RefCommand::Propose { proposals, .. } = cmd
+            && proposals.iter().any(|p| p.value.holds_nul())
+        {
+            return Err(RefRefusal::NulValue);
+        }
         if d.active.is_some() {
             return Err(RefRefusal::Active);
+        }
+        // Issue 6 L4: a confirmed or edited value with a NUL is refused
+        // before any resolution rule runs.
+        if let RefCommand::Resolve {
+            resolution: RefResolution::Confirm(v) | RefResolution::Edit(v),
+            ..
+        } = cmd
+            && v.holds_nul()
+        {
+            return Err(RefRefusal::NulValue);
         }
         match cmd {
             RefCommand::Grant { by, to } => {
@@ -2124,7 +2158,10 @@ pub mod production {
                     id,
                     document: doc_id(doc),
                     field: field_id(p.field).map_err(|_| GAP_STEP)?,
-                    value: untrusted(&p.value).map_err(|_| GAP_STEP)?,
+                    value: match value_of(&p.value)? {
+                        Ok(v) => v,
+                        Err(r) => return Ok(StepVerdict::Refused(r)),
+                    },
                     text: fstp_import::ValueTextRef::new(
                         fstp_import::ValueTextId::from_raw(id.raw()),
                         fstp_import::SaltedDigest::from_bytes(salted(p.id, &p.value)?),
@@ -2184,9 +2221,11 @@ pub mod production {
                     match self.values.iter().find(|(_, x)| *x == v) {
                         Some((other, x)) => salted(*other, x),
                         None => {
-                            let data = untrusted(v).map_err(|_| GAP_STEP)?;
+                            // A value no proposal holds, NUL included: any
+                            // digest that no stored value has (issue 6 L4).
+                            let text = json_value(v).map_err(|_| GAP_STEP)?.to_compact();
                             let mut bytes = b"fresh:".to_vec();
-                            bytes.extend_from_slice(data.as_data().as_bytes());
+                            bytes.extend_from_slice(text.as_bytes());
                             Ok(fstp_crypto::sha256(&bytes))
                         }
                     }
@@ -2209,25 +2248,34 @@ pub mod production {
             }
             let digest = self.shown(proposal, shown)?;
             let valued = |v: &RefValue| -> Result<
-                (fstp_import::UntrustedValue, fstp_import::ValueDigest),
+                Result<(fstp_import::UntrustedValue, fstp_import::ValueDigest), RefRefusal>,
                 NotImplemented,
             > {
-                let value = untrusted(v).map_err(|_| GAP_STEP)?;
+                let value = match value_of(v)? {
+                    Ok(value) => value,
+                    Err(r) => return Ok(Err(r)),
+                };
                 let d = fstp_import::ValueDigest::from_bytes(fstp_crypto::sha256(
                     value.as_data().as_bytes(),
                 ));
-                Ok((value, d))
+                Ok(Ok((value, d)))
             };
             let (client, applied) = match resolution {
                 RefResolution::Confirm(v) => {
-                    let (value, digest) = valued(v)?;
+                    let (value, digest) = match valued(v)? {
+                        Ok(x) => x,
+                        Err(r) => return Ok(StepVerdict::Refused(r)),
+                    };
                     (
                         ClientResolution::Confirm { value, digest },
                         Some((v.clone(), Applied::Confirmed)),
                     )
                 }
                 RefResolution::Edit(v) => {
-                    let (value, digest) = valued(v)?;
+                    let (value, digest) = match valued(v)? {
+                        Ok(x) => x,
+                        Err(r) => return Ok(StepVerdict::Refused(r)),
+                    };
                     (
                         ClientResolution::Edit { value, digest },
                         Some((v.clone(), Applied::Edited)),
@@ -2911,6 +2959,20 @@ pub mod production {
     /// The `UntrustedValue` of a reference value.
     pub fn untrusted(v: &RefValue) -> Result<fstp_import::UntrustedValue, String> {
         fstp_import::UntrustedValue::new(&json_value(v)?).map_err(|e| e.to_string())
+    }
+
+    /// The production value of `v`, or the model refusal of its import
+    /// error: `ImportError::Nul` is [`RefRefusal::NulValue`] (issue 6 L4).
+    /// Any other failure is outside the model.
+    pub fn value_of(
+        v: &RefValue,
+    ) -> Result<Result<fstp_import::UntrustedValue, RefRefusal>, NotImplemented> {
+        let json = json_value(v).map_err(|_| GAP_STEP)?;
+        match fstp_import::UntrustedValue::new(&json) {
+            Ok(u) => Ok(Ok(u)),
+            Err(fstp_import::ImportError::Nul) => Ok(Err(RefRefusal::NulValue)),
+            Err(_) => Err(GAP_STEP),
+        }
     }
 
     /// The reference value of JSON in the reference vocabulary.
@@ -4140,6 +4202,19 @@ fn expect_refused_without_effect(
     }
 }
 
+/// Issue 6 L4: `cmd` carries a value with a NUL, so it is refused as
+/// [`RefRefusal::NulValue`] and appends nothing.
+fn expect_nul_refused(s: &mut System, cmd: &RefCommand, why: &str) -> Result<(), String> {
+    let before = s.entries()?;
+    match s.apply(cmd)? {
+        StepVerdict::Refused(RefRefusal::NulValue) if s.entries()? == before => Ok(()),
+        StepVerdict::Refused(RefRefusal::NulValue) => Err(format!(
+            "I-65: {why}: the NUL refusal of {cmd:?} appended records"
+        )),
+        other => Err(format!("I-65: {why}: {cmd:?} gave {other:?}, not NulValue")),
+    }
+}
+
 fn expect_accepted(s: &mut System, cmd: &RefCommand, why: &str) -> Result<(), String> {
     match s.apply(cmd)? {
         StepVerdict::Accepted => Ok(()),
@@ -4181,14 +4256,17 @@ pub fn shown_case(backend: Backend, g: &mut Gen) -> Result<(), String> {
     }
     let target = g.pick(&proposals).clone();
     g.note("target", &target);
-    expect_accepted(
-        &mut s,
-        &RefCommand::Propose {
-            doc: D1,
-            proposals: proposals.clone(),
-        },
-        "setup",
-    )?;
+    let propose = RefCommand::Propose {
+        doc: D1,
+        proposals: proposals.clone(),
+    };
+    // Issue 6 L4: a havoc value may hold a NUL. Its batch is refused and
+    // records nothing, so no resolution of it can exist.
+    if proposals.iter().any(|p| p.value.holds_nul()) {
+        expect_nul_refused(&mut s, &propose, "a proposal value with a NUL")?;
+        return check_i65(&s.entries()?);
+    }
+    expect_accepted(&mut s, &propose, "setup")?;
     let others: Vec<RefValue> = proposals
         .iter()
         .map(|p| p.value.clone())
@@ -4232,6 +4310,18 @@ pub fn shown_case(backend: Backend, g: &mut Gen) -> Result<(), String> {
         &resolve(bad),
         "a stale or forged shown digest must be refused",
     )?;
+    // Issue 6 L4: an edit to a value with a NUL is refused even with the
+    // matching digest, and changes nothing.
+    if let RefResolution::Edit(v) = &resolution
+        && v.holds_nul()
+    {
+        expect_nul_refused(
+            &mut s,
+            &resolve(RefShown::Of(target.value.clone())),
+            "an edit to a value with a NUL",
+        )?;
+        return check_i65(&s.entries()?);
+    }
     expect_accepted(
         &mut s,
         &resolve(RefShown::Of(target.value.clone())),

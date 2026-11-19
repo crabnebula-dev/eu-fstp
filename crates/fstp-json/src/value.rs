@@ -16,7 +16,9 @@ use crate::object::Object;
 /// I-JSON member names are unique. Use [`Value::identical`] to compare member
 /// order as well. Numbers compare by exact lexeme (see [`Number`]).
 ///
-/// `Display` and `Debug` both write compact JSON text.
+/// `Display` writes compact JSON text. `Debug` shows the shape only (kinds,
+/// lengths, node count and depth), so a value printed with `{:?}` never
+/// puts its content in a log (issue 6 L2, R-NF-02).
 #[derive(Default)]
 pub enum Value {
     /// `null`.
@@ -218,8 +220,45 @@ impl fmt::Display for Value {
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&crate::ser::to_compact(self))
+        match self {
+            Value::Null => f.write_str("Null"),
+            Value::Bool(_) => f.write_str("Bool"),
+            Value::Number(n) => write!(f, "Number(len {})", n.as_str().len()),
+            Value::String(s) => write!(f, "String(len {})", s.len()),
+            Value::Array(a) => fmt_shape(f, "Array", a.len(), a.iter()),
+            Value::Object(o) => fmt_shape(f, "Object", o.len(), o.iter().map(|(_, v)| v)),
+        }
     }
+}
+
+/// Writes the shape of a container with `len` direct `children`: its node
+/// count, itself included, and its depth, where an empty container has
+/// depth 1. The walk uses an explicit stack. No content is written.
+pub(crate) fn fmt_shape<'a>(
+    f: &mut fmt::Formatter<'_>,
+    kind: &str,
+    len: usize,
+    children: impl Iterator<Item = &'a Value>,
+) -> fmt::Result {
+    let mut nodes: usize = 1;
+    let mut depth: usize = 1;
+    let mut stack: Vec<(&Value, usize)> = children.map(|c| (c, 1)).collect();
+    while let Some((v, d)) = stack.pop() {
+        nodes = nodes.saturating_add(1);
+        let below = d.saturating_add(1);
+        match v {
+            Value::Array(a) => {
+                depth = depth.max(below);
+                stack.extend(a.iter().map(|c| (c, below)));
+            }
+            Value::Object(o) => {
+                depth = depth.max(below);
+                stack.extend(o.iter().map(|(_, c)| (c, below)));
+            }
+            _ => {}
+        }
+    }
+    write!(f, "{kind}(len {len}, nodes {nodes}, depth {depth})")
 }
 
 /// Compares two trees with an explicit stack.
@@ -452,9 +491,10 @@ impl<'a> IntoIterator for &'a Array {
     }
 }
 
+/// Shows the shape only, like `Debug` for [`Value`].
 impl fmt::Debug for Array {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.items.iter()).finish()
+        fmt_shape(f, "Array", self.items.len(), self.items.iter())
     }
 }
 
