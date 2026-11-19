@@ -28,7 +28,6 @@ fn compact_preserves_lexemes_order_and_bytes() {
     let spaced = "{ \"z\" : [ 1.50 , 1E3 , -0 , 0e-0 , 12345678901234567890123 ] , \"a\" : \"x\" , \"m\" : { } }";
     assert_eq!(to_compact(&p(spaced)), doc);
     assert_eq!(v.to_string(), doc);
-    assert_eq!(format!("{v:?}"), doc);
 }
 
 #[test]
@@ -235,4 +234,41 @@ fn display_and_methods_agree_with_functions() {
     assert_eq!(v.to_compact(), to_compact(&v));
     assert_eq!(v.to_pretty(), to_pretty(&v));
     assert_eq!(v.to_canonical().unwrap(), "{\"a\":null,\"b\":[1,\"x\"]}");
+}
+
+/// Issue 6 L2 (R-NF-02): `Debug` of a value, an object or an array shows
+/// its shape only: kinds, lengths, node counts and depth. No string, member
+/// name, number or boolean reaches a log through `{:?}`. The text of a
+/// value comes only from an explicit serialiser.
+#[test]
+fn issue6_l2_r_nf_02_debug_shows_shape_not_content() {
+    let v = json!({"email": "ada@example.invalid", "age": 36, "ok": true, "tags": ["secret"]});
+    let shown = format!("{v:?}");
+    for leaked in ["email", "ada", "36", "true", "tags", "secret"] {
+        assert!(!shown.contains(leaked), "{leaked} in {shown}");
+    }
+    assert_eq!(shown, "Object(len 4, nodes 6, depth 2)");
+    let o = v.as_object().unwrap();
+    assert_eq!(format!("{o:?}"), shown);
+    let a = v.get("tags").unwrap();
+    assert_eq!(format!("{a:?}"), "Array(len 1, nodes 2, depth 1)");
+    assert_eq!(
+        format!("{:?}", a.as_array().unwrap()),
+        "Array(len 1, nodes 2, depth 1)"
+    );
+    assert_eq!(format!("{:?}", v.get("email").unwrap()), "String(len 19)");
+    assert_eq!(format!("{:?}", v.get("age").unwrap()), "Number(len 2)");
+    assert_eq!(format!("{:?}", v.get("ok").unwrap()), "Bool");
+    assert_eq!(format!("{:?}", Value::Null), "Null");
+    // A value inside a derived Debug is redacted too.
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct Holder {
+        body: Value,
+    }
+    let held = format!("{:?}", Holder { body: v.clone() });
+    assert!(!held.contains("ada"), "{held}");
+    // The explicit serialisers still write the text.
+    assert!(v.to_compact().contains("ada@example.invalid"));
+    assert!(v.to_string().contains("ada@example.invalid"));
 }

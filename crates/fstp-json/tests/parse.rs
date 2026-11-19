@@ -593,8 +593,12 @@ fn th26_deep_nesting_never_overflows_the_stack() {
             doc.push_str(&"}".repeat(depth));
             let v = parse_with(doc.as_bytes(), &limits).unwrap();
             assert_eq!(v.to_compact(), doc);
+            // Debug walks the whole depth without recursion (issue 6 L2).
             let shown = format!("{v:?}");
-            assert_eq!(shown.len(), doc.len());
+            assert_eq!(
+                shown,
+                format!("Object(len 1, nodes {}, depth {depth})", depth + 1)
+            );
             drop(v);
 
             // Past the limit: an error, not a crash.
