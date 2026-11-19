@@ -175,7 +175,12 @@ pub(crate) fn any_finding(g: &mut Gen) -> Finding {
 
 /// A finding record of any variant.
 pub(crate) fn any_record(g: &mut Gen) -> FindingRecord {
-    match g.u8_in(0..=4) {
+    match g.u8_in(0..=5) {
+        5 => FindingRecord::RerunAbandoned {
+            call: CallId::from_raw(u128_any(g)),
+            proposal: ProposalId::from_raw(u128_any(g)),
+            reason: *g.pick(&fstp_findings::RerunEnd::ALL),
+        },
         3 => FindingRecord::RerunRequested {
             call: CallId::from_raw(u128_any(g)),
             proposal: ProposalId::from_raw(u128_any(g)),
@@ -221,6 +226,7 @@ pub(crate) fn statements(record: &FindingRecord) -> Vec<String> {
         FindingRecord::Recorded(f) => vec![f.statement.as_data().to_owned()],
         FindingRecord::Marked { .. }
         | FindingRecord::RerunRequested { .. }
+        | FindingRecord::RerunAbandoned { .. }
         | FindingRecord::RefusalsRecorded { .. } => Vec::new(),
         FindingRecord::Regenerated { findings, .. } => findings
             .iter()

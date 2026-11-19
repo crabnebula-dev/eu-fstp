@@ -4,6 +4,8 @@
 //!
 //! - the sweep: `StartExecution`, `Complete` and the other due System
 //!   commands, as the cell's timeline task issues them;
+//! - the re-run timeout: `AbandonRerun` for a re-run in flight for
+//!   `RERUN_TIMEOUT_US` (issue 6 M3);
 //! - the checks runner: a passed run of the submission and acceptance
 //!   checks (I-32) for each payment request that awaits one, against the
 //!   fake forge. One release of the fake forge answers 404 once, when
@@ -71,6 +73,26 @@ pub(crate) fn sweep(inner: &Inner, now: Timestamp) -> Result<(), String> {
             .engine
             .environment(cmd, ctx(now, SystemCause::Timeline))
             .map_err(|e| format!("sweep command: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Abandons each re-run that has been in flight for `RERUN_TIMEOUT_US` at
+/// `now` (issue 6 M3, I-10), as the cell's timeline task does. The fake
+/// port runs a re-run inside the request, so a run that never returns
+/// would hold its slot. This cell keeps no ledger across a restart, so it
+/// has no start clean-up.
+pub(crate) fn abandon_stale_reruns(inner: &Inner, now: Timestamp) -> Result<(), String> {
+    let state = inner.ports.engine.state();
+    for cmd in fstp_engine::findings::stale_reruns(&state, now) {
+        inner
+            .ports
+            .engine
+            .environment(
+                fstp_engine::Command::Finding(cmd),
+                ctx(now, SystemCause::Timeline),
+            )
+            .map_err(|e| format!("abandon re-run: {e}"))?;
     }
     Ok(())
 }
@@ -151,6 +173,7 @@ fn run_phase(inner: &Inner, now: Timestamp) -> Result<(), String> {
 pub(crate) fn tick(inner: &Inner) {
     let now = inner.ports.clock.read();
     let _ = sweep(inner, now);
+    let _ = abandon_stale_reruns(inner, now);
     let _ = run_checks_now(inner, now);
 }
 

@@ -479,6 +479,12 @@ fn due_engine_command<'a>(
         {
             Ok(cmd)
         }
+        // Issue 6 M3: the timeline abandons a re-run whose run died. The
+        // engine checks that one is in flight, and the timeout's age.
+        (
+            SystemTask::Timeline,
+            fstp_engine::Command::Finding(fstp_engine::FindingCommand::AbandonRerun { .. }),
+        ) => Ok(cmd),
         // The contract port issues only the core contract fact (M5 design
         // section 4.1, `SystemTask::ContractPort`).
         (

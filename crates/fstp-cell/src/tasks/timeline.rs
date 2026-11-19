@@ -11,6 +11,10 @@
 //! 2. The M2 System commands that `fstp_domain::due` lists at the tick,
 //!    such as `EndScheduledRole`.
 //!    The four sweep kinds are left to step 3.
+//!    It also issues `AbandonRerun` for each re-run in flight for
+//!    `RERUN_TIMEOUT_US` (issue 6 M3). Before its first tick, the task
+//!    abandons every re-run in flight, since a cell start leaves no run
+//!    alive ([`abandon_reruns_at_start`]).
 //! 3. The timeline engine (`fstp_timeline`, M6 design section 4): the plan
 //!    that schedules and cancels events, then one entry per due event,
 //!    with its `EventFired` record, its outbox rows and its System
@@ -238,6 +242,14 @@ pub fn due_commands(cell: [u8; 16], s: &CellState, now: Timestamp) -> Vec<(CellC
         let id = next_occurrence_id(cell, s, &cmd);
         out.push((cmd, id));
     }
+    // Issue 6 M3: a re-run in flight for `RERUN_TIMEOUT_US` has a run that
+    // died or hung. Its abandonment comes due once per re-run, and its
+    // commit ends it, so the occurrence id commits it once.
+    for f in fstp_engine::findings::stale_reruns(s.engine(), now) {
+        let cmd = CellCommand::Engine(fstp_engine::Command::Finding(f));
+        let id = next_occurrence_id(cell, s, &cmd);
+        out.push((cmd, id));
+    }
     out
 }
 
@@ -384,6 +396,28 @@ async fn issue_with(
     Issued::Ran(engine.execute(a).await)
 }
 
+/// The clean-up of a cell start (issue 6 M3, I-10): `AbandonRerun` with
+/// reason `CellStart` for every re-run in flight. A re-run runs in the cell
+/// process, so none from before the start is alive, and its result would
+/// never close it. Each is one ledger record and one audit chain row. The
+/// re-run still counts toward `MAX_RERUNS`. [`run`] calls it once, before
+/// its first tick.
+pub async fn abandon_reruns_at_start(engine: &CellEngine, now: Timestamp) -> Vec<TickItem> {
+    let state = engine.state();
+    let mut out = Vec::new();
+    for f in fstp_engine::findings::reruns_at_start(state.engine()) {
+        let command = CellCommand::Engine(fstp_engine::Command::Finding(f));
+        let id = next_occurrence_id(engine.cell(), &state, &command);
+        let result = issue(engine, command.clone(), id, Vec::new(), now).await;
+        out.push(TickItem {
+            command,
+            id,
+            result,
+        });
+    }
+    out
+}
+
 /// Runs the timeline every [`TICK`] until `stop` is triggered.
 pub async fn run<C: Clock, S: SessionSource + ?Sized>(
     clock: &C,
@@ -391,6 +425,7 @@ pub async fn run<C: Clock, S: SessionSource + ?Sized>(
     sessions: &S,
     stop: &ShutdownSignal,
 ) {
+    let _ = abandon_reruns_at_start(engine, Timestamp::from_micros(clock.now())).await;
     let step = i64::try_from(TICK.as_micros()).unwrap_or(i64::MAX);
     loop {
         let now = clock.now();

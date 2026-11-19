@@ -296,3 +296,39 @@ impl RefusedStage {
         })
     }
 }
+
+/// How long a re-run may stay in flight before the cell abandons it, in
+/// microseconds (issue 6 M3): one hour. An assessment takes minutes, so a
+/// re-run still in flight after an hour has a run that died or hung.
+///
+/// Interim, pending Daniel: the value is the lane's reading. The PR 11
+/// decision of 2026-11-19 names no timeout.
+pub const RERUN_TIMEOUT_US: i64 = 3_600_000_000;
+
+/// Why the cell abandoned a re-run in flight (issue 6 M3). A closed list,
+/// so the record holds no free text (I-10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RerunEnd {
+    /// The cell started, so no run of an earlier process is alive.
+    CellStart,
+    /// The re-run was in flight for [`RERUN_TIMEOUT_US`].
+    Timeout,
+}
+
+impl RerunEnd {
+    /// Every reason.
+    pub const ALL: [RerunEnd; 2] = [RerunEnd::CellStart, RerunEnd::Timeout];
+
+    /// The wire name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RerunEnd::CellStart => "cell_start",
+            RerunEnd::Timeout => "timeout",
+        }
+    }
+
+    /// The reason named `s`, if it is on the list.
+    pub fn parse(s: &str) -> Option<RerunEnd> {
+        RerunEnd::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
