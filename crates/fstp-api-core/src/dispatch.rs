@@ -3234,8 +3234,16 @@ async fn append_content_read<P: Seams>(
 }
 
 /// The text behind `r`: one this core stored, else a public text of the
-/// text store. A text neither holds fails the read closed.
+/// text store. A text neither holds fails the read closed, and the
+/// refusal is audited.
 async fn text_of<P: Seams>(call: &Call<'_, P>, r: TextRef) -> Result<String, ApiError> {
+    text_unaudited(call, r).await.map_err(|e| call.refuse(e))
+}
+
+/// [`text_of`] without the audit entry, for a caller that leaves a
+/// missing text out and goes on. So one call keeps exactly one audit
+/// entry (I-24, design section 3.7 step 9).
+async fn text_unaudited<P: Seams>(call: &Call<'_, P>, r: TextRef) -> Result<String, ApiError> {
     if let Some(t) = lock(&call.st.content).text(r) {
         return Ok(t.to_owned());
     }
@@ -3244,9 +3252,8 @@ async fn text_of<P: Seams>(call: &Call<'_, P>, r: TextRef) -> Result<String, Api
         .texts()
         .get_public(crate::port::PublicTextRef(r.id().raw()))
         .await
-        .map_err(|e| call.refuse(port_failed(e, "text")))?;
-    String::from_utf8(bytes)
-        .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "text")))
+        .map_err(|e| port_failed(e, "text"))?;
+    String::from_utf8(bytes).map_err(|_| ApiError::refused(ErrorCode::Unavailable, "text"))
 }
 
 /// The frozen values of the published call `c`.
@@ -4397,7 +4404,7 @@ async fn call_summary<P: Seams>(
     v: &fstp_domain::programme::CallView,
 ) -> CallSummary {
     let mut s = CallSummary::of(v, call.now);
-    s.title = text_of(call, v.text()).await.ok();
+    s.title = text_unaudited(call, v.text()).await.ok();
     s.recipient_max = call
         .state
         .core
