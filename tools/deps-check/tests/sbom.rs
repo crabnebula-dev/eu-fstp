@@ -146,7 +146,12 @@ fn r_nf_07_sbom_cli_writes_identical_bytes() {
     assert!(out.status.success(), "{}", text(&out));
     let first = fs::read(&a).unwrap();
     assert_eq!(first, fs::read(&b).unwrap());
-    let doc = fstp_json::parse(&first).unwrap();
+    // The SBOM of a workspace takes more than the 1 MiB default memory
+    // limit (issue 6 L3).
+    let limits = fstp_json::ParseLimits::default()
+        .with_max_input_bytes(64 << 20)
+        .with_max_memory_bytes(64 << 20);
+    let doc = fstp_json::parse_with(&first, &limits).unwrap();
     assert_eq!(doc.get("specVersion").and_then(Value::as_str), Some("1.6"));
     let comps = doc.get("components").and_then(Value::as_array).unwrap();
     let purls: Vec<&str> = comps

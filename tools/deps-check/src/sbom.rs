@@ -580,7 +580,12 @@ mod tests {
 
         fn doc(&self) -> Value {
             let text = build(&self.inputs()).unwrap();
-            fstp_json::parse(text.as_bytes()).unwrap()
+            // An SBOM may take more than the 1 MiB default memory limit
+            // (issue 6 L3).
+            let limits = fstp_json::ParseLimits::default()
+                .with_max_input_bytes(64 << 20)
+                .with_max_memory_bytes(64 << 20);
+            fstp_json::parse_with(text.as_bytes(), &limits).unwrap()
         }
     }
 
