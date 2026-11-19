@@ -479,6 +479,12 @@ fn due_engine_command<'a>(
         {
             Ok(cmd)
         }
+        // Issue 6 M3: the timeline abandons a re-run whose run died. The
+        // engine checks that one is in flight, and the timeout's age.
+        (
+            SystemTask::Timeline,
+            fstp_engine::Command::Finding(fstp_engine::FindingCommand::AbandonRerun { .. }),
+        ) => Ok(cmd),
         // The contract port issues only the core contract fact (M5 design
         // section 4.1, `SystemTask::ContractPort`).
         (
@@ -793,12 +799,25 @@ fn decide_system(
             if c.suspect {
                 return Err(reused());
             }
-            Ok(vec![CellRecord::Auth(
-                fstp_auth::AuthRecord::CredentialSuspect {
-                    account: *account,
-                    credential: credential.clone(),
-                },
-            )])
+            let mut out = vec![CellRecord::Auth(fstp_auth::AuthRecord::CredentialSuspect {
+                account: *account,
+                credential: credential.clone(),
+            })];
+            // ADR-008, R-LG-04 (issue 6 L10): the sessions the passkey
+            // opened end in the same batch, as a revocation ends them, so
+            // the sessions list no longer shows them. The rows are optional:
+            // without them the flag still records, and the gate refuses
+            // those sessions by their credential in any case.
+            if let Some(rows) = inputs.sessions() {
+                let ended = fstp_auth::session::ended_by_credential_revocation(
+                    &rows.of(s, *account),
+                    rows.logins(),
+                    *account,
+                    credential,
+                );
+                out.extend(session_ends(&ended));
+            }
+            Ok(out)
         }
         // No relationship form and no operator ticket form is defined yet,
         // so both are refused (fail closed).

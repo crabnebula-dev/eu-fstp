@@ -7,7 +7,7 @@
 use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
 use fstp_domain::policy::ModelRef;
 
-use crate::finding::{Finding, FindingId, Mark, RefusedStage};
+use crate::finding::{Finding, FindingId, Mark, RefusedStage, RerunEnd};
 
 /// A command on findings, decided by `decide_finding` in `fstp-engine`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -58,6 +58,18 @@ pub enum FindingCommand {
         proposal: ProposalId,
         /// The dropped stages, possibly none.
         refused: Vec<RefusedStage>,
+    },
+    /// The re-run of `proposal` in flight is abandoned (issue 6 M3): its
+    /// run died with the cell process, or it has been in flight for
+    /// `RERUN_TIMEOUT_US`. By the cell as the system only. It frees the
+    /// in-flight slot, and the re-run still counts toward `MAX_RERUNS`.
+    AbandonRerun {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// Why.
+        reason: RerunEnd,
     },
 }
 
@@ -111,5 +123,16 @@ pub enum FindingRecord {
         proposal: ProposalId,
         /// The dropped stages, possibly none.
         refused: Vec<RefusedStage>,
+    },
+    /// The re-run of `proposal` in flight was abandoned, for `reason`
+    /// (issue 6 M3). This is the abandonment's audit record in the
+    /// ledger. It frees the in-flight slot, and the re-run still counts.
+    RerunAbandoned {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// Why.
+        reason: RerunEnd,
     },
 }

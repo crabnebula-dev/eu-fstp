@@ -269,23 +269,28 @@ fn finding_kind_of(c: &FindingCommand) -> FindingKind {
         FindingCommand::Regenerate { .. } => FindingKind::Regenerate,
         FindingCommand::RequestRerun { .. } => FindingKind::RequestRerun,
         FindingCommand::RecordRefusals { .. } => FindingKind::RecordRefusals,
+        FindingCommand::AbandonRerun { .. } => FindingKind::AbandonRerun,
     }
 }
 
 /// Every finding kind. The match in `finding_kind_of` ties this list to
 /// `FindingCommand`, and the one below ties it to `FindingKind`.
-const FINDING_KINDS: [FindingKind; 5] = [
+const FINDING_KINDS: [FindingKind; 6] = [
     FindingKind::Record,
     FindingKind::Mark,
     FindingKind::Regenerate,
     FindingKind::RequestRerun,
     FindingKind::RecordRefusals,
+    FindingKind::AbandonRerun,
 ];
 
 fn finding_routed(k: FindingKind) -> bool {
     match k {
         FindingKind::Mark | FindingKind::RequestRerun => true,
-        FindingKind::Record | FindingKind::Regenerate | FindingKind::RecordRefusals => false,
+        FindingKind::Record
+        | FindingKind::Regenerate
+        | FindingKind::RecordRefusals
+        | FindingKind::AbandonRerun => false,
     }
 }
 
@@ -305,8 +310,9 @@ fn import_routed(k: ImportKind) -> bool {
 /// I-65, I-84, design section 3.6
 /// `ops_cover_every_finding_and_import_kind_once`: `FindingCommand::Mark`
 /// and `ImportCommand::RegisterDocument` are routed. `Record`,
-/// `Regenerate` and `RecordProposals` are in `SYSTEM_ONLY_OTHER`, and no
-/// operation routes them.
+/// `Regenerate`, `RecordRefusals`, `AbandonRerun` (issue 6 M3) and
+/// `RecordProposals` are in `SYSTEM_ONLY_OTHER`, and no operation routes
+/// them.
 #[test]
 fn ops_cover_every_finding_and_import_kind_once() {
     let _: fn(&FindingCommand) -> FindingKind = finding_kind_of;
@@ -332,7 +338,7 @@ fn ops_cover_every_finding_and_import_kind_once() {
     }
     assert_eq!(
         SYSTEM_ONLY_OTHER.len(),
-        4,
+        5,
         "SYSTEM_ONLY_OTHER: {SYSTEM_ONLY_OTHER:?}"
     );
 }

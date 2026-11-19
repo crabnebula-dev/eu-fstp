@@ -306,10 +306,12 @@ fn i78_side_rows_name_the_entry_of_their_own_record() {
             SessionEnd {
                 session: s0,
                 record: 0,
+                ..SessionEnd::default()
             },
             SessionEnd {
                 session: s1,
                 record: 1,
+                ..SessionEnd::default()
             },
         ],
         outbox: Vec::new(),
@@ -343,6 +345,7 @@ fn i78_side_rows_name_the_entry_of_their_own_record() {
         sessions_ended: vec![SessionEnd {
             session: fresh16(),
             record: 1,
+            ..SessionEnd::default()
         }],
         ..SideEffects::default()
     };

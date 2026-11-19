@@ -93,9 +93,15 @@ pub fn system_clock() -> Option<i64> {
 /// `SessionEnded` ledger record. Idle and absolute expiry write no row.
 ///
 /// Reading, interim, pending Daniel: design section 4.2 names no cause
-/// codes, and `SessionEnded` carries no cause. So every row the store
-/// writes has this one cause, "ended by a record".
+/// codes, and `SessionEnded` carries no cause. So a row has this cause,
+/// "ended by a record", unless [`SESSION_END_CREDENTIAL_DISABLED`] applies.
 pub const SESSION_END_BY_RECORD: i16 = 1;
+
+/// The `auth_log.session_end.cause` of a session that the flagging of its
+/// passkey ended (ADR-008, issue 6 L10, R-LG-04): the batch holds the
+/// `CredentialSuspect` record that names the disabled credential, and the
+/// row's `ledger_seq` names an entry of that batch.
+pub const SESSION_END_CREDENTIAL_DISABLED: i16 = 2;
 
 /// The `ops.outbox.kind` of a `PossibleDeletion` alert (design section
 /// 7.2 "In doubt"). Its body is `be64(n) || link`, sealed under its own
@@ -203,15 +209,27 @@ pub struct StepUpUse {
     pub record: usize,
 }
 
-/// An ended session: one `auth_log.session_end` row, with cause
-/// [`SESSION_END_BY_RECORD`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// An ended session: one `auth_log.session_end` row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionEnd {
     /// The session id.
     pub session: [u8; 16],
     /// The index in the batch of the `SessionEnded` record that ends it,
     /// so the row names that record's entry.
     pub record: usize,
+    /// The cause: [`SESSION_END_BY_RECORD`] or
+    /// [`SESSION_END_CREDENTIAL_DISABLED`].
+    pub cause: i16,
+}
+
+impl Default for SessionEnd {
+    fn default() -> SessionEnd {
+        SessionEnd {
+            session: [0; 16],
+            record: 0,
+            cause: SESSION_END_BY_RECORD,
+        }
+    }
 }
 
 /// The insert-only side effects of one append (design section 5.3 step
@@ -1517,7 +1535,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                 &[
                     &Uuid::from_bytes(s.session),
                     &at,
-                    &SESSION_END_BY_RECORD,
+                    &s.cause,
                     &seq_of(s.record)?,
                 ],
             )

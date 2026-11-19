@@ -54,6 +54,11 @@ pub mod tenant;
 pub mod unmask;
 pub mod views;
 
+// I-86 compile-fail twins (`i86_identity_types_are_not_mcp_safe`). Doc
+// comments only.
+#[cfg(doctest)]
+mod twins;
+
 use std::future::Future;
 use std::pin::Pin;
 

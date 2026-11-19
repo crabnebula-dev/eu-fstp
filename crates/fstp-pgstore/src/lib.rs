@@ -82,8 +82,8 @@ pub use seal::{
 };
 pub use store::{
     AnchorSigner, ChainRows, Clock, Committed, Decode, OUTBOX_POSSIBLE_DELETION, PgRecordStore,
-    SESSION_END_BY_RECORD, SessionEnd, SideEffects, StepUpUse, StoredCommit,
-    possible_deletion_idem, system_clock,
+    SESSION_END_BY_RECORD, SESSION_END_CREDENTIAL_DISABLED, SessionEnd, SideEffects, StepUpUse,
+    StoredCommit, possible_deletion_idem, system_clock,
 };
 pub use stored::{
     MAX_SEALED_LEN, MIN_SEALED_LEN, STORED_ENTRY_FORMAT, StoredEntry, decode_stored_entry,

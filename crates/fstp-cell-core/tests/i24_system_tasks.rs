@@ -852,3 +852,74 @@ fn adr007_cell_codec_reads_back_creator_records() {
         assert_eq!(decode_cell_record(&encode_cell_record(r)).as_ref(), Ok(r));
     }
 }
+
+/// I-10, I-24, issue 6 M3: the timeline task issues `AbandonRerun` for a
+/// re-run whose run died, at the cell's start or after the timeout. The
+/// gate admits it for the timeline only, never `RequestRerun`, which is
+/// the coordinator's. The decider passes it to the engine's rule for the
+/// timeline, which refuses an unknown call, and refuses any other task as
+/// an actor.
+#[test]
+fn i10_issue6_m3_timeline_issues_abandon_rerun_only() {
+    let s = fstp_cell_core::replay(&[]).unwrap();
+    let call = fstp_domain::id::CallId::from_raw(1);
+    let proposal = fstp_domain::id::ProposalId::from_raw(7);
+    let abandon = CellCommand::Engine(fstp_engine::Command::Finding(
+        fstp_engine::FindingCommand::AbandonRerun {
+            call,
+            proposal,
+            reason: fstp_findings::RerunEnd::CellStart,
+        },
+    ));
+    let request = CellCommand::Engine(fstp_engine::Command::Finding(
+        fstp_engine::FindingCommand::RequestRerun { call, proposal },
+    ));
+    // The command survives its codec, and a reason off the list never
+    // decodes.
+    let bytes = fstp_cell_core::encode_cell_command(&abandon);
+    assert_eq!(
+        fstp_cell_core::codec::decode_cell_command(&bytes).ok(),
+        Some(abandon.clone())
+    );
+    let text = String::from_utf8(bytes)
+        .unwrap()
+        .replace("cell_start", "whim");
+    assert!(fstp_cell_core::codec::decode_cell_command(text.as_bytes()).is_err());
+    let admit = |c: &CellCommand, t: SystemTask| {
+        gate::admit_system(&s, Action::Command(c.clone()), t, cid(5), NOW)
+    };
+    assert!(admit(&abandon, SystemTask::Timeline).is_ok());
+    for (c, t) in [
+        (&abandon, SystemTask::LoginVerifier),
+        (&abandon, SystemTask::ErasureRunner),
+        (&request, SystemTask::Timeline),
+    ] {
+        assert_eq!(admit(c, t).err(), Some(Deny::NotPermitted), "{c:?} {t:?}");
+    }
+    let at = |task| SystemCtx {
+        task,
+        at: NOW.micros(),
+    };
+    let r = decide_system(
+        &s,
+        &abandon,
+        &at(SystemTask::Timeline),
+        cid(0x61),
+        &Answers::new(),
+    );
+    assert!(
+        refused(&r, RuleRef::I11, RefusalReason::UnknownEntity),
+        "{r:?}"
+    );
+    let r = decide_system(
+        &s,
+        &abandon,
+        &at(SystemTask::PaymentPort),
+        cid(0x62),
+        &Answers::new(),
+    );
+    assert!(
+        refused(&r, RuleRef::Actor, RefusalReason::WrongActor),
+        "{r:?}"
+    );
+}

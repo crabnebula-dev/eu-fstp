@@ -939,3 +939,103 @@ fn i65_fold_refuses_the_removal_of_an_unknown_document() {
         .is_err()
     );
 }
+
+// ---------------------------------------------------------------------------
+// R-PC-03 across activation
+// ---------------------------------------------------------------------------
+
+/// A second programme manager, who drafts the first call.
+const M2: AccountId = AccountId::from_raw(0xB2);
+/// A third programme manager, who built nothing and drafted nothing.
+const M3: AccountId = AccountId::from_raw(0xB3);
+/// The first call of the activated programme.
+const FIRST_CALL: fstp_domain::id::CallId = fstp_domain::id::CallId::from_raw(0xC1);
+
+/// Grants `account` the programme manager role by TA at time `t`.
+fn grant_manager(e: &mut E, binding: u128, account: AccountId, t: i64) {
+    let c = by(TA, t);
+    let grant = fstp_domain::Command::GrantRole {
+        binding: BindingId::from_raw(binding),
+        account,
+        programme: P,
+        role: Role::ProgrammeManager,
+        start: c.now,
+        second_admin: None,
+        confidentiality: Some(TextRef::new(
+            TextId::from_raw(50_000 + binding),
+            ContentDigest::from_bytes([4; 32]),
+        )),
+        organisation: None,
+        end: None,
+    };
+    e.execute(Command::Core(grant), c)
+        .unwrap_or_else(|r| panic!("the grant of {account:?} is refused: {r:?}"));
+}
+
+/// An `ApproveCallPublication` of the first call by `approver`.
+fn approve_call(e: &mut E, approver: AccountId, t: i64) -> Result<Seq, ExecError> {
+    let cmd = fstp_domain::Command::ApproveCallPublication {
+        call: FIRST_CALL,
+        decision: DecisionId::from_raw(0xD0 + u128::try_from(t).unwrap()),
+    };
+    e.execute(Command::Core(cmd), by(approver, t))
+}
+
+/// R-PC-03 NOTE, M4 design section 8.2 (`r_pc_03_builder_authorship_
+/// survives_activation`): M1 set P-01 in the creator draft. After TB
+/// activates the programme, M1 is still the last author of P-01 in the
+/// policy the first call would freeze. So M1 is a drafter of that call,
+/// though M2 wrote it, and R-PC-03 refuses M1's approval. M3, who neither
+/// built nor drafted, may approve. The same holds after a replay.
+#[test]
+fn r_pc_03_builder_authorship_survives_activation() {
+    let mut e = requested(Vault::default());
+    approve(&mut e, TB, 7).unwrap_or_else(|r| panic!("the clean approval is refused: {r:?}"));
+    assert_eq!(status(&e), Some(ProgrammeStatus::Active));
+    let author = e
+        .state()
+        .core
+        .policy()
+        .programme(P)
+        .map(|p| p.last_author_p01());
+    assert_eq!(author, Some(M1), "M1 saved P-01 in the creator draft");
+
+    grant_manager(&mut e, 2, M2, 8);
+    grant_manager(&mut e, 3, M3, 9);
+    let draft = fstp_domain::Command::DraftCall {
+        call: FIRST_CALL,
+        programme: P,
+        opens: Timestamp::from_micros(1_000_000_000_000),
+        deadline: Timestamp::from_micros(2_000_000_000_000),
+        deadline_zone: fstp_domain::time::ZoneName::new("Europe/Brussels").unwrap(),
+        budget: fstp_money::NonNegAmount::new(
+            fstp_money::Amount::from_minor(100_000_000, fstp_money::Currency::Eur).unwrap(),
+        )
+        .unwrap(),
+        text: TextRef::new(TextId::from_raw(60_001), ContentDigest::from_bytes([6; 32])),
+    };
+    e.execute(Command::Core(draft), by(M2, 10))
+        .unwrap_or_else(|r| panic!("M2's call draft is refused: {r:?}"));
+    let drafters = fstp_domain::programme::drafters(&e.state().core, FIRST_CALL).unwrap();
+    assert!(
+        drafters.contains(&M1) && drafters.contains(&M2),
+        "{drafters:?}"
+    );
+    assert!(!drafters.contains(&M3), "{drafters:?}");
+
+    let before = e.head();
+    assert_eq!(
+        approve_call(&mut e, M1, 11),
+        refused(RuleRef::Rpc03, RefusalReason::GuardFailed)
+    );
+    assert_eq!(e.head(), before);
+
+    let mut e = reopened(e);
+    assert_eq!(
+        approve_call(&mut e, M1, 12),
+        refused(RuleRef::Rpc03, RefusalReason::GuardFailed),
+        "the replayed ledger keeps M1's authorship"
+    );
+    approve_call(&mut e, M3, 13)
+        .unwrap_or_else(|r| panic!("the independent approval by M3 is refused: {r:?}"));
+}

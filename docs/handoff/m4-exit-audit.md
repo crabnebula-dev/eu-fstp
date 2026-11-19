@@ -41,12 +41,12 @@ Every fuzz target ran in the four fuzz smoke shards of the closing run.
 
 Daniel decided on 2026-11-16 to build the key gaps and then close M4. The items below stay open. None weakens an invariant test that exists.
 
-1. `t_authz_matrix_pg_sample`: the matrix sample on PostgreSQL.
-2. `i85_concurrent_confirmations_execute_once` on PostgreSQL.
-3. `i86_identity_types_are_not_mcp_safe`: the compile-fail twins.
-4. The I-84 audit properties over random sequences on both channels.
-5. `r_ev_03_exactly_75_percent_does_not_pass_through_the_interface`.
-6. `r_pc_03_builder_authorship_survives_activation`.
+1. `t_authz_matrix_pg_sample`: the matrix sample on PostgreSQL. Not built: the production cell does not run `ApiCore`, and no `AsyncEngine` or `AuditSink` exists over PostgreSQL, so a sample on `PgRecordStore` would test storage, not authorisation. It waits on the W6 composition.
+2. `i85_concurrent_confirmations_execute_once` on PostgreSQL. Not built, for the same reason: `api.pending_actions` is not in the app migrations.
+3. Built on 2026-11-19 (`1688d46e`): `i86_identity_types_are_not_mcp_safe`, compile-fail twins in `crates/fstp-api-core/src/twins.rs`. `IdentityAttribute`, `BankDetails` and `AccountContact` exist nowhere in the code. The twins use `port::CountryCode`, `port::Affiliations`, `unmask::UnmaskRow` and `UnmaskModel` instead. Bank details have no `fstp-api-core` type, so they have no twin.
+4. Built on 2026-11-19 (`57efb882`): `crates/fstp-api-testkit/tests/i84_audit_parity.rs`, properties over random sequences on both channels. It found a double audit entry in `calls.list_open`, fixed in `c6fc46f0`.
+5. Built on 2026-11-19 (`b672fb1e`): `r_ev_03_exactly_75_percent_does_not_pass_through_the_interface`.
+6. Built on 2026-11-19 (`0aef3228`): `r_pc_03_builder_authorship_survives_activation`, at engine level, since `r_pg_02_supersafe_built_through_creator_api` does not exist.
 7. Built by lane m4/pubtext on 2026-11-19: a per-peer rate limit on the cell's public routes, 120 per minute, interim pending Daniel's acceptance (ADR-024), and `t_iso_public_rate_limit_keys_are_per_cell` in the `isolation-multi-cell` CI part.
 8. Built by lane m4/pubtext on 2026-11-19: the public text class, "copy at publication" (Daniel, 2026-11-17). See M4 design section 8.4, "Built by lane m4/pubtext".
 9. Built by lane m4/pubtext on 2026-11-19: the cell's public routes answer as the web adapter does, with the platform stylesheets, the styled "Page not found" page, the SA-09 redirects and the fail-closed organisation port. See M4 design section 8.4.

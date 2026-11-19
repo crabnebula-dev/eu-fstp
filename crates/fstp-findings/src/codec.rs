@@ -511,6 +511,16 @@ impl ToJson for FindingRecord {
                 o.insert("proposal", id_to_json(proposal.raw()));
                 o.insert("refused", refused_to_json(refused));
             }
+            FindingRecord::RerunAbandoned {
+                call,
+                proposal,
+                reason,
+            } => {
+                o.insert("record", Value::String("rerun_abandoned".to_owned()));
+                o.insert("call", id_to_json(call.raw()));
+                o.insert("proposal", id_to_json(proposal.raw()));
+                o.insert("reason", Value::String(reason.as_str().to_owned()));
+            }
         }
         Value::Object(o)
     }
@@ -598,6 +608,18 @@ impl FromJson for FindingRecord {
                     call: CallId::from_raw(member(o, "call", id_from_json)?),
                     proposal: ProposalId::from_raw(member(o, "proposal", id_from_json)?),
                     refused: member(o, "refused", refused_from_json)?,
+                })
+            }
+            "rerun_abandoned" => {
+                reject_unknown(o, &["record", "call", "proposal", "reason"])?;
+                Ok(FindingRecord::RerunAbandoned {
+                    call: CallId::from_raw(member(o, "call", id_from_json)?),
+                    proposal: ProposalId::from_raw(member(o, "proposal", id_from_json)?),
+                    reason: member(o, "reason", |m| {
+                        m.as_str()
+                            .and_then(crate::finding::RerunEnd::parse)
+                            .ok_or_else(|| FromJsonError::invalid("not a re-run end"))
+                    })?,
                 })
             }
             _ => Err(FromJsonError::invalid("not a known finding record").at_field("record")),
