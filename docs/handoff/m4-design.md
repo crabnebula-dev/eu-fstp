@@ -1541,6 +1541,17 @@ Built by lane m4/cellpub (2026-11-17):
 - `i87_two_cells_never_cross` (`crates/fstp-celltest/tests/t_iso_i87.rs`) runs in the `isolation-multi-cell` CI part.
 - Not built: `t_iso_public_rate_limit_keys_are_per_cell` (section 8.6). The cell's public routes keep no rate limit and no cache.
 
+Built by lane m4/pubtext (2026-11-19), the public text class:
+
+- Daniel chose "copy at publication" on 2026-11-17. When a call is published, the cell copies its title, its P-09 wording and the stored texts of its Guide into `fstp_cell::public::PublicClass`, keyed by call. The public view reads only that class.
+- The route backend runs the copy after every command it commits, and the cell runs it once at start. For each published call it copies the texts the call names that the class does not hold yet. A text is copied once and never replaced.
+- A corrigendum recorded after publication (I-53) adds the stored texts its wording reads, from the programme's compiled draft. They are copied at the first copy after the record, under the corrected call.
+- A text is read from the cell's own text store only while the ledger holds it as live. A text that is not live or does not open is not copied, and the copy is tried again after the next commit.
+- The world cell no longer holds public texts of its own. The cycle's `publish-call` stores the title and P-09 wording in the cell text store with their `PutText`, and the cell copies them. Each call now has its own title text id.
+- Tests in `crates/fstp-cell/src/public_class_tests.rs`: `r_pb_03_public_class_answers_only_the_copy_of_its_own_call`, `r_pb_03_copy_takes_only_the_texts_a_published_call_names`, `r_pb_03_public_view_reads_only_the_class`, `r_pb_03_copy_is_taken_once_at_publication`, `i53_corrigenda_after_publication_reach_the_copy` and `i87_two_classes_never_cross`. `i87_two_cells_never_cross` now runs over the class.
+- Interim, pending Daniel: the class lives in memory, as the text store it copies from does. The grantee choices have no class yet, so the cell's funded and finished pages show no grantee choice. The `fstp-api-core` path keeps its put-time `TextClass::Public`, which already shows the same call texts.
+- Open for Daniel: an erasure of a call text after publication leaves its public copy. The command route lets a client name any text id as a call title, and the copy trusts the ids the published call names.
+
 ### 8.5 Models
 
 | Model | Universe | Properties | Witnesses |

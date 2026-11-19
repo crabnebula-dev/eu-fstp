@@ -48,7 +48,7 @@ Daniel decided on 2026-11-16 to build the key gaps and then close M4. The items 
 5. `r_ev_03_exactly_75_percent_does_not_pass_through_the_interface`.
 6. `r_pc_03_builder_authorship_survives_activation`.
 7. `t_iso_public_rate_limit_keys_are_per_cell`, and a rate limit on the cell's public routes.
-8. The public text class. Daniel chose "copy at publication" on 2026-11-17. Until it is built, the production cell (`NoPublicTexts`) shows programme pages with no open call.
+8. Built by lane m4/pubtext on 2026-11-19: the public text class, "copy at publication" (Daniel, 2026-11-17). See M4 design section 8.4, "Built by lane m4/pubtext".
 9. The cell's public routes differ from the web adapter: no platform stylesheet, the router's empty 404, and gating by activation only.
 10. The country code: the vault grammar holds a 1 to 999 code, while `fstp-api-core` takes an alpha-2 code. The registry route still names a body the production cell does not take. This needs Daniel.
 11. Suspected browser spec flakes left unchanged by the flake review: the async response handlers of the devstack specs i17, i20 and i77; `waitForTimeout(2500)` in `e2e/mail/mail.spec.ts`; the day boundary of the assess daily limit; and `#page-status:not(:empty)` in `e2e/speedrun/speedrun.ui.spec.ts`.

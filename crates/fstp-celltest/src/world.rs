@@ -332,7 +332,7 @@ pub struct CellHandle {
     ticket: TicketSigner,
     /// The replies the cell gave to sessions ([`crate::responses`]).
     responses: crate::responses::ResponseLog,
-    /// The cell's public texts and identity ([`crate::world_public`]).
+    /// The cell's public identity ([`crate::world_public`]).
     public: crate::world_public::WorldPublic,
 }
 
@@ -351,7 +351,7 @@ impl CellHandle {
         &self.clock
     }
 
-    /// The cell's public texts and identity ([`crate::world_public`],
+    /// The cell's public identity ([`crate::world_public`],
     /// lane m4/cellpub).
     pub fn public(&self) -> &crate::world_public::WorldPublic {
         &self.public
@@ -4020,12 +4020,11 @@ fn start_cell(
             return Err(e);
         }
     };
-    // Lane m4/cellpub: the cell's own public texts ([`crate::world_public`]).
+    // Lane m4/cellpub: the cell's public identity ([`crate::world_public`]).
     let public = crate::world_public::WorldPublic::default();
     let options = fstp_cell::process::StartOptions {
         clock: clock.commit_clock(),
         creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
-        public_texts: std::sync::Arc::new(public.clone()),
         proof_mail: std::sync::Arc::new(mail.clone()),
         operator_key: Some(operator.0.public_key().to_bytes().to_vec()),
         // P-70: the world's tenant enables magic links, as the auth
