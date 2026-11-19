@@ -19,19 +19,34 @@
 //! typed error until a real source lands (M5 design 12.1, Q2).
 //!
 //! Issuer and signer rules (H-15, RFC 5280 section 6 over the parsed
-//! fields): keyCertSign, pathLenConstraint, signer keyUsage, and refusal of critical extensions not processed. Name
-//! constraints are not enforced: a critical one is refused as unprocessed.
+//! fields): keyCertSign, pathLenConstraint, signer keyUsage, name
+//! constraints, and refusal of critical extensions not processed.
+//!
+//! Name constraints (RFC 5280 sections 4.2.1.10 and 6.1, issue 6 M1) are
+//! enforced for the directoryName, rfc822Name and dNSName forms, critical or
+//! not. The constraints of every CA on the path bind every certificate
+//! below it, the anchor's included, which the RFC leaves optional. A
+//! constraint of another form is refused, and so is a malformed one.
+//! Directory attribute values compare as strings after trimming, folding
+//! white space and lowering case, so a respelt name cannot leave an
+//! excluded subtree. That is a simplified form of the RFC 4518 rules.
 //!
 //! `TODO(legal)`: which signature and seal levels the SuperSAFE MoU needs,
 //! and which qualified-certificate statements a qualified signature must
 //! carry. The fake list marks its test CA as qualified.
 
+use der::Tagged;
 use der::{Decode, Encode};
 use fstp_pdf::object::{Object, Ref};
 use fstp_pdf::{IncrementError, ParseError, PdfFile, verify_increment};
 use fstp_pki::cms::{CmsError, decode_signed_data, verify_signature};
 use x509_cert::Certificate;
-use x509_cert::ext::pkix::{BasicConstraints, KeyUsage, KeyUsages};
+use x509_cert::attr::AttributeTypeAndValue;
+use x509_cert::ext::pkix::name::GeneralName;
+use x509_cert::ext::pkix::{
+    BasicConstraints, KeyUsage, KeyUsages, NameConstraints, SubjectAltName,
+};
+use x509_cert::name::{Name, RelativeDistinguishedName};
 
 /// Most certificates on one path, the anchor included.
 pub const MAX_PATH: usize = 8;
@@ -189,9 +204,15 @@ pub enum SigvalError {
     /// The signer's keyUsage does not allow signing a document.
     SignerPurpose,
     /// A certificate carries a critical extension this validator does not
-    /// process, or a critical name constraints extension (not enforced,
-    /// so refused).
+    /// process.
     CriticalExtension,
+    /// A name on the path is outside a permitted subtree or inside an
+    /// excluded subtree of a CA above it, or a name constraints extension
+    /// is malformed (RFC 5280 section 4.2.1.10, issue 6 M1).
+    NameConstraints,
+    /// A name constraint names a form this validator does not enforce. Only
+    /// directoryName, rfc822Name and dNSName are enforced.
+    UnsupportedNameConstraint,
 }
 
 impl std::fmt::Display for SigvalError {
@@ -263,17 +284,29 @@ fn valid_at(c: &Certificate, at: i64) -> bool {
 
 /// Critical extensions the validator processes: basicConstraints,
 /// keyUsage, extKeyUsage, subjectKeyIdentifier, authorityKeyIdentifier and
-/// subjectAltName (names are not used). Any other critical extension is
-/// refused, as RFC 5280 section 4.2 requires of a validator that cannot
-/// process it. Policy extensions and name constraints are not processed.
-const PROCESSED_CRITICAL: [der::asn1::ObjectIdentifier; 6] = [
+/// subjectAltName (read for name constraints), and nameConstraints. Any
+/// other critical extension is refused, as RFC 5280 section 4.2 requires
+/// of a validator that cannot process it. Policy extensions are not
+/// processed.
+const PROCESSED_CRITICAL: [der::asn1::ObjectIdentifier; 7] = [
     der::asn1::ObjectIdentifier::new_unwrap("2.5.29.19"),
     der::asn1::ObjectIdentifier::new_unwrap("2.5.29.15"),
     der::asn1::ObjectIdentifier::new_unwrap("2.5.29.37"),
     der::asn1::ObjectIdentifier::new_unwrap("2.5.29.14"),
     der::asn1::ObjectIdentifier::new_unwrap("2.5.29.35"),
     der::asn1::ObjectIdentifier::new_unwrap("2.5.29.17"),
+    NAME_CONSTRAINTS,
 ];
+
+/// The nameConstraints extension.
+const NAME_CONSTRAINTS: der::asn1::ObjectIdentifier =
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.30");
+/// The subjectAltName extension.
+const SUBJECT_ALT_NAME: der::asn1::ObjectIdentifier =
+    der::asn1::ObjectIdentifier::new_unwrap("2.5.29.17");
+/// The emailAddress attribute of a distinguished name (PKCS #9).
+const EMAIL_ADDRESS: der::asn1::ObjectIdentifier =
+    der::asn1::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.1");
 
 /// Refuses a certificate with a critical extension not in
 /// [`PROCESSED_CRITICAL`].
@@ -397,6 +430,258 @@ fn revoked(c: &Certificate, at: i64, trust: &dyn TrustedList) -> Result<bool, Si
         .map_err(SigvalError::Trust)
 }
 
+/// The one extension `oid` of `c`, if present. Two copies are malformed
+/// (RFC 5280 section 4.2).
+fn single_extension<'a>(
+    c: &'a Certificate,
+    oid: &der::asn1::ObjectIdentifier,
+) -> Result<Option<&'a [u8]>, SigvalError> {
+    let mut found = c
+        .tbs_certificate
+        .extensions
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .filter(|e| &e.extn_id == oid);
+    let first = found.next();
+    if found.next().is_some() {
+        return Err(SigvalError::NameConstraints);
+    }
+    Ok(first.map(|e| e.extn_value.as_bytes()))
+}
+
+/// The name constraints of `c`, checked for shape: at least one subtree,
+/// every subtree of a supported form, with minimum 0 and no maximum, as
+/// RFC 5280 section 4.2.1.10 requires.
+fn name_constraints(c: &Certificate) -> Result<Option<NameConstraints>, SigvalError> {
+    let Some(bytes) = single_extension(c, &NAME_CONSTRAINTS)? else {
+        return Ok(None);
+    };
+    let nc = NameConstraints::from_der(bytes).map_err(|_| SigvalError::NameConstraints)?;
+    let lists = [&nc.permitted_subtrees, &nc.excluded_subtrees];
+    if lists.iter().all(|l| l.is_none())
+        || lists.iter().any(|l| l.as_ref().is_some_and(Vec::is_empty))
+    {
+        return Err(SigvalError::NameConstraints);
+    }
+    for t in lists.into_iter().flatten().flatten() {
+        if t.minimum != 0 || t.maximum.is_some() {
+            return Err(SigvalError::NameConstraints);
+        }
+        if !matches!(
+            t.base,
+            GeneralName::DirectoryName(_) | GeneralName::Rfc822Name(_) | GeneralName::DnsName(_)
+        ) {
+            return Err(SigvalError::UnsupportedNameConstraint);
+        }
+    }
+    Ok(Some(nc))
+}
+
+/// The names of `c` that name constraints bind: its subject and the
+/// directoryName entries of subjectAltName, its rfc822Name entries and any
+/// emailAddress attribute of the subject, and its dNSName entries.
+struct Names {
+    directory: Vec<Name>,
+    mailbox: Vec<String>,
+    dns: Vec<String>,
+}
+
+fn names_of(c: &Certificate) -> Result<Names, SigvalError> {
+    let subject = &c.tbs_certificate.subject;
+    let mut n = Names {
+        directory: Vec::new(),
+        mailbox: Vec::new(),
+        dns: Vec::new(),
+    };
+    if !subject.0.is_empty() {
+        n.directory.push(subject.clone());
+    }
+    for rdn in &subject.0 {
+        for atv in rdn.0.iter().filter(|a| a.oid == EMAIL_ADDRESS) {
+            n.mailbox
+                .push(attribute_text(atv).ok_or(SigvalError::NameConstraints)?);
+        }
+    }
+    if let Some(bytes) = single_extension(c, &SUBJECT_ALT_NAME)? {
+        let san = SubjectAltName::from_der(bytes).map_err(|_| SigvalError::NameConstraints)?;
+        for g in san.0 {
+            match g {
+                GeneralName::DirectoryName(d) => n.directory.push(d),
+                GeneralName::Rfc822Name(m) => n.mailbox.push(m.as_str().to_owned()),
+                GeneralName::DnsName(d) => n.dns.push(d.as_str().to_owned()),
+                // No constraint of another form passes `name_constraints`,
+                // so names of other forms are unconstrained.
+                _ => {}
+            }
+        }
+    }
+    Ok(n)
+}
+
+/// The text of a directory attribute value of a string type. Teletex is
+/// read as Latin-1. `None` for a value of another type.
+fn attribute_text(atv: &AttributeTypeAndValue) -> Option<String> {
+    let v = atv.value.value();
+    match atv.value.tag() {
+        der::Tag::Utf8String
+        | der::Tag::PrintableString
+        | der::Tag::Ia5String
+        | der::Tag::VisibleString
+        | der::Tag::NumericString => std::str::from_utf8(v).ok().map(str::to_owned),
+        der::Tag::TeletexString => Some(v.iter().map(|&b| char::from(b)).collect()),
+        der::Tag::BmpString => {
+            let units: Vec<u16> = v
+                .chunks(2)
+                .map(|p| match p {
+                    [a, b] => Some(u16::from_be_bytes([*a, *b])),
+                    _ => None,
+                })
+                .collect::<Option<_>>()?;
+            String::from_utf16(&units).ok()
+        }
+        _ => None,
+    }
+}
+
+/// `s` trimmed, with each run of white space folded to one space, in
+/// lower case.
+fn fold(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Two directory attributes are equal when their types are, and their
+/// values are equal strings after [`fold`], or equal DER for another type.
+fn attribute_eq(a: &AttributeTypeAndValue, b: &AttributeTypeAndValue) -> bool {
+    if a.oid != b.oid {
+        return false;
+    }
+    match (attribute_text(a), attribute_text(b)) {
+        (Some(x), Some(y)) => fold(&x) == fold(&y),
+        (None, None) => a.value == b.value,
+        _ => false,
+    }
+}
+
+fn rdn_eq(a: &RelativeDistinguishedName, b: &RelativeDistinguishedName) -> bool {
+    a.0.len() == b.0.len()
+        && a.0.iter().all(|x| b.0.iter().any(|y| attribute_eq(x, y)))
+        && b.0.iter().all(|y| a.0.iter().any(|x| attribute_eq(x, y)))
+}
+
+/// Whether `name` lies in the directory subtree `base`: `base` is a prefix
+/// of `name`, RDN by RDN.
+fn in_directory(name: &Name, base: &Name) -> bool {
+    base.0.len() <= name.0.len() && base.0.iter().zip(&name.0).all(|(b, n)| rdn_eq(b, n))
+}
+
+/// Whether the host name `name` lies in the dNSName subtree `base`: the
+/// same name, or one with more labels to the left. A base with a leading
+/// dot names the hosts below it only. An empty base names every host.
+fn in_dns(name: &str, base: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let base = base.to_ascii_lowercase();
+    if base.is_empty() {
+        return true;
+    }
+    if base.starts_with('.') {
+        return name.ends_with(&base);
+    }
+    name == base || name.ends_with(&format!(".{base}"))
+}
+
+/// Whether the mailbox `name` lies in the rfc822Name subtree `base`: the
+/// same mailbox, any mailbox on the host `base`, or with a leading dot any
+/// mailbox on a host below the domain. Hosts compare without case and
+/// local parts exactly. `None` for a mailbox with no `@`.
+fn in_mailbox(name: &str, base: &str) -> Option<bool> {
+    let (local, host) = name.rsplit_once('@')?;
+    Some(match base.rsplit_once('@') {
+        Some((bl, bh)) => local == bl && host.eq_ignore_ascii_case(bh),
+        None if base.starts_with('.') => host
+            .to_ascii_lowercase()
+            .ends_with(&base.to_ascii_lowercase()),
+        None => host.eq_ignore_ascii_case(base),
+    })
+}
+
+/// Whether `name` lies in the subtree `base`. `None` when `base` is of
+/// another form, so it does not constrain `name`.
+fn in_subtree(name: &NameRef<'_>, base: &GeneralName) -> Result<Option<bool>, SigvalError> {
+    Ok(match (name, base) {
+        (NameRef::Directory(n), GeneralName::DirectoryName(b)) => Some(in_directory(n, b)),
+        (NameRef::Dns(n), GeneralName::DnsName(b)) => Some(in_dns(n, b.as_str())),
+        (NameRef::Mailbox(n), GeneralName::Rfc822Name(b)) => {
+            Some(in_mailbox(n, b.as_str()).ok_or(SigvalError::NameConstraints)?)
+        }
+        _ => None,
+    })
+}
+
+/// One name of a certificate, by form.
+enum NameRef<'a> {
+    Directory(&'a Name),
+    Mailbox(&'a str),
+    Dns(&'a str),
+}
+
+/// Checks every name of `names` against the constraints `nc` of one CA:
+/// each name must lie in a permitted subtree of its form when the CA
+/// permits any of that form, and in no excluded subtree.
+fn check_names(nc: &NameConstraints, names: &Names) -> Result<(), SigvalError> {
+    let all = names
+        .directory
+        .iter()
+        .map(NameRef::Directory)
+        .chain(names.mailbox.iter().map(|m| NameRef::Mailbox(m)))
+        .chain(names.dns.iter().map(|d| NameRef::Dns(d)));
+    let permitted = nc.permitted_subtrees.as_deref().unwrap_or(&[]);
+    let excluded = nc.excluded_subtrees.as_deref().unwrap_or(&[]);
+    for name in all {
+        let mut of_form = false;
+        let mut inside = false;
+        for t in permitted {
+            if let Some(hit) = in_subtree(&name, &t.base)? {
+                of_form = true;
+                inside |= hit;
+            }
+        }
+        if of_form && !inside {
+            return Err(SigvalError::NameConstraints);
+        }
+        for t in excluded {
+            if in_subtree(&name, &t.base)? == Some(true) {
+                return Err(SigvalError::NameConstraints);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Enforces the name constraints of every CA on `path` (signer first,
+/// anchor last) over every certificate below it. A self-issued
+/// intermediate is exempt, as RFC 5280 section 6.1.3 (b) states; the
+/// signer never is. Checking each CA on its own is the RFC's intersection
+/// of permitted subtrees and union of excluded ones.
+fn check_name_constraints(path: &[Certificate]) -> Result<(), SigvalError> {
+    for (i, ca) in path.iter().enumerate().skip(1) {
+        let Some(nc) = name_constraints(ca)? else {
+            continue;
+        };
+        for (j, below) in path.iter().enumerate().take(i) {
+            let self_issued = below.tbs_certificate.issuer == below.tbs_certificate.subject;
+            if j > 0 && self_issued {
+                continue;
+            }
+            check_names(&nc, &names_of(below)?)?;
+        }
+    }
+    Ok(())
+}
+
 /// Validates the path from `signer_der` through the intermediates in
 /// `pool` to an anchor of `trust`, at `at` (Unix seconds). Returns the
 /// anchor, its DER and the path length.
@@ -419,6 +704,8 @@ pub fn validate_chain(
     let pool: Vec<Certificate> = pool.iter().filter_map(|d| parse(d).ok()).collect();
     let mut current = parse(signer_der)?;
     check_signer(&current)?;
+    // The path so far, signer first, for the name constraints (issue 6 M1).
+    let mut path = vec![current.clone()];
     for depth in 1..MAX_PATH {
         if !valid_at(&current, at) {
             return Err(SigvalError::OutsideValidity);
@@ -435,6 +722,8 @@ pub fn validate_chain(
                     return Err(SigvalError::NotCa);
                 }
                 check_issuer(cert, depth.saturating_sub(1))?;
+                path.push(cert.clone());
+                check_name_constraints(&path)?;
                 let len = u8::try_from(depth.saturating_add(1)).unwrap_or(u8::MAX);
                 return Ok((anchor.clone(), len));
             }
@@ -453,6 +742,7 @@ pub fn validate_chain(
             return Err(SigvalError::NotCa);
         }
         check_issuer(&issuer, depth.saturating_sub(1))?;
+        path.push(issuer.clone());
         current = issuer;
     }
     Err(SigvalError::Untrusted)
