@@ -141,6 +141,7 @@ const MESSAGES = {
   'account.devices': 'Passkeys',
   'account.device.label': 'Passkey ending {suffix}',
   'account.device.current': 'Used for this session',
+  'account.device.disabled': 'Disabled. Remove it and add a new passkey.',
   'account.device.remove': 'Remove passkey ending {suffix}',
   'account.device.removed': 'The passkey is removed.',
   'account.passkey.add': 'Add a passkey',

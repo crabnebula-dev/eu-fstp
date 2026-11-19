@@ -44,6 +44,8 @@ interface SessionItem {
 interface DeviceItem {
   readonly id: string;
   readonly current: boolean;
+  /** A suspect passkey is disabled for good (ADR-008, 2026-11-19). */
+  readonly suspect: boolean;
 }
 
 /** The display name routes of the API (SA-11). */
@@ -134,7 +136,7 @@ function devicesOf(body: unknown): { devices: DeviceItem[]; account: string | nu
     if (!isHex(id, 1, MAX_CREDENTIAL) || typeof current !== 'boolean') {
       throw new Failure('malformed');
     }
-    return { id, current };
+    return { id, current, suspect: d?.['suspect'] === true };
   });
   return {
     devices,
@@ -214,6 +216,7 @@ export function mount(): void {
         h('li', d.current ? { 'aria-current': 'true' } : {}, [
           h('strong', {}, [t('account.device.label', { suffix })]),
           ...(d.current ? [' ', h('span', { class: 'tag' }, [t('account.device.current')])] : []),
+          ...(d.suspect ? [' ', h('span', { class: 'tag' }, [t('account.device.disabled')])] : []),
           ' ',
           remove,
         ]),

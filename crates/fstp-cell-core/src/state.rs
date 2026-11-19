@@ -253,13 +253,18 @@ impl AuthState {
     /// The owner and the stored credential of the live credential
     /// `credential`, with the sign count `sign_count` from the
     /// operational row (`AuthRecord::stored_credential`). `None` for a
-    /// revoked or unknown credential.
+    /// revoked, suspect or unknown credential. A suspect credential is
+    /// disabled for good (ADR-008, decided 2026-11-19), and its refusal
+    /// is the one of an unknown credential, so it tells a client nothing.
     pub fn stored_credential(
         &self,
         credential: &[u8],
         sign_count: u32,
     ) -> Option<(AccountId, fstp_auth::StoredCredential)> {
-        let c = self.credentials.get(credential).filter(|c| !c.revoked)?;
+        let c = self
+            .credentials
+            .get(credential)
+            .filter(|c| !c.revoked && !c.suspect)?;
         Some((
             c.account,
             fstp_auth::StoredCredential {

@@ -1735,12 +1735,17 @@ pub(crate) async fn devices<B: Backend>(ctx: &Ctx<B>, caller: &Caller) -> Reply 
     let list: Array = own_credentials(&s, caller.view.account)
         .iter()
         .map(|id| {
-            let mut o = Object::with_capacity(3);
+            let mut o = Object::with_capacity(4);
             o.insert(
                 "current",
                 Value::Bool(caller.row.credential.as_deref() == Some(id.as_slice())),
             );
             o.insert("id", hex_value(id));
+            // ADR-008, decided 2026-11-19: a suspect passkey is disabled.
+            o.insert(
+                "suspect",
+                Value::Bool(s.auth().credential(id).is_some_and(|c| c.suspect)),
+            );
             o.insert(
                 "user_verified",
                 Value::Bool(s.auth().credential(id).is_some_and(|c| c.user_verified)),
