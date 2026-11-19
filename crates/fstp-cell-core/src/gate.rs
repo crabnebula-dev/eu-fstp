@@ -1603,8 +1603,9 @@ pub fn admit_proven_recovery_completion(
 
 /// Admits a command of a system task, which holds no session (design
 /// sections 3.5 and 5.1). The erasure runner is admitted for key records
-/// only. The timeline is admitted for `EndSessionsAtBindingEnd` and for M2
-/// core commands, which `decide` then checks against `fstp_domain::due`.
+/// only. The timeline is admitted for `EndSessionsAtBindingEnd`, for M2 core
+/// commands, which `decide` then checks against `fstp_domain::due`, and for
+/// `AbandonRerun` (issue 6 M3).
 /// Every read and every other command is refused with
 /// [`Deny::NotPermitted`]. The command runs under `command_id`.
 ///
@@ -1631,6 +1632,14 @@ pub fn admit_system(
             !matches!(core, fstp_domain::Command::VaultChanged { .. })
         }
         (SystemTask::Timeline, CellCommand::Timeline(_)) => true,
+        // Issue 6 M3: a re-run whose run died, at the cell's start or after
+        // `RERUN_TIMEOUT_US` (`fstp_engine::findings::stale_reruns`).
+        (
+            SystemTask::Timeline,
+            CellCommand::Engine(fstp_engine::Command::Finding(
+                fstp_engine::FindingCommand::AbandonRerun { .. },
+            )),
+        ) => true,
         (
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. }),

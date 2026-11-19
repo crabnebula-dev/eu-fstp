@@ -1211,8 +1211,10 @@ fn named_ids(cmd: &FindingCommand) -> Vec<u128> {
         FindingCommand::Regenerate { findings, .. } => {
             findings.iter().map(|f| f.id.raw()).collect()
         }
-        // Issue 6 M3: neither names a finding. The twin does not generate them.
-        FindingCommand::RequestRerun { .. } | FindingCommand::RecordRefusals { .. } => Vec::new(),
+        // Issue 6 M3: none names a finding. The twin does not generate them.
+        FindingCommand::RequestRerun { .. }
+        | FindingCommand::AbandonRerun { .. }
+        | FindingCommand::RecordRefusals { .. } => Vec::new(),
     }
 }
 
@@ -1330,6 +1332,7 @@ impl StateMachine for TwinMachine {
                     FindingCommand::Record(_)
                     | FindingCommand::Regenerate { .. }
                     | FindingCommand::RequestRerun { .. }
+                    | FindingCommand::AbandonRerun { .. }
                     | FindingCommand::RecordRefusals { .. } => None,
                 };
                 let mut es = EngineState::new(sut.b.sod.state.clone(), sut.b_store.clone());

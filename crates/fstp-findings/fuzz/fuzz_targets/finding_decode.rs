@@ -27,6 +27,7 @@ fn statements(record: &FindingRecord) -> Vec<Vec<u8>> {
         FindingRecord::Recorded(f) => vec![f.statement.as_data().as_bytes().to_vec()],
         FindingRecord::Marked { .. }
         | FindingRecord::RerunRequested { .. }
+        | FindingRecord::RerunAbandoned { .. }
         | FindingRecord::RefusalsRecorded { .. } => Vec::new(),
         FindingRecord::Regenerated { findings, .. } => findings
             .iter()

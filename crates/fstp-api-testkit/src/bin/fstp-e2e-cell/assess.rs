@@ -690,6 +690,138 @@ mod tests {
         );
     }
 
+    /// I-10, issue 6 M3 (PR 11 loose end): a re-run whose run dies is
+    /// abandoned. The timeout abandons it only once it has been in flight
+    /// for `RERUN_TIMEOUT_US`, and the cell start abandons every re-run in
+    /// flight. Each abandonment is one `RerunAbandoned` record by the
+    /// system, which frees the slot. An abandoned re-run still counts, so
+    /// the proposal gets three re-runs in all. An account never abandons.
+    #[test]
+    fn i10_issue6_m3_dead_rerun_is_abandoned_and_still_counts() {
+        use fstp_api_core::port::{AsyncEngine as _, Clock as _};
+        use fstp_findings::{RERUN_TIMEOUT_US, RerunEnd};
+        let stage = crate::scenario::ReviewAt::parse("stage1").unwrap();
+        let (inner, _) =
+            fstp_rt::future::block_on(crate::scenario::build_review(&info(), stage)).unwrap();
+        let call = CallId::from_raw(1);
+        let w = ProposalId::from_raw(1003);
+        let coordinator = fstp_domain_testkit::r#gen::review::COORDINATOR;
+        let at = std::cell::Cell::new(inner.ports.clock.now().micros());
+        let step = |micros: i64| {
+            at.set(at.get().saturating_add(micros));
+            inner.ports.clock.set(Timestamp::from_micros(at.get()));
+            Timestamp::from_micros(at.get())
+        };
+        let run = |actor: Actor, cmd: FindingCommand| {
+            let now = step(1_000_000);
+            let ctx = Ctx {
+                now,
+                actor,
+                command: command_id(),
+                via: Via::Web,
+                tenant_admin: false,
+                second_tenant_admin: None,
+                binds_tenant_admin: false,
+            };
+            inner.ports.engine.environment(Command::Finding(cmd), ctx)
+        };
+        let system = Actor::System(SystemCause::Timeline);
+        let abandon = |reason| FindingCommand::AbandonRerun {
+            call,
+            proposal: w,
+            reason,
+        };
+        let abandoned = || {
+            inner
+                .ports
+                .engine
+                .ledger()
+                .unwrap()
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        &e.record,
+                        fstp_engine::Record::Finding(
+                            fstp_findings::FindingRecord::RerunAbandoned { proposal, .. }
+                        ) if *proposal == w
+                    )
+                })
+                .count()
+        };
+        // Nothing in flight: nothing to abandon.
+        assert!(run(system, abandon(RerunEnd::CellStart)).is_err());
+        run(
+            Actor::Account(coordinator),
+            FindingCommand::RequestRerun { call, proposal: w },
+        )
+        .unwrap();
+        // The run dies. Too early for the timeout, and an account never
+        // abandons a re-run.
+        assert!(
+            run(system, abandon(RerunEnd::Timeout)).is_err(),
+            "too early"
+        );
+        assert!(run(Actor::Account(coordinator), abandon(RerunEnd::CellStart)).is_err());
+        let state = inner.ports.engine.state();
+        assert!(
+            fstp_engine::findings::stale_reruns(&state, Timestamp::from_micros(at.get()))
+                .is_empty()
+        );
+        let later = step(RERUN_TIMEOUT_US);
+        assert_eq!(
+            fstp_engine::findings::stale_reruns(&inner.ports.engine.state(), later),
+            vec![abandon(RerunEnd::Timeout)]
+        );
+        crate::pump::abandon_stale_reruns(&inner, later).unwrap();
+        assert_eq!(abandoned(), 1, "one record by the system");
+        crate::pump::abandon_stale_reruns(&inner, step(1_000_000)).unwrap();
+        assert_eq!(abandoned(), 1, "a second sweep finds nothing");
+        assert_eq!(inner.ports.engine.state().findings.reruns_of(w), (1, false));
+        assert_eq!(
+            status(&inner, 1003).get("rerun").and_then(Value::as_str),
+            Some("available"),
+            "the slot is free"
+        );
+        // A cell start abandons every re-run in flight, whatever its age.
+        run(
+            Actor::Account(coordinator),
+            FindingCommand::RequestRerun { call, proposal: w },
+        )
+        .unwrap();
+        let start = fstp_engine::findings::reruns_at_start(&inner.ports.engine.state());
+        assert_eq!(start, vec![abandon(RerunEnd::CellStart)]);
+        for cmd in start {
+            run(system, cmd).unwrap();
+        }
+        run(
+            Actor::Account(coordinator),
+            FindingCommand::RequestRerun { call, proposal: w },
+        )
+        .unwrap();
+        run(system, abandon(RerunEnd::CellStart)).unwrap();
+        assert_eq!(abandoned(), 3);
+        assert!(
+            run(
+                Actor::Account(coordinator),
+                FindingCommand::RequestRerun { call, proposal: w },
+            )
+            .is_err(),
+            "abandoned re-runs count toward the three"
+        );
+        assert_eq!(
+            status(&inner, 1003).get("rerun").and_then(Value::as_str),
+            Some("used_up")
+        );
+        // The ledger alone holds the same bounds.
+        let mut store = fstp_findings::FindingStore::genesis();
+        for e in inner.ports.engine.ledger().unwrap() {
+            if let fstp_engine::Record::Finding(r) = e.record {
+                store.apply_at(&r, Timestamp::from_micros(e.at)).unwrap();
+            }
+        }
+        assert_eq!(store.reruns_of(w), (3, false));
+    }
+
     /// R-NF-10: an unreachable assessor records nothing; the proposal
     /// stays pending.
     #[test]

@@ -167,7 +167,11 @@ fn i77_a_session_end_replay_names_the_session_row() {
     let (db, _w, mut s) = world();
     let session = [0x5E; 16];
     let first = SideEffects {
-        sessions_ended: vec![SessionEnd { session, record: 0 }],
+        sessions_ended: vec![SessionEnd {
+            session,
+            record: 0,
+            ..SessionEnd::default()
+        }],
         ..SideEffects::default()
     };
     s.append_committed(Seq::ZERO, AT, [0x41; 16], recs(1, "a"), &first)
@@ -178,7 +182,11 @@ fn i77_a_session_end_replay_names_the_session_row() {
             record: 0,
         }),
         stepup_fresh_until: Some(i64::MAX),
-        sessions_ended: vec![SessionEnd { session, record: 1 }],
+        sessions_ended: vec![SessionEnd {
+            session,
+            record: 1,
+            ..SessionEnd::default()
+        }],
         ..SideEffects::default()
     };
     assert_eq!(
@@ -191,4 +199,41 @@ fn i77_a_session_end_replay_names_the_session_row() {
         0,
         "the aborted append left its step-up row"
     );
+}
+
+/// ADR-008, issue 6 L10, R-LG-04 (PR 11 loose end): the cause of an ended
+/// session reaches its `auth_log.session_end` row. A session that the
+/// flagging of its passkey ended names the disabled passkey, and any
+/// other keeps "ended by a record".
+#[test]
+fn issue6_l10_r_lg_04_session_end_row_keeps_its_cause() {
+    let (db, _w, mut s) = world();
+    let flagged = [0x6A; 16];
+    let plain = [0x6B; 16];
+    let side = SideEffects {
+        sessions_ended: vec![
+            SessionEnd {
+                session: flagged,
+                record: 0,
+                cause: fstp_pgstore::SESSION_END_CREDENTIAL_DISABLED,
+            },
+            SessionEnd {
+                session: plain,
+                record: 1,
+                ..SessionEnd::default()
+            },
+        ],
+        ..SideEffects::default()
+    };
+    s.append_committed(Seq::ZERO, AT, [0x43; 16], recs(2, "c"), &side)
+        .unwrap();
+    let cause = |id: &[u8; 16]| {
+        db.count(&format!(
+            "SELECT cause FROM auth_log.session_end WHERE session_id = '{}'",
+            uuid_text(id)
+        ))
+    };
+    assert_eq!(cause(&flagged), 2, "SESSION_END_CREDENTIAL_DISABLED");
+    assert_eq!(cause(&plain), 1, "SESSION_END_BY_RECORD");
+    assert_eq!(fstp_pgstore::SESSION_END_CREDENTIAL_DISABLED, 2);
 }

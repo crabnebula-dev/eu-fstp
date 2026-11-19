@@ -26,8 +26,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
 use fstp_domain::refusal::RuleRef;
+use fstp_domain::time::Timestamp;
 
-use crate::finding::{Finding, FindingId, MAX_REFUSED, MAX_RERUNS, Mark, RefusedStage};
+use crate::finding::{
+    Finding, FindingId, MAX_REFUSED, MAX_RERUNS, Mark, RERUN_TIMEOUT_US, RefusedStage, RerunEnd,
+};
 use crate::record::FindingRecord;
 
 /// Why the store refused an operation. A refusal names ids of findings,
@@ -91,6 +94,18 @@ pub enum FindingRefusal {
         /// The proposal.
         proposal: ProposalId,
     },
+    /// Issue 6 M3: no re-run of this proposal is in flight, so none is
+    /// abandoned.
+    NoRerunInFlight {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// Issue 6 M3: the re-run in flight is younger than
+    /// `RERUN_TIMEOUT_US`, so the timeout does not abandon it yet.
+    RerunNotStale {
+        /// The proposal.
+        proposal: ProposalId,
+    },
     /// The finding id is already taken, now or by a retired finding.
     DuplicateFinding {
         /// The finding.
@@ -121,7 +136,9 @@ impl FindingRefusal {
             FindingRefusal::DuplicateFinding { .. } => RuleRef::Ledger,
             FindingRefusal::RerunInFlight { .. }
             | FindingRefusal::RerunLimit { .. }
-            | FindingRefusal::TooManyRefused { .. } => RuleRef::I10,
+            | FindingRefusal::TooManyRefused { .. }
+            | FindingRefusal::NoRerunInFlight { .. }
+            | FindingRefusal::RerunNotStale { .. } => RuleRef::I10,
             FindingRefusal::WrongCall { .. }
             | FindingRefusal::UnknownFinding { .. }
             | FindingRefusal::MalformedEvidence { .. } => RuleRef::Input,
@@ -158,9 +175,9 @@ pub struct FindingStore {
     /// The stages dropped from the last assessment of each proposal, with
     /// the call that ran it (issue 6 M3). A proposal with none has no entry.
     refusals: BTreeMap<ProposalId, (CallId, Vec<RefusedStage>)>,
-    /// The re-runs of each proposal: how many were requested, and whether
-    /// one is still in flight (issue 6 M3).
-    reruns: BTreeMap<ProposalId, (u32, bool)>,
+    /// The re-runs of each proposal: how many were requested, and the call
+    /// and request instant of the one still in flight (issue 6 M3).
+    reruns: BTreeMap<ProposalId, (u32, Option<(CallId, Timestamp)>)>,
 }
 
 impl FindingStore {
@@ -186,7 +203,36 @@ impl FindingStore {
     /// How many re-runs of `proposal` were requested, and whether one is
     /// in flight.
     pub fn reruns_of(&self, proposal: ProposalId) -> (u32, bool) {
-        self.reruns.get(&proposal).copied().unwrap_or((0, false))
+        self.reruns
+            .get(&proposal)
+            .map_or((0, false), |(n, f)| (*n, f.is_some()))
+    }
+
+    /// The call and the request instant of the re-run of `proposal` in
+    /// flight, if one is (issue 6 M3).
+    pub fn rerun_in_flight(&self, proposal: ProposalId) -> Option<(CallId, Timestamp)> {
+        self.reruns.get(&proposal).and_then(|(_, f)| *f)
+    }
+
+    /// Every re-run in flight, as proposal and call, by proposal. The
+    /// cell abandons each at its start (issue 6 M3).
+    pub fn in_flight_reruns(&self) -> Vec<(ProposalId, CallId)> {
+        self.reruns
+            .iter()
+            .filter_map(|(p, (_, f))| f.map(|(c, _)| (*p, c)))
+            .collect()
+    }
+
+    /// Every re-run that has been in flight for `RERUN_TIMEOUT_US` at
+    /// `now`, as proposal and call, by proposal (issue 6 M3).
+    pub fn stale_reruns(&self, now: Timestamp) -> Vec<(ProposalId, CallId)> {
+        self.reruns
+            .iter()
+            .filter_map(|(p, (_, f))| match f {
+                Some((c, since)) if stale(*since, now) => Some((*p, *c)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Whether a re-run of `proposal` may be requested now: none in
@@ -410,7 +456,23 @@ impl FindingStore {
     /// checks the record's model against the list, and refuses a config
     /// equal to the published pin. A refused record leaves the store
     /// unchanged.
+    ///
+    /// The record is folded as if at the epoch. Only the re-run records read
+    /// the instant, so a ledger fold calls [`FindingStore::apply_at`] with
+    /// each entry's instant.
     pub fn apply(&mut self, record: &FindingRecord) -> Result<(), FindingRefusal> {
+        self.apply_at(record, Timestamp::from_micros(0))
+    }
+
+    /// [`FindingStore::apply`] for a record whose entry is at `at` (issue 6
+    /// M3). A `RerunRequested` keeps `at` as its request instant. A
+    /// `RerunAbandoned` needs a re-run in flight, and its `Timeout` reason
+    /// needs that re-run to be `RERUN_TIMEOUT_US` old at `at`.
+    pub fn apply_at(
+        &mut self,
+        record: &FindingRecord,
+        at: Timestamp,
+    ) -> Result<(), FindingRefusal> {
         match record {
             FindingRecord::Recorded(f) => {
                 let pinned = self.config_of(f.call).unwrap_or(f.config);
@@ -436,10 +498,30 @@ impl FindingStore {
                 }
                 self.replace_call(*call, *config, findings.clone())
             }
-            FindingRecord::RerunRequested { proposal, .. } => {
+            FindingRecord::RerunRequested { call, proposal, .. } => {
                 self.check_rerun(*proposal)?;
                 let (n, _) = self.reruns_of(*proposal);
-                self.reruns.insert(*proposal, (n.saturating_add(1), true));
+                self.reruns
+                    .insert(*proposal, (n.saturating_add(1), Some((*call, at))));
+                Ok(())
+            }
+            FindingRecord::RerunAbandoned {
+                proposal, reason, ..
+            } => {
+                let Some((_, since)) = self.rerun_in_flight(*proposal) else {
+                    return Err(FindingRefusal::NoRerunInFlight {
+                        proposal: *proposal,
+                    });
+                };
+                if *reason == RerunEnd::Timeout && !stale(since, at) {
+                    return Err(FindingRefusal::RerunNotStale {
+                        proposal: *proposal,
+                    });
+                }
+                // The count stays: an abandoned re-run is one of the three.
+                if let Some(r) = self.reruns.get_mut(proposal) {
+                    r.1 = None;
+                }
                 Ok(())
             }
             FindingRecord::RefusalsRecorded {
@@ -458,7 +540,7 @@ impl FindingStore {
                     self.refusals.insert(*proposal, (*call, refused.clone()));
                 }
                 if let Some(r) = self.reruns.get_mut(proposal) {
-                    r.1 = false;
+                    r.1 = None;
                 }
                 Ok(())
             }
@@ -476,6 +558,12 @@ impl FindingStore {
         }
         Ok(())
     }
+}
+
+/// Whether a re-run requested at `since` has been in flight for
+/// `RERUN_TIMEOUT_US` at `now`.
+fn stale(since: Timestamp, now: Timestamp) -> bool {
+    now.micros().saturating_sub(since.micros()) >= RERUN_TIMEOUT_US
 }
 
 #[cfg(test)]

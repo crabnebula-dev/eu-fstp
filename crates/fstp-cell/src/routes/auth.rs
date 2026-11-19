@@ -299,6 +299,12 @@ async fn record_suspect<B: Backend>(ctx: &Ctx<B>, account: AccountId, credential
     ) else {
         return;
     };
+    // R-LG-04: the batch ends the sessions this passkey opened. Without
+    // the rows the flag still records (`fstp_cell_core::decide`).
+    let admitted = match ctx.backend.sessions_of(account).await {
+        Ok(rows) => admitted.with_sessions(session_rows(&rows)),
+        Err(_) => admitted,
+    };
     let _ = ctx.backend.execute(admitted).await;
 }
 

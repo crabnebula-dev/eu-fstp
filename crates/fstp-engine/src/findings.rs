@@ -94,6 +94,7 @@ pub fn finding_queries(
         FindingCommand::Record(_)
         | FindingCommand::Regenerate { .. }
         | FindingCommand::RequestRerun { .. }
+        | FindingCommand::AbandonRerun { .. }
         | FindingCommand::RecordRefusals { .. } => Ok(Vec::new()),
     }
 }
@@ -130,6 +131,25 @@ pub fn decide_finding(
                 call: *call,
                 proposal: *proposal,
                 by,
+            }
+        }
+        FindingCommand::AbandonRerun {
+            call,
+            proposal,
+            reason,
+        } => {
+            // Issue 6 M3: the cell, as the system, ends a re-run whose run
+            // died. The store checks that one is in flight, and for the
+            // timeout that it is old enough, in the trial fold below.
+            system_actor(ctx)?;
+            published(core, *call)?;
+            if !proposal_in_call(core, *proposal, *call) {
+                return Err(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity));
+            }
+            FindingRecord::RerunAbandoned {
+                call: *call,
+                proposal: *proposal,
+                reason: *reason,
             }
         }
         FindingCommand::RecordRefusals {
@@ -184,7 +204,7 @@ pub fn decide_finding(
     check_fold(core, store, &record, ctx.now)
         .map_err(|_| Refusal::new(RuleRef::I11, RefusalReason::GuardFailed))?;
     let mut trial = store.clone();
-    trial.apply(&record).map_err(store_refusal)?;
+    trial.apply_at(&record, ctx.now).map_err(store_refusal)?;
     Ok(vec![record])
 }
 
@@ -229,7 +249,8 @@ pub fn check_fold(
         FindingRecord::RerunRequested { call, proposal, by } => {
             check_rerun_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)
         }
-        FindingRecord::RefusalsRecorded { call, proposal, .. } => {
+        FindingRecord::RefusalsRecorded { call, proposal, .. }
+        | FindingRecord::RerunAbandoned { call, proposal, .. } => {
             published(core, *call).map_err(|_| FoldError::Inconsistent)?;
             if proposal_in_call(core, *proposal, *call) {
                 Ok(())
@@ -257,7 +278,41 @@ pub fn apply_finding(
     at: Timestamp,
 ) -> Result<(), FoldError> {
     check_fold(core, store, record, at)?;
-    store.apply(record).map_err(fold_error)
+    store.apply_at(record, at).map_err(fold_error)
+}
+
+/// The `AbandonRerun` commands the cell issues at `now` (issue 6 M3, I-10):
+/// one `Timeout` for each re-run that has been in flight for
+/// `RERUN_TIMEOUT_US`. It reads the finding store only. A dead run never
+/// records its result, so without this its slot would stay taken.
+pub fn stale_reruns(state: &EngineState, now: Timestamp) -> Vec<FindingCommand> {
+    abandon(
+        state.findings.stale_reruns(now),
+        fstp_findings::RerunEnd::Timeout,
+    )
+}
+
+/// The `AbandonRerun` commands of a cell start (issue 6 M3, I-10): one
+/// `CellStart` for each re-run in flight. A run lives in the cell process,
+/// so none of an earlier process is alive when the cell starts.
+pub fn reruns_at_start(state: &EngineState) -> Vec<FindingCommand> {
+    abandon(
+        state.findings.in_flight_reruns(),
+        fstp_findings::RerunEnd::CellStart,
+    )
+}
+
+fn abandon(
+    runs: Vec<(ProposalId, CallId)>,
+    reason: fstp_findings::RerunEnd,
+) -> Vec<FindingCommand> {
+    runs.into_iter()
+        .map(|(proposal, call)| FindingCommand::AbandonRerun {
+            call,
+            proposal,
+            reason,
+        })
+        .collect()
 }
 
 /// The checks every command shares with the core (design section 3.4).
@@ -535,9 +590,10 @@ fn store_refusal(r: FindingRefusal) -> Refusal {
         | FindingRefusal::FallbackOutOfOrder { .. }
         | FindingRefusal::FallbackExhausted { .. } => RefusalReason::GuardFailed,
         FindingRefusal::DuplicateFinding { .. } => RefusalReason::IdReused,
-        FindingRefusal::RerunInFlight { .. } | FindingRefusal::RerunLimit { .. } => {
-            RefusalReason::GuardFailed
-        }
+        FindingRefusal::RerunInFlight { .. }
+        | FindingRefusal::RerunLimit { .. }
+        | FindingRefusal::NoRerunInFlight { .. }
+        | FindingRefusal::RerunNotStale { .. } => RefusalReason::GuardFailed,
         FindingRefusal::TooManyRefused { .. } => RefusalReason::InvalidValue,
         FindingRefusal::UnknownFinding { .. } => RefusalReason::UnknownEntity,
         FindingRefusal::WrongCall { .. } | FindingRefusal::MalformedEvidence { .. } => {
@@ -554,7 +610,9 @@ fn fold_error(r: FindingRefusal) -> FoldError {
         FindingRefusal::DuplicateFinding { .. } => FoldError::DuplicateId,
         FindingRefusal::RerunInFlight { .. }
         | FindingRefusal::RerunLimit { .. }
-        | FindingRefusal::TooManyRefused { .. } => FoldError::Inconsistent,
+        | FindingRefusal::TooManyRefused { .. }
+        | FindingRefusal::NoRerunInFlight { .. }
+        | FindingRefusal::RerunNotStale { .. } => FoldError::Inconsistent,
         FindingRefusal::UnknownFinding { .. } => FoldError::UnknownEntity,
         FindingRefusal::ForeignConfig { .. }
         | FindingRefusal::RetiredConfig { .. }

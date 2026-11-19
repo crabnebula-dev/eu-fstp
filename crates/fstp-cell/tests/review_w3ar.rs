@@ -262,3 +262,86 @@ fn review_th_26_command_request_fuzz_target_has_an_accepted_seed() {
         dir.display()
     );
 }
+
+/// I-10, I-84, issue 6 M3 (Daniel, 2026-11-19): this cell runs no
+/// assessor, so nothing would ever run a re-run it records. A
+/// `RequestRerun` sent to `POST /api/v1/commands` answers 501 before the
+/// engine runs, so no `RerunRequested` takes the in-flight slot or one of
+/// the three re-runs. The API core refuses the same way when its port
+/// cannot re-run. The spy reports a commit for every execute, so the old
+/// route answered 200.
+#[test]
+fn issue6_m3_i10_production_cell_never_records_a_rerun_it_cannot_run() {
+    use fstp_domain::id::{CallId, ProposalId};
+    let spy = Arc::new(Spy {
+        inner: MemoryBackend::new(),
+        executed: AtomicUsize::new(0),
+    });
+    let now = spy.inner.now();
+    let token = [0x7c; 32];
+    fstp_rt::future::block_on(spy.inner.open_session(
+        fstp_crypto::sha256(&token),
+        SessionRow {
+            id: [0x12; 16],
+            account: ADMIN,
+            method: LoginMethod::Passkey,
+            started: now,
+            last_used: now,
+            credential: None,
+        },
+    ))
+    .unwrap();
+    let front = Front::new(
+        FrontConfig {
+            cell: CELL,
+            host: HOST.to_owned(),
+            enabled: EnabledMethods {
+                methods: vec![LoginMethod::Passkey],
+            },
+            limits: fstp_cell::routes::AuthLimits::default(),
+        },
+        Arc::clone(&spy),
+        Arc::new(MemoryLog::default()),
+    )
+    .unwrap();
+    let set = set_session_cookie(CELL, &token);
+    let cookie = set
+        .as_bytes()
+        .split(|b| *b == b';')
+        .next()
+        .unwrap()
+        .to_vec();
+    let cmd = fstp_cell_core::CellCommand::Engine(fstp_engine::Command::Finding(
+        fstp_engine::FindingCommand::RequestRerun {
+            call: CallId::from_raw(1),
+            proposal: ProposalId::from_raw(1003),
+        },
+    ));
+    let command = String::from_utf8(fstp_cell_core::encode_cell_command(&cmd)).unwrap();
+    let body = format!(
+        "{{\"command\":{command},\"command_id\":\"{}\"}}",
+        hex(&[0x43; 16])
+    );
+    let mut req = Request::new(
+        Method::POST,
+        RequestTarget::origin("/api/v1/commands").unwrap(),
+    )
+    .try_with_header("host", HOST)
+    .and_then(|r| r.try_with_header("origin", format!("https://{HOST}")))
+    .and_then(|r| r.try_with_header("content-type", "application/json"))
+    .and_then(|r| r.try_with_header("cookie", cookie))
+    .unwrap();
+    req.body = body.into_bytes();
+    let resp = fstp_rt::future::block_on(front.serve(req));
+    assert_eq!(
+        resp.status.as_u16(),
+        501,
+        "{}",
+        String::from_utf8_lossy(&resp.body)
+    );
+    assert_eq!(
+        spy.executed.load(Ordering::SeqCst),
+        0,
+        "the engine never ran the request"
+    );
+}

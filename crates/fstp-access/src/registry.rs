@@ -316,6 +316,9 @@ pub enum FindingKind {
     RequestRerun,
     /// `FindingCommand::RecordRefusals`, by the assessor only (issue 6 M3).
     RecordRefusals,
+    /// `FindingCommand::AbandonRerun`, by the cell's timeline only, for a
+    /// re-run whose run died (issue 6 M3).
+    AbandonRerun,
 }
 
 /// An import operation kind, one per `ImportCommand` variant.
@@ -2573,12 +2576,14 @@ pub const SYSTEM_ONLY: &[CommandKind] = &[
 ];
 
 /// Finding and import kinds that never arrive from a person:
-/// `FindingCommand::Record` and `Regenerate` (the assessor, M7), and
+/// `FindingCommand::Record`, `Regenerate` and `RecordRefusals` (the
+/// assessor, M7), `AbandonRerun` (the cell's timeline, issue 6 M3), and
 /// `ImportCommand::RecordProposals` (the proposer, run by the shell).
 pub const SYSTEM_ONLY_OTHER: &[OpKind] = &[
     OpKind::Finding(FindingKind::Record),
     OpKind::Finding(FindingKind::Regenerate),
     OpKind::Finding(FindingKind::RecordRefusals),
+    OpKind::Finding(FindingKind::AbandonRerun),
     OpKind::Import(ImportKind::RecordProposals),
 ];
 

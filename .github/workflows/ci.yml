@@ -35,7 +35,8 @@
 #          test with a stated minimum count keeps it
 #          (fstp_prop::Config::min_cases)
 #   full   a manual run with `full` ticked: every part, every test, and
-#          every property at its own case count. About three hours. A
+#          every property at its own case count. About an hour: full
+#          run 44513445737 (2026-11-19) took 51 minutes. A
 #          milestone closes, and a release ships, only on a green full run
 # Start a full run under Actions, workflow "ci", "Run workflow", with the
 # `full` box ticked. teeth_m3_registry checks both tiers.
@@ -56,8 +57,8 @@ on:
       full:
         description: >-
           Full run: the authorisation matrices, every teeth test and every
-          property at its full case count (about three hours). Required to
-          close a milestone or ship a release
+          property at its full case count (about an hour; run 44513445737
+          took 51 minutes). Required to close a milestone or ship a release
         type: boolean
         default: false
 
@@ -228,41 +229,47 @@ jobs:
           # runners. Since then each peaks under 2 GB (measured 2026-11-13).
           # They keep a part of their own, which runs only on the full tier
           # (Daniel, 2026-11-16), so every full run proves I-66 and I-67.
+          # In full run 44513445737 (2026-11-19) the part took 50 minutes, so
+          # its 120 stays.
           - { part: m-activate, packages: -p fstp-api-testkit --test i66_m_activate --test i67_m_activate, timeout: 120 }
           # I-84: the MCP channel matrix. Inside the api-testkit part it ran
           # past 75 minutes on 2026-11-13 and the part was cancelled at 90, so
-          # it runs in 8 shards of its own, as the direct matrix does.
-          - { part: matrix-mcp-0, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 0/8, timeout: 150 }
-          - { part: matrix-mcp-1, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 1/8, timeout: 150 }
-          - { part: matrix-mcp-2, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 2/8, timeout: 150 }
-          - { part: matrix-mcp-3, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 3/8, timeout: 150 }
-          - { part: matrix-mcp-4, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 4/8, timeout: 150 }
-          - { part: matrix-mcp-5, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 5/8, timeout: 150 }
-          - { part: matrix-mcp-6, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 6/8, timeout: 150 }
-          - { part: matrix-mcp-7, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 7/8, timeout: 150 }
-          # Q34 B: HTTP and MCP at the 9-row policy covering array. On CI the
-          # shards ran past 50 minutes on 2026-11-12, so each has 100. Measured
-          # locally on 4 threads: about 53 minutes in all, so 4 shards.
-          - { part: matrix-http-0, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 0/4, timeout: 100 }
-          - { part: matrix-http-1, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 1/4, timeout: 100 }
-          - { part: matrix-http-2, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 2/4, timeout: 100 }
-          - { part: matrix-http-3, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 3/4, timeout: 100 }
+          # it runs in 8 shards of its own, as the direct matrix does. In full
+          # run 44513445737 (2026-11-19) a shard took at most 11 minutes, so
+          # each has 25, about twice that.
+          - { part: matrix-mcp-0, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 0/8, timeout: 25 }
+          - { part: matrix-mcp-1, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 1/8, timeout: 25 }
+          - { part: matrix-mcp-2, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 2/8, timeout: 25 }
+          - { part: matrix-mcp-3, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 3/8, timeout: 25 }
+          - { part: matrix-mcp-4, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 4/8, timeout: 25 }
+          - { part: matrix-mcp-5, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 5/8, timeout: 25 }
+          - { part: matrix-mcp-6, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 6/8, timeout: 25 }
+          - { part: matrix-mcp-7, packages: -p fstp-api-testkit --test i84_mcp_matrix, filter: i84_t_authz_matrix_mcp_equals_channel_policy_of_web, shard: 7/8, timeout: 25 }
+          # Q34 B: HTTP and MCP at the 9-row policy covering array. Measured
+          # locally on 4 threads: about 53 minutes in all, so 4 shards. In
+          # full run 44513445737 (2026-11-19) a shard took at most 14 minutes,
+          # so each has 30, about twice that.
+          - { part: matrix-http-0, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 0/4, timeout: 30 }
+          - { part: matrix-http-1, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 1/4, timeout: 30 }
+          - { part: matrix-http-2, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 2/4, timeout: 30 }
+          - { part: matrix-http-3, packages: -p fstp-api-testkit --test t_authz_matrix_http, shard: 3/4, timeout: 30 }
           # Q34 B: the direct channel at the full policy product (144
-          # policies). On CI four shards ran past 100 minutes on 2026-11-13,
-          # so each has 180. Measured locally on 4 threads: about 250 minutes in
-          # all, so 12 shards of about 21 minutes.
-          - { part: matrix-direct-0, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 0/12, timeout: 180 }
-          - { part: matrix-direct-1, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 1/12, timeout: 180 }
-          - { part: matrix-direct-2, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 2/12, timeout: 180 }
-          - { part: matrix-direct-3, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 3/12, timeout: 180 }
-          - { part: matrix-direct-4, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 4/12, timeout: 180 }
-          - { part: matrix-direct-5, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 5/12, timeout: 180 }
-          - { part: matrix-direct-6, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 6/12, timeout: 180 }
-          - { part: matrix-direct-7, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 7/12, timeout: 180 }
-          - { part: matrix-direct-8, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 8/12, timeout: 180 }
-          - { part: matrix-direct-9, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 9/12, timeout: 180 }
-          - { part: matrix-direct-10, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 10/12, timeout: 180 }
-          - { part: matrix-direct-11, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 11/12, timeout: 180 }
+          # policies). Measured locally on 4 threads: about 250 minutes in all,
+          # so 12 shards of about 21 minutes. Since the matrix parts build
+          # optimised (5073fa66), a shard of full run 44513445737 (2026-11-19)
+          # took at most 25 minutes, so each has 50, about twice that.
+          - { part: matrix-direct-0, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 0/12, timeout: 50 }
+          - { part: matrix-direct-1, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 1/12, timeout: 50 }
+          - { part: matrix-direct-2, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 2/12, timeout: 50 }
+          - { part: matrix-direct-3, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 3/12, timeout: 50 }
+          - { part: matrix-direct-4, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 4/12, timeout: 50 }
+          - { part: matrix-direct-5, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 5/12, timeout: 50 }
+          - { part: matrix-direct-6, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 6/12, timeout: 50 }
+          - { part: matrix-direct-7, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 7/12, timeout: 50 }
+          - { part: matrix-direct-8, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 8/12, timeout: 50 }
+          - { part: matrix-direct-9, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 9/12, timeout: 50 }
+          - { part: matrix-direct-10, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 10/12, timeout: 50 }
+          - { part: matrix-direct-11, packages: -p fstp-api-testkit --lib, filter: t_authz_matrix_direct, shard: 11/12, timeout: 50 }
     env:
       # The M2 testkit builds about 160 test binaries, and each links every
       # M2 crate. With full debug info they fill the runner's disk. Line
@@ -293,8 +300,9 @@ jobs:
     steps:
       # The tier (Daniel, 2026-11-16): full on a manual run with the full
       # box ticked, light on every other run. The authorisation matrices
-      # (direct, HTTP and MCP, parts matrix-*) run about three hours, and
-      # the M-ACTIVATE model checks (part m-activate) 11 to 29 minutes. On
+      # (direct, HTTP and MCP, parts matrix-*) run at most 25 minutes a part,
+      # and the M-ACTIVATE model checks (part m-activate) 50 minutes, in full
+      # run 44513445737 (2026-11-19). On
       # the light tier each of these parts stops here (Daniel, 2026-11-16).
       # The per-operation agreement tests of the api-testkit part still run.
       - name: Decide the tier and whether this part runs

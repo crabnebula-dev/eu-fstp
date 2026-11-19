@@ -1078,6 +1078,18 @@ fn finding_command_json(c: &FindingCommand) -> Value {
                 ("proposal", dec_u128(proposal.raw())),
             ],
         ),
+        FindingCommand::AbandonRerun {
+            call,
+            proposal,
+            reason,
+        } => tagged(
+            "AbandonRerun",
+            vec![
+                ("call", dec_u128(call.raw())),
+                ("proposal", dec_u128(proposal.raw())),
+                ("reason", Value::String(reason.as_str().to_owned())),
+            ],
+        ),
         FindingCommand::RecordRefusals {
             call,
             proposal,
@@ -1153,6 +1165,18 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
             Ok(FindingCommand::RequestRerun {
                 call: CallId::from_raw(u128_from(o, "call")?),
                 proposal: fstp_domain::id::ProposalId::from_raw(u128_from(o, "proposal")?),
+            })
+        }
+        "AbandonRerun" => {
+            fields(o, &["call", "proposal", "reason"])?;
+            let reason = member(o, "reason")?
+                .as_str()
+                .and_then(fstp_findings::RerunEnd::parse)
+                .ok_or_else(|| FromJsonError::invalid("not a re-run end").at_field("reason"))?;
+            Ok(FindingCommand::AbandonRerun {
+                call: CallId::from_raw(u128_from(o, "call")?),
+                proposal: fstp_domain::id::ProposalId::from_raw(u128_from(o, "proposal")?),
+                reason,
             })
         }
         "RecordRefusals" => {

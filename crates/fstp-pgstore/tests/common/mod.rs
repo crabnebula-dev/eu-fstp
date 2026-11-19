@@ -635,6 +635,7 @@ impl Store {
                 .map(|session| SessionEnd {
                     session: *session,
                     record: last,
+                    ..SessionEnd::default()
                 })
                 .collect(),
             outbox: Vec::new(),
@@ -2019,6 +2020,7 @@ pub fn injected_side() -> SideEffects {
         sessions_ended: vec![SessionEnd {
             session: fresh16(),
             record: 1,
+            ..SessionEnd::default()
         }],
         outbox: vec![outbox_row(2, b"recovery mail")],
     }
