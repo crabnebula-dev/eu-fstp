@@ -299,6 +299,7 @@ fn issue6_m3_i10_production_cell_never_records_a_rerun_it_cannot_run() {
                 methods: vec![LoginMethod::Passkey],
             },
             limits: fstp_cell::routes::AuthLimits::default(),
+            organisation: fstp_cell::public::OrganisationPort::default(),
         },
         Arc::clone(&spy),
         Arc::new(MemoryLog::default()),
