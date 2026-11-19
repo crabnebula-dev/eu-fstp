@@ -80,7 +80,7 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
             "rate",
         );
     }
-    let blocked = needs_route_input(&command);
+    let blocked = needs_route_input(&command) || runs_no_rerun(&command);
     let unmask = match &command {
         CellCommand::Engine(fstp_engine::Command::Core(
             fstp_domain::command::Command::UnmaskParty {
@@ -122,7 +122,8 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
     };
     if blocked {
         // The batch needs a route input that `decide` cannot take yet
-        // (`fstp_cell_core::RouteInput`).
+        // (`fstp_cell_core::RouteInput`), or it is a re-run this cell
+        // cannot run ([`runs_no_rerun`]).
         return Reply::not_built();
     }
     // ADR-023 reading 7: an unmask answers its ticket, so it never
@@ -142,6 +143,23 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
         return unavailable(f);
     }
     run(ctx, admitted).await
+}
+
+/// Whether `command` asks for a re-run of an assessment (issue 6 M3, I-10).
+///
+/// This cell wires no assessor and no API core yet (M7 design section
+/// 3.4), so nothing would run the re-run, record its result as the system
+/// and end it. A recorded request would hold the proposal's in-flight slot
+/// and use one of its `MAX_RERUNS`. So the route answers 501 before the
+/// engine runs, as the API core answers "unavailable" when its port cannot
+/// re-run. Interim, until the production cell gets an assessor.
+fn runs_no_rerun(command: &CellCommand) -> bool {
+    matches!(
+        command,
+        CellCommand::Engine(fstp_engine::Command::Finding(
+            fstp_engine::FindingCommand::RequestRerun { .. }
+        ))
+    )
 }
 
 /// Issues a vault ticket (I-17, R-AU-01, design section 6.5).
