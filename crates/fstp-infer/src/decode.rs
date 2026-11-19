@@ -155,6 +155,9 @@ pub(crate) fn limits() -> ParseLimits {
         max_string_bytes: MAX_RESPONSE_BYTES,
         max_container_len: 64,
         max_nodes: 1024,
+        // A reply may hold one string of up to the whole response, more than
+        // the 1 MiB default memory limit allows (issue 6 L3).
+        max_memory_bytes: 8 << 20,
         ..ParseLimits::default()
     }
 }

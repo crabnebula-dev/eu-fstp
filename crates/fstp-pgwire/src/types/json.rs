@@ -24,11 +24,15 @@ pub const JSONB_VERSION: u8 = 1;
 
 /// The parse limits used when reading `json` and `jsonb` columns through
 /// [`FromSql`]: the fstp-json defaults, except that the input may be as
-/// large as one protocol message (1 GiB). Use
+/// large as one protocol message (1 GiB) and the parsed value may take
+/// 32 MiB. A stored column is the cell's own data, so it gets more room
+/// than the 1 MiB default for one request body (issue 6 L3). Use
 /// [`decode_json_with`] for other limits.
 #[must_use]
 pub fn json_limits() -> ParseLimits {
-    ParseLimits::default().with_max_input_bytes(1 << 30)
+    ParseLimits::default()
+        .with_max_input_bytes(1 << 30)
+        .with_max_memory_bytes(32 << 20)
 }
 
 /// Decodes a `json` or `jsonb` value under explicit limits.

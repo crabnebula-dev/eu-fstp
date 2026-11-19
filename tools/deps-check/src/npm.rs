@@ -250,6 +250,7 @@ fn limits() -> ParseLimits {
         .with_max_string_bytes(1 << 20)
         .with_max_container_len(200_000)
         .with_max_nodes(5_000_000)
+        .with_max_memory_bytes(32 << 20)
 }
 
 fn object<'a>(v: &'a Value, what: &str) -> Result<&'a Object, String> {

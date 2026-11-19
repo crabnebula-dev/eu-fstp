@@ -254,7 +254,10 @@ fn duplicate_detection_holds_in_large_objects() {
         doc.push_str(&format!("\"k{i}\":{i},"));
     }
     doc.push_str("\"k4321\":0}");
-    let (kind, offset) = err(doc.as_bytes());
+    // 5000 members take about 1.1 MiB, past the default memory limit.
+    let limits = ParseLimits::default().with_max_memory_bytes(4 << 20);
+    let e = parse_with(doc.as_bytes(), &limits).unwrap_err();
+    let (kind, offset) = (e.kind(), e.offset());
     assert_eq!(kind, K::DuplicateKey);
     assert_eq!(&doc[offset..offset + 7], "\"k4321\"");
 }
@@ -449,7 +452,7 @@ fn memory_limit_is_enforced() {
     let text = nine.to_compact();
     assert!(parse_with(text.as_bytes(), &at(cost)).is_ok());
     assert!(parse_with(text.as_bytes(), &at(cost - 1)).is_err());
-    assert_eq!(ParseLimits::default().max_memory_bytes, 32 << 20);
+    assert_eq!(ParseLimits::default().max_memory_bytes, 1 << 20);
 }
 
 /// `total` copies of `item` in sub-arrays of at most 99 000, which keeps
@@ -477,8 +480,9 @@ fn chunked(item: &str, total: usize) -> String {
 }
 
 /// Review finding parse-memory-amplification (TH-26). These inputs stay
-/// inside every other default limit, yet built trees of 60 to 160 MiB. The
-/// default memory limit now rejects each of them.
+/// inside every other limit of the former defaults (4 MiB of input), yet
+/// built trees of 60 to 160 MiB. A memory limit of 32 MiB rejects each of
+/// them, and the current defaults refuse them by length already.
 #[test]
 fn review_parse_memory_amplification() {
     let nine = "{\"a\":0,\"b\":0,\"c\":0,\"d\":0,\"e\":0,\"f\":0,\"g\":0,\"h\":0,\"i\":0}";
@@ -492,7 +496,9 @@ fn review_parse_memory_amplification() {
         n += 1;
     }
     objects.push(']');
-    let defaults = ParseLimits::default();
+    let defaults = ParseLimits::default()
+        .with_max_input_bytes(4 << 20)
+        .with_max_memory_bytes(32 << 20);
     let raised = defaults.with_max_memory_bytes(usize::MAX);
     for doc in [
         chunked("0", 990_000),
@@ -501,7 +507,8 @@ fn review_parse_memory_amplification() {
         objects,
     ] {
         assert!(doc.len() <= defaults.max_input_bytes);
-        let e = parse(doc.as_bytes()).unwrap_err();
+        assert!(parse(doc.as_bytes()).is_err());
+        let e = parse_with(doc.as_bytes(), &defaults).unwrap_err();
         assert_eq!(e.kind(), K::LimitExceeded(Limit::MemoryBytes));
         // Only the memory limit stops it.
         let v = parse_with(doc.as_bytes(), &raised).unwrap();
@@ -511,13 +518,13 @@ fn review_parse_memory_amplification() {
     }
 }
 
-/// The default memory limit admits 3 MiB of `cargo metadata` output under
+/// A memory limit of 32 MiB admits 3 MiB of `cargo metadata` output under
 /// the limits that `tools/deps-check` sets. That is more than ten times the
 /// largest output of this repository. The synthetic document has the shape of
 /// real output but denser values, so it costs about 9 bytes per input byte
 /// where real output costs about 7.
 #[test]
-fn default_memory_limit_admits_large_cargo_metadata() {
+fn deps_check_memory_limit_admits_large_cargo_metadata() {
     let reg = "registry+https://github.com/rust-lang/crates.io-index";
     let mut packages = Vec::new();
     let mut nodes = Vec::new();
@@ -544,13 +551,14 @@ fn default_memory_limit_admits_large_cargo_metadata() {
         packages.join(","),
         nodes.join(",")
     );
-    // `metadata_limits` in tools/deps-check, with the default memory limit.
+    // `metadata_limits` in tools/deps-check.
     let deps_check = ParseLimits::default()
         .with_max_input_bytes(256 << 20)
         .with_max_depth(64)
         .with_max_string_bytes(16 << 20)
         .with_max_container_len(1_000_000)
-        .with_max_nodes(50_000_000);
+        .with_max_nodes(50_000_000)
+        .with_max_memory_bytes(32 << 20);
     assert!(doc.len() > 3 << 20, "{}", doc.len());
     let v = parse_with(doc.as_bytes(), &deps_check).unwrap();
     let cost = documented_estimate(&v);
@@ -612,7 +620,9 @@ fn th26_wide_inputs_parse_in_linear_time() {
         doc.push_str(&format!("\"{}{i}\":[{i}]", "p".repeat(32)));
     }
     doc.push('}');
-    let limits = ParseLimits::default().with_max_input_bytes(64 << 20);
+    let limits = ParseLimits::default()
+        .with_max_input_bytes(64 << 20)
+        .with_max_memory_bytes(32 << 20);
     let started = std::time::Instant::now();
     let v = parse_with(doc.as_bytes(), &limits).unwrap();
     assert_eq!(v.as_object().unwrap().len(), n);
@@ -625,7 +635,11 @@ fn th26_wide_inputs_parse_in_linear_time() {
 
     let long = format!("\"{}\"", "x".repeat(1 << 20));
     assert_eq!(
-        parse(long.as_bytes()).unwrap().as_str().unwrap().len(),
+        parse_with(long.as_bytes(), &limits)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .len(),
         1 << 20
     );
     let digits = "9".repeat(4 << 20);
@@ -633,7 +647,7 @@ fn th26_wide_inputs_parse_in_linear_time() {
         parse_with(digits.as_bytes(), &limits).unwrap_err().kind(),
         K::LimitExceeded(Limit::NumberLength)
     );
-    let opens = "[".repeat((4 << 20) + 1);
+    let opens = "[".repeat((1 << 20) + 1);
     assert_eq!(
         parse(opens.as_bytes()).unwrap_err().kind(),
         K::LimitExceeded(Limit::InputBytes)
@@ -696,4 +710,23 @@ fn issue6_l4_contains_nul_finds_an_escaped_nul_anywhere() {
     for doc in [&b"\"ab\""[..], b"{\"k\":[1,true,null,\"\\u001f\"]}"] {
         assert!(!ok(doc).contains_nul(), "{doc:?}");
     }
+}
+
+/// Issue 6 L3: the default limits suit one HTTP body of the default size
+/// (1 MiB, `fstp_http::Limits::max_body_bytes`). The estimated memory of a
+/// parsed value is at most that size too, so a dense body cannot expand
+/// into a tree many times its length. Callers that need more set it.
+#[test]
+fn issue6_l3_default_memory_limit_matches_the_body_limit() {
+    let defaults = ParseLimits::default();
+    assert_eq!(defaults.max_memory_bytes, 1 << 20);
+    assert_eq!(defaults.max_input_bytes, 1 << 20);
+    // A dense body well inside 1 MiB costs about 33 bytes per input byte.
+    let dense = chunked("0", 100_000);
+    assert!(dense.len() < 1 << 20);
+    let e = parse(dense.as_bytes()).unwrap_err();
+    assert_eq!(e.kind(), K::LimitExceeded(Limit::MemoryBytes));
+    // A long string of almost the whole budget still parses.
+    let text = format!("\"{}\"", "x".repeat((1 << 20) - 1024));
+    assert!(parse(text.as_bytes()).is_ok());
 }

@@ -443,6 +443,7 @@ fn record_limits() -> ParseLimits {
         .with_max_string_bytes(256)
         .with_max_container_len(128)
         .with_max_nodes(16_384)
+        .with_max_memory_bytes(32 << 20)
 }
 
 /// The RFC 8785 text of a record, which [`decode_record`] reads back to
@@ -472,6 +473,7 @@ fn output_limits() -> ParseLimits {
         .with_max_string_bytes(MAX_VALUE_BYTES)
         .with_max_container_len(MAX_VALUE_NODES)
         .with_max_nodes(MAX_BATCH.saturating_mul(MAX_VALUE_NODES.saturating_add(32)))
+        .with_max_memory_bytes(32 << 20)
 }
 
 fn raw_json(p: &RawProposal) -> Value {

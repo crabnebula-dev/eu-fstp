@@ -42,12 +42,14 @@ fn t_llm_retrieval_fixture_web_serves_corpus_pages() {
     assert_eq!(Some(r.body.as_slice()), web.sites().get(site, "/"));
     assert!(String::from_utf8(r.body).unwrap().contains("<h1>"));
 
-    let manifest = fstp_json::parse(
+    // The manifest takes more than the 1 MiB default memory limit.
+    let manifest = fstp_json::parse_with(
         &std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../corpus/v1/manifest.json"
         ))
         .unwrap(),
+        &fstp_json::ParseLimits::default().with_max_memory_bytes(32 << 20),
     )
     .unwrap();
     let item = manifest.get("items").unwrap().get_index(0).unwrap();

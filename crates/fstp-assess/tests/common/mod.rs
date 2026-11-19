@@ -77,8 +77,11 @@ pub fn plan_text(plan: &Value) -> String {
     out
 }
 
+/// The manifest takes more than the 1 MiB default memory limit.
 pub fn manifest() -> Value {
-    fstp_json::parse(&std::fs::read(corpus_dir().join("manifest.json")).unwrap()).unwrap()
+    let limits = fstp_json::ParseLimits::default().with_max_memory_bytes(32 << 20);
+    let bytes = std::fs::read(corpus_dir().join("manifest.json")).unwrap();
+    fstp_json::parse_with(&bytes, &limits).unwrap()
 }
 
 /// Every item of the manifest, evaluation and e2e alike.
