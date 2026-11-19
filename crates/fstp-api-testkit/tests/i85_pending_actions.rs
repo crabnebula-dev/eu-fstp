@@ -444,6 +444,38 @@ fn i85_confirmation_needs_fresh_digest_bound_step_up() {
     });
 }
 
+/// Issue 6 L4, I-85: the MCP edit `r` of `edit`, whose text holds a NUL,
+/// was refused. No pending action exists, a confirmation of any id is
+/// refused, nothing is appended, and the direct web edit is refused.
+fn nul_edit_is_refused(
+    c: &FakeCell,
+    owner: &WebLogin,
+    edit: &CallEdit,
+    r: &Result<OpResult, ApiError>,
+) -> Result<(), String> {
+    prop_assert_eq!(class(r), Class::Refused(ErrorCode::BadRequest), "{:?}", r);
+    let list = c.pending(owner)?;
+    prop_assert!(
+        list.is_empty(),
+        "a NUL edit left a pending action: {:?}",
+        list
+    );
+    for id in [0, 1, 2, u64::MAX] {
+        let r = c.web(
+            owner,
+            requests::pending_confirm(
+                fstp_api_core::port::PendingId::from_raw(id.into()),
+                &ActionDigest([0; 32]),
+            ),
+        );
+        prop_assert!(class(&r).refused(), "confirmation {id}: {:?}", r);
+    }
+    let r = c.web(owner, requests::edit_web(CALL_EDIT, edit));
+    prop_assert_eq!(class(&r), Class::Refused(ErrorCode::BadRequest), "{:?}", r);
+    prop_assert!(c.ports.engine.appended().is_empty());
+    Ok(())
+}
+
 /// `cmd` with the id of its text set to zero. The content digest stays,
 /// so two cells that stored the same text give equal commands.
 fn without_text_id(cmd: &Command) -> Command {
@@ -467,7 +499,8 @@ fn without_text_id(cmd: &Command) -> Command {
     }
 }
 
-/// A random edit of a call, valid for the domain.
+/// A random edit of a call, valid for the domain. Its text is any string,
+/// so it may hold a NUL, which the request boundary refuses (issue 6 L4).
 fn gen_edit(g: &mut fstp_prop::Gen) -> CallEdit {
     let opens = g.i64_in(0..=1_000_000_000_000);
     let span = g.i64_in(1..=1_000_000_000_000);
@@ -477,9 +510,7 @@ fn gen_edit(g: &mut fstp_prop::Gen) -> CallEdit {
         deadline: fstp_domain::time::Timestamp::from_micros(opens.saturating_add(span)),
         deadline_zone: (*g.pick(&zones)).to_owned(),
         budget_cents: g.i64_in(0..=100_000_000_000),
-        // A text holds no NUL (issue 6 L4): PostgreSQL text refuses it, so
-        // a request with one is refused before any rule runs.
-        text: g.string(1..=120).replace('\0', "\u{1}"),
+        text: g.string(1..=120),
     }
 }
 
@@ -488,6 +519,10 @@ fn gen_edit(g: &mut fstp_prop::Gen) -> CallEdit {
 /// members beside the shown digest is refused. The executed command
 /// equals the command a direct web call of the same request executes on a
 /// twin cell, and the stored request is RFC 8785 canonical JSON.
+///
+/// Issue 6 L4: an edit whose text holds a NUL is refused as a bad request.
+/// It leaves no pending action, no confirmation executes anything, and a
+/// direct web edit of it is refused too.
 #[test]
 fn i85_confirmation_replays_stored_request() {
     check("i85_confirmation_replays_stored_request", |g| {
@@ -496,6 +531,9 @@ fn i85_confirmation_replays_stored_request() {
         let c = FakeCell::new().map_err(|e| e.to_string())?;
         let owner = c.login(OWNER, LoginMethod::Passkey);
         let r = c.mcp(&owner_token(&c), requests::edit_mcp(CALL_EDIT, &edit));
+        if edit.text.contains('\0') {
+            return nul_edit_is_refused(&c, &owner, &edit, &r);
+        }
         prop_assert_eq!(class(&r), Class::Pending, "{:?}", r);
         let view = only_pending(&c, &owner);
         let parsed = fstp_json::parse_str(&view.request)

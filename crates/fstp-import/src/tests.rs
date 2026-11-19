@@ -149,14 +149,19 @@ fn resolve<'a>(
     }
 }
 
-/// A string of `len` characters with no NUL. An import value refuses a
-/// NUL (issue 6 L4), so a generated NUL becomes U+0001, the nearest
-/// control character, which every value may hold.
-fn gen_text(g: &mut Gen, len: std::ops::RangeInclusive<usize>) -> String {
-    g.string(len).replace('\0', "\u{1}")
+/// `v` as an import value, or `None` when it holds a NUL. Issue 6 L4: a
+/// value with a NUL is refused with the typed `ImportError::Nul`, and a
+/// value without one is never refused for it.
+fn untrusted(v: &Value) -> Result<Option<UntrustedValue>, String> {
+    let got = UntrustedValue::new(v);
+    if v.contains_nul() {
+        prop_assert_eq!(got, Err(ImportError::Nul));
+        return Ok(None);
+    }
+    got.map(Some).map_err(|e| format!("{e:?}"))
 }
 
-/// An arbitrary JSON value of small size: any string without NUL, any
+/// An arbitrary JSON value of small size: any string, NUL included, any
 /// number lexeme from a list, booleans, null, arrays and objects.
 fn gen_value(g: &mut Gen, depth: u8) -> Value {
     const LEXEMES: [&str; 9] = [
@@ -171,7 +176,7 @@ fn gen_value(g: &mut Gen, depth: u8) -> Value {
         "400000",
     ];
     match g.u8_in(0..=if depth >= 3 { 3 } else { 5 }) {
-        0 => Value::String(gen_text(g, 0..=24)),
+        0 => Value::String(g.string(0..=24)),
         1 => Value::Number(Number::from_lexeme(g.pick(&LEXEMES)).unwrap()),
         2 => Value::Bool(g.bool()),
         3 => Value::Null,
@@ -182,7 +187,7 @@ fn gen_value(g: &mut Gen, depth: u8) -> Value {
         _ => {
             let mut o = Object::new();
             for _ in 0..g.usize_in(0..=3) {
-                let k = gen_text(g, 0..=6);
+                let k = g.string(0..=6);
                 let v = gen_value(g, depth.saturating_add(1));
                 o.insert(k, v);
             }
@@ -416,10 +421,9 @@ fn th26_untrusted_value_normal_text_round_trips() {
         let b = if g.bool() { a.clone() } else { gen_value(g, 0) };
         g.note("a", &a);
         g.note("b", &b);
-        let (ua, ub) = (
-            UntrustedValue::new(&a).map_err(e)?,
-            UntrustedValue::new(&b).map_err(e)?,
-        );
+        let (Some(ua), Some(ub)) = (untrusted(&a)?, untrusted(&b)?) else {
+            return Ok(());
+        };
         prop_assert_eq!(
             UntrustedValue::from_normal_text(ua.as_data()).map_err(e)?,
             ua.clone()
@@ -539,8 +543,14 @@ fn adr007_proposals_record_never_holds_value_text() {
             let mut o = Object::new();
             o.insert("name", Value::String(marker));
             o.insert("other", gen_value(g, 1));
-            p.value = UntrustedValue::new(&Value::Object(o)).map_err(e)?;
+            let Some(value) = untrusted(&Value::Object(o))? else {
+                continue;
+            };
+            p.value = value;
             proposals.push(p);
+        }
+        if proposals.is_empty() {
+            return Ok(());
         }
         let mut s = ImportStore::genesis();
         s.apply(&ImportRecord::DocumentRegistered(document(D1, 100)))
@@ -571,9 +581,12 @@ fn th26_proposer_output_round_trips() {
     check("th26_proposer_output_round_trips", |g| {
         let value = gen_value(g, 0);
         g.note("value", &value);
+        let Some(untrusted_value) = untrusted(&value)? else {
+            return Ok(());
+        };
         let raw = RawProposal {
             field: f,
-            value: UntrustedValue::new(&value).map_err(e)?,
+            value: untrusted_value,
             evidence: vec![Span { start: 1, end: 4 }],
         };
         let text = encode_proposal(&raw);
@@ -728,11 +741,14 @@ fn i65_import_commands_never_resolve() {
                 let doc = *g.pick(&[D1, ImportDocumentId::from_raw(2)]);
                 let proposals = g.vec(0..=3, |g| {
                     next = next.saturating_add(1);
-                    ImportProposal {
+                    // Issue 6 L4: a value with a NUL is refused as `Nul`
+                    // and forms no proposal.
+                    let value = untrusted(&gen_value(g, 0)).unwrap()?;
+                    Some(ImportProposal {
                         id: ImportProposalId::from_raw(next),
                         document: doc,
                         field: *g.pick(&fields),
-                        value: UntrustedValue::new(&gen_value(g, 0)).unwrap(),
+                        value,
                         text: text_ref(next, g.u8()),
                         evidence: vec![Span {
                             start: g.u32_in(0..=50),
@@ -740,8 +756,9 @@ fn i65_import_commands_never_resolve() {
                         }],
                         config: ImportConfigId::from_raw(1),
                         conflicts_with_profile: Vec::new(),
-                    }
+                    })
                 });
+                let proposals = proposals.into_iter().flatten().collect();
                 ImportCommand::RecordProposals {
                     document: doc,
                     proposals,

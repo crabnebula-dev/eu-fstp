@@ -36,8 +36,7 @@ fn method(g: &mut Gen) -> String {
     if g.bool() {
         (*g.pick(&fixed)).to_owned()
     } else {
-        // No NUL (issue 6 L4): a message with one is refused as invalid.
-        g.ascii_string(1..=24).replace('\0', "\u{1}")
+        g.ascii_string(1..=24)
     }
 }
 
@@ -57,17 +56,12 @@ fn th26_jsonrpc_decode_reads_requests_and_notifications() {
             let id = if g.bool() {
                 Some(JsonRpcId::Number(g.i64_in(-1_000_000..=1_000_000)))
             } else if g.bool() {
-                Some(JsonRpcId::String(
-                    g.ascii_string(0..=12).replace('\0', "\u{1}"),
-                ))
+                Some(JsonRpcId::String(g.ascii_string(0..=12)))
             } else {
                 None
             };
-            // A message holds no NUL (issue 6 L4). It is refused as invalid,
-            // which `issue6_l4_a_message_with_a_nul_is_refused` covers.
             let params = if g.bool() {
-                let name = g.string(0..=10).replace('\0', "\u{1}");
-                Some(format!(r#"{{"name":{},"n":7}}"#, quoted(&name)))
+                Some(format!(r#"{{"name":{},"n":7}}"#, quoted(&g.string(0..=10))))
             } else {
                 None
             };
@@ -83,6 +77,14 @@ fn th26_jsonrpc_decode_reads_requests_and_notifications() {
             }
             text.push('}');
             g.note("text", &text);
+            // Issue 6 L4: a message with a NUL anywhere is refused as invalid.
+            if fstp_json::parse(text.as_bytes()).is_ok_and(|v| v.contains_nul()) {
+                prop_assert_eq!(
+                    decode_jsonrpc(text.as_bytes()),
+                    Err(McpError::Invalid("the message holds a NUL character"))
+                );
+                return Ok(());
+            }
             let got = decode_jsonrpc(text.as_bytes()).map_err(|e| e.to_string())?;
             let want_params = params.as_deref().map(|p| {
                 fstp_json::parse(p.as_bytes())
