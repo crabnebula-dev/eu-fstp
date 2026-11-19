@@ -402,6 +402,25 @@ const SUBMITTED_ON: [StateTag; 14] = [
     StateTag::Terminated,
 ];
 
+/// `review.findings_refusals`: the stages the output validator dropped
+/// from the assessment of the assignment's proposal (issue 6 M3, I-10,
+/// H-03). Stage names and codes only, each checked again against its
+/// allowlist. A cell with no assessor port reports none.
+pub(crate) fn refused_stages<P: Seams>(
+    call: &Call<'_, P>,
+    a: fstp_domain::id::AssignmentId,
+) -> Result<Vec<crate::views::RefusedStageRow>, ApiError> {
+    let assignment = call
+        .state
+        .core
+        .review()
+        .get(a)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+    Ok(call.ports.precheck().map_or_else(Vec::new, |port| {
+        crate::views::refused_rows(&port.refused_stages(assignment.proposal))
+    }))
+}
+
 /// `assess.findings_status`: per submitted proposal of the call, pending
 /// or ready with a count (M7 design section 7). Never a statement.
 pub(crate) fn findings_status<P: Seams>(call: &Call<'_, P>, c: CallId) -> Vec<FindingsStatusRow> {

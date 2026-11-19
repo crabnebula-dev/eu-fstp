@@ -123,3 +123,55 @@ fn i21_precheck_runs_read_is_the_drafting_team_only() {
     assert!(matches!(spec.kind, OpKind::M3Port(_)));
     assert_eq!(spec.acting, op("proposal.save_workspace").unwrap().acting);
 }
+
+/// Issue 6 M3, I-10, H-03: the refused-stage read holds a stage name and a
+/// code, both closed enums of fixed identifiers. No member can carry model
+/// or submission text, and nothing from which a score is derivable.
+#[test]
+fn issue6_m3_refusals_reply_is_two_closed_enums() {
+    let (_, shape) = REPLIES
+        .iter()
+        .find(|(n, _)| *n == "review.findings_refusals")
+        .expect("the read has a reply shape");
+    let Shape::Array(item) = shape else {
+        panic!("an array");
+    };
+    let Shape::Object(members) = item else {
+        panic!("an object per entry");
+    };
+    assert_eq!(
+        members.iter().map(|m| m.name).collect::<Vec<_>>(),
+        vec!["stage", "code"]
+    );
+    for m in members.iter() {
+        assert!(matches!(m.shape, Shape::Enum(_)), "{} is an enum", m.name);
+    }
+    assert_eq!(
+        fstp_access::REFUSED_STAGE_NAMES,
+        ["completeness", "quality", "claims", "verify", "integrity"]
+    );
+    assert_eq!(fstp_access::REFUSED_STAGE_CODES.len(), 8);
+}
+
+/// Issue 6 M3, I-10, I-21: the refused-stage read is the findings
+/// reader's rule, in the same states as `review.findings`, and has no
+/// tool, so an agent cannot read it. It widens nobody's view.
+#[test]
+fn issue6_m3_refusals_read_has_the_findings_rule_and_no_tool() {
+    let spec = op("review.findings_refusals").expect("in the registry");
+    assert!(spec.tool.is_none());
+    assert_eq!(
+        read_rule(ReadKind::GetFindingsRefusals),
+        read_rule(ReadKind::GetFindings)
+    );
+    let p = mcp();
+    assert_eq!(
+        channel_policy(
+            spec,
+            &p,
+            McpBindingActions::Allowed,
+            &McpSettings::all_roles()
+        ),
+        ChannelVerdict::Deny(ChannelDenial::NotExposed)
+    );
+}

@@ -1633,6 +1633,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("stage2.no_questions", T::Assignment, R::ReviewerAct).binding(),
     RefOp::act("review.rank", T::Assignment, R::ReviewerAct).binding(),
     RefOp::read("review.findings", T::Assignment, R::Findings).tool("fstp_get_findings"),
+    // Issue 6 M3: the stages the validator dropped, names and codes only.
+    RefOp::read("review.findings_refusals", T::Assignment, R::Findings),
     // M7 design section 7: counts per proposal for the coordinator.
     RefOp::read("assess.findings_status", T::Call, R::Coordinator),
     RefOp::act("review.mark_finding", T::Finding, R::FindingMarker).binding(),

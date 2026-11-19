@@ -247,9 +247,15 @@ pub(crate) async fn assess(
     let Ok(lines) = link.run(&[job.line().to_line()]).await else {
         return Ok(Assessed::Pending);
     };
-    let Some(Ok(Intake::Done { findings, .. })) = lines.first().map(|l| job.intake(l)) else {
+    let Some(Ok(Intake::Done {
+        findings, refused, ..
+    })) = lines.first().map(|l| job.intake(l))
+    else {
         return Ok(Assessed::Pending);
     };
+    // Issue 6 M3 (I-10, H-03): the stages the validator dropped, kept as
+    // stage and code only, for the notice on the findings panel.
+    inner.ports.precheck.record_refused(proposal, &refused);
     let n = findings.len();
     for f in findings {
         let id = 50_000_000_u128

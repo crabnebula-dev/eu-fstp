@@ -103,6 +103,7 @@ The output parser (`fstp-json` plus a typed decoder, fuzz target `assess_output_
 - `criterion` must be in the frozen P-01, and `element` in the pinned rubric;
 - `statement` is bounded to 1,000 bytes and stored as `UntrustedText`;
 - placeholders in statements stay placeholders. Reviewers see `[PERSON-1]`, never a name.
+- when the validator refuses a whole model reply for one stage, the assessor ends the job with the other stages and lists the dropped ones as stage and code pairs (issue 6 M3, H-03). The reviewer's findings panel shows a status notice with the count, each stage and its code, as fixed labels chosen from the two allowlists (`review.findings_refusals`, the findings reader's rule, no tool). An identifier outside an allowlist reads as a generic label. No model output is shown, and applicants see nothing of it. Daniel decided on 2026-11-19 that staff with the right role can start the assessment again from the notice. No operation starts an assessment today, so the notice has no control until one exists (open).
 
 ### 3.5 Traces and regeneration
 

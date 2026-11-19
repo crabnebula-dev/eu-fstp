@@ -191,6 +191,7 @@ export type OpName =
   | "stage2.no_questions"
   | "review.rank"
   | "review.findings"
+  | "review.findings_refusals"
   | "assess.findings_status"
   | "review.mark_finding"
   | "committee.ranking"
@@ -438,6 +439,7 @@ export interface OpParams {
   readonly "stage2.no_questions": { readonly "assignment": string };
   readonly "review.rank": { readonly "assignment": string };
   readonly "review.findings": { readonly "assignment": string };
+  readonly "review.findings_refusals": { readonly "assignment": string };
   readonly "assess.findings_status": { readonly "call": string };
   readonly "review.mark_finding": { readonly "finding": string };
   readonly "committee.ranking": { readonly "call": string };
@@ -658,6 +660,7 @@ export const OP_NAMES: readonly OpName[] = [
   "stage2.no_questions",
   "review.rank",
   "review.findings",
+  "review.findings_refusals",
   "assess.findings_status",
   "review.mark_finding",
   "committee.ranking",
@@ -2658,6 +2661,20 @@ export const OPERATIONS: readonly Operation[] = [
     session: "any",
     classification: "confidential",
     tool: { name: "fstp_get_findings", scope: "findings:read", prepareOnly: false },
+  },
+  {
+    name: "review.findings_refusals",
+    method: "GET",
+    path: "/assignments/{assignment}/findings-refusals",
+    base: "api",
+    segments: [{ kind: "literal", text: "assignments" }, { kind: "param", name: "assignment" }, { kind: "literal", text: "findings-refusals" }],
+    params: ["assignment"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
   },
   {
     name: "assess.findings_status",
@@ -4666,6 +4683,13 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "statement": { schema: { kind: "string" }, optional: false },
       "mark": { schema: { kind: "nullable", inner: { kind: "enum", values: ["Agreed", "Disputed"] } }, optional: false },
       "assessor": { schema: { kind: "enum", values: ["synthetic", "model"] }, optional: false },
+    },
+  } },
+  "review.findings_refusals": { kind: "array", items: {
+    kind: "object",
+    fields: {
+      "stage": { schema: { kind: "enum", values: ["completeness", "quality", "claims", "verify", "integrity"] }, optional: false },
+      "code": { schema: { kind: "enum", values: ["json", "unknown_member", "shape", "score_like", "criterion", "element", "kind", "too_long"] }, optional: false },
     },
   } },
   "assess.findings_status": { kind: "array", items: {

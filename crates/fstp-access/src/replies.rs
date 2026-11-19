@@ -110,6 +110,24 @@ const fn opt(name: &'static str, shape: Shape) -> Member {
 /// section 7): the in-memory synthetic model of a demo cell, or a model.
 const ASSESSOR_NAMES: &[&str] = &["synthetic", "model"];
 
+/// The stage names a refused-stage notice may carry, as
+/// `fstp_assess::Stage::as_str` spells them (issue 6 M3, I-10, H-03).
+pub const REFUSED_STAGE_NAMES: &[&str] =
+    &["completeness", "quality", "claims", "verify", "integrity"];
+
+/// The refusal codes a refused-stage notice may carry, as
+/// `fstp_assess::OutputError::code` spells them (issue 6 M3, I-10, H-03).
+pub const REFUSED_STAGE_CODES: &[&str] = &[
+    "json",
+    "unknown_member",
+    "shape",
+    "score_like",
+    "criterion",
+    "element",
+    "kind",
+    "too_long",
+];
+
 /// The rubric v1 element tags (M7 design section 2, reading 1).
 const RUBRIC_ELEMENTS: &[&str] = &[
     "problem",
@@ -1344,6 +1362,16 @@ pub const REPLIES: &[(&str, Shape)] = &[
             // M7 design section 7, R-LA-08: which assessor produced it, so
             // the panel discloses a synthetic demo run as such.
             m("assessor", Shape::Enum(ASSESSOR_NAMES)),
+        ])),
+    ),
+    // Issue 6 M3, I-10, H-03: the stages the output validator dropped from
+    // the assessment of the reviewer's proposal. Closed enums of stage
+    // names and refusal codes, so no model or submission text can fit.
+    (
+        "review.findings_refusals",
+        Shape::Array(&Shape::Object(&[
+            m("stage", Shape::Enum(REFUSED_STAGE_NAMES)),
+            m("code", Shape::Enum(REFUSED_STAGE_CODES)),
         ])),
     ),
     // M7 design section 7: per submitted proposal, pending or ready and

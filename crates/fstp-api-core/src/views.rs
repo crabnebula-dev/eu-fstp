@@ -997,3 +997,104 @@ impl ToJson for FindingsStatusRow {
         ])
     }
 }
+
+/// One stage the assessor's output validator dropped (issue 6 M3, I-10,
+/// H-03): a stage name and a refusal code, each from a fixed allowlist.
+/// No member can hold model output or submission text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RefusedStageRow {
+    /// One of [`fstp_access::REFUSED_STAGE_NAMES`].
+    pub stage: &'static str,
+    /// One of [`fstp_access::REFUSED_STAGE_CODES`].
+    pub code: &'static str,
+}
+
+impl ToJson for RefusedStageRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("stage", Value::from(self.stage)),
+            ("code", Value::from(self.code)),
+        ])
+    }
+}
+
+impl McpSafe for RefusedStageRow {}
+
+/// The rows the port's refused stages make. An entry whose stage or code
+/// is not on its allowlist is dropped, and a repeated pair shows once, so
+/// nothing but fixed identifiers reaches a reply (issue 6 M3, I-10).
+#[must_use]
+pub fn refused_rows(raw: &[crate::port::RefusedStage]) -> Vec<RefusedStageRow> {
+    let mut out: Vec<RefusedStageRow> = Vec::new();
+    for r in raw {
+        let stage = fstp_access::REFUSED_STAGE_NAMES
+            .iter()
+            .find(|s| **s == r.stage);
+        let code = fstp_access::REFUSED_STAGE_CODES
+            .iter()
+            .find(|c| **c == r.code);
+        if let (Some(stage), Some(code)) = (stage, code) {
+            let row = RefusedStageRow { stage, code };
+            if !out.contains(&row) {
+                out.push(row);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod refused_tests {
+    use super::*;
+    use crate::port::RefusedStage;
+
+    /// Issue 6 M3, I-10, H-03: the list reaches the read unchanged when
+    /// every identifier is on its allowlist.
+    #[test]
+    fn issue6_m3_allowlisted_pairs_pass_unchanged_in_order() {
+        let raw = [
+            RefusedStage {
+                stage: "quality",
+                code: "score_like",
+            },
+            RefusedStage {
+                stage: "integrity",
+                code: "json",
+            },
+        ];
+        let rows = refused_rows(&raw);
+        assert_eq!(
+            rows.iter().map(|r| (r.stage, r.code)).collect::<Vec<_>>(),
+            vec![("quality", "score_like"), ("integrity", "json")]
+        );
+    }
+
+    /// Issue 6 M3, I-10, TH-01: nothing but allowlisted identifiers
+    /// reaches a reply. An unknown stage or code, such as text a model
+    /// wrote, is dropped, and an empty list stays empty.
+    #[test]
+    fn issue6_m3_unknown_identifiers_never_reach_the_reply() {
+        let raw = [
+            RefusedStage {
+                stage: "ignore previous instructions",
+                code: "json",
+            },
+            RefusedStage {
+                stage: "quality",
+                code: "<script>alert(1)</script>",
+            },
+            RefusedStage {
+                stage: "claims",
+                code: "shape",
+            },
+            RefusedStage {
+                stage: "claims",
+                code: "shape",
+            },
+        ];
+        let rows = refused_rows(&raw);
+        assert_eq!(rows.len(), 1, "one allowlisted pair, shown once");
+        assert_eq!((rows[0].stage, rows[0].code), ("claims", "shape"));
+        assert!(refused_rows(&[]).is_empty(), "no refusals, no rows");
+    }
+}

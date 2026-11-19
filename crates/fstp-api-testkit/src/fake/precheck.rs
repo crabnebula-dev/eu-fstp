@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use fstp_api_core::port::{
     Clock, InferenceProvider, PortError, Precheck, PrecheckEvidence, PrecheckFinding,
     PrecheckQuota, PrecheckRefusal, PrecheckRun, PrecheckRunId, PrecheckRunState, PrecheckSection,
-    PrecheckSnapshot,
+    PrecheckSnapshot, RefusedStage,
 };
 use fstp_assess::{SubmissionPart, SyntheticNameMask};
 use fstp_assessor::{CellJob, Intake, JobConfig, Link};
@@ -39,6 +39,9 @@ pub struct FakePrecheck {
     link: Arc<Mutex<Link>>,
     runs: Arc<Mutex<BTreeMap<ProposalId, Vec<PrecheckRun>>>>,
     next: Arc<Mutex<u128>>,
+    /// The stages the validator dropped from the last assessment of each
+    /// proposal (issue 6 M3). Stage names and codes only.
+    refused: Arc<Mutex<BTreeMap<ProposalId, Vec<RefusedStage>>>>,
 }
 
 impl FakePrecheck {
@@ -49,6 +52,7 @@ impl FakePrecheck {
             link: Arc::new(Mutex::new(Link::InProcess)),
             runs: Arc::default(),
             next: Arc::new(Mutex::new(1)),
+            refused: Arc::default(),
         }
     }
 
@@ -56,6 +60,29 @@ impl FakePrecheck {
     /// the e2e cell.
     pub fn set_link(&self, link: Link) {
         *lock(&self.link) = link;
+    }
+
+    /// Keeps the stages the validator dropped from the assessment of
+    /// `proposal`, in place of those of an earlier assessment. A result
+    /// with none clears the entry, so a rerun that drops nothing shows no
+    /// notice (issue 6 M3, I-10, H-03). Only the stage and the code are
+    /// kept, never a reply.
+    pub fn record_refused(&self, proposal: ProposalId, refused: &[fstp_assessor::RefusedStage]) {
+        let mut map = lock(&self.refused);
+        if refused.is_empty() {
+            map.remove(&proposal);
+            return;
+        }
+        map.insert(
+            proposal,
+            refused
+                .iter()
+                .map(|r| RefusedStage {
+                    stage: r.stage,
+                    code: r.code,
+                })
+                .collect(),
+        );
     }
 
     /// The link runs go through.
@@ -175,6 +202,13 @@ pub async fn run_snapshot(
 }
 
 impl Precheck for FakePrecheck {
+    fn refused_stages(&self, proposal: ProposalId) -> Vec<RefusedStage> {
+        lock(&self.refused)
+            .get(&proposal)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     async fn request(
         &self,
         proposal: ProposalId,
@@ -222,5 +256,42 @@ impl Precheck for FakePrecheck {
         // holds no counts of its own.
         let _ = (proposal, account);
         Err(PortError::Unavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake() -> FakePrecheck {
+        FakePrecheck::new(FakeClock::new(fstp_domain::time::Timestamp::from_micros(1)))
+    }
+
+    /// Issue 6 M3, I-10, H-03: the dropped stages of an assessment are
+    /// kept per proposal as stage and code only, a rerun replaces them,
+    /// and a result with no refusals clears them, so no notice stays.
+    #[test]
+    fn issue6_m3_refused_stages_are_kept_per_proposal_and_replaced() {
+        let f = fake();
+        let p = ProposalId::from_raw(1001);
+        let q = ProposalId::from_raw(1002);
+        assert!(f.refused_stages(p).is_empty());
+        f.record_refused(
+            p,
+            &[fstp_assessor::RefusedStage {
+                stage: "quality",
+                code: "score_like",
+            }],
+        );
+        assert_eq!(
+            f.refused_stages(p)
+                .iter()
+                .map(|r| (r.stage, r.code))
+                .collect::<Vec<_>>(),
+            vec![("quality", "score_like")]
+        );
+        assert!(f.refused_stages(q).is_empty(), "another proposal");
+        f.record_refused(p, &[]);
+        assert!(f.refused_stages(p).is_empty(), "a clean rerun clears it");
     }
 }

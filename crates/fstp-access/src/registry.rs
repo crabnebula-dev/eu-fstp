@@ -1945,6 +1945,15 @@ pub const OPS: &[OpSpec] = &[
         &IN_ASSIGNMENT,
         Scope::FindingsRead,
     ),
+    // Issue 6 M3 (I-10, H-03): the stages the output validator dropped from
+    // the assessment of the reviewer's proposal. Names and codes only.
+    // Web only: no tool, so no agent reads it.
+    OpSpec::read(
+        "review.findings_refusals",
+        RK::GetFindingsRefusals,
+        "/assignments/{assignment}/findings-refusals",
+    )
+    .acting(REVIEWER),
     // M7 lane L-UI (M7 design section 7): per submitted proposal of a
     // call, whether its findings are pending and how many there are.
     // Never a statement. Web only.

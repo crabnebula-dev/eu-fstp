@@ -19,9 +19,11 @@ import { readMyRoles } from "../home/model.js";
 import { FINDINGS_LABELS } from "./messages.en.js";
 import {
   decodeFindingsStatus,
+  decodeRefusedStages,
   decodeReviewFindings,
   type Assessor,
   type FindingsStatus,
+  type RefusedStage,
   type ReviewFinding,
 } from "./model.js";
 
@@ -44,6 +46,37 @@ function markText(t: I18n, m: ReviewFinding["mark"]): Label {
 }
 
 /**
+ * The notice of stages the validator dropped from the assessment (issue 6
+ * M3, I-10, H-03), or null when none were. A plain status region: the
+ * count, then each stage and its refusal code as fixed labels chosen from
+ * the allowlisted identifiers. No model output is shown, and no control:
+ * no operation lets staff start an assessment again.
+ */
+export function refusedNotice(t: I18n, rows: readonly RefusedStage[]): HTMLElement | null {
+  if (rows.length === 0) {
+    return null;
+  }
+  const lead =
+    rows.length === 1
+      ? t.label("rev.findings.refused.one")
+      : t.label("rev.findings.refused.other", { count: String(rows.length) });
+  const items = rows.map((r) =>
+    h("li", { "data-stage": r.stage, "data-code": r.code }, [
+      t.label("rev.findings.refused.item", {
+        stage: t.label(`refused.stage.${r.stage}`),
+        reason: t.label(`refused.code.${r.code}`),
+        code: r.code,
+      }),
+    ]),
+  );
+  return h(
+    "div",
+    { id: "findings-refused", role: "status", class: "callout", "data-refused": String(rows.length) },
+    [h("p", {}, [lead]), h("p", {}, [t.label("rev.findings.refused.lead")]), h("ul", {}, items)],
+  );
+}
+
+/**
  * The reviewer's findings panel for `assignment`. It reads
  * `review.findings` itself and re-reads after each mark.
  */
@@ -62,6 +95,15 @@ export async function findingsSection(env: PageEnv, f: Frame, assignment: string
       return;
     }
     children.push(disclosure(t, rows[0]?.assessor ?? null));
+    // The notice is extra. A refused or failed read leaves the findings
+    // as they are, with no notice.
+    const dropped = await callOp(env, "review.findings_refusals", { assignment }, undefined, (v): v is unknown =>
+      decodeRefusedStages(v) !== null,
+    );
+    const notice = dropped.ok ? refusedNotice(t, decodeRefusedStages(dropped.data) ?? []) : null;
+    if (notice !== null) {
+      children.push(notice);
+    }
     if (rows.length === 0) {
       children.push(h("p", { id: "findings-none" }, [t.label("rev.findings.none")]));
       section.replaceChildren(...children);

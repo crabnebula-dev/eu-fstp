@@ -1305,6 +1305,16 @@ pub enum PrecheckRefusal {
     CallNotPublished,
 }
 
+/// One reply the assessor's output validator refused whole (issue 6 M3,
+/// I-10, H-03): a stage name and a refusal code, never content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RefusedStage {
+    /// The stage name, one of the assessor's fixed stage names.
+    pub stage: &'static str,
+    /// The refusal code, one of the validator's fixed codes.
+    pub code: &'static str,
+}
+
 /// The pre-check provider (M7 design section 4, R-LA-06, I-21). M4
 /// production cells have none, so `PrecheckUnavailable` fails validation
 /// there (Q38). The e2e cell supplies a fake.
@@ -1341,6 +1351,14 @@ pub trait Precheck: Send + Sync {
     ) -> impl Future<Output = Result<PrecheckQuota, PortError>> + Send {
         let _ = (proposal, account);
         std::future::ready(Err(PortError::Unavailable))
+    }
+    /// The stages the validator dropped from the last assessment of
+    /// `proposal` (issue 6 M3, I-10, H-03). Stage names and refusal codes
+    /// only, never a reply. The default is none. The read allowlists both
+    /// names again before the page sees them.
+    fn refused_stages(&self, proposal: ProposalId) -> Vec<RefusedStage> {
+        let _ = proposal;
+        Vec::new()
     }
 }
 

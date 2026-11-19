@@ -1901,6 +1901,10 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let a = assignment_param(call, op, "assignment")?;
             ReadModel::Findings(findings(call, a, viewer)?)
         }
+        ReadKind::GetFindingsRefusals => {
+            let a = assignment_param(call, op, "assignment")?;
+            ReadModel::FindingsRefusals(precheck::refused_stages(call, a)?)
+        }
         ReadKind::GetStage2Thread => {
             let a = assignment_param(call, op, "assignment")?;
             ReadModel::Stage2Thread(stage2_thread(call, a, &clearance).await?)
