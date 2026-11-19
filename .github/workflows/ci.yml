@@ -372,12 +372,27 @@ jobs:
         if: steps.part.outputs.run == 'true'
         env:
           PG_PACKAGE_VERSION: 16.16-1.pgdg24.04+1
+          # SHA-256 of https://www.postgresql.org/media/keys/ACCC4CF8.asc,
+          # the signing key of the PostgreSQL apt repository, as fetched
+          # on 2026-11-19.
+          PGDG_KEY_SHA256: 0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76
         run: |
           set -euo pipefail
           pg_bin=/usr/lib/postgresql/16/bin
           have="$(dpkg-query -W -f='${Version}' postgresql-16 2>/dev/null || true)"
           if [ "$have" != "$PG_PACKAGE_VERSION" ]; then
             echo "postgresql-16 is '$have', the pin is '$PG_PACKAGE_VERSION'"
+            # The runner image holds a PostgreSQL build and no apt source
+            # for it. The PostgreSQL apt repository keeps recent builds,
+            # and its archive keeps the older ones.
+            key="$RUNNER_TEMP/pgdg.asc"
+            curl -fsSL --retry 3 -o "$key" https://www.postgresql.org/media/keys/ACCC4CF8.asc
+            echo "$PGDG_KEY_SHA256  $key" | sha256sum -c -
+            sudo install -m 0644 "$key" /usr/share/keyrings/fstp-pgdg.asc
+            {
+              echo "deb [signed-by=/usr/share/keyrings/fstp-pgdg.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main"
+              echo "deb [signed-by=/usr/share/keyrings/fstp-pgdg.asc] https://apt-archive.postgresql.org/pub/repos/apt noble-pgdg-archive main"
+            } | sudo tee /etc/apt/sources.list.d/fstp-pgdg.list > /dev/null
             sudo apt-get update -q
             sudo apt-get install -y -q --no-install-recommends --allow-downgrades \
               "postgresql-16=$PG_PACKAGE_VERSION" \
