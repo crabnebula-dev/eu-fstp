@@ -54,7 +54,7 @@ pub const FLOOR_REVISION: &str = "2025-06-18";
 /// The most sessions each table holds.
 pub(crate) const MAX_SESSIONS: usize = 4096;
 
-/// The most anonymous sessions one peer holds (ADR-024, interim: 64 of
+/// The most anonymous sessions one peer holds (ADR-024: 64 of
 /// 4096, pending Daniel).
 pub(crate) const MAX_ANONYMOUS_PER_PEER: usize = 64;
 
