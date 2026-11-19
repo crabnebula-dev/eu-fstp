@@ -484,6 +484,62 @@ fn th26_smuggling_rules() {
     ]);
 }
 
+/// Issue 6 L1, TH-26, H-17: the authority of an absolute-form target and
+/// the Host field must name the same host and port, with the scheme's
+/// default port when none is given. RFC 9112 section 3.2.2 lets an origin
+/// server ignore Host for that form. This server refuses a mismatch with
+/// 400 instead, so no layer can route on the other value.
+#[test]
+fn issue6_l1_absolute_form_authority_must_match_host() {
+    run_rows(vec![
+        row(
+            "absolute form host differs",
+            "GET http://example.com:8080/x?y HTTP/1.1\r\nHost: other\r\n\r\n",
+            err(K::HostMismatch, 400),
+        ),
+        row(
+            "absolute form port differs",
+            "GET http://example.com:8080/x HTTP/1.1\r\nHost: example.com:8081\r\n\r\n",
+            err(K::HostMismatch, 400),
+        ),
+        row(
+            "absolute form default port named once",
+            "GET http://example.com/x HTTP/1.1\r\nHost: example.com:80\r\n\r\n",
+            ok(b""),
+        ),
+        row(
+            "absolute form https default port and case",
+            "GET https://example.com:443/x HTTP/1.1\r\nHost: Example.COM\r\n\r\n",
+            ok(b""),
+        ),
+        row(
+            "absolute form https with port 80",
+            "GET https://example.com/x HTTP/1.1\r\nHost: example.com:80\r\n\r\n",
+            err(K::HostMismatch, 400),
+        ),
+        row(
+            "absolute form empty host",
+            "GET http://example.com/x HTTP/1.1\r\nHost:\r\n\r\n",
+            err(K::HostMismatch, 400),
+        ),
+        row(
+            "absolute form http/1.0 without host",
+            "GET http://example.com/x HTTP/1.0\r\n\r\n",
+            ok(b""),
+        ),
+        row(
+            "absolute form ipv6",
+            "GET http://[::1]:8080/ HTTP/1.1\r\nHost: [::1]:8080\r\n\r\n",
+            ok(b""),
+        ),
+        row(
+            "origin form any host",
+            "GET /x HTTP/1.1\r\nHost: other:9\r\n\r\n",
+            ok(b""),
+        ),
+    ]);
+}
+
 /// TH-26: request-line, Host, Expect and Connection rules.
 #[test]
 fn th26_start_line_and_host_rules() {
@@ -501,7 +557,7 @@ fn th26_start_line_and_host_rules() {
         ),
         row(
             "absolute form",
-            "GET http://example.com:8080/x?y HTTP/1.1\r\nHost: other\r\n\r\n",
+            "GET http://example.com:8080/x?y HTTP/1.1\r\nHost: example.com:8080\r\n\r\n",
             ok(b""),
         ),
         row(

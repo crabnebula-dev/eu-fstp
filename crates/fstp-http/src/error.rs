@@ -70,6 +70,9 @@ pub enum ParseErrorKind {
     MultipleHost,
     /// The Host field value is not `uri-host [ ":" port ]`.
     InvalidHost,
+    /// An absolute-form target names another host or port than the Host
+    /// field (issue 6 L1, RFC 9112 section 3.2.2).
+    HostMismatch,
 
     // Framing (request smuggling defence).
     /// Both Content-Length and Transfer-Encoding are present.
@@ -173,6 +176,7 @@ impl ParseErrorKind {
             K::MissingHost => "HTTP/1.1 request without Host",
             K::MultipleHost => "more than one Host field line",
             K::InvalidHost => "malformed Host value",
+            K::HostMismatch => "the target authority and Host differ",
             K::ContentLengthWithTransferEncoding => "both Content-Length and Transfer-Encoding",
             K::MultipleContentLength => "more than one Content-Length field line",
             K::InvalidContentLength => "malformed Content-Length value",
