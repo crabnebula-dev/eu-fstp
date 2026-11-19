@@ -417,6 +417,22 @@ pub trait Backend: Send + Sync + 'static {
         std::future::ready(Err(BackendFault::Unavailable))
     }
 
+    /// The decoy of one storing step of a recovery request for an address
+    /// that holds no account, or whose case cannot open (L12, issue 6).
+    /// `step` 0 stands for [`Backend::execute`], 1 for
+    /// [`Backend::put_token`] and 2 for [`Backend::send_recovery_proof`].
+    /// It does the read side of that step and writes and sends nothing, so
+    /// a known and an unknown address take the same steps. The provided
+    /// body does nothing.
+    fn recovery_decoy(
+        &self,
+        token: [u8; 32],
+        step: u8,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        let _ = (token, step);
+        std::future::ready(Ok(()))
+    }
+
     /// Sends the one-time enrolment token `token` of recovery case `case`
     /// to the login email of `account` through the cell's proof mail port.
     /// The provided body fails closed.

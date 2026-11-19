@@ -55,6 +55,11 @@ fn magic(c: &LocalCell, email: &str, from: SocketAddr) -> Response {
     c.serve(post("/auth/magic/request", None, body.as_bytes(), from))
 }
 
+fn recovery(c: &LocalCell, email: &str, from: SocketAddr) -> Response {
+    let body = format!("{{\"email\":\"{email}\"}}");
+    c.serve(post("/auth/recovery", None, body.as_bytes(), from))
+}
+
 /// M8, H-21, TH-21, ADR-024: login start is limited per peer. The 31st
 /// call of a peer in a minute is refused, and another peer is unaffected.
 #[test]
@@ -218,4 +223,48 @@ fn issue6_m9_put_text_is_rate_limited_per_account() {
         assert_eq!(code(&put(i)), 200, "put {i}");
     }
     assert_eq!(code(&put(120)), 429);
+}
+
+/// L12, issue 6: `POST /auth/recovery` takes the same steps in the same
+/// order for a known and an unknown address before the reply: read the
+/// state, open the case, store the token row, send the proof. The decoy of
+/// each storing step stands in the same place as the step. Only the known
+/// address opens a case.
+#[test]
+fn issue6_l12_known_and_unknown_recovery_requests_take_the_same_steps() {
+    let c = cell();
+    c.backend()
+        .set_deployment(Some(fstp_auth::recovery::Deployment::Saas));
+    let known = c.applicant_email().to_owned();
+    let before = c.backend().records().len();
+    let _ = c.backend().take_magic_trail();
+    let r1 = recovery(&c, &known, peer(6, 1));
+    let known_trail = c.backend().take_magic_trail();
+    let opened = c.backend().records().len();
+    let r2 = recovery(&c, "ghost@example.test", peer(6, 2));
+    let unknown_trail = c.backend().take_magic_trail();
+    assert_eq!(code(&r1), 202);
+    assert_eq!(code(&r2), 202);
+    assert_eq!(r1.body, r2.body);
+    let shape = |t: &[&'static str]| -> Vec<&'static str> {
+        t.iter()
+            .map(|s| s.strip_prefix("decoy_").unwrap_or(s))
+            .collect()
+    };
+    assert_eq!(shape(&known_trail), shape(&unknown_trail));
+    assert_eq!(
+        known_trail,
+        ["state", "execute", "put_token", "send_recovery_proof"]
+    );
+    assert_eq!(
+        unknown_trail,
+        [
+            "state",
+            "decoy_execute",
+            "decoy_put_token",
+            "decoy_send_recovery_proof"
+        ]
+    );
+    assert!(opened > before, "the known address opened a case");
+    assert_eq!(c.backend().records().len(), opened);
 }

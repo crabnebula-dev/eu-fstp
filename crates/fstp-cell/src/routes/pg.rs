@@ -821,6 +821,21 @@ impl<R: Runtime> Backend for PgBackend<R> {
         Ok(())
     }
 
+    async fn recovery_decoy(&self, token: [u8; 32], step: u8) -> Result<(), BackendFault> {
+        // L12: the read side of each storing step of a recovery request, so
+        // it costs a database round trip in each step for any address.
+        // Step 0 reads the live sessions, as `execute` does for a route
+        // that read none. It writes nothing and sends nothing.
+        match step {
+            0 => {
+                let _ = self.all_sessions().await?;
+                Ok(())
+            }
+            1 => self.magic_link_decoy(token, 0).await,
+            _ => self.magic_link_decoy(token, 1).await,
+        }
+    }
+
     async fn send_magic_link(
         &self,
         account: AccountId,

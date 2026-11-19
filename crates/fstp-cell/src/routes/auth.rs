@@ -1910,13 +1910,22 @@ pub(crate) async fn approve_recovery<B: Backend>(
 
 /// `POST /auth/recovery` (Public, design section 8.5): `{email}`. The one
 /// reply is 202 whether or not the address holds an account.
+///
+/// L12, issue 6: the work is uniform too, as for `POST
+/// /auth/magic/request`. A known and an unknown address run the same steps
+/// in the same order ([`open_recovery`]): read the state, open the case,
+/// store the token row, send the proof. An unknown address, or a case that
+/// cannot open, runs the decoy of each storing step
+/// ([`Backend::recovery_decoy`]), which does the read side of the step and
+/// writes nothing. No early return skips a costly step.
 pub(crate) async fn recovery_request<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
     let email = match decode_email(&req.body) {
         Ok(e) => e,
         Err(r) => return bad_body(r),
     };
     // ADR-024, M8: the per-target limit. The per-peer limit sits in the
-    // dispatcher. The charge is the same for every address.
+    // dispatcher. The charge is the same for every address, and a request
+    // over it runs no step, so the answer tells nothing about the account.
     let within = ctx.limits.mail_target(
         crate::routes::limits::target_digest(&email),
         ctx.backend.now().micros(),
@@ -1925,27 +1934,39 @@ pub(crate) async fn recovery_request<B: Backend>(ctx: &Ctx<B>, req: &Request) ->
         Ok(a) => a,
         Err(f) => return unavailable(f),
     };
-    if let (true, Some(account)) = (within, account) {
+    if within {
         // Errors on this path are not shown (uniform reply).
         let _ = open_recovery(ctx, account).await;
     }
     magic_accepted()
 }
 
-/// Opens a case for `account` and sends its email proof.
-async fn open_recovery<B: Backend>(ctx: &Ctx<B>, account: AccountId) -> Result<(), ()> {
-    let mode = ctx.backend.deployment().ok_or(())?;
-    let case = random::<16>().map_err(|_| ())?;
-    let token = random::<32>().map_err(|_| ())?;
-    let command_id = random::<16>().map_err(|_| ())?;
-    let s = ctx.backend.state().await.map_err(|_| ())?;
+/// Opens a case for `account`, if it exists and the gate admits it, and
+/// sends its email proof. Every case runs the same four steps (L12):
+/// state, case, token row, send. A case that opens nothing runs the
+/// decoys of the steps it does not take.
+async fn open_recovery<B: Backend>(ctx: &Ctx<B>, account: Option<AccountId>) -> Result<(), ()> {
+    let mode = ctx.backend.deployment();
+    let case = random::<16>();
+    let token = random::<32>();
+    let command_id = random::<16>();
+    let state = ctx.backend.state().await;
     let now = ctx.backend.now();
-    let admitted =
-        fstp_cell_core::gate::admit_recovery_request(&s, case, account, mode, command_id, now)
-            .map_err(|_| ())?;
-    match ctx.backend.execute(admitted).await {
-        Ok(Ok(_)) => {}
-        _ => return Err(()),
+    let admitted = match (&state, account, mode, &case, &command_id) {
+        (Ok(s), Some(a), Some(mode), Ok(case), Ok(command_id)) => {
+            fstp_cell_core::gate::admit_recovery_request(s, *case, a, mode, *command_id, now).ok()
+        }
+        _ => None,
+    };
+    let decoy = token.as_ref().copied().unwrap_or([0u8; 32]);
+    let (Some(account), Some(admitted), Ok(token), Ok(case)) = (account, admitted, token, case)
+    else {
+        decoys(ctx, decoy, 0).await;
+        return Err(());
+    };
+    if !matches!(ctx.backend.execute(admitted).await, Ok(Ok(_))) {
+        decoys(ctx, decoy, 1).await;
+        return Err(());
     }
     let row = TokenRow {
         digest: fstp_cell_core::gate::recovery_token_digest(case, &token),
@@ -1953,11 +1974,22 @@ async fn open_recovery<B: Backend>(ctx: &Ctx<B>, account: AccountId) -> Result<(
         account,
         issued_at: now,
     };
-    ctx.backend.put_token(row).await.map_err(|_| ())?;
+    if ctx.backend.put_token(row).await.is_err() {
+        decoys(ctx, decoy, 2).await;
+        return Err(());
+    }
     ctx.backend
         .send_recovery_proof(account, case, token)
         .await
         .map_err(|_| ())
+}
+
+/// Runs the recovery decoys from storing step `from` on, so a request that
+/// stops early still takes every step (L12, issue 6).
+async fn decoys<B: Backend>(ctx: &Ctx<B>, token: [u8; 32], from: u8) {
+    for step in from..3 {
+        let _ = ctx.backend.recovery_decoy(token, step).await;
+    }
 }
 
 /// The proof the route holds for `token` of `case` and its row.
