@@ -103,6 +103,22 @@ pub const MIN_IDENTIFIER_LEN: usize = 16;
 /// such as zero padding, which every store shares and no random value is.
 pub const MIN_IDENTIFIER_DISTINCT: usize = 8;
 
+/// The DER header of every P-256 public key: `SubjectPublicKeyInfo` with
+/// `id-ecPublicKey` and `prime256v1`, the BIT STRING header and the
+/// uncompressed point tag. It is public and the same in every key. A base64
+/// run of a stored key can stop inside it at a `+` or `/` of the key bytes,
+/// so a slice of it is no identifier (R-NF-05, I-20).
+const P256_SPKI_HEADER: [u8; 27] = [
+    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+    0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04,
+];
+
+/// Whether `id` lies wholly inside a public DER header. A candidate that
+/// reaches into key bytes does not, so it is still kept.
+fn within_public_header(id: &[u8]) -> bool {
+    !id.is_empty() && P256_SPKI_HEADER.windows(id.len()).any(|w| w == id)
+}
+
 impl CellDump {
     /// The identifier candidates of every store in `stores` (I-20, design
     /// section 14.4). Each candidate is kept as its decoded bytes, so a key
@@ -312,7 +328,10 @@ pub fn shared_identifiers(
 /// [`CellDump::from_stores`] describes.
 fn extract_identifiers(bytes: &[u8], out: &mut BTreeSet<Vec<u8>>) {
     let mut keep = |id: Vec<u8>| {
-        if id.len() >= MIN_IDENTIFIER_LEN && distinct_bytes(&id) >= MIN_IDENTIFIER_DISTINCT {
+        if id.len() >= MIN_IDENTIFIER_LEN
+            && distinct_bytes(&id) >= MIN_IDENTIFIER_DISTINCT
+            && !within_public_header(&id)
+        {
             out.insert(id);
         }
     };
@@ -897,6 +916,35 @@ mod tests {
     #[test]
     fn hex_decode_reads_pairs() {
         assert_eq!(hex_decode(b"0aFf1"), vec![0x0a, 0xff]);
+    }
+
+    /// R-NF-05, I-20: a run that stops inside the public DER header of a
+    /// P-256 key yields no identifier, whichever slice of the header it
+    /// decodes to. CI run 44584601832 reported such a slice as a fixed
+    /// value two installs share.
+    #[test]
+    fn r_nf_05_i20_public_key_header_slices_are_not_identifiers() {
+        let mut out = BTreeSet::new();
+        // The whole header, as base64 that a `/` of the key bytes ends.
+        extract_identifiers(b"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/", &mut out);
+        // The slice CI saw, from the fourth header byte on, as hex.
+        extract_identifiers(
+            b"1306072a8648ce3d020106082a8648ce3d03010703420004",
+            &mut out,
+        );
+        assert!(out.is_empty(), "{out:?}");
+    }
+
+    /// R-NF-05, I-20: a candidate that reaches past the header into the
+    /// key bytes is still kept, so a key two installs share is reported.
+    #[test]
+    fn r_nf_05_i20_header_with_key_bytes_is_still_an_identifier() {
+        let mut out = BTreeSet::new();
+        let mut hex = b"3059301306072a8648ce3d020106082a8648ce3d030107034200".to_vec();
+        hex.extend_from_slice(b"04a1b2c3d4e5f60718293a4b5c6d7e8f90");
+        extract_identifiers(&hex, &mut out);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(out.iter().all(|id| id.len() > P256_SPKI_HEADER.len()));
     }
 
     #[test]

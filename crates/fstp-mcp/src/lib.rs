@@ -390,4 +390,19 @@ mod tests {
         );
         assert!(decode_jsonrpc(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#).is_ok());
     }
+
+    /// Issue 6 L4, design section 3.8: the shape rules come before the NUL
+    /// rule, so a batch holding a NUL is still refused as a batch. Fuzz
+    /// target `jsonrpc_decode` found this input in CI run 44591168526.
+    #[test]
+    fn issue6_l4_a_batch_with_a_nul_is_refused_as_a_batch() {
+        assert_eq!(
+            decode_jsonrpc(b"\n[[\"\\u0000\",[],[]],[]]"),
+            Err(McpError::Batch)
+        );
+        assert_eq!(
+            decode_jsonrpc(br#""a\u0000""#),
+            Err(McpError::Invalid("the message is not a JSON object"))
+        );
+    }
 }

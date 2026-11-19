@@ -96,16 +96,20 @@ pub fn decode_jsonrpc(bytes: &[u8]) -> Result<JsonRpcMessage, McpError> {
         return Err(McpError::TooLong);
     }
     let v = fstp_json::parse(bytes).map_err(|_| McpError::NotJson)?;
-    // Issue 6 L4: PostgreSQL text holds no NUL, so no message may carry
-    // one into a tool call or a session field.
-    if v.contains_nul() {
-        return Err(McpError::Invalid("the message holds a NUL character"));
-    }
+    // The shape rules come first, so a batch is always refused as a batch
+    // (design section 3.8), whatever it holds.
     let o = match v {
         Value::Object(o) => o,
         Value::Array(_) => return Err(McpError::Batch),
         _ => return Err(McpError::Invalid("the message is not a JSON object")),
     };
+    // Issue 6 L4: PostgreSQL text holds no NUL, so no message may carry
+    // one into a tool call or a session field.
+    if o.iter()
+        .any(|(k, val)| k.contains('\0') || val.contains_nul())
+    {
+        return Err(McpError::Invalid("the message holds a NUL character"));
+    }
     let mut version = false;
     let mut id = None;
     let mut method = None;
