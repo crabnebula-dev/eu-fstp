@@ -149,8 +149,15 @@ fn resolve<'a>(
     }
 }
 
-/// An arbitrary JSON value of small size: any string, any number lexeme
-/// from a list, booleans, null, arrays and objects.
+/// A string of `len` characters with no NUL. An import value refuses a
+/// NUL (issue 6 L4), so a generated NUL becomes U+0001, the nearest
+/// control character, which every value may hold.
+fn gen_text(g: &mut Gen, len: std::ops::RangeInclusive<usize>) -> String {
+    g.string(len).replace('\0', "\u{1}")
+}
+
+/// An arbitrary JSON value of small size: any string without NUL, any
+/// number lexeme from a list, booleans, null, arrays and objects.
 fn gen_value(g: &mut Gen, depth: u8) -> Value {
     const LEXEMES: [&str; 9] = [
         "0",
@@ -164,7 +171,7 @@ fn gen_value(g: &mut Gen, depth: u8) -> Value {
         "400000",
     ];
     match g.u8_in(0..=if depth >= 3 { 3 } else { 5 }) {
-        0 => Value::String(g.string(0..=24)),
+        0 => Value::String(gen_text(g, 0..=24)),
         1 => Value::Number(Number::from_lexeme(g.pick(&LEXEMES)).unwrap()),
         2 => Value::Bool(g.bool()),
         3 => Value::Null,
@@ -175,7 +182,7 @@ fn gen_value(g: &mut Gen, depth: u8) -> Value {
         _ => {
             let mut o = Object::new();
             for _ in 0..g.usize_in(0..=3) {
-                let k = g.string(0..=6);
+                let k = gen_text(g, 0..=6);
                 let v = gen_value(g, depth.saturating_add(1));
                 o.insert(k, v);
             }
@@ -1207,4 +1214,25 @@ fn i66_removed_document_proposals_no_longer_count() {
         decide_import(&removed, &more, ImportActor::System),
         Err(ImportRefusal::DocumentRemoved)
     );
+}
+
+/// Issue 6 L4: a proposed value with a NUL, in a string or a member name,
+/// is refused as `Nul`. An import value is kept in PostgreSQL text and
+/// reaches the ledger at confirmation, and neither may hold a NUL.
+#[test]
+fn issue6_l4_untrusted_value_refuses_a_nul() {
+    for text in [
+        &br#""a\u0000b""#[..],
+        br#"{"k\u0000":1}"#,
+        br#"[1,["\u0000"]]"#,
+    ] {
+        assert_eq!(
+            UntrustedValue::parse(text),
+            Err(ImportError::Nul),
+            "{text:?}"
+        );
+    }
+    let v = Value::String("x\u{0}".to_owned());
+    assert_eq!(UntrustedValue::new(&v), Err(ImportError::Nul));
+    assert!(UntrustedValue::parse(br#""a\u001fb""#).is_ok());
 }

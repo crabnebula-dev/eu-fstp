@@ -281,3 +281,15 @@ fn r_la_01_child_link_runs_the_binary() {
         assert!(matches!(job.intake(line), Ok(Intake::Done { .. })));
     }
 }
+
+/// Issue 6 L4: a result line whose JSON holds an escaped NUL fails whole,
+/// so no finding carries a NUL into the ledger or PostgreSQL text.
+#[test]
+fn issue6_l4_result_with_a_nul_is_refused() {
+    let job = cell_job();
+    let mut f = finding(job.line());
+    f.insert("statement", Value::from("The problem \u{0} is stated."));
+    let line = done_line(job.line(), vec![Value::Object(f)]);
+    assert!(String::from_utf8_lossy(&line).contains("\\u0000"));
+    assert_eq!(decode_result(&line, job.line()), Err(IntakeError::Json));
+}

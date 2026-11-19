@@ -477,7 +477,9 @@ fn gen_edit(g: &mut fstp_prop::Gen) -> CallEdit {
         deadline: fstp_domain::time::Timestamp::from_micros(opens.saturating_add(span)),
         deadline_zone: (*g.pick(&zones)).to_owned(),
         budget_cents: g.i64_in(0..=100_000_000_000),
-        text: g.string(1..=120),
+        // A text holds no NUL (issue 6 L4): PostgreSQL text refuses it, so
+        // a request with one is refused before any rule runs.
+        text: g.string(1..=120).replace('\0', "\u{1}"),
     }
 }
 

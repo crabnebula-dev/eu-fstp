@@ -96,6 +96,11 @@ pub fn decode_jsonrpc(bytes: &[u8]) -> Result<JsonRpcMessage, McpError> {
         return Err(McpError::TooLong);
     }
     let v = fstp_json::parse(bytes).map_err(|_| McpError::NotJson)?;
+    // Issue 6 L4: PostgreSQL text holds no NUL, so no message may carry
+    // one into a tool call or a session field.
+    if v.contains_nul() {
+        return Err(McpError::Invalid("the message holds a NUL character"));
+    }
     let o = match v {
         Value::Object(o) => o,
         Value::Array(_) => return Err(McpError::Batch),

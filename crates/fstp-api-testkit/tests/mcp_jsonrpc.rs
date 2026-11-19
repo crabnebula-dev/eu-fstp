@@ -36,7 +36,8 @@ fn method(g: &mut Gen) -> String {
     if g.bool() {
         (*g.pick(&fixed)).to_owned()
     } else {
-        g.ascii_string(1..=24)
+        // No NUL (issue 6 L4): a message with one is refused as invalid.
+        g.ascii_string(1..=24).replace('\0', "\u{1}")
     }
 }
 
@@ -56,12 +57,17 @@ fn th26_jsonrpc_decode_reads_requests_and_notifications() {
             let id = if g.bool() {
                 Some(JsonRpcId::Number(g.i64_in(-1_000_000..=1_000_000)))
             } else if g.bool() {
-                Some(JsonRpcId::String(g.ascii_string(0..=12)))
+                Some(JsonRpcId::String(
+                    g.ascii_string(0..=12).replace('\0', "\u{1}"),
+                ))
             } else {
                 None
             };
+            // A message holds no NUL (issue 6 L4). It is refused as invalid,
+            // which `issue6_l4_a_message_with_a_nul_is_refused` covers.
             let params = if g.bool() {
-                Some(format!(r#"{{"name":{},"n":7}}"#, quoted(&g.string(0..=10))))
+                let name = g.string(0..=10).replace('\0', "\u{1}");
+                Some(format!(r#"{{"name":{},"n":7}}"#, quoted(&name)))
             } else {
                 None
             };

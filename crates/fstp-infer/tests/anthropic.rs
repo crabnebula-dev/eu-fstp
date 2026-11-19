@@ -598,3 +598,12 @@ fn r_la_04_anthropic_http_transport_sends_documented_headers() {
         let _ = handle.shutdown(std::time::Duration::from_secs(1)).await;
     });
 }
+
+/// Issue 6 L4: an Anthropic reply whose JSON holds an escaped NUL is
+/// refused as not I-JSON for this client.
+#[test]
+fn issue6_l4_an_anthropic_reply_with_a_nul_is_refused() {
+    let body = reply_with(&text_block("a\u{0}b"), "end_turn", "");
+    let r = decode_anthropic_response(body.as_bytes());
+    assert!(matches!(r, Err(DecodeError::Json)), "{r:?}");
+}

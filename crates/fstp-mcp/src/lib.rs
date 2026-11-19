@@ -372,4 +372,22 @@ mod tests {
             assert_eq!(e.to_string(), "the body is not one JSON value");
         }
     }
+
+    /// Issue 6 L4: an escaped NUL anywhere in a JSON-RPC message is
+    /// refused as invalid, so it never reaches PostgreSQL text or the
+    /// ledger through a tool call or a session field.
+    #[test]
+    fn issue6_l4_a_message_with_a_nul_is_refused() {
+        let call = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":{"a":"\u0000"}}}"#;
+        assert_eq!(
+            decode_jsonrpc(call),
+            Err(McpError::Invalid("the message holds a NUL character"))
+        );
+        let init = br#"{"jsonrpc":"2.0","id":"a\u0000","method":"ping"}"#;
+        assert_eq!(
+            decode_jsonrpc(init),
+            Err(McpError::Invalid("the message holds a NUL character"))
+        );
+        assert!(decode_jsonrpc(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#).is_ok());
+    }
 }

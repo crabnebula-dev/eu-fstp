@@ -66,6 +66,11 @@ impl ToSql for Value {
     }
 
     fn to_sql(&self, ty: Type, out: &mut Vec<u8>) -> Result<IsNull, EncodeError> {
+        // Issue 6 L4: PostgreSQL `json` and `jsonb` hold no NUL. The
+        // value is refused before any byte is written.
+        if self.contains_nul() {
+            return Err(EncodeError("json value holds a NUL character"));
+        }
         if ty == Type::JSONB {
             out.push(JSONB_VERSION);
         }
@@ -128,5 +133,20 @@ mod tests {
         assert!(Value::from_sql(Type::JSONB, deep.as_bytes()).is_err());
         let limits = ParseLimits::default().with_max_depth(300);
         assert!(decode_json_with(Type::JSONB, deep.as_bytes(), &limits).is_ok());
+    }
+
+    /// Issue 6 L4: PostgreSQL `json` and `jsonb` hold no NUL, so a value
+    /// with one is an encode error before any byte goes to the server.
+    #[test]
+    fn issue6_l4_a_value_with_a_nul_is_an_encode_error() {
+        let v = fstp_json::json!({"a": ["x\u{0}"]});
+        for ty in [Type::JSON, Type::JSONB] {
+            let mut out = Vec::new();
+            assert_eq!(
+                v.to_sql(ty, &mut out),
+                Err(EncodeError("json value holds a NUL character"))
+            );
+            assert!(out.is_empty());
+        }
     }
 }

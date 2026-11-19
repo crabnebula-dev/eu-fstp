@@ -236,3 +236,13 @@ fn i10_pipeline_hostile_output_publishes_nothing() {
         Err(AssessError::Output(OutputError::UnknownMember))
     ));
 }
+
+/// Issue 6 L4: model output whose JSON holds an escaped NUL is refused as
+/// not I-JSON within the limits, so no finding carries a NUL into the
+/// ledger or PostgreSQL text.
+#[test]
+fn issue6_l4_validator_refuses_a_nul() {
+    let s = finding("").replace("The approach is described.", "The \\u0000 approach.");
+    assert!(s.contains("\\u0000"));
+    assert_eq!(decode(&s).unwrap_err(), OutputError::Json);
+}

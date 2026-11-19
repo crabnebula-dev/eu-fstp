@@ -158,12 +158,16 @@ fn body_object_for(spec: &OpSpec, body: &[u8]) -> Result<Object, ApiError> {
     body_object(body)
 }
 
-/// Parses a body that must be one JSON object under `limits`.
+/// Parses a body that must be one JSON object under `limits`. An escaped
+/// NUL in any string or member name is a bad request (issue 6 L4).
+/// PostgreSQL text holds no NUL, and a record that held one could not be
+/// projected.
 fn body_object_with(body: &[u8], limits: &ParseLimits) -> Result<Object, ApiError> {
     if body.is_empty() {
         return Ok(Object::new());
     }
     match fstp_json::parse_with(body, limits) {
+        Ok(v) if v.contains_nul() => Err(bad()),
         Ok(Value::Object(o)) => Ok(o),
         _ => Err(bad()),
     }
@@ -519,6 +523,9 @@ pub(crate) fn decode_pending_request_in(
     bytes: &[u8],
 ) -> Result<PendingRequest, ApiError> {
     let v = fstp_json::parse_with(bytes, &limits()).map_err(|_| bad())?;
+    if v.contains_nul() {
+        return Err(bad());
+    }
     let canonical = v.to_canonical().map_err(|_| bad())?;
     if canonical.as_bytes() != bytes {
         return Err(bad());
@@ -721,5 +728,21 @@ mod tests {
         assert!(decode_query_params(b"a=%zz").is_err());
         assert_eq!(decode_cursor(b"12").unwrap().offset, 12);
         assert!(decode_cursor(b"012").is_err());
+    }
+
+    /// Issue 6 L4: an escaped NUL in a web body, a tool's arguments or a
+    /// stored pending request is a bad request, before any form reads it.
+    /// PostgreSQL text holds no NUL.
+    #[test]
+    fn issue6_l4_bodies_with_a_nul_are_bad_requests() {
+        for body in [&br#"{"title":"a\u0000b"}"#[..], br#"{"a":[{"b\u0000":1}]}"#] {
+            let e = body_object(body).unwrap_err();
+            assert_eq!(e, bad(), "{body:?}");
+            let e = body_object_with(body, &limits_with(BODY_LIMIT)).unwrap_err();
+            assert_eq!(e, bad(), "{body:?}");
+        }
+        assert!(body_object(br#"{"title":"a\u001fb"}"#).is_ok());
+        let pending = br#"{"op":"call.edit","request":{"call":"1","title":"\u0000"}}"#;
+        assert_eq!(decode_pending_request(pending).unwrap_err(), bad());
     }
 }
