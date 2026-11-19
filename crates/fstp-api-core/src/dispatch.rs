@@ -892,19 +892,22 @@ async fn finding_rerun<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult
     let p = proposal_param(call, op)?;
     let c = call_of(&call.state, p)
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
-    // The port is checked before the command, so no request is recorded
-    // for a job that cannot start (the way pre-check answers "unavailable").
-    let job = rerun_job(call, c, p)
-        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Unavailable, "I-10")))?;
     let cmd = Command::Finding(fstp_engine::FindingCommand::RequestRerun {
         call: c,
         proposal: p,
     });
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
+    // The engine judges the caller first. A caller who may not ask is
+    // refused for the actor, and learns nothing of the port or the content.
     dry_run(call, account, &cmd, ctx)
         .await
         .map_err(|e| call.refuse(e))?;
+    // The port is checked before the command runs, so no request is
+    // recorded for a job that cannot start (the way pre-check answers
+    // "unavailable").
+    let job = rerun_job(call, c, p)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Unavailable, "I-10")))?;
     let meta = ExecMeta {
         via: call.caller.via(),
         session: call.caller.session,
