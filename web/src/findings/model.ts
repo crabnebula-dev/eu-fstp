@@ -125,6 +125,10 @@ export interface FindingsStatus {
   readonly proposal: string;
   readonly status: "pending" | "ready";
   readonly findings: number;
+  /** How many stages the validator dropped (issue 6 M3). A number only. */
+  readonly refused: number;
+  /** Whether the coordinator may run the assessment again now. */
+  readonly rerun: "available" | "in_flight" | "used_up";
 }
 
 /** The `assess.findings_status` reply, or null. */
@@ -134,14 +138,15 @@ export function decodeFindingsStatus(v: unknown): readonly FindingsStatus[] | nu
   }
   const out: FindingsStatus[] = [];
   for (const x of v) {
-    if (!isObject(x) || !exactly(x, ["proposal", "status", "findings"])) {
+    if (!isObject(x) || !exactly(x, ["proposal", "status", "findings", "refused", "rerun"])) {
       return null;
     }
     const status = oneOf(x["status"], ["pending", "ready"] as const);
-    if (!isId(x["proposal"]) || status === null || !isCount(x["findings"])) {
+    const rerun = oneOf(x["rerun"], ["available", "in_flight", "used_up"] as const);
+    if (!isId(x["proposal"]) || status === null || !isCount(x["findings"]) || !isCount(x["refused"]) || rerun === null) {
       return null;
     }
-    out.push(Object.freeze({ proposal: x["proposal"], status, findings: x["findings"] }));
+    out.push(Object.freeze({ proposal: x["proposal"], status, findings: x["findings"], refused: x["refused"], rerun }));
   }
   return Object.freeze(out);
 }

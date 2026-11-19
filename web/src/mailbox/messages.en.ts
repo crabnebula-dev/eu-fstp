@@ -49,6 +49,11 @@ export const MAILBOX_LABELS: Readonly<Record<string, string>> = Object.freeze({
     "The funder retention period of grant {proposal} in programme {programme} has ended. You may now request the erasure of its texts",
   "mailbox.kind.report.period_ended":
     "A reporting period of programme {programme} has ended. Generate and approve its periodic reporting data before the report deadline",
+  // TODO(legal): draft wording, Daniel to review (ADR-008, 2026-11-19).
+  "mailbox.kind.notice.passkey_disabled":
+    "A passkey of your account was disabled. Sign in with another passkey, or recover your account, then add a new passkey",
+  "mailbox.kind.admin.passkey_disabled":
+    "A passkey of an account on this platform was disabled, and no mail relay sends the email to its holder. The holder can recover the account",
 
   "pending.title": "Prepared action",
   "pending.intro": "An agent you connected prepared this action. It runs only if you confirm it here.",

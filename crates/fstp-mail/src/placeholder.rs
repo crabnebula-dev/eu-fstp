@@ -173,6 +173,9 @@ impl Moment {
 /// route plus at most one id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LinkTarget {
+    /// The platform home, `/app/` (ADR-008, 2026-11-19: the holder email
+    /// of a disabled passkey points here and holds no id).
+    Home,
     /// The recipient's notices, `/app/notices`.
     Notices,
     /// A proposal, `/app/proposals/{proposal}`.
@@ -189,6 +192,7 @@ impl LinkTarget {
     /// The path, starting with `/`.
     pub fn path(self) -> String {
         match self {
+            LinkTarget::Home => "/app/".to_owned(),
             LinkTarget::Notices => "/app/notices".to_owned(),
             LinkTarget::Proposal(p) => format!("/app/proposals/{}", p.raw()),
             LinkTarget::ProposalProgress(p) => format!("/app/proposals/{}/progress", p.raw()),

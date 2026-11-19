@@ -71,7 +71,11 @@ fn th02_precheck_reply_has_no_score_member() {
 #[test]
 fn i10_findings_status_shows_counts_only() {
     let names = reply_names("assess.findings_status");
-    assert_eq!(names, vec!["proposal", "status", "findings"]);
+    // Issue 6 M3: two more numbers and a word, still no statement.
+    assert_eq!(
+        names,
+        vec!["proposal", "status", "findings", "refused", "rerun"]
+    );
 }
 
 fn mcp() -> Principal {

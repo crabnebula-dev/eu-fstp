@@ -311,6 +311,11 @@ pub enum FindingKind {
     Mark,
     /// `FindingCommand::Regenerate`, by the assessor only.
     Regenerate,
+    /// `FindingCommand::RequestRerun`, by the FSTP coordinator of the
+    /// call (issue 6 M3, I-10).
+    RequestRerun,
+    /// `FindingCommand::RecordRefusals`, by the assessor only (issue 6 M3).
+    RecordRefusals,
 }
 
 /// An import operation kind, one per `ImportCommand` variant.
@@ -1972,6 +1977,19 @@ pub const OPS: &[OpSpec] = &[
     .binding()
     // The engine's `Mark` rule admits a reviewer or an IRC assignee.
     .acting(FINDING_MARKER),
+    // Issue 6 M3 (Daniel, 2026-11-19): the coordinator asks for the
+    // assessment of a proposal to run again. Like `review.assign` and
+    // `review.admit`, the coordinator's other commands on a proposal, it
+    // is a binding command and not high-risk, so it takes no step-up. The
+    // engine bounds it: one in flight, three in all.
+    OpSpec::new(
+        "assess.rerun",
+        OpKind::Finding(FindingKind::RequestRerun),
+        Post,
+        "/proposals/{proposal}/assessment-rerun",
+    )
+    .binding()
+    .acting(COORDINATOR),
     // J7: the committee and the cut-off rounds of change D5.
     OpSpec::read("committee.ranking", RK::GetRankingView, "/calls/{call}/ranking")
         .acting(COMMITTEE)
@@ -2560,6 +2578,7 @@ pub const SYSTEM_ONLY: &[CommandKind] = &[
 pub const SYSTEM_ONLY_OTHER: &[OpKind] = &[
     OpKind::Finding(FindingKind::Record),
     OpKind::Finding(FindingKind::Regenerate),
+    OpKind::Finding(FindingKind::RecordRefusals),
     OpKind::Import(ImportKind::RecordProposals),
 ];
 

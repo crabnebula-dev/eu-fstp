@@ -76,9 +76,13 @@ test("th29_no_check_left_offers_none", () => {
 
 /** I-10, M7 design section 7: the coordinator's status carries counts only. */
 test("i10_findings_status_refuses_a_statement", () => {
-  const ok = decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9 }]);
+  const ok = decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9, refused: 0, rerun: "available" }]);
   eq(ok?.length, 1, "decodes");
-  eq(decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9, statement: "x" }]), null, "statement refused");
+  eq(
+    decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9, refused: 0, rerun: "available", statement: "x" }]),
+    null,
+    "statement refused",
+  );
 });
 
 /** R-LA-03: reviewer rows decode with their mark; the confidence is dropped, never shown. */

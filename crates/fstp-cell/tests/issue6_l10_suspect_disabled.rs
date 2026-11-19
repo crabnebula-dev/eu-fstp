@@ -419,3 +419,25 @@ fn registration(challenge: [u8; 32]) -> (Vec<u8>, Vec<u8>) {
     cbor_bytes(&mut att, &auth);
     (att, client)
 }
+
+/// Issue 6 L10, ADR-008 (2026-11-19, decision 4): a session opened with a
+/// passkey ends at once when that passkey is flagged. It is refused as a
+/// session that does not exist, which is the answer to a made-up cookie. A
+/// session opened with another passkey of the account continues.
+#[test]
+fn issue6_l10_adr008_flagging_a_passkey_ends_its_sessions_only() {
+    let c = LocalCell::start(CELL, HOST).unwrap();
+    let flagged_session = c.admin_session().unwrap();
+    let cred = admin_credential(&c);
+    let mut second = Pk::new();
+    second.register(&c);
+    let other_session = cookie_of(&second.login(&c));
+    let devices = |cookie: &[u8]| c.serve(request(Method::GET, "/auth/devices", Some(cookie), b""));
+    assert_eq!(devices(&flagged_session).status.as_u16(), 200);
+    let _ = flag_admin_passkey(&c, &cred);
+    let gone = devices(&flagged_session);
+    assert_eq!(gone.status.as_u16(), 401, "{}", text(&gone));
+    let made_up = devices(b"fstp_session=00");
+    assert_eq!(gone.status, made_up.status);
+    assert_eq!(devices(&other_session).status.as_u16(), 200);
+}

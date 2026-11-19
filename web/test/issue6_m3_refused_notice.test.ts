@@ -6,9 +6,9 @@
 
 import type { ApiClient, ApiOutcome, OperationRef } from "../src/core/api.js";
 import { OPERATIONS, SCHEMAS, VALIDATORS } from "../src/gen/api.js";
-import { findingsSection, refusedNotice, findingsI18n } from "../src/findings/panel.js";
+import { findingsSection, findingsStatusSection, refusedNotice, findingsI18n } from "../src/findings/panel.js";
 import { FINDINGS_LABELS } from "../src/findings/messages.en.js";
-import { REFUSED_CODES, REFUSED_STAGES, decodeRefusedStages } from "../src/findings/model.js";
+import { REFUSED_CODES, REFUSED_STAGES, decodeFindingsStatus, decodeRefusedStages } from "../src/findings/model.js";
 import type { PageEnv } from "../src/reviewer/kit.js";
 import { FakeElement, asFake, fakeDocument, freshDom } from "./support/fakedom.js";
 import { assert, eq, test } from "./support/harness.js";
@@ -128,7 +128,7 @@ test("i10_issue6_m3_h03_notice_shows_count_stages_and_codes", async () => {
   assert(shown.includes("2 checks of the AI assessor were dropped"), shown);
   assert(shown.includes("Quality assessment") && shown.includes("code: score_like"), shown);
   assert(shown.includes("Integrity check") && shown.includes("code: too_long"), shown);
-  assert(!note.descendants().some((d) => d.localName === "button"), "no re-run control: no operation lets staff start an assessment");
+  assert(!note.descendants().some((d) => d.localName === "button"), "no re-run control for a reviewer: the control is the coordinator's");
   eq(note.getAttribute("data-refused"), "2", "count attribute");
 });
 
@@ -152,8 +152,95 @@ test("i10_issue6_m3_failed_refusals_read_leaves_the_findings", async () => {
   assert(textOf(sec).includes("A statement."), "findings show");
 });
 
-/** I-10: no operation lets staff start an assessment again, so the page has none to call. */
-test("i10_issue6_m3_no_staff_operation_starts_an_assessment", () => {
-  const names = OPERATIONS.map((o) => o.name).filter((n) => /assess\.|rerun|re_run|run_assess|request_assess/.test(n));
-  eq(names, ["assess.findings_status"], "the only assess operation is the coordinator's counts read");
+
+const ROLES = (role: string): Record<string, unknown> => ({
+  tenant_admin: false,
+  roles: [{ role, programme: "1", calls: ["1"] }],
+  calls: [],
+  rounds: [],
+  drafts: [],
+  signatories: [],
+});
+
+const ROW = { proposal: "1003", status: "ready", findings: 4, refused: 2, rerun: "available" };
+
+interface Sent {
+  readonly path: string;
+}
+
+function envSent(replies: Readonly<Record<string, unknown>>, sent: Sent[]): PageEnv {
+  const inner = env(replies);
+  return {
+    ...inner,
+    api: {
+      async call(op, params, body, validate) {
+        let path = op.path;
+        for (const [k, v] of Object.entries(params)) {
+          path = path.replace(`{${k}}`, v);
+        }
+        sent.push({ path: `${op.method} ${path}` });
+        return inner.api.call(op, params, body, validate);
+      },
+    },
+  };
+}
+
+/** I-10, H-03: the status read carries the count of dropped stages as a number and the re-run state, and nothing else. */
+test("i10_issue6_m3_h03_status_row_carries_a_count_and_the_rerun_state", () => {
+  const rows = decodeFindingsStatus([ROW]);
+  assert(rows !== null, "decodes");
+  eq(rows[0]?.refused, 2, "count");
+  eq(rows[0]?.rerun, "available", "state");
+  assert(VALIDATORS["assess.findings_status"]?.([ROW]) === true, "the generated validator accepts it");
+  eq(decodeFindingsStatus([{ ...ROW, rerun: "now" }]), null, "an unknown state is refused");
+  eq(decodeFindingsStatus([{ ...ROW, refused: -1 }]), null, "a negative count is refused");
+  eq(decodeFindingsStatus([{ ...ROW, codes: ["json"] }]), null, "no codes in the status read");
+});
+
+/** I-10, H-03, R-LA-03: the coordinator sees the count and the re-run control, and the click sends assess.rerun. */
+test("i10_issue6_m3_h03_coordinator_sees_the_control_and_it_sends_the_rerun", async () => {
+  prepare();
+  const sent: Sent[] = [];
+  const e = envSent(
+    { "GET /me/roles": ROLES("fstp_coordinator"), "GET /calls/1/findings-status": [ROW], "POST /proposals/1003/assessment-rerun": { accepted: true } },
+    sent,
+  );
+  const f = { clearAlert: () => undefined, status: () => undefined, problem: () => undefined } as never;
+  const sec = await findingsStatusSection(e, "1", f);
+  assert(sec !== null, "the coordinator gets the section");
+  assert(textOf(sec).includes("2 checks were dropped"), textOf(sec));
+  const button = byId(sec, "findings-rerun-1003");
+  assert(button !== null, "the control shows");
+  button.dispatchEvent(new Event("click"));
+  await new Promise((r) => setTimeout(r, 20));
+  assert(sent.some((s) => s.path === "POST /proposals/1003/assessment-rerun"), "the operation is called");
+});
+
+/** I-10: the control shows only while a re-run can start and a stage was dropped. */
+test("i10_issue6_m3_control_only_while_a_rerun_can_start", async () => {
+  for (const row of [
+    { ...ROW, refused: 0 },
+    { ...ROW, rerun: "in_flight" },
+    { ...ROW, rerun: "used_up" },
+  ]) {
+    prepare();
+    const e = env({ "GET /me/roles": ROLES("fstp_coordinator"), "GET /calls/1/findings-status": [row] });
+    const sec = await findingsStatusSection(e, "1");
+    assert(sec !== null, "section");
+    assert(byId(sec, "findings-rerun-1003") === null, JSON.stringify(row));
+  }
+});
+
+/** I-10, R-LA-03: a reviewer, a programme manager and an applicant get no status section, so no control. */
+test("i10_issue6_m3_only_the_coordinator_gets_the_control", async () => {
+  for (const role of ["committee_member", "programme_manager", "applicant", "call_drafter"]) {
+    prepare();
+    const e = env({ "GET /me/roles": ROLES(role), "GET /calls/1/findings-status": [ROW] });
+    eq(await findingsStatusSection(e, "1"), null, role);
+  }
+});
+
+/** I-10: the reviewer's notice says the coordinator can run it again, and has no control itself. */
+test("i10_issue6_m3_reviewer_notice_names_the_coordinator", () => {
+  assert((FINDINGS_LABELS["rev.findings.refused.lead"] ?? "").includes("The FSTP coordinator can run the assessment again."), "sentence");
 });

@@ -24,10 +24,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fstp_domain::id::{AccountId, CallId, LlmConfigId};
+use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
 use fstp_domain::refusal::RuleRef;
 
-use crate::finding::{Finding, FindingId, Mark};
+use crate::finding::{Finding, FindingId, MAX_REFUSED, MAX_RERUNS, Mark, RefusedStage};
 use crate::record::FindingRecord;
 
 /// Why the store refused an operation. A refusal names ids of findings,
@@ -76,6 +76,21 @@ pub enum FindingRefusal {
         /// The call the finding names.
         found: CallId,
     },
+    /// Issue 6 M3: a re-run of this proposal is in flight.
+    RerunInFlight {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// Issue 6 M3: the proposal has used its `MAX_RERUNS` re-runs.
+    RerunLimit {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// Issue 6 M3: a refusal list is over `MAX_REFUSED`.
+    TooManyRefused {
+        /// The proposal.
+        proposal: ProposalId,
+    },
     /// The finding id is already taken, now or by a retired finding.
     DuplicateFinding {
         /// The finding.
@@ -104,6 +119,9 @@ impl FindingRefusal {
             FindingRefusal::FallbackOutOfOrder { .. }
             | FindingRefusal::FallbackExhausted { .. } => RuleRef::I12,
             FindingRefusal::DuplicateFinding { .. } => RuleRef::Ledger,
+            FindingRefusal::RerunInFlight { .. }
+            | FindingRefusal::RerunLimit { .. }
+            | FindingRefusal::TooManyRefused { .. } => RuleRef::I10,
             FindingRefusal::WrongCall { .. }
             | FindingRefusal::UnknownFinding { .. }
             | FindingRefusal::MalformedEvidence { .. } => RuleRef::Input,
@@ -137,6 +155,12 @@ pub struct FindingStore {
     live: BTreeMap<FindingId, CallId>,
     /// Ids of findings removed by a replacement. They are never reused.
     retired: BTreeSet<FindingId>,
+    /// The stages dropped from the last assessment of each proposal, with
+    /// the call that ran it (issue 6 M3). A proposal with none has no entry.
+    refusals: BTreeMap<ProposalId, (CallId, Vec<RefusedStage>)>,
+    /// The re-runs of each proposal: how many were requested, and whether
+    /// one is still in flight (issue 6 M3).
+    reruns: BTreeMap<ProposalId, (u32, bool)>,
 }
 
 impl FindingStore {
@@ -146,9 +170,37 @@ impl FindingStore {
             by_call: BTreeMap::new(),
             live: BTreeMap::new(),
             retired: BTreeSet::new(),
+            refusals: BTreeMap::new(),
+            reruns: BTreeMap::new(),
         }
     }
 
+    /// The stages dropped from the last assessment of `proposal`
+    /// (issue 6 M3, I-10, H-03). Empty when none were.
+    pub fn refusals_of(&self, proposal: ProposalId) -> &[RefusedStage] {
+        self.refusals
+            .get(&proposal)
+            .map_or(&[], |(_, r)| r.as_slice())
+    }
+
+    /// How many re-runs of `proposal` were requested, and whether one is
+    /// in flight.
+    pub fn reruns_of(&self, proposal: ProposalId) -> (u32, bool) {
+        self.reruns.get(&proposal).copied().unwrap_or((0, false))
+    }
+
+    /// Whether a re-run of `proposal` may be requested now: none in
+    /// flight and fewer than `MAX_RERUNS` so far.
+    pub fn check_rerun(&self, proposal: ProposalId) -> Result<(), FindingRefusal> {
+        let (n, in_flight) = self.reruns_of(proposal);
+        if in_flight {
+            return Err(FindingRefusal::RerunInFlight { proposal });
+        }
+        if n >= MAX_RERUNS {
+            return Err(FindingRefusal::RerunLimit { proposal });
+        }
+        Ok(())
+    }
     /// The configuration of `call`'s findings, or `None` when the call
     /// holds no findings and has never been regenerated.
     pub fn config_of(&self, call: CallId) -> Option<LlmConfigId> {
@@ -311,6 +363,8 @@ impl FindingStore {
             self.live.insert(f.id, call);
             set.insert(f.id, f);
         }
+        // The stages dropped from the retired findings' run are stale.
+        self.refusals.retain(|_, (c, _)| *c != call);
         self.by_call.insert(
             call,
             CallFindings {
@@ -381,6 +435,32 @@ impl FindingStore {
                     });
                 }
                 self.replace_call(*call, *config, findings.clone())
+            }
+            FindingRecord::RerunRequested { proposal, .. } => {
+                self.check_rerun(*proposal)?;
+                let (n, _) = self.reruns_of(*proposal);
+                self.reruns.insert(*proposal, (n.saturating_add(1), true));
+                Ok(())
+            }
+            FindingRecord::RefusalsRecorded {
+                call,
+                proposal,
+                refused,
+            } => {
+                if refused.len() > MAX_REFUSED {
+                    return Err(FindingRefusal::TooManyRefused {
+                        proposal: *proposal,
+                    });
+                }
+                if refused.is_empty() {
+                    self.refusals.remove(proposal);
+                } else {
+                    self.refusals.insert(*proposal, (*call, refused.clone()));
+                }
+                if let Some(r) = self.reruns.get_mut(proposal) {
+                    r.1 = false;
+                }
+                Ok(())
             }
         }
     }

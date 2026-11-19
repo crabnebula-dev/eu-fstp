@@ -52,7 +52,7 @@ fn seeder(w: Built) -> Seeder {
 }
 
 /// The members a message may hold (design section 1).
-const MEMBERS: [&str; 18] = [
+const MEMBERS: [&str; 19] = [
     "id",
     "kind",
     "action",
@@ -64,6 +64,8 @@ const MEMBERS: [&str; 18] = [
     // MB-Q3: the role binding and the invitation.
     "binding",
     "invitation",
+    // ADR-008: the ordinal of a disabled passkey's flagging event.
+    "passkey",
     "since",
     "due",
     "proposal",
@@ -77,10 +79,11 @@ const MEMBERS: [&str; 18] = [
 ];
 
 /// The id members of a message.
-const IDS: [&str; 13] = [
+const IDS: [&str; 14] = [
     "question",
     "binding",
     "invitation",
+    "passkey",
     "since",
     "due",
     "proposal",
@@ -761,4 +764,86 @@ fn r_ng_06_mailbox_acknowledge_goes_to_the_lead_only() {
     )
     .unwrap_or_else(|e| panic!("acknowledge: {e}"));
     assert!(of_kind(&mailbox(&mut seed, LEAD), "negotiation.acknowledge").is_empty());
+}
+
+/// Issue 6 L10 follow-up, ADR-008 (2026-11-19), ADR-020 amendment, I-86,
+/// I-27: each flagging event gives its holder one notice
+/// `notice.passkey_disabled`, numbered by the event's ordinal, in that
+/// holder's own mailbox and no other. A second event of the same holder
+/// gives a second notice. The notice takes a read mark and does not count
+/// in `open`. It holds no credential id, no device name and no address.
+#[test]
+fn issue6_l10_adr008_i86_holder_gets_one_notice_per_flagging_event() {
+    let mut seed = seeder(world(StateTag::Draft));
+    let before = mailbox(&mut seed, LEAD);
+    seed.ports
+        .accounts
+        .set_disabled_passkeys(vec![(LEAD, 1), (TEAM, 2), (LEAD, 3)]);
+    let lead = mailbox(&mut seed, LEAD);
+    check_reply(&lead, &WORLD_TEXTS, Who::Lead);
+    assert_eq!(
+        of_kind(&lead, "notice.passkey_disabled"),
+        ["notice.passkey_disabled:1", "notice.passkey_disabled:3"]
+    );
+    assert_eq!(lead.get("open"), before.get("open"), "a notice is no work");
+    let team = mailbox(&mut seed, TEAM);
+    assert_eq!(
+        of_kind(&team, "notice.passkey_disabled"),
+        ["notice.passkey_disabled:2"]
+    );
+    assert!(of_kind(&mailbox(&mut seed, UNBOUND), "notice.passkey_disabled").is_empty());
+    // The holder marks it read, and the mark is the holder's alone.
+    mark(&mut seed, LEAD, "notice.passkey_disabled:1").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        read_mark(&mailbox(&mut seed, LEAD), "notice.passkey_disabled:1"),
+        Some(true)
+    );
+    // Another account's notice is refused as an unknown one.
+    let e = mark(&mut seed, TEAM, "notice.passkey_disabled:1").expect_err("not the team's");
+    assert!(e.contains("not_found") && e.contains("Input"), "{e}");
+}
+
+/// ADR-008 (2026-11-19) decision 3, I-86: a tenant without a mail relay
+/// sends no email, so each tenant admin gets one notice
+/// `admin.passkey_disabled` per flagging event. It carries the ordinal
+/// only, never the account. Other accounts get none. Once a relay is set
+/// the email goes out and the admin notice is gone.
+#[test]
+fn issue6_l10_adr008_i86_admins_are_told_only_when_no_relay_sends_the_email() {
+    let mut seed = seeder(world(StateTag::Draft));
+    seed.ports
+        .accounts
+        .set_disabled_passkeys(vec![(LEAD, 1), (TEAM, 2)]);
+    for admin in [ADMIN_BUILDER, ADMIN_PLAIN] {
+        let v = mailbox(&mut seed, admin);
+        check_reply(&v, &WORLD_TEXTS, Who::TenantAdminBuilder);
+        assert_eq!(
+            of_kind(&v, "admin.passkey_disabled"),
+            ["admin.passkey_disabled:1", "admin.passkey_disabled:2"],
+            "{}",
+            v.to_compact()
+        );
+        for m in messages(&v) {
+            if text(&m, "kind") == "admin.passkey_disabled" {
+                let keys: BTreeSet<&str> = m.as_object().unwrap().keys().collect();
+                let wanted: BTreeSet<&str> = ["id", "kind", "action", "href", "read", "passkey"]
+                    .into_iter()
+                    .collect();
+                assert_eq!(keys, wanted, "no account in {}", m.to_compact());
+            }
+        }
+    }
+    assert!(of_kind(&mailbox(&mut seed, LEAD), "admin.passkey_disabled").is_empty());
+    seed.api(
+        ADMIN_BUILDER,
+        ApiMethod::Put,
+        "/admin/settings/mail-relay",
+        &obj(vec![
+            ("ca_pem", s("")),
+            ("credential", s("mail-relay")),
+            ("host", s("smtp.relay.example")),
+        ]),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert!(of_kind(&mailbox(&mut seed, ADMIN_BUILDER), "admin.passkey_disabled").is_empty());
 }

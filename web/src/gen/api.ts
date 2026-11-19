@@ -194,6 +194,7 @@ export type OpName =
   | "review.findings_refusals"
   | "assess.findings_status"
   | "review.mark_finding"
+  | "assess.rerun"
   | "committee.ranking"
   | "committee.open_round"
   | "committee.round"
@@ -442,6 +443,7 @@ export interface OpParams {
   readonly "review.findings_refusals": { readonly "assignment": string };
   readonly "assess.findings_status": { readonly "call": string };
   readonly "review.mark_finding": { readonly "finding": string };
+  readonly "assess.rerun": { readonly "proposal": string };
   readonly "committee.ranking": { readonly "call": string };
   readonly "committee.open_round": { readonly "call": string };
   readonly "committee.round": { readonly "round": string };
@@ -663,6 +665,7 @@ export const OP_NAMES: readonly OpName[] = [
   "review.findings_refusals",
   "assess.findings_status",
   "review.mark_finding",
+  "assess.rerun",
   "committee.ranking",
   "committee.open_round",
   "committee.round",
@@ -2705,6 +2708,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "assess.rerun",
+    method: "POST",
+    path: "/proposals/{proposal}/assessment-rerun",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "assessment-rerun" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "committee.ranking",
     method: "GET",
     path: "/calls/{call}/ranking",
@@ -4698,6 +4715,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "proposal": { schema: { kind: "id" }, optional: false },
       "status": { schema: { kind: "enum", values: ["pending", "ready"] }, optional: false },
       "findings": { schema: { kind: "int" }, optional: false },
+      "refused": { schema: { kind: "int" }, optional: false },
+      "rerun": { schema: { kind: "enum", values: ["available", "in_flight", "used_up"] }, optional: false },
     },
   } },
   "review.stage2_thread": {
@@ -4828,13 +4847,14 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
         kind: "object",
         fields: {
           "id": { schema: { kind: "string" }, optional: false },
-          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted", "admin.retention_ended", "report.period_ended"] }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["pending.confirm", "proposal.submit", "stage2.respond", "negotiation.acknowledge", "review.declare", "review.score", "irc.declare", "irc.review", "intake.knock_out", "round.vote", "admin.approve_activation", "admin.override_activation", "contract.sign", "payment.review", "payment.approve", "payment.release", "payment.confirm", "notice.outcome", "notice.irc_concern", "invitation.open", "role.granted", "admin.retention_ended", "report.period_ended", "notice.passkey_disabled", "admin.passkey_disabled"] }, optional: false },
           "action": { schema: { kind: "bool" }, optional: false },
           "href": { schema: { kind: "string" }, optional: false },
           "read": { schema: { kind: "bool" }, optional: true },
           "question": { schema: { kind: "id" }, optional: true },
           "binding": { schema: { kind: "id" }, optional: true },
           "invitation": { schema: { kind: "id" }, optional: true },
+          "passkey": { schema: { kind: "id" }, optional: true },
           "since": { schema: { kind: "id" }, optional: true },
           "due": { schema: { kind: "id" }, optional: true },
           "proposal": { schema: { kind: "id" }, optional: true },

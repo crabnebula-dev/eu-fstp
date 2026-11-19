@@ -40,6 +40,9 @@ export const MAIL_KINDS = [
   "admin.retention_ended",
   // P-57 (Daniel, 2026-11-15 late): a reporting period ended and its report is due.
   "report.period_ended",
+  // ADR-008 (Daniel, 2026-11-19): a passkey of an account was disabled.
+  "notice.passkey_disabled",
+  "admin.passkey_disabled",
 ] as const;
 
 /** One kind. */
@@ -73,6 +76,8 @@ export const MAILBOX_ROUTES: Readonly<Record<MailKind, string>> = Object.freeze(
   "role.granted": "/app/",
   "admin.retention_ended": "/app/admin/erasures",
   "report.period_ended": "/app/programmes/{programme}/reports",
+  "notice.passkey_disabled": "/app/",
+  "admin.passkey_disabled": "/app/",
 });
 
 /**
@@ -102,6 +107,8 @@ export const ID_MEMBERS = [
   // MB-Q3: the role binding and the invitation.
   "binding",
   "invitation",
+  // ADR-008: the ordinal of a disabled passkey's flagging event.
+  "passkey",
 ] as const;
 
 /** One id member. */

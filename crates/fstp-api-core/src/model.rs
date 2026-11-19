@@ -2483,6 +2483,8 @@ pub(crate) mod reply_shape_tests {
                 proposal: 1001,
                 status: "ready",
                 findings: 9,
+                refused: 2,
+                rerun: "available",
             }]),
             ReadModel::Mailbox(crate::mailbox::MailboxView::default()),
             ReadModel::Mailbox(crate::mailbox::samples()),

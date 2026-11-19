@@ -680,6 +680,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::M3Port(PortKind::StateCountry) => BodyRule::Exactly(&["country"]),
         // `review.mark_finding`: the reviewer's mark, `Agreed` or `Disputed`.
         OpKind::Finding(fstp_access::FindingKind::Mark) => BodyRule::Exactly(&["mark"]),
+        // Issue 6 M3: `assess.rerun` names the proposal in its path only.
+        OpKind::Finding(fstp_access::FindingKind::RequestRerun) => BodyRule::Empty,
         OpKind::M3Port(PortKind::DeclareAffiliations) => BodyRule::Exactly(&["affiliations"]),
         OpKind::M3Port(PortKind::StateBirthDate) => BodyRule::Exactly(&["date_of_birth"]),
         // MB-Q1, ADR-020: the message id of the notice to mark read.

@@ -39,7 +39,7 @@ export const FINDINGS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   // here. No model output is shown.
   "rev.findings.refused.one": "One check of the AI assessor was dropped, so some findings may be missing.",
   "rev.findings.refused.other": "{count} checks of the AI assessor were dropped, so some findings may be missing.",
-  "rev.findings.refused.lead": "The dropped checks are listed below. Their output is not shown.",
+  "rev.findings.refused.lead": "The dropped checks are listed below. Their output is not shown. The FSTP coordinator can run the assessment again.",
   "rev.findings.refused.item": "{stage}: {reason} (code: {code})",
   "refused.stage.completeness": "Completeness check",
   "refused.stage.quality": "Quality assessment",
@@ -68,6 +68,14 @@ export const FINDINGS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "coord.findings.none": "No submitted proposal yet.",
   "coord.findings.unavailable": "The assessment status cannot be shown now.",
   "coord.findings.proposal": "Proposal {id}",
+  // Issue 6 M3: the coordinator sees how many checks were dropped and can run the assessment again.
+  "coord.findings.refused_one": "One check was dropped.",
+  "coord.findings.refused_other": "{count} checks were dropped.",
+  "coord.findings.rerun": "Run the assessment again",
+  "coord.findings.rerun_named": "Run the assessment of proposal {id} again",
+  "coord.findings.rerun_started": "The assessment ran again.",
+  "coord.findings.rerun_in_flight": "The assessment is running again.",
+  "coord.findings.rerun_used_up": "The assessment has run again three times. No more runs are left.",
 
   "pre.title": "Check my draft",
   "pre.link": "Check my draft",

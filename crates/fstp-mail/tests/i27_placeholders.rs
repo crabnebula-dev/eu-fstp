@@ -81,7 +81,7 @@ fn i_27_placeholder_enum_is_enumerated() {
             }
             Value::Link(x) => {
                 let _: LinkTarget = match x {
-                    LinkTarget::Notices => x,
+                    LinkTarget::Home | LinkTarget::Notices => x,
                     LinkTarget::Proposal(p) | LinkTarget::ProposalProgress(p) => {
                         let _: ProposalId = p;
                         x
@@ -292,5 +292,10 @@ const PINNED: &[(&str, &str)] = &[
     (
         "submission-copy/1/en",
         "cc4726e27f0fe6e1974e3a44dab0706621ef888df38ea261eb15a03a6e444f47",
+    ),
+    // ADR-008, 2026-11-19: the holder email of a disabled passkey.
+    (
+        "passkey-disabled/1/en",
+        "d9dfd5d285250333a9e04b3e00c7840f0c8d7d81d13b92b9826e2c66e7d92b54",
     ),
 ];

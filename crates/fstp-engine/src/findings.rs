@@ -91,7 +91,10 @@ pub fn finding_queries(
             .map(|(by, f)| conflict_query(&state.core, by, f.proposal))
             .into_iter()
             .collect()),
-        FindingCommand::Record(_) | FindingCommand::Regenerate { .. } => Ok(Vec::new()),
+        FindingCommand::Record(_)
+        | FindingCommand::Regenerate { .. }
+        | FindingCommand::RequestRerun { .. }
+        | FindingCommand::RecordRefusals { .. } => Ok(Vec::new()),
     }
 }
 
@@ -114,6 +117,36 @@ pub fn decide_finding(
         FindingCommand::Record(f) => decide_record(core, store, f, ctx)?,
         FindingCommand::Mark { finding, mark } => {
             decide_mark(state, *finding, *mark, ctx, answers)?
+        }
+        FindingCommand::RequestRerun { call, proposal } => {
+            // Issue 6 M3, I-10: the call's FSTP coordinator asks, once at
+            // a time and at most MAX_RERUNS times. The bounds are the
+            // store's, which the trial fold below applies.
+            let Actor::Account(by) = ctx.actor else {
+                return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+            };
+            check_rerun_basis(core, by, *call, *proposal, ctx.now)?;
+            FindingRecord::RerunRequested {
+                call: *call,
+                proposal: *proposal,
+                by,
+            }
+        }
+        FindingCommand::RecordRefusals {
+            call,
+            proposal,
+            refused,
+        } => {
+            system_actor(ctx)?;
+            published(core, *call)?;
+            if !proposal_in_call(core, *proposal, *call) {
+                return Err(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity));
+            }
+            FindingRecord::RefusalsRecorded {
+                call: *call,
+                proposal: *proposal,
+                refused: refused.clone(),
+            }
         }
         FindingCommand::Regenerate {
             call,
@@ -192,6 +225,17 @@ pub fn check_fold(
                 return Err(FoldError::Inconsistent);
             }
             Ok(())
+        }
+        FindingRecord::RerunRequested { call, proposal, by } => {
+            check_rerun_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)
+        }
+        FindingRecord::RefusalsRecorded { call, proposal, .. } => {
+            published(core, *call).map_err(|_| FoldError::Inconsistent)?;
+            if proposal_in_call(core, *proposal, *call) {
+                Ok(())
+            } else {
+                Err(FoldError::Inconsistent)
+            }
         }
         FindingRecord::Marked { finding, by, .. } => {
             // An unknown finding is the store's refusal, as before.
@@ -282,6 +326,58 @@ fn decide_record(
     // The trial fold in `decide_finding` checks the rest, as
     // `FindingStore::insert` would with this pin.
     Ok(FindingRecord::Recorded(f.clone()))
+}
+
+/// Whether `proposal` has its latest binding scope in `call`.
+fn proposal_in_call(core: &State, proposal: ProposalId, call: CallId) -> bool {
+    use fstp_domain::roles::BindingScope;
+    let roster = core.roster();
+    roster
+        .bindings()
+        .map(|(_, b)| *b)
+        .chain(roster.ended().map(|(_, e)| e.binding))
+        .filter_map(|b| match b.scope {
+            BindingScope::Proposal { proposal: p, call } if p == proposal => {
+                Some((b.opened, b.start, call))
+            }
+            _ => None,
+        })
+        .max()
+        .is_some_and(|(_, _, c)| c == call)
+}
+
+/// What a re-run request needs from the core (issue 6 M3, I-10): the
+/// call is published, the proposal is a submitted proposal of that call,
+/// and `by` holds an active FSTP coordinator binding in the call's
+/// programme, as `review.assign` requires. The store's bounds are
+/// checked by the fold.
+fn check_rerun_basis(
+    core: &State,
+    by: AccountId,
+    call: CallId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> Result<(), Refusal> {
+    use fstp_domain::roles::Role;
+    let (view, _) = published(core, call)?;
+    let programme = view.programme();
+    if !core.roster().bindings().any(|(_, b)| {
+        b.account == by
+            && b.role == Role::FstpCoordinator
+            && b.programme == programme
+            && b.active_at(now)
+    }) {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
+    }
+    if !proposal_in_call(core, proposal, call) {
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity));
+    }
+    match fstp_domain::view::proposal_state(core, proposal) {
+        Some(fstp_domain::StateTag::Draft) | None => {
+            Err(Refusal::new(RuleRef::Input, RefusalReason::WrongState))
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 /// The refusal of a `Mark` before the account is shown to be allowed. It
@@ -439,6 +535,10 @@ fn store_refusal(r: FindingRefusal) -> Refusal {
         | FindingRefusal::FallbackOutOfOrder { .. }
         | FindingRefusal::FallbackExhausted { .. } => RefusalReason::GuardFailed,
         FindingRefusal::DuplicateFinding { .. } => RefusalReason::IdReused,
+        FindingRefusal::RerunInFlight { .. } | FindingRefusal::RerunLimit { .. } => {
+            RefusalReason::GuardFailed
+        }
+        FindingRefusal::TooManyRefused { .. } => RefusalReason::InvalidValue,
         FindingRefusal::UnknownFinding { .. } => RefusalReason::UnknownEntity,
         FindingRefusal::WrongCall { .. } | FindingRefusal::MalformedEvidence { .. } => {
             RefusalReason::InvalidValue
@@ -452,6 +552,9 @@ fn store_refusal(r: FindingRefusal) -> Refusal {
 fn fold_error(r: FindingRefusal) -> FoldError {
     match r {
         FindingRefusal::DuplicateFinding { .. } => FoldError::DuplicateId,
+        FindingRefusal::RerunInFlight { .. }
+        | FindingRefusal::RerunLimit { .. }
+        | FindingRefusal::TooManyRefused { .. } => FoldError::Inconsistent,
         FindingRefusal::UnknownFinding { .. } => FoldError::UnknownEntity,
         FindingRefusal::ForeignConfig { .. }
         | FindingRefusal::RetiredConfig { .. }

@@ -176,10 +176,42 @@ function statusText(t: I18n, s: FindingsStatus): Label {
 }
 
 /**
+ * The coordinator's cell for a proposal: the status, the number of dropped
+ * checks, and the re-run control while a dropped check can be run again
+ * (issue 6 M3, I-10). Only this section, which only the call's coordinator
+ * gets, builds the control. The control is the `assess.rerun` operation.
+ */
+export function statusCell(
+  t: I18n,
+  s: FindingsStatus,
+  rerun: (proposal: string, b: HTMLButtonElement) => void,
+): Child[] {
+  const parts: Child[] = [statusText(t, s)];
+  if (s.refused === 0) {
+    return parts;
+  }
+  parts.push(
+    " ",
+    s.refused === 1
+      ? t.label("coord.findings.refused_one")
+      : t.label("coord.findings.refused_other", { count: String(s.refused) }),
+  );
+  if (s.rerun === "available") {
+    const b = buttonEl(`findings-rerun-${s.proposal}`, "button", t.label("coord.findings.rerun"));
+    b.setAttribute("aria-label", t.label("coord.findings.rerun_named", { id: s.proposal }));
+    b.addEventListener("click", () => rerun(s.proposal, b));
+    parts.push(" ", b);
+  } else {
+    parts.push(" ", t.label(s.rerun === "in_flight" ? "coord.findings.rerun_in_flight" : "coord.findings.rerun_used_up"));
+  }
+  return parts;
+}
+
+/**
  * The coordinator's assessment status of `call`: per submitted proposal,
  * "Findings pending" or a count. Never a statement (I-10).
  */
-export async function findingsStatusSection(env: PageEnv, call: string): Promise<HTMLElement | null> {
+export async function findingsStatusSection(env: PageEnv, call: string, f?: Frame): Promise<HTMLElement | null> {
   // The read is the coordinator's alone (M7 design section 7). Other
   // readers of the call board, such as the programme manager, would only
   // be refused, so the section is left out for them.
@@ -192,10 +224,29 @@ export async function findingsStatusSection(env: PageEnv, call: string): Promise
     return null;
   }
   const t = findingsI18n(env);
+  const section = h("section", { id: "findings-status", "aria-labelledby": "findings-status-heading" });
+  const render = async (): Promise<void> => {
   const answer = await callOp(env, "assess.findings_status", { call }, undefined, (v): v is unknown =>
     decodeFindingsStatus(v) !== null,
   );
   const rows = answer.ok ? decodeFindingsStatus(answer.data) : null;
+  const rerun = (proposal: string, b: HTMLButtonElement): void => {
+    if (f === undefined) {
+      return;
+    }
+    void guarded(f, () =>
+      whileBusy(b, async () => {
+        f.clearAlert();
+        const done = await writeOp(env, "assess.rerun", { proposal }, {});
+        if (!done.ok) {
+          f.problem(done.problem);
+          return;
+        }
+        f.status(t.label("coord.findings.rerun_started"));
+        await render();
+      }),
+    );
+  };
   const children: Child[] = [
     h("h2", { id: "findings-status-heading" }, [t.label("coord.findings.heading")]),
     disclosure(t, null),
@@ -221,12 +272,15 @@ export async function findingsStatusSection(env: PageEnv, call: string): Promise
           rows.map((r) =>
             h("tr", { "data-findings-proposal": r.proposal, "data-findings-status": r.status }, [
               h("th", { scope: "row" }, [t.label("coord.findings.proposal", { id: r.proposal })]),
-              h("td", {}, [statusText(t, r)]),
+              h("td", {}, statusCell(t, r, rerun)),
             ]),
           ),
         ),
       ]),
     );
   }
-  return h("section", { id: "findings-status", "aria-labelledby": "findings-status-heading" }, children);
+  section.replaceChildren(...children);
+  };
+  await render();
+  return section;
 }

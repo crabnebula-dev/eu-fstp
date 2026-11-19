@@ -244,6 +244,10 @@ pub const MAILBOX_KINDS: &[&str] = &[
     // P-57 (Daniel, 2026-11-15 late): a reporting period ended and its
     // report is due.
     "report.period_ended",
+    // ADR-008 (Daniel, 2026-11-19): a passkey was disabled. The holder's
+    // notice, and the tenant admins' notice when no relay sends the email.
+    "notice.passkey_disabled",
+    "admin.passkey_disabled",
 ];
 
 /// The erasure causes of ADR-007, as the wire names them (lane
@@ -1382,6 +1386,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("proposal", Shape::Id),
             m("status", Shape::Enum(&["pending", "ready"])),
             m("findings", Shape::Int),
+            // Issue 6 M3: how many stages the validator dropped, and
+            // whether the coordinator may run the assessment again.
+            m("refused", Shape::Int),
+            m("rerun", Shape::Enum(&["available", "in_flight", "used_up"])),
         ])),
     ),
     // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.
@@ -1557,6 +1565,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     // MB-Q3: the role binding and the invitation.
                     opt("binding", Shape::Id),
                     opt("invitation", Shape::Id),
+                    // ADR-008: the ordinal of a disabled passkey's flagging event.
+                    opt("passkey", Shape::Id),
                     opt("since", Shape::Id),
                     opt("due", Shape::Id),
                     opt("proposal", Shape::Id),

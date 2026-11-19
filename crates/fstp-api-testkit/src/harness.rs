@@ -663,6 +663,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         | "proposal.withdraw"
         | "guardian.begin_consent"
         | "review.admit"
+        | "assess.rerun"
         | "review.close_stage1"
         | "review.unassign"
         | "stage2.no_questions"

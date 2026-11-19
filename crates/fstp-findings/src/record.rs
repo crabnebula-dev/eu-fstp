@@ -4,10 +4,10 @@
 //! folds only into the [`FindingStore`](crate::FindingStore). Neither can
 //! name a core record (I-10).
 
-use fstp_domain::id::{AccountId, CallId, LlmConfigId};
+use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
 use fstp_domain::policy::ModelRef;
 
-use crate::finding::{Finding, FindingId, Mark};
+use crate::finding::{Finding, FindingId, Mark, RefusedStage};
 
 /// A command on findings, decided by `decide_finding` in `fstp-engine`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -38,6 +38,26 @@ pub enum FindingCommand {
         config_model: ModelRef,
         /// The whole new set of the call's findings.
         findings: Vec<Finding>,
+    },
+    /// The FSTP coordinator of the call asks for the assessment of
+    /// `proposal` to run again (issue 6 M3, I-10). The decider refuses it
+    /// while a re-run is in flight and after `MAX_RERUNS` re-runs.
+    RequestRerun {
+        /// The call the proposal belongs to.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// The assessment of `proposal` ended, and these are the stages the
+    /// validator dropped. The list replaces the earlier one and ends a
+    /// re-run in flight. By the assessor's system path only.
+    RecordRefusals {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The dropped stages, possibly none.
+        refused: Vec<RefusedStage>,
     },
 }
 
@@ -71,5 +91,25 @@ pub enum FindingRecord {
         config: LlmConfigId,
         /// The whole new set of the call's findings.
         findings: Vec<Finding>,
+    },
+    /// A re-run of the assessment of `proposal` was requested by `by`.
+    /// This is the re-run's audit record in the ledger.
+    RerunRequested {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The coordinator's account.
+        by: AccountId,
+    },
+    /// The stages dropped from the last assessment of `proposal`. The
+    /// list supersedes the earlier one, and it ends a re-run in flight.
+    RefusalsRecorded {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The dropped stages, possibly none.
+        refused: Vec<RefusedStage>,
     },
 }

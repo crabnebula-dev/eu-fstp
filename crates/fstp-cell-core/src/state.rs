@@ -205,9 +205,19 @@ pub struct AuthState {
     invitations: BTreeMap<[u8; 16], Invitation>,
     first_admins: BTreeSet<AccountId>,
     recovered: BTreeMap<AccountId, Timestamp>,
+    /// The owner of each credential a `CredentialSuspect` record marked, in
+    /// ledger order. The position, from 1, is the flagging event's ordinal
+    /// (ADR-008, decided 2026-11-19).
+    suspect_flags: Vec<AccountId>,
 }
 
 impl AuthState {
+    /// The owner of each flagged credential, in ledger order. Event
+    /// `n` (from 1) is the entry at position `n - 1`.
+    pub fn suspect_flags(&self) -> &[AccountId] {
+        &self.suspect_flags
+    }
+
     /// Whether `account` holds the live credential `credential`:
     /// registered to it and not revoked.
     pub fn has_credential(&self, account: AccountId, credential: &[u8]) -> bool {
@@ -935,7 +945,10 @@ fn fold_auth(
             if c.account != *account {
                 return Err(inconsistent());
             }
-            c.suspect = true;
+            if !c.suspect {
+                c.suspect = true;
+                a.suspect_flags.push(*account);
+            }
         }
         R::StepUpGranted {
             id,

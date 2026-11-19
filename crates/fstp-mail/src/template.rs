@@ -42,11 +42,13 @@ pub enum TemplateId {
     ContractNotice,
     /// The copy of a submission record the applicant asked for (R-SB-04).
     SubmissionCopy,
+    /// A passkey of the account was disabled (ADR-008, 2026-11-19).
+    PasskeyDisabled,
 }
 
 impl TemplateId {
     /// Every template id.
-    pub const ALL: [TemplateId; 8] = [
+    pub const ALL: [TemplateId; 9] = [
         TemplateId::ProposalOutcome,
         TemplateId::IrcConcern,
         TemplateId::NotifiableConflict,
@@ -55,6 +57,7 @@ impl TemplateId {
         TemplateId::Corrigendum,
         TemplateId::ContractNotice,
         TemplateId::SubmissionCopy,
+        TemplateId::PasskeyDisabled,
     ];
 
     /// The stable code, as `X-FSTP-Template` and the ledger record carry it.
@@ -68,6 +71,7 @@ impl TemplateId {
             TemplateId::Corrigendum => "corrigendum",
             TemplateId::ContractNotice => "contract-notice",
             TemplateId::SubmissionCopy => "submission-copy",
+            TemplateId::PasskeyDisabled => "passkey-disabled",
         }
     }
 }
@@ -483,6 +487,23 @@ pub static TEMPLATES: &[Template] = &[
             T(".\nIt was submitted on "),
             S(Slot::When),
             T(".\n\nSign in to see the full submission:\n"),
+            S(Slot::Link),
+        ],
+    },
+    // TODO(legal): draft wording for the email that tells a holder a passkey
+    // of the account was disabled (ADR-008, 2026-11-19). It holds no time, no
+    // credential id, no device name and no address. It says only that a
+    // passkey was disabled and points to the platform.
+    Template {
+        id: TemplateId::PasskeyDisabled,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[T("A passkey of your account was disabled")],
+        body: &[
+            T(
+                "A passkey of your account on the platform was disabled.\n\nSign in with another passkey, or recover your account, to see your passkeys and add a new one:\n",
+            ),
             S(Slot::Link),
         ],
     },

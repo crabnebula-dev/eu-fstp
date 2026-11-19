@@ -170,3 +170,129 @@ pub enum Mark {
     /// The reviewer disputes the finding.
     Disputed,
 }
+
+/// The most re-runs of one proposal's assessment (issue 6 M3, decided by
+/// Daniel on 2026-11-19). The count is kept in the ledger, so a restart
+/// does not reset it.
+pub const MAX_RERUNS: u32 = 3;
+
+/// The most refused stages one record may list.
+pub const MAX_REFUSED: usize = 64;
+
+/// A stage of the assessment pipeline, as `fstp_assess::Stage::as_str`
+/// spells it. A closed list, so a record can hold no model text (I-10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AssessStage {
+    /// Completeness against the call's required elements.
+    Completeness,
+    /// Quality per criterion.
+    Quality,
+    /// Claim extraction.
+    Claims,
+    /// Claim verification.
+    Verify,
+    /// Integrity checks.
+    Integrity,
+}
+
+impl AssessStage {
+    /// Every stage.
+    pub const ALL: [AssessStage; 5] = [
+        AssessStage::Completeness,
+        AssessStage::Quality,
+        AssessStage::Claims,
+        AssessStage::Verify,
+        AssessStage::Integrity,
+    ];
+
+    /// The wire name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AssessStage::Completeness => "completeness",
+            AssessStage::Quality => "quality",
+            AssessStage::Claims => "claims",
+            AssessStage::Verify => "verify",
+            AssessStage::Integrity => "integrity",
+        }
+    }
+
+    /// The stage named `s`, if it is on the list.
+    pub fn parse(s: &str) -> Option<AssessStage> {
+        AssessStage::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+/// Why the validator refused a reply, as `fstp_assess::OutputError::code`
+/// spells it. A closed list (I-10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RefusalCode {
+    /// Not one JSON text.
+    Json,
+    /// A member outside the result shape.
+    UnknownMember,
+    /// A member missing or of the wrong type.
+    Shape,
+    /// A statement that reads like a score.
+    ScoreLike,
+    /// A criterion outside the call.
+    Criterion,
+    /// An element outside the rubric.
+    Element,
+    /// A finding kind outside the stage.
+    Kind,
+    /// A statement over the bound.
+    TooLong,
+}
+
+impl RefusalCode {
+    /// Every code.
+    pub const ALL: [RefusalCode; 8] = [
+        RefusalCode::Json,
+        RefusalCode::UnknownMember,
+        RefusalCode::Shape,
+        RefusalCode::ScoreLike,
+        RefusalCode::Criterion,
+        RefusalCode::Element,
+        RefusalCode::Kind,
+        RefusalCode::TooLong,
+    ];
+
+    /// The wire name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RefusalCode::Json => "json",
+            RefusalCode::UnknownMember => "unknown_member",
+            RefusalCode::Shape => "shape",
+            RefusalCode::ScoreLike => "score_like",
+            RefusalCode::Criterion => "criterion",
+            RefusalCode::Element => "element",
+            RefusalCode::Kind => "kind",
+            RefusalCode::TooLong => "too_long",
+        }
+    }
+
+    /// The code named `s`, if it is on the list.
+    pub fn parse(s: &str) -> Option<RefusalCode> {
+        RefusalCode::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+/// One stage the validator dropped (issue 6 M3, I-10, H-03): a stage and
+/// a code, never a reply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RefusedStage {
+    /// The stage.
+    pub stage: AssessStage,
+    /// The code.
+    pub code: RefusalCode,
+}
+
+impl RefusedStage {
+    /// The pair from wire names, or `None` for a name off its list.
+    pub fn parse(stage: &str, code: &str) -> Option<RefusedStage> {
+        Some(RefusedStage {
+            stage: AssessStage::parse(stage)?,
+            code: RefusalCode::parse(code)?,
+        })
+    }
+}

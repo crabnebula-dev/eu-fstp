@@ -267,21 +267,25 @@ fn finding_kind_of(c: &FindingCommand) -> FindingKind {
         FindingCommand::Record(_) => FindingKind::Record,
         FindingCommand::Mark { .. } => FindingKind::Mark,
         FindingCommand::Regenerate { .. } => FindingKind::Regenerate,
+        FindingCommand::RequestRerun { .. } => FindingKind::RequestRerun,
+        FindingCommand::RecordRefusals { .. } => FindingKind::RecordRefusals,
     }
 }
 
 /// Every finding kind. The match in `finding_kind_of` ties this list to
 /// `FindingCommand`, and the one below ties it to `FindingKind`.
-const FINDING_KINDS: [FindingKind; 3] = [
+const FINDING_KINDS: [FindingKind; 5] = [
     FindingKind::Record,
     FindingKind::Mark,
     FindingKind::Regenerate,
+    FindingKind::RequestRerun,
+    FindingKind::RecordRefusals,
 ];
 
 fn finding_routed(k: FindingKind) -> bool {
     match k {
-        FindingKind::Mark => true,
-        FindingKind::Record | FindingKind::Regenerate => false,
+        FindingKind::Mark | FindingKind::RequestRerun => true,
+        FindingKind::Record | FindingKind::Regenerate | FindingKind::RecordRefusals => false,
     }
 }
 
@@ -328,7 +332,7 @@ fn ops_cover_every_finding_and_import_kind_once() {
     }
     assert_eq!(
         SYSTEM_ONLY_OTHER.len(),
-        3,
+        4,
         "SYSTEM_ONLY_OTHER: {SYSTEM_ONLY_OTHER:?}"
     );
 }

@@ -32,7 +32,8 @@ pub mod store;
 pub mod text;
 
 pub use finding::{
-    Confidence, EvidenceRef, Finding, FindingId, FindingKind, Mark, Severity, TraceRef,
+    AssessStage, Confidence, EvidenceRef, Finding, FindingId, FindingKind, MAX_REFUSED, MAX_RERUNS,
+    Mark, RefusalCode, RefusedStage, Severity, TraceRef,
 };
 pub use record::{FindingCommand, FindingRecord};
 pub use store::{FindingRefusal, FindingStore};

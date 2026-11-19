@@ -23,9 +23,16 @@ pub struct FakeAccounts {
     kinds: Arc<Mutex<Vec<InviteKind>>>,
     /// The login email index of the cell, by account (SA-11).
     logins: Arc<Mutex<BTreeMap<AccountId, String>>>,
+    /// The flagging events of disabled passkeys (ADR-008, 2026-11-19).
+    disabled: Arc<Mutex<Vec<(AccountId, u64)>>>,
 }
 
 impl FakeAccounts {
+    /// Sets the disabled passkeys the port lists: owner and ordinal.
+    pub fn set_disabled_passkeys(&self, flags: Vec<(AccountId, u64)>) {
+        *lock(&self.disabled) = flags;
+    }
+
     /// How many invitations were made.
     pub fn invited(&self) -> usize {
         *lock(&self.invited)
@@ -95,6 +102,11 @@ impl Accounts for FakeAccounts {
     /// The login email [`FakeAccounts::set_login_email`] recorded.
     async fn login_email(&self, a: AccountId) -> Result<Option<String>, PortError> {
         Ok(lock(&self.logins).get(&a).cloned())
+    }
+
+    /// The events [`FakeAccounts::set_disabled_passkeys`] set.
+    fn disabled_passkeys(&self) -> Vec<(AccountId, u64)> {
+        lock(&self.disabled).clone()
     }
 }
 

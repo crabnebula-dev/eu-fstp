@@ -1638,6 +1638,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // M7 design section 7: counts per proposal for the coordinator.
     RefOp::read("assess.findings_status", T::Call, R::Coordinator),
     RefOp::act("review.mark_finding", T::Finding, R::FindingMarker).binding(),
+    // Issue 6 M3: the coordinator runs the assessment of a proposal again.
+    // Binding, not high-risk, as the coordinator's `review.assign`.
+    RefOp::act("assess.rerun", T::Proposal, R::Coordinator).binding(),
     // J7: the committee.
     RefOp::read("committee.ranking", T::PublishedCall, R::Committee).tool("fstp_get_ranking_view"),
     RefOp::read("committee.round", T::Round, R::Committee),
