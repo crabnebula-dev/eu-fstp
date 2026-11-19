@@ -67,7 +67,9 @@ This section records Daniel's answers of 2026-10-28 to Q3, Q4, Q25 and Q36 of `d
 
 #### The managed control cluster
 
-- `fstp-pgwire` connects with SCRAM only. It accepts SCRAM-SHA-256-PLUS or SCRAM-SHA-256 (`RequireAuth::SCRAM`), and moves to `RequireAuth::SCRAM_PLUS_ONLY` if the service supports channel binding (V6).
+- The `fstp-pgwire` default is `RequireAuth::SCRAM_PLUS_ONLY`: SCRAM-SHA-256-PLUS with channel binding, and nothing else (issue 6 L6). Every self-operated cluster under D2 uses the default.
+- This link alone sets `RequireAuth::MANAGED_CONTROL_LINK`, an explicit non-default setting. It accepts SCRAM-SHA-256-PLUS or SCRAM-SHA-256 while V6 is open. If V6 confirms channel binding, the constant becomes `SCRAM_PLUS_ONLY`.
+- A test or devstack connection to a server without channel binding sets `RequireAuth::SCRAM` in its own test configuration. It never relies on the default.
 - Cleartext passwords and unauthenticated connections are never added to the accepted set. If the service cannot complete SCRAM, the control-plane databases move to a self-operated `control` cluster under D2.
 - The server is verified against the CA that OVHcloud shares across the Public Cloud Databases services of the project, as documented. That CA is shared, so the host name check is what binds the connection to our service.
 - D2 binds every database connection from a cell component. No cell or vault component connects to the control cluster. Cells reach the control plane only through `CellToCp` over mutual TLS.

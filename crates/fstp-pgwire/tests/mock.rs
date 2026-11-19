@@ -47,6 +47,13 @@ fn config() -> Config {
     .connect_timeout(None)
 }
 
+/// A configuration that accepts plain SCRAM-SHA-256, for the tests of a
+/// server that offers no channel binding. The default refuses it (issue 6
+/// L6), so these tests opt out explicitly.
+fn plain_scram_config() -> Config {
+    config().require_auth(RequireAuth::SCRAM)
+}
+
 fn server_der() -> Vec<u8> {
     let text = std::str::from_utf8(SERVER).unwrap();
     let body: String = text
@@ -255,7 +262,7 @@ fn r_nf_09_scram_plus_binds_to_the_server_certificate() {
 
 #[test]
 fn r_nf_09_client_signals_channel_binding_support_when_not_offered() {
-    let client = run_tls(config(), |mut p| async move {
+    let client = run_tls(plain_scram_config(), |mut p| async move {
         scram_server(&mut p, &["SCRAM-SHA-256"], "y,,", Scram::Honest).await;
         p.ready().await;
         p
@@ -283,7 +290,7 @@ fn r_nf_09_wrong_server_signature_is_rejected() {
 
 #[test]
 fn r_nf_09_scram_error_in_final_message_is_rejected() {
-    let err = run_tls(config(), |mut p| async move {
+    let err = run_tls(plain_scram_config(), |mut p| async move {
         scram_server(&mut p, &["SCRAM-SHA-256"], "y,,", Scram::ErrorInFinal).await;
         p
     })
@@ -293,7 +300,7 @@ fn r_nf_09_scram_error_in_final_message_is_rejected() {
 
 #[test]
 fn r_nf_09_authentication_ok_without_server_proof_is_rejected() {
-    let err = run_tls(config(), |mut p| async move {
+    let err = run_tls(plain_scram_config(), |mut p| async move {
         scram_server(&mut p, &["SCRAM-SHA-256"], "y,,", Scram::SkipFinal).await;
         p
     })
@@ -951,7 +958,7 @@ fn review_pg_pending_close_lost_after_dropped_prepare() {
 /// (4096 by default, RFC 7677) is refused before the client sends a proof.
 #[test]
 fn review_pg_scram_no_min_iterations_session() {
-    let err = run_tls(config(), |mut p| async move {
+    let err = run_tls(plain_scram_config(), |mut p| async move {
         p.send(&[BackendMessage::Authentication(Authentication::Sasl {
             mechanisms: vec!["SCRAM-SHA-256".into()],
         })])
@@ -1036,4 +1043,20 @@ fn issue6_l5_default_statement_timeout_is_finite() {
         cfg.statement_timeout(None).configured_statement_timeout(),
         None
     );
+}
+
+/// Issue 6 L6, R-NF-09: a configuration left at its default refuses a
+/// server that offers SCRAM-SHA-256 without channel binding, before any
+/// SCRAM message is sent.
+#[test]
+fn issue6_l6_r_nf_09_default_refuses_plain_scram() {
+    let err = run_tls(config(), |mut p| async move {
+        p.send(&[BackendMessage::Authentication(Authentication::Sasl {
+            mechanisms: vec!["SCRAM-SHA-256".into()],
+        })])
+        .await;
+        p
+    })
+    .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Auth, "{err}");
 }
