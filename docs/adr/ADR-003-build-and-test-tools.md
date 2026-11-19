@@ -119,14 +119,14 @@ The tsc and Playwright rows in the record table above are filled at first use as
 
 ### Context
 
-The CI test job runs the workspace in parallel parts. With the authorisation matrices, every teeth test and every property at its full case count, one run takes about three hours. Most of that time is in a few heavy classes of test. A push or pull request needs a faster answer.
+The CI test job runs the workspace in parallel parts. With the authorisation matrices, every teeth test and every property at its full case count, one run took about three hours until 2026-11-19. The matrix parts now build optimised and fail fast (5073fa66), and full run 44513445737 took 51 minutes. Its direct matrix shards took at most 25 minutes each, the HTTP matrix shards 14, the MCP matrix shards 11 and the m-activate part 50. Most of the time is in a few heavy classes of test. A push or pull request needs a faster answer.
 
 ### Decision
 
 The test job and the fuzz smoke run in one of two tiers. Every other CI job is the same in both.
 
 - **Light**, on every push and pull request, and on a manual run without `full`. The `matrix-*` parts and the `m-activate` part stop at their first step. Every other part skips the teeth tests and the matrix layout self-checks, and caps every property at 32 cases. The fuzz smoke runs every fuzz target for 15 s.
-- **Full**, on a manual run with the `full` input ticked (Actions, workflow "ci", "Run workflow"). Every part runs every test, and every property runs at its own case count. The fuzz smoke runs every fuzz target for 60 s. It takes about three hours.
+- **Full**, on a manual run with the `full` input ticked (Actions, workflow "ci", "Run workflow"). Every part runs every test, and every property runs at its own case count. The fuzz smoke runs every fuzz target for 60 s. It takes about an hour (51 minutes in run 44513445737). Each matrix part has a timeout of about twice its measured time: 50 minutes for a direct shard, 30 for an HTTP shard and 25 for an MCP shard. The m-activate part keeps 120.
 
 A milestone closes, and a release ships, only on a green full run. A green light run never closes a milestone or ships a release.
 
