@@ -36,7 +36,7 @@ pub use backend::{
     AnchorRow, Backend, BackendFault, ChallengePurpose, ChallengeRow, ErasureRow, SessionRow,
     TokenKind, TokenRow,
 };
-pub(crate) use handle::{CellCfg, Ctx, Outcome, Rule, serve_route};
+pub(crate) use handle::{CellCfg, Ctx, Outcome, Rule, serve_route, unrouted};
 pub use limits::{AuthLimits, Limit};
 
 use fstp_cell_core::gate::HighRiskAction;
@@ -154,6 +154,9 @@ pub enum Endpoint {
     /// `GET /p/...`: a public page, the feed or a public tool
     /// (`crate::public`, I-87, lane m4/cellpub).
     Public(crate::public::PublicOp),
+    /// `GET /app/assets/{file}`: a platform stylesheet of the public
+    /// pages (`crate::http::site`, lane m4/pubtext).
+    SiteSheet,
     /// No handler: a route built with `Route::new` alone.
     Unserved,
 }
@@ -537,6 +540,26 @@ pub fn public_table() -> &'static [Route] {
     &PUBLIC_TABLE
 }
 
+/// The route of the platform stylesheets the public pages link
+/// (`crate::http::site`, R-NF-03, lane m4/pubtext). It is a `GET` with no
+/// body, no session and no state change, so its risk class is `Normal`
+/// and its access class `Public` (I-78).
+static SITE_TABLE: [Route; 1] = [Route::served(
+    "GET",
+    crate::http::site::SHEET_ROUTE,
+    Normal,
+    A::Public,
+    E::SiteSheet,
+    0,
+)];
+
+/// The site routes, with their classes: the platform stylesheets of the
+/// public pages. Like [`public_table`], they are not rows of [`table`],
+/// and every front serves them through the same shared checks.
+pub fn site_table() -> &'static [Route] {
+    &SITE_TABLE
+}
+
 /// The routes of the compiled auth pages of design section 11.2
 /// (`crate::http::pages`). Each is a `GET` with no body, no session and
 /// no state change, so its risk class is `Normal` and its access class
@@ -684,6 +707,29 @@ mod tests {
                 .iter()
                 .chain(page_table())
                 .all(|t| !matches!(t.endpoint(), Endpoint::Public(_)))
+        );
+    }
+
+    /// I-78, R-NF-03: the site table is the one sheet route, a public
+    /// `GET` of risk class `Normal` with no body, outside every other
+    /// table, and its endpoint appears in no other row.
+    #[test]
+    fn i78_site_route_is_a_public_get_outside_the_other_tables() {
+        let got: Vec<&str> = site_table().iter().map(|r| r.path).collect();
+        assert_eq!(got, ["/app/assets/{file}"]);
+        for r in site_table() {
+            assert_eq!(r.parts(), ("GET", r.path, RiskClass::Normal), "{}", r.path);
+            assert_eq!(r.access(), Access::Public, "{}", r.path);
+            assert_eq!(r.body_limit(), 0, "{}", r.path);
+            assert_eq!(r.endpoint(), Endpoint::SiteSheet, "{}", r.path);
+        }
+        assert!(
+            table()
+                .iter()
+                .chain(page_table())
+                .chain(public_table())
+                .all(|t| t.endpoint() != Endpoint::SiteSheet
+                    && site_table().iter().all(|s| s.path != t.path))
         );
     }
 }
