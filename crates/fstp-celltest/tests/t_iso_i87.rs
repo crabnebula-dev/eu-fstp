@@ -7,12 +7,11 @@
 //! answer of a cell must name only that cell's programme and call, and
 //! none of the other cell's names, slugs, call ids or texts.
 //!
-//! Interim, pending Daniel: the cell text store has no public class yet,
-//! so a production cell shows no open call (`fstp_cell::public`). Each
-//! world cell holds its own public texts instead
-//! (`fstp_celltest::world_public`), which the cycle's `publish-call`
-//! fills with the synthetic title and P-09 wording of the call it
-//! published. Each cell reads only its own.
+//! The texts reach the pages as in production (lane m4/pubtext): the
+//! cycle's `publish-call` stores the synthetic title and P-09 wording in
+//! each cell's own text store, and the cell copies them into its public
+//! text class when the call is published (`fstp_cell::public`). Each
+//! cell's view reads only its own class.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]

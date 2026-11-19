@@ -47,8 +47,8 @@ Daniel decided on 2026-11-16 to build the key gaps and then close M4. The items 
 4. Built on 2026-11-19 (`57efb882`): `crates/fstp-api-testkit/tests/i84_audit_parity.rs`, properties over random sequences on both channels. It found a double audit entry in `calls.list_open`, fixed in `c6fc46f0`.
 5. Built on 2026-11-19 (`b672fb1e`): `r_ev_03_exactly_75_percent_does_not_pass_through_the_interface`.
 6. Built on 2026-11-19 (`0aef3228`): `r_pc_03_builder_authorship_survives_activation`, at engine level, since `r_pg_02_supersafe_built_through_creator_api` does not exist.
-7. `t_iso_public_rate_limit_keys_are_per_cell`, and a rate limit on the cell's public routes.
-8. The public text class. Daniel chose "copy at publication" on 2026-11-17. Until it is built, the production cell (`NoPublicTexts`) shows programme pages with no open call.
-9. The cell's public routes differ from the web adapter: no platform stylesheet, the router's empty 404, and gating by activation only.
+7. Built by lane m4/pubtext on 2026-11-19: a per-peer rate limit on the cell's public routes, 120 per minute, interim pending Daniel's acceptance (ADR-024), and `t_iso_public_rate_limit_keys_are_per_cell` in the `isolation-multi-cell` CI part.
+8. Built by lane m4/pubtext on 2026-11-19: the public text class, "copy at publication" (Daniel, 2026-11-17). See M4 design section 8.4, "Built by lane m4/pubtext".
+9. Built by lane m4/pubtext on 2026-11-19: the cell's public routes answer as the web adapter does, with the platform stylesheets, the styled "Page not found" page, the SA-09 redirects and the fail-closed organisation port. See M4 design section 8.4.
 10. The country code: the vault grammar holds a 1 to 999 code, while `fstp-api-core` takes an alpha-2 code. The registry route still names a body the production cell does not take. This needs Daniel.
 11. Suspected browser spec flakes left unchanged by the flake review: the async response handlers of the devstack specs i17, i20 and i77; `waitForTimeout(2500)` in `e2e/mail/mail.spec.ts`; the day boundary of the assess daily limit; and `#page-status:not(:empty)` in `e2e/speedrun/speedrun.ui.spec.ts`.

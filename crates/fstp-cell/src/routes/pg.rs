@@ -156,8 +156,9 @@ pub struct PgBackend<R: Runtime> {
     operator_key: Option<Vec<u8>>,
     /// The vault ticket key (ADR-004 purpose `Ticket`).
     ticket: Option<Arc<fstp_crypto::sig::Ed25519SigningKey>>,
-    /// The source of the texts a public view may show (`crate::public`).
-    public_texts: Arc<dyn crate::public::PublicTextSource>,
+    /// The public text class the public view reads, which the copy at
+    /// publication fills (`crate::public`, lane m4/pubtext).
+    public: Arc<crate::public::PublicClass>,
     /// What the routes keep between two steps of a ceremony (module
     /// documentation).
     pending: Mutex<Pending>,
@@ -210,7 +211,7 @@ impl<R: Runtime> PgBackend<R> {
             mode: None,
             operator_key: None,
             ticket: None,
-            public_texts: Arc::new(crate::public::NoPublicTexts),
+            public: Arc::new(crate::public::PublicClass::default()),
             pending: Mutex::new(Pending::default()),
         })
     }
@@ -270,15 +271,21 @@ impl<R: Runtime> PgBackend<R> {
         self
     }
 
-    /// The same backend over the public text source `texts`
-    /// (`crate::public`, lane m4/cellpub).
-    #[must_use]
-    pub fn with_public_texts(
-        mut self,
-        texts: Arc<dyn crate::public::PublicTextSource>,
-    ) -> PgBackend<R> {
-        self.public_texts = texts;
-        self
+    /// Copies the public texts of every published call into the public
+    /// class, from the cell's own text store (`crate::public`, "copy at
+    /// publication"). A backend with no text store copies nothing. The
+    /// command route runs it after each commit, and the cell once at
+    /// start.
+    pub async fn copy_public_texts(&self) {
+        let Some(store) = self.keys.as_ref() else {
+            return;
+        };
+        let state = self.engine.state();
+        let texts = crate::public::CellTexts {
+            store,
+            state: &state,
+        };
+        crate::public::copy_at_publication(state.engine(), &self.public, &texts).await;
     }
 
     /// Keeps `email` as the address of the invitation whose token digest
@@ -351,7 +358,7 @@ impl<R: Runtime> PgBackend<R> {
 
 impl<R: Runtime> Backend for PgBackend<R> {
     fn public_texts(&self) -> Arc<dyn crate::public::PublicTextSource> {
-        Arc::clone(&self.public_texts)
+        Arc::clone(&self.public) as Arc<dyn crate::public::PublicTextSource>
     }
 
     fn ticket_key(&self) -> Option<Arc<fstp_crypto::sig::Ed25519SigningKey>> {
@@ -398,7 +405,13 @@ impl<R: Runtime> Backend for PgBackend<R> {
             admitted
         };
         match self.engine.execute(admitted).await {
-            Ok(done) => Ok(Ok(done)),
+            Ok(done) => {
+                // The copy at publication (`crate::public`): a commit
+                // that published a call or recorded a corrigendum makes
+                // its texts public before the reply.
+                self.copy_public_texts().await;
+                Ok(Ok(done))
+            }
             Err(EngineError::Exec(e)) => Ok(Err(e)),
             Err(EngineError::ShuttingDown | EngineError::Stopped) => Err(BackendFault::Unavailable),
         }

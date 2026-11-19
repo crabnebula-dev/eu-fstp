@@ -1047,6 +1047,8 @@ impl<'w> Cycle<'w> {
             .ok_or_else(|| Self::refused(STEP, "the call budget", None))?;
         let zone = ZoneName::new("Europe/Brussels")
             .ok_or_else(|| Self::refused(STEP, "the zone", None))?;
+        let text = call_text(call);
+        self.store_call_texts(STEP, call, text, &drafter)?;
         self.command(
             STEP,
             "DraftCall",
@@ -1058,7 +1060,7 @@ impl<'w> Cycle<'w> {
                 deadline: Timestamp::from_micros(now.saturating_add(30 * DAY)),
                 deadline_zone: zone,
                 budget,
-                text: synthetic_text(0x0c),
+                text,
             }),
             false,
         )?;
@@ -1085,7 +1087,7 @@ impl<'w> Cycle<'w> {
         )?;
         self.call = true;
         self.calls = self.calls.saturating_add(1);
-        self.publish_texts(STEP, call)
+        Ok(())
     }
 
     /// The id of the cell's first call: [`CALL`], or the one a test named
@@ -1118,36 +1120,58 @@ impl<'w> Cycle<'w> {
         Ok(spec)
     }
 
-    /// Marks the texts of the published call `call` public in the world
-    /// cell (lane m4/cellpub, [`crate::world_public`]): its title and the
-    /// P-09 wording of its frozen policy, each a synthetic text that names
-    /// the programme and the call.
-    fn publish_texts(&self, step: &str, call: CallId) -> Result<(), NotImplemented> {
+    /// Stores the texts call `call` will make public in the cell's own
+    /// text store, each with its `PutText` by `session` (lane m4/pubtext,
+    /// [`crate::world_public`]): its title `title` and the P-09 wording of
+    /// the programme's head policy, which the publication freezes. Each is
+    /// a synthetic text that names the programme and the call. A text the
+    /// ledger holds already is kept. The cell copies them into its public
+    /// text class when the call is published (`fstp_cell::public`).
+    ///
+    /// The store runs in process (`CellHandle::store_text`). A cell that
+    /// runs as a process has no such store here, so its call keeps no
+    /// public text and its public pages show no open call. The step
+    /// itself still runs.
+    fn store_call_texts(
+        &self,
+        step: &str,
+        call: CallId,
+        title: TextRef,
+        session: &Cookie,
+    ) -> Result<(), NotImplemented> {
         let state = self.state()?;
-        let view = state
-            .engine()
-            .core
-            .calls()
-            .get(call)
-            .ok_or_else(|| Self::refused(step, "the published call", None))?;
         let name = self
             .client
             .cell()
             .public()
             .identity()
             .map_or_else(|| "SuperSAFE".to_owned(), |i| i.name);
-        let public = self.client.cell().public();
-        public.publish(
-            view.text().id(),
-            &format!("{name} synthetic call {}", call.raw()),
-        );
-        if let Some(frozen) = view.frozen() {
-            for (i, k) in frozen.values().p09.0.iter().enumerate() {
-                public.publish(
+        let mut texts = vec![(title.id(), format!("{name} synthetic call {}", call.raw()))];
+        if let Some(head) = fstp_domain::policy::head(&state.engine().core, P1) {
+            for (i, k) in head.frozen.p09.0.iter().enumerate() {
+                texts.push((
                     k.text.id(),
-                    &format!("{name} synthetic eligibility rule {}", i.saturating_add(1)),
-                );
+                    format!("{name} synthetic eligibility rule {}", i.saturating_add(1)),
+                ));
             }
+        }
+        let cell = self.client.cell();
+        for (id, text) in texts {
+            let raw = id.raw().to_be_bytes();
+            if state.text(raw).is_some() {
+                continue;
+            }
+            if let Err(e) = cell.store_text(raw, text.as_bytes()) {
+                eprintln!("fstp_celltest::cycle {step}: the call text is not stored: {e}");
+                continue;
+            }
+            self.command(
+                step,
+                "PutText",
+                session,
+                CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { id: raw }),
+                false,
+            )?;
         }
         Ok(())
     }
@@ -2087,6 +2111,17 @@ pub(crate) fn creator(c: CreatorCommand) -> CellCommand {
 /// The cell command of a core command.
 pub(crate) fn core(c: fstp_domain::Command) -> CellCommand {
     CellCommand::Engine(fstp_engine::Command::Core(c))
+}
+
+/// The synthetic title reference of call `call`: its own id per call, so
+/// each call of a cell copies its own title at publication (lane
+/// m4/pubtext). The id is `2^100` plus the call id, apart from every
+/// other synthetic text id.
+pub(crate) fn call_text(call: CallId) -> TextRef {
+    TextRef::new(
+        TextId::from_raw((1u128 << 100) | call.raw()),
+        ContentDigest::from_bytes([0x0c; 32]),
+    )
 }
 
 /// A synthetic text reference: id `n`, digest of `n` bytes.

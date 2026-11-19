@@ -479,11 +479,6 @@ pub struct StartOptions {
     /// The creator shell the command route reads its facts from
     /// ([`crate::shell`]).
     pub creator_shell: Arc<dyn crate::shell::CreatorShell>,
-    /// The source of the texts a public view may show (`crate::public`,
-    /// lane m4/cellpub). The production default, `NoPublicTexts`, holds
-    /// none, since the cell text store has no public class yet. A test
-    /// world passes a source of its own, and its claims say so.
-    pub public_texts: Arc<dyn crate::public::PublicTextSource>,
     /// The proof mail port of self-registration, magic links and recovery
     /// email proofs ([`crate::mail`]).
     pub proof_mail: Arc<dyn crate::mail::ProofMail>,
@@ -533,6 +528,12 @@ pub struct StartOptions {
     /// passes wider ones, since all its clients share one loopback
     /// address and so one peer key.
     pub auth_limits: crate::routes::AuthLimits,
+    /// The organisation port of ADR-021 for a ledger that holds no
+    /// tenant part (`crate::public::OrganisationPort`). The production
+    /// default answers "not active", so the public pages answer "not
+    /// published yet" until the ledger records the activation. A test
+    /// world from before the tenant part sets it active, and says so.
+    pub organisation: crate::public::OrganisationPort,
 }
 
 impl Default for StartOptions {
@@ -540,7 +541,6 @@ impl Default for StartOptions {
         StartOptions {
             clock: crate::engine::system_commit_clock(),
             creator_shell: Arc::new(crate::shell::ProductionShell),
-            public_texts: Arc::new(crate::public::NoPublicTexts),
             proof_mail: Arc::new(crate::mail::NoProofMail),
             operator_key: None,
             login_methods: fstp_auth::EnabledMethods::default(),
@@ -550,6 +550,7 @@ impl Default for StartOptions {
             licence: None,
             release_clock: None,
             auth_limits: crate::routes::AuthLimits::default(),
+            organisation: crate::public::OrganisationPort::default(),
         }
     }
 }
@@ -596,7 +597,6 @@ where
     let StartOptions {
         clock,
         creator_shell,
-        public_texts,
         proof_mail,
         operator_key,
         login_methods,
@@ -606,6 +606,7 @@ where
         licence,
         release_clock,
         auth_limits,
+        organisation,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -710,7 +711,6 @@ where
             .map_err(store_err)?
             .with_clock(Arc::clone(&clock))
             .with_shell(creator_shell)
-            .with_public_texts(public_texts)
             .with_proof_mail(proof_mail)
             .with_login_index(started.erasure.clone())
             .with_mode(match mode {
@@ -720,6 +720,10 @@ where
             .with_operator_key(operator_key)
             .with_ticket_key(keys.ticket),
     );
+    // The public text class lives in memory, as the text store it copies
+    // from does, so a start copies the texts of every published call
+    // again (`crate::public`).
+    backend.copy_public_texts().await;
     // The timeline reads `auth.session` through the route backend for
     // `EndSessionsAtBindingEnd` (design sections 4.2 and 5.1).
     let _ = started
@@ -732,6 +736,7 @@ where
         host: host.clone(),
         enabled: login_methods,
         limits: auth_limits,
+        organisation,
     };
     let log = Arc::new(StderrLog);
     let front = match pages {

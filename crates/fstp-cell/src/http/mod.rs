@@ -6,6 +6,8 @@
 //!   and writes one typed log event per request.
 //! - [`pages`] holds the compiled auth pages of `web/src/auth`, which the
 //!   front serves on the cell origin when they are loaded.
+//! - [`site`] holds the platform stylesheets of the public pages and the
+//!   cell's static "not published yet" and "Page not found" pages.
 //! - [`cookie`] writes and reads the `__Host-fstp` session cookie (B11).
 //! - [`body`] decodes request bodies: canonical JSON, schema members only,
 //!   and no `minor` member at any depth (I-18).
@@ -16,6 +18,7 @@ pub mod body;
 pub mod cookie;
 pub mod front;
 pub mod pages;
+pub mod site;
 pub mod tunnel;
 
 pub use body::BodyRefusal;

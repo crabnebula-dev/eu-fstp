@@ -1,12 +1,12 @@
 //! The anonymous public surface of a cell: the `/p` pages, the feed and
 //! the public research tools (I-87, TH-06, R-PB-01 to R-PB-05; M4 design
-//! section 3.10; lane m4/cellpub).
+//! section 3.10; lanes m4/cellpub and m4/pubtext).
 //!
 //! Every answer comes from one `fstp_public::PublicView`, built per
 //! request by `fstp_public::public_view_with` from the core state of this
 //! cell's own engine head. Nothing is cached, so a narrowing shows on the
 //! next request (R-PB-02), and no state outside the cell's own ledger and
-//! its own public texts reaches a view (TH-06). The steps mirror
+//! its own public class reaches a view (TH-06). The steps mirror
 //! `fstp_api_core::dispatch::public`, so a cell answers the same bytes as
 //! the web adapter for the same view:
 //!
@@ -14,36 +14,77 @@
 //!   slug or by its id in decimal (`fstp_public::slug`). Its slug, name
 //!   and narrative come from its creator draft. A programme with no draft
 //!   is public under its id, named "Programme" and its id.
-//! - The texts are the title and P-09 wording of each call open now and
-//!   the approved texts of each grantee choice. Each is read through
-//!   [`PublicTextSource`], which answers public texts only. A text it
-//!   refuses is left out, so its call or grant is not shown.
+//! - The texts are the title and P-09 wording of each call open now. Each
+//!   is read through [`PublicTextSource`] under its call. A text it
+//!   refuses is left out, so its call is not shown.
 //! - The Guide of an open call is the one its publication stored, with
-//!   its corrigenda (I-53).
+//!   its corrigenda (I-53). Their stored texts are read under the call.
 //! - The page chrome links the tenant brand sheet once a brand is set, and
 //!   names the funder profile the programme pins through P-53 (I-69).
 //!
+//! # The public text class (Daniel, 2026-11-17: "copy at publication")
+//!
+//! When a call is published, the cell copies its title, its P-09 wording
+//! and the stored texts of its Guide into [`PublicClass`], keyed by call.
+//! The public view reads only that class, never the cell text store.
+//! [`copy_at_publication`] takes the copy:
+//!
+//! - It runs after every command the route backend commits, and once at
+//!   start (`crate::routes::pg::PgBackend::copy_public_texts`).
+//! - For each published call it copies the texts that call names and the
+//!   class does not hold yet. A text is copied once and never replaced,
+//!   so a later change of the text store leaves the public copy as it was.
+//! - A corrigendum recorded after publication (I-53) adds the stored
+//!   texts its wording reads, from the programme's compiled draft
+//!   (`fstp_public::guide::corrigenda_text_refs`). They are copied at the
+//!   first copy after the record, under the corrected call.
+//! - A text is read from the cell's own text store only while the ledger
+//!   holds it as live (`TextPut`, no erasure). A text that is not live or
+//!   does not open is not copied, and the copy is tried again after the
+//!   next commit.
+//!
+//! So no text reaches a view unless a published call names it (R-PB-03),
+//! and each cell holds its own class, filled from its own store (I-87,
+//! TH-06).
+//!
 //! # Interim, pending Daniel
 //!
-//! - The cell's text store has no text class yet: a sealed text carries
-//!   no mark that says it may be shown in public. So the production
-//!   source, [`NoPublicTexts`], holds no public text, and a production
-//!   cell shows its programme pages with no open call. A test world
-//!   passes a source of its own through `crate::process::StartOptions`,
-//!   and claims built on it say so.
+//! - The class lives in process memory, as the cell text store it copies
+//!   from does until the keystore tables land (`crate::tasks::erasure`).
+//!   The copy at start fills it again from that store.
+//! - The cell's command route lets a client name any text id as a call
+//!   title. The copy trusts the ids the published call names, which a
+//!   programme manager approved and published with a step-up.
+//! - A text the cell id names is its 16 bytes, big-endian, of the text id.
+//! - The grantee choices (M9 lane P1) have no class yet, so the cell reads
+//!   none of their texts, and its funded and finished pages show no
+//!   grantee choice.
 //! - The public research tools answer as JSON on the routes of the
 //!   registry that no page uses: `/p/{slug}/calls`,
 //!   `/p/{slug}/deadlines` and `/p/{slug}/eligibility`. The cell serves
 //!   no MCP endpoint, so `/mcp/public` is not served here.
 //! - The ADR-021 setup gate reads the tenant part of the ledger. A
-//!   cell whose ledger holds no tenant part is gated by programme
-//!   activation only, since the cell has no M4 organisation port.
+//!   cell whose ledger holds no tenant part asks [`OrganisationPort`], a
+//!   start option that stands for the web adapter's `TenantConfig` port
+//!   and answers "not active" by default, so the gate fails closed as
+//!   the web adapter's does (lane m4/pubtext).
+//!
+//! # The answers on the wire (`crate::routes`, `crate::http::site`)
+//!
+//! As the web adapter's router answers them: a page links the platform
+//! stylesheets first in its head. A page before activation answers the
+//! "not published yet" page. A browser page request for a public path
+//! that is malformed or not found goes to the programme's public home,
+//! or to home `/app/` when no programme answers there (SA-09
+//! amendment). Any other request for a path under `/p/` that no route
+//! matches answers 404 `{"code":"not_found","rule":"route"}`.
 
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use fstp_domain::id::{CallId, ProgrammeId, TextId};
+use fstp_domain::id::{CallId, ProgrammeId, TextId, TextRef};
 use fstp_domain::programme::{ProgrammeStatus, programme_status};
 use fstp_domain::time::Timestamp;
 use fstp_engine::EngineState;
@@ -56,22 +97,177 @@ use fstp_public::{
 pub type PublicTextFuture<'a> = Pin<Box<dyn Future<Output = Option<String>> + Send + 'a>>;
 
 /// Where a cell reads the texts a public view may show (module
-/// documentation). It answers a text only when that text is public, so
-/// no proposal or review text reaches a view (R-PB-03).
+/// documentation). It answers a text only under the call it was made
+/// public for, so no proposal or review text reaches a view (R-PB-03).
 pub trait PublicTextSource: Send + Sync + 'static {
-    /// The public text `id`, or `None` when it is not public or not held.
-    fn get_public(&self, id: TextId) -> PublicTextFuture<'_>;
+    /// The public text `id` of call `call`, or `None` when it is not
+    /// public for that call.
+    fn get_public(&self, call: CallId, id: TextId) -> PublicTextFuture<'_>;
 }
 
-/// The public text source of a production cell: no text is public yet
-/// (module documentation). It fails closed.
+/// The public text source of a backend with no text store, such as the
+/// in-memory route backend: no text is public. It fails closed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NoPublicTexts;
 
 impl PublicTextSource for NoPublicTexts {
-    fn get_public(&self, id: TextId) -> PublicTextFuture<'_> {
-        let _ = id;
+    fn get_public(&self, call: CallId, id: TextId) -> PublicTextFuture<'_> {
+        let _ = (call, id);
         Box::pin(std::future::ready(None))
+    }
+}
+
+/// What the class holds for one published call.
+#[derive(Clone, Debug, Default)]
+struct CallCopy {
+    /// The copied texts.
+    texts: BTreeMap<TextId, String>,
+    /// The count of corrigenda whose texts are all copied, once every
+    /// text the call named at that count is copied. `None` until then.
+    complete: Option<usize>,
+}
+
+/// The public text class of a cell (module documentation): the texts each
+/// published call made public, copied at its publication, keyed by call.
+#[derive(Debug, Default)]
+pub struct PublicClass {
+    calls: Mutex<BTreeMap<CallId, CallCopy>>,
+}
+
+impl PublicClass {
+    fn calls(&self) -> MutexGuard<'_, BTreeMap<CallId, CallCopy>> {
+        self.calls.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Every text copied for `call`, by id.
+    pub fn copy_of(&self, call: CallId) -> BTreeMap<TextId, String> {
+        self.calls()
+            .get(&call)
+            .map(|c| c.texts.clone())
+            .unwrap_or_default()
+    }
+
+    /// Whether the copy of `call` is complete at `corrigenda` corrigenda.
+    fn complete_at(&self, call: CallId, corrigenda: usize) -> bool {
+        self.calls()
+            .get(&call)
+            .and_then(|c| c.complete)
+            .is_some_and(|n| n >= corrigenda)
+    }
+
+    /// Whether the class holds text `id` for `call`.
+    fn holds(&self, call: CallId, id: TextId) -> bool {
+        self.calls()
+            .get(&call)
+            .is_some_and(|c| c.texts.contains_key(&id))
+    }
+
+    /// Copies `text` as text `id` of `call`, unless one is held already.
+    fn insert(&self, call: CallId, id: TextId, text: String) {
+        let _ = self
+            .calls()
+            .entry(call)
+            .or_default()
+            .texts
+            .entry(id)
+            .or_insert(text);
+    }
+
+    /// Marks the copy of `call` complete at `corrigenda` corrigenda.
+    fn mark(&self, call: CallId, corrigenda: usize) {
+        self.calls().entry(call).or_default().complete = Some(corrigenda);
+    }
+}
+
+impl PublicTextSource for PublicClass {
+    fn get_public(&self, call: CallId, id: TextId) -> PublicTextFuture<'_> {
+        let t = self
+            .calls()
+            .get(&call)
+            .and_then(|c| c.texts.get(&id).cloned());
+        Box::pin(std::future::ready(t))
+    }
+}
+
+/// Where the copy reads a text: the cell's own text store.
+pub trait TextOpener: Sync {
+    /// The text `id`, or `None` when it is not live or does not open.
+    fn open(&self, id: TextId) -> PublicTextFuture<'_>;
+}
+
+/// The text store of a started cell, at the state `state` (module
+/// documentation): a text opens only while the ledger holds it as live.
+pub(crate) struct CellTexts<'a> {
+    /// The erasure task, which owns the text store.
+    pub(crate) store: &'a crate::tasks::erasure::ErasureHandle,
+    /// The cell state the copy reads.
+    pub(crate) state: &'a fstp_cell_core::CellState,
+}
+
+impl TextOpener for CellTexts<'_> {
+    fn open(&self, id: TextId) -> PublicTextFuture<'_> {
+        let raw = id.raw().to_be_bytes();
+        if self.state.text(raw) != Some(fstp_cell_core::state::TextStatus::Live) {
+            return Box::pin(std::future::ready(None));
+        }
+        let store = self.store;
+        Box::pin(async move {
+            let opened = store.open_text(raw).await.ok()?;
+            String::from_utf8(opened.to_vec()).ok()
+        })
+    }
+}
+
+/// Copies into `class` the public texts of every call published in
+/// `state`, read from `store` (module documentation). The corrigenda
+/// texts come from each programme's compiled draft.
+pub async fn copy_at_publication(state: &EngineState, class: &PublicClass, store: &dyn TextOpener) {
+    let corrigenda = |p: ProgrammeId| {
+        fstp_engine::compose::draft_compiled(state, p)
+            .map(|c| fstp_public::guide::corrigenda_text_refs(&c))
+    };
+    copy_with(state, class, store, &corrigenda).await;
+}
+
+/// [`copy_at_publication`] with the corrigenda texts of each programme
+/// from `corrigenda`. `None` means they cannot be named yet.
+async fn copy_with(
+    state: &EngineState,
+    class: &PublicClass,
+    store: &dyn TextOpener,
+    corrigenda: &(dyn Fn(ProgrammeId) -> Option<Vec<TextRef>> + Sync),
+) {
+    for (id, v) in state.core.calls().iter() {
+        let Some(frozen) = v.frozen() else {
+            continue;
+        };
+        let count = fstp_domain::programme::effective_limits(&state.core, id)
+            .map_or(0, |l| l.tightenings().len());
+        if class.complete_at(id, count) {
+            continue;
+        }
+        let mut wanted: Vec<TextId> = vec![v.text().id()];
+        wanted.extend(frozen.values().p09.0.iter().map(|k| k.text.id()));
+        let mut named = true;
+        if count > 0 {
+            match corrigenda(v.programme()) {
+                Some(refs) => wanted.extend(refs.iter().map(|r| r.id())),
+                None => named = false,
+            }
+        }
+        let mut all = true;
+        for t in wanted {
+            if class.holds(id, t) {
+                continue;
+            }
+            match store.open(t).await {
+                Some(text) => class.insert(id, t, text),
+                None => all = false,
+            }
+        }
+        if all && named {
+            class.mark(id, count);
+        }
     }
 }
 
@@ -143,14 +339,31 @@ impl PublicRefusal {
     }
 }
 
-/// The plain page a `/p` page answers before the organisation is
-/// activated (ADR-021 decision 3), as the web adapter writes it with no
-/// platform stylesheet.
-pub const NOT_PUBLISHED: &str = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
-<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-<title>Not published yet</title>\n</head>\n<body>\n<main>\n<h1>Not published yet</h1>\n\
-<p>This organisation's pages are not published yet. \
-They open once its activation has been approved.</p>\n</main>\n</body>\n</html>\n";
+/// Whether the organisation is active, for a cell whose ledger holds no
+/// tenant part yet (ADR-021 "Where the answer comes from"). The web
+/// adapter asks its `TenantConfig` port then, whose default answer is
+/// "not active". The cell has no such port, so this start option stands
+/// for it, with the same fail-closed default. Once the ledger holds the
+/// tenant part, the ledger alone answers.
+///
+/// A test world from before the tenant part sets it active, as the test
+/// kit's fake port answers by default, and says so.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OrganisationPort {
+    /// The port's answer: active or not.
+    pub active: bool,
+}
+
+impl OrganisationPort {
+    /// Whether the organisation is active in `state`: the ledger's tenant
+    /// part when it holds one, else this port's answer.
+    pub fn active_in(self, state: &EngineState) -> bool {
+        state
+            .tenant
+            .state()
+            .map_or(self.active, |ts| ts.is_active())
+    }
+}
 
 /// Whether `s` is a path token: 1 to 64 of `[a-z0-9_-]`
 /// (`fstp_api_core::forms::token`).
@@ -218,35 +431,31 @@ fn draft_identity(state: &EngineState, programme: ProgrammeId) -> Option<Program
         .and_then(|v| ProgrammeIdentity::from_spec_json(&v.spec))
 }
 
-/// The public texts of `programme` at `now` (module documentation).
+/// The public texts of `programme` at `now` (module documentation): the
+/// title and P-09 wording of each open call, each read under its call.
 async fn texts_of(
     state: &EngineState,
     source: &dyn PublicTextSource,
     programme: ProgrammeId,
     identity: ProgrammeIdentity,
-    choices: &fstp_public::GrantChoices,
     now: Timestamp,
 ) -> PublicTexts {
-    let mut ids: Vec<TextId> = Vec::new();
-    for (_, c) in choices.iter() {
-        ids.extend([c.title, c.summary, c.grantee]);
-    }
-    for (_, v) in state.core.calls().iter() {
+    let mut found: BTreeMap<TextId, String> = BTreeMap::new();
+    for (call, v) in state.core.calls().iter() {
         if v.programme() != programme || !v.is_open_at(now) {
             continue;
         }
-        ids.push(v.text().id());
+        let mut ids = vec![v.text().id()];
         if let Some(f) = v.frozen() {
             ids.extend(f.values().p09.0.iter().map(|k| k.text.id()));
         }
-    }
-    let mut found: BTreeMap<TextId, String> = BTreeMap::new();
-    for id in ids {
-        if found.contains_key(&id) {
-            continue;
-        }
-        if let Some(t) = source.get_public(id).await {
-            let _ = found.insert(id, t);
+        for id in ids {
+            if found.contains_key(&id) {
+                continue;
+            }
+            if let Some(t) = source.get_public(call, id).await {
+                let _ = found.insert(id, t);
+            }
         }
     }
     let mut texts = PublicTexts::new(identity);
@@ -295,7 +504,7 @@ async fn stored_guide(
         fstp_engine::compose::draft_compiled(state, programme).ok_or(PublicError::NotFound)?;
     let mut found = BTreeMap::new();
     for r in fstp_public::guide::corrigenda_text_refs(&compiled) {
-        if let Some(t) = source.get_public(r.id()).await {
+        if let Some(t) = source.get_public(id, r.id()).await {
             let _ = found.insert(r.id(), t);
         }
     }
@@ -375,21 +584,66 @@ fn answer(
     }
 }
 
-/// One public operation over the engine state `state` at `now`, reading
-/// its texts from `source` (module documentation). `slug` and `call` are
-/// the path segments as the router captured them.
+/// What one public read runs against: the engine state of the cell's
+/// head, its public text class, the instant and the organisation port.
+#[derive(Clone, Copy)]
+pub struct PublicRead<'a> {
+    /// The engine state.
+    pub state: &'a EngineState,
+    /// The public texts.
+    pub source: &'a dyn PublicTextSource,
+    /// The instant of the read.
+    pub now: Timestamp,
+    /// The organisation port of ADR-021.
+    pub organisation: OrganisationPort,
+}
+
+impl PublicRead<'_> {
+    /// One public operation (module documentation): [`read`].
+    ///
+    /// # Errors
+    ///
+    /// As [`read`].
+    pub async fn op(
+        self,
+        op: PublicOp,
+        slug: &str,
+        call: Option<&str>,
+    ) -> Result<PublicAnswer, PublicRefusal> {
+        read(self, op, slug, call).await
+    }
+
+    /// The public home `/p/{slug}/` of the programme the path segment
+    /// `slug` names, when the cell serves it: its page answers, or the
+    /// setup gate answers its "not published yet" page. A browser that
+    /// asks for a public page that does not exist goes there (SA-09
+    /// amendment), as `fstp_web`'s router sends it.
+    pub async fn home(self, slug: &str) -> Option<String> {
+        match read(self, PublicOp::Programme, slug, None).await {
+            Ok(_) | Err(PublicRefusal::Setup) => Some(format!("/p/{slug}/")),
+            Err(_) => None,
+        }
+    }
+}
+
+/// One public operation over `ctx` (module documentation). `slug` and
+/// `call` are the path segments as the router captured them.
 ///
 /// # Errors
 ///
 /// The [`PublicRefusal`] the web adapter answers for the same request.
 pub async fn read(
-    state: &EngineState,
-    source: &dyn PublicTextSource,
-    now: Timestamp,
+    ctx: PublicRead<'_>,
     op: PublicOp,
     slug: &str,
     call: Option<&str>,
 ) -> Result<PublicAnswer, PublicRefusal> {
+    let PublicRead {
+        state,
+        source,
+        now,
+        organisation,
+    } = ctx;
     if !token(slug) {
         return Err(PublicRefusal::BadRequest);
     }
@@ -402,12 +656,14 @@ pub async fn read(
         None => None,
     };
     // ADR-021: before the organisation is activated, only onboarding runs.
-    if state.tenant.state().is_some_and(|ts| !ts.is_active()) {
+    // A ledger with no tenant part asks the organisation port, which
+    // fails closed by default, as the web adapter's does.
+    if !organisation.active_in(state) {
         return Err(PublicRefusal::Setup);
     }
     let (programme, identity) = programme_of(state, slug).ok_or(PublicRefusal::NotFound)?;
     let choices = fstp_public::grant_choices(&state.core);
-    let texts = texts_of(state, source, programme, identity, &choices, now).await;
+    let texts = texts_of(state, source, programme, identity, now).await;
     let view = fstp_public::public_view_with(&state.core, programme, &texts, &choices, now)
         .map_err(refused)?;
     let chrome = Chrome {
@@ -437,12 +693,14 @@ mod tests {
         assert_eq!(canonical_id(""), None);
     }
 
-    /// R-PB-03: the production source holds no public text, so it fails
-    /// closed.
+    /// R-PB-03: a backend with no text store, and a class before any
+    /// copy, hold no public text, so both fail closed.
     #[test]
-    fn r_pb_03_production_source_holds_no_public_text() {
-        let got = futures_ready(NoPublicTexts.get_public(TextId::from_raw(1)));
-        assert_eq!(got, None);
+    fn r_pb_03_no_text_store_and_empty_class_hold_no_public_text() {
+        let (call, id) = (CallId::from_raw(1), TextId::from_raw(1));
+        assert_eq!(futures_ready(NoPublicTexts.get_public(call, id)), None);
+        let class = PublicClass::default();
+        assert_eq!(futures_ready(class.get_public(call, id)), None);
     }
 
     /// Polls a ready future once.
@@ -456,3 +714,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "public_class_tests.rs"]
+mod class_tests;
