@@ -22,8 +22,10 @@
 //! Open, ADR-008 "Unset lifetimes" (fixed by amendment before W2b
 //! merges): a recovery case, the `SecondAdmin` one-time enrolment token
 //! and an operator ticket have no lifetime in the design. So [`decide`]
-//! checks no case age, [`Evidence`] holds no enrolment token, and a
-//! ticket carries no expiry. This lane does not invent the constants.
+//! checks no case age and [`Evidence`] holds no enrolment token. Daniel
+//! accepted the staff-assertion lifetime on 2026-11-15, and an operator
+//! ticket now carries the cell and an expiry in its signed bytes (issue 6
+//! L11, [`TICKET_LIFETIME_US`]).
 
 use fstp_domain::id::AccountId;
 use fstp_webauthn::NewCredential;
@@ -277,30 +279,48 @@ pub const TICKET_CONTEXT: &[u8] = TicketKind::Recovery.context();
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StaffRef(pub [u8; 16]);
 
-/// An operator ticket: two staff approvals for one case reference. It
-/// names only the cell's opaque case reference, never an account (I-20).
+/// An operator ticket: two staff approvals for one case reference of one
+/// cell, until an expiry. It names only the cell id and the cell's opaque
+/// case reference, never an account (I-20).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OperatorTicket {
+    /// The cell the ticket is for (issue 6 L11).
+    pub cell: [u8; 16],
     /// The case reference.
     pub case: [u8; 16],
     /// The first staff approval.
     pub staff_1: StaffRef,
     /// The second staff approval.
     pub staff_2: StaffRef,
+    /// The last instant the cell accepts the ticket, in Unix microseconds
+    /// (issue 6 L11). It lies at most [`TICKET_LIFETIME_US`] after the
+    /// instant the cell accepts it.
+    pub expires_at: i64,
 }
 
 /// The length of the signed part of a ticket.
-pub const TICKET_MESSAGE_LEN: usize = 48;
+pub const TICKET_MESSAGE_LEN: usize = 72;
+
+/// The longest time from acceptance to a ticket's expiry: 15 minutes, in
+/// microseconds. An operator ticket carries the staff approvals of the
+/// operator process, so it takes the staff-assertion lifetime that Daniel
+/// accepted on 2026-11-15 (ADR-008, `fstp_cell_core::lifetimes`).
+pub const TICKET_LIFETIME_US: i64 = 15 * 60 * 1_000_000;
 
 impl OperatorTicket {
-    /// The bytes the control plane signs: `case || staff_1 || staff_2`.
+    /// The bytes the control plane signs: `cell || case || staff_1 ||
+    /// staff_2 || expires_at`, the expiry as eight big-endian bytes.
     pub fn message(&self) -> [u8; TICKET_MESSAGE_LEN] {
         let mut out = [0u8; TICKET_MESSAGE_LEN];
-        let (case, rest) = out.split_at_mut(16);
-        let (s1, s2) = rest.split_at_mut(16);
+        let (cell, rest) = out.split_at_mut(16);
+        let (case, rest) = rest.split_at_mut(16);
+        let (s1, rest) = rest.split_at_mut(16);
+        let (s2, expires) = rest.split_at_mut(16);
+        cell.copy_from_slice(&self.cell);
         case.copy_from_slice(&self.case);
         s1.copy_from_slice(&self.staff_1.0);
         s2.copy_from_slice(&self.staff_2.0);
+        expires.copy_from_slice(&self.expires_at.to_be_bytes());
         out
     }
 }
@@ -339,6 +359,13 @@ pub enum TicketDeny {
     OneStaff,
     /// The ticket is of another kind than a recovery.
     OtherKind,
+    /// The ticket is for another cell (issue 6 L11).
+    OtherCell,
+    /// The ticket's expiry has passed (issue 6 L11).
+    Expired,
+    /// The ticket's expiry lies more than [`TICKET_LIFETIME_US`] ahead
+    /// (issue 6 L11).
+    Lifetime,
 }
 
 /// Decodes `bytes` and verifies the ticket's composite signature under
@@ -383,14 +410,56 @@ pub fn check_ticket(t: &VerifiedTicket, case: [u8; 16]) -> Result<(), TicketDeny
     Ok(())
 }
 
-/// [`verify_ticket`], then [`check_ticket`].
+/// The ticket is for `cell` (issue 6 L11).
+pub fn check_ticket_cell(t: &VerifiedTicket, cell: [u8; 16]) -> Result<(), TicketDeny> {
+    if t.ticket.cell == cell {
+        Ok(())
+    } else {
+        Err(TicketDeny::OtherCell)
+    }
+}
+
+/// At `now_us` (Unix microseconds) the ticket has not expired, and its
+/// expiry lies at most [`TICKET_LIFETIME_US`] ahead (issue 6 L11).
+pub fn check_ticket_time(t: &VerifiedTicket, now_us: i64) -> Result<(), TicketDeny> {
+    if now_us > t.ticket.expires_at {
+        return Err(TicketDeny::Expired);
+    }
+    if t.ticket.expires_at > now_us.saturating_add(TICKET_LIFETIME_US) {
+        return Err(TicketDeny::Lifetime);
+    }
+    Ok(())
+}
+
+/// The acceptance of a ticket by `cell` for `case` at `now_us` (Unix
+/// microseconds): [`verify_ticket`], [`check_ticket`],
+/// [`check_ticket_cell`] and [`check_ticket_time`]. The cell records each
+/// accepted ticket, so a second use is refused.
 pub fn accept_ticket(
     bytes: &[u8],
+    cell: [u8; 16],
+    case: [u8; 16],
+    now_us: i64,
+    pinned_key: &[u8],
+) -> Result<VerifiedTicket, TicketDeny> {
+    let t = accept_stored_ticket(bytes, cell, case, pinned_key)?;
+    check_ticket_time(&t, now_us)?;
+    Ok(t)
+}
+
+/// A ticket that `cell` accepted earlier with [`accept_ticket`] and kept,
+/// checked again at completion: [`verify_ticket`], [`check_ticket`] and
+/// [`check_ticket_cell`]. Its time was checked at acceptance, so a
+/// completion after the expiry still reads it.
+pub fn accept_stored_ticket(
+    bytes: &[u8],
+    cell: [u8; 16],
     case: [u8; 16],
     pinned_key: &[u8],
 ) -> Result<VerifiedTicket, TicketDeny> {
     let t = verify_ticket(bytes, pinned_key)?;
     check_ticket(&t, case)?;
+    check_ticket_cell(&t, cell)?;
     Ok(t)
 }
 

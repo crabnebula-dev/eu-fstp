@@ -55,4 +55,11 @@ mod tests {
     fn adr008_interim_signup_proof_lifetime_is_the_proposed_value() {
         assert_eq!(SIGNUP_PROOF_US, 900_000_000);
     }
+
+    /// Issue 6 L11: an operator ticket takes the staff-assertion lifetime,
+    /// so the two constants agree.
+    #[test]
+    fn issue6_l11_ticket_lifetime_is_the_staff_assertion_lifetime() {
+        assert_eq!(fstp_auth::recovery::TICKET_LIFETIME_US, STAFF_ASSERTION_US);
+    }
 }

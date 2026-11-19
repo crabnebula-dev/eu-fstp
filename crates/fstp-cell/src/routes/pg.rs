@@ -174,6 +174,26 @@ struct Pending {
     invitations: BTreeMap<[u8; 32], String>,
     /// The verified operator ticket of each recovery case.
     tickets: BTreeMap<[u8; 16], Vec<u8>>,
+    /// The SHA-256 of every operator ticket the cell accepted (issue 6
+    /// L11), so a second use is refused. It lives in process memory with
+    /// the tickets until a record form exists (ADR-008). After a restart,
+    /// the ticket expiry bounds a replay to [`TICKET_LIFETIME_US`].
+    ///
+    /// [`TICKET_LIFETIME_US`]: fstp_auth::recovery::TICKET_LIFETIME_US
+    used_tickets: std::collections::BTreeSet<[u8; 32]>,
+}
+
+impl Pending {
+    /// Keeps `bytes` as the ticket of `case` and records its use. `false`
+    /// when the case holds a ticket already or the ticket was used before.
+    fn keep_ticket(&mut self, case: [u8; 16], bytes: Vec<u8>) -> bool {
+        let digest = fstp_crypto::sha256(&bytes);
+        if self.tickets.contains_key(&case) || !self.used_tickets.insert(digest) {
+            return false;
+        }
+        self.tickets.insert(case, bytes);
+        true
+    }
 }
 
 impl<R: Runtime> std::fmt::Debug for PgBackend<R> {
@@ -728,11 +748,7 @@ impl<R: Runtime> Backend for PgBackend<R> {
         case: [u8; 16],
         bytes: Vec<u8>,
     ) -> impl Future<Output = Result<bool, BackendFault>> + Send {
-        let mut p = self.pending();
-        let fresh = !p.tickets.contains_key(&case);
-        if fresh {
-            p.tickets.insert(case, bytes);
-        }
+        let fresh = self.pending().keep_ticket(case, bytes);
         std::future::ready(Ok(fresh))
     }
 
@@ -945,5 +961,21 @@ mod tests {
         assert_eq!(method_of(0), None);
         assert_eq!(purpose_of(9), None);
         assert_eq!(token_code(TokenKind::MagicLink), 1);
+    }
+
+    /// Issue 6 L11, I-79: each accepted operator ticket is recorded, so a
+    /// second use is refused, for its case and for any other case, even
+    /// after its case let it go.
+    #[test]
+    fn issue6_l11_an_operator_ticket_is_used_once() {
+        let mut p = Pending::default();
+        let (a, b) = ([1u8; 16], [2u8; 16]);
+        assert!(p.keep_ticket(a, vec![7; 4]));
+        assert!(!p.keep_ticket(a, vec![7; 4]));
+        assert!(!p.keep_ticket(a, vec![8; 4]), "one ticket per case");
+        p.tickets.remove(&a);
+        assert!(!p.keep_ticket(a, vec![7; 4]), "a used ticket stays used");
+        assert!(!p.keep_ticket(b, vec![7; 4]));
+        assert!(p.keep_ticket(b, vec![9; 4]));
     }
 }

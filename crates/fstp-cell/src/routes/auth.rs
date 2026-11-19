@@ -1891,8 +1891,10 @@ pub(crate) async fn approve_recovery<B: Backend>(
 // 4. `POST /auth/recovery/{case}/complete` takes one of three bodies:
 //    - `{ticket}`: an operator ticket of the `OperatorProcess` path, as
 //      `fstp_auth::codec::encode_operator_ticket` writes it, in hex. It
-//      must verify under the pinned control-plane key, name this case
-//      and carry two staff approvals (`fstp_auth::recovery::accept_ticket`).
+//      must verify under the pinned control-plane key, name this cell and
+//      this case, be within its expiry and carry two staff approvals
+//      (`fstp_auth::recovery::accept_ticket`). The cell records each
+//      accepted ticket, so a second use is refused (issue 6 L11).
 //      The case must be open with its email proven and hold no ticket.
 //      The cell keeps it for the completion. No record form for a ticket
 //      exists, so none is written; the completion's record shows the
@@ -2216,7 +2218,9 @@ async fn apply_ticket<B: Backend>(ctx: &Ctx<B>, case: [u8; 16], bytes: Vec<u8>) 
     let Some(key) = ctx.backend.operator_key() else {
         return ticket_refused();
     };
-    if fstp_auth::recovery::accept_ticket(&bytes, case, &key).is_err() {
+    // Issue 6 L11: the ticket names this cell and is within its expiry.
+    let now = ctx.backend.now().micros();
+    if fstp_auth::recovery::accept_ticket(&bytes, ctx.cfg.cell, case, now, &key).is_err() {
         return ticket_refused();
     }
     let s = match ctx.backend.state().await {
@@ -2290,10 +2294,10 @@ async fn complete_recovery<B: Backend>(
     let ticket = match ctx.backend.operator_ticket(case).await {
         Err(f) => return unavailable(f),
         Ok(None) => None,
-        Ok(Some(bytes)) => ctx
-            .backend
-            .operator_key()
-            .and_then(|key| fstp_auth::recovery::accept_ticket(&bytes, case, &key).ok()),
+        Ok(Some(bytes)) => ctx.backend.operator_key().and_then(|key| {
+            // Its time was checked when the cell accepted it.
+            fstp_auth::recovery::accept_stored_ticket(&bytes, ctx.cfg.cell, case, &key).ok()
+        }),
     };
     let s = match ctx.backend.state().await {
         Ok(s) => s,

@@ -458,8 +458,10 @@ pub trait Backend: Send + Sync + 'static {
         None
     }
 
-    /// Keeps the verified operator ticket `bytes` of case `case`. `false`
-    /// when the case holds one already. The provided body fails closed.
+    /// Keeps the verified operator ticket `bytes` of case `case` and
+    /// records its use (issue 6 L11). `false` when the case holds one
+    /// already or the ticket was used before. The provided body fails
+    /// closed.
     fn put_operator_ticket(
         &self,
         case: [u8; 16],

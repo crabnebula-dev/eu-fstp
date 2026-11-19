@@ -214,14 +214,19 @@ pub fn decode_operator_ticket(bytes: &[u8]) -> Result<SignedTicket, CodecError> 
         return Err(CodecError::Length);
     }
     let (message, signature) = bytes.split_at(TICKET_MESSAGE_LEN);
-    let (case, rest) = message.split_at(16);
-    let (s1, s2) = rest.split_at(16);
+    let (cell, rest) = message.split_at(16);
+    let (case, rest) = rest.split_at(16);
+    let (s1, rest) = rest.split_at(16);
+    let (s2, expires) = rest.split_at(16);
     let arr = |b: &[u8]| <[u8; 16]>::try_from(b).map_err(|_| CodecError::Length);
+    let expires = <[u8; 8]>::try_from(expires).map_err(|_| CodecError::Length)?;
     Ok(SignedTicket {
         ticket: OperatorTicket {
+            cell: arr(cell)?,
             case: arr(case)?,
             staff_1: StaffRef(arr(s1)?),
             staff_2: StaffRef(arr(s2)?),
+            expires_at: i64::from_be_bytes(expires),
         },
         signature: signature.to_vec(),
     })
