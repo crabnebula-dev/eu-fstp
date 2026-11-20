@@ -307,3 +307,41 @@ Daniel asked that Claude Code and claude.ai act on the demo cell through its MCP
 - **Transport rows.** This record adds the modern era next to the rows and changes none. Daniel decides whether the rows are amended to name both eras.
 - **Production cell.** `fstp-cell` still refuses `/oauth/**`. It needs a token store port, the endpoints above, and a consent page in the platform that runs the passkey step-up.
 - **Restarts.** The e2e cell keeps its records in memory, so a restart forces `claude mcp logout` before the next login. The `mcp` schema seam of the W1e record would remove this.
+
+## Amendment 2026-11-20: production authorisation server (lane L2 `prod/oauth-pg`)
+
+### Basis
+
+`docs/handoff/production-mcp-design.md` section 2.1 drafted these rows, and section 3.4 gives them to lane L2. Daniel answered the design questions on 2026-11-20 (section 2.2). D9 bears on two rows below and is marked decided. D12 is no: the lane builds everything, and no real user uses a production cell until the release gate passes, the M10 Mythos confirmation included (I-74). Every other row is interim, pending Daniel. The rows supersede the "Records" reading of lane W1e and the "Production cell" point of lane mcp-demo.
+
+### Rows of the design
+
+| Topic | Decision | Basis |
+| --- | --- | --- |
+| Records | Persisted in the `mcp` schema: clients, grant families, and the hashes of current and retired refresh tokens. Kept in memory only: pending consents (10 minutes), codes (60 seconds), access tokens (10 minutes) and registration counters. A restart burns those. The client then refreshes or logs in again, which fails closed | Interim, pending Daniel; G5 |
+| Write path | `fstp-oauth` stays sans-IO. It gains an export of its records and a journal of changes per call. `fstp-cell` writes the changes of one endpoint call in one transaction before it sends the reply | Interim, pending Daniel; G5 |
+| Tables | `mcp.client`, `mcp.family`, `mcp.refresh`, with hashes, random ids and opaque references only. The M4 design tables `mcp.codes`, `mcp.tokens` and `mcp.sessions` are not built, since the modern era has no session | Interim, pending Daniel; `m4-design.md` section 4.3 |
+| Endpoints | `/oauth/register`, `/oauth/authorize`, `/oauth/token` and `/oauth/revoke`, served by `fstp-cell` over the same server as the `Tokens` port. `fstp-web` serves the two metadata documents from the same `fstp_oauth::Config` | Interim, pending Daniel; G5a |
+| Consent page | `/oauth/authorize` answers 303 to the consent page of the platform. The page reads `agents.consent_request`, a new web-only read naming the client name as unverified text, the redirect host and the scopes. Approval calls `agents.consent` with `withStepUp`, then follows the redirect. No demo button exists in production | Interim, pending Daniel; G5a; I-78; I-77; I-86 |
+| Recovery | A grant whose family started at or before the account's last completed recovery is refused on every call. The recovery route also calls `revoke_all_agents` after the commit | Interim, pending Daniel; G6; H-21; I-79 |
+| Agent origins | `/mcp` accepts a request without `Origin`, or with the tenant origin, as now. A configured list `mcp.agent_origins`, empty by default, would add origins for `/mcp` only, with the bearer token still required. It is built only after a claude.ai trace shows the need | Decided by Daniel on 2026-11-20 (D9): the lead runs the trace before L2 merges |
+| Token auth method | `none` only, until a claude.ai trace shows another method | Decided by Daniel on 2026-11-20 (D9) |
+| Consent texts | The e2e cell's texts become the production texts. They move to the platform message catalogue of the consent page | Interim, pending Daniel; "Scopes" |
+| Real users | No real user uses a production cell before the release gate passes | Decided by Daniel on 2026-11-20 (D12) |
+
+### Readings of lane L2
+
+Each reading below is interim, pending Daniel. The lane needed it to build the rows above.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Consent page route | `/oauth/authorize` answers 303 to `/app/connect#<handle>`, with the handle in the fragment, as the invitation landing carries its token. The page table admits the page to anyone. The page itself asks the visitor to sign in, and keeps the handle in the tab's session storage across the sign-in. The design named `/app/connect/{handle}`. Every page parameter of the page gate is a decimal id or a closed value, and a fragment keeps the handle out of every request line | SA-09 page table; TW-4 |
+| Consent read | `agents.consent_request` is `GET /api/v1/oauth/consents/{consent}`. It answers the client number, the client name as unverified text, the redirect host, whether that host is a loopback host, the scopes and the expiry. It names no account, no handle and no digest (I-86). It is web only, for any signed-in account | I-86; I-85 |
+| Deny | `POST /oauth/deny` with `{consent}`, sent by the page's script with `X-FSTP-Request` from the cell origin, answers `{redirect}`: the client's redirect URI with `access_denied`, `state` and `iss`. It needs no session, since the handle is the browser's secret | RFC 6749 section 4.1.2.1; RFC 9207 |
+| Accounts | `fstp_oauth::Account` holds the full 128-bit account id. The production cell draws account ids at random over 128 bits | I-86 |
+| Client metadata | A client row holds the client id and a text reference. The registration metadata, the redirect URIs and the client name, is stored as one sealed text in the cell's text store, in one text group of the authorisation server. A client whose text does not open at start is dropped with its families, which fails closed | R-NF-08 column classes; ADR-007 |
+| Family rows | Each change of a family carries a version from the server's change counter. A row is replaced only by a higher version, so two endpoint calls that commit out of order leave the later state | G5 |
+| Failed write | When the transaction of a call fails, the reply is 503 and the server is reloaded from the tables before the next call. Records held in memory only are then lost, as on a restart | Fails closed |
+| Recovery check | The instant compared is the code's issue for a code redemption, and the family's start for a refresh or an access token. A code issued at or before the last completed recovery is burned. The start of the cell also revokes every stored family the check refuses, which closes the window between a recovery's commit and its call to `revoke_all_agents` | I-79; H-21 |
+| Rate keys | The registration rate key is the tunnel peer's address. The consent rate key is the SHA-256 of the session cookie when one is sent, and the peer's address otherwise | ADR-024 |
+| Lifetimes | The production server reads P-71 and P-72 from the cell's defaults: 5 minutes and 12 hours. A tenant setting of P-71 or P-72 takes effect at the next start | P-71; P-72 (proposed) |
