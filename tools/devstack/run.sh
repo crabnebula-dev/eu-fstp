@@ -6,6 +6,13 @@
 #
 # Usage: tools/devstack/run.sh
 #        tools/devstack/run.sh e2e [playwright args...]
+#        tools/devstack/run.sh external-cell [--resolver-rules]
+#
+# `external-cell` (lane L4) runs the same stack with its cell started by
+# the production `fstp-cell` binary from a configuration file. It also
+# packs the journey UI (web/dist/app and its asset manifest) and builds
+# fstp-cell. The stack prints "config <path>", the file the binary reads,
+# before the other lines.
 #
 # `e2e` runs the M3 browser specs (Playwright project `devstack`, the
 # root specs of e2e/) against `fstp-devstack e2e`: two cells on
@@ -72,6 +79,14 @@ fi
 
 cd "$root"
 cargo build --locked -p fstp-celltest --bin fstp-devstack
+
+if [ "${1:-}" = "external-cell" ]; then
+  shift
+  "$tsc" -p "$root/web/build"
+  node "$root/web/dist/build/pack.js" "$root/web/dist" "$root/web/src" "$root/web/dist/app" shell/main.js
+  cargo build --locked -p fstp-cell --bin fstp-cell
+  exec "$target/debug/fstp-devstack" external-cell "$@"
+fi
 
 if [ "${1:-}" = "e2e" ]; then
   shift

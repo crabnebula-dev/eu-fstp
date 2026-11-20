@@ -57,6 +57,12 @@
 //! keeps no port. `tests/slice_devstack.rs` runs this mode, so the test
 //! does not need port 443 (M3 exit audit section 7, item 7).
 //!
+//! # The cell as its own process
+//!
+//! `fstp-devstack external-cell` runs the same stack with its cell started by
+//! the production `fstp-cell` binary from a configuration file (lane L4,
+//! `external.rs`).
+//!
 //! The binary registers its termination handlers before the world starts,
 //! so a SIGTERM during the start is queued rather than fatal. A world that
 //! does not start, or a URL it cannot give, ends the binary with failure
@@ -70,6 +76,7 @@
 )]
 
 mod e2e;
+mod external;
 mod scenario;
 
 use std::io::Write as _;
@@ -269,11 +276,14 @@ fn main() -> ExitCode {
             }
         };
     }
+    if args.first().is_some_and(|a| a == "external-cell") {
+        return external::run(args.get(1..).unwrap_or_default());
+    }
     let e2e = args.first().is_some_and(|a| a == "e2e");
     let resolver = args.as_slice() == ["--resolver-rules"];
     if !args.is_empty() && !e2e && !resolver {
         eprintln!(
-            "usage: fstp-devstack [--resolver-rules], fstp-devstack e2e --manifest-out <file>, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
+            "usage: fstp-devstack [--resolver-rules], fstp-devstack external-cell [--resolver-rules], fstp-devstack e2e --manifest-out <file>, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
         );
         return ExitCode::from(2);
     }
