@@ -1,0 +1,142 @@
+# Connect Claude to a production cell
+
+This guide is for two readers. Sections 1 to 4 are for the operator who runs the cell. Sections 5 to 7 are for a programme manager who connects Claude to it.
+
+**A pilot is not a release.** Daniel decided on 2026-11-20 that a clearly labelled pilot may have real users, since moduletto is confirmed for release. A release still needs the Mythos confirmation of the Tier B formats crates `der`, `spki`, `x509-cert` and `cms` (I-74), and the legal wording marked `TODO(legal)`. Label every pilot cell as a pilot to its users. `deps-check --release` fails on such a build.
+
+The design is in `docs/handoff/production-mcp-design.md`. The configuration is ADR-026 "Configuration". The key file is ADR-004, record of lane L4. The MCP and OAuth profile is ADR-013. The demo cell has its own guide, `docs/guide/claude-connector-demo.md`.
+
+## 1. What the operator supplies
+
+The pilot is one host in SaaS mode, with `fstp-keyd` custody and no control plane link (D1). R-KY-01 is not claimed. The operator supplies:
+
+- **Host.** A Linux host in the EU. The `fstp-keyd` volumes sit on ext4 or XFS (I-81).
+- **DNS.** A tenant domain, for example `grants.example.eu`, pointing at the edge.
+- **Public TLS.** An origin certificate for that domain from a public CA. Browsers and claude.ai need it. WebAuthn needs `https` with no port.
+- **PostgreSQL.** An application cluster and a vault cluster, each with a server certificate whose OU names its kind. Each login role has its own client certificate and password (I-82, I-83). The SPKI digests of the clusters go into `registered_servers`.
+- **Custody.** Two `fstp-keyd` entries for the cell, each with its own socket and passphrase as a systemd credential. One serves the cell's App chain. The other holds only the dedicated root of the cell key file. The cell refuses to start when both name the same socket.
+- **Witness.** `fstp-witness` from its own configuration, with the cell CA and the cell's anchor public key registered.
+- **Vault.** The cell's vault, which pins the cell's ticket public key.
+- **Edge.** The edge that routes the tenant domain to the cell's tunnel listener.
+- **Mail.** An account on a submission relay for proof mail: sign-up proofs, magic links and recovery proofs (D3). A tenant's own relay replaces it once the tenant sets one (ADR-018).
+- **Backups.** Object storage under ADR-012. The S3 client of `fstp-backup` is still a stub.
+- **claude.ai.** A claude.ai plan that allows custom connectors, if staff use claude.ai. The claude.ai trace of D9 is still open, so claude.ai is not yet verified against a production cell.
+
+## 2. Configure the cell
+
+The cell reads one JSON file, named by `FSTP_CELL_CONFIG`. It holds no secret. Every member is checked, and an unknown member is refused.
+
+```json
+{
+  "assets_dir": "/opt/fstp/web",
+  "cell": "<32 lowercase hex digits>",
+  "credentials_dir": "/etc/fstp/cell",
+  "database": {"dbname": "c_<the same 32 hex digits>", "host": "db.internal", "port": 5432},
+  "host": "grants.example.eu",
+  "key_file_keyd_socket": "/run/fstp-keyd/cell-keys.sock",
+  "keyd_socket": "/run/fstp-keyd/cell.sock",
+  "listen": {"health": "127.0.0.1:9090", "internal": "0.0.0.0:7444", "tunnel": "0.0.0.0:7443"},
+  "mail": {"relay": "smtp.example.eu", "sender": "noreply@grants.example.eu", "username": "cell"},
+  "mode": "saas",
+  "organisation_active": true,
+  "registered_servers": [{"kind": "application", "spki_sha256": "<64 hex digits>"},
+                         {"kind": "vault", "spki_sha256": "<64 hex digits>"}],
+  "vault": {"address": "10.0.0.6:7445"},
+  "version": "0.3.0",
+  "witness": {"address": "10.0.0.5:7443", "ca_spki_sha256": "<64 hex digits>", "server_name": "witness.internal"}
+}
+```
+
+Notes on the members:
+
+- `database.dbname` must be `c_` followed by the cell id. The cell logs in as `<dbname>_writer`, `<dbname>_app` and `<dbname>_keys`.
+- `listen.health` must be a loopback address.
+- `assets_dir` holds `auth/` (the compiled auth pages, with `shell.html` and the stylesheets beside them) and `app/` (the packed journey UI with its `asset-manifest.json`). Without it, the cell serves the API, `/mcp` and the OAuth endpoints with an empty `/app` page and no sign-in pages.
+- `mail.address` may pin the relay's socket address in place of a DNS lookup. Interim, pending Daniel: the public address and port 465 rules of ADR-018 then do not apply. Leave it out for a public relay.
+- `organisation_active` is an interim reading, pending Daniel. A pilot cell records no tenant provisioning, since no control plane runs. Without this member, the ADR-021 gate refuses every programme operation, so no draft can be prepared.
+
+The credentials directory holds these files, readable by the cell's OS user only:
+
+| File | Holds |
+| --- | --- |
+| `db-ca.pem` | The CA of the application cluster's server certificate |
+| `writer.pem`, `writer.key`, `writer.password` | The writer login |
+| `app.pem`, `app.key`, `app.password` | The app login |
+| `keys.pem`, `keys.key`, `keys.password` | The keystore login |
+| `tunnel.pem`, `tunnel.key`, `tunnel-ca.pem` | The tunnel listener's certificate, and the CA of the edge's client certificate |
+| `origin.pem`, `origin.key` | The public origin certificate of `host` |
+| `internal.pem`, `internal.key`, `cell-ca.pem` | The internal listener and the cell CA |
+| `witness.pem`, `witness.key`, `witness-ca.pem` | The cell's witness client certificate and the witness CA |
+| `witness-receipt-keys` | The witness receipt public keys, one lowercase hex line each |
+| `vault.pem`, `vault.key`, `vault-ca.pem` | The cell's vault client certificate and the vault's CA |
+| `cell-keys.sealed` | The sealed cell key file, made by `fstp-cell init-keys` |
+| `mail.password` | The relay password, with `mail` |
+| `mail-ca.pem` | Optional: a pinned CA of the relay, beside the public roots |
+
+## 3. Start the cell
+
+Create the key file once, at genesis. The command creates the dedicated root in the key file's custody entry, seals the cell's keys under it, and writes two public keys into the directory you name:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell init-keys /root/cell-public
+```
+
+- `anchor.pub` is the composite anchor public key. Register it with the witness for the App chain.
+- `ticket.pub` is the ticket public key. The vault pins it.
+
+The command refuses to overwrite an existing key file. Never delete that file: it holds every ledger key generation, and the cell cannot read its ledger without it.
+
+Then start the cell, for example as a systemd service:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell
+```
+
+Each start opens the key file through its custody entry, draws a new ledger key generation, and rewrites the file before it seals anything. The first start on an empty database creates the keystore. The cell is ready when `GET /healthz` on the health listener answers 200. SIGTERM drains it. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
+
+## 4. Create the first admin
+
+Stop the cell first. Then run:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell first-admin /root/first-admin.token
+```
+
+The command starts the cell with its listeners on loopback, records the first admin's invitation, and writes the token once to the new file, with mode 0600 (D4). On a SaaS cell the file holds two lines, one for each half. Hand each half to the first admin through a different staff channel. The command refuses an existing file, and a cell whose first admin is already invited or enrolled. Start the cell again afterwards.
+
+The first admin opens `https://<host>/auth/invite#<first half><second half>` and enrols a passkey. The first admin then invites the other staff from the platform.
+
+The first admin has no login email after this step, so recovery by email does not apply to that account. A second tenant admin can approve its recovery.
+
+## 5. Install the plugin (programme manager)
+
+You need an account on the cell with a programme staff or tenant admin role, and a passkey. Your operator gives you the cell's MCP URL, `https://<cell domain>/mcp`.
+
+In Claude Code:
+
+```sh
+claude plugin marketplace add crabnebula-dev/eu-fstp
+claude plugin install fstp-programmes@eu-fstp
+```
+
+Claude Code asks for the cell MCP URL when you enable the plugin. The plugin is in `integrations/claude/fstp-programmes/` of the repository. Its `programme-setup` skill guides Claude through programme setup.
+
+On claude.ai, add a custom connector with the same URL, and upload the skill as `integrations/claude/fstp-programmes/README.md` describes.
+
+## 6. Connect and approve
+
+In Claude Code, run `/mcp`, choose `fstp` and sign in. Your browser opens the cell's consent page. It shows the agent's name as unverified text, the host the browser returns to, and each permission in plain words.
+
+Sign in with your passkey if the page asks. Choose **Approve**. The cell asks for a passkey step-up, since connecting an agent links a new device. A magic-link session cannot approve.
+
+## 7. Work with Claude and confirm in the platform
+
+Ask Claude, for example: "Set up a new programme draft called Green Valleys 2027". Claude prepares the draft. Nothing changes until you confirm.
+
+Each `fstp_prepare_*` tool leaves a pending action with a path such as `/app/pending/<id>`. Open it in the platform and confirm it. A high-risk action asks for a fresh passkey step-up. Each action can be confirmed once. Pending actions survive a restart of the cell.
+
+Access tokens live 10 minutes. Claude refreshes them while your grant lasts, also across a restart of the cell. When you recover your account, every agent grant of your account ends at once (I-79). Connect Claude again afterwards with your new passkey. To end Claude's access yourself, run `claude mcp logout fstp`, or remove the claude.ai connector.
+
+## Checked by
+
+`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 6 and 7 against the `fstp-cell` binary over local PostgreSQL. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
