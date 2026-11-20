@@ -2727,6 +2727,25 @@ mod tests {
         }
     }
 
+    /// I-84, T-AUTHZ-MATRIX: the reference has one row for every
+    /// operation of the registry, and no row the registry lacks. It builds
+    /// the matrix and observes no cell, so it is cheap where the matrix
+    /// suites are not (lane L1, `agents.consent_request`).
+    #[test]
+    fn i84_reference_and_registry_name_the_same_operations() {
+        let m = matrix().unwrap_or_else(|e| panic!("{e}"));
+        assert!(
+            m.missing_from_ops().is_empty(),
+            "{:?}",
+            m.missing_from_ops()
+        );
+        assert!(
+            m.unknown_to_reference().is_empty(),
+            "{:?}",
+            m.unknown_to_reference()
+        );
+    }
+
     /// ADR-021, SoD-14, SoD-15, SoD-18: before the organisation is
     /// activated the reference refuses every operation outside onboarding
     /// with `Setup`, for every caller. A tenant admin keeps the onboarding

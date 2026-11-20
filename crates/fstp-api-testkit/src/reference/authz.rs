@@ -1762,6 +1762,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     .binding(),
     // J9: agents, sessions, pending actions and audit.
     RefOp::act("agents.consent", T::None, R::AnyAccount).hr(),
+    // ADR-013 amendment of 2026-11-20, row "Consent read": the consent
+    // page's read of the caller's own pending consent. Web only, for any
+    // signed-in account, with no tool and no step-up. It names no account,
+    // no handle and no digest (I-85, I-86).
+    RefOp::read("agents.consent_request", T::None, R::AnyAccount),
     RefOp::read("agents.list", T::None, R::AnyAccount),
     RefOp::read("agents.activity", T::None, R::AnyAccount),
     RefOp::act("agents.revoke", T::None, R::AnyAccount),
