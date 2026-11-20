@@ -36,7 +36,10 @@ mod setup;
 #[cfg(doctest)]
 mod twins;
 
-pub use channel::{ChannelDenial, ChannelVerdict, McpSettings, channel_policy, session_admits};
+pub use channel::{
+    ChannelDenial, ChannelVerdict, McpSettings, channel_policy, creator_channel_policy,
+    session_admits, sets_agent_policy,
+};
 pub use pages::{
     CREATOR_STEPS, Listed, ONBOARDING_STEPS, PAGES, PageNeed, PageRow, SETTINGS, SETUP_STAGES,
     canonical_id, page_of, page_read, read_params,

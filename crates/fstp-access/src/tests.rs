@@ -824,11 +824,7 @@ fn i85_p75_p77_creator_channel_policy_prepares_only_mcp_calls_that_set_them() {
         start(template()),
         start(clone_of(5)),
     ];
-    let other = [
-        save(vec![p28()], vec![]),
-        start(blank()),
-        start(import()),
-    ];
+    let other = [save(vec![p28()], vec![]), start(blank()), start(import())];
     let denied = ChannelVerdict::Deny(ChannelDenial::Scope);
     for c in &touching {
         assert_eq!(

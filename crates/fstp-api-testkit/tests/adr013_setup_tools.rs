@@ -330,7 +330,9 @@ fn field(key: &str) -> fstp_programme::FieldId {
 /// `fstp_creator_save_fields` on draft `p` at `base`, with `fields` as
 /// `[{field, value}]` JSON and an optional `clear` JSON array.
 fn save_tool(p: &str, base: &str, fields: &str, clear: Option<&str>) -> Result<Op, ApiError> {
-    let clear = clear.map(|c| format!(r#","clear":{c}"#)).unwrap_or_default();
+    let clear = clear
+        .map(|c| format!(r#","clear":{c}"#))
+        .unwrap_or_default();
     tool(
         "fstp_creator_save_fields",
         &format!(r#"{{"programme":"{p}","base":"{base}","fields":{fields}{clear}}}"#),
@@ -380,7 +382,12 @@ fn p75_i85_save_through_mcp_is_pending_until_confirmed() {
     let receipt = pending(
         c.mcp(
             &token,
-            save_tool(&p, &base, &format!(r#"[{{"field":"{P75}","value":true}}]"#), None),
+            save_tool(
+                &p,
+                &base,
+                &format!(r#"[{{"field":"{P75}","value":true}}]"#),
+                None,
+            ),
         ),
         "a save of P-75 through MCP",
     );
@@ -388,7 +395,10 @@ fn p75_i85_save_through_mcp_is_pending_until_confirmed() {
     assert!(!held(&c, &p).contains(&field(P75)), "P-75 changed");
     assert_eq!(head(&c, &l1, &p), base, "the draft revision moved");
     confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
-    assert!(held(&c, &p).contains(&field(P75)), "the confirmed save holds");
+    assert!(
+        held(&c, &p).contains(&field(P75)),
+        "the confirmed save holds"
+    );
 }
 
 /// P-77, I-85, ADR-013 decision of Daniel of 2026-11-20: a save of P-77
@@ -415,7 +425,10 @@ fn p77_i85_save_through_mcp_is_pending_until_confirmed() {
     assert_eq!(appended(&c), before, "I-85: preparing saves nothing");
     assert!(!held(&c, &p).contains(&field(P77)), "P-77 changed");
     confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
-    assert!(held(&c, &p).contains(&field(P77)), "the confirmed save holds");
+    assert!(
+        held(&c, &p).contains(&field(P77)),
+        "the confirmed save holds"
+    );
 }
 
 /// P-75, P-77, I-85, ADR-013 decision of Daniel of 2026-11-20: a save that
@@ -472,7 +485,10 @@ fn p77_i85_clear_through_mcp_is_pending_until_confirmed() {
     assert_eq!(appended(&c), before, "I-85: preparing clears nothing");
     assert!(held(&c, &p).contains(&field(P77)), "P-77 was cleared");
     confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
-    assert!(!held(&c, &p).contains(&field(P77)), "the confirmed clear holds");
+    assert!(
+        !held(&c, &p).contains(&field(P77)),
+        "the confirmed clear holds"
+    );
 }
 
 /// I-84, P-75, P-77, ADR-013 decision of Daniel of 2026-11-20: a save of
@@ -486,7 +502,12 @@ fn i84_p75_p77_save_of_other_fields_through_mcp_executes() {
     let _ = done(
         c.mcp(
             &token,
-            save_tool(&p, &base, &format!(r#"[{{"field":"{P28}","value":true}}]"#), None),
+            save_tool(
+                &p,
+                &base,
+                &format!(r#"[{{"field":"{P28}","value":true}}]"#),
+                None,
+            ),
         ),
         "a save of P-28 through MCP",
     );
@@ -535,7 +556,12 @@ fn p75_i85_confirmation_applies_the_save_once() {
     let receipt = pending(
         c.mcp(
             &token,
-            save_tool(&p, &base, &format!(r#"[{{"field":"{P75}","value":false}}]"#), None),
+            save_tool(
+                &p,
+                &base,
+                &format!(r#"[{{"field":"{P75}","value":false}}]"#),
+                None,
+            ),
         ),
         "a save of P-75 through MCP",
     );
