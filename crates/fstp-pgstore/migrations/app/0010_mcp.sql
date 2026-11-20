@@ -11,7 +11,7 @@
 -- No column holds a token, a code, a consent handle or client text:
 --
 -- * client_id is the 16 random bytes of the RFC 7591 client_id.
--- * metadata_text names the sealed text that holds the registration
+-- * metadata_ref names the sealed text that holds the registration
 --   metadata, the redirect URIs and the untrusted client name.
 -- * account is the raw account id. No identity attribute is stored
 --   (I-86).
@@ -27,7 +27,7 @@ CREATE SCHEMA mcp;
 CREATE TABLE mcp.client (
   number        bigint  PRIMARY KEY CHECK (number > 0),
   client_id     bytea   NOT NULL UNIQUE CHECK (octet_length(client_id) = 16),
-  metadata_text bytea   NOT NULL CHECK (octet_length(metadata_text) = 16),
+  metadata_ref bytea   NOT NULL CHECK (octet_length(metadata_ref) = 16),
   registered_at bigint  NOT NULL
 );
 

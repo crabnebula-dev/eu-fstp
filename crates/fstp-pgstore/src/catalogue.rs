@@ -444,7 +444,7 @@ pub const CATALOGUE: &[TableSpec] = &[
     ),
     // Lane L2 (ADR-013 amendment of 2026-11-20): the durable records of
     // the OAuth 2.1 authorisation server. Interim readings, pending
-    // Daniel: `metadata_text` names a sealed text, so it is a `RandomId`
+    // Daniel: `metadata_ref` names a sealed text, so it is a `RandomId`
     // like the other text ids; `scopes` is a set of a closed enum and
     // `revoked` a closed flag, so both are `Enum`; `account` is the raw
     // account id, a `RandomId`. Both hash columns are SHA-256 digests of
@@ -456,7 +456,7 @@ pub const CATALOGUE: &[TableSpec] = &[
         &[
             col("number", Sequence),
             col("client_id", RandomId),
-            col("metadata_text", RandomId),
+            col("metadata_ref", RandomId),
             col("registered_at", Time),
         ],
     ),
@@ -652,7 +652,7 @@ mod mcp_tests {
         assert_eq!(class("family", "current_hash"), Some(SecretDigest));
         assert_eq!(class("refresh", "hash"), Some(SecretDigest));
         assert_eq!(class("client", "client_id"), Some(RandomId));
-        assert_eq!(class("client", "metadata_text"), Some(RandomId));
+        assert_eq!(class("client", "metadata_ref"), Some(RandomId));
         assert_eq!(class("family", "account"), Some(RandomId));
     }
 

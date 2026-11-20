@@ -245,7 +245,7 @@ impl<R: Runtime> PgMcpStore<R> {
         let mut c = self.pool.get().await.map_err(|_| McpFault::Unavailable)?;
         let clients = c
             .query(
-                "SELECT number, client_id, metadata_text, registered_at FROM mcp.client ORDER BY number",
+                "SELECT number, client_id, metadata_ref, registered_at FROM mcp.client ORDER BY number",
                 &[],
             )
             .await
@@ -375,7 +375,7 @@ impl<R: Runtime> PgMcpStore<R> {
         let fail = |_| McpFault::Unavailable;
         for (number, id, text, registered) in &client_rows {
             tx.execute(
-                "INSERT INTO mcp.client (number, client_id, metadata_text, registered_at) VALUES ($1, $2, $3, $4) \
+                "INSERT INTO mcp.client (number, client_id, metadata_ref, registered_at) VALUES ($1, $2, $3, $4) \
                  ON CONFLICT (number) DO NOTHING",
                 &[number, &id.to_vec(), &text.to_vec(), registered],
             )
