@@ -80,11 +80,16 @@ fn scope_text(s: fstp_oauth::Scope) -> &'static str {
         S::ReviewDraft => "Draft scores and comments for you.",
         S::RankingRead => "Read the ranking view you may see.",
         S::FindingsRead => "Read findings you may see.",
-        S::CreatorDraft => "Read and edit programme drafts you work on.",
+        S::CreatorDraft => {
+            "Read and edit programme drafts you work on. Prepare invitations, role changes and activation requests that you confirm in the platform."
+        }
         S::CallsDraft => {
             "Draft and edit calls, and prepare a publication that you confirm in the platform."
         }
         S::AuditRead => "Read audit views you may see.",
+        S::TenantDraft => {
+            "Read your organisation's funder profiles and check brand colours. Prepare changes to funder profiles, brand tokens and interface labels. Nothing changes until you confirm each change in the platform."
+        }
     }
 }
 
