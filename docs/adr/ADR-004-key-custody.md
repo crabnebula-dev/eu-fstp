@@ -581,3 +581,15 @@ Each entry builds one decision of the section above. Interim readings are marked
 - **Object storage on cell erasure.** Option B. Step 2 does not delete the cell's object-storage prefix. Destroying the CellBackup roots in step 1 makes every backup unreadable (I-81), and bucket lifecycle rules remove the objects later. ADR-005 and ADR-012 stand: no client `DeleteObject` and no listing call. `CellObjects` leaves step 2. Built by lane m4/matrix-final: `erase_cell_steps` takes no object store, and the `ObjectsDeleted` step is gone.
 - **Interim readings of lane m3/erase-prod accepted.** An edge is named by its client certificate's subject CN `edge_<32 hex digits>`, and the set of edges is configured. Only the `fstp-keyd` console socket creates sign keys, and only cluster CA keys. `erase_cell`, which runs steps 1 and 4 only, still accepts an approval of its single job.
 - **Registries.** The I-90 sweep gains the break-glass staff assertion (`fstp_auth::breakglass::verify_staff_assertion`), and the M3 teeth registry gains the two I-17 unmask teeth tests of `fstp-api-testkit/src/harness_unmask.rs`.
+
+## Decided by Daniel, 2026-11-20: keystore tables and the cell key file
+
+Decided by Daniel on 2026-11-20 (production MCP design, `docs/handoff/production-mcp-design.md` section 2.1, decision D5). A restart of a production cell must keep every key, so the keystore leaves process memory.
+
+| Topic | Decision |
+| --- | --- |
+| Keystore | The rows of the keystore image (`fstp_cell::tasks::erasure::snapshot`) move to `keystore.root`, `keystore.group_key`, `keystore.data_key` and `blob.text`. Signer rows, the chain state and the login email index get their own tables in migration `0011_keystore.sql`. They are written through `c_<cell>_keys` only |
+| Load | `fstp_cell::process::start` loads the keystore from the tables when the ledger is not empty, and runs genesis only on an empty ledger |
+| Cell key file | `cell-keys.sealed` holds the `Anchor` key, the ledger data key generations, the CredLookup key and the ticket key. It is sealed under a seal key wrapped by `fstp-keyd`, with the layout of the witness receipt key file. Its decoder `cell_key_file_decode` is fuzzed |
+
+Tests, from section 3.5 of the design: `i80_keystore_rows_hold_no_root_material`, `i81_destroyed_epoch_stays_unreadable_after_restart`, `r_cr_01_keystore_rows_sealed_at_rest`, `adr004_keystore_round_trips_through_tables`, `i23_process_restart_reads_every_text`, `i79_login_email_lookup_survives_restart` and `i82_keystore_written_by_keys_role_only`.
