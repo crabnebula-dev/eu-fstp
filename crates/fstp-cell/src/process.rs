@@ -20,10 +20,14 @@
 //!    keys, the App chain's `Anchor` key, the witness client of the App
 //!    chain over [`crate::witness::link::TlsWitnessLink`] and the pinned
 //!    witness receipt keys (ADR-010 "Keys").
-//! 3. On a first start, with no keystore held, it creates epoch 0 of the
-//!    App key chain through custody (design section 9.2 step 8). Each
+//! 3. It loads the keystore of the App chain from its tables over the
+//!    `c_<cell>_keys` login (ADR-004, decided by Daniel on 2026-11-20,
+//!    lane L3). On a first start, with no keystore rows and an empty
+//!    ledger, it creates epoch 0 of the App key chain through custody
+//!    (design section 9.2 step 8) and writes it to the tables. Each
 //!    custody call is recorded first, through an engine over the same
 //!    store, so the genesis entries are anchored like every other entry.
+//!    No keystore rows beside a ledger that is not empty is refused.
 //! 4. It runs `crate::engine::startup::start_pg`: custody, the open
 //!    prepare, the replay, the chain against the witness log, and the
 //!    three listeners.
@@ -42,7 +46,7 @@
 //! What the caller still hands in, reported to Daniel and the lead: the
 //! ledger keys, the `Anchor` key and the CredLookup key, which the
 //! keystore groups of design section 3.5 do not give yet. The keystore
-//! itself is held in memory by its owner (`crate::tasks::erasure`). The
+//! itself lives in its tables (`crate::tasks::erasure::tables`). The
 //! outbox data keys are held in process memory ([`MemoryOutboxKeys`]).
 //!
 //! The caller hands in no claim about its database server. It hands in
@@ -137,8 +141,10 @@ pub struct CellProcessParts<C, V> {
     pub registered_servers: Vec<RegisteredSpki>,
     /// The App chain's custody backend.
     pub custody: C,
-    /// The keystore of the App chain, or `None` on a first start.
-    pub keystore: Option<Keystore>,
+    /// The `c_<cell>_keys` login of the keystore tables (ADR-004, decided
+    /// by Daniel on 2026-11-20). The keystore is loaded from them at each
+    /// start, and created there on a first start (lane L3).
+    pub keystore: fstp_pgwire::Config,
     /// The keys of module documentation.
     pub keys: CellKeys,
     /// The witness of the App chain.
@@ -622,6 +628,8 @@ where
     // server's OU and SPKI before its startup message.
     let server_check = application_server_check(&registered_servers);
     let writer = writer.server_check(server_check.clone());
+    // Lane L3: the keys login checks its server as the other two do.
+    let keystore = keystore.server_check(server_check.clone());
     let app = app.server_check(server_check);
     let reader_pool = Pool::open(rt.clone(), cell, Role::Writer, writer.clone(), 1)
         .await
@@ -674,20 +682,51 @@ where
         inner = inner.with_fault_point(f);
     }
     let store = PgCellStore::from_store(inner);
-    let (store, keystore) = match keystore {
-        Some(k) => (store, k),
-        None => {
-            genesis(
-                rt,
-                store,
-                vault.clone(),
-                custody.clone(),
-                cell,
-                Arc::clone(&clock),
-            )
-            .await?
+    // ---- Lane L3 `prod/keystore-pg`: the keystore load (ADR-004, decided
+    // by Daniel on 2026-11-20). The keystore lives in its tables and is
+    // written through `c_<cell>_keys` only (I-82). A start loads it. Genesis
+    // runs only on an empty ledger with no keystore rows. Either way the
+    // keystore handed on comes from the tables, its chain state sealed
+    // until the start-up opens it under `S(e)`.
+    let keys_pool = Pool::open(rt.clone(), cell, Role::Keys, keystore, 2)
+        .await
+        .map_err(pool_err)?;
+    let tables = Arc::new(
+        fstp_pgstore::KeystoreTables::new(keys_pool)
+            .map_err(store_err)?
+            .with_clock(Arc::new({
+                let clock = Arc::clone(&clock);
+                move || Some(clock())
+            })),
+    );
+    let sink: Arc<dyn crate::tasks::erasure::KeystoreSink> = tables.clone();
+    let mut rows = tables.load().await.map_err(store_err)?;
+    let store = if rows.chain.is_none() {
+        if !ledger_is_empty(&app_pool).await? {
+            // The ledger names key records of a keystore these tables do
+            // not hold. A fresh epoch 0 would leave every stored text
+            // unreadable, so the start refuses.
+            return Err(CellError::Keys(
+                "the keystore tables are empty but the ledger is not",
+            ));
         }
+        let store = genesis(
+            rt,
+            store,
+            vault.clone(),
+            custody.clone(),
+            cell,
+            Arc::clone(&clock),
+            Arc::clone(&sink),
+        )
+        .await?;
+        rows = tables.load().await.map_err(store_err)?;
+        store
+    } else {
+        store
     };
+    let keystore = Keystore::from_rows(cell, rows, sink)?;
+    // ---- End of lane L3's block.
     // The API core asks the vault through a clone of the engine's client.
     let api_vault = vault.clone();
     let started = start_pg(
@@ -852,8 +891,25 @@ fn http_config(tls: Option<fstp_tls::ServerConfig>) -> fstp_http::ServerConfig {
     }
 }
 
+/// Whether the cell's ledger holds no entry, read as the app role, which
+/// holds SELECT on the ledger (lane L3).
+async fn ledger_is_empty<R: Runtime>(app: &Pool<R>) -> Result<bool, CellError> {
+    const SQL: &str = "SELECT NOT EXISTS (SELECT 1 FROM ledger.entry)";
+    let mut c = app.get().await.map_err(pool_err)?;
+    let row = c
+        .query_one(SQL, &[])
+        .await
+        .map_err(|_| CellError::Keys("the ledger head read"))?;
+    let empty: bool = row
+        .get(0)
+        .map_err(|_| CellError::Keys("the ledger head read"))?;
+    c.release();
+    Ok(empty)
+}
+
 /// Step 3 of the module documentation: epoch 0 of the App key chain,
-/// with each custody call recorded through an engine over `store`.
+/// with each custody call recorded through an engine over `store`. The
+/// keystore is written whole to `sink` before the engine stops (lane L3).
 async fn genesis<R, C, V>(
     rt: &R,
     store: PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>,
@@ -861,7 +917,8 @@ async fn genesis<R, C, V>(
     custody: C,
     cell: [u8; 16],
     clock: crate::engine::CommitClock,
-) -> Result<(PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>, Keystore), CellError>
+    sink: Arc<dyn crate::tasks::erasure::KeystoreSink>,
+) -> Result<PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>, CellError>
 where
     R: Runtime,
     C: Custody + Send + Sync + 'static,
@@ -873,12 +930,15 @@ where
             .await
             .map_err(store_err)?;
     let engine = engine.with_clock(clock);
-    let runner = ErasureRunner::genesis(custody, engine.clone(), cell).await;
+    let written = match ErasureRunner::genesis(custody, engine.clone(), cell).await {
+        Ok(mut runner) => runner.persist_to(sink).await,
+        Err(e) => Err(e),
+    };
     // The engine ends once its last handle drops, and gives the store back.
-    let keystore = runner.map(|r| r.keystore().clone());
     drop(engine);
     let store = task.await.map_err(store_err)?;
-    Ok((store, keystore?))
+    written?;
+    Ok(store)
 }
 
 impl<R: Runtime> RunningCell<R> {

@@ -12,6 +12,8 @@
 //! - [`TextStore`]: sealed free text behind a [`TextRef`] (ADR-007).
 //! - [`Checkpoints`]: sealed fold checkpoints in `ops.checkpoint`.
 //! - [`OutboxRow`]: a sealed `ops.outbox` row of an append's side effects.
+//! - [`KeystoreTables`]: the keystore tables of the App chain over the
+//!   keys role (ADR-004, 2026-11-20).
 //! - [`DeliveryLog`]: the insert-only delivery log `ops.delivery` of the M6
 //!   dispatcher, with the head rules it shares with the dispatcher's model.
 //! - [`decode_stored_entry`]: the one byte layout of a stored ledger row.
@@ -58,6 +60,7 @@ mod checkpoint;
 mod delivery;
 mod error;
 mod fault;
+mod keystore;
 mod migrations;
 mod outbox;
 mod pool;
@@ -78,6 +81,11 @@ pub use delivery::{
 };
 pub use error::{AppendFault, DbFault, DecodeError, StoreFault};
 pub use fault::FaultPoint;
+pub use keystore::{
+    APP_CHAIN, ChainRow, Change, DataKeyRow, GroupKeyRow, KeystoreChanges, KeystoreRows,
+    KeystoreTables, LoginDigestRow, LoginTextRow, ROOT_DESTROYED, ROOT_LIVE, ROOT_PENDING, RootRow,
+    RootStatus, SignerRow, TextRow as KeystoreTextRow,
+};
 pub use migrations::MIGRATIONS;
 pub use outbox::{KeyFuture, MAX_OUTBOX_BODY, MAX_OUTBOX_ROWS, OutboxKey, OutboxKeys, OutboxRow};
 pub use pool::{MAX_POOL_CLIENTS, Pool, PoolError, Role, database_name, role_name};

@@ -27,6 +27,13 @@ use fstp_migrate::Migration;
 ///    Daniel's Q-A answer (2026-11-07, design section 4.5, R-NF-08).
 /// 9. `api`: the pending actions and their confirmations, and the sealed
 ///    workspaces of the API core (ADR-026, lane L1).
+///
+/// Lane L3 `prod/keystore-pg` (ADR-004, decided by Daniel on 2026-11-20):
+///
+/// - `keystore`: the keystore tables of the App chain, file
+///   `0011_keystore.sql` as the production design fixes it. Its version
+///   follows the last migration on the branch it lands on, since a set
+///   has no gap: 9 on this lane alone, 10 after lane L1, 11 after L2.
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -58,6 +65,12 @@ pub const MIGRATIONS: &[Migration] = &[
     ),
     // Lane L1 (ADR-026): pending actions and workspaces.
     Migration::new(9, "api", include_str!("../migrations/app/0009_api.sql")),
+    // Lane L3: see the list above for its version.
+    Migration::new(
+        10,
+        "keystore",
+        include_str!("../migrations/app/0011_keystore.sql"),
+    ),
 ];
 
 #[cfg(test)]
@@ -119,7 +132,8 @@ mod m4_tests {
         };
         assert_eq!(api.version, 9, "ADR-026: the api migration is number 9");
         let versions: Vec<u32> = MIGRATIONS.iter().map(|m| m.version).collect();
-        let want: Vec<u32> = (1..=9).collect();
+        let last = u32::try_from(MIGRATIONS.len()).unwrap_or(0);
+        let want: Vec<u32> = (1..=last).collect();
         assert_eq!(versions, want, "design section 4.6: no gap");
         let body = statements(api.sql);
         for word in [

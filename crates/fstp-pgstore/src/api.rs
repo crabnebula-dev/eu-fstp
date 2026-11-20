@@ -336,7 +336,9 @@ impl<R: Runtime> ApiStore<R> {
     /// A pool or database fault.
     pub async fn delete_pending(&self, id: [u8; 16]) -> Result<bool, StoreFault> {
         let mut client = self.pool.get().await?;
-        let n = client.execute(DELETE_PENDING_SQL, &[&id.as_slice()]).await?;
+        let n = client
+            .execute(DELETE_PENDING_SQL, &[&id.as_slice()])
+            .await?;
         client.release();
         Ok(n == 1)
     }

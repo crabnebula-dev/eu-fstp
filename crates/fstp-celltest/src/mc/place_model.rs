@@ -100,7 +100,7 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 /// The tables of the application database, from design section 4.2, and
 /// the journey read model of ADR-015 "Storage and roles", and the delivery
 /// log of the M6 design section 3.2.
-pub const APP_TABLES: [&str; 26] = [
+pub const APP_TABLES: [&str; 32] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -129,6 +129,15 @@ pub const APP_TABLES: [&str; 26] = [
     "doc.blob",
     // Daniel, 2026-11-07 (m4-design section 15.0): the delivery log.
     "ops.delivery",
+    // Lane L3 (ADR-004, decided by Daniel on 2026-11-20): the keystore
+    // tables of migration `0011_keystore.sql`. Only the keys role holds a
+    // right on them, as on every `keystore` table.
+    "keystore.chain",
+    "keystore.text",
+    "keystore.signer",
+    "keystore.login_digest",
+    "keystore.login_text",
+    "keystore.erasure_request",
 ];
 
 const SI: &[Privilege] = &[Privilege::Select, Privilege::Insert];

@@ -1020,17 +1020,19 @@ fn granted_cell_database(
     t: Target,
     cell: [u8; 16],
 ) -> Live {
-    let live = live_database(server, t, cell, &["writer", "app"]);
+    // Lane L3: the cell also logs in as `keys` to load its keystore.
+    let live = live_database(server, t, cell, &["writer", "app", "keys"]);
     let grants = format!(
         "DO $g$ DECLARE s text; BEGIN \
            FOR s IN SELECT nspname FROM pg_namespace \
              WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' LOOP \
-             EXECUTE format('GRANT USAGE ON SCHEMA %I TO {w}, {a}', s); \
-             EXECUTE format('GRANT ALL ON ALL TABLES IN SCHEMA %I TO {w}, {a}', s); \
-             EXECUTE format('GRANT ALL ON ALL SEQUENCES IN SCHEMA %I TO {w}, {a}', s); \
+             EXECUTE format('GRANT USAGE ON SCHEMA %I TO {w}, {a}, {k}', s); \
+             EXECUTE format('GRANT ALL ON ALL TABLES IN SCHEMA %I TO {w}, {a}, {k}', s); \
+             EXECUTE format('GRANT ALL ON ALL SEQUENCES IN SCHEMA %I TO {w}, {a}, {k}', s); \
            END LOOP; END $g$",
         w = live.logins[0].role,
         a = live.logins[1].role,
+        k = live.logins[2].role,
     );
     live.server.psql(&live.dbname, &grants).unwrap();
     live
@@ -1069,7 +1071,7 @@ fn start_cell_over(t: Target, registered: RegisteredBy, writer_on: ClusterKind) 
         app: live.config(1),
         registered_servers,
         custody: custody.clone(),
-        keystore: None,
+        keystore: live.config(2),
         keys: fstp_cell::process::CellKeys {
             anchor: fstp_crypto::composite::generate().unwrap(),
             ledger: Arc::new(fstp_pgstore::LedgerKeys::new(ledger_key)),
