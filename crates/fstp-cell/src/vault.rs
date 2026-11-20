@@ -238,6 +238,14 @@ pub fn wire_query(q: &Query) -> Result<WireQuery, VaultFault> {
             grant: WireProposal(grant.raw()),
             evidence: WireEvidence(evidence.raw()),
         },
+        Query::ClassesDefined { programme, classes } => W::ClassesDefined {
+            programme: WireProgramme(programme.raw()),
+            classes: classes.0.iter().map(|c| WireClass(c.raw())).collect(),
+        },
+        Query::ProximityListsDeclared { programme, lists } => W::ProximityListsDeclared {
+            programme: WireProgramme(programme.raw()),
+            lists: lists.iter().map(|l| WireList(l.raw())).collect(),
+        },
     };
     w.to_wire().map_err(|_| VaultFault::Refused)
 }

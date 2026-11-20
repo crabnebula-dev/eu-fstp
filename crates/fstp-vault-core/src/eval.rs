@@ -594,6 +594,14 @@ impl Facts {
                 .hardship
                 .get(&(*grant, *evidence))
                 .is_some_and(|h| h.verified),
+            // Q35 A, NOTE 8, ADR-027: the vault holds no class register,
+            // so a class is defined once an effective affiliation carries it.
+            Query::ClassesDefined { classes, .. } => classes
+                .iter()
+                .all(|c| self.affiliations.values().any(|a| *a == Some(*c))),
+            Query::ProximityListsDeclared { lists, .. } => {
+                lists.iter().all(|l| self.lists.contains_key(l))
+            }
         }
     }
 }
@@ -632,7 +640,9 @@ pub fn named(q: &Query) -> (BTreeSet<WireAccount>, Option<WireProposal>) {
         }
         Query::DeclaresAffiliationOnList { team, .. } => (team.clone(), None),
         Query::HasGuardianConsent { proposal } => (BTreeSet::new(), Some(*proposal)),
-        Query::ChangedSince { .. } => (BTreeSet::new(), None),
+        Query::ChangedSince { .. }
+        | Query::ClassesDefined { .. }
+        | Query::ProximityListsDeclared { .. } => (BTreeSet::new(), None),
         Query::BankReleasable { grant, .. } | Query::HardshipEvidenceVerified { grant, .. } => {
             (BTreeSet::new(), Some(*grant))
         }

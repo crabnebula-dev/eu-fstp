@@ -572,6 +572,12 @@ pub(crate) fn queries_with_inputs(
                     out.push(q);
                 }
             }
+            // Q35 A, NOTE 8: the questions the shell gives no answer to.
+            for q in crate::creator::q35_asked(s, cmd, inputs.creator()) {
+                if !out.contains(&q) {
+                    out.push(q);
+                }
+            }
             Ok(out)
         }
         CellCommand::Release(ReleaseCommand::IssueWriteTicket {

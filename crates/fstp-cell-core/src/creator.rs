@@ -17,6 +17,11 @@
 //!   shell before admission: the probes, the Q35 answers, the ports and
 //!   the funder profile. A command admitted without them gets none, so
 //!   every check that needs one fails closed, as `NoEnvironment` did.
+//! - The two Q35 answers (`overview.md` NOTE 8, ADR-027). A shell that
+//!   gives none leaves them to the vault: a command that reads the report
+//!   asks `ClassesDefined` and `ProximityListsDeclared` with its other
+//!   questions ([`q35_queries`]), and the decision reads their answers. A
+//!   test shell may stand in for the vault with answers of its own.
 //!
 //! The engine replaces the facts it owns: the count of unresolved import
 //! proposals, and the `IsVerified` and `SameIdentityAsAny` answers, which
@@ -114,6 +119,7 @@ impl CreatorEnvironment for CellEnvironment<'_> {
     ) -> CreatorInputs {
         let none = CreatorFacts::default();
         let f = self.facts.unwrap_or(&none);
+        let q35 = q35_queries(state, cmd);
         let admins = &self.admins;
         let sod = fstp_engine::compose::sod_previews(
             state,
@@ -137,8 +143,16 @@ impl CreatorEnvironment for CellEnvironment<'_> {
                 // The engine replaces both with the answers it obtained.
                 is_verified: Default::default(),
                 same_identity: Default::default(),
-                exclusion_classes_known: f.exclusion_classes_known,
-                proximity_lists_declared: f.proximity_lists_declared,
+                exclusion_classes_known: q35_answer(
+                    f.exclusion_classes_known,
+                    q35.as_ref().map(|q| &q[0]),
+                    self.answers,
+                ),
+                proximity_lists_declared: q35_answer(
+                    f.proximity_lists_declared,
+                    q35.as_ref().map(|q| &q[1]),
+                    self.answers,
+                ),
             },
             tenant_admins: self.admins.clone(),
             ports: f.ports,
@@ -201,4 +215,78 @@ pub(crate) fn hold_appended(
     // A value that is not held fails its checks closed, so a partial
     // hold is safe to keep.
     let _ = fstp_engine::hold_appended(before.engine(), &mut after.engine, cmd, ctx, &engine);
+}
+
+/// Whether a creator command reads the validation report, as
+/// `fstp_engine::compose` asks its own questions for: acknowledging a
+/// warning, requesting activation, approving and overriding it.
+fn reads_report(cmd: &CreatorCommand) -> bool {
+    matches!(
+        cmd,
+        CreatorCommand::AcknowledgeWarning { .. }
+            | CreatorCommand::RequestActivation { .. }
+            | CreatorCommand::ApproveActivation { .. }
+            | CreatorCommand::OverrideActivation { .. }
+    )
+}
+
+/// The two Q35 questions of `cmd` on `state` (`overview.md` NOTE 8,
+/// ADR-027): `ClassesDefined` over the P-13 classes and
+/// `ProximityListsDeclared` over the P-38 lists of the draft's head
+/// policy, in that order. `None` for a command that reads no report, or a
+/// programme with no policy, and then both checks fail closed.
+pub fn q35_queries(state: &EngineState, cmd: &CreatorCommand) -> Option<[Query; 2]> {
+    if !reads_report(cmd) {
+        return None;
+    }
+    let programme = cmd.programme();
+    let policy = state.core.policy().head(programme)?;
+    Some(q35_of(programme, policy))
+}
+
+/// The two Q35 questions over the policy version `policy` of `programme`.
+pub fn q35_of(
+    programme: fstp_domain::id::ProgrammeId,
+    policy: &fstp_domain::policy::PolicyVersion,
+) -> [Query; 2] {
+    [
+        Query::ClassesDefined {
+            programme,
+            classes: policy.live.p13.clone(),
+        },
+        Query::ProximityListsDeclared {
+            programme,
+            lists: policy.live.p38.0.values().copied().collect(),
+        },
+    ]
+}
+
+/// A Q35 answer: the shell's own if it gives one, else the vault's answer
+/// to `query` among `answers`. `None` when neither exists, which fails
+/// the check closed.
+pub fn q35_answer(shell: Option<bool>, query: Option<&Query>, answers: &Answers) -> Option<bool> {
+    shell.or_else(|| query.and_then(|q| answers.get(q)).map(|a| a.holds))
+}
+
+/// The Q35 questions `cmd` asks the vault on `s` (module documentation):
+/// each one whose answer the route's `facts` do not give.
+pub(crate) fn q35_asked(
+    s: &CellState,
+    cmd: &fstp_engine::Command,
+    facts: Option<&CreatorFacts>,
+) -> Vec<Query> {
+    let fstp_engine::Command::Creator(c) = cmd else {
+        return Vec::new();
+    };
+    let Some([classes, lists]) = q35_queries(s.engine(), c) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if facts.is_none_or(|f| f.exclusion_classes_known.is_none()) {
+        out.push(classes);
+    }
+    if facts.is_none_or(|f| f.proximity_lists_declared.is_none()) {
+        out.push(lists);
+    }
+    out
 }
