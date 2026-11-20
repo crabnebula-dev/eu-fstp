@@ -707,6 +707,17 @@ impl GroundTruth {
             Query::HardshipEvidenceVerified { grant, evidence } => {
                 self.hardship_verified(*grant, *evidence)
             }
+            // Q35 A, NOTE 8, ADR-027. The synthetic vault holds no class
+            // register or list fact: a class is defined once an identity is
+            // excluded in it, and a list is declared once an effective
+            // affiliation names it.
+            Query::ClassesDefined { classes, .. } => classes
+                .0
+                .iter()
+                .all(|c| self.excluded.iter().any(|(_, x)| x == c)),
+            Query::ProximityListsDeclared { lists, .. } => lists
+                .iter()
+                .all(|l| self.affiliations.iter().any(|(_, x)| x == l)),
         }
     }
 

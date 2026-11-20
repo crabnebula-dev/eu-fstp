@@ -1,7 +1,7 @@
 //! The typed queries of the vault (design section 6.2, `overview.md`
 //! query table).
 //!
-//! [`Query`] mirrors the thirteen `fstp_domain::oracle::Query` kinds. The
+//! [`Query`] mirrors the fifteen `fstp_domain::oracle::Query` kinds. The
 //! kind code of a [`WireQuery`] is the index of its kind in
 //! `fstp_domain::oracle::QueryKind::ALL`, as lane W1c proposed. The
 //! arguments are canonical JSON with W1c's member names. `fstp-cell`
@@ -48,11 +48,15 @@ pub enum QueryKind {
     BankReleasable = 11,
     /// `HardshipEvidenceVerified` (R-PR-04, M5 design 12.1).
     HardshipEvidenceVerified = 12,
+    /// `ClassesDefined` (Q35 A, NOTE 8, ADR-027).
+    ClassesDefined = 13,
+    /// `ProximityListsDeclared` (Q35 A, NOTE 8, ADR-027).
+    ProximityListsDeclared = 14,
 }
 
 impl QueryKind {
     /// Every kind, in code order.
-    pub const ALL: [QueryKind; 13] = [
+    pub const ALL: [QueryKind; 15] = [
         QueryKind::IsVerified,
         QueryKind::SameIdentityAsAny,
         QueryKind::HasConflict,
@@ -66,6 +70,8 @@ impl QueryKind {
         QueryKind::ChangedSince,
         QueryKind::BankReleasable,
         QueryKind::HardshipEvidenceVerified,
+        QueryKind::ClassesDefined,
+        QueryKind::ProximityListsDeclared,
     ];
 
     /// The wire code.
@@ -186,6 +192,22 @@ pub enum Query {
         /// The evidence.
         evidence: WireEvidence,
     },
+    /// Every P-13 class of the set appears on an effective affiliation
+    /// of the view (Q35 A, NOTE 8, I-04). It names no account.
+    ClassesDefined {
+        /// The programme.
+        programme: WireProgramme,
+        /// The P-13 classes of the programme.
+        classes: BTreeSet<WireClass>,
+    },
+    /// Every list of the set has an effective `ProximityListDeclared`
+    /// fact (Q35 A, NOTE 8, I-35, P-38). It names no account.
+    ProximityListsDeclared {
+        /// The programme.
+        programme: WireProgramme,
+        /// The P-38 lists of the programme.
+        lists: BTreeSet<WireList>,
+    },
 }
 
 const ARGS: &str = "query arguments";
@@ -207,6 +229,8 @@ impl Query {
             Query::ChangedSince { .. } => QueryKind::ChangedSince,
             Query::BankReleasable { .. } => QueryKind::BankReleasable,
             Query::HardshipEvidenceVerified { .. } => QueryKind::HardshipEvidenceVerified,
+            Query::ClassesDefined { .. } => QueryKind::ClassesDefined,
+            Query::ProximityListsDeclared { .. } => QueryKind::ProximityListsDeclared,
         }
     }
 
@@ -277,6 +301,14 @@ impl Query {
             Query::HardshipEvidenceVerified { grant, evidence } => obj(vec![
                 ("evidence", id_json(evidence.0)),
                 ("grant", id_json(grant.0)),
+            ]),
+            Query::ClassesDefined { programme, classes } => obj(vec![
+                ("classes", id_list_json(classes.iter().map(|c| c.0))),
+                ("programme", id_json(programme.0)),
+            ]),
+            Query::ProximityListsDeclared { programme, lists } => obj(vec![
+                ("lists", id_list_json(lists.iter().map(|l| l.0))),
+                ("programme", id_json(programme.0)),
             ]),
         }
     }
@@ -393,6 +425,20 @@ pub fn query_from_value(kind: QueryKind, v: &Value) -> Result<Query, ProtoError>
             Query::HardshipEvidenceVerified {
                 grant: WireProposal(id(o, "grant", ARGS)?),
                 evidence: WireEvidence(id(o, "evidence", ARGS)?),
+            }
+        }
+        QueryKind::ClassesDefined => {
+            let o = object(v, &["classes", "programme"], ARGS)?;
+            Query::ClassesDefined {
+                programme: WireProgramme(id(o, "programme", ARGS)?),
+                classes: id_set(o, "classes", ARGS, WireClass)?,
+            }
+        }
+        QueryKind::ProximityListsDeclared => {
+            let o = object(v, &["lists", "programme"], ARGS)?;
+            Query::ProximityListsDeclared {
+                programme: WireProgramme(id(o, "programme", ARGS)?),
+                lists: id_set(o, "lists", ARGS, WireList)?,
             }
         }
     })

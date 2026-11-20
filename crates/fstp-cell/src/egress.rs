@@ -73,6 +73,13 @@ pub enum Destination {
         /// The relay host.
         host: MailHost,
     },
+    /// The configured DNS resolver, TCP port 53 only, for the sending
+    /// domain probe of the creator shell (ADR-027, proposed amendment of
+    /// ADR-009). It takes an address, so it never names a CrabNebula host.
+    DnsResolver {
+        /// The resolver address.
+        addr: SocketAddr,
+    },
 }
 
 /// Why the connector refused a destination.
@@ -105,6 +112,8 @@ pub enum EgressRefusal {
     /// A mail relay that resolves to a private, loopback, link-local or
     /// other non-public address (ADR-018).
     MailAddress,
+    /// A DNS resolver on a port other than 53 (ADR-027).
+    DnsPort,
 }
 
 /// A mail relay host: a DNS host name in lowercase, without a trailing
@@ -200,7 +209,8 @@ pub fn check_host(to: &Destination, host: &str) -> Result<(), EgressRefusal> {
         | Destination::Vault
         | Destination::Custody
         | Destination::ControlPlane
-        | Destination::Witness => {
+        | Destination::Witness
+        | Destination::DnsResolver { .. } => {
             if is_crabnebula_host(host) {
                 Err(EgressRefusal::CrabNebulaHost)
             } else {
@@ -221,6 +231,11 @@ pub fn check_port(to: &Destination, port: u16) -> Result<(), EgressRefusal> {
     match to {
         Destination::MailSubmission { .. } if port != SUBMISSION_PORT => {
             Err(EgressRefusal::MailPort)
+        }
+        Destination::DnsResolver { addr }
+            if port != crate::shell::dns::DNS_PORT || addr.port() != port =>
+        {
+            Err(EgressRefusal::DnsPort)
         }
         _ => Ok(()),
     }
@@ -261,7 +276,8 @@ pub fn connect(to: &Destination) -> Result<(), crate::CellError> {
         | Destination::Vault
         | Destination::Custody
         | Destination::ControlPlane
-        | Destination::Witness => Ok(()),
+        | Destination::Witness
+        | Destination::DnsResolver { .. } => Ok(()),
     }
     .map_err(crate::CellError::Egress)
 }

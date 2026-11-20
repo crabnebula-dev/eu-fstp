@@ -19,7 +19,9 @@
 //! Every answer is one bit, except `ChangedSince`, which lists account
 //! ids and nothing else (NOTE 5). The two M5 queries, `BankReleasable`
 //! and `HardshipEvidenceVerified` (codes 11 and 12, M5 design 12.1),
-//! answer one bit and name no account. A decoder cannot see which query an
+//! answer one bit and name no account. So do the two creator queries,
+//! `ClassesDefined` and `ProximityListsDeclared` (codes 13 and 14, Q35 A,
+//! ADR-027). A decoder cannot see which query an
 //! answer belongs to, so [`decode_response`] enforces what the bytes show:
 //! a set is ascending, and the bit says whether it is non-empty.
 //! [`answers_for`] then pairs the answers with their queries and refuses a

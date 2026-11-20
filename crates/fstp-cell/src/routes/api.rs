@@ -123,9 +123,11 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
     {
         // A creator command reads the shell's facts (`crate::shell`).
         Ok((s, a)) => match (&creator, published) {
-            (Some(c), _) => a.with_creator(ctx.backend.creator_facts(&s, c)),
+            // ADR-027: fresh facts, so the shell runs its probes and reads
+            // the stored texts in this request.
+            (Some(c), _) => a.with_creator(ctx.backend.creator_facts_fresh(&s, c).await),
             (None, Some(call)) => a.with_creator(fstp_cell_core::creator::CreatorFacts {
-                guide: ctx.backend.guide_inputs(&s, call),
+                guide: ctx.backend.guide_inputs_fresh(&s, call).await,
                 ..Default::default()
             }),
             (None, None) => a,

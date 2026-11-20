@@ -547,6 +547,8 @@ unit_enum!(QueryKind {
     ChangedSince,
     BankReleasable,
     HardshipEvidenceVerified,
+    ClassesDefined,
+    ProximityListsDeclared,
 });
 unit_enum!(Row {
     DraftToSubmitted,

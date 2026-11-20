@@ -39,6 +39,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "dns_txt_decode"
+path = "fuzz_targets/dns_txt_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]
