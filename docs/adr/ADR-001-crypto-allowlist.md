@@ -47,7 +47,7 @@ Tier B crates may be used throughout development. No release ships a Tier B crat
 
 | Crate | Version | Source hash | Confirmed on | Findings |
 | --- | --- | --- | --- | --- |
-| (none yet) |  |  |  |  |
+| moduletto | 0.1.0 | git commit `ded73e577220b7ae620d3a3db8d66f07904aa726` | 2026-11-20 | Claude Mythos 5.2 review of 2026-11-20, recorded in moduletto `audits/README.md` at `ded73e57`: findings re-checked at `6c1ae92`, the three low findings remediated in `0970a00`, informational items open. Daniel confirmed `ded73e57` for release on 2026-11-20, accepting the remediation without a further review |
 
 ## Hybrid rule (I-75, I-90)
 
@@ -284,7 +284,7 @@ Pin move record, 2026-11-20 (lead, at Daniel's report that the second Mythos rev
 - Changes between the two commits touch `src/modn.rs`, `src/ntt.rs`, `src/wasm.rs`, two examples, CI, the fuzz project and the documents. moduletto's manifest is unchanged, so its dependency lines and features are unchanged.
 - Resolved tree: unchanged. moduletto brings `libm 0.2.16`, `subtle 2.6.1` and `zeroize 1.9.1`. Features resolved: `alloc`, `default`, `libm`, `std` (`cargo tree --locked`, 2026-11-20). No package enters or leaves the platform tree.
 - Every `fstp-crypto` test passes at the new pin, including the ML-KEM-768 and ML-DSA-65 ACVP vectors. The ML-DSA vector file keeps its provenance line naming `6c1ae92`, the commit the vectors were extracted with.
-- The move counts as a version change for the release gate. `deps/tier-b-confirmations.txt` holds no confirmation for the new commit, so `deps-check --release` still fails on it (I-74). Whether this review confirms `ded73e57` for release is Daniel's decision, and the low-finding fixes have not been re-reviewed.
+- The move counts as a version change for the release gate. The release gate table and `deps/tier-b-confirmations.txt` record it. Daniel confirmed `ded73e57` for release on 2026-11-20 (release gate table), knowing the low-finding fixes were not re-reviewed.
 
 ### A3. deps-check git-source rule
 
