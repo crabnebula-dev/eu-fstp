@@ -1,6 +1,6 @@
 # ADR-026: Production cell composition
 
-Status: Accepted in part. The rows of "Composition" below were decided by Daniel on 2026-11-20 (D2, D6, D8 and D10 of `docs/handoff/production-mcp-design.md` section 2.2). The configuration rows are written by lane L4 before its code.
+Status: Accepted in part. The rows of "Composition" below were decided by Daniel on 2026-11-20 (D2, D6, D8 and D10 of `docs/handoff/production-mcp-design.md` section 2.2). The "Configuration" rows were written by lane L4 before its code. Rows there marked "interim, pending Daniel" wait for him.
 
 ## Context
 
@@ -31,7 +31,32 @@ Decided by Daniel on 2026-11-20.
 
 ## Configuration
 
-Written by lane L4 before its code (`docs/handoff/production-mcp-design.md` section 2.1, rows "Configuration", "Secrets", "Decoder" and "Deployment of the pilot").
+Written by lane L4 `prod/cell-run` before its code, from `docs/handoff/production-mcp-design.md` section 2.1, rows "Configuration", "Secrets", "Decoder" and "Deployment of the pilot". Rows marked "interim, pending Daniel" are the lane's own readings.
+
+| Topic | Decision | Basis |
+| --- | --- | --- |
+| Deployment of the pilot | A single-host pilot in SaaS mode, with `fstp-keyd` custody and no control plane link. No licence. R-KY-01 is not claimed until OKMS custody runs (ADR-004 Q11). Decided by Daniel on 2026-11-20 (D1) | D1 |
+| Real users | moduletto is confirmed for release, so a clearly labelled pilot may have real users. A pilot is not a release. `der`, `spki`, `x509-cert` and `cms` stay unconfirmed (I-74). Decided by Daniel on 2026-11-20 (D12, changed) | D12; I-74 |
+| File | One JSON object in the file that `FSTP_CELL_CONFIG` names, at most 8 KiB, decoded by `fstp_json` with depth, member and string limits. The member set is closed. An unknown member, a member given twice or a missing required member is refused, so a typo never falls back to a default | G1; witness precedent |
+| Members | `cell`, `mode`, `version`, `licence` and `eudi_relying_party` keep their M3 grammar. New: `host`, `credentials_dir`, `assets_dir` (optional), `database` (`host`, `port`, `dbname`), `registered_servers` (a list of `spki_sha256` and `kind`), `keyd_socket`, `key_file_keyd_socket`, `witness` (`address`, `server_name`), `vault` (`address`, `server_name`), `listen` (`tunnel`, `internal`, `health`), `mail` (optional: `relay`, `sender`, `username`, `address`) and `organisation_active` (optional). The `mcp` member of the design is not added, since the agent origin list waits for D9 | G1; ADR-013 amendment |
+| Logins | The three logins are `<dbname>_writer`, `<dbname>_app` and `<dbname>_keys` on `database`, as `fstp_control::pg::role_name` names them. The configuration names no role | M3 design section 4.7; I-82 |
+| Secrets | No secret is in the configuration. The credentials directory holds, by fixed name: `db-ca.pem`; `writer.pem`, `writer.key`, `writer.password`; `app.pem`, `app.key`, `app.password`; `keys.pem`, `keys.key`, `keys.password`; `tunnel.pem`, `tunnel.key`, `tunnel-ca.pem`; `origin.pem`, `origin.key`; `internal.pem`, `internal.key`, `cell-ca.pem`; `witness.pem`, `witness.key`, `witness-ca.pem`, `witness-receipt-keys`; `vault.pem`, `vault.key`, `vault-ca.pem`; `cell-keys.sealed`; and with `mail`, `mail.password` and optionally `mail-ca.pem` | R-NF-02; witness precedent |
+| Receipt key list | `witness-receipt-keys` holds one encoded witness receipt public key per line, in lowercase hex. At most 8 keys | ADR-010 "Keys" |
+| Decoder | `fstp_cell::config::decode_file` reads the file, and `decode_receipt_keys` the key list. The fuzz target `cell_config_decode` covers both. A refusal names its rule and never quotes the input | CLAUDE.md fuzz rule; R-NF-02 |
+| Assets | With `assets_dir`, the cell serves the compiled auth pages of `assets_dir/auth` (with `shell.html` and the stylesheets beside them) and mounts the journey UI of `assets_dir/app` (`fstp_web::load_dir`, manifest checked). Without it, the cell mounts the web adapter over a one-module stub shell, so `/api/v1`, `/mcp` and the OAuth endpoints are served and `/app` shows an empty page. Interim, pending Daniel | D2; G2 |
+| Proof mail | Proof mail goes through a platform submission relay named in `mail`, until a tenant sets its own relay (ADR-018). Decided by Daniel on 2026-11-20 (D3) | D3 |
+| Relay address | Interim, pending Daniel. `mail.address` may pin the relay's socket address in place of a DNS lookup. The relay is then reached at that address on its port, and the public address and port 465 rules of ADR-018 do not apply. TLS still verifies the certificate for `mail.relay` against the public roots and `mail-ca.pem`. Only the operator's configuration can name it. A tenant relay never can. The devstack names a loopback sink this way | D3; ADR-018 |
+| First admin | `fstp-cell first-admin <file>` starts the cell from the same configuration with every listener on a loopback port the system picks. It records the `Provisioning` invitation, writes the token once to a new file with mode 0600, and stops. A SaaS cell writes two halves on two lines. The file must not exist. Run it while the cell is stopped. Decided by Daniel on 2026-11-20 (D4). Interim, pending Daniel: "prints" is read as "writes once to a new file", since R-NF-02 bans a write to standard output outside `fstp-obs` | D4; R-NF-02 |
+| Organisation port | Interim, pending Daniel. A production cell records no `TenantProvisioned`, since no control plane runs (D1). Its ledger then holds no tenant part, and the ADR-021 gate reads the organisation port, whose default is "not active". `organisation_active: true` sets that port to "active" for such a ledger, as the test world does. A ledger with a tenant part ignores it. Without it, no programme draft can be prepared on a pilot cell | ADR-021 "Where the answer comes from" |
+| Start | `fstp_cell::run` decodes the file, reads the credentials, opens the cell key file through `key_file_keyd_socket`, draws a new ledger key generation and rewrites the key file before any seal, then runs `process::start_with` over `keyd_socket` on one tokio runtime until SIGTERM or SIGINT drains it | G1; G8; ADR-002 |
+
+## Configuration tests
+
+- `i19_config_names_one_cell` and `i16_config_types_hold_no_debtor_account` over the new grammar (I-19, I-16).
+- `i83_config_start_refuses_a_vault_cluster` (I-83).
+- `i80_cell_key_file_holds_no_open_key` (I-80).
+- `r_nf_02_config_and_key_errors_never_quote_bytes` (R-NF-02).
+- `crates/fstp-celltest/tests/prod_mcp_e2e.rs`: section 4.1 of the design over the `fstp-cell` binary.
 
 ## Consequences
 

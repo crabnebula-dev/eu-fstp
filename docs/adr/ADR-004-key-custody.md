@@ -627,3 +627,34 @@ Each entry builds a row of the decision above. Readings marked "interim, pending
   - A failed write after `create_root` can leave a root that no row names. The restart creates another. Reconciliation reports the orphan, and nothing destroys it yet.
   - Each flush that changes the chain state seals it once more under `S(e)` with a random nonce. No seal count bounds that per epoch yet (ADR-004 part 1 "Seal-count limit").
   - The migration set allows no gap. The file is `0011_keystore.sql` as the design fixes it, but its version is 9 on this lane alone. Merged after L1 it becomes 10, and L2's `0010_mcp.sql` then follows as 11.
+
+## Built by lane L4 `prod/cell-run`, 2026-11-20: the cell key file
+
+Daniel decided on 2026-11-20 the two points that lane L3 left open for the cell key file. Each is recorded here as "Decided by Daniel on 2026-11-20". Readings marked "interim, pending Daniel" are lane L4's own.
+
+| Topic | Decision |
+| --- | --- |
+| Sealing root | The sealed cell key file is sealed by a dedicated custody cell root. It is created at genesis, and no erasure ever destroys it. Decided by Daniel on 2026-11-20 |
+| Root entry | Interim, pending Daniel. The root lives in its own `fstp-keyd` entry, named by the configuration member `key_file_keyd_socket`, as the witness receipt key has its own entry. The start refuses a configuration whose two keyd sockets are the same path. The keystore and its erasures never reach that entry |
+| Root label | Interim, pending Daniel. The root is labelled cell, chain CellBackup, epoch 1. The `fstp-keyd` cell role reaches that chain, and ADR-004 part 2 says erasure never rotates it. So a root shared by mistake with the cell's own entry is still never destroyed by an erasure. A yearly re-wrap of CellBackup must re-wrap the key file too |
+| Ledger key generations | A generation is never reused across starts. Each start, `first-admin` included, draws a new generation with the next index and a fresh data key id, keeps every older one for opening, and rewrites the key file before the first seal. Decided by Daniel on 2026-11-20 (L3's open question 3) |
+| Rewrite | The file is written to a temporary file in the same directory, synced, and renamed over the old one. A crash leaves the old file or the new one, never a mix. The new body is sealed again under the same `S(e)` with a fresh random nonce |
+| Wiping | `zeroize` wipes the plain body of the key file in `fstp-cell` (ADR-001 record of 2026-11-20). Decided by Daniel on 2026-11-20 |
+
+```text
+file    = magic "fstp-cell-keys-v1" (17) || cell (16) || be64(epoch)
+          || be16(len) || custody handle || be16(len) || wrapped S(e)
+          || nonce (12) || be32(len) || sealed
+wrap    = custody wrap of S(e) under the dedicated root,
+          AAD = magic || cell || "cellbackup" || be64(epoch)
+sealed  = AES-256-GCM under S(e) of body,
+          AAD = magic || cell || "cellbackup" || be64(epoch)
+body    = anchor composite secret (64) || CredLookup key (32)
+          || ticket Ed25519 seed (32) || be16(n)
+          || n x (be32(key_ix) || data key id (16) || ledger key (32))
+```
+
+- Interim, pending Daniel: the layout. It follows the witness receipt key file (`fstp_witness::config`). The handle and the wrapped key are 1 to 4096 bytes each. The body holds 1 to 1024 generations, in increasing `key_ix`, with distinct indexes and data key ids. The last one is the current generation.
+- The decoder accepts exactly this form and re-encodes it byte for byte. Its fuzz target `cell_key_file_decode` exists from the first commit.
+- The file never holds an open key (I-80, `i80_cell_key_file_holds_no_open_key`). Errors name a rule and never quote file bytes (R-NF-02).
+- Interim, pending Daniel: the ticket key now always exists, so the vault ticket routes no longer answer 501 on a production cell.

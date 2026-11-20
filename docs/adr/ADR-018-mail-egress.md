@@ -70,3 +70,13 @@ pub enum Destination {
 ## Amendment, 2026-11-19 (ADR-008, suspect passkeys)
 
 A ninth template `passkey-disabled` (version 1) and the timeline event kind 15 carry the holder email of a disabled passkey. A tenant without a relay sends none. The template holds no time and no ids.
+
+## Amendment, 2026-11-20 (lane L4 `prod/cell-run`): the platform relay
+
+| Topic | Decision | Basis |
+| --- | --- | --- |
+| Proof mail before a tenant relay | Proof mail goes through a platform submission relay named in the cell configuration (`mail` of ADR-026), until a tenant sets its own relay. Decided by Daniel on 2026-11-20 (D3) | `docs/handoff/production-mcp-design.md` D3 |
+| Path | `fstp_cell::mail::SmtpRelay` submits through `MailEgress`, so the host, CrabNebula and TLS rules above hold. Its credential is the file `mail.password` of the credentials directory, and its pinned CA the optional `mail-ca.pem` | This ADR, "Connector" |
+| Relay address | Interim, pending Daniel. The operator may pin the relay's socket address (`mail.address`). The cell then connects to that address in place of a DNS lookup, and the public address and port 465 rules do not apply to the platform relay. TLS still checks the certificate for the relay host. A tenant relay can never name an address | ADR-026 "Relay address" |
+| Port for other lanes | `fstp_cell::mail::MailRelay` is the small trait that submits one message. The proof mail port `RelayProofMail` and the outbox delivery of lane L5 use it | Lane plan of 2026-11-20 |
+| Send | `ProofMail::send` is synchronous, so `RelayProofMail` queues the message and a task of the cell submits it. A full queue refuses the send. The route then answers as for any refused mail | Fails closed |
