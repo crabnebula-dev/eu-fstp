@@ -98,7 +98,10 @@ pub fn append_only(db: CellDatabase, object: &str) -> bool {
     match db {
         CellDatabase::App => {
             matches!(schema_of(object), "ledger" | "auth_log")
-                || matches!(object, "audit.chain" | "audit.anchor" | "ops.outbox")
+                || matches!(
+                    object,
+                    "audit.chain" | "audit.anchor" | "ops.outbox" | "api.pending_confirmed"
+                )
         }
         CellDatabase::Vault => schema_of(object) == "vault_audit",
     }

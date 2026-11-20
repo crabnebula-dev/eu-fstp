@@ -227,7 +227,7 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 /// The tables of the application database (design section 4.2, and the
 /// journey read model of ADR-015 "Storage and roles", and the delivery
 /// log of the M6 design section 3.2), in the order of the migration set.
-pub const APP_TABLES: [&str; 26] = [
+pub const APP_TABLES: [&str; 29] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -255,6 +255,10 @@ pub const APP_TABLES: [&str; 26] = [
     // M5 design section 4.3: write-once documents (I-30).
     "doc.blob",
     "ops.delivery",
+    // Lane L1 (ADR-026): the API core's pending actions and workspaces.
+    "api.pending_actions",
+    "api.pending_confirmed",
+    "workspace.drafts",
 ];
 
 /// The tables of the vault database (design section 4.3, with the
@@ -312,6 +316,8 @@ fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             "ledger" | "auth_log" => SI,
             "audit" if matches!(object, "audit.chain" | "audit.anchor") => SI,
             "ops" if object == "ops.outbox" => SI,
+            // ADR-026: a confirmation commits with its append (I-85).
+            "api" if object == "api.pending_confirmed" => SI,
             _ => &[],
         },
         RoleName::App => match schema {
@@ -328,6 +334,10 @@ fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             "journey" => SI,
             // M5 design section 4.3, I-30: write-once documents.
             "doc" => SI,
+            // ADR-026: the app role reads the confirmations the writer
+            // inserts, and keeps the pending actions and workspaces.
+            "api" if object == "api.pending_confirmed" => S,
+            "api" | "workspace" => FULL,
             // The I-83 start check of `fstp-cell` (design section 9.2).
             "fstp_meta" if object == PLACEMENT_TABLE => S,
             _ => &[],

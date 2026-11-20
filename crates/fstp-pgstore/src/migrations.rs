@@ -25,6 +25,8 @@ use fstp_migrate::Migration;
 ///    runner it changes nothing.
 /// 8. `column_classes`: the length checks of the column classes of
 ///    Daniel's Q-A answer (2026-11-07, design section 4.5, R-NF-08).
+/// 9. `api`: the pending actions and their confirmations, and the sealed
+///    workspaces of the API core (ADR-026, lane L1).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -54,6 +56,8 @@ pub const MIGRATIONS: &[Migration] = &[
         "column_classes",
         include_str!("../migrations/app/0008_column_classes.sql"),
     ),
+    // Lane L1 (ADR-026): pending actions and workspaces.
+    Migration::new(9, "api", include_str!("../migrations/app/0009_api.sql")),
 ];
 
 #[cfg(test)]
@@ -87,5 +91,91 @@ mod tests {
             assert!(!upper.contains("CREATE EXTENSION"), "{}", m.name);
             assert!(!upper.contains("SECURITY DEFINER"), "{}", m.name);
         }
+    }
+}
+
+#[cfg(test)]
+mod m4_tests {
+    use super::*;
+
+    /// The statements of `sql` with comments removed, upper case.
+    fn statements(sql: &str) -> String {
+        sql.lines()
+            .map(|l| l.split("--").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_ascii_uppercase()
+    }
+
+    /// M4 design section 9, ADR-026: migration 9 is forward only. It
+    /// creates the `api` and `workspace` schemas and changes nothing that
+    /// an earlier migration created: no DROP, no ALTER, no UPDATE, no
+    /// DELETE and no TRUNCATE. It follows migration 8 with no gap.
+    #[test]
+    fn t_db_m4_migrations_forward_only() {
+        let api = MIGRATIONS.iter().find(|m| m.name == "api");
+        let Some(api) = api else {
+            panic!("ADR-026: migration api is missing");
+        };
+        assert_eq!(api.version, 9, "ADR-026: the api migration is number 9");
+        let versions: Vec<u32> = MIGRATIONS.iter().map(|m| m.version).collect();
+        let want: Vec<u32> = (1..=9).collect();
+        assert_eq!(versions, want, "design section 4.6: no gap");
+        let body = statements(api.sql);
+        for word in [
+            "DROP ",
+            "ALTER ",
+            "UPDATE ",
+            "DELETE ",
+            "TRUNCATE ",
+            "GRANT ",
+            "REVOKE ",
+        ] {
+            // `BEFORE UPDATE OR DELETE` and `BEFORE TRUNCATE` name trigger
+            // events, not statements.
+            let hits = body
+                .match_indices(word)
+                .filter(|(i, _)| {
+                    let before = body.get(..*i).unwrap_or("");
+                    let word_start = !before
+                        .chars()
+                        .last()
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                    word_start && !(before.ends_with("BEFORE ") || before.ends_with("OR "))
+                })
+                .count();
+            assert_eq!(hits, 0, "M4 design section 9: migration 9 runs {word}");
+        }
+        for created in [
+            "CREATE SCHEMA API;",
+            "CREATE TABLE API.PENDING_ACTIONS",
+            "CREATE TABLE API.PENDING_CONFIRMED",
+            "CREATE SCHEMA WORKSPACE;",
+            "CREATE TABLE WORKSPACE.DRAFTS",
+        ] {
+            assert!(body.contains(created), "ADR-026: {created}");
+        }
+        // Every table it creates is new: no earlier migration names it.
+        for m in MIGRATIONS.iter().filter(|m| m.version < 9) {
+            let earlier = statements(m.sql);
+            for t in ["API.", "WORKSPACE."] {
+                assert!(!earlier.contains(t), "{} names {t}", m.name);
+            }
+        }
+    }
+
+    /// I-85, ADR-007: a confirmation row is insert-only. Its table refuses
+    /// UPDATE, DELETE and TRUNCATE through the shared trigger function.
+    #[test]
+    fn i85_pending_confirmed_is_insert_only() {
+        let api = MIGRATIONS.iter().find(|m| m.name == "api");
+        let body = statements(api.map_or("", |m| m.sql));
+        assert!(body.contains(
+            "BEFORE UPDATE OR DELETE ON API.PENDING_CONFIRMED\n  FOR EACH ROW EXECUTE FUNCTION FSTP_META.REFUSE_MUTATION()"
+        ));
+        assert!(body.contains(
+            "BEFORE TRUNCATE ON API.PENDING_CONFIRMED\n  FOR EACH STATEMENT EXECUTE FUNCTION FSTP_META.REFUSE_MUTATION()"
+        ));
+        assert!(body.contains("ID         BYTEA  PRIMARY KEY REFERENCES API.PENDING_ACTIONS"));
     }
 }

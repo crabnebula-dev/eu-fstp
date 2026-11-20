@@ -400,4 +400,114 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("reply_code", Enum),
         ],
     ),
+    // Lane L1 (ADR-026): the pending actions of the API core and their
+    // confirmations (I-85), and the sealed workspaces (I-21). `op_kind`
+    // and `status` are names from closed lists, `key_ix` a generation.
+    table(
+        "api",
+        "pending_actions",
+        TableClass::SealedContent,
+        &[
+            col("id", RandomId),
+            col("account", RandomId),
+            col("client_id", RandomId),
+            col("op_kind", Enum),
+            col("key_ix", Sequence),
+            col("request", Sealed),
+            col("digest", PublicDigest),
+            col("created_at", Time),
+            col("expires_at", Time),
+            col("status", Enum),
+            col("closed_at", Time),
+        ],
+    ),
+    table(
+        "api",
+        "pending_confirmed",
+        TableClass::Operational,
+        &[col("id", RandomId), col("ledger_seq", Sequence)],
+    ),
+    table(
+        "workspace",
+        "drafts",
+        TableClass::SealedContent,
+        &[
+            col("proposal", RandomId),
+            col("slot", Enum),
+            col("revision", Count),
+            col("key_ix", Sequence),
+            col("sealed", Sealed),
+            col("updated_at", Time),
+        ],
+    ),
 ];
+
+#[cfg(test)]
+mod api_tests {
+    use super::*;
+
+    fn class(schema: &str, name: &str, column: &str) -> Option<ColumnClass> {
+        CATALOGUE
+            .iter()
+            .find(|t| t.schema == schema && t.name == name)
+            .and_then(|t| t.columns.iter().find(|c| c.name == column))
+            .and_then(|c| c.class)
+    }
+
+    /// R-NF-08, I-21, I-85, ADR-026: every column of the `api` and
+    /// `workspace` tables carries a class. The request a pending action
+    /// replays and every workspace value are sealed. No other column of
+    /// these tables is sealed or holds content: ids, times, enums,
+    /// generations and one public digest only.
+    #[test]
+    fn r_nf_08_api_and_workspace_columns_are_classed() {
+        let tables: Vec<&TableSpec> = CATALOGUE
+            .iter()
+            .filter(|t| matches!(t.schema, "api" | "workspace"))
+            .collect();
+        let names: Vec<(&str, &str)> = tables.iter().map(|t| (t.schema, t.name)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("api", "pending_actions"),
+                ("api", "pending_confirmed"),
+                ("workspace", "drafts"),
+            ]
+        );
+        for t in &tables {
+            for c in t.columns {
+                assert!(
+                    c.class.is_some(),
+                    "R-NF-08: {}.{}.{}",
+                    t.schema,
+                    t.name,
+                    c.name
+                );
+            }
+        }
+        assert_eq!(class("api", "pending_actions", "request"), Some(Sealed));
+        assert_eq!(class("workspace", "drafts", "sealed"), Some(Sealed));
+        let sealed: Vec<String> = tables
+            .iter()
+            .flat_map(|t| {
+                t.columns
+                    .iter()
+                    .filter(|c| c.class == Some(Sealed))
+                    .map(move |c| format!("{}.{}", t.name, c.name))
+            })
+            .collect();
+        assert_eq!(sealed, vec!["pending_actions.request", "drafts.sealed"]);
+        assert_eq!(
+            class("api", "pending_actions", "digest"),
+            Some(PublicDigest)
+        );
+        for (t, c) in [
+            ("pending_actions", "id"),
+            ("pending_actions", "account"),
+            ("pending_actions", "client_id"),
+            ("pending_confirmed", "id"),
+        ] {
+            assert_eq!(class("api", t, c), Some(RandomId), "{t}.{c}");
+        }
+    }
+}
