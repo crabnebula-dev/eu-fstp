@@ -554,6 +554,31 @@ impl FakeTokens {
         by.into_values().collect()
     }
 
+    /// The pending consent `handle` at `now` as the consent page shows it
+    /// (lane L2, `agents.consent_request`).
+    ///
+    /// # Errors
+    ///
+    /// [`PortError::Refused`] for a handle the server does not hold.
+    pub fn consent_request(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<fstp_api_core::port::ConsentRequestInfo, PortError> {
+        let v = self
+            .with_oauth(|o| o.server.consent_view(handle, now.micros()))
+            .map_err(|_| PortError::Unavailable)?
+            .ok_or(PortError::Refused)?;
+        Ok(fstp_api_core::port::ConsentRequestInfo {
+            client: AgentClientId::from_raw(u128::from(v.client.raw())),
+            name: v.client_name,
+            redirect_host: v.redirect_host,
+            loopback: v.loopback_redirect,
+            scopes: port_scopes(v.scopes),
+            expires: Timestamp::from_micros(v.expires),
+        })
+    }
+
     /// How many tokens were issued.
     pub fn issued(&self) -> usize {
         lock(&self.state).grants.len()
@@ -588,5 +613,13 @@ impl fstp_api_core::port::Tokens for FakeTokens {
         now: Timestamp,
     ) -> Result<Vec<AgentInfo>, PortError> {
         Ok(FakeTokens::agents(self, account, now))
+    }
+
+    async fn consent_request(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<fstp_api_core::port::ConsentRequestInfo, PortError> {
+        FakeTokens::consent_request(self, handle, now)
     }
 }

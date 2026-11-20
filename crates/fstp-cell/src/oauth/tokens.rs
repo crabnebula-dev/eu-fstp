@@ -237,4 +237,41 @@ impl fstp_api_core::port::Tokens for CellTokens {
     ) -> Result<Vec<AgentInfo>, PortError> {
         self.agents_of(account, now).await
     }
+
+    async fn consent_request(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<fstp_api_core::port::ConsentRequestInfo, PortError> {
+        self.consent_view(handle, now).await
+    }
+}
+
+impl CellTokens {
+    /// The pending consent `handle` at `now`, as the consent page shows it
+    /// (`agents.consent_request`, I-86).
+    ///
+    /// # Errors
+    ///
+    /// [`PortError::Refused`] for a handle the server does not hold.
+    pub async fn consent_view(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<fstp_api_core::port::ConsentRequestInfo, PortError> {
+        let v = self
+            .server
+            .read(|s, _, _| s.consent_view(handle, now.micros()))
+            .await
+            .map_err(|_| PortError::Unavailable)?
+            .ok_or(PortError::Refused)?;
+        Ok(fstp_api_core::port::ConsentRequestInfo {
+            client: AgentClientId::from_raw(u128::from(v.client.raw())),
+            name: v.client_name,
+            redirect_host: v.redirect_host,
+            loopback: v.loopback_redirect,
+            scopes: port_scopes(v.scopes),
+            expires: Timestamp::from_micros(v.expires),
+        })
+    }
 }

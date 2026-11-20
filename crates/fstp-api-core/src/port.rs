@@ -978,6 +978,39 @@ pub trait Tokens: Send + Sync {
         account: AccountId,
         now: Timestamp,
     ) -> impl Future<Output = Result<Vec<AgentInfo>, PortError>> + Send;
+    /// The pending consent `handle` at `now`, as the consent page shows it
+    /// (`agents.consent_request`, ADR-013 amendment of 2026-11-20, lane
+    /// L2). A handle the server does not hold, or holds no longer, is
+    /// refused. The default holds no authorisation server, so it fails
+    /// closed.
+    fn consent_request(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> impl Future<Output = Result<ConsentRequestInfo, PortError>> + Send {
+        let _ = (handle, now);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+}
+
+/// A pending consent as the consent page shows it (lane L2,
+/// `agents.consent_request`): the client, its own name as unverified text,
+/// the host the browser goes back to and the scopes asked for. It names
+/// no account, no handle and no digest (I-86).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConsentRequestInfo {
+    /// The agent client.
+    pub client: AgentClientId,
+    /// The client name it registered with: untrusted text, unverified.
+    pub name: Option<String>,
+    /// The host of the redirect URI.
+    pub redirect_host: String,
+    /// Whether that host is a loopback host on the user's own device.
+    pub loopback: bool,
+    /// The scopes asked for.
+    pub scopes: BTreeSet<fstp_access::Scope>,
+    /// When the consent expires.
+    pub expires: Timestamp,
 }
 
 /// One connected agent client of an account (R-MC-03): what its tokens
