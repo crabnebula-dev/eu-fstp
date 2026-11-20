@@ -764,6 +764,7 @@ where
         &host,
     )
     .await?;
+    let _ = backend.set_agent_grants(Arc::clone(&oauth) as Arc<dyn crate::oauth::AgentGrants>);
     let _ = front.mount_oauth(Arc::new(crate::oauth::OauthRoutes::new(
         Arc::clone(&oauth),
         &host,
