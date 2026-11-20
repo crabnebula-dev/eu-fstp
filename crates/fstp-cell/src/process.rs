@@ -935,6 +935,21 @@ impl<R: Runtime> RunningCell<R> {
         &self.app
     }
 
+    /// Every row of the App chain, with the stored ledger rows and the
+    /// anchors, read through the cell's own reading store (ADR-010). The
+    /// kind 2 rows are the audit events (ADR-010 amendment of 2026-11-20).
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Store`] when the store cannot be read.
+    pub async fn chain_rows(&self) -> Result<fstp_pgstore::ChainRows, CellError> {
+        self.reader
+            .inner()
+            .read_chain_rows()
+            .await
+            .map_err(|e| CellError::Store(fstp_ledger::StoreError::from(e)))
+    }
+
     /// Design section 9.2 step 10 (module documentation): draws the first
     /// admin's token and records its invitation for a new account.
     ///

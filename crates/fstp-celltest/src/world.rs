@@ -917,6 +917,60 @@ impl CellHandle {
         Ok(self.runtime()?.services.rt.block_on(f))
     }
 
+    /// The cell's engine handle (lane L1, ADR-026): the only path into
+    /// `DriverCore`, for tests that admit commands through the gate.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell is not running.
+    pub fn cell_engine(&self) -> Result<fstp_cell::engine::CellEngine, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        running
+            .cell
+            .as_ref()
+            .map(|c| c.engine().clone())
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
+    }
+
+    /// Runs `f` on the cell's runtime with its running cell (lane L1).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell is not running.
+    pub fn with_running<T>(
+        &self,
+        f: impl AsyncFnOnce(&fstp_cell::process::RunningCell<fstp_rt::tokio::TokioRuntime>) -> T,
+    ) -> Result<T, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        let cell = running
+            .cell
+            .as_ref()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
+        Ok(rt.services.rt.block_on(f(cell)))
+    }
+
+    /// The kinds of the App chain rows in order: 1 for a ledger entry, 2
+    /// for an audit event (ADR-010, lane L1).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell is not running or its chain cannot be read.
+    pub fn chain_kinds(&self) -> Result<Vec<u8>, WorldError> {
+        let rows = self
+            .with_running(async |c| c.chain_rows().await)?
+            .map_err(|e| WorldError::Store(format!("the chain rows: {e}")))?;
+        Ok(rows
+            .rows
+            .iter()
+            .map(|r| match r.row.kind {
+                fstp_audit::RowKind::Ledger { .. } => 1,
+                fstp_audit::RowKind::Event { .. } => 2,
+            })
+            .collect())
+    }
+
     pub(crate) fn erasure(&self) -> Result<fstp_cell::tasks::erasure::ErasureHandle, WorldError> {
         let rt = self.runtime()?;
         let running = lock(&rt.running);
