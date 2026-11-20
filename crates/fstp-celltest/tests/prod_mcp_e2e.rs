@@ -57,7 +57,7 @@ const SINK_CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
 /// before its custody goes.
 struct Stack {
     world: World,
-    _sink: SmtpSink,
+    sink: SmtpSink,
     _rt: fstp_rt::tokio::TokioRuntime,
     _custody: SimProcess,
     _key_file_custody: SimProcess,
@@ -123,7 +123,7 @@ fn stack() -> Stack {
     .unwrap_or_else(|e| panic!("{e}"));
     Stack {
         world,
-        _sink: sink,
+        sink,
         _rt: rt,
         _custody: custody,
         _key_file_custody: key_file_custody,
@@ -376,6 +376,16 @@ fn action(cell: &CellHandle, admin: &Cookie, id: &str) -> Value {
         .unwrap_or_else(|| panic!("the action {id} is not listed"))
 }
 
+/// How many messages to `to` the platform relay accepted.
+fn relayed(stack: &Stack, to: &str) -> usize {
+    stack
+        .sink
+        .messages()
+        .iter()
+        .filter(|m| m.to.iter().any(|t| t == to))
+        .count()
+}
+
 /// Production MCP design section 4.1, steps 1 to 7, over the `fstp-cell`
 /// binary started from its configuration file (G1, G8, G10, G11).
 ///
@@ -393,7 +403,9 @@ fn action(cell: &CellHandle, admin: &Cookie, id: &str) -> Value {
 ///    call answers a pending action. No programme exists yet.
 /// 5. Confirm (I-85, I-78): the same account confirms with a fresh step-up
 ///    bound to the stored digest. The draft exists. A second confirmation
-///    is refused.
+///    is refused. Then (step 5b, D3, I-26, wave 2 merge) the agent
+///    prepares a role invitation, the person confirms it, and its mail
+///    reaches the relay once.
 /// 6. Restart (I-23): SIGTERM drains the binary, which starts again from
 ///    the same file with a new ledger key generation (ADR-004 record of
 ///    L4). The refresh token rotates, which needs the client's sealed
@@ -495,6 +507,48 @@ fn prod_mcp_e2e_binary_from_config_file() {
     );
     let again = web_with_step_up(&client, "POST", &path, &admin2, &body);
     assert_ne!(again.status, 200, "I-85: confirmed twice: {}", text(&again));
+
+    // Step 5b (wave 2 merge, D3, I-85, I-26): the agent prepares a role
+    // invitation, the person confirms it in the platform, and its mail
+    // reaches the platform relay once.
+    let invitee = "invitee-l4@fstp-l4.invalid";
+    let r = mcp(
+        cell,
+        &access,
+        "tools/call",
+        Some("fstp_prepare_invitation"),
+        &format!(
+            r#""name":"fstp_prepare_invitation","arguments":{{"programme":"{programme}","email":"{invitee}","role":"programme_manager"}}"#
+        ),
+    );
+    assert_eq!(r.status, 200, "prepare invitation: {}", text(&r));
+    assert!(!text(&r).contains(invitee), "I-86: {}", text(&r));
+    let invitation = text(&r)
+        .split('"')
+        .find(|s| s.starts_with("/app/pending/"))
+        .unwrap_or_else(|| panic!("no confirm path: {}", text(&r)))
+        .trim_start_matches("/app/pending/")
+        .to_owned();
+    assert_eq!(relayed(&stack, invitee), 0, "I-85: preparing sent mail");
+    let open = action(cell, &admin2, &invitation);
+    let digest = open
+        .get("digest")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_owned();
+    let done = web_with_step_up(
+        &client,
+        "POST",
+        &format!("/api/v1/pending-actions/{invitation}/confirmation"),
+        &admin2,
+        &format!(r#"{{"shown":"{digest}"}}"#),
+    );
+    assert_eq!(done.status, 200, "the invitation: {}", text(&done));
+    let begun = std::time::Instant::now();
+    while relayed(&stack, invitee) == 0 && begun.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(relayed(&stack, invitee), 1, "I-26: the invitation mail");
 
     // Step 6.
     ext.stop()
