@@ -72,5 +72,5 @@ DnsResolver { addr: SocketAddr },   // the configured resolver, TCP port 53 only
 - Whether a class counts as defined only through a declared member, or through a class register in the vault.
 - Whether the ledger records the two Q35 answers as `VaultOutcome` records in an approval entry.
 - How the inference probe reaches P-21: through the assessor, or through an ADR-009 member.
-- The API core path. `CellAsyncEngine` in `crates/fstp-cell/src/api/` still reads the synchronous shell facts and `AsyncEngine::creator_inputs` keeps its default, so a report read and a request for activation through the API core see no probe and no Q35 answer. Lane L5 or the lead calls `creator_facts_fresh` and `guide_inputs_fresh` there.
+- The API core path. Closed in part at the wave 2 merge: the engine port decides creator commands and publications with the fresh facts (`api::facts::FreshFacts` over `creator_facts_fresh` and `guide_inputs_fresh`). `AsyncEngine::creator_inputs` keeps its default, so the API core's own report reads still see no probe and no Q35 answer.
 - The approved wording of the shipped profiles and of the platform data protection texts (`TODO(legal)`).
