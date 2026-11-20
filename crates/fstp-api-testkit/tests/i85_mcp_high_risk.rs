@@ -77,8 +77,8 @@ fn high_risk_through_mcp(c: &McpCell) -> usize {
 
 /// I-85, ADR-013: in the registry, every high-risk operation has no tool
 /// or a prepare-only one. Green now, and it must stay green. The ADR-013
-/// amendment of 2026-11-20 adds the prepare-only setup tools, each named
-/// `fstp_prepare_*`.
+/// amendment of 2026-11-20 adds the prepare-only setup tools. The list of
+/// prepare-only tools and their operations is pinned exactly.
 #[test]
 fn i85_mcp_registry_high_risk_ops_have_no_tool_or_a_prepare_only_one() {
     for op in OPS.iter().filter(|o| o.high_risk) {
@@ -90,17 +90,49 @@ fn i85_mcp_registry_high_risk_ops_have_no_tool_or_a_prepare_only_one() {
             );
         }
     }
-    let prepare: Vec<&str> = tools().filter(|t| t.prepare_only).map(|t| t.name).collect();
-    assert_eq!(prepare.len(), 15, "{prepare:?}");
-    assert!(prepare.contains(&"fstp_prepare_call_publication"));
-    for name in &prepare {
-        assert!(name.starts_with("fstp_prepare_"), "{name}");
-    }
-    let named: Vec<&str> = tools()
-        .filter(|t| t.name.starts_with("fstp_prepare_"))
-        .map(|t| t.name)
+    let mut prepare: Vec<(&str, &str)> = OPS
+        .iter()
+        .filter_map(|o| o.tool.filter(|t| t.prepare_only).map(|t| (t.name, o.name)))
         .collect();
-    assert_eq!(named, prepare, "every fstp_prepare_* tool only prepares");
+    prepare.sort_unstable();
+    assert_eq!(
+        prepare,
+        [
+            (
+                "fstp_prepare_activation_request",
+                "creator.request_activation"
+            ),
+            ("fstp_prepare_branding", "tenant.branding.set"),
+            ("fstp_prepare_call_approval", "call.approve"),
+            ("fstp_prepare_call_publication", "call.publish"),
+            (
+                "fstp_prepare_funder_profile_copy",
+                "tenant.funder_profile.copy"
+            ),
+            (
+                "fstp_prepare_funder_profile_save",
+                "tenant.funder_profile.save"
+            ),
+            ("fstp_prepare_import_resolution", "import.resolve"),
+            ("fstp_prepare_invitation", "creator.invite"),
+            (
+                "fstp_prepare_narrative_acceptance",
+                "creator.accept_narrative"
+            ),
+            ("fstp_prepare_programme_draft", "creator.open_draft"),
+            ("fstp_prepare_role_end", "roles.end"),
+            ("fstp_prepare_role_grant", "roles.grant"),
+            ("fstp_prepare_tenant_template", "creator.save_as_template"),
+            ("fstp_prepare_terminology", "tenant.terminology.set"),
+            (
+                "fstp_prepare_warning_acknowledgement",
+                "creator.acknowledge"
+            ),
+        ],
+        "I-85, ADR-013 amendment of 2026-11-20: the prepare-only tools"
+    );
+    let served: Vec<&str> = tools().filter(|t| t.prepare_only).map(|t| t.name).collect();
+    assert_eq!(served.len(), prepare.len(), "the served prepare-only tools");
 }
 
 /// I-85, I-84: through the MCP server, for every world account with

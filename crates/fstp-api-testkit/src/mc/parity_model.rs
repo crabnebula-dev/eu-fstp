@@ -23,8 +23,10 @@
 //!
 //! The exposure of an operation comes from the reference
 //! (`reference::authz`), never from `fstp-access`: a high-risk operation,
-//! and a binding one under P-77 "draft only", is a pending exposure. Every
-//! other one is a direct exposure.
+//! one whose reference tool is prepare-only (`RefTool::prepare`, the ADR-013
+//! amendment of 2026-11-20), and a binding one under P-77 "draft only", is
+//! a pending exposure. Every other one is a direct exposure, so `Pending`
+//! through MCP stays a violation for it.
 //!
 //! Properties:
 //!
@@ -114,9 +116,12 @@ pub enum Exposure {
     Pending,
 }
 
-/// The exposure of `op` under `policy`.
+/// The exposure of `op` under `policy`. A prepare-only tool on an operation
+/// that is not high-risk is a pending exposure (ADR-013 amendment of
+/// 2026-11-20). The reference names exactly those tools.
 pub fn exposure(op: &RefOp, policy: &Policy) -> Exposure {
-    if op.high_risk || (op.binding && policy.p77_draft_only) {
+    let prepare_only = op.tool.is_some_and(|t| t.prepare);
+    if op.high_risk || prepare_only || (op.binding && policy.p77_draft_only) {
         Exposure::Pending
     } else {
         Exposure::Direct
@@ -591,5 +596,43 @@ mod tests {
         );
         let skipped = pair(p, guard.clone(), Observed::Pending, Some(guard.clone()));
         assert!(skipped.pending_parity().is_err());
+    }
+
+    /// I-84, I-85, ADR-013 amendment of 2026-11-20: exactly the seven
+    /// operations that are not high-risk but whose tool only prepares are
+    /// pending exposures under either P-77 value. Every other operation
+    /// with a tool that is neither high-risk nor binding stays a direct
+    /// exposure, so `Pending` through MCP is a violation for it.
+    #[test]
+    fn i84_m_parity_prepare_only_tools_are_pending_exposures() {
+        let reference = authz_reference().unwrap();
+        let prepared: Vec<&str> = reference
+            .ops()
+            .filter(|o| !o.high_risk && o.tool.is_some_and(|t| t.prepare))
+            .map(|o| o.name)
+            .collect();
+        let mut want = vec![
+            "call.approve",
+            "creator.accept_narrative",
+            "creator.acknowledge",
+            "creator.invite",
+            "creator.request_activation",
+            "creator.save_as_template",
+            "import.resolve",
+        ];
+        want.sort_unstable();
+        assert_eq!(prepared, want, "the prepare-only operations");
+        for op in reference.ops().filter(|o| o.tool.is_some()) {
+            for p77 in [true, false] {
+                let got = exposure(op, &policy(p77));
+                let pending = op.high_risk || prepared.contains(&op.name) || (op.binding && p77);
+                let want = if pending {
+                    Exposure::Pending
+                } else {
+                    Exposure::Direct
+                };
+                assert_eq!(got, want, "{} under P-77 draft only {p77}", op.name);
+            }
+        }
     }
 }
