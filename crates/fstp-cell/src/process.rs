@@ -787,6 +787,17 @@ where
         limits: auth_limits,
         organisation,
     };
+    // Lane L2 hook (ADR-013 amendment of 2026-11-20): the authorisation
+    // server over the `mcp` rows, its `/oauth` routes on the front, and its
+    // grants for the recovery route (H-21).
+    let oauth = crate::oauth::start_pg(
+        app_pool.clone(),
+        started.erasure.clone(),
+        started.engine.clone(),
+        Arc::clone(&clock),
+        &host,
+    )
+    .await?;
     let log = Arc::new(StderrLog);
     // ADR-026: with the compiled journey UI, the cell mounts the web
     // adapter over one ApiCore of its own ports behind its table. The
@@ -804,14 +815,18 @@ where
                 erasure: started.erasure.clone(),
                 organisation,
             };
-            // Lane L2 replaces the refusing token store here.
-            let core = crate::api::compose(parts, crate::api::NoTokens);
+            // Lane L2's token store over the same authorisation server.
+            let tokens = crate::oauth::tokens::CellTokens::new(Arc::clone(&oauth));
+            let core = crate::api::compose(parts, tokens);
             let origin = fstp_web::parse_origin_header(format!("https://{host}").as_bytes())
                 .map_err(|_| CellError::Config(crate::config::ConfigError::Invalid("host")))?;
-            let web = fstp_web::router(Arc::new(core), fstp_web::WebConfig::new(origin, assets))
-                .map_err(|_| {
-                    CellError::NotImplemented("the web adapter refused its configuration")
-                })?;
+            // One issuer and resource for the metadata documents and the
+            // server that issues the tokens (ADR-013 amendment).
+            let web_cfg =
+                fstp_web::WebConfig::new(origin, assets).with_oauth(oauth.config().clone());
+            let web = fstp_web::router(Arc::new(core), web_cfg).map_err(|_| {
+                CellError::NotImplemented("the web adapter refused its configuration")
+            })?;
             Front::with_web(front_cfg, pages, web, Arc::clone(&backend), log)
         }
         None => match pages {
@@ -820,17 +835,6 @@ where
         },
     }
     .map_err(|_| CellError::Config(crate::config::ConfigError::Invalid("host")))?;
-    // Lane L2 hook (ADR-013 amendment of 2026-11-20): the authorisation
-    // server over the `mcp` rows, its `/oauth` routes on the front, and its
-    // grants for the recovery route (H-21).
-    let oauth = crate::oauth::start_pg(
-        app_pool.clone(),
-        started.erasure.clone(),
-        started.engine.clone(),
-        Arc::clone(&clock),
-        &host,
-    )
-    .await?;
     let _ = backend.set_agent_grants(Arc::clone(&oauth) as Arc<dyn crate::oauth::AgentGrants>);
     let _ = front.mount_oauth(Arc::new(crate::oauth::OauthRoutes::new(
         Arc::clone(&oauth),

@@ -58,11 +58,13 @@ impl Mcp {
         core: Arc<ApiCore>,
         origin: &Origin,
         local_http: Option<fn(&str) -> bool>,
+        shared: Option<fstp_oauth::Config>,
     ) -> Result<Mcp, WebError> {
         let issuer = origin.to_string();
         let resource = format!("{issuer}{}", fstp_mcp::Surface::Mcp.path());
-        let cfg =
-            fstp_oauth::Config::new(&issuer, &resource, METADATA_P72_MICROS, METADATA_P71_MICROS);
+        let cfg = shared.unwrap_or_else(|| {
+            fstp_oauth::Config::new(&issuer, &resource, METADATA_P72_MICROS, METADATA_P71_MICROS)
+        });
         let docs = oauth_server(cfg, local_http)
             .ok()
             .map(|o| (o.resource_metadata().body, o.server_metadata().body));

@@ -11,28 +11,23 @@
 //!   cell's own `/auth` routes serve those.
 //! - Invitations are issued through the cell's command route. The API
 //!   core reads display handles and login emails only.
-//! - [`NoTokens`] refuses every bearer token, so `/mcp` answers 401 and no
-//!   agent call is admitted, until lane L2 plugs in its token store.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use fstp_access::ReadClearance;
 use fstp_api_core::port::{
-    Accounts, Affiliations, AgentClientId, AgentInfo, AsyncIdentityOracle, BirthDate, BlobOwner,
-    BlobRef, BlobStore, BreakGlass, BreakGlassId, ConsentApproval, CountryCode, DisplayHandle,
-    ExclusionClasses, InvitationLink, InviteKind, PasskeyRegistration, PortError, Precheck,
-    ProbeKind, ProbeOutcome, Prober, Receipt, Recovery, RecoveryId, SessionId, SessionInfo,
-    SessionsAdmin, StepUpProof, Tokens, Vault, VaultBound, VerificationPurpose,
-    VerificationRedirect,
+    Accounts, Affiliations, AsyncIdentityOracle, BirthDate, BlobOwner, BlobRef, BlobStore,
+    BreakGlass, BreakGlassId, CountryCode, DisplayHandle, ExclusionClasses, InvitationLink,
+    InviteKind, PasskeyRegistration, PortError, Precheck, ProbeKind, ProbeOutcome, Prober, Receipt,
+    Recovery, RecoveryId, SessionId, SessionInfo, SessionsAdmin, StepUpProof, Vault, VaultBound,
+    VerificationPurpose, VerificationRedirect,
 };
-use fstp_cell_core::gate::AgentGrant;
 use fstp_domain::id::{AccountId, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
-use fstp_domain::time::Timestamp;
 use fstp_rt::Runtime;
 
-use super::{CellTokens, Inner};
+use super::Inner;
 use crate::engine::VaultClient;
 
 /// The vault port.
@@ -226,51 +221,5 @@ impl BlobStore for ClosedBlobs {
     ) -> Result<Vec<u8>, PortError> {
         let _ = (owner, r, clearance);
         Err(PortError::Unavailable)
-    }
-}
-
-/// The token store until lane L2: every token is refused, and no agent
-/// grant exists.
-pub(crate) struct NoTokens;
-
-impl Tokens for NoTokens {
-    async fn grant(
-        &self,
-        token: &[u8],
-        now: Timestamp,
-    ) -> Result<fstp_access::GrantFacts, PortError> {
-        let _ = (token, now);
-        Err(PortError::Refused)
-    }
-
-    async fn revoke(&self, account: AccountId, client: AgentClientId) -> Result<(), PortError> {
-        let _ = (account, client);
-        Err(PortError::Unavailable)
-    }
-
-    async fn approve_consent(&self, c: ConsentApproval) -> Result<String, PortError> {
-        drop(c);
-        Err(PortError::Refused)
-    }
-
-    async fn agents(
-        &self,
-        account: AccountId,
-        now: Timestamp,
-    ) -> Result<Vec<AgentInfo>, PortError> {
-        let _ = (account, now);
-        Ok(Vec::new())
-    }
-}
-
-impl CellTokens for NoTokens {
-    async fn agent_grant(
-        &self,
-        account: AccountId,
-        client: AgentClientId,
-        now: Timestamp,
-    ) -> Option<AgentGrant> {
-        let _ = (account, client, now);
-        None
     }
 }

@@ -22,11 +22,11 @@
 //! - `tenant`: `TenantConfig`, `Outbox`, `Clock` and `Ids`.
 //! - `closed`: the ports the production cell does not serve yet, each
 //!   failing closed: the vault's intake and Q35 queries, `Precheck`,
-//!   `Prober`, `Recovery`, `BreakGlass`, `Accounts::invite` and `Tokens`
-//!   until lane L2 plugs in its token store.
+//!   `Prober`, `Recovery`, `BreakGlass` and `Accounts::invite`.
 //!
-//! Lane L2 plugs its token store in through [`CellTokens`]: the `Tokens`
-//! port of `ApiCore` and the agent grant the agent admission reads.
+//! The token store is lane L2's (`crate::oauth::tokens::CellTokens`),
+//! through [`CellTokens`]: the `Tokens` port of `ApiCore` and the agent
+//! grant the agent admission reads.
 
 mod audit;
 mod closed;
@@ -50,11 +50,9 @@ use crate::public::OrganisationPort;
 use crate::routes::pg::PgBackend;
 use crate::tasks::erasure::ErasureHandle;
 
-pub(crate) use closed::NoTokens;
-
 /// The token store of the cell, as `ApiCore` and the agent admission
-/// reach it (ADR-026 "Tokens until lane L2"). Lane L2 implements it over
-/// the `mcp` schema. [`NoTokens`] refuses every token until then.
+/// reach it (ADR-026). Lane L2's store over the `mcp` schema implements
+/// it.
 pub(crate) trait CellTokens: port::Tokens + 'static {
     /// The grant behind the agent client `client` of `account` at `now`,
     /// as the gate's agent admission reads it, or `None` when no live
@@ -314,4 +312,44 @@ fn phishing_resistant(m: fstp_auth::Method) -> bool {
         m,
         fstp_auth::Method::Passkey | fstp_auth::Method::EudiWallet
     )
+}
+
+/// The token store of a serving cell: lane L2's port over its
+/// authorisation server. The agent admission takes the account's live
+/// grants of the client: the oldest family start and a phishing-resistant
+/// consent only if every live grant had one, so a doubt refuses (I-77,
+/// I-79, I-85).
+impl CellTokens for crate::oauth::tokens::CellTokens {
+    async fn agent_grant(
+        &self,
+        account: AccountId,
+        client: port::AgentClientId,
+        now: Timestamp,
+    ) -> Option<AgentGrant> {
+        let grants = self
+            .server()
+            .read(|s, guard, _| {
+                let a = fstp_oauth::Account::from_raw(account.raw());
+                s.agents_of(a, now.micros())
+                    .into_iter()
+                    .filter(|g| u128::from(g.client.raw()) == client.raw())
+                    .filter(|g| !guard.refused(a, g.start))
+                    .map(|g| (g.start, g.consent_method))
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .ok()?;
+        let start = grants.iter().map(|(s, _)| *s).min()?;
+        let strong = grants.iter().all(|(_, m)| {
+            matches!(
+                m,
+                fstp_oauth::LoginMethod::Passkey | fstp_oauth::LoginMethod::EudiWallet
+            )
+        });
+        Some(AgentGrant {
+            account,
+            family_started: Timestamp::from_micros(start),
+            phishing_resistant: strong,
+        })
+    }
 }
