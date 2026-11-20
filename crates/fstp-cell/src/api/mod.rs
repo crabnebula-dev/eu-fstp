@@ -33,6 +33,7 @@
 //! grant the agent admission reads.
 
 mod accounts;
+mod admin;
 mod audit;
 mod closed;
 mod content;
@@ -126,7 +127,7 @@ impl<R: Runtime, V> Inner<R, V> {
 pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     sessions: session::CellSessions<R, V>,
     step_up: session::CellStepUp<R, V>,
-    sessions_admin: closed::ClosedSessionsAdmin,
+    sessions_admin: admin::CellSessionsAdmin<R, V>,
     accounts: accounts::CellAccounts<R, V>,
     vault: closed::CellVault<R, V>,
     engine: engine::CellAsyncEngine<R, V, T>,
@@ -137,7 +138,7 @@ pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     sealer: content::CellSealer<R, V>,
     workspaces: content::CellWorkspaces<R, V>,
     pending: content::CellPending<R, V>,
-    recovery: closed::ClosedRecovery,
+    recovery: admin::CellRecovery<R, V>,
     break_glass: closed::ClosedBreakGlass,
     tenant: tenant::CellTenant<R, V>,
     outbox: tenant::CellOutbox<R, V>,
@@ -187,7 +188,7 @@ where
     let ports = Ports {
         sessions: session::CellSessions(Arc::clone(&inner)),
         step_up: session::CellStepUp(Arc::clone(&inner)),
-        sessions_admin: closed::ClosedSessionsAdmin,
+        sessions_admin: admin::CellSessionsAdmin(Arc::clone(&inner)),
         accounts: accounts::CellAccounts(Arc::clone(&inner)),
         vault: closed::CellVault(Arc::clone(&inner)),
         engine: engine::CellAsyncEngine::new(Arc::clone(&inner), Arc::clone(&tokens)),
@@ -198,7 +199,7 @@ where
         sealer: content::CellSealer(Arc::clone(&inner)),
         workspaces: content::CellWorkspaces(Arc::clone(&inner)),
         pending: content::CellPending(Arc::clone(&inner)),
-        recovery: closed::ClosedRecovery,
+        recovery: admin::CellRecovery(Arc::clone(&inner)),
         break_glass: closed::ClosedBreakGlass,
         tenant: tenant::CellTenant(Arc::clone(&inner)),
         outbox: tenant::CellOutbox(Arc::clone(&inner)),
@@ -228,8 +229,8 @@ where
     type Sealer = content::CellSealer<R, V>;
     type Workspaces = content::CellWorkspaces<R, V>;
     type VaultAudit = audit::CellVaultAudit<R, V>;
-    type SessionsAdmin = closed::ClosedSessionsAdmin;
-    type Recovery = closed::ClosedRecovery;
+    type SessionsAdmin = admin::CellSessionsAdmin<R, V>;
+    type Recovery = admin::CellRecovery<R, V>;
     type BreakGlass = closed::ClosedBreakGlass;
     type Tenant = tenant::CellTenant<R, V>;
     type Outbox = tenant::CellOutbox<R, V>;

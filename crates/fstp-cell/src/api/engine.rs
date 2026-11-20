@@ -205,26 +205,9 @@ where
         s: &CellState,
         id: [u8; 16],
     ) -> Result<Option<StepUpView>, ExecError> {
-        let Some(grant) = s.auth().stepup_grant(id) else {
-            return Ok(None);
-        };
-        let asserted_at = self
-            .inner
-            .backend
-            .stepup_asserted_at(id)
+        stepup_view_of(&self.inner, s, id)
             .await
-            .map_err(|_| ExecError::Port(PortError::Unavailable))?
-            .ok_or(ExecError::Port(PortError::Unavailable))?;
-        Ok(Some(StepUpView {
-            id,
-            session: grant.session,
-            action_digest: grant.action_digest,
-            asserted_at,
-            // The ledger grants a step-up only after a passkey assertion
-            // with user verification (design section 8.4).
-            strong: true,
-            consumed: s.auth().consumed(id),
-        }))
+            .map_err(ExecError::Port)
     }
 
     async fn dry(
@@ -356,4 +339,33 @@ where
     fn ledger_after(&self, after: Seq) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
         Some(self.inner.engine.engine_entries_after(after))
     }
+}
+
+/// The step-up `id` as the gate sees it: the ledger's grant, with its
+/// logged assertion instant (as the cell's routes read it). `None` when
+/// the ledger holds no such grant.
+pub(super) async fn stepup_view_of<R: Runtime, V>(
+    inner: &Inner<R, V>,
+    s: &CellState,
+    id: [u8; 16],
+) -> Result<Option<StepUpView>, PortError> {
+    let Some(grant) = s.auth().stepup_grant(id) else {
+        return Ok(None);
+    };
+    let asserted_at = inner
+        .backend
+        .stepup_asserted_at(id)
+        .await
+        .map_err(|_| PortError::Unavailable)?
+        .ok_or(PortError::Unavailable)?;
+    Ok(Some(StepUpView {
+        id,
+        session: grant.session,
+        action_digest: grant.action_digest,
+        asserted_at,
+        // The ledger grants a step-up only after a passkey assertion with
+        // user verification (design section 8.4).
+        strong: true,
+        consumed: s.auth().consumed(id),
+    }))
 }
