@@ -36,6 +36,8 @@
 //!   activation too (ADR-021). The invitation landing reads the token in
 //!   its fragment, which no server sees, so it is open to anyone and
 //!   its read is judged when the page loads.
+//! - The consent page of an agent connection works the same way: its
+//!   handle is in the fragment (lane L2).
 
 use crate::registry::{Method, OPS, OpKind, route_params};
 
@@ -190,6 +192,10 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/notices", &["me.notices"]),
     // The invitation landing: its token is in the fragment.
     PageRow::need("/app/invitation", PageNeed::Anyone),
+    // Lane L2 (ADR-013 amendment of 2026-11-20): the consent page of an
+    // agent connection. Its handle is in the fragment, so no server sees
+    // it, and the page asks the visitor to sign in itself.
+    PageRow::need("/app/connect", PageNeed::Anyone),
     // Onboarding and the tenant admin's screens.
     PageRow::read("/app/admin/approvals", &["admin.approvals"]),
     PageRow::read("/app/admin/onboarding/summary", &["tenant.get_activation"]),

@@ -56,6 +56,7 @@ import { holdsOperations } from "../home/model.js";
 import { mailboxCount } from "../mailbox/pages.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
+import { CONNECT_ROUTES } from "../connect/routes.js";
 import { SETUP_ROUTES } from "../setup/routes.js";
 import { browserEnv, readOp } from "../reviewer/kit.js";
 import { decodeFunderProfile, type FunderProfileView } from "../operations/profile.js";
@@ -66,7 +67,14 @@ import { setReadRefusalGuard } from "../core/api.js";
 import { createGate, gateLinks } from "./gate.js";
 
 /** The creator, onboarding and people routes, checked once when first used. */
-const STAFF_ROUTES: readonly PageRoute[] = [...CREATOR_ROUTES, ...ONBOARDING_ROUTES, ...PEOPLE_ROUTES, ...SETUP_ROUTES];
+const STAFF_ROUTES: readonly PageRoute[] = [
+  ...CREATOR_ROUTES,
+  ...ONBOARDING_ROUTES,
+  ...PEOPLE_ROUTES,
+  ...SETUP_ROUTES,
+  // Lane L2: the consent page of an agent connection (ADR-013).
+  ...CONNECT_ROUTES,
+];
 
 let staff: ReturnType<typeof createRouter> | null = null;
 

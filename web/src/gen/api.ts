@@ -5537,6 +5537,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/pending/{pending}", need: { kind: "reads", reads: ["pending.list"] }, values: {}, listed: "pending" },
   { pattern: "/app/notices", need: { kind: "reads", reads: ["me.notices"] }, values: {}, listed: null },
   { pattern: "/app/invitation", need: { kind: "anyone" }, values: {}, listed: null },
+  { pattern: "/app/connect", need: { kind: "anyone" }, values: {}, listed: null },
   { pattern: "/app/admin/approvals", need: { kind: "reads", reads: ["admin.approvals"] }, values: {}, listed: null },
   { pattern: "/app/admin/onboarding/summary", need: { kind: "reads", reads: ["tenant.get_activation"] }, values: {}, listed: null },
   { pattern: "/app/admin/onboarding/{step}", need: { kind: "reads", reads: ["tenant.get_step"] }, values: { step: ["organisation", "agreements", "branding", "domains_and_email", "identity", "inference", "payments", "channels", "administrators"] }, listed: null },
