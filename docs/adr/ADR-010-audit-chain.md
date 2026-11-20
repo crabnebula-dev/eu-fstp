@@ -246,6 +246,18 @@ A batch of entries shares one prepare. Steps 1 to 6 can abort. The vault follows
 - A daily task reads the backend's usage record and compares it with these events. A backend entry without a matching event raises `CustodyAnomaly` (ADR-004).
 - OKMS reconciliation waits on ADR-004 verify item K6, which Daniel is asking OVHcloud.
 
+### Amendment 2026-11-20: API call audit events
+
+Decided by Daniel on 2026-11-20 (D7 of `docs/handoff/production-mcp-design.md` section 2.2). It applies to `ApiCore` on a production cell (ADR-026).
+
+| Topic | Decision | Basis |
+| --- | --- | --- |
+| Event | Each `ApiCore` call writes one kind 2 event on the App chain. Its body names the actor, the channel, the agent client, the operation, the outcome, the request digest and the step-up reference. It holds ids, enums, digests and the rule name of a refusal only. The body is sealed under the current ledger key generation with a random nonce and the AAD `"fstp-audit-event-v1" \|\| cell \|\| be64(n)`, as every kind 2 body is sealed | I-24; R-AU-01; M4 design 3.7 |
+| Executed command | The event joins the command's append transaction through `SideEffects`. The ledger batch, its audit event and the pending status commit together, under one anchor | M4 design 6.1 requirement 1 |
+| Other calls | `AuditSink::record` buffers the event for the call. A new `AuditSink::flush` is awaited before `ApiCore::dispatch` returns. A failed flush turns the reply into a 503 refusal | G2d |
+| Event transaction | A flush runs through the engine's single writer, so the event rows and their anchor follow the append protocol above: lock, chain rows, prepare, receipt, commit. Flushes that wait while one is written are written together in the next transaction. Each read call costs one witness round trip through its event, with no 200 ms timer. Decided by Daniel on 2026-11-20, for the pilot | I-24 |
+| Order of events | An event row carries no ledger sequence. Events of one call keep their order. Events of concurrent calls are ordered by their transaction | I-24 |
+
 ## Tests
 
 - Property and integration: `i24_verifier_flags_every_mutation`, `i24_pg_chain_equals_reference_chain`, `i24_database_refuses_bad_link_and_mutation`, `i24_ledger_and_chain_commit_together`, `i24_no_commit_without_a_receipt_for_its_link`.

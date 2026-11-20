@@ -587,6 +587,21 @@ impl Admitted {
         self
     }
 
+    /// The same admission with the API core's side effects `effects`:
+    /// the pending action the command confirms and the call's audit
+    /// events (ADR-026). They change no check and no decision.
+    #[must_use]
+    pub fn with_api(mut self, effects: crate::inputs::ApiEffects) -> Admitted {
+        self.inputs = self.inputs.with_api(effects);
+        self
+    }
+
+    /// Whether this admission is for a dry run only
+    /// ([`admit_dry_run`]). The engine executes no such admission.
+    pub fn is_dry_run(&self) -> bool {
+        self.inputs.dry_run()
+    }
+
     /// The same admission with the message bodies of a timeline firing
     /// (M6 design section 4 step 2). Only the timeline task calls it. The
     /// decider refuses bodies that do not name exactly the fired messages.
@@ -658,6 +673,158 @@ pub fn admit_command(
     policy: &LoginPolicy,
 ) -> Result<Admitted, Deny> {
     admit_inner(s, session, action, Some(command_id), stepup, now, policy)
+}
+
+/// What the gate knows of an agent's grant (ADR-026 "Agent admission"):
+/// the account that consented, when its token family started, and
+/// whether the consenting session was phishing resistant (I-77). The
+/// cell's token port resolves it from the bearer token. It holds no
+/// session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentGrant {
+    /// The account the agent acts for.
+    pub account: AccountId,
+    /// When the token family of the grant started: the consent.
+    pub family_started: Timestamp,
+    /// Whether the consenting session's method was phishing resistant.
+    pub phishing_resistant: bool,
+}
+
+/// Admits a command an agent sent through MCP under `grant`, as the
+/// grant's account, with `Via::Mcp` and no step-up (ADR-026, decided by
+/// Daniel on 2026-11-20, I-85).
+///
+/// In order, it refuses:
+///
+/// 1. every read, every system-only and every route-only command
+///    ([`Deny::NotPermitted`]);
+/// 2. a grant whose family started at or before a completed recovery of
+///    the account (I-79), or before a binding end of the account that
+///    lies at or before `now`, as a session is ended
+///    ([`Deny::SessionEnded`]);
+/// 3. a management holder's grant whose consent was not phishing
+///    resistant (I-77, [`Deny::WeakSessionForRole`]);
+/// 4. every high-risk action ([`Deny::NotPermitted`]): only the user
+///    confirms such an action in the platform, with a step-up (I-78,
+///    I-85).
+///
+/// # Errors
+///
+/// The [`Deny`] of the first check that fails.
+pub fn admit_agent_command(
+    s: &CellState,
+    grant: &AgentGrant,
+    action: Action,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, Deny> {
+    let Action::Command(c) = &action else {
+        return Err(Deny::NotPermitted);
+    };
+    if system_only(c) || route_only(c) {
+        return Err(Deny::NotPermitted);
+    }
+    let a = grant.account;
+    if s.auth().ended_by_recovery(a, grant.family_started)
+        || s.binding_ended_between(a, grant.family_started, now)
+    {
+        return Err(Deny::SessionEnded);
+    }
+    if holds_management(s, a, now)? && !grant.phishing_resistant {
+        return Err(Deny::WeakSessionForRole);
+    }
+    if HighRiskAction::of(&action)?.is_some() {
+        return Err(Deny::NotPermitted);
+    }
+    Ok(Admitted {
+        action,
+        principal: Principal::Account(a),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none().with_agent(),
+    })
+}
+
+/// [`admit_command`] for a web command the API core authorised, whose
+/// step-up is bound to the API core's request digest `request_digest`
+/// in place of the gate's own command digest (ADR-026 "API step-up
+/// admission", decided by Daniel on 2026-11-20, I-78).
+///
+/// Every other check is the one of [`admit_command`]: the session, the
+/// log readers, a phishing-resistant session for a high-risk action, and
+/// a step-up the ledger granted in this session for this digest, strong,
+/// within P-71 and unused. The `Admitted` carries the step-up, so the
+/// batch consumes it and the store checks its freshness again at commit.
+///
+/// # Errors
+///
+/// The [`Deny`] of the first check that fails.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the inputs of admit_command and the API core's digest"
+)]
+pub fn admit_api_command(
+    s: &CellState,
+    session: &SessionView,
+    action: Action,
+    command_id: [u8; 16],
+    request_digest: [u8; 32],
+    stepup: Option<&StepUpView>,
+    now: Timestamp,
+    policy: &LoginPolicy,
+) -> Result<Admitted, Deny> {
+    if let Action::Command(c) = &action
+        && (system_only(c) || route_only(c))
+    {
+        return Err(Deny::NotPermitted);
+    }
+    admit_in_session_with(
+        s,
+        session,
+        action,
+        Some(command_id),
+        stepup,
+        now,
+        policy,
+        Some(request_digest),
+    )
+}
+
+/// Admits `action` of `account` for a dry run only (ADR-026 "Dry run"):
+/// the command is decided on a copy of the state and never appended, so
+/// no session or step-up is checked here. The API core resolved the
+/// caller first, and an execution passes [`admit_api_command`] or
+/// [`admit_agent_command`] with every check. A read, a system-only and a
+/// route-only command are refused, and so is an unclassified high-risk
+/// kind.
+///
+/// # Errors
+///
+/// [`Deny::NotPermitted`] as above.
+pub fn admit_dry_run(
+    s: &CellState,
+    account: AccountId,
+    action: Action,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, Deny> {
+    let _ = s;
+    let Action::Command(c) = &action else {
+        return Err(Deny::NotPermitted);
+    };
+    if system_only(c) || route_only(c) {
+        return Err(Deny::NotPermitted);
+    }
+    let _ = HighRiskAction::of(&action)?;
+    Ok(Admitted {
+        action,
+        principal: Principal::Account(account),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none().with_dry(),
+    })
 }
 
 fn admit_inner(

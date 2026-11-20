@@ -14,8 +14,8 @@
 //! `fstp-oauth`'s own tests, and no metadata member names them.
 //! `fstp-oauth` refuses an `http` issuer outside loopback. A test cell on
 //! a `.localhost` origin, such as the e2e cell's `http://a.fstp.localhost`,
-//! sets `WebConfig::test_cell` (test-only feature `test-cell`), so its
-//! metadata names that origin. Any other refused origin still serves MCP
+//! sets a local `http` rule (`WebConfig::with_local_http`), which only the
+//! test kit supplies, so its metadata names that origin. Any other refused origin still serves MCP
 //! and the 401 challenge, and its metadata documents keep the ADR-013
 //! refusal, so no document names an issuer the OAuth server refuses.
 
@@ -31,19 +31,17 @@ const METADATA_P72_MICROS: i64 = 43_200_000_000;
 /// P-71 for the metadata server: 5 minutes. No document names it.
 const METADATA_P71_MICROS: i64 = 300_000_000;
 
-/// The metadata server of `cfg`: a test cell's when `test_cell` is set
-/// and the build has the test-only feature `test-cell`, else a
-/// production one, which refuses a plain `http` issuer outside loopback.
+/// The metadata server of `cfg`: one that admits the plain `http` hosts
+/// of `local_http` when a caller set that rule, else a production one,
+/// which refuses a plain `http` issuer outside loopback.
 fn oauth_server(
     cfg: fstp_oauth::Config,
-    test_cell: bool,
+    local_http: Option<fn(&str) -> bool>,
 ) -> Result<fstp_oauth::AuthorizationServer, fstp_oauth::OauthError> {
-    #[cfg(feature = "test-cell")]
-    if test_cell {
-        return fstp_oauth::AuthorizationServer::new_test_cell(cfg);
+    match local_http {
+        Some(rule) => fstp_oauth::AuthorizationServer::new_with_local_http(cfg, rule),
+        None => fstp_oauth::AuthorizationServer::new(cfg),
     }
-    let _ = test_cell;
-    fstp_oauth::AuthorizationServer::new(cfg)
 }
 
 /// The MCP server and the two metadata documents of one tenant origin.
@@ -59,13 +57,15 @@ impl Mcp {
     pub(crate) fn new(
         core: Arc<ApiCore>,
         origin: &Origin,
-        test_cell: bool,
+        local_http: Option<fn(&str) -> bool>,
+        shared: Option<fstp_oauth::Config>,
     ) -> Result<Mcp, WebError> {
         let issuer = origin.to_string();
         let resource = format!("{issuer}{}", fstp_mcp::Surface::Mcp.path());
-        let cfg =
-            fstp_oauth::Config::new(&issuer, &resource, METADATA_P72_MICROS, METADATA_P71_MICROS);
-        let docs = oauth_server(cfg, test_cell)
+        let cfg = shared.unwrap_or_else(|| {
+            fstp_oauth::Config::new(&issuer, &resource, METADATA_P72_MICROS, METADATA_P71_MICROS)
+        });
+        let docs = oauth_server(cfg, local_http)
             .ok()
             .map(|o| (o.resource_metadata().body, o.server_metadata().body));
         let resource_metadata_url = format!("{issuer}{}", fstp_oauth::RESOURCE_METADATA_PATH);

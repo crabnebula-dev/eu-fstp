@@ -152,6 +152,22 @@ aad    = column name || "|" || row key
 - Columns with this layout: `vault.epoch.affected`, `vault.fact.body`, `vault.negotiation.sealed_accounts` and `vault_audit.chain.body`. The chain body's row key is its entry sequence number as a big-endian `u64`.
 - A reader that checks the nonce rule, such as the R-NF-08 test, reads the nonce from offset 0 of these values.
 
+**Application sealed values.** Recorded by lane L1 on 2026-11-20, from the code of lanes L1, L2 and L3, for the nonce check of R-NF-08 (`r_nf_08_aborted_append_never_reuses_a_nonce`). Every value below is an AES-256-GCM seal through `fstp_crypto::aead::seal`, with a random nonce under the rule below. None uses a deterministic key wrap, so every column has a nonce a reader can check.
+
+| Layout | Nonce at | Columns |
+| --- | --- | --- |
+| `nonce 12 \| ciphertext \| tag 16`, in a table whose `key_ix` column names the ledger key generation | 0 | `ledger.entry.body`, `ops.checkpoint.body`, `api.pending_actions.request`, `workspace.drafts.sealed` |
+| `nonce 12 \| ciphertext \| tag 16`, under the epoch seal key `S(e)` | 0 | `keystore.chain.state` (AAD `"fstp-chain-state-v1"`, cell, chain, epoch), `keystore.group_key.sealed_secret`, `keystore.signer.sealed_secret` |
+| `nonce 12 \| ciphertext \| tag 16`, under the row's own outbox data key | 0 | `ops.outbox.body` |
+| A wrapped seal key of `fstp-keyd` or the custody simulator: `nonce 12 \| S(e) 32 \| tag 16`, exactly 60 bytes, under the root `R(e)` | 0 | `keystore.root.wrapped_seal_key` |
+| A sealed blob of `fstp_keys::envelope`: `"FSB1" \| version u8 = 1 \| aead u16 = 1 \| nonce 12 \| ciphertext \| tag 16` | 7 | `blob.text.envelope`, `keystore.text.envelope`, and any other column holding that form |
+| A sealed key (section "Sealed key format"): 1210 bytes from `"FSK1"` | 1150 | `keystore.data_key.sealed` |
+| An App chain event (ADR-010 amendment of 2026-11-20): `be32(key_ix) \| nonce 12 \| ciphertext \| tag 16` under the ledger key generation `key_ix` | 4 | `audit.chain.body` of a kind 2 row |
+
+- A wrapped seal key of another backend, such as OKMS, has the layout of that backend. It is recorded here before that backend wraps a production root. Until then a reader that meets another length reports the value as unread, so the check fails closed.
+- `keystore.erasure_intent.plan`, `ops.licence_state.sealed_token` and `doc.blob.envelope` have no writer in the cell yet. Their layout is recorded here with their first writer. Until then a reader that meets a value reports it as unread.
+- `workspace.drafts.sealed` holds the seal without the generation prefix of `fstp_pgstore::seal_workspace`. The prefix lives in the row's `key_ix` column, and the store puts it back on read.
+
 ### Purpose code table
 
 Status: Accepted by Daniel Thompson-Yvetot on 2026-11-07 (m3-finish Q-E). The table is frozen.
@@ -581,3 +597,33 @@ Each entry builds one decision of the section above. Interim readings are marked
 - **Object storage on cell erasure.** Option B. Step 2 does not delete the cell's object-storage prefix. Destroying the CellBackup roots in step 1 makes every backup unreadable (I-81), and bucket lifecycle rules remove the objects later. ADR-005 and ADR-012 stand: no client `DeleteObject` and no listing call. `CellObjects` leaves step 2. Built by lane m4/matrix-final: `erase_cell_steps` takes no object store, and the `ObjectsDeleted` step is gone.
 - **Interim readings of lane m3/erase-prod accepted.** An edge is named by its client certificate's subject CN `edge_<32 hex digits>`, and the set of edges is configured. Only the `fstp-keyd` console socket creates sign keys, and only cluster CA keys. `erase_cell`, which runs steps 1 and 4 only, still accepts an approval of its single job.
 - **Registries.** The I-90 sweep gains the break-glass staff assertion (`fstp_auth::breakglass::verify_staff_assertion`), and the M3 teeth registry gains the two I-17 unmask teeth tests of `fstp-api-testkit/src/harness_unmask.rs`.
+
+## Decided by Daniel, 2026-11-20: keystore tables and the cell key file
+
+Decided by Daniel on 2026-11-20 (production MCP design, `docs/handoff/production-mcp-design.md` section 2.1, decision D5). A restart of a production cell must keep every key, so the keystore leaves process memory.
+
+| Topic | Decision |
+| --- | --- |
+| Keystore | The rows of the keystore image (`fstp_cell::tasks::erasure::snapshot`) move to `keystore.root`, `keystore.group_key`, `keystore.data_key` and `blob.text`. Signer rows, the chain state and the login email index get their own tables in migration `0011_keystore.sql`. They are written through `c_<cell>_keys` only |
+| Load | `fstp_cell::process::start` loads the keystore from the tables when the ledger is not empty, and runs genesis only on an empty ledger |
+| Cell key file | `cell-keys.sealed` holds the `Anchor` key, the ledger data key generations, the CredLookup key and the ticket key. It is sealed under a seal key wrapped by `fstp-keyd`, with the layout of the witness receipt key file. Its decoder `cell_key_file_decode` is fuzzed |
+
+Tests, from section 3.5 of the design: `i80_keystore_rows_hold_no_root_material`, `i81_destroyed_epoch_stays_unreadable_after_restart`, `r_cr_01_keystore_rows_sealed_at_rest`, `adr004_keystore_round_trips_through_tables`, `i23_process_restart_reads_every_text`, `i79_login_email_lookup_survives_restart` and `i82_keystore_written_by_keys_role_only`.
+
+## Built by lane L3 `prod/keystore-pg`, 2026-11-20
+
+Each entry builds a row of the decision above. Readings marked "interim, pending Daniel" are this lane's own.
+
+- **Tables.** Migration `0011_keystore.sql` adds `keystore.chain`, `keystore.text`, `keystore.signer`, `keystore.login_digest`, `keystore.login_text` and `keystore.erasure_request`, and the column `keystore.root.receipt_digest`. Each column has a class in `fstp_pgstore::CATALOGUE`. The role plan of `fstp-control` grants every `keystore` table to the keys role only (I-82).
+- **Texts.** Interim, pending Daniel: the texts go to `keystore.text`, not `blob.text`. `blob.text` is the table of `fstp_pgstore::TextStore`, whose envelope holds a salt before the text (ADR-007). The app role inserts there, and the keys role holds SELECT and DELETE only. A text row and its data key row must commit in one transaction of one role, so both live in the keys role's schema.
+- **Rows.** A root row is live, pending (created for a batch not yet committed, with no wrapped key) or destroyed, with the receipt digest. A group row holds the hybrid public key, the purpose and the secret sealed under `S(e)`. A signer row holds the current generation sealed under `S(e)`, and a replaced generation with its public key only.
+- **Chain state.** Interim, pending Daniel: the planner's chain state is stored in the form `"FKC1"` of `fstp_keys::erasure::codec`, with the fuzz target `chain_state_decode`. It is sealed with AES-256-GCM under `S(e)` of its epoch, AAD `"fstp-chain-state-v1"`, cell, chain and epoch. The epoch stands in clear beside it, so the start knows which root to unwrap. It opens with the group secrets, and dies with its root (I-81).
+- **Write-through.** `fstp_cell::tasks::erasure::tables`: the keystore marks each changed row, and a flush writes every marked row in one transaction through `fstp_pgstore::KeystoreTables` over `c_<cell>_keys`. The runner flushes before and after each erasure step and after each request it serves. So no reply claims a change that is not durable, and no step or custody call follows a step whose rows are not durable. A failed flush refuses the request, keeps the marks, and the next flush writes them. The start-up unwrap's request id is written before the call (ADR-004 "Reconciliation").
+- **Load.** `fstp_cell::process::start_with` takes the `c_<cell>_keys` login in place of an in-memory keystore. It loads the rows. With no rows and an empty ledger it runs genesis, writes the keystore whole, and loads it back. No rows beside a ledger that is not empty is refused. The test world's restart passes no keystore any more.
+- **Tests.** `fstp-pgstore/tests/keystore_tables.rs`, `fstp-control/tests/i82_keystore_role_plan.rs`, `fstp-cell/tests/keystore_tables.rs` (restart at every step and a failed write at every step of a batch) and `fstp-celltest/tests/keystore_restart_pg.rs` (a world restart over PostgreSQL).
+- **Not built: the cell key file.** Section 3.6 of the design gives `keyfile.rs` and `cell_key_file_decode` to lane L4. Three points need a decision first. (1) Which custody root seals it: the App chain roots are destroyed at every erasure, so the file needs a root that no erasure destroys, as the witness has its own entry. (2) A ledger key generation may not be reused across starts (`fstp_pgstore::LedgerKey`), so each start draws a generation and rewrites the file. (3) `fstp-cell` holds no `zeroize` dependency, and ADR-001 A1 names the crates that may. Wiping the plain body needs either that record or a wiping type from `fstp-crypto`.
+- **Open, for Daniel.**
+  - A crash inside genesis, after its key records and before the keystore rows commit, leaves a ledger with no keystore. The start then refuses on every attempt, and an operator must reset the cell database.
+  - A failed write after `create_root` can leave a root that no row names. The restart creates another. Reconciliation reports the orphan, and nothing destroys it yet.
+  - Each flush that changes the chain state seals it once more under `S(e)` with a random nonce. No seal count bounds that per epoch yet (ADR-004 part 1 "Seal-count limit").
+  - The migration set allows no gap. The file is `0011_keystore.sql` as the design fixes it, but its version is 9 on this lane alone. Merged after L1 it becomes 10, and L2's `0010_mcp.sql` then follows as 11.

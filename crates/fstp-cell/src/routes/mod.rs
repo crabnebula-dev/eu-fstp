@@ -590,14 +590,11 @@ static PAGE_TABLE: [Route; 7] = [
 
 /// The page routes, with their classes (design section 11.2).
 ///
-/// They are not rows of [`table`]. Design section 8.7 lists
-/// `GET /auth/magic` as the only page of the cell, while section 11.2
-/// puts the auth pages on the cell origin. Until Daniel adds the page
-/// rows to section 8.7, the strict reading holds: the production front
-/// serves exactly [`table`], and only `crate::http::Front::with_pages`,
-/// built with the test and dev-stack feature `dev-pages`, serves these
-/// rows. It serves them through the same shared checks as every other
-/// route.
+/// They are not rows of [`table`]. Daniel decided on 2026-11-20 (D2,
+/// ADR-026 "Auth pages") that they join the served table, which amends
+/// design section 8.7: every front built with the compiled pages
+/// (`crate::http::Front::with_pages`, `crate::http::Front::with_web`)
+/// serves them, through the same shared checks as every other route.
 pub fn page_table() -> &'static [Route] {
     &PAGE_TABLE
 }

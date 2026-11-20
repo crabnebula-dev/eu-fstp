@@ -80,3 +80,10 @@ bench = false
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[[bin]]
+name = "records_restore"
+path = "fuzz_targets/records_restore.rs"
+test = false
+doc = false
+bench = false

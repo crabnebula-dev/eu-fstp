@@ -594,3 +594,20 @@ fn i85_confirmation_replays_stored_request() {
         Ok(())
     });
 }
+
+/// I-24, ADR-010 amendment of 2026-11-20: a call is answered only once
+/// its audit entries are durable. A failed flush turns the answer into an
+/// unavailable refusal, whatever the call did. Once the sink flushes
+/// again, the same read answers.
+#[test]
+fn i24_failed_audit_flush_answers_unavailable() {
+    let c = cell();
+    let owner = c.login(OWNER, LoginMethod::Passkey);
+    assert!(c.pending(&owner).is_ok());
+    c.ports.audit.set_flush_failing(true);
+    let got = c.pending(&owner);
+    c.ports.audit.set_flush_failing(false);
+    let got = got.expect_err("a call answered with no durable audit entry");
+    assert!(got.contains("Unavailable") && got.contains("I-24"), "{got}");
+    assert!(c.pending(&owner).is_ok());
+}

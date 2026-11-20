@@ -153,6 +153,8 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("created_at", Time),
             col("destroyed_at", Time),
             col("receipt", Signature),
+            // Lane L3, migration `0011_keystore.sql`: the receipt digest.
+            col("receipt_digest", PublicDigest),
         ],
     ),
     table(
@@ -400,4 +402,280 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("reply_code", Enum),
         ],
     ),
+    // Lane L1 (ADR-026): the pending actions of the API core and their
+    // confirmations (I-85), and the sealed workspaces (I-21). `op_kind`
+    // and `status` are names from closed lists, `key_ix` a generation.
+    table(
+        "api",
+        "pending_actions",
+        TableClass::SealedContent,
+        &[
+            col("id", RandomId),
+            col("account", RandomId),
+            col("client_id", RandomId),
+            col("op_kind", Enum),
+            col("key_ix", Sequence),
+            col("request", Sealed),
+            col("digest", PublicDigest),
+            col("created_at", Time),
+            col("expires_at", Time),
+            col("status", Enum),
+            col("closed_at", Time),
+        ],
+    ),
+    table(
+        "api",
+        "pending_confirmed",
+        TableClass::Operational,
+        &[col("id", RandomId), col("ledger_seq", Sequence)],
+    ),
+    table(
+        "workspace",
+        "drafts",
+        TableClass::SealedContent,
+        &[
+            col("proposal", RandomId),
+            col("slot", Enum),
+            col("revision", Count),
+            col("key_ix", Sequence),
+            col("sealed", Sealed),
+            col("updated_at", Time),
+        ],
+    ),
+    // Lane L2 (ADR-013 amendment of 2026-11-20): the durable records of
+    // the OAuth 2.1 authorisation server. Interim readings, pending
+    // Daniel: `metadata_ref` names a sealed text, so it is a `RandomId`
+    // like the other text ids; `scopes` is a set of a closed enum and
+    // `revoked` a closed flag, so both are `Enum`; `account` is the raw
+    // account id, a `RandomId`. Both hash columns are SHA-256 digests of
+    // 256-bit random tokens (`SecretDigest`, ADR-013 "Token storage").
+    table(
+        "mcp",
+        "client",
+        TableClass::Operational,
+        &[
+            col("number", Sequence),
+            col("client_id", RandomId),
+            col("metadata_ref", RandomId),
+            col("registered_at", Time),
+        ],
+    ),
+    table(
+        "mcp",
+        "family",
+        TableClass::Operational,
+        &[
+            col("id", Sequence),
+            col("client", Sequence),
+            col("account", RandomId),
+            col("scopes", Enum),
+            col("started_at", Time),
+            col("ends_at", Time),
+            col("current_hash", SecretDigest),
+            col("refreshes", Count),
+            col("revoked", Enum),
+            col("method", Enum),
+            col("version", Sequence),
+        ],
+    ),
+    table(
+        "mcp",
+        "refresh",
+        TableClass::Operational,
+        &[col("hash", SecretDigest), col("family", Sequence)],
+    ),
+    // Lane L3 (ADR-004, decided by Daniel on 2026-11-20), migration
+    // `0011_keystore.sql`: the keystore of the App chain in its tables.
+    // The chain state, the signer secrets and the texts are sealed. The
+    // login digests are HMACs under the `Lookup` key, which erasure
+    // replaces (decision 27).
+    table(
+        "keystore",
+        "chain",
+        TableClass::KeyMaterial,
+        &[
+            col("chain", Enum),
+            col("epoch", Sequence),
+            col("state", Sealed),
+            col("lookup_group", RandomId),
+            col("login_group", RandomId),
+            col("startup_unwrap", RandomId),
+        ],
+    ),
+    table(
+        "keystore",
+        "text",
+        TableClass::SealedContent,
+        &[
+            col("id", RandomId),
+            col("dek", RandomId),
+            col("generation", Sequence),
+            col("envelope", Sealed),
+        ],
+    ),
+    table(
+        "keystore",
+        "signer",
+        TableClass::KeyMaterial,
+        &[
+            col("purpose", Enum),
+            col("generation", Sequence),
+            col("public_key", PublicKeyMaterial),
+            col("created_at", Time),
+            col("epoch", Sequence),
+            col("sealed_secret", Sealed),
+        ],
+    ),
+    table(
+        "keystore",
+        "login_digest",
+        TableClass::KeyMaterial,
+        &[col("digest", KeyedDigest), col("account", RandomId)],
+    ),
+    table(
+        "keystore",
+        "login_text",
+        TableClass::KeyMaterial,
+        &[col("account", RandomId), col("text_id", RandomId)],
+    ),
+    table(
+        "keystore",
+        "erasure_request",
+        TableClass::KeyMaterial,
+        &[col("text_id", RandomId)],
+    ),
 ];
+
+#[cfg(test)]
+mod api_tests {
+    use super::*;
+
+    fn class(schema: &str, name: &str, column: &str) -> Option<ColumnClass> {
+        CATALOGUE
+            .iter()
+            .find(|t| t.schema == schema && t.name == name)
+            .and_then(|t| t.columns.iter().find(|c| c.name == column))
+            .and_then(|c| c.class)
+    }
+
+    /// R-NF-08, I-21, I-85, ADR-026: every column of the `api` and
+    /// `workspace` tables carries a class. The request a pending action
+    /// replays and every workspace value are sealed. No other column of
+    /// these tables is sealed or holds content: ids, times, enums,
+    /// generations and one public digest only.
+    #[test]
+    fn r_nf_08_api_and_workspace_columns_are_classed() {
+        let tables: Vec<&TableSpec> = CATALOGUE
+            .iter()
+            .filter(|t| matches!(t.schema, "api" | "workspace"))
+            .collect();
+        let names: Vec<(&str, &str)> = tables.iter().map(|t| (t.schema, t.name)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("api", "pending_actions"),
+                ("api", "pending_confirmed"),
+                ("workspace", "drafts"),
+            ]
+        );
+        for t in &tables {
+            for c in t.columns {
+                assert!(
+                    c.class.is_some(),
+                    "R-NF-08: {}.{}.{}",
+                    t.schema,
+                    t.name,
+                    c.name
+                );
+            }
+        }
+        assert_eq!(class("api", "pending_actions", "request"), Some(Sealed));
+        assert_eq!(class("workspace", "drafts", "sealed"), Some(Sealed));
+        let sealed: Vec<String> = tables
+            .iter()
+            .flat_map(|t| {
+                t.columns
+                    .iter()
+                    .filter(|c| c.class == Some(Sealed))
+                    .map(move |c| format!("{}.{}", t.name, c.name))
+            })
+            .collect();
+        assert_eq!(sealed, vec!["pending_actions.request", "drafts.sealed"]);
+        assert_eq!(
+            class("api", "pending_actions", "digest"),
+            Some(PublicDigest)
+        );
+        for (t, c) in [
+            ("pending_actions", "id"),
+            ("pending_actions", "account"),
+            ("pending_actions", "client_id"),
+            ("pending_confirmed", "id"),
+        ] {
+            assert_eq!(class("api", t, c), Some(RandomId), "{t}.{c}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use super::*;
+
+    /// R-NF-08, TH-61, lane L2: every column of the `mcp` schema has a
+    /// class, none holds content in clear, and each token column is a
+    /// digest of a random secret. The tables are operational, since they
+    /// hold no tenant content: client text lives in a sealed text.
+    #[test]
+    fn r_nf_08_mcp_columns_are_classed() {
+        let mcp: Vec<&TableSpec> = CATALOGUE.iter().filter(|t| t.schema == "mcp").collect();
+        let names: Vec<&str> = mcp.iter().map(|t| t.name).collect();
+        assert_eq!(names, ["client", "family", "refresh"]);
+        for t in &mcp {
+            assert_eq!(t.class, TableClass::Operational, "mcp.{}", t.name);
+            for c in t.columns {
+                let class = c
+                    .class
+                    .unwrap_or_else(|| panic!("R-NF-08: mcp.{}.{} unclassed", t.name, c.name));
+                assert!(
+                    !matches!(class, ColumnClass::Infrastructure | ColumnClass::Sealed),
+                    "mcp.{}.{} holds content",
+                    t.name,
+                    c.name
+                );
+            }
+        }
+        let class = |table: &str, column: &str| {
+            mcp.iter()
+                .find(|t| t.name == table)
+                .and_then(|t| t.columns.iter().find(|c| c.name == column))
+                .and_then(|c| c.class)
+        };
+        assert_eq!(class("family", "current_hash"), Some(SecretDigest));
+        assert_eq!(class("refresh", "hash"), Some(SecretDigest));
+        assert_eq!(class("client", "client_id"), Some(RandomId));
+        assert_eq!(class("client", "metadata_ref"), Some(RandomId));
+        assert_eq!(class("family", "account"), Some(RandomId));
+    }
+
+    /// R-NF-08, lane L2: the catalogue lists the columns of
+    /// `0010_mcp.sql` in declaration order. The database comparison of
+    /// `tests/schema.rs` checks the same on a migrated cluster.
+    #[test]
+    fn r_nf_08_mcp_catalogue_follows_the_migration() {
+        let sql = include_str!("../migrations/app/0010_mcp.sql");
+        for t in CATALOGUE.iter().filter(|t| t.schema == "mcp") {
+            let head = format!("CREATE TABLE mcp.{} (", t.name);
+            let body = sql
+                .split_once(head.as_str())
+                .and_then(|(_, rest)| rest.split_once("\n);"))
+                .map(|(b, _)| b)
+                .unwrap_or_else(|| panic!("no table mcp.{}", t.name));
+            let declared: Vec<&str> = body
+                .lines()
+                .filter_map(|l| l.split_whitespace().next())
+                .filter(|w| *w != "CHECK")
+                .collect();
+            let listed: Vec<&str> = t.columns.iter().map(|c| c.name).collect();
+            assert_eq!(declared, listed, "mcp.{}", t.name);
+        }
+    }
+}

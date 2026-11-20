@@ -211,6 +211,7 @@ export type OpName =
   | "agents.consent"
   | "agents.list"
   | "agents.activity"
+  | "agents.consent_request"
   | "agents.revoke"
   | "me.sessions"
   | "me.roles"
@@ -460,6 +461,7 @@ export interface OpParams {
   readonly "agents.consent": Readonly<Record<never, string>>;
   readonly "agents.list": Readonly<Record<never, string>>;
   readonly "agents.activity": { readonly "client": string };
+  readonly "agents.consent_request": { readonly "consent": string };
   readonly "agents.revoke": { readonly "client": string };
   readonly "me.sessions": Readonly<Record<never, string>>;
   readonly "me.roles": Readonly<Record<never, string>>;
@@ -682,6 +684,7 @@ export const OP_NAMES: readonly OpName[] = [
   "agents.consent",
   "agents.list",
   "agents.activity",
+  "agents.consent_request",
   "agents.revoke",
   "me.sessions",
   "me.roles",
@@ -2933,6 +2936,20 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "agents.consent_request",
+    method: "GET",
+    path: "/oauth/consents/{consent}",
+    base: "api",
+    segments: [{ kind: "literal", text: "oauth" }, { kind: "literal", text: "consents" }, { kind: "param", name: "consent" }],
+    params: ["consent"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
     name: "agents.revoke",
     method: "POST",
     path: "/me/agents/{client}/revocation",
@@ -4776,6 +4793,17 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "until": { schema: { kind: "string" }, optional: true },
     },
   } },
+  "agents.consent_request": {
+    kind: "object",
+    fields: {
+      "client": { schema: { kind: "id" }, optional: false },
+      "name": { schema: { kind: "string" }, optional: true },
+      "redirect_host": { schema: { kind: "string" }, optional: false },
+      "loopback": { schema: { kind: "bool" }, optional: false },
+      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft"] } }, optional: false },
+      "expires": { schema: { kind: "string" }, optional: false },
+    },
+  },
   "agents.activity": { kind: "array", items: {
     kind: "object",
     fields: {
@@ -5509,6 +5537,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/pending/{pending}", need: { kind: "reads", reads: ["pending.list"] }, values: {}, listed: "pending" },
   { pattern: "/app/notices", need: { kind: "reads", reads: ["me.notices"] }, values: {}, listed: null },
   { pattern: "/app/invitation", need: { kind: "anyone" }, values: {}, listed: null },
+  { pattern: "/app/connect", need: { kind: "anyone" }, values: {}, listed: null },
   { pattern: "/app/admin/approvals", need: { kind: "reads", reads: ["admin.approvals"] }, values: {}, listed: null },
   { pattern: "/app/admin/onboarding/summary", need: { kind: "reads", reads: ["tenant.get_activation"] }, values: {}, listed: null },
   { pattern: "/app/admin/onboarding/{step}", need: { kind: "reads", reads: ["tenant.get_step"] }, values: { step: ["organisation", "agreements", "branding", "domains_and_email", "identity", "inference", "payments", "channels", "administrators"] }, listed: null },

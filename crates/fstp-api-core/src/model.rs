@@ -111,6 +111,9 @@ pub enum ReadModel {
     /// `agents.activity`: the caller's calls through one agent client
     /// (R-MC-03).
     AgentActivity(crate::dispatch::agents::AgentActivity),
+    /// `agents.consent_request`: the pending consent the consent page shows
+    /// (lane L2).
+    ConsentRequest(crate::dispatch::agents::ConsentRequestView),
     /// `roles.list`: the staff bindings of a programme (J1).
     Bindings(crate::dispatch::bindings::ProgrammeBindings),
     /// SA-11: the team of a programme.
@@ -312,6 +315,7 @@ impl ToJson for ReadModel {
             ReadModel::MyRoles(r) => r.to_json(),
             ReadModel::MyAgents(a) => a.to_json(),
             ReadModel::AgentActivity(a) => a.to_json(),
+            ReadModel::ConsentRequest(c) => c.to_json(),
             ReadModel::Bindings(b) => b.to_json(),
             ReadModel::Team(v) => v.to_json(),
             ReadModel::Members(v) => v.to_json(),
@@ -1779,6 +1783,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(_) => &["me.roles"],
             ReadModel::MyAgents(_) => &["agents.list"],
             ReadModel::AgentActivity(_) => &["agents.activity"],
+            ReadModel::ConsentRequest(_) => &["agents.consent_request"],
             ReadModel::Bindings(_) => &["roles.list"],
             ReadModel::Team(_) => &["team.list"],
             ReadModel::Members(_) => &["admin.members"],
@@ -1968,6 +1973,19 @@ pub(crate) mod reply_shape_tests {
                 Vec::new()
             },
         }
+    }
+
+    /// An `agents.consent_request` reply (lane L2), with the client name
+    /// or without it.
+    fn consent_request(named: bool) -> crate::dispatch::agents::ConsentRequestView {
+        crate::dispatch::agents::ConsentRequestView(crate::port::ConsentRequestInfo {
+            client: crate::port::AgentClientId::from_raw(7),
+            name: named.then(|| "Synthetic agent".to_owned()),
+            redirect_host: "127.0.0.1".to_owned(),
+            loopback: true,
+            scopes: [fstp_access::Scope::CallsRead].into_iter().collect(),
+            expires: Timestamp::from_micros(600),
+        })
     }
 
     /// An `agents.list` reply (R-MC-03): one client with every optional
@@ -2365,6 +2383,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::MyRoles(my_roles(false)),
             ReadModel::MyAgents(my_agents()),
             ReadModel::AgentActivity(agent_activity()),
+            ReadModel::ConsentRequest(consent_request(true)),
+            ReadModel::ConsentRequest(consent_request(false)),
             ReadModel::Bindings(programme_bindings()),
             ReadModel::Team(team_view()),
             ReadModel::Members(members_view()),
@@ -2574,7 +2594,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 57;
+    const VARIANTS: usize = 58;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2638,6 +2658,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::DisplayName(_) => 54,
             ReadModel::Plan(_) => 55,
             ReadModel::FindingsRefusals(_) => 56,
+            ReadModel::ConsentRequest(_) => 57,
         }
     }
 

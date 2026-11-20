@@ -29,7 +29,8 @@ use fstp_json::{Array, Object, ToJson, Value};
 
 use super::{ApiError, Call, ErrorCode, Op, Seams, forms, lock, port_failed, refused_rule};
 use crate::OpResult;
-use crate::port::{AgentClientId, AgentInfo, LoginMethod, Tokens};
+use crate::port::{AgentClientId, AgentInfo, ConsentRequestInfo, LoginMethod, PortError, Tokens};
+use fstp_domain::Via;
 
 /// The most entries kept for one client of one account.
 pub(crate) const PER_CLIENT: usize = 50;
@@ -203,4 +204,58 @@ pub(super) fn activity<P: Seams>(
         .map(AgentClientId::from_raw)
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
     Ok(AgentActivity(lock(&call.st.activity).of(account, client)))
+}
+
+/// The `agents.consent_request` reply (lane L2, ADR-013 amendment of
+/// 2026-11-20): the pending consent the consent page asks about. It
+/// names no account, no handle and no digest (I-86).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConsentRequestView(pub ConsentRequestInfo);
+
+impl ToJson for ConsentRequestView {
+    fn to_json(&self) -> Value {
+        let c = &self.0;
+        let mut o = Object::new();
+        let _ = o.insert("client", dec(c.client.raw()));
+        if let Some(n) = &c.name {
+            let _ = o.insert("name", Value::from(n.as_str()));
+        }
+        let _ = o.insert("redirect_host", Value::from(c.redirect_host.as_str()));
+        let _ = o.insert("loopback", Value::from(c.loopback));
+        let _ = o.insert(
+            "scopes",
+            Value::Array(c.scopes.iter().map(|s| Value::from(s.as_str())).collect()),
+        );
+        let _ = o.insert("expires", dec(c.expires.micros()));
+        Value::Object(o)
+    }
+}
+
+/// `agents.consent_request` for `account`: the consent the path's handle
+/// names (lane L2). Web only, as `agents.consent` is (I-85). The read
+/// names nothing of the account, so any signed-in account may read a
+/// handle its browser holds. A handle the server does not hold is not
+/// found.
+pub(super) async fn consent_request<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+    account: AccountId,
+) -> Result<ConsentRequestView, ApiError> {
+    let _ = account;
+    if call.caller.via() != Via::Web {
+        return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
+    }
+    let handle = op
+        .request
+        .get("consent")
+        .and_then(Value::as_str)
+        .filter(|h| forms::param_str_ok("consent", h))
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))?;
+    match call.ports.tokens().consent_request(handle, call.now).await {
+        Ok(info) => Ok(ConsentRequestView(info)),
+        Err(PortError::Refused) => {
+            Err(call.refuse(ApiError::refused(ErrorCode::NotFound, "Input")))
+        }
+        Err(e) => Err(call.refuse(port_failed(e, "R-MC-01"))),
+    }
 }

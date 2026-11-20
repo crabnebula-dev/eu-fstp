@@ -76,6 +76,10 @@ fstp-contract.workspace = true
 fstp-mail.workspace = true
 fstp-smtp.workspace = true
 fstp-api-core.workspace = true
+# Lane L2: the OAuth form encoder and the grant facts of the production
+# authorisation server tests (`tests/l2_oauth_pg.rs`).
+fstp-oauth.workspace = true
+fstp-access.workspace = true
 
 [lints]
 workspace = true

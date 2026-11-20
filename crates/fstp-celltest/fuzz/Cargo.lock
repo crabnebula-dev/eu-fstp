@@ -141,6 +141,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fstp-access"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-import",
+ "fstp-programme",
+ "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-api-core"
+version = "0.1.0"
+dependencies = [
+ "fstp-access",
+ "fstp-brand",
+ "fstp-contract",
+ "fstp-creator",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-findings",
+ "fstp-guide",
+ "fstp-html",
+ "fstp-import",
+ "fstp-journey",
+ "fstp-json",
+ "fstp-ledger",
+ "fstp-money",
+ "fstp-pdf",
+ "fstp-public",
+ "fstp-report",
+ "fstp-rt",
+ "fstp-sigval",
+ "fstp-tenant",
+]
+
+[[package]]
 name = "fstp-audit"
 version = "0.1.0"
 dependencies = [
@@ -183,6 +222,8 @@ dependencies = [
 name = "fstp-cell"
 version = "0.1.0"
 dependencies = [
+ "fstp-access",
+ "fstp-api-core",
  "fstp-audit",
  "fstp-auth",
  "fstp-cell-core",
@@ -201,6 +242,7 @@ dependencies = [
  "fstp-keys",
  "fstp-ledger",
  "fstp-money",
+ "fstp-oauth",
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgwire",
@@ -212,6 +254,7 @@ dependencies = [
  "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
+ "fstp-web",
  "fstp-webauthn",
  "fstp-witness",
 ]
@@ -296,6 +339,20 @@ version = "0.1.0"
 dependencies = [
  "fstp-crypto",
  "fstp-domain",
+]
+
+[[package]]
+name = "fstp-contract"
+version = "0.1.0"
+dependencies = [
+ "fstp-contract-core",
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-pdf",
+ "fstp-pki",
+ "fstp-sigval",
 ]
 
 [[package]]
@@ -480,6 +537,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-journey"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-engine",
+ "fstp-json",
+ "fstp-ledger",
+]
+
+[[package]]
 name = "fstp-json"
 version = "0.1.0"
 
@@ -524,6 +592,16 @@ name = "fstp-mc"
 version = "0.1.0"
 
 [[package]]
+name = "fstp-mcp"
+version = "0.1.0"
+dependencies = [
+ "fstp-api-core",
+ "fstp-http",
+ "fstp-json",
+ "fstp-oauth",
+]
+
+[[package]]
 name = "fstp-migrate"
 version = "0.1.0"
 dependencies = [
@@ -536,6 +614,14 @@ dependencies = [
 name = "fstp-money"
 version = "0.1.0"
 dependencies = [
+ "fstp-json",
+]
+
+[[package]]
+name = "fstp-oauth"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
  "fstp-json",
 ]
 
@@ -673,6 +759,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-sigval"
+version = "0.1.0"
+dependencies = [
+ "der",
+ "fstp-crypto",
+ "fstp-pdf",
+ "fstp-pki",
+ "x509-cert",
+]
+
+[[package]]
 name = "fstp-smtp"
 version = "0.1.0"
 dependencies = [
@@ -749,6 +846,28 @@ version = "0.1.0"
 dependencies = [
  "fstp-json",
  "fstp-money",
+]
+
+[[package]]
+name = "fstp-web"
+version = "0.1.0"
+dependencies = [
+ "fstp-api-core",
+ "fstp-http",
+ "fstp-json",
+ "fstp-mcp",
+ "fstp-oauth",
+ "fstp-rt",
+ "fstp-web-assets",
+]
+
+[[package]]
+name = "fstp-web-assets"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-http",
+ "fstp-json",
 ]
 
 [[package]]

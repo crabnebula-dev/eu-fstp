@@ -228,10 +228,37 @@ pub fn checkpoint_aad(cell: &[u8; 16], seq: u64) -> Vec<u8> {
     aad(b"fstp-checkpoint-v1", cell, &[&seq.to_be_bytes()])
 }
 
+/// The AAD of a sealed audit event body of chain row `n` (ADR-010
+/// amendment of 2026-11-20): `"fstp-audit-event-v1" || cell || be64(n)`.
+pub fn event_aad(cell: &[u8; 16], n: u64) -> Vec<u8> {
+    aad(b"fstp-audit-event-v1", cell, &[&n.to_be_bytes()])
+}
+
 /// The AAD of an outbox body:
 /// `"fstp-outbox-v1" || cell || id || be16(kind) || idem`.
 pub fn outbox_aad(cell: &[u8; 16], id: &[u8; 16], kind: u16, idem: &[u8]) -> Vec<u8> {
     aad(b"fstp-outbox-v1", cell, &[id, &kind.to_be_bytes(), idem])
+}
+
+/// Opens the sealed body of the kind 2 chain row `n` of `cell`:
+/// `be32(key_ix) || nonce || ciphertext || tag` under [`event_aad`]
+/// (ADR-010 amendment of 2026-11-20).
+///
+/// # Errors
+///
+/// [`StoreFault::OpenFailed`] for a short body, an unknown generation, or
+/// a body sealed for another cell or row.
+pub fn open_event_body(
+    keys: &LedgerKeys,
+    cell: &[u8; 16],
+    n: u64,
+    body: &[u8],
+) -> Result<Vec<u8>, StoreFault> {
+    let (ix, rest) = body
+        .split_first_chunk::<4>()
+        .ok_or(StoreFault::OpenFailed)?;
+    let plain = keys.open(u32::from_be_bytes(*ix), &event_aad(cell, n), rest)?;
+    Ok(plain.to_vec())
 }
 
 #[cfg(test)]

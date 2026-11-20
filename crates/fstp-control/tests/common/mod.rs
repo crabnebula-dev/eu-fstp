@@ -80,6 +80,13 @@ pub fn schemas_of(db: CellDatabase) -> &'static [&'static str] {
             "journey",
             // M5 design section 4.3: write-once documents (I-30).
             "doc",
+            // M4 design section 4.3, ADR-026: the API core's pending
+            // actions and workspaces (lane L1).
+            "api",
+            "workspace",
+            // ADR-013 amendment of 2026-11-20: the authorisation server
+            // (lane L2).
+            "mcp",
         ],
         CellDatabase::Vault => &["vault", "keystore", "vault_audit", "fstp_meta"],
     }
@@ -98,7 +105,10 @@ pub fn append_only(db: CellDatabase, object: &str) -> bool {
     match db {
         CellDatabase::App => {
             matches!(schema_of(object), "ledger" | "auth_log")
-                || matches!(object, "audit.chain" | "audit.anchor" | "ops.outbox")
+                || matches!(
+                    object,
+                    "audit.chain" | "audit.anchor" | "ops.outbox" | "api.pending_confirmed"
+                )
         }
         CellDatabase::Vault => schema_of(object) == "vault_audit",
     }

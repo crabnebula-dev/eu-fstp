@@ -11,9 +11,9 @@
 //!
 //! Interim, pending Daniel:
 //!
-//! - The keystore is still held in memory by its owner (W2e has not
-//!   moved it into the `keystore` tables), so the image stands for those
-//!   tables. The texts are in it too, as `blob.text` would hold them.
+//! - The image holds the rows of the keystore tables (`super::tables`,
+//!   lane L3) that open texts: roots, group secrets, data keys, texts and
+//!   the login digests. The texts are in it as `keystore.text` holds them.
 //! - The level 2 signing key rows and the chain state are not in it yet.
 //!   They open nothing that the tests here read.
 //! - The bytes below are this lane's own:
@@ -174,7 +174,7 @@ pub struct KeystoreImage {
     pub digests: Vec<ImageDigest>,
 }
 
-const fn backend_code(b: BackendId) -> u8 {
+pub(super) const fn backend_code(b: BackendId) -> u8 {
     match b {
         BackendId::Okms => 1,
         BackendId::Keyd => 2,
@@ -182,7 +182,7 @@ const fn backend_code(b: BackendId) -> u8 {
     }
 }
 
-fn backend_of(code: u8) -> Option<BackendId> {
+pub(super) fn backend_of(code: u8) -> Option<BackendId> {
     match code {
         1 => Some(BackendId::Okms),
         2 => Some(BackendId::Keyd),
@@ -565,6 +565,7 @@ pub fn open_text(
                 epoch: g.epoch,
                 nonce: g.nonce,
                 body: g.body.clone(),
+                public: Vec::new(),
             };
             for s in seal_keys {
                 if let Ok(sk) = open_group(s, cell, id, g.generation, &row) {
@@ -618,6 +619,7 @@ pub fn login_digest_keys(
                 epoch: g.epoch,
                 nonce: g.nonce,
                 body: g.body.clone(),
+                public: Vec::new(),
             };
             for s in seal_keys {
                 if let Ok(sk) = open_group(s, cell, GroupId(g.group), g.generation, &row)

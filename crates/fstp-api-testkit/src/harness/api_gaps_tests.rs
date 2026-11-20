@@ -181,7 +181,7 @@ fn adr013_i78_agents_consent_approves_the_authorize_flow_consent() {
         .tokens
         .redeem(&start, &redirect, Timestamp::from_micros(w.now))
         .unwrap();
-    assert_eq!(u128::from(grant.account.raw()), PM.raw());
+    assert_eq!(grant.account.raw(), PM.raw());
     assert_eq!(grant.consent_method, fstp_oauth::LoginMethod::Passkey);
     assert_eq!(
         observed(&stepped(&w, &login, POST, "/oauth/consent", &body)),
@@ -216,6 +216,69 @@ fn adr013_i77_i78_agents_consent_refusals() {
     assert_eq!(
         observed(&stepped(&w, &login, POST, "/oauth/consent", &unknown)),
         refused("Input")
+    );
+}
+
+/// I-86, lane L2 (`agents.consent_request`): the consent page reads the
+/// pending consent by its handle. The reply names the client, its own name
+/// as unverified text, the redirect host, the scopes and the expiry, and
+/// nothing else: no account, no handle, no digest, no identity attribute.
+/// A handle the server does not hold is not found, and a magic-link
+/// session may read it too, since it only shows the request.
+#[test]
+fn i86_consent_request_names_no_identity() {
+    let w = active();
+    let start = w
+        .ports
+        .tokens
+        .begin_consent(Timestamp::from_micros(w.now))
+        .unwrap();
+    let path = format!("/oauth/consents/{}", start.handle);
+    let login = w.ports.sessions.login(PM, LoginMethod::Passkey);
+    let reply = body_json(once(&w, &login, GET, &path, &Value::Null));
+    let Value::Object(o) = &reply else {
+        panic!("not an object: {reply:?}");
+    };
+    let mut sorted: Vec<&str> = o.iter().map(|(k, _)| k).collect();
+    sorted.sort_unstable();
+    assert_eq!(
+        sorted,
+        [
+            "client",
+            "expires",
+            "loopback",
+            "name",
+            "redirect_host",
+            "scopes"
+        ]
+    );
+    assert_eq!(
+        str_member(&reply, "name").as_deref(),
+        Some("Synthetic agent")
+    );
+    assert_eq!(
+        str_member(&reply, "redirect_host").as_deref(),
+        Some("127.0.0.1")
+    );
+    let text = reply.to_compact();
+    for absent in [
+        start.handle.clone(),
+        PM.raw().to_string(),
+        "account".to_owned(),
+        "digest".to_owned(),
+        "email".to_owned(),
+    ] {
+        assert!(!text.contains(&absent), "I-86: the reply holds {absent}");
+    }
+    let magic = w.ports.sessions.login(LEAD, LoginMethod::MagicLink);
+    assert!(matches!(
+        once(&w, &magic, GET, &path, &Value::Null),
+        Ok(OpResult::Done { .. })
+    ));
+    let unknown = format!("/oauth/consents/{}", "A".repeat(43));
+    assert_eq!(
+        observed(&once(&w, &login, GET, &unknown, &Value::Null)),
+        Observed::NotFound("Input".to_owned())
     );
 }
 

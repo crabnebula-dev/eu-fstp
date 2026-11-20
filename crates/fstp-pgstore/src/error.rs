@@ -199,6 +199,10 @@ pub enum AppendFault {
     /// stored row, or of another row of the same append. The whole append
     /// aborted (TH-21).
     OutboxDuplicate,
+    /// The `api.pending_confirmed` row of the batch already exists: the
+    /// pending action was confirmed already. The whole append aborted
+    /// (I-85, ADR-026).
+    PendingConfirmed,
     /// An earlier prepare is still unresolved: its abort or its in-doubt
     /// record has not reached the witness. No write is admitted until it
     /// is (ADR-010).
@@ -218,6 +222,9 @@ impl fmt::Display for AppendFault {
             AppendFault::StepUpReplayed => f.write_str("the step-up was consumed already"),
             AppendFault::SessionEndReplayed => f.write_str("a session was ended already"),
             AppendFault::OutboxDuplicate => f.write_str("an outbox row already exists"),
+            AppendFault::PendingConfirmed => {
+                f.write_str("the pending action was confirmed already")
+            }
             AppendFault::Pending(e) => write!(f, "an earlier prepare is unresolved: {e}"),
             AppendFault::Unknown => f.write_str("the commit outcome is unknown"),
             AppendFault::Fault(e) => write!(f, "{e}"),
@@ -243,6 +250,7 @@ impl From<AppendFault> for AppendError {
             | AppendFault::StepUpReplayed
             | AppendFault::SessionEndReplayed
             | AppendFault::OutboxDuplicate
+            | AppendFault::PendingConfirmed
             | AppendFault::Pending(_)
             | AppendFault::Unknown
             | AppendFault::Fault(_) => AppendError::Store(StoreError::Unavailable),

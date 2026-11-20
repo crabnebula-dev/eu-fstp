@@ -21,9 +21,9 @@
 //!    shell there yet. A path under `/p/` that no route matches answers
 //!    as the web adapter answers it (`crate::routes::unrouted`).
 //!
-//! A front built with `Front::with_pages` (feature `dev-pages`, test and
-//! dev stack only) also routes the compiled auth pages
-//! (`crate::http::pages`): the rows of `crate::routes::page_table`. Each
+//! A front built with `Front::with_pages` or `Front::with_web` also
+//! routes the compiled auth pages (ADR-026 "Auth pages", decided by
+//! Daniel on 2026-11-20, `crate::http::pages`): the rows of `crate::routes::page_table`. Each
 //! row names its risk class and runs the shared checks, like every other
 //! route. `GET` of each page path serves the shell, and `GET` under the
 //! asset routes serves a loaded module or stylesheet by name.
@@ -78,6 +78,37 @@ pub const HEALTH_BODY: &[u8] = b"ok\n";
 /// The response field a route handler sets so the front knows the route
 /// logged its own event. The front removes it from every response.
 const LOGGED: &str = "x-fstp-internal-logged";
+
+/// The response field the web adapter's answers carry inside the front,
+/// so the front keeps the adapter's own security fields. The front removes
+/// it from every response.
+const WEB: &str = "x-fstp-internal-web";
+
+/// Whether `path` belongs to a surface of the web adapter that the cell
+/// table does not serve (ADR-026 "Composition"): the journey UI under
+/// `/app`, the API core's `/api/` routes, `/mcp`, `/oauth` and the
+/// two OAuth metadata documents. `/p/` stays the cell's own.
+fn web_path(path: &str) -> bool {
+    path == "/app"
+        || path.starts_with("/app/")
+        || path.starts_with("/api/")
+        || path == "/mcp"
+        || path.starts_with("/mcp/")
+        || path.starts_with("/oauth/")
+        || path.starts_with("/.well-known/")
+}
+
+/// The web adapter mounted behind the cell table (ADR-026).
+type Web = Option<Arc<fstp_web::WebRouter>>;
+
+/// Serves `req` through the web adapter, marked as its answer.
+async fn serve_web(web: &fstp_web::WebRouter, req: Request) -> Response {
+    let mut resp = web.serve(req).await;
+    if let (Ok(name), Ok(value)) = (HeaderName::new(WEB), HeaderValue::new("1")) {
+        resp.headers.insert(name, value);
+    }
+    resp
+}
 
 /// Where the front writes its events.
 pub trait LogSink: Send + Sync + 'static {
@@ -179,6 +210,8 @@ struct Inner<B, L> {
     router: Router,
     host: String,
     log: Arc<L>,
+    /// Lane L2 hook: the OAuth endpoints of the cell (`crate::oauth`).
+    oauth: std::sync::OnceLock<Arc<dyn crate::oauth::Mount>>,
     _backend: std::marker::PhantomData<B>,
 }
 
@@ -210,12 +243,20 @@ impl<B: Backend, L: LogSink> Handler for RouteHandler<B, L> {
 struct Unrouted<B, L> {
     ctx: Arc<Ctx<B>>,
     log: Arc<L>,
+    web: Web,
 }
 
 impl<B: Backend, L: LogSink> Handler for Unrouted<B, L> {
     async fn handle(&self, req: Request) -> Response {
         let started = Instant::now();
         let method = obs_method(&req.method);
+        // ADR-026: a path of the web adapter's surfaces that the cell
+        // table did not match goes to the adapter. The front logs it.
+        if let Some(web) = &self.web
+            && web_path(req.target.path())
+        {
+            return serve_web(web, req).await;
+        }
         let (mut resp, outcome) = crate::routes::unrouted(&self.ctx, &req).await;
         self.log
             .log(event(method, UNROUTED, &resp, outcome, started));
@@ -223,6 +264,24 @@ impl<B: Backend, L: LogSink> Handler for Unrouted<B, L> {
             resp.headers.insert(name, value);
         }
         resp
+    }
+}
+
+/// The site stylesheet route with the web adapter mounted: a platform
+/// stylesheet of the public pages is the cell's, and any other file under
+/// `/app/assets/` is the adapter's journey UI asset (ADR-026).
+struct SiteOrWeb<B, L> {
+    cell: RouteHandler<B, L>,
+    web: Arc<fstp_web::WebRouter>,
+}
+
+impl<B: Backend, L: LogSink> Handler for SiteOrWeb<B, L> {
+    async fn handle(&self, req: Request) -> Response {
+        if crate::http::site::sheet(req.target.path()).is_some() {
+            self.cell.handle(req).await
+        } else {
+            serve_web(&self.web, req).await
+        }
     }
 }
 
@@ -282,7 +341,26 @@ impl<B: Backend, L: LogSink> Front<B, L> {
     /// [`FrontError::Host`] for a host that is not a relying party host,
     /// and [`FrontError::Route`] if the router refuses a table route.
     pub fn new(cfg: FrontConfig, backend: Arc<B>, log: Arc<L>) -> Result<Front<B, L>, FrontError> {
-        Front::build(cfg, None, backend, log)
+        Front::build(cfg, None, backend, log, None)
+    }
+
+    /// The production front of ADR-026 (decided by Daniel on 2026-11-20):
+    /// the cell table, the public and site rows, the auth page rows when
+    /// `pages` are loaded, and the web adapter `web` behind them for the
+    /// `/app`, `/api`, `/mcp`, `/oauth` and `/.well-known` paths the
+    /// cell table does not match.
+    ///
+    /// # Errors
+    ///
+    /// As [`Front::new`].
+    pub fn with_web(
+        cfg: FrontConfig,
+        pages: Option<Pages>,
+        web: fstp_web::WebRouter,
+        backend: Arc<B>,
+        log: Arc<L>,
+    ) -> Result<Front<B, L>, FrontError> {
+        Front::build(cfg, pages.map(Arc::new), backend, log, Some(Arc::new(web)))
     }
 
     /// [`Front::new`] that also serves the compiled auth pages `pages` on
@@ -291,23 +369,20 @@ impl<B: Backend, L: LogSink> Front<B, L> {
     /// through the shared checks of every route. `GET /auth/magic` then
     /// serves the shell too. Every reply carries the cell CSP.
     ///
-    /// Test and dev stack only: it is built with the `dev-pages` feature,
-    /// which no shipped build enables. Design section 8.7 does not list the
-    /// page routes yet, so the production front serves exactly
-    /// `crate::routes::table` (a question for Daniel, lane int4).
+    /// Daniel decided on 2026-11-20 (D2, ADR-026 "Auth pages") that the
+    /// page rows join the served table, so a shipped build serves them.
     ///
     /// # Errors
     ///
     /// As [`Front::new`], and [`FrontError::Route`] if the router refuses
     /// a page route.
-    #[cfg(feature = "dev-pages")]
     pub fn with_pages(
         cfg: FrontConfig,
         pages: Pages,
         backend: Arc<B>,
         log: Arc<L>,
     ) -> Result<Front<B, L>, FrontError> {
-        Front::build(cfg, Some(Arc::new(pages)), backend, log)
+        Front::build(cfg, Some(Arc::new(pages)), backend, log, None)
     }
 
     fn build(
@@ -315,6 +390,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         pages: Option<Arc<Pages>>,
         backend: Arc<B>,
         log: Arc<L>,
+        web: Web,
     ) -> Result<Front<B, L>, FrontError> {
         let rp = RelyingParty::new(&cfg.host).map_err(|_| FrontError::Host)?;
         let serve_pages = pages.is_some();
@@ -336,6 +412,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         let mut router = Router::new().fallback(Unrouted {
             ctx: Arc::clone(&ctx),
             log: Arc::clone(&log),
+            web: web.clone(),
         });
         for route in table()
             .iter()
@@ -352,18 +429,35 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 route,
                 log: Arc::clone(&log),
             };
-            router = router
-                .route(http_method(m)?, path, handler)
-                .map_err(|_| FrontError::Route)?;
+            router = match (&web, path == crate::http::site::SHEET_ROUTE) {
+                (Some(w), true) => router.route(
+                    http_method(m)?,
+                    path,
+                    SiteOrWeb {
+                        cell: handler,
+                        web: Arc::clone(w),
+                    },
+                ),
+                _ => router.route(http_method(m)?, path, handler),
+            }
+            .map_err(|_| FrontError::Route)?;
         }
         Ok(Front {
             inner: Arc::new(Inner {
                 router,
                 host: cfg.host,
                 log,
+                oauth: std::sync::OnceLock::new(),
                 _backend: std::marker::PhantomData,
             }),
         })
+    }
+
+    /// Lane L2 hook (ADR-013 amendment of 2026-11-20): mounts the OAuth
+    /// endpoints of the cell, which then serve every path below `/oauth`
+    /// after the host check. `false` when a mount is set already.
+    pub fn mount_oauth(&self, mount: Arc<dyn crate::oauth::Mount>) -> bool {
+        self.inner.oauth.set(mount).is_ok()
     }
 
     /// Serves one request on the tunnel listener (module documentation).
@@ -374,10 +468,15 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         let public = is_public_path(req.target.path());
         let (mut resp, rule) = match self.precheck(&req) {
             Some(refused) => refused,
-            None => (self.inner.router.handle(req).await, None),
+            None => match self.inner.oauth.get() {
+                // Lane L2 hook: `/oauth/**` goes to the authorisation server.
+                Some(o) if crate::oauth::is_route(req.target.path()) => (o.serve(req).await, None),
+                _ => (self.inner.router.handle(req).await, None),
+            },
         };
         let logged = resp.headers.remove(LOGGED) > 0;
-        if home && resp.status == StatusCode::NOT_FOUND {
+        let from_web = resp.headers.remove(WEB) > 0;
+        if home && resp.status == StatusCode::NOT_FOUND && !from_web {
             resp = see_home();
         }
         if !logged {
@@ -386,7 +485,13 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 .log
                 .log(event(method, UNROUTED, &resp, outcome, started));
         }
-        secure(&mut resp, public);
+        if from_web {
+            // The adapter set the fields of its surface (ADR-014). The
+            // front still removes every CORS grant.
+            strip_cors(&mut resp);
+        } else {
+            secure(&mut resp, public);
+        }
         resp
     }
 
@@ -509,6 +614,12 @@ fn secure(resp: &mut Response, public: bool) {
     ] {
         let _ = resp.headers.try_insert(name, value);
     }
+    strip_cors(resp);
+}
+
+/// Removes every `Access-Control-*` field, so no other origin may read
+/// a response.
+fn strip_cors(resp: &mut Response) {
     let cors: Vec<String> = resp
         .headers
         .iter()

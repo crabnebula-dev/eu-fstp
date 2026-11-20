@@ -361,17 +361,24 @@ pub(crate) fn account_engine_ctx(
     cmd: &fstp_engine::Command,
     now: Timestamp,
     command: Option<[u8; 16]>,
+    via: Via,
 ) -> Ctx {
     let a = attestation(s, actor, cmd, command.map(|id| (id, now)));
-    engine_ctx(actor, now, command, &a)
+    engine_ctx(actor, now, command, &a, via)
 }
 
-fn engine_ctx(actor: AccountId, now: Timestamp, command: Option<[u8; 16]>, a: &Attest) -> Ctx {
+fn engine_ctx(
+    actor: AccountId,
+    now: Timestamp,
+    command: Option<[u8; 16]>,
+    a: &Attest,
+    via: Via,
+) -> Ctx {
     Ctx {
         now,
         actor: Actor::Account(actor),
         command: CommandId::from_bytes(command.unwrap_or([0; 16])),
-        via: Via::Web,
+        via,
         tenant_admin: a.tenant_admin,
         second_tenant_admin: a.second,
         binds_tenant_admin: a.binds,
@@ -552,7 +559,7 @@ pub(crate) fn queries_with_inputs(
     overdue(s, c, now)?;
     match c {
         CellCommand::Engine(cmd) => {
-            let ctx = account_engine_ctx(s, actor, cmd, now, command);
+            let ctx = account_engine_ctx(s, actor, cmd, now, command, inputs.via());
             // The creator decider over the cell's environment, with the
             // questions of its SoD previews (`crate::creator`).
             let none = Answers::new();
@@ -926,7 +933,7 @@ fn decide_engine(
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     let a = attestation(s, actor, cmd, command.map(|id| (id, now)));
-    let ctx = engine_ctx(actor, now, command, &a);
+    let ctx = engine_ctx(actor, now, command, &a, inputs.via());
     // A creator command reads the cell's environment (`crate::creator`).
     // Every other engine command is decided as `DomainDecider` decides it.
     let env = crate::creator::CellEnvironment::new(s, inputs.creator(), answers);

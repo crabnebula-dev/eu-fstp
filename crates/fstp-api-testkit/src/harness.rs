@@ -1040,6 +1040,15 @@ fn request_of(cell: &Cell, w: &Built, session: Option<u128>) -> Result<Request, 
                         .binding_suspended
                         .map(|b| b.raw().to_string())
                         .ok_or("no suspended binding")?,
+                    // ADR-013 amendment of 2026-11-20: the consent page reads
+                    // a live consent the authorize flow left for this cell,
+                    // drawn as `agents.consent` draws its own.
+                    ("consent", "agents.consent_request") => {
+                        w.ports
+                            .tokens
+                            .begin_consent(Timestamp::from_micros(w.now))?
+                            .handle
+                    }
                     _ => param(name, cell.who, &w.targets, session)?,
                 };
                 path.push_str(&v);
@@ -4098,9 +4107,13 @@ impl Runner {
 /// m4/api-gaps). `me.add_passkey` takes the challenge of options drawn
 /// for its own cell and adds a passkey of the caller, which no cell's
 /// outcome reads. `agents.consent` approves a consent drawn for its own
-/// cell and leaves a code no cell redeems.
+/// cell and leaves a code no cell redeems. `agents.consent_request`
+/// reads a consent drawn for its own cell and changes nothing.
 fn port_confined(op: &str) -> bool {
-    matches!(op, "me.add_passkey" | "agents.consent")
+    matches!(
+        op,
+        "me.add_passkey" | "agents.consent" | "agents.consent_request"
+    )
 }
 
 /// Whether `op` is a read or a public page.

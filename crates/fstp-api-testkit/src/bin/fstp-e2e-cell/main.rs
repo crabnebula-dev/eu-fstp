@@ -279,7 +279,8 @@ impl Inner {
             Arc::clone(&core),
             // The cell origin is plain `http` under `.localhost`, so its
             // OAuth metadata names it as a test cell (lane W3c).
-            WebConfig::new(origin, site.assets.clone()).test_cell(),
+            WebConfig::new(origin, site.assets.clone())
+                .with_local_http(fstp_api_testkit::fake::tokens::test_cell_host),
         )
         .map_err(|e| e.to_string())?;
         let mut auth = auth;

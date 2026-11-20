@@ -190,6 +190,15 @@ pub fn side_effects(req: &AppendRequest) -> Result<fstp_pgstore::SideEffects, Ce
         stepup_fresh_until: req.side.stepup_fresh_until,
         sessions_ended,
         outbox,
+        // ADR-026: the confirmation names the last entry of the batch.
+        pending_confirmed: req
+            .side
+            .pending_confirmed
+            .map(|id| fstp_pgstore::PendingConfirm {
+                id,
+                record: req.batch.len().saturating_sub(1),
+            }),
+        events: req.side.audit_events.clone(),
     })
 }
 
@@ -229,6 +238,9 @@ fn append_error(f: AppendFault) -> CellAppendError {
         // is a store that disagrees with the fold, which never names an
         // ended session again, so it reads as the store failing.
         AppendFault::StepUpReplayed => CellAppendError::StepUpReplayed,
+        // ADR-026, I-85: the pending action was confirmed by an earlier
+        // append. A refusal, never an outage.
+        AppendFault::PendingConfirmed => CellAppendError::PendingConfirmed,
         AppendFault::SessionEndReplayed
         | AppendFault::OutboxDuplicate
         | AppendFault::Pending(_)
@@ -301,6 +313,18 @@ where
                 witness_seq: c.witness_seq,
             }),
         })
+    }
+
+    async fn append_events(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+    ) -> Result<(), CellAppendError> {
+        self.inner
+            .append_events(at, events)
+            .await
+            .map(|_| ())
+            .map_err(append_error)
     }
 
     async fn stored_commit(&self, seq: Seq) -> Result<Option<StoredCommit>, StoreError> {
@@ -465,6 +489,7 @@ mod tests {
             stepup_fresh_until: Some(7),
             sessions_ended: vec![[2; 16], [3; 16]],
             outbox: Vec::new(),
+            ..Default::default()
         };
         let got = side_effects(&request(batch, side)).unwrap();
         assert_eq!(
@@ -508,6 +533,7 @@ mod tests {
                 stepup_fresh_until: None,
                 sessions_ended: sessions,
                 outbox: Vec::new(),
+                ..Default::default()
             }
         };
         assert_eq!(
@@ -544,6 +570,7 @@ mod tests {
             stepup_fresh_until: None,
             sessions_ended: Vec::new(),
             outbox: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(
             side_effects(&request(vec![consumed([1; 16])], side(None))),

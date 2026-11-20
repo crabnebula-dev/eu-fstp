@@ -2358,6 +2358,10 @@ async fn complete_recovery<B: Backend>(
         Err(f) => unavailable(f),
         Ok(Err(e)) => exec_failed(&e),
         Ok(Ok(_)) => {
+            // H-21, I-79, issue 6 M5 (lane L2): the completion committed, so
+            // every agent grant of the account ends now. The token check
+            // refuses every older grant even if this call fails.
+            ctx.backend.revoke_all_agents(account).await;
             let started = Timestamp::from_micros(now.micros().saturating_add(1));
             open_session_at(ctx, account, Method::Passkey, Some(credential), started).await
         }

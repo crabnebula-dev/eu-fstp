@@ -162,6 +162,9 @@ pub struct PgBackend<R: Runtime> {
     /// What the routes keep between two steps of a ceremony (module
     /// documentation).
     pending: Mutex<Pending>,
+    /// Lane L2 hook: the authorisation server, for the recovery route
+    /// (H-21).
+    agents: std::sync::OnceLock<Arc<dyn crate::oauth::AgentGrants>>,
 }
 
 /// What the routes keep between two steps of a ceremony, in process
@@ -233,6 +236,7 @@ impl<R: Runtime> PgBackend<R> {
             ticket: None,
             public: Arc::new(crate::public::PublicClass::default()),
             pending: Mutex::new(Pending::default()),
+            agents: std::sync::OnceLock::new(),
         })
     }
 
@@ -248,6 +252,12 @@ impl<R: Runtime> PgBackend<R> {
     pub fn with_proof_mail(mut self, mail: Arc<dyn crate::mail::ProofMail>) -> PgBackend<R> {
         self.proof_mail = mail;
         self
+    }
+
+    /// Lane L2 hook (H-21): the authorisation server whose grants the
+    /// recovery route ends. `false` when one is set already.
+    pub fn set_agent_grants(&self, agents: Arc<dyn crate::oauth::AgentGrants>) -> bool {
+        self.agents.set(agents).is_ok()
     }
 
     /// The same backend on the cell clock `clock` (`crate::process::StartOptions`).
@@ -377,6 +387,12 @@ impl<R: Runtime> PgBackend<R> {
 }
 
 impl<R: Runtime> Backend for PgBackend<R> {
+    async fn revoke_all_agents(&self, account: AccountId) {
+        if let Some(a) = self.agents.get() {
+            a.revoke_all_agents(account).await;
+        }
+    }
+
     fn public_texts(&self) -> Arc<dyn crate::public::PublicTextSource> {
         Arc::clone(&self.public) as Arc<dyn crate::public::PublicTextSource>
     }

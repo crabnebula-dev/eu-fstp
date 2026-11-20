@@ -22,12 +22,11 @@
 //! `crate::routes::page_table`, with its risk class (I-78), and runs the
 //! shared checks of every route. Those rows are not rows of
 //! `crate::routes::table`, the transcription of design section 8.7,
-//! which lists `GET /auth/magic` as its only page. So the production
-//! front serves none of them: only `Front::with_pages`, behind the test
-//! and dev-stack feature `dev-pages`, does. `GET /auth/magic` keeps its
+//! which lists `GET /auth/magic` as its only page. Daniel decided on
+//! 2026-11-20 (D2, ADR-026 "Auth pages") that the page rows join the
+//! served table, so every front built with the loaded pages serves them
+//! (`Front::with_pages`, `Front::with_web`). `GET /auth/magic` keeps its
 //! table route, whose handler serves the shell when pages are loaded.
-//! Adding the page rows to section 8.7 is a question for Daniel, raised
-//! by lane int4.
 //!
 //! [`Pages::load`] refuses a directory that lacks the shell, `main.js`
 //! or a stylesheet, a symbolic link, a file name outside a closed
