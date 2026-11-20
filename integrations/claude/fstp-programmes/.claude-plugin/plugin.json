@@ -1,0 +1,25 @@
+{
+  "name": "fstp-programmes",
+  "displayName": "EU FSTP programmes",
+  "version": "0.1.0",
+  "description": "Set up and manage FSTP funding programmes and calls on an EU FSTP cell. Claude drafts; people confirm binding and high-risk steps in the platform.",
+  "author": { "name": "CrabNebula Ltd", "url": "https://crabnebula.dev" },
+  "repository": "https://github.com/crabnebula-dev/eu-fstp",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "keywords": ["fstp", "funding", "grants", "mcp"],
+  "userConfig": {
+    "mcp_url": {
+      "type": "string",
+      "title": "Cell MCP URL",
+      "description": "The MCP endpoint of your organisation's cell, for example https://grants.example.eu/mcp. For the local demo cell use the origin printed by the demo, followed by /mcp.",
+      "required": true
+    }
+  },
+  "mcpServers": {
+    "fstp": {
+      "type": "http",
+      "url": "${user_config.mcp_url}",
+      "oauth": { "scopes": "creator:draft calls:draft calls:read tenant:draft audit:read" }
+    }
+  }
+}
