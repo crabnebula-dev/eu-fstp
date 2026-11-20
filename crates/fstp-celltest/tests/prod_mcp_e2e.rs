@@ -33,7 +33,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use fstp_celltest::external_cell::ExternalSpec;
+use fstp_api_testkit::smtp_sink::{SINK_SERVER_NAME, SinkConfig, SmtpSink};
+use fstp_celltest::external_cell::{ExternalRelay, ExternalSpec};
 use fstp_celltest::mc::auth_model::RosterChange;
 use fstp_celltest::mc::auth_model::http::{AuthClient, Cookie, FIRST_ADMIN};
 use fstp_celltest::reference::auth::RefMethod;
@@ -49,10 +50,15 @@ const VERIFIER: &str = "l4-verifier-0123456789abcdefghijklmnopqrstuvwxyz";
 const MODERN: &str = "2026-07-28";
 const DRAFT: &str = "Synthetic production programme";
 
+/// The fstp-tls test CA, which issued the sink's `localhost` certificate.
+const SINK_CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
+
 /// The processes of the run. The world drops first, so the cell drains
 /// before its custody goes.
 struct Stack {
     world: World,
+    _sink: SmtpSink,
+    _rt: fstp_rt::tokio::TokioRuntime,
     _custody: SimProcess,
     _key_file_custody: SimProcess,
     dir: std::path::PathBuf,
@@ -76,11 +82,32 @@ fn stack() -> Stack {
     std::fs::create_dir_all(&dir).unwrap();
     let custody = SimProcess::spawn(0, &dir).unwrap_or_else(|e| panic!("{e}"));
     let key_file_custody = SimProcess::spawn(1, &dir).unwrap_or_else(|e| panic!("{e}"));
+    // The platform relay (D3): the test SMTP sink, on the world's runtime
+    // kind. It must outlive the cell, so the stack holds it.
+    let rt = fstp_rt::tokio::TokioRuntime::new_multi_thread(1).unwrap();
+    let cfg = SinkConfig::default();
+    let sink = rt.block_on(SmtpSink::start(&rt, cfg.clone())).unwrap();
+    let handle = sink.handle().clone();
+    let relay = ExternalRelay {
+        address: sink.addr(),
+        relay: SINK_SERVER_NAME.to_owned(),
+        username: cfg.username,
+        password: cfg.password,
+        ca_pem: SINK_CA.to_vec(),
+        messages: std::sync::Arc::new(move || {
+            handle
+                .messages()
+                .into_iter()
+                .filter_map(|m| Some((m.to.first()?.clone(), m.data)))
+                .collect()
+        }),
+    };
     let spec = ExternalSpec {
         binary,
         dir: dir.clone(),
         key_file_custody: key_file_custody.socket().to_path_buf(),
         assets_dir: None,
+        relay: Some(relay),
     };
     let world = World::start_external(
         WorldSpec {
@@ -96,6 +123,8 @@ fn stack() -> Stack {
     .unwrap_or_else(|e| panic!("{e}"));
     Stack {
         world,
+        _sink: sink,
+        _rt: rt,
         _custody: custody,
         _key_file_custody: key_file_custody,
         dir,

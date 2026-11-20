@@ -10,8 +10,10 @@
 //!    the sealed cell key file through the dedicated custody entry
 //!    (`fstp_cell::keyfile::create`), with the keys the witness and the
 //!    vault already pin;
-//! 2. starts the test SMTP sink of `fstp-api-testkit` as the platform
-//!    relay, pinned by address (ADR-026 "Relay address");
+//! 2. names the relay the caller runs, if any, as the platform relay,
+//!    pinned by address (ADR-026 "Relay address"). The test passes the
+//!    SMTP sink of `fstp-api-testkit`, which rule A9 keeps out of this
+//!    library;
 //! 3. writes `cell.json`, with the tunnel, internal and health ports drawn
 //!    here, so the edge can route to the tunnel before the cell starts;
 //! 4. runs `fstp-cell first-admin`, then `fstp-cell` itself, and waits
@@ -19,7 +21,7 @@
 //!
 //! The binary's own process holds every key: this process never sees the
 //! ledger keys of a start. The world reads a captured proof mail from the
-//! sink ([`ExternalCell::captured_mail`]), the way a mailbox holder reads
+//! relay ([`ExternalCell::mail_source`]), the way a mailbox holder reads
 //! it. Every value is synthetic.
 
 use std::io::{Read as _, Write as _};
@@ -33,9 +35,6 @@ use fstp_cell::mail::ProofKind;
 
 use crate::world::WorldError;
 use crate::world_mail::CapturedMail;
-
-/// The fstp-tls test CA, which issued the sink's `localhost` certificate.
-const SINK_CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
 
 /// How long the binary may take to reach `ready`.
 pub const START_TIMEOUT: Duration = Duration::from_secs(180);
@@ -57,9 +56,41 @@ pub struct ExternalSpec {
     pub dir: PathBuf,
     /// The socket of the dedicated custody entry of the key file root.
     pub key_file_custody: PathBuf,
+    /// The platform relay the cell submits proof mail to, or `None` for a
+    /// cell without mail.
+    pub relay: Option<ExternalRelay>,
     /// The compiled web assets (`assets_dir` of ADR-026), or `None` for the
     /// stub journey shell and no auth pages.
     pub assets_dir: Option<PathBuf>,
+}
+
+/// Every message a relay accepted so far, in order: its first recipient
+/// and its bytes.
+pub type RelayMessages = std::sync::Arc<dyn Fn() -> Vec<(String, Vec<u8>)> + Send + Sync>;
+
+/// A submission relay the caller runs for the cell (module documentation).
+#[derive(Clone)]
+pub struct ExternalRelay {
+    /// Where it listens, with implicit TLS.
+    pub address: SocketAddr,
+    /// The host name its certificate carries.
+    pub relay: String,
+    /// The AUTH PLAIN user.
+    pub username: String,
+    /// The AUTH PLAIN password. Synthetic.
+    pub password: String,
+    /// The CA of its certificate, PEM.
+    pub ca_pem: Vec<u8>,
+    /// The messages it accepted.
+    pub messages: RelayMessages,
+}
+
+impl std::fmt::Debug for ExternalRelay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalRelay")
+            .field("address", &self.address)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One database login, as `fstp-pgtest` minted it.
@@ -111,7 +142,7 @@ pub struct ExternalCell {
     spec: ExternalSpec,
     config: PathBuf,
     child: Mutex<Option<Child>>,
-    sink: fstp_api_testkit::smtp_sink::SmtpSink,
+    relay: Option<ExternalRelay>,
     tunnel: SocketAddr,
     health: SocketAddr,
     starts: Mutex<u32>,
@@ -171,8 +202,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), WorldError> {
 
 impl ExternalCell {
     /// Writes the files of `parts` under `spec.dir`, with the key file
-    /// sealed through `spec.key_file_custody`, and starts the sink on
-    /// `rt`. The cell does not run yet.
+    /// sealed through `spec.key_file_custody`. The cell does not run yet.
     pub(crate) fn prepare(
         rt: &fstp_rt::tokio::TokioRuntime,
         spec: &ExternalSpec,
@@ -180,13 +210,6 @@ impl ExternalCell {
     ) -> Result<ExternalCell, WorldError> {
         let creds = spec.dir.join("credentials");
         std::fs::create_dir_all(&creds).map_err(|e| fail("the credentials directory", &e))?;
-        let sink_cfg = fstp_api_testkit::smtp_sink::SinkConfig::default();
-        let sink = rt
-            .block_on(fstp_api_testkit::smtp_sink::SmtpSink::start(
-                rt,
-                sink_cfg.clone(),
-            ))
-            .map_err(|e| fail("the SMTP sink", &e))?;
         let files: Vec<(&str, Vec<u8>)> = vec![
             ("db-ca.pem", parts.db_ca.clone()),
             ("writer.pem", parts.writer.cert_pem.clone()),
@@ -219,11 +242,13 @@ impl ExternalCell {
             ("vault.pem", parts.vault_client.cert.clone()),
             ("vault.key", parts.vault_client.key.clone()),
             ("vault-ca.pem", parts.vault_ca.clone()),
-            ("mail.password", sink_cfg.password.clone().into_bytes()),
-            ("mail-ca.pem", SINK_CA.to_vec()),
         ];
         for (name, bytes) in &files {
             write_private(&creds.join(name), bytes)?;
+        }
+        if let Some(r) = &spec.relay {
+            write_private(&creds.join("mail.password"), r.password.as_bytes())?;
+            write_private(&creds.join("mail-ca.pem"), &r.ca_pem)?;
         }
         // The key file, sealed through the dedicated custody entry.
         let custody = fstp_custody::KeydCustody::new(&spec.key_file_custody)
@@ -244,7 +269,7 @@ impl ExternalCell {
             .map(|(digest, kind)| format!(r#"{{"kind":"{kind}","spki_sha256":"{}"}}"#, hex(digest)))
             .collect();
         let config = format!(
-            r#"{{{assets}"cell":"{cell}","credentials_dir":"{creds}","database":{{"dbname":"{dbname}","host":"{db_host}","port":{db_port}}},"host":"{host}","key_file_keyd_socket":"{kf}","keyd_socket":"{keyd}","listen":{{"health":"{health}","internal":"{internal}","tunnel":"{tunnel}"}},"mail":{{"address":"{sink}","relay":"{relay}","sender":"noreply@{host}","username":"{user}"}},"mode":"{mode}","organisation_active":true,"registered_servers":[{registered}],"vault":{{"address":"{vault}"}},"version":"0.3.0","witness":{{"address":"{waddr}","ca_spki_sha256":"{wdigest}","server_name":"{wname}"}}}}"#,
+            r#"{{{assets}"cell":"{cell}","credentials_dir":"{creds}","database":{{"dbname":"{dbname}","host":"{db_host}","port":{db_port}}},"host":"{host}","key_file_keyd_socket":"{kf}","keyd_socket":"{keyd}","listen":{{"health":"{health}","internal":"{internal}","tunnel":"{tunnel}"}},{mail}"mode":"{mode}","organisation_active":true,"registered_servers":[{registered}],"vault":{{"address":"{vault}"}},"version":"0.3.0","witness":{{"address":"{waddr}","ca_spki_sha256":"{wdigest}","server_name":"{wname}"}}}}"#,
             assets = spec
                 .assets_dir
                 .as_ref()
@@ -258,9 +283,16 @@ impl ExternalCell {
             host = parts.host,
             kf = spec.key_file_custody.display(),
             keyd = parts.keyd_socket.display(),
-            sink = sink.addr(),
-            relay = fstp_api_testkit::smtp_sink::SINK_SERVER_NAME,
-            user = sink_cfg.username,
+            mail = spec
+                .relay
+                .as_ref()
+                .map(|r| {
+                    format!(
+                        r#""mail":{{"address":"{}","relay":"{}","sender":"noreply@{}","username":"{}"}},"#,
+                        r.address, r.relay, parts.host, r.username
+                    )
+                })
+                .unwrap_or_default(),
             mode = if parts.self_hosted {
                 "self_hosted"
             } else {
@@ -281,7 +313,7 @@ impl ExternalCell {
             spec: spec.clone(),
             config: path,
             child: Mutex::new(None),
-            sink,
+            relay: spec.relay.clone(),
             tunnel,
             health,
             starts: Mutex::new(0),
@@ -430,19 +462,13 @@ impl ExternalCell {
         }
     }
 
-    /// Every proof mail the sink accepted, in order, read back from its
-    /// link (`fstp_cell::mail::proof_message`).
+    /// A source of the proof mails the relay accepted, read back from
+    /// their links (`fstp_cell::mail::proof_message`), for a world mail
+    /// capture. `None` for a cell without a relay.
     #[must_use]
-    pub fn captured_mail(&self) -> Vec<CapturedMail> {
-        captured_from(&self.sink.messages())
-    }
-
-    /// A source of [`ExternalCell::captured_mail`] for a world mail
-    /// capture.
-    #[must_use]
-    pub fn mail_source(&self) -> crate::world_mail::MailSource {
-        let handle = self.sink.handle().clone();
-        std::sync::Arc::new(move || captured_from(&handle.messages()))
+    pub fn mail_source(&self) -> Option<crate::world_mail::MailSource> {
+        let messages = std::sync::Arc::clone(&self.relay.as_ref()?.messages);
+        Some(std::sync::Arc::new(move || captured_from(&messages())))
     }
 }
 
@@ -469,12 +495,12 @@ fn healthz(addr: SocketAddr) -> bool {
 
 /// The proofs of `messages`: each message's link names its kind, case
 /// and token (`fstp_cell::mail::proof_message`).
-fn captured_from(messages: &[fstp_api_testkit::smtp_sink::SinkMessage]) -> Vec<CapturedMail> {
+fn captured_from(messages: &[(String, Vec<u8>)]) -> Vec<CapturedMail> {
     messages
         .iter()
-        .filter_map(|m| {
-            let text = String::from_utf8_lossy(&m.data);
-            let to = m.to.first()?.clone();
+        .filter_map(|(to, data)| {
+            let text = String::from_utf8_lossy(data);
+            let to = to.clone();
             let (kind, token) = proof_of(&text)?;
             Some(CapturedMail { kind, to, token })
         })

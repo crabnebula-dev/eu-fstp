@@ -12,9 +12,13 @@
 //! `FSTP_CELL_CONFIG` (`fstp_celltest::world::World::start_external`).
 //!
 //! It prints the lines of the default mode, and before them `config
-//! <path>`: the configuration file the binary reads. Proof mail goes to
-//! the test SMTP sink of the stack. SIGTERM stops the binary, then the
-//! world, then custody.
+//! <path>`: the configuration file the binary reads. SIGTERM stops the
+//! binary, then the world, then custody.
+//!
+//! The stack names no mail relay, since rule A9 keeps the test SMTP sink
+//! of `fstp-api-testkit` out of this binary. Sign-up, magic link and
+//! recovery proofs therefore answer 503 here. `tests/prod_mcp_e2e.rs` runs
+//! the relay path.
 //!
 //! The binary must be built first: `tools/devstack/run.sh external-cell`
 //! builds it.
@@ -138,6 +142,9 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             dir: dir.clone(),
             key_file_custody: key_file_custody.socket().to_path_buf(),
             assets_dir: Some(assets),
+            // Rule A9 keeps the test SMTP sink out of this binary, so the
+            // stack names no relay: proofs answer 503 (`NoProofMail`).
+            relay: None,
         };
         let world = World::start_external(SPEC, custody.socket().to_path_buf(), &spec)?;
         Ok((world, custody, key_file_custody, dir))

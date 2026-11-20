@@ -4530,7 +4530,10 @@ fn start_cell(
     // An external cell's proofs reach the test SMTP sink, which its mail
     // capture reads ([`crate::world_mail::WorldMail::with_source`]).
     let mail = match &external {
-        Some(ext) => crate::world_mail::WorldMail::with_source(ext.mail_source()),
+        Some(ext) => match ext.mail_source() {
+            Some(source) => crate::world_mail::WorldMail::with_source(source),
+            None => mail,
+        },
         None => mail,
     };
     Ok(CellHandle {
