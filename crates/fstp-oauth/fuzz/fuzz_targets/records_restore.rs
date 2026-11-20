@@ -115,7 +115,11 @@ fuzz_target!(|data: &[u8]| {
     };
     let kept = restored.server.records();
     let held = kept.clients.len() + kept.families.len() + kept.refresh.len();
-    assert_eq!(held + restored.dropped, total, "a record was lost or doubled");
+    assert_eq!(
+        held + restored.dropped,
+        total,
+        "a record was lost or doubled"
+    );
     let Ok(again) = AuthorizationServer::restore(cfg, kept.clone()) else {
         panic!("a valid configuration was refused");
     };
