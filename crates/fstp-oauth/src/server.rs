@@ -1590,6 +1590,18 @@ impl AuthorizationServer {
     // Housekeeping
     // -----------------------------------------------------------------
 
+    /// Ends every pending consent, code, refresh family and access token
+    /// at once, and keeps the registered clients and the registration
+    /// counts. A test cell calls it when it replaces its accounts, so no
+    /// grant outlives the account it was given for (lane mcp-demo).
+    pub fn end_all_grants(&mut self) {
+        self.tickets.clear();
+        self.codes.clear();
+        self.families.clear();
+        self.refresh.clear();
+        self.access.clear();
+    }
+
     /// Drops records that can no longer change any answer at `now`:
     /// expired consents, expired codes that redeemed nothing, expired
     /// access tokens, families past P-72 with their tokens and codes,
@@ -1763,6 +1775,29 @@ mod tests {
             ("client_id", id),
         ]);
         s.token(body.as_bytes(), now)
+    }
+
+    /// ADR-013, R-MC-03 (lane mcp-demo): ending every grant at once kills
+    /// each access and refresh token and each pending consent, and keeps
+    /// the registered clients, which consent again from scratch.
+    #[test]
+    fn r_mc_03_end_all_grants_keeps_clients_only() {
+        let (mut s, id) = server();
+        let r = grant(&mut s, &id, 10, LoginMethod::Passkey);
+        assert_eq!(r.status, 200);
+        let access = json_str(&r, "access_token");
+        let refresh_token = json_str(&r, "refresh_token");
+        let pending = consent(&mut s, &id, 10);
+        let header = format!("Bearer {access}");
+        assert!(s.authenticate(Some(header.as_bytes()), MCP, 11).is_ok());
+        s.end_all_grants();
+        assert!(s.authenticate(Some(header.as_bytes()), MCP, 11).is_err());
+        assert_ne!(refresh(&mut s, &id, &refresh_token, 11).status, 200);
+        assert!(s.consent_step_up_digest(&pending.handle, 11).is_none());
+        assert!(s.agents_of(Account::from_raw(7), 11).is_empty());
+        assert!(s.client_number(&id).is_some());
+        let again = grant(&mut s, &id, 12, LoginMethod::Passkey);
+        assert_eq!(again.status, 200);
     }
 
     /// ADR-013 "Consent", I-78: the step-up digest of a live consent is

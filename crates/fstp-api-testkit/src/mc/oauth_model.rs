@@ -77,8 +77,9 @@ pub const OTHER_RESOURCE: &str = "https://cell-b.example/mcp";
 /// The well-known path of the protected resource metadata (RFC 9728).
 pub const PRM_PATH: &str = "/.well-known/oauth-protected-resource";
 
-/// The scopes issued in M4 (design section 3.8), spelt as on the wire.
-pub const SCOPES: [&str; 12] = [
+/// The scopes issued in M4 (design section 3.8), and `tenant:draft` of the
+/// ADR-013 amendment of 2026-11-20, spelt as on the wire.
+pub const SCOPES: [&str; 13] = [
     "calls:read",
     "proposals:read",
     "proposals:draft",
@@ -91,6 +92,7 @@ pub const SCOPES: [&str; 12] = [
     "creator:draft",
     "calls:draft",
     "audit:read",
+    "tenant:draft",
 ];
 
 /// The redirect URI of the model's client.

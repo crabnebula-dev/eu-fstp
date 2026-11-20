@@ -8,14 +8,17 @@ use fstp_domain::roles::Role;
 
 /// R-LG-03, I-78, I-85: `tenant.branding.set` is a tenant admin's
 /// high-risk operation. It needs a phishing-resistant session and a fresh
-/// step-up, and it has no tool, so it is web only.
+/// step-up. Its tool only prepares (I-85, ADR-013 amendment of
+/// 2026-11-20), so it completes only in the web.
 #[test]
 fn r_lg_03_branding_set_needs_step_up() {
     let o = op("tenant.branding.set").expect("tenant.branding.set");
     assert_eq!(o.kind, OpKind::Tenant(TenantKind::SetBranding));
     assert!(o.high_risk);
     assert_eq!(o.session, SessionNeed::PhishingResistant);
-    assert!(o.tool.is_none());
+    let t = o.tool.expect("the prepare-only tool");
+    assert_eq!(t.name, "fstp_prepare_branding");
+    assert!(t.prepare_only, "I-85: the set completes through MCP");
     assert_eq!(o.route, Some((Method::Put, "/admin/branding")));
     assert_eq!(o.acting.len(), 1);
     assert!(matches!(
@@ -26,12 +29,16 @@ fn r_lg_03_branding_set_needs_step_up() {
 
 /// I-70: `tenant.branding.check` returns the failing pairs and saves
 /// nothing, so it needs no step-up. Its reply lists pairs by name only.
+/// Its tool executes, since it records nothing (ADR-013 amendment of
+/// 2026-11-20).
 #[test]
 fn i70_branding_check_lists_pairs_and_saves_nothing() {
     let o = op("tenant.branding.check").expect("tenant.branding.check");
     assert_eq!(o.kind, OpKind::Tenant(TenantKind::CheckBranding));
     assert!(!o.high_risk);
-    assert!(o.tool.is_none());
+    let t = o.tool.expect("the check tool");
+    assert_eq!(t.name, "fstp_tenant_check_branding");
+    assert!(!t.prepare_only);
     assert_eq!(o.route, Some((Method::Post, "/admin/branding/check")));
     let Some(Shape::Object(members)) = reply("tenant.branding.check") else {
         panic!("tenant.branding.check has an object reply");

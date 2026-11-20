@@ -23,10 +23,12 @@
 //!   is the white-labelled `serverInfo.name`. [`McpResponse`] builds every
 //!   tool result (TH-60).
 //!
-//! Open point for Daniel and the lead: ADR-013 pins MCP revision
-//! 2026-07-28, which removes the `initialize` handshake, `ping` and
-//! protocol sessions that design section 3.8 lists. The lane scope builds
-//! the design's methods at the ADR-013 floor, revision 2025-06-18.
+//! Two eras on one endpoint (ADR-013, record of lane mcp-demo): a
+//! request whose params carry the protocol version in `_meta` is a modern
+//! request of the pinned revision 2026-07-28, served with no session
+//! (`server/discover`, `tools/list`, `tools/call`). Every other request
+//! keeps the design's legacy methods at the floor revision 2025-06-18,
+//! with `initialize` and a session.
 
 mod jsonrpc;
 mod origin;
@@ -39,7 +41,7 @@ pub use fstp_api_core::meta::Classification;
 pub use jsonrpc::{JsonRpcId, JsonRpcMessage, MAX_MESSAGE_BYTES, RpcError, decode_jsonrpc};
 pub use origin::{OriginRefusal, OriginSeen, check_origin, server_name};
 pub use result::{JsonPointer, McpResponse};
-pub use server::{FLOOR_REVISION, McpConfig, McpServer};
+pub use server::{FLOOR_REVISION, McpConfig, McpServer, PINNED_REVISION};
 
 /// Why an operation of this crate failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +127,11 @@ pub enum McpMessage {
         /// The request id.
         id: JsonRpcId,
     },
+    /// `server/discover`, a method of the modern era only.
+    Discover {
+        /// The request id.
+        id: JsonRpcId,
+    },
     /// `tools/list`.
     ToolsList {
         /// The request id.
@@ -179,6 +186,7 @@ pub(crate) fn mcp_message(m: JsonRpcMessage) -> Result<McpMessage, BadParams> {
             Ok(McpMessage::Initialize { id, version })
         }
         "ping" => Ok(McpMessage::Ping { id }),
+        "server/discover" => Ok(McpMessage::Discover { id }),
         "tools/list" => Ok(McpMessage::ToolsList { id }),
         "tools/call" => {
             let p = params.ok_or_else(|| bad(&id))?;
@@ -248,6 +256,34 @@ pub struct McpHeaders {
     origin: Result<OriginSeen, OriginRefusal>,
     session: Option<[u8; 16]>,
     version: Option<String>,
+    method: Field,
+    name: Field,
+}
+
+/// A request metadata field of the modern era, `Mcp-Method` or `Mcp-Name`.
+/// Only a modern request judges it, so a legacy request that carries a
+/// malformed one is not refused for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Field {
+    /// Not sent.
+    Absent,
+    /// Sent once, as visible ASCII of at most [`MAX_FIELD_BYTES`] bytes.
+    One(String),
+    /// Sent twice, or not visible ASCII, or longer.
+    Bad,
+}
+
+/// The longest `Mcp-Method` or `Mcp-Name` value read, in bytes.
+pub(crate) const MAX_FIELD_BYTES: usize = 256;
+
+impl Field {
+    /// The value when sent once and well formed.
+    pub(crate) fn one(&self) -> Option<&str> {
+        match self {
+            Field::One(s) => Some(s),
+            Field::Absent | Field::Bad => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for McpHeaders {
@@ -257,6 +293,8 @@ impl std::fmt::Debug for McpHeaders {
             .field("origin", &self.origin)
             .field("session", &self.session.is_some())
             .field("version", &self.version)
+            .field("method", &self.method)
+            .field("name", &self.name)
             .finish()
     }
 }
@@ -275,6 +313,16 @@ impl McpHeaders {
     /// Whether one well-formed `Mcp-Session-Id` is present.
     pub fn has_session(&self) -> bool {
         self.session.is_some()
+    }
+
+    /// The `Mcp-Method` value, when sent once and well formed.
+    pub fn mcp_method(&self) -> Option<&str> {
+        self.method.one()
+    }
+
+    /// The `Mcp-Name` value, when sent once and well formed.
+    pub fn mcp_name(&self) -> Option<&str> {
+        self.name.one()
     }
 }
 

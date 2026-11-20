@@ -78,8 +78,9 @@ fn i84_tool_input_schema_matches_its_route() {
         tools += 1;
     }
     // M5 design 12.1: the read-only contract, payment status and
-    // payment queue tools, and the signing list tool (2026-11-13).
-    assert_eq!(tools, 39);
+    // payment queue tools, and the signing list tool (2026-11-13). The
+    // ADR-013 amendment of 2026-11-20 adds 28 setup tools.
+    assert_eq!(tools, 67);
 }
 
 /// I-84: no two operations share a method and a route.
@@ -185,7 +186,7 @@ fn i84_channel_policy_denies_without_tool_scope_or_p74() {
     let full = mcp(L1, &Scope::ALL, &s);
     let none = mcp(L1, &[], &s);
     assert_eq!(
-        channel_policy(spec("roles.grant"), &full, ALLOWED, &all),
+        channel_policy(spec("creator.approve_activation"), &full, ALLOWED, &all),
         ChannelVerdict::Deny(ChannelDenial::NotExposed)
     );
     assert_eq!(
@@ -441,4 +442,258 @@ fn adr021_setup_gate_admits_onboarding_for_admins_only() {
         }
     }
     assert_eq!(SETUP_RULE, "ADR-021");
+}
+
+/// The setup tools of the ADR-013 amendment of 2026-11-20: each tool, its
+/// operation, its scope, and whether MCP prepares it.
+pub(crate) const SETUP_TOOLS: [(&str, &str, Scope, bool); 28] = [
+    (
+        "fstp_creator_list_programmes",
+        "creator.list_programmes",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_list_templates",
+        "creator.list_templates",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_apply_start",
+        "creator.apply_start",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_edit_narrative",
+        "creator.edit_narrative",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_get_preview",
+        "creator.preview",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_get_impact",
+        "creator.impact",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_upload_import",
+        "import.upload",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_list_import_proposals",
+        "import.list",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_creator_remove_import",
+        "import.remove",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_prepare_narrative_acceptance",
+        "creator.accept_narrative",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_warning_acknowledgement",
+        "creator.acknowledge",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_import_resolution",
+        "import.resolve",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_invitation",
+        "creator.invite",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_activation_request",
+        "creator.request_activation",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_tenant_template",
+        "creator.save_as_template",
+        Scope::CreatorDraft,
+        true,
+    ),
+    ("fstp_list_calls", "call.list", Scope::CallsRead, false),
+    (
+        "fstp_get_programme_timeline",
+        "programme.timeline",
+        Scope::CallsRead,
+        false,
+    ),
+    (
+        "fstp_prepare_call_approval",
+        "call.approve",
+        Scope::CallsDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_programme_draft",
+        "creator.open_draft",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_list_programme_roles",
+        "roles.list",
+        Scope::CreatorDraft,
+        false,
+    ),
+    (
+        "fstp_prepare_role_grant",
+        "roles.grant",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_role_end",
+        "roles.end",
+        Scope::CreatorDraft,
+        true,
+    ),
+    (
+        "fstp_tenant_list_funder_profiles",
+        "tenant.funder_profiles",
+        Scope::TenantDraft,
+        false,
+    ),
+    (
+        "fstp_prepare_funder_profile_copy",
+        "tenant.funder_profile.copy",
+        Scope::TenantDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_funder_profile_save",
+        "tenant.funder_profile.save",
+        Scope::TenantDraft,
+        true,
+    ),
+    (
+        "fstp_tenant_check_branding",
+        "tenant.branding.check",
+        Scope::TenantDraft,
+        false,
+    ),
+    (
+        "fstp_prepare_branding",
+        "tenant.branding.set",
+        Scope::TenantDraft,
+        true,
+    ),
+    (
+        "fstp_prepare_terminology",
+        "tenant.terminology.set",
+        Scope::TenantDraft,
+        true,
+    ),
+];
+
+/// I-84, I-85, ADR-013 amendment of 2026-11-20: each setup tool sits on
+/// its operation with its scope. Through MCP, a prepare-only one gives a
+/// pending action under either P-77 value and never executes, and a draft
+/// or read one executes. A token without the scope is refused, and the
+/// web channel executes each operation as before.
+#[test]
+fn i85_adr013_setup_tools_prepare_or_execute_as_the_amendment_says() {
+    let s = EngineState::genesis();
+    let full = mcp(L1, &Scope::ALL, &s);
+    let none = mcp(L1, &[], &s);
+    let on_web = web(L1, LoginMethod::Passkey, &[], &s);
+    let all = McpSettings::all_roles();
+    for (tool, name, scope, prepare) in SETUP_TOOLS {
+        let o = spec(name);
+        let t = o.tool.unwrap_or_else(|| panic!("{name} has no tool"));
+        assert_eq!(t.name, tool, "{name}");
+        assert_eq!(t.scope, scope, "{name} scope");
+        assert_eq!(o.scope, Some(scope), "{name} operation scope");
+        assert_eq!(t.prepare_only, prepare, "{name} prepare_only");
+        assert!(o.route.is_some(), "I-84: {name} has a web route");
+        if o.high_risk {
+            assert!(t.prepare_only, "I-85: {name} is high-risk");
+        }
+        let want = if prepare {
+            ChannelVerdict::Prepare
+        } else {
+            ChannelVerdict::Execute
+        };
+        for p77 in [DRAFT_ONLY, ALLOWED] {
+            assert_eq!(channel_policy(o, &full, p77, &all), want, "{name}");
+        }
+        assert_eq!(
+            channel_policy(o, &none, ALLOWED, &all),
+            ChannelVerdict::Deny(ChannelDenial::Scope),
+            "{name} without its scope"
+        );
+        assert_eq!(
+            channel_policy(o, &on_web, DRAFT_ONLY, &McpSettings::disabled()),
+            ChannelVerdict::Execute,
+            "{name} on the web"
+        );
+    }
+}
+
+/// I-86, ADR-013 amendment of 2026-11-20: no setup tool sits on an
+/// operation whose data is personal, and the reads that name emails or
+/// display names keep no tool.
+#[test]
+fn i86_adr013_setup_tools_return_no_personal_data() {
+    for (_, name, _, _) in SETUP_TOOLS {
+        assert_ne!(
+            spec(name).classification,
+            Classification::Personal,
+            "{name}"
+        );
+    }
+    for name in [
+        "creator.invitations",
+        "team.list",
+        "admin.members",
+        "tenant.list_admins",
+        "tenant.list_signatories",
+        "tenant.get_mail_relay",
+        "me.get_verification",
+    ] {
+        assert!(spec(name).tool.is_none(), "{name} has a tool");
+    }
+}
+
+/// I-66, I-67, R-PC-03, ADR-013 amendment of 2026-11-20: the second-person
+/// approvals stay web only, so no agent completes or prepares an
+/// activation approval or override, and the call publication keeps its
+/// one prepare-only tool.
+#[test]
+fn i67_adr013_second_person_approvals_keep_no_executing_tool() {
+    for name in ["creator.approve_activation", "creator.override_activation"] {
+        assert!(spec(name).tool.is_none(), "{name} has a tool");
+    }
+    for name in ["call.approve", "call.publish"] {
+        assert!(
+            spec(name).tool.is_some_and(|t| t.prepare_only),
+            "{name} lacks a prepare-only tool"
+        );
+    }
 }

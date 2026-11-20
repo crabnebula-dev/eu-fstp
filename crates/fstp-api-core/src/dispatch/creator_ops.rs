@@ -406,8 +406,16 @@ async fn store<P: Seams>(
 }
 
 /// A creator, bridge or import command: steps 5 to 9 of design section
-/// 3.7.
-pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiError> {
+/// 3.7. With `ChannelVerdict::Prepare` it stops after the dry run and its
+/// gates and stores a pending action (step 6, ADR-013 amendment of
+/// 2026-11-20). `pending` names the action a web confirmation runs, which
+/// the execution records.
+pub(super) async fn command<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+    verdict: ChannelVerdict,
+    pending: Option<PendingId>,
+) -> Result<OpResult, ApiError> {
     let Some(account) = call.account() else {
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
@@ -441,6 +449,16 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
         .map_err(|e| call.refuse(e))?;
     if let Command::Creator(CreatorCommand::RequestActivation { programme, .. }) = &cmd {
         activation_gate(call, *programme, account).await?;
+    }
+    // Step 6 (I-85): nothing is stored, mailed or appended for a prepared
+    // call but the pending action.
+    if verdict == ChannelVerdict::Prepare {
+        return prepare(call, op, account);
+    }
+    // A second line under `channel_policy`: a high-risk operation never
+    // executes through MCP (I-85).
+    if call.spec.high_risk && call.caller.via() != Via::Web {
+        return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
     // Step 7.
     let proof = if call.spec.high_risk && call.caller.via() == Via::Web {
@@ -478,7 +496,7 @@ pub(super) async fn command<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpR
         op: OpName(call.spec.name),
         request: call.digest,
         step_up: proof,
-        pending: None,
+        pending,
         second_tenant_admin: None,
     };
     let appended = cmd.clone();

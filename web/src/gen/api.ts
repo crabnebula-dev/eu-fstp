@@ -50,7 +50,8 @@ export type Scope =
   | "findings:read"
   | "creator:draft"
   | "calls:draft"
-  | "audit:read";
+  | "audit:read"
+  | "tenant:draft";
 
 /** The name of an operation of the registry. */
 export type OpName =
@@ -941,7 +942,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_tenant_check_branding", scope: "tenant:draft", prepareOnly: false },
   },
   {
     name: "tenant.branding.set",
@@ -955,7 +956,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "phishing_resistant",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_branding", scope: "tenant:draft", prepareOnly: true },
   },
   {
     name: "tenant.terminology.set",
@@ -969,7 +970,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "phishing_resistant",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_terminology", scope: "tenant:draft", prepareOnly: true },
   },
   {
     name: "tenant.set_mail_relay",
@@ -1039,7 +1040,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_tenant_list_funder_profiles", scope: "tenant:draft", prepareOnly: false },
   },
   {
     name: "tenant.funder_profile.copy",
@@ -1053,7 +1054,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "phishing_resistant",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_funder_profile_copy", scope: "tenant:draft", prepareOnly: true },
   },
   {
     name: "tenant.funder_profile.save",
@@ -1067,7 +1068,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "phishing_resistant",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_funder_profile_save", scope: "tenant:draft", prepareOnly: true },
   },
   {
     name: "me.get_verification",
@@ -1291,7 +1292,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "phishing_resistant",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_programme_draft", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "creator.list_programmes",
@@ -1305,7 +1306,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_list_programmes", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "creator.list_templates",
@@ -1319,7 +1320,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_list_templates", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "creator.invite",
@@ -1333,7 +1334,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_invitation", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "creator.withdraw_invitation",
@@ -1375,7 +1376,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_apply_start", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "creator.save_fields",
@@ -1403,7 +1404,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_narrative_acceptance", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "creator.edit_narrative",
@@ -1417,7 +1418,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_edit_narrative", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "creator.get_draft",
@@ -1459,7 +1460,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_warning_acknowledgement", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "creator.preview",
@@ -1473,7 +1474,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_get_preview", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "creator.impact",
@@ -1487,7 +1488,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_get_impact", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "creator.request_activation",
@@ -1501,7 +1502,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_activation_request", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "creator.approve_activation",
@@ -1543,7 +1544,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_tenant_template", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "import.upload",
@@ -1557,7 +1558,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_upload_import", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "import.list",
@@ -1571,7 +1572,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_list_import_proposals", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "import.resolve",
@@ -1585,7 +1586,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_import_resolution", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "import.remove",
@@ -1599,7 +1600,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_creator_remove_import", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "people.get_invitation",
@@ -1655,7 +1656,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_list_programme_roles", scope: "creator:draft", prepareOnly: false },
   },
   {
     name: "team.list",
@@ -1683,7 +1684,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: true,
     session: "phishing_resistant",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_role_grant", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "roles.end",
@@ -1697,7 +1698,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: true,
     session: "phishing_resistant",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_role_end", scope: "creator:draft", prepareOnly: true },
   },
   {
     name: "roles.reinstate",
@@ -1753,7 +1754,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: true,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_prepare_call_approval", scope: "calls:draft", prepareOnly: true },
   },
   {
     name: "call.publish",
@@ -1795,7 +1796,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_list_calls", scope: "calls:read", prepareOnly: false },
   },
   {
     name: "programme.timeline",
@@ -1809,7 +1810,7 @@ export const OPERATIONS: readonly Operation[] = [
     binding: false,
     session: "any",
     classification: "confidential",
-    tool: null,
+    tool: { name: "fstp_get_programme_timeline", scope: "calls:read", prepareOnly: false },
   },
   {
     name: "public.programme",
@@ -4769,7 +4770,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     fields: {
       "client": { schema: { kind: "id" }, optional: false },
       "name": { schema: { kind: "string" }, optional: true },
-      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read"] } }, optional: false },
+      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft"] } }, optional: false },
       "method": { schema: { kind: "enum", values: ["passkey", "magic_link", "opaque", "eudi_wallet"] }, optional: false },
       "since": { schema: { kind: "string" }, optional: true },
       "until": { schema: { kind: "string" }, optional: true },

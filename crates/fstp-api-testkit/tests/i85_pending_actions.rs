@@ -29,7 +29,7 @@ use fstp_json::Value;
 use fstp_prop::{check, check_machine, prop_assert, prop_assert_eq};
 
 /// Every scope M4 issues (design section 3.8).
-const EVERY_SCOPE: [Scope; 12] = [
+const EVERY_SCOPE: [Scope; 13] = [
     Scope::CallsRead,
     Scope::ProposalsRead,
     Scope::ProposalsDraft,
@@ -42,6 +42,7 @@ const EVERY_SCOPE: [Scope; 12] = [
     Scope::CreatorDraft,
     Scope::CallsDraft,
     Scope::AuditRead,
+    Scope::TenantDraft,
 ];
 
 fn cell() -> FakeCell {
@@ -86,7 +87,9 @@ struct HighRisk {
 /// `authentication.md` high-risk list and design sections 2.2 and 3.8. The
 /// publication has the prepare-only tool `fstp_prepare_call_publication`
 /// (Q32). The others have no tool, so a bearer request for them is sent
-/// on their web route.
+/// on their web route. The ADR-013 amendment of 2026-11-20 leaves each of
+/// them without a tool, and the test checks every mark against the
+/// registry.
 fn high_risk_ops() -> Vec<HighRisk> {
     vec![
         HighRisk {
@@ -160,6 +163,14 @@ fn i85_every_high_risk_op_prepares_through_mcp() {
         ("revoked token", revoked, false, false),
     ];
     for op in high_risk_ops() {
+        let spec = fstp_access::op(op.name).unwrap_or_else(|| panic!("{} is not in OPS", op.name));
+        assert!(spec.high_risk, "{} is high-risk", op.name);
+        assert_eq!(
+            spec.tool.map(|t| t.prepare_only),
+            op.prepare_only_tool.then_some(true),
+            "{}: the list's tool mark against the registry",
+            op.name
+        );
         for (who, token, strong, may_prepare) in &principals {
             let r = c.mcp(token, (op.op)());
             let got = class(&r);

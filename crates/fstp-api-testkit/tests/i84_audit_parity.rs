@@ -46,7 +46,7 @@ use fstp_prop::{Config, Gen, check_with};
 use mcp_support::{McpCell, call, dec, obj, op_of_tool};
 
 /// Every scope M4 issues (design section 3.8).
-const EVERY_SCOPE: [Scope; 12] = [
+const EVERY_SCOPE: [Scope; 13] = [
     Scope::CallsRead,
     Scope::ProposalsRead,
     Scope::ProposalsDraft,
@@ -59,6 +59,7 @@ const EVERY_SCOPE: [Scope; 12] = [
     Scope::CreatorDraft,
     Scope::CallsDraft,
     Scope::AuditRead,
+    Scope::TenantDraft,
 ];
 
 /// The accounts of the menu.

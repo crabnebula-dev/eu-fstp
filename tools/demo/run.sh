@@ -43,6 +43,11 @@
 #   FSTP_DEMO_SIGNIN `on` (default) starts the cell with --demo-signin: the
 #                    demo page signs each person in with one click, no
 #                    passkey. `off` starts it as the e2e suite runs it.
+#   FSTP_DEMO_PUBLIC_ORIGIN  the origin cell a names instead of
+#                    http://a.fstp.localhost:<port>, passed as
+#                    --public-origin: http://localhost:<port> for Claude
+#                    Code, or the https origin of a tunnel for claude.ai
+#                    (docs/guide/claude-connector-demo.md)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -51,7 +56,8 @@ STATE=${FSTP_DEMO_STATE:-$ROOT/target/demo}
 SEED=${FSTP_DEMO_SEED:-review stage1}
 SIGNIN=${FSTP_DEMO_SIGNIN:-on}
 CONTROL="http://127.0.0.1:$((PORT + 1))"
-ORIGIN="http://a.fstp.localhost:$PORT"
+PUBLIC=${FSTP_DEMO_PUBLIC_ORIGIN:-}
+ORIGIN=${PUBLIC:-"http://a.fstp.localhost:$PORT"}
 CELL_BIN="$ROOT/target/debug/fstp-e2e-cell"
 
 die() {
@@ -60,7 +66,7 @@ die() {
 }
 
 usage() {
-  sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'
   exit 64
 }
 
@@ -152,6 +158,9 @@ start() {
     off) ;;
     *) die "FSTP_DEMO_SIGNIN is on or off, not $SIGNIN" ;;
   esac
+  if [[ -n $PUBLIC ]]; then
+    flags+=(--public-origin "$PUBLIC")
+  fi
   "$CELL_BIN" --port "$PORT" --web "$ROOT/web" --manifest-out "$STATE/stack.json" ${flags[@]+"${flags[@]}"} \
     >"$STATE/cell.log" 2>&1 &
   echo $! >"$STATE/pid"

@@ -2973,10 +2973,11 @@ mod tests {
                 at(op, Who::Anonymous, draft, SS, anonymous()),
                 Expected::Deny(AuthClass::Actor)
             );
+            // ADR-013 amendment of 2026-11-20: each list has a read tool.
             assert_eq!(
                 at(op, Who::ProgrammeManager, draft, SS, mcp(true)),
-                Expected::Deny(AuthClass::NotExposed),
-                "{op} has no tool"
+                Expected::Allow,
+                "{op} has a read tool"
             );
         }
     }
@@ -3512,7 +3513,17 @@ mod read_rules_over_built_states {
             if let Some(t) = r.tool {
                 assert_eq!(o.scope.is_some(), t.scoped, "{} scope", o.name);
                 assert_eq!(o.binding, r.binding, "{} binding", o.name);
+                // I-85, ADR-013 amendment of 2026-11-20: the registry's
+                // prepare-only mark is the reference's, a high-risk
+                // operation's tool always included.
+                assert_eq!(
+                    o.tool.map(|x| x.prepare_only),
+                    Some(t.prepare || r.high_risk),
+                    "{} prepare_only",
+                    o.name
+                );
             }
+
             if !r.public {
                 let want: BTreeSet<RoleOrApplicant> = r
                     .rule

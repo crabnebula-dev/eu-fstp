@@ -40,7 +40,8 @@ pub fn json_limits() -> ParseLimits {
 /// # Errors
 ///
 /// Returns a [`DecodeError`] for a wrong `jsonb` version byte or JSON text
-/// that does not parse within `limits`.
+/// that does not parse within `limits`, or a value that holds a NUL
+/// character, which PostgreSQL never stores.
 pub fn decode_json_with(ty: Type, raw: &[u8], limits: &ParseLimits) -> Result<Value, DecodeError> {
     let text = if ty == Type::JSONB {
         match raw.split_first() {
@@ -51,7 +52,15 @@ pub fn decode_json_with(ty: Type, raw: &[u8], limits: &ParseLimits) -> Result<Va
     } else {
         raw
     };
-    fstp_json::parse_with(text, limits).map_err(|_| DecodeError("json value does not parse"))
+    let value = fstp_json::parse_with(text, limits)
+        .map_err(|_| DecodeError("json value does not parse"))?;
+    // Issue 6 L4: PostgreSQL `json` and `jsonb` hold no NUL, and
+    // `to_sql` refuses one. Refusing it here too keeps every decoded value
+    // encodable (TH-26).
+    if value.contains_nul() {
+        return Err(DecodeError("json value holds a NUL character"));
+    }
+    Ok(value)
 }
 
 accepts!(Value, Type::JSONB, Type::JSON);
@@ -148,5 +157,25 @@ mod tests {
             );
             assert!(out.is_empty());
         }
+    }
+
+    /// Issue 6 L4, TH-26: decoding refuses an escaped NUL too, so every
+    /// decoded value encodes again. Fuzz target `pg_value_decode` found
+    /// a `json` string holding `\u0000` that decoded and then failed to
+    /// encode (CI run 44735089523).
+    #[test]
+    fn issue6_l4_th26_a_value_with_a_nul_is_a_decode_error() {
+        let raw = br#""al0,u\u0000{e""#;
+        assert_eq!(
+            Value::from_sql(Type::JSON, raw),
+            Err(DecodeError("json value holds a NUL character"))
+        );
+        let mut jsonb = vec![JSONB_VERSION];
+        jsonb.extend_from_slice(br#"{"a":["x\u0000"]}"#);
+        assert_eq!(
+            Value::from_sql(Type::JSONB, &jsonb),
+            Err(DecodeError("json value holds a NUL character"))
+        );
+        assert!(Value::from_sql(Type::JSON, br#""\u0001""#).is_ok());
     }
 }

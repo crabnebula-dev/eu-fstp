@@ -119,6 +119,46 @@ fn adr013_web_serves_protected_resource_metadata() {
     );
 }
 
+/// ADR-013 "Metadata", RFC 9728 section 3.1 (lane mcp-demo): the
+/// protected resource metadata is also served at the well-known URI with
+/// the resource's path appended, `/.well-known/oauth-protected-resource/mcp`.
+/// Claude Code 2.1.328 asks there first when no 401 challenge named the
+/// document, and without it sends no `resource`. Both answers are equal.
+#[test]
+fn adr013_web_serves_protected_resource_metadata_at_the_path_form() {
+    let c = McpCell::new();
+    let r = router(&c);
+    let root = send(
+        &r,
+        Method::GET,
+        "/.well-known/oauth-protected-resource",
+        &[],
+        b"",
+    );
+    let pathed = send(
+        &r,
+        Method::GET,
+        "/.well-known/oauth-protected-resource/mcp",
+        &[],
+        b"",
+    );
+    assert_eq!(
+        pathed.status.as_u16(),
+        200,
+        "{}",
+        String::from_utf8_lossy(&pathed.body)
+    );
+    assert_eq!(pathed.body, root.body);
+    let other = send(
+        &r,
+        Method::GET,
+        "/.well-known/oauth-protected-resource/other",
+        &[],
+        b"",
+    );
+    assert_ne!(other.status.as_u16(), 200);
+}
+
 /// ADR-013 "Metadata", RFC 8414: the authorisation server metadata names
 /// the tenant origin as issuer and `S256` as the only PKCE method.
 #[test]

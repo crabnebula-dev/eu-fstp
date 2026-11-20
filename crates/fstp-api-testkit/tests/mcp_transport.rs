@@ -10,7 +10,7 @@
 //! present foreign `Origin` gets 403, an unsupported protocol version
 //! gets 400. The 2026-07-28 shape (`server/discover`, per-request
 //! `_meta`, `Mcp-Method` and `Mcp-Name`, `resultType`, no sessions) is
-//! outside the lane scope, and is an open point for Daniel.
+//! tested in `mcp_modern_era.rs` (lane mcp-demo).
 //!
 //! The 2025-06-18 facts used here, checked against its published text on
 //! 2026-11-06 and paraphrased: a server that offers no stream answers

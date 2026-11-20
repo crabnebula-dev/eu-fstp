@@ -88,9 +88,16 @@ impl Mcp {
         if let Some(surface) = fstp_mcp::Surface::of_path(path) {
             return self.server.serve(surface, req).await;
         }
+        // RFC 9728 section 3.1: the resource metadata of `{origin}/mcp` is
+        // also found at the well-known URI with the resource's path
+        // appended. A client asks there when no challenge named the
+        // document (lane mcp-demo).
+        let resource_path = path
+            .strip_prefix(fstp_oauth::RESOURCE_METADATA_PATH)
+            .is_some_and(|rest| rest.is_empty() || rest == fstp_mcp::Surface::Mcp.path());
         let doc = match (path, &self.docs) {
-            (fstp_oauth::RESOURCE_METADATA_PATH, Some((d, _)))
-            | (fstp_oauth::SERVER_METADATA_PATH, Some((_, d))) => d,
+            (_, Some((d, _))) if resource_path => d,
+            (fstp_oauth::SERVER_METADATA_PATH, Some((_, d))) => d,
             _ if path.starts_with("/mcp/") => return reply::not_found(),
             _ => return reply::adr013(),
         };

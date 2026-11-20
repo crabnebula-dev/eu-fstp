@@ -45,8 +45,9 @@ Each row below names its basis:
 | Topic | Proposed decision | Basis |
 | --- | --- | --- |
 | Tool table | Names, descriptions and input schemas are `const` data in the `OPS` registry of `fstp-access`, the only tool table. `fstp-mcp` serves `fstp_api_core::meta::tools()` and defines no tool of its own (TH-63) | Design |
-| Tool set | Only the capability table of `mcp-server.md`, plus the prepare-only tool `fstp_prepare_call_publication` (Q32). No coordinator, ballot, IRC or tenant admin tools | Decided by Daniel on 2026-10-31 (Q8, with the Q32 prepare-only tool) |
+| Tool set | Only the capability table of `mcp-server.md`, plus the prepare-only tool `fstp_prepare_call_publication` (Q32). No coordinator, ballot, IRC or tenant admin tools | Decided by Daniel on 2026-10-31 (Q8, with the Q32 prepare-only tool). Amended by Daniel on 2026-11-20: prepare-only tools and draft tools for tenant and programme setup, with a Tenant admin row. See "Amendment 2026-11-20" below |
 | High-risk operations | `channel_policy` returns `Prepare` for every high-risk operation that has a tool. Every other high-risk operation has no tool and gets `Deny(NotExposed)` | Design |
+| Prepare-only tools on other operations | `channel_policy` also returns `Prepare` for a tool marked prepare-only on an operation that is not high-risk. Creator, bridge, import and tenant operations can be prepared, as core commands can | Amendment 2026-11-20 (Daniel), with each mark interim, pending Daniel |
 | Results | The read model goes in `structuredContent.data`, with `classification` and `untrusted`, the JSON pointers to user-supplied text. The `content` text block is a fixed sentence naming the classification and never holds user text (TH-60) | Design |
 | MCP safety | MCP response construction requires `fstp_api_core::McpSafe`, implemented by hand for identity-free read models only (I-86) | Design |
 
@@ -69,7 +70,7 @@ Each row below names its basis:
 
 ## Scopes
 
-Issued in M4: `calls:read`, `proposals:read`, `proposals:draft`, `proposals:binding`, `stage2:draft`, `review:read`, `review:draft`, `ranking:read`, `findings:read`, `creator:draft`, `calls:draft` and `audit:read`. Each has consent text. A scope never adds a right that the roles lack. Scopes for M5 and later are reserved names and are never issued. Basis: Design.
+Issued in M4: `calls:read`, `proposals:read`, `proposals:draft`, `proposals:binding`, `stage2:draft`, `review:read`, `review:draft`, `ranking:read`, `findings:read`, `creator:draft`, `calls:draft` and `audit:read`. Each has consent text. The amendment of 2026-11-20 adds `tenant:draft`, with the consent text stated there. A scope never adds a right that the roles lack. Scopes for M5 and later are reserved names and are never issued. Basis: Design.
 
 The consent texts are not written yet. They are open.
 
@@ -142,3 +143,167 @@ Daniel decided on 2026-11-15 to wire `agents.consent` to the real flow. This rec
 | Step-up binding | The API core takes the step-up bound to its own request digest, which covers the handle (I-78). The token port then attests that step-up to `AuthorizationServer::approve`, bound to the consent's own digest, which `consent_step_up_digest` reads for a live handle. The server still checks the attested proof itself | Consent row; I-78 |
 | Order | A magic-link session is refused first (I-77), then the channel (web only, I-85), then the step-up. A handle the server does not hold is refused under `Input` after the step-up | Design section 3.7 |
 | Shell | The API core's `Tokens::approve_consent` port reaches the server. The test cells' fake port holds a real `fstp-oauth` server. `fstp-web` still answers `/oauth/**` with the typed refusal of this ADR, so the authorize, token and revocation endpoints wait for the lane that mounts the server with its token store | Consequences |
+
+## Amendment 2026-11-20: prepare-only setup tools (Daniel)
+
+### Decision
+
+Daniel amended his Q8 decision on 2026-11-20. He wants to set up funding programmes through an agent that uses the cell's MCP server. The tool set grows by prepare-only tools for tenant and programme setup, and by the reads and ordinary draft edits those steps need. An agent prepares. A human confirms in the platform with a step-up where the operation is high-risk (I-85, I-78). The Q8 row of "Tools" keeps its first decision and points here.
+
+These rules hold unchanged, and the tests of each new tool name them:
+
+- I-84: every new tool sits on an operation that already has a web route under the same roles. No operation was added for a tool.
+- I-85: a high-risk operation has no tool or a prepare-only one. A prepare-only tool always returns a pending action, never the effect.
+- I-86: no new tool returns an email, a display name, an identity attribute, bank details or vault contents. The invitation list, the team list and the member list stay web only.
+- I-21: no new tool reads a proposal draft or another user's workspace.
+- TH-60, TH-63: names, descriptions and schemas are fixed platform text in the `OPS` registry. User text sits only in `structuredContent.data`.
+- Separation of duties: the confirmation runs the stored request as the confirming person through the web, with every guard of the direct web path. An agent acting for a builder cannot approve an activation, since that approval has no tool. An agent acting for a call's drafter can prepare the call's approval, but the dry run refuses it before anything is stored (R-PC-03).
+
+### When a tool prepares
+
+`channel_policy` returns `Prepare` for every high-risk operation (I-78), as before. Under this amendment it also returns `Prepare` for a tool marked prepare-only on an operation that is not high-risk. That mark is set for anything that activates, publishes, grants a role, invites a person, records a human judgement the design asks of a named person, or changes who can see what. Ordinary draft edits and reads return `Allow`.
+
+A prepared action is confirmed at `POST /api/v1/pending-actions/{pending}/confirmation`, by the same account, through the web. A high-risk operation also needs a fresh step-up bound to the stored digest. A prepared operation that is not high-risk needs no step-up on its direct web path, so its confirmation needs none either. Interim, pending Daniel: the confirmation itself is the human act, and a step-up is asked only where the web path asks one.
+
+Before this amendment only core commands could be prepared. Creator, bridge, import and tenant operations can now be prepared too. Their confirmation runs the same dispatch as their web route.
+
+### Scopes
+
+`creator:draft` and `calls:draft` are reused. One scope is added, `tenant:draft`, for the tenant-level setup tools. Its consent text: "Read your organisation's funder profiles and check brand colours. Prepare changes to funder profiles, brand tokens and interface labels. Nothing changes until you confirm each change in the platform." Interim, pending Daniel: the scope name and its text.
+
+### New tools, Programme staff row
+
+| Tool | Operation | Roles | Scope | Channel |
+| --- | --- | --- | --- | --- |
+| `fstp_creator_list_programmes` | `creator.list_programmes` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_list_templates` | `creator.list_templates` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_apply_start` | `creator.apply_start` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_edit_narrative` | `creator.edit_narrative` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_get_preview` | `creator.preview` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_get_impact` | `creator.impact` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_upload_import` | `import.upload` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_list_import_proposals` | `import.list` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_remove_import` | `import.remove` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_prepare_narrative_acceptance` | `creator.accept_narrative` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_warning_acknowledgement` | `creator.acknowledge` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_import_resolution` | `import.resolve` | Programme manager | `creator:draft` | Prepare |
+| `fstp_prepare_invitation` | `creator.invite` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_activation_request` | `creator.request_activation` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_tenant_template` | `creator.save_as_template` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_list_calls` | `call.list` | Programme manager, call drafter, FSTP coordinator, tenant admin | `calls:read` | Allow |
+| `fstp_get_programme_timeline` | `programme.timeline` | Programme manager | `calls:read` | Allow |
+| `fstp_prepare_call_approval` | `call.approve` | Programme manager | `calls:draft` | Prepare |
+
+### New tools, Tenant admin row
+
+| Tool | Operation | Roles | Scope | Channel |
+| --- | --- | --- | --- | --- |
+| `fstp_prepare_programme_draft` | `creator.open_draft` | Tenant admin | `creator:draft` | Prepare (high-risk: creating a programme counts as activating it) |
+| `fstp_list_programme_roles` | `roles.list` | Tenant admin | `creator:draft` | Allow |
+| `fstp_prepare_role_grant` | `roles.grant` | Tenant admin | `creator:draft` | Prepare (high-risk) |
+| `fstp_prepare_role_end` | `roles.end` | Tenant admin | `creator:draft` | Prepare (high-risk) |
+| `fstp_tenant_list_funder_profiles` | `tenant.funder_profiles` | Tenant admin | `tenant:draft` | Allow |
+| `fstp_prepare_funder_profile_copy` | `tenant.funder_profile.copy` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+| `fstp_prepare_funder_profile_save` | `tenant.funder_profile.save` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+| `fstp_tenant_check_branding` | `tenant.branding.check` | Tenant admin | `tenant:draft` | Allow (it records nothing) |
+| `fstp_prepare_branding` | `tenant.branding.set` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+| `fstp_prepare_terminology` | `tenant.terminology.set` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+
+Reasons for each Prepare mark on an operation that is not high-risk, all interim, pending Daniel:
+
+- `creator.accept_narrative`: template text applies only once a person accepts it (TH-49).
+- `creator.acknowledge`: an acknowledged warning clears the I-66 gate, and it makes the acknowledging account a builder (I-67).
+- `import.resolve`: I-65 asks a named programme manager to confirm or edit each imported value.
+- `creator.invite`: it invites a person.
+- `creator.request_activation`: it starts the activation of a programme.
+- `creator.save_as_template`: it makes the draft's text readable to the tenant's other staff.
+- `call.approve`: it is the second-person approval of R-PC-03 before publication.
+
+Every Allow mark is a read or an edit of a draft record. Interim, pending Daniel: P-75 and P-77 are draft policy fields, saved through `fstp_creator_save_fields` like any other field. They take effect only through an activation that a second person approves in the web with a step-up, so their saves stay Allow.
+
+### Operations that stay web only
+
+| Operation | Reason |
+| --- | --- |
+| `creator.approve_activation`, `creator.override_activation` | The I-67 approval or override is the second person's own judgement, with a written reason for the override. No tool reaches `ActivateProgramme` (I-66 test) |
+| `creator.withdraw_invitation` | No tool can name an invitation: its list holds emails and stays web only (I-86) |
+| `creator.invitations`, `team.list`, `admin.members`, `tenant.list_admins`, `tenant.list_signatories` | They name emails or display names (I-86) |
+| `roles.reinstate` | Reinstating a suspended binding is not a setup step |
+| `tenant.save_step`, `tenant.complete`, `tenant.request_activation`, `tenant.approve_activation` | Onboarding runs before activation. The setup gate (ADR-021) refuses `agents.consent` until then, so no agent exists to call them |
+| `tenant.invite_admin`, `tenant.grant_signatory`, `tenant.end_signatory`, `admin.*` | Tenant governance, not programme setup. Interim, pending Daniel |
+| `tenant.set_login_methods`, `tenant.set_step_up_freshness`, `tenant.set_session_lifetimes`, `tenant.set_mcp` | They set the controls of sign-in and of agents themselves |
+| `tenant.set_mail_relay`, `tenant.clear_mail_relay`, `tenant.get_mail_relay` | The relay holds a credential |
+| `tenant.set_payment_mode`, `tenant.set_template_licence` | Interim, pending Daniel: tenant money and licence settings, outside programme setup |
+| `tenant.set_guide_notice` | The Guide's data protection texts are legal wording. Interim, pending Daniel |
+
+### Setup steps with no web route, so no tool
+
+- A reviewer pool as its own object. The pool is the committee and IRC invitations and grants of a programme, which the tools above prepare.
+- A separate budget, envelope, criteria, timeline or Guide editor. Each is a draft field or narrative of the creator, saved through `creator.save_fields` or `creator.edit_narrative`, and a call's dates and budget through `call.draft` and `call.edit`.
+- Setting P-75 or P-77 on an active programme. After activation the creator saves P-09 alone (lane m4/fast-flow), so neither has an edit route there.
+
+## Record of lane mcp-demo (2026-11-20)
+
+Daniel asked that Claude Code and claude.ai act on the demo cell through its MCP server. This record states what the current Claude Code sends, and what the lane built so that both it and the pinned revision work. Every fact about the revision is a paraphrase. No specification text is quoted.
+
+### Evidence
+
+- The client was the real Claude Code CLI, version 2.1.328 for darwin arm64, run with its own configuration directory so no setting of Daniel's changed.
+- The first capture used `nc` as a listener, before the cell served anything. Every later fact comes from the e2e cell started with `--log-requests`, which writes method, path, MCP fields and status, and never a query, body, cookie or token.
+- The browser side of the OAuth flow was played with `curl`: the demo sign-in of programme manager M1, the consent page, the approval and the demo step-up. Claude Code's own loopback callback then received the code and redeemed it.
+- One non-interactive `claude -p` call with the model Haiku then called two tools against the cell, with an access token passed in a temporary MCP configuration.
+
+### What Claude Code 2.1.328 sends
+
+| Step | Observed |
+| --- | --- |
+| First request | `POST /mcp` with the method `server/discover`, the string id `server-discover-probe-1`, `_meta` naming revision 2026-07-28 and the client's identity and capabilities. The headers carry `MCP-Protocol-Version: 2026-07-28` and `Mcp-Method: server/discover`, and accept both JSON and an event stream |
+| Discovery after a 401 | It reads `resource_metadata` from the challenge, then fetches the protected resource metadata and the authorisation server metadata. These two GETs carry `MCP-Protocol-Version: 2025-11-25` |
+| Discovery without a 401 | `claude mcp login` asks first for the path form `/.well-known/oauth-protected-resource/mcp`. When that failed, it fell back to the server metadata at the root, then sent the authorisation request with neither `resource` nor `scope`, which the server refused as `invalid_target` |
+| Registration | Open registration succeeds. The client names itself `Claude Code (<server name>)` and registers one redirect URI, `http://localhost:<random port>/callback` |
+| Authorisation | PKCE `S256`, a `state`, `resource` equal to the MCP URL, and `scope` listing every scope of `scopes_supported` |
+| Token | It refuses to send a token request to a plain `http` endpoint unless the host is `localhost`, `127.0.0.1` or `::1`. A `.localhost` subdomain such as `a.fstp.localhost` is not exempt |
+| After the token | `server/discover`, then `tools/list`, both modern, with no session id. Each `tools/call` carries `Mcp-Name` equal to the tool name |
+| Legacy fallback | Before this lane the server spoke the legacy revision only. `claude mcp list` still reported `/mcp/public` as connected, which matches the fallback to `initialize` on a 400 that carries no modern error |
+| A restarted cell | The client keeps the `client_id` it registered. A restarted cell no longer knows it and refuses the request as `invalid_client`. `claude mcp logout <name>` drops it, and the next login registers again |
+| User agents | `claude-code/2.1.328 (...)` on `/mcp`, and `Bun/1.4.4` on discovery, registration and the token endpoint |
+
+### Facts of revision 2026-07-28 used here
+
+- A modern request names its protocol version in `_meta`. The `MCP-Protocol-Version` header must equal it.
+- Each request names its method in `Mcp-Method`. A tool call names its tool in `Mcp-Name`. A missing or different value gets 400 with JSON-RPC error -32020.
+- A version the server does not serve gets 400 with error -32022. Its data lists the supported versions and the requested one.
+- A method the server does not offer gets 404 with -32601.
+- `server/discover` is mandatory. It answers the supported versions, the capabilities and the server's identity under `_meta`.
+- Every result names its `resultType`. No session exists, and a server ignores a session id it receives.
+- A server may serve both eras on one endpoint. A request with modern `_meta` is served without a session, and `initialize` selects the legacy rules.
+- A client that meets a 400 without a recognised modern error falls back to `initialize`.
+
+### What the lane built
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Two eras | `fstp-mcp` serves a request with a `_meta` protocol version as a modern request of 2026-07-28. Every other request keeps the legacy rules of the floor revision, with `initialize` and a session. The Transport rows above hold for legacy requests | Pinned revision; Claude Code 2.1.328 |
+| Modern rules | The shared rules run first: `GET` gets 405, then `Origin`, then the bearer token on `/mcp`, then media types and the JSON-RPC body. Then the header checks, the version check, and the method | Pinned revision |
+| Modern methods | `server/discover`, `tools/list` and `tools/call`. `server/discover` and `tools/list` on `/mcp` judge the token like `initialize` does. Any other method, the legacy `ping` included, gets 404 | Pinned revision; Methods row |
+| Discovery result | `supportedVersions` names 2026-07-28 only, since the legacy floor is reached through `initialize`. The capabilities offer tools. The white-labelled name sits under `_meta`. No `instructions` member is sent | Q43; `serverInfo.name` row |
+| `Mcp-Name` | Compared byte for byte. A Base64 sentinel value is refused as a mismatch, since no tool name of the registry needs it | Interim, pending Daniel |
+| Unsupported version | Its error data echoes the requested version. The header admits only visible ASCII of at most 32 bytes, so the echo stays bounded | Interim, pending Daniel |
+| Resource metadata | `fstp-web` also serves it at `/.well-known/oauth-protected-resource/mcp`, the RFC 9728 path form. Challenges still name the root form, as the "Metadata location" reading says | RFC 9728; Claude Code 2.1.328 |
+| OAuth endpoints | The e2e cell mounts `/oauth/register`, `/oauth/authorize`, `/oauth/token` and `/oauth/revoke` over the `fstp-oauth` server of its token port. `fstp-web` keeps the typed refusal, so the production cell is unchanged | Consequences; lane m4/api-gaps record |
+| Token port | The fake token port resolves access tokens of its `fstp-oauth` server for the API core, so dispatch judges a real token on every call (I-84) | I-84; Roles row |
+| Consent page | Server-rendered, with no script. It shows the client name as unverified text, the redirect host and each scope in plain words. Approval calls `agents.consent` through the cell's own API with the browser's session, so I-77, I-85 and I-78 run there | Consent row |
+| Form posts | A plain form cannot send `X-FSTP-Request`. The consent forms are admitted only when `Origin` is the cell origin and `Sec-Fetch-Site`, when present, is `same-origin` | Interim, pending Daniel |
+| Demo step-up | Only with `--demo-signin`, and only for a session a demo sign-in opened, the step-up of a consent confirms with a button. Without the flag the route answers 404, which a test proves | Layering rule A9; I-78 |
+| Consent texts | The e2e cell writes its own plain-language text per scope | Interim, pending Daniel; consent texts open |
+| Public origin | `--public-origin <origin>` makes cell `a` name that origin as its page origin, `Origin` rule, issuer and MCP resource. It admits `https`, or `http` to `localhost`, `127.0.0.1`, `[::1]` or a `.localhost` host | Claude Code token rule; claude.ai needs https |
+| Local demo origin | For Claude Code the demo cell runs with `--public-origin http://localhost:<port>`, so the token endpoint is on an exempt host | Claude Code 2.1.328 |
+| Grants on a reset | A reset or a new scene replaces the cell's accounts. The authorisation server then ends every consent, code and token, and keeps the registered clients, through `AuthorizationServer::end_all_grants` | R-MC-03 |
+| Registration limit | The test cell admits 200 registrations per rate key and hour. Every client behind a tunnel shares one loopback peer | Interim, test cell only |
+
+### Not verified, open for Daniel
+
+- **claude.ai custom connector.** Not exercised, since it needs a public tunnel and Daniel's claude.ai account. The flow it uses was checked by design: the 401 challenge, both metadata documents under the public origin, and an `https` redirect URI within the URL subset. Three points are unknown. Its registration may ask for a token endpoint authentication method other than `none`, which the decoder refuses. Its servers may send an `Origin` header, which gets 403 unless it is the tenant origin. Which era it speaks is not known; both are served.
+- **Transport rows.** This record adds the modern era next to the rows and changes none. Daniel decides whether the rows are amended to name both eras.
+- **Production cell.** `fstp-cell` still refuses `/oauth/**`. It needs a token store port, the endpoints above, and a consent page in the platform that runs the passkey step-up.
+- **Restarts.** The e2e cell keeps its records in memory, so a restart forces `claude mcp logout` before the next login. The `mcp` schema seam of the W1e record would remove this.

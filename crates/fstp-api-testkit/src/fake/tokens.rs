@@ -60,6 +60,58 @@ struct Oauth {
     client_id: String,
 }
 
+/// Where the authorisation server of a fake cell lives: its issuer and
+/// MCP resource, and whether it is a test cell's on a plain `http`
+/// `.localhost` origin (lane mcp-demo).
+#[derive(Clone, Debug)]
+struct OauthSetup {
+    issuer: String,
+    resource: String,
+    test_cell: bool,
+}
+
+impl Default for OauthSetup {
+    fn default() -> OauthSetup {
+        OauthSetup {
+            issuer: OAUTH_ISSUER.to_owned(),
+            resource: OAUTH_RESOURCE.to_owned(),
+            test_cell: false,
+        }
+    }
+}
+
+/// Registrations a test cell admits per rate key and hour. Every client
+/// behind one tunnel shares the key of its loopback peer, so the interim
+/// default of 10 would end a demo early (lane mcp-demo).
+const TEST_CELL_REGISTRATIONS: u32 = 200;
+
+/// The server of `setup`.
+fn build_server(setup: &OauthSetup) -> Result<fstp_oauth::AuthorizationServer, String> {
+    let mut cfg = fstp_oauth::Config::new(&setup.issuer, &setup.resource, OAUTH_P72, OAUTH_P71);
+    if setup.test_cell {
+        cfg.registration_max = TEST_CELL_REGISTRATIONS;
+        return fstp_oauth::AuthorizationServer::new_test_cell(cfg).map_err(|e| e.to_string());
+    }
+    fstp_oauth::AuthorizationServer::new(cfg).map_err(|e| e.to_string())
+}
+
+/// The API core's login method of a method of `fstp-oauth`.
+const fn port_method(m: fstp_oauth::LoginMethod) -> LoginMethod {
+    match m {
+        fstp_oauth::LoginMethod::Passkey => LoginMethod::Passkey,
+        fstp_oauth::LoginMethod::MagicLink => LoginMethod::MagicLink,
+        fstp_oauth::LoginMethod::Opaque => LoginMethod::Opaque,
+        fstp_oauth::LoginMethod::EudiWallet => LoginMethod::EudiWallet,
+    }
+}
+
+/// The API core's scopes of an `fstp-oauth` scope set, by name.
+fn port_scopes(s: fstp_oauth::ScopeSet) -> BTreeSet<Scope> {
+    s.iter()
+        .filter_map(|s| Scope::ALL.into_iter().find(|x| x.as_str() == s.as_str()))
+        .collect()
+}
+
 /// A consent the authorize flow left for the user: its handle, and what
 /// the agent keeps to redeem the code.
 #[derive(Clone, PartialEq, Eq)]
@@ -89,17 +141,155 @@ pub struct FakeTokens {
     state: Arc<Mutex<State>>,
     /// The authorisation server of ADR-013, built on first use.
     oauth: Arc<Mutex<Option<Oauth>>>,
+    /// Where that server lives.
+    setup: Arc<OauthSetup>,
 }
 
 impl FakeTokens {
+    /// The token port of a test cell whose origin is `issuer`, such as the
+    /// e2e cell's `http://a.fstp.localhost:8640`: its authorisation server
+    /// names that issuer and `{issuer}/mcp` as the one resource, so the
+    /// tokens it issues work on the cell's `/mcp` (lane mcp-demo).
+    ///
+    /// # Errors
+    ///
+    /// When `fstp-oauth` refuses the issuer.
+    pub fn for_test_cell(issuer: &str) -> Result<FakeTokens, String> {
+        let setup = OauthSetup {
+            issuer: issuer.to_owned(),
+            resource: format!("{issuer}/mcp"),
+            test_cell: true,
+        };
+        build_server(&setup)?;
+        Ok(FakeTokens {
+            setup: Arc::new(setup),
+            ..FakeTokens::default()
+        })
+    }
+
+    /// A token port with no token of its own that shares this port's
+    /// authorisation server, after ending every grant that server holds.
+    /// The registered clients stay. A test cell that replaces its state
+    /// calls it, so an agent reconnects with the client it registered,
+    /// and no grant outlives the accounts it was given for.
+    pub fn sharing_oauth(&self) -> FakeTokens {
+        if let Some(o) = lock(&self.oauth).as_mut() {
+            o.server.end_all_grants();
+        }
+        FakeTokens {
+            state: Arc::default(),
+            oauth: Arc::clone(&self.oauth),
+            setup: Arc::clone(&self.setup),
+        }
+    }
+
+    /// The MCP resource of the authorisation server.
+    pub fn resource(&self) -> &str {
+        &self.setup.resource
+    }
+
+    /// `POST /oauth/register` from `source` at `now` (RFC 7591).
+    ///
+    /// # Errors
+    ///
+    /// When the server cannot be built.
+    pub fn register_client(
+        &self,
+        source: fstp_oauth::RateKey,
+        body: &[u8],
+        now: Timestamp,
+    ) -> Result<fstp_oauth::Reply, String> {
+        self.with_oauth(|o| o.server.register(source, body, now.micros()))
+    }
+
+    /// `GET /oauth/authorize` with `query` from the browser session keyed
+    /// `session` at `now`.
+    ///
+    /// # Errors
+    ///
+    /// When the server cannot be built.
+    pub fn authorize(
+        &self,
+        session: fstp_oauth::RateKey,
+        query: &[u8],
+        now: Timestamp,
+    ) -> Result<fstp_oauth::AuthorizeOutcome, String> {
+        self.with_oauth(|o| o.server.authorize_from(session, query, now.micros()))
+    }
+
+    /// The user's refusal of the consent `handle` at `now`.
+    ///
+    /// # Errors
+    ///
+    /// When the server cannot be built.
+    pub fn deny(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<fstp_oauth::AuthorizeOutcome, String> {
+        self.with_oauth(|o| o.server.deny(handle, now.micros()))
+    }
+
+    /// Whether the consent `handle` is live at `now`.
+    pub fn consent_is_live(&self, handle: &str, now: Timestamp) -> bool {
+        self.with_oauth(|o| {
+            o.server
+                .consent_step_up_digest(handle, now.micros())
+                .is_some()
+        })
+        .unwrap_or(false)
+    }
+
+    /// `POST /oauth/token` with the form `body` at `now`.
+    ///
+    /// # Errors
+    ///
+    /// When the server cannot be built.
+    pub fn token(&self, body: &[u8], now: Timestamp) -> Result<fstp_oauth::Reply, String> {
+        self.with_oauth(|o| o.server.token(body, now.micros()))
+    }
+
+    /// `POST /oauth/revoke` with the form `body` at `now` (RFC 7009).
+    ///
+    /// # Errors
+    ///
+    /// When the server cannot be built.
+    pub fn revoke_token(&self, body: &[u8], now: Timestamp) -> Result<fstp_oauth::Reply, String> {
+        self.with_oauth(|o| o.server.revoke(body, now.micros()))
+    }
+
+    /// The grant of an access token of the authorisation server, as the
+    /// API core reads it, if it is valid at `now` for this resource.
+    fn oauth_grant(&self, token: &[u8], now: Timestamp) -> Option<TokenGrant> {
+        if token.len() != 43 || !token.iter().all(u8::is_ascii_graphic) {
+            return None;
+        }
+        let mut header = b"Bearer ".to_vec();
+        header.extend_from_slice(token);
+        let resource = self.setup.resource.clone();
+        let g = self
+            .with_oauth(|o| {
+                o.server
+                    .authenticate(Some(&header), &resource, now.micros())
+                    .ok()
+            })
+            .ok()??;
+        let method = port_method(g.consent_method);
+        Some(TokenGrant {
+            account: AccountId::from_raw(u128::from(g.account.raw())),
+            client: AgentClientId::from_raw(u128::from(g.client.raw())),
+            scopes: port_scopes(g.scopes),
+            consented_with: method,
+            phishing_resistant: phishing_resistant(method),
+        })
+    }
+
     /// Runs `f` on the cell's authorisation server, built with its agent
     /// client on first use.
     fn with_oauth<R>(&self, f: impl FnOnce(&mut Oauth) -> R) -> Result<R, String> {
         let mut slot = lock(&self.oauth);
         if slot.is_none() {
-            let cfg = fstp_oauth::Config::new(OAUTH_ISSUER, OAUTH_RESOURCE, OAUTH_P72, OAUTH_P71);
-            let mut server =
-                fstp_oauth::AuthorizationServer::new(cfg).map_err(|e| e.to_string())?;
+            let mut server = build_server(&self.setup)?;
             let body = format!(
                 r#"{{"client_name":"Synthetic agent","redirect_uris":["{OAUTH_REDIRECT}"]}}"#
             );
@@ -136,7 +326,7 @@ impl FakeTokens {
                 ("code_challenge", challenge.as_str()),
                 ("code_challenge_method", "S256"),
                 ("scope", "calls:read"),
-                ("resource", OAUTH_RESOURCE),
+                ("resource", self.setup.resource.as_str()),
             ]);
             match o.server.authorize_from(
                 fstp_oauth::RateKey::from_raw(2),
@@ -178,7 +368,7 @@ impl FakeTokens {
                 ("client_id", start.client_id.as_str()),
                 ("redirect_uri", start.redirect_uri.as_str()),
                 ("code_verifier", start.verifier.as_str()),
-                ("resource", OAUTH_RESOURCE),
+                ("resource", self.setup.resource.as_str()),
             ]);
             let r = o.server.token(body.as_bytes(), now.micros());
             let token = fstp_json::parse(&r.body)
@@ -191,7 +381,7 @@ impl FakeTokens {
                 .ok_or_else(|| format!("token refused: {}", r.status))?;
             let header = format!("Bearer {token}");
             o.server
-                .authenticate(Some(header.as_bytes()), OAUTH_RESOURCE, now.micros())
+                .authenticate(Some(header.as_bytes()), &self.setup.resource, now.micros())
                 .map_err(|r| format!("authenticate: {}", r.status))
         })?
     }
@@ -261,12 +451,15 @@ impl FakeTokens {
         token
     }
 
-    /// The grant of `token`, if it is valid at `now`.
+    /// The grant of `token`, if it is valid at `now`: a token this fake
+    /// issued, or an access token of the authorisation server (lane
+    /// mcp-demo).
     pub fn grant(&self, token: &[u8], now: Timestamp) -> Result<TokenGrant, PortError> {
-        let _ = now;
-        match lock(&self.state).grants.get(token) {
-            Some((g, false)) => Ok(g.clone()),
-            Some((_, true)) | None => Err(PortError::Refused),
+        let issued = lock(&self.state).grants.get(token).cloned();
+        match issued {
+            Some((g, false)) => Ok(g),
+            Some((_, true)) => Err(PortError::Refused),
+            None => self.oauth_grant(token, now).ok_or(PortError::Refused),
         }
     }
 
