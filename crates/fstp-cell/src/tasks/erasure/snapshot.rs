@@ -174,7 +174,7 @@ pub struct KeystoreImage {
     pub digests: Vec<ImageDigest>,
 }
 
-const fn backend_code(b: BackendId) -> u8 {
+pub(super) const fn backend_code(b: BackendId) -> u8 {
     match b {
         BackendId::Okms => 1,
         BackendId::Keyd => 2,
@@ -182,7 +182,7 @@ const fn backend_code(b: BackendId) -> u8 {
     }
 }
 
-fn backend_of(code: u8) -> Option<BackendId> {
+pub(super) fn backend_of(code: u8) -> Option<BackendId> {
     match code {
         1 => Some(BackendId::Okms),
         2 => Some(BackendId::Keyd),
@@ -565,6 +565,7 @@ pub fn open_text(
                 epoch: g.epoch,
                 nonce: g.nonce,
                 body: g.body.clone(),
+                public: Vec::new(),
             };
             for s in seal_keys {
                 if let Ok(sk) = open_group(s, cell, id, g.generation, &row) {
@@ -618,6 +619,7 @@ pub fn login_digest_keys(
                 epoch: g.epoch,
                 nonce: g.nonce,
                 body: g.body.clone(),
+                public: Vec::new(),
             };
             for s in seal_keys {
                 if let Ok(sk) = open_group(s, cell, GroupId(g.group), g.generation, &row)

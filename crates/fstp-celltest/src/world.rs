@@ -968,6 +968,37 @@ impl CellHandle {
             .map_err(|e| WorldError::Store(format!("the text store: {e}")))
     }
 
+    /// Opens text `id` through the cell's erasure task, as a route would
+    /// (lane L3). `None` when the task refuses it. Test only: no route
+    /// returns text bytes yet.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process.
+    pub fn open_text(&self, id: [u8; 16]) -> Result<Option<Vec<u8>>, WorldError> {
+        let erasure = self.erasure()?;
+        Ok(self
+            .block_on(erasure.open_text(id))?
+            .ok()
+            .map(|t| t.to_vec()))
+    }
+
+    /// The fingerprint of the keystore the cell's erasure task holds
+    /// (`Keystore::fingerprint`, lane L3). A restart test compares it
+    /// before and after.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process or the keystore gives none.
+    pub fn keystore_fingerprint(&self) -> Result<[u8; 32], WorldError> {
+        let erasure = self.erasure()?;
+        let ks = self
+            .block_on(erasure.keystore())?
+            .ok_or_else(|| WorldError::Store("the erasure task gave no keystore".to_owned()))?;
+        ks.fingerprint()
+            .map_err(|e| WorldError::Store(format!("the keystore fingerprint: {e}")))
+    }
+
     /// Waits up to `deadline` until the cell's erasure task has completed
     /// the erasure of text `id` (design section 3.5, steps 1 to 7). The
     /// task runs a batch once something wakes it, and its tick follows
@@ -4032,7 +4063,12 @@ fn start_cell(
             })
             .collect(),
         custody: custody.clone(),
-        keystore: None,
+        // Lane L3: the keystore lives in its tables, over the keys login.
+        keystore: pg_config(
+            app_cluster.server(),
+            &app_db,
+            &login(CellDatabase::App, RoleName::Keys)?,
+        )?,
         keys: fstp_cell::process::CellKeys {
             anchor,
             ledger: std::sync::Arc::new(fstp_pgstore::LedgerKeys::new(ledger_key)),
@@ -5050,8 +5086,8 @@ impl ReleaseClockSource {
 }
 
 /// What a world cell restarts from (lane m3/licence-update): every part
-/// of its first start but the keystore, which the running cell hands
-/// over, and the listen addresses, which the restarted cell binds again.
+/// of its first start but the listen addresses, which the restarted cell
+/// binds again. The keystore is read from its tables (lane L3).
 /// The composite `Anchor` key is kept as its encoded bytes, since the
 /// key has no `Clone`. The world is test-only and its keys synthetic.
 #[derive(Clone)]
@@ -5063,6 +5099,7 @@ struct RestartParts {
     app: fstp_pgwire::Config,
     registered_servers: Vec<fstp_cell::process::RegisteredSpki>,
     custody: WorldCustody,
+    keystore: fstp_pgwire::Config,
     anchor: Vec<u8>,
     ledger: std::sync::Arc<fstp_pgstore::LedgerKeys>,
     cred_lookup: [u8; 32],
@@ -5098,6 +5135,7 @@ impl RestartParts {
             app: parts.app.clone(),
             registered_servers: parts.registered_servers.clone(),
             custody: parts.custody.clone(),
+            keystore: parts.keystore.clone(),
             anchor: anchor.to_vec(),
             ledger: std::sync::Arc::clone(&parts.keys.ledger),
             cred_lookup: parts.keys.cred_lookup,
@@ -5113,10 +5151,9 @@ impl RestartParts {
         })
     }
 
-    /// The process parts of a restart over `keystore`, bound at `listen`.
+    /// The process parts of a restart, bound at `listen`.
     fn parts(
         &self,
-        keystore: fstp_cell::tasks::erasure::Keystore,
         listen: fstp_cell::process::Listen,
     ) -> Result<fstp_cell::process::CellProcessParts<WorldCustody, SharedVault>, WorldError> {
         let anchor = fstp_crypto::composite::CompositeSigningKey::from_bytes(&self.anchor)
@@ -5129,7 +5166,7 @@ impl RestartParts {
             app: self.app.clone(),
             registered_servers: self.registered_servers.clone(),
             custody: self.custody.clone(),
-            keystore: Some(keystore),
+            keystore: self.keystore.clone(),
             keys: fstp_cell::process::CellKeys {
                 anchor,
                 ledger: std::sync::Arc::clone(&self.ledger),
@@ -5160,21 +5197,21 @@ pub const RELEASE_NO_CALL: &str = "fstp_celltest::world release steps: the cell 
 impl CellHandle {
     /// Restarts the cell (lane m3/licence-update): the running process
     /// drains and stops, and a new one starts over the same databases,
-    /// with the keystore the old one held and the licence token it held
-    /// last. The vault, the witness, the relays and the stand-in keep
+    /// reads the keystore from its tables (lane L3), and holds the licence
+    /// token the old one held last. The vault, the witness, the relays and the stand-in keep
     /// running. The new process binds the same listen addresses, so the
     /// edge routes and the health address stay valid.
     ///
-    /// Claims, Interim, pending Daniel: the keystore passes in process,
-    /// since the keystore tables are not built, and the licence token
-    /// passes the same way, since the sealed licence store is not built.
+    /// Claims, Interim, pending Daniel: the licence token passes in
+    /// process, since the sealed licence store is not built. The keystore
+    /// does not: the new process loads it from the keystore tables.
     /// What `fstp_cell::routes::pg` keeps in process memory between two
     /// ceremony steps is lost, so a restart falls between cycle steps.
     ///
     /// # Errors
     ///
-    /// Fails when the cell runs no process, the old one gives no keystore
-    /// or does not stop, or the new one does not start.
+    /// Fails when the cell runs no process, the old one does not stop, or
+    /// the new one does not start.
     pub fn restart(&self) -> Result<(), WorldError> {
         let rt = self.runtime()?;
         let s = rt.services;
@@ -5183,15 +5220,11 @@ impl CellHandle {
             .cell
             .take()
             .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
-        let keystore = s.rt.block_on(old.erasure().keystore());
         let hold = old.release().hold();
         let bound = old.bound();
         let stopped = s.rt.block_on(old.shutdown(CELL_DRAIN));
-        let keystore = keystore.ok_or_else(|| {
-            WorldError::Store("the restart: the old process gave no keystore".to_owned())
-        })?;
         stopped.map_err(|e| WorldError::Store(format!("the restart: the old process: {e}")))?;
-        let parts = rt.restart.parts(keystore, bound)?;
+        let parts = rt.restart.parts(bound)?;
         let mut options = rt.restart.options.clone();
         if hold.is_some() {
             options.licence = hold;
