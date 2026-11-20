@@ -634,13 +634,13 @@ impl AuthServer for ProductionServer {
         let auth = fstp_oauth::ConsentAuth {
             session: method_of(auth.session),
             step_up: auth.step_up.map(|p| fstp_oauth::StepUpProof {
-                account: fstp_oauth::Account::from_raw(p.account.0),
+                account: fstp_oauth::Account::from_raw(u128::from(p.account.0)),
                 digest: p.digest,
                 at: p.at,
                 method: method_of(p.method),
             }),
         };
-        let account = fstp_oauth::Account::from_raw(account.0);
+        let account = fstp_oauth::Account::from_raw(u128::from(account.0));
         Ok(outcome_of(
             self.server()?.approve(&handle, account, &auth, now),
         ))
@@ -660,7 +660,7 @@ impl AuthServer for ProductionServer {
         client_id: &str,
         now: Micros,
     ) -> Result<(), NotImplemented> {
-        let account = fstp_oauth::Account::from_raw(account.0);
+        let account = fstp_oauth::Account::from_raw(u128::from(account.0));
         self.server()?.revoke_agent(account, client_id, now);
         Ok(())
     }
@@ -674,7 +674,7 @@ impl AuthServer for ProductionServer {
         Ok(
             match self.server()?.authenticate(authorization, resource, now) {
                 Ok(g) => Access::Granted(GrantView {
-                    account: AccountRef(g.account.raw()),
+                    account: AccountRef(u64::try_from(g.account.raw()).unwrap_or(u64::MAX)),
                     client_id: g.client_id,
                     scopes: g.scopes.iter().map(|s| s.as_str().to_owned()).collect(),
                     audience: g.audience,

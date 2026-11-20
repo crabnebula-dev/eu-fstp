@@ -276,7 +276,7 @@ impl FakeTokens {
             .ok()??;
         let method = port_method(g.consent_method);
         Some(TokenGrant {
-            account: AccountId::from_raw(u128::from(g.account.raw())),
+            account: AccountId::from_raw(g.account.raw()),
             client: AgentClientId::from_raw(u128::from(g.client.raw())),
             scopes: port_scopes(g.scopes),
             consented_with: method,
@@ -390,8 +390,7 @@ impl FakeTokens {
     /// core's step-up, attested under the consent's own digest at the
     /// instant of the approval (ADR-013 "Consent", I-78).
     fn approve(&self, c: &ConsentApproval) -> Result<String, PortError> {
-        let account = u64::try_from(c.account.raw()).map_err(|_| PortError::Refused)?;
-        let account = fstp_oauth::Account::from_raw(account);
+        let account = fstp_oauth::Account::from_raw(c.account.raw());
         let method = match c.method {
             LoginMethod::Passkey => fstp_oauth::LoginMethod::Passkey,
             LoginMethod::MagicLink => fstp_oauth::LoginMethod::MagicLink,
@@ -493,11 +492,11 @@ impl FakeTokens {
                 }
             }
         }
-        if let (Ok(a), Ok(c)) = (u64::try_from(account.raw()), u64::try_from(client.raw()))
+        if let Ok(c) = u64::try_from(client.raw())
             && let Some(o) = lock(&self.oauth).as_mut()
         {
             let n = o.server.revoke_agent_by_number(
-                fstp_oauth::Account::from_raw(a),
+                fstp_oauth::Account::from_raw(account.raw()),
                 fstp_oauth::ClientNumber::from_raw(c),
                 0,
             );
@@ -526,13 +525,10 @@ impl FakeTokens {
             });
             e.scopes.extend(g.scopes.iter().copied());
         }
-        let Ok(a) = u64::try_from(account.raw()) else {
-            return by.into_values().collect();
-        };
         if let Some(o) = lock(&self.oauth).as_ref() {
             for g in o
                 .server
-                .agents_of(fstp_oauth::Account::from_raw(a), now.micros())
+                .agents_of(fstp_oauth::Account::from_raw(account.raw()), now.micros())
             {
                 let client = AgentClientId::from_raw(u128::from(g.client.raw()));
                 let e = by.entry(client).or_insert_with(|| AgentInfo {
