@@ -838,9 +838,11 @@ where
                 host: host.clone(),
                 app: app_pool.clone(),
                 relay: api_relay,
-                // Lane L5 seam: the shell facts of lane L6 plug in here at
-                // merge. `None` reads the route backend's facts.
-                facts: None,
+                // Lane L6's shell facts, fresh in the request, as the
+                // cell's command route reads them (ADR-027, wave 2 merge).
+                facts: Some(Arc::new(crate::api::facts::FreshFacts(Arc::clone(
+                    &backend,
+                )))),
             };
             // Lane L2's token store over the same authorisation server.
             let tokens = crate::oauth::tokens::CellTokens::new(Arc::clone(&oauth));

@@ -101,3 +101,29 @@ pub(crate) fn default_creator_inputs(
         .and_then(|name| fstp_guide::ShippedProfiles.profile(&name).ok());
     inputs
 }
+
+/// The fresh source of a serving cell (lane L4 at the wave 2 merge,
+/// ADR-027): the route backend's shell runs its probes in the request
+/// (`CreatorShell::facts_fresh`) and reads the Guide's stored texts from
+/// the cell's text store (`CreatorShell::guide_fresh`), as the cell's own
+/// command route does. With [`crate::shell::ProductionShell`] it gives the
+/// same facts as [`BackendFacts`].
+pub(crate) struct FreshFacts<R: Runtime>(pub(crate) Arc<PgBackend<R>>);
+
+impl<R: Runtime> ShellFacts for FreshFacts<R> {
+    fn creator_facts<'a>(
+        &'a self,
+        state: &'a CellState,
+        cmd: &'a fstp_creator::CreatorCommand,
+    ) -> FactsFuture<'a, CreatorFacts> {
+        Box::pin(self.0.creator_facts_fresh(state, cmd))
+    }
+
+    fn guide_inputs<'a>(
+        &'a self,
+        state: &'a CellState,
+        call: CallId,
+    ) -> FactsFuture<'a, Option<GuideInputs>> {
+        Box::pin(self.0.guide_inputs_fresh(state, call))
+    }
+}

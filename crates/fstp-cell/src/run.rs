@@ -230,37 +230,61 @@ fn parts(
             },
         })
         .collect();
-    let proof_mail: Arc<dyn crate::mail::ProofMail> = match &cfg.mail {
-        None => Arc::new(crate::mail::NoProofMail),
+    // D3: one platform relay for proof mail and for the API core's
+    // delivered mail (role invitations, recovery approvals, lane L5).
+    let mail_ca = match std::fs::read(dir.join("mail-ca.pem")) {
+        Ok(pem) => Some(pem),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(cfg_err("mail-ca.pem")),
+    };
+    let relay: Option<Arc<crate::mail::SmtpRelay<TokioRuntime>>> = match &cfg.mail {
+        None => None,
         Some(m) => {
             let password = read_secret(dir, "mail.password")?;
             let credentials = fstp_smtp::client::Credentials::try_new(&m.username, &password)
                 .map_err(|_| cfg_err("mail.password"))?;
-            let ca = match std::fs::read(dir.join("mail-ca.pem")) {
-                Ok(pem) => Some(pem),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(_) => return Err(cfg_err("mail-ca.pem")),
-            };
-            let relay = crate::mail::SmtpRelay::new(
-                cfg.core.mode,
-                rt.clone(),
-                crate::mail::RelayParts {
-                    relay: &m.relay,
-                    address: m.address,
-                    sender: &m.sender,
-                    helo: &cfg.host,
-                    credentials,
-                    ca_pem: ca.as_deref(),
-                },
-            )
-            .map_err(|_| cfg_err("mail"))?;
-            Arc::new(crate::mail::RelayProofMail::new(
-                rt.clone(),
-                Arc::new(relay),
-                &cfg.host,
+            Some(Arc::new(
+                crate::mail::SmtpRelay::new(
+                    cfg.core.mode,
+                    rt.clone(),
+                    crate::mail::RelayParts {
+                        relay: &m.relay,
+                        address: m.address,
+                        sender: &m.sender,
+                        helo: &cfg.host,
+                        credentials,
+                        ca_pem: mail_ca.as_deref(),
+                    },
+                )
+                .map_err(|_| cfg_err("mail"))?,
             ))
         }
     };
+    let proof_mail: Arc<dyn crate::mail::ProofMail> = match &relay {
+        None => Arc::new(crate::mail::NoProofMail),
+        Some(r) => Arc::new(crate::mail::RelayProofMail::new(
+            rt.clone(),
+            Arc::clone(r) as Arc<dyn crate::mail::MailRelay>,
+            &cfg.host,
+        )),
+    };
+    let api_relay = relay.map(|r| r as process::ApiRelay);
+    // ADR-027: the creator shell over the configured probes. The relay
+    // probe checks the relay the cell submits to.
+    let shell = cfg.shell.clone().unwrap_or_default();
+    let creator_shell = crate::shell::facts::production_shell(
+        rt.clone(),
+        crate::shell::facts::ShellSettings {
+            resolver: shell.resolver,
+            probes: crate::shell::probe::ProbeSettings {
+                mail_relay: cfg.mail.as_ref().map(|m| m.relay.clone()),
+                mail_ca_pem: mail_ca,
+                sending_domain: shell.sending_domain,
+                dkim_selector: shell.dkim_selector,
+            },
+            platform_url: shell.platform_url,
+        },
+    );
     let parts = CellProcessParts {
         cell: cfg.core.cell.0,
         mode: cfg.core.mode,
@@ -281,6 +305,8 @@ fn parts(
     };
     let options = StartOptions {
         proof_mail,
+        api_relay,
+        creator_shell,
         organisation: organisation(cfg),
         web_assets: Some(web_assets),
         ..StartOptions::default()

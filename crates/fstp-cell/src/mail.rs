@@ -308,6 +308,82 @@ impl<R: Runtime> MailRelay for SmtpRelay<R> {
     }
 }
 
+/// The refusal of a session that failed before the final dot, as
+/// `fstp_dispatch` reads it.
+fn dispatch_refusal(f: &MailFault) -> fstp_dispatch::Refused {
+    use fstp_dispatch::Refused;
+    match f {
+        MailFault::Refused(_) | MailFault::Config => Refused::Permanent(None),
+        MailFault::Unreachable => Refused::Transient(None),
+        MailFault::Smtp(SmtpError::Transient { reply, .. }) => {
+            Refused::Transient(Some(reply.code()))
+        }
+        MailFault::Smtp(SmtpError::Permanent { reply, .. }) => {
+            Refused::Permanent(Some(reply.code()))
+        }
+        MailFault::Smtp(SmtpError::Unsupported(_) | SmtpError::Envelope | SmtpError::Body(_)) => {
+            Refused::Permanent(None)
+        }
+        MailFault::Smtp(_) => Refused::Transient(None),
+    }
+}
+
+/// A session of the platform relay with the body sent except the final
+/// dot.
+struct SmtpStaged<R: Runtime>(fstp_smtp::client::Staged<R, R::Tcp>);
+
+impl<R: Runtime> crate::api::mail::StagedMail for SmtpStaged<R> {
+    fn end_of_data(
+        self: Box<Self>,
+    ) -> crate::api::mail::RelayFuture<'static, fstp_dispatch::EndOfData> {
+        Box::pin(async move {
+            match self.0.commit().await {
+                Ok(reply) => fstp_dispatch::EndOfData::Reply(reply.code()),
+                Err(SmtpError::Transient { reply, .. } | SmtpError::Permanent { reply, .. }) => {
+                    fstp_dispatch::EndOfData::Reply(reply.code())
+                }
+                Err(_) => fstp_dispatch::EndOfData::Unknown,
+            }
+        })
+    }
+
+    fn abandon(self: Box<Self>) -> crate::api::mail::RelayFuture<'static, ()> {
+        Box::pin(async move { self.0.abandon().await })
+    }
+}
+
+/// The platform relay as the API core's ports deliver through it (ADR-026
+/// record of lane L5, wave 2 merge): role invitations and recovery
+/// approval mail go through the configured relay (D3). The worker records
+/// the commit point before the final dot (I-26).
+impl<R: Runtime> crate::api::mail::Relay for SmtpRelay<R> {
+    fn sender(&self) -> &str {
+        &self.sender
+    }
+
+    fn stage<'a>(
+        &'a self,
+        envelope: &'a fstp_dispatch::Envelope,
+        body: &'a [u8],
+    ) -> crate::api::mail::RelayFuture<
+        'a,
+        Result<Box<dyn crate::api::mail::StagedMail>, fstp_dispatch::Refused>,
+    > {
+        Box::pin(async move {
+            let env = Envelope {
+                from: envelope.from.clone(),
+                to: envelope.to.clone(),
+            };
+            match self.egress.stage(&env, body).await {
+                Ok(staged) => {
+                    Ok(Box::new(SmtpStaged(staged)) as Box<dyn crate::api::mail::StagedMail>)
+                }
+                Err(e) => Err(dispatch_refusal(&e)),
+            }
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Proof mail over a relay.
 

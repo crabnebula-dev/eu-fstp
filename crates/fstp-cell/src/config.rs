@@ -219,7 +219,7 @@ pub const MAX_RECEIPT_KEYS: usize = 8;
 /// The longest encoded witness receipt key, in bytes.
 pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 
-const FILE_MEMBERS: [&str; 17] = [
+const FILE_MEMBERS: [&str; 18] = [
     "assets_dir",
     "cell",
     "credentials_dir",
@@ -234,6 +234,7 @@ const FILE_MEMBERS: [&str; 17] = [
     "mode",
     "organisation_active",
     "registered_servers",
+    "shell",
     "vault",
     "version",
     "witness",
@@ -317,6 +318,84 @@ pub struct MailConfig {
     pub address: Option<SocketAddr>,
 }
 
+/// The settings of the creator shell of a configured cell (ADR-027, wave 2
+/// merge). The probes take the relay host from `mail.relay` and its CA from
+/// `mail-ca.pem`, so the sending domain probe checks the relay the cell
+/// submits to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShellConfig {
+    /// The DNS resolver of the sending domain probe, TCP.
+    pub resolver: Option<SocketAddr>,
+    /// The sending domain, a host name.
+    pub sending_domain: Option<String>,
+    /// The DKIM selector of the sending domain.
+    pub dkim_selector: Option<String>,
+    /// The `https:` address applicants create an account on.
+    pub platform_url: Option<String>,
+}
+
+/// Whether `s` is a DKIM selector: dot-separated LDH labels of 1 to 63
+/// bytes, at most 253 bytes.
+fn is_selector(s: &str) -> bool {
+    (1..=253).contains(&s.len())
+        && s.split('.').all(|l| {
+            (1..=63).contains(&l.len())
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
+/// Whether `s` is a platform address: `https://`, a host name, and an
+/// optional path of visible ASCII, at most 512 bytes.
+fn is_platform_url(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix("https://") else {
+        return false;
+    };
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    s.len() <= 512 && is_host_name(host) && path.bytes().all(|b| b.is_ascii_graphic())
+}
+
+fn shell_of(o: &Object) -> Result<ShellConfig, ConfigError> {
+    members(
+        o,
+        &[
+            "dkim_selector",
+            "platform_url",
+            "resolver",
+            "sending_domain",
+        ],
+        "shell",
+    )?;
+    let opt = |name: &'static str| -> Result<Option<&str>, ConfigError> {
+        o.get(name)
+            .map(|v| v.as_str().ok_or(ConfigError::Invalid(name)))
+            .transpose()
+    };
+    let resolver = opt("resolver")?
+        .map(|s| addr_of(s, "shell.resolver"))
+        .transpose()?;
+    let sending_domain = opt("sending_domain")?;
+    if sending_domain.is_some_and(|d| !is_host_name(d)) {
+        return Err(ConfigError::Invalid("shell.sending_domain"));
+    }
+    let dkim_selector = opt("dkim_selector")?;
+    if dkim_selector.is_some_and(|d| !is_selector(d)) {
+        return Err(ConfigError::Invalid("shell.dkim_selector"));
+    }
+    let platform_url = opt("platform_url")?;
+    if platform_url.is_some_and(|u| !is_platform_url(u)) {
+        return Err(ConfigError::Invalid("shell.platform_url"));
+    }
+    Ok(ShellConfig {
+        resolver,
+        sending_domain: sending_domain.map(str::to_owned),
+        dkim_selector: dkim_selector.map(str::to_owned),
+        platform_url: platform_url.map(str::to_owned),
+    })
+}
+
 /// The configuration file of one cell process (ADR-026).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileConfig {
@@ -347,6 +426,8 @@ pub struct FileConfig {
     /// The organisation port's answer for a ledger with no tenant part
     /// (ADR-021, interim, pending Daniel).
     pub organisation_active: bool,
+    /// The creator shell's settings (ADR-027), if any.
+    pub shell: Option<ShellConfig>,
 }
 
 fn file_limits() -> ParseLimits {
@@ -607,6 +688,12 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
             })
         }
     };
+    let shell = match o.get("shell") {
+        None => None,
+        Some(v) => Some(shell_of(
+            v.as_object().ok_or(ConfigError::Invalid("shell"))?,
+        )?),
+    };
     let organisation_active = match o.get("organisation_active") {
         None => false,
         Some(v) => v
@@ -627,6 +714,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
         listen,
         mail,
         organisation_active,
+        shell,
     })
 }
 
@@ -894,5 +982,57 @@ mod file_tests {
         }
         let many = encode_receipt_keys(&vec![vec![1u8]; MAX_RECEIPT_KEYS + 1]);
         assert!(decode_receipt_keys(&many).is_err());
+    }
+}
+
+#[cfg(test)]
+mod shell_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// The file seed of `cell_config_decode` is an accepted file, so the
+    /// fuzz properties of an accepted file run from the first input.
+    #[test]
+    fn adr026_fuzz_seed_file_decodes() {
+        let seed = include_bytes!("../fuzz/seeds/cell_config_decode/file_saas");
+        assert!(decode_file(seed).unwrap().shell.is_some());
+    }
+
+    /// ADR-027, wave 2 merge: the `shell` member takes the resolver, the
+    /// sending domain, the DKIM selector and the platform address, each
+    /// optional, and refuses any other member or a malformed value.
+    #[test]
+    fn adr027_config_shell_member_decodes_and_refuses() {
+        let ok = tests_file(
+            r#","shell":{"dkim_selector":"fstp1","platform_url":"https://grants.example.test/apply","resolver":"10.0.0.53:53","sending_domain":"calls.example.test"}"#,
+        );
+        let c = decode_file(ok.as_bytes()).unwrap().shell.unwrap();
+        assert_eq!(c.resolver, Some("10.0.0.53:53".parse().unwrap()));
+        assert_eq!(c.dkim_selector.as_deref(), Some("fstp1"));
+        let empty = decode_file(tests_file(r#","shell":{}"#).as_bytes()).unwrap();
+        assert_eq!(empty.shell, Some(ShellConfig::default()));
+        for (bad, rule) in [
+            (r#","shell":{"x":1}"#, ConfigError::Invalid("shell")),
+            (
+                r#","shell":{"resolver":"dns"}"#,
+                ConfigError::Invalid("shell.resolver"),
+            ),
+            (
+                r#","shell":{"sending_domain":"Calls.Example"}"#,
+                ConfigError::Invalid("shell.sending_domain"),
+            ),
+            (
+                r#","shell":{"dkim_selector":"-bad"}"#,
+                ConfigError::Invalid("shell.dkim_selector"),
+            ),
+            (
+                r#","shell":{"platform_url":"http://grants.example.test"}"#,
+                ConfigError::Invalid("shell.platform_url"),
+            ),
+            (r#","shell":[]"#, ConfigError::Invalid("shell")),
+        ] {
+            assert_eq!(decode_file(tests_file(bad).as_bytes()), Err(rule), "{bad}");
+        }
     }
 }
