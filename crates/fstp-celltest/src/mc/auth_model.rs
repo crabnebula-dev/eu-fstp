@@ -3745,6 +3745,34 @@ pub mod http {
             self.known().admin.clone()
         }
 
+        /// Lane L1 (ADR-026), test only: proves the API core's step-up
+        /// challenge `challenge_id` (lowercase hex) over `challenge` with
+        /// device 0 of the account of `session`, through the cell's own
+        /// `POST /auth/stepup`, as `web/src/core/stepup.ts` does. Whether
+        /// the cell recorded the step-up.
+        pub fn prove_api_step_up(
+            &self,
+            session: &Cookie,
+            challenge_id: &str,
+            challenge: [u8; 32],
+        ) -> Result<bool, NotImplemented> {
+            let Some((account, _)) = self.known().sessions.get(&session.0).copied() else {
+                return Ok(false);
+            };
+            let body = {
+                let mut k = self.known();
+                let device = k
+                    .people
+                    .get_mut(&account)
+                    .and_then(|p| p.devices.first_mut())
+                    .ok_or_else(failed)?;
+                device.assertion_body(challenge_id, challenge)?
+            };
+            Ok(self
+                .call("POST", "/auth/stepup", Some(session), &body)?
+                .ok())
+        }
+
         /// A passkey login of `account` with its device 0.
         fn passkey_login(&self, account: AccountId) -> Result<Option<Cookie>, NotImplemented> {
             if !self.known().people.contains_key(&account) {

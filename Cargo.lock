@@ -323,6 +323,8 @@ dependencies = [
 name = "fstp-cell"
 version = "0.1.0"
 dependencies = [
+ "fstp-access",
+ "fstp-api-core",
  "fstp-audit",
  "fstp-auth",
  "fstp-cell",
@@ -343,6 +345,7 @@ dependencies = [
  "fstp-keys",
  "fstp-ledger",
  "fstp-money",
+ "fstp-oauth",
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgwire",
@@ -355,6 +358,7 @@ dependencies = [
  "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
+ "fstp-web",
  "fstp-webauthn",
  "fstp-witness",
 ]
@@ -386,6 +390,7 @@ name = "fstp-celltest"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "fstp-access",
  "fstp-api-core",
  "fstp-api-testkit",
  "fstp-audit",
@@ -414,6 +419,7 @@ dependencies = [
  "fstp-mc",
  "fstp-migrate",
  "fstp-money",
+ "fstp-oauth",
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgtest",

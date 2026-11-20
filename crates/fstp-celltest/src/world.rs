@@ -909,12 +909,64 @@ impl CellHandle {
         }
     }
 
-    /// Runs `f` on the cell's runtime to its end (lane F-ERASE).
-    pub(crate) fn block_on<T>(
-        &self,
-        f: impl std::future::Future<Output = T>,
-    ) -> Result<T, WorldError> {
+    /// Runs `f` on the cell's runtime to its end (lane F-ERASE). Public
+    /// for the authorisation server tests of lane L2.
+    pub fn block_on<T>(&self, f: impl std::future::Future<Output = T>) -> Result<T, WorldError> {
         Ok(self.runtime()?.services.rt.block_on(f))
+    }
+
+    /// The cell's engine handle (lane L1, ADR-026): the only path into
+    /// `DriverCore`, for tests that admit commands through the gate.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell is not running.
+    pub fn cell_engine(&self) -> Result<fstp_cell::engine::CellEngine, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        running
+            .cell
+            .as_ref()
+            .map(|c| c.engine().clone())
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
+    }
+
+    /// Runs `f` on the cell's runtime with its running cell (lane L1).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell is not running.
+    pub fn with_running<T>(
+        &self,
+        f: impl AsyncFnOnce(&fstp_cell::process::RunningCell<fstp_rt::tokio::TokioRuntime>) -> T,
+    ) -> Result<T, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        let cell = running
+            .cell
+            .as_ref()
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
+        Ok(rt.services.rt.block_on(f(cell)))
+    }
+
+    /// The kinds of the App chain rows in order: 1 for a ledger entry, 2
+    /// for an audit event (ADR-010, lane L1).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell is not running or its chain cannot be read.
+    pub fn chain_kinds(&self) -> Result<Vec<u8>, WorldError> {
+        let rows = self
+            .with_running(async |c| c.chain_rows().await)?
+            .map_err(|e| WorldError::Store(format!("the chain rows: {e}")))?;
+        Ok(rows
+            .rows
+            .iter()
+            .map(|r| match r.row.kind {
+                fstp_audit::RowKind::Ledger { .. } => 1,
+                fstp_audit::RowKind::Event { .. } => 2,
+            })
+            .collect())
     }
 
     pub(crate) fn erasure(&self) -> Result<fstp_cell::tasks::erasure::ErasureHandle, WorldError> {
@@ -966,6 +1018,37 @@ impl CellHandle {
                 erasure.put_text(group, id, text.to_vec()).await
             })
             .map_err(|e| WorldError::Store(format!("the text store: {e}")))
+    }
+
+    /// Opens text `id` through the cell's erasure task, as a route would
+    /// (lane L3). `None` when the task refuses it. Test only: no route
+    /// returns text bytes yet.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process.
+    pub fn open_text(&self, id: [u8; 16]) -> Result<Option<Vec<u8>>, WorldError> {
+        let erasure = self.erasure()?;
+        Ok(self
+            .block_on(erasure.open_text(id))?
+            .ok()
+            .map(|t| t.to_vec()))
+    }
+
+    /// The fingerprint of the keystore the cell's erasure task holds
+    /// (`Keystore::fingerprint`, lane L3). A restart test compares it
+    /// before and after.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process or the keystore gives none.
+    pub fn keystore_fingerprint(&self) -> Result<[u8; 32], WorldError> {
+        let erasure = self.erasure()?;
+        let ks = self
+            .block_on(erasure.keystore())?
+            .ok_or_else(|| WorldError::Store("the erasure task gave no keystore".to_owned()))?;
+        ks.fingerprint()
+            .map_err(|e| WorldError::Store(format!("the keystore fingerprint: {e}")))
     }
 
     /// Waits up to `deadline` until the cell's erasure task has completed
@@ -1241,7 +1324,7 @@ impl World {
                 host: Some(crate::world_host::WorldHost::start(&spec)?),
             });
         }
-        World::start_in_process(spec, pages, dev, &[], None)
+        World::start_in_process(spec, pages, dev, &[], None, false)
     }
 
     /// The world of a `fstp-world-host` process ([`crate::world_host`]):
@@ -1261,7 +1344,7 @@ impl World {
                 "a hosted world runs in this process, with one custody socket per cell".to_owned(),
             ));
         }
-        World::start_in_process(spec, None, &[], custody, None)
+        World::start_in_process(spec, None, &[], custody, None, false)
     }
 
     /// [`World::start`] whose cells limit their public routes to `limit`
@@ -1282,7 +1365,25 @@ impl World {
                 "fstp_celltest::world::World in process mode sets no public limit",
             )));
         }
-        World::start_in_process(spec, None, &[], &[], Some(limit))
+        World::start_in_process(spec, None, &[], &[], Some(limit), false)
+    }
+
+    /// [`World::start`] whose cells mount the web adapter over their own
+    /// `ApiCore` behind the cell table (ADR-026, lane L1), with a stub
+    /// journey UI shell. The API, MCP and OAuth metadata surfaces then run
+    /// over the cell's PostgreSQL ports. The spec must not ask for process
+    /// mode.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`], and a refusal of a spec in process mode.
+    pub fn start_with_api(spec: WorldSpec) -> Result<World, WorldError> {
+        if spec.process_mode {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::world::World in process mode mounts no API core",
+            )));
+        }
+        World::start_in_process(spec, None, &[], &[], None, true)
     }
 
     fn start_in_process(
@@ -1291,6 +1392,7 @@ impl World {
         dev: &[DevCell],
         custody: &[std::path::PathBuf],
         public_limit: Option<fstp_cell::routes::Limit>,
+        api: bool,
     ) -> Result<World, WorldError> {
         // One world start at a time in the process (lead decision,
         // 2026-11-13, lane F-ERASE): worlds that start in parallel race
@@ -1321,6 +1423,7 @@ impl World {
                     dev,
                     custody,
                     public_limit,
+                    api,
                 },
                 &egress,
             ) {
@@ -1453,6 +1556,26 @@ impl World {
             set.push("edge/log", lock(&s.edge.log).clone());
         }
         Ok(set)
+    }
+
+    /// Lane L2: runs `sql` as the superuser in the application database
+    /// of cell `i`, on the application cluster. A test uses it to put a
+    /// row back as a crash would have left it. Its output is `psql`'s.
+    ///
+    /// # Errors
+    ///
+    /// Fails for an unknown cell, or when `psql` refuses.
+    pub fn app_superuser_sql(&self, i: u8, sql: &str) -> Result<String, WorldError> {
+        let cell = self
+            .cell(i)
+            .ok_or_else(|| WorldError::Store(format!("no cell {i}")))?;
+        let cluster = self
+            .clusters
+            .iter()
+            .find(|c| c.kind() == ClusterKind::Application)
+            .ok_or_else(|| WorldError::Store("no application cluster".to_owned()))?;
+        superuser_sql(cluster, &cell.app_database(), sql)
+            .map_err(|e| step_failed(cluster, "superuser sql", &e))
     }
 
     /// Every database of every cluster, with what attributes a store to
@@ -2201,6 +2324,8 @@ struct CellServe<'a> {
     /// The limit of the public routes per peer, when a test sets one
     /// ([`World::start_with_public_limit`]).
     public_limit: Option<fstp_cell::routes::Limit>,
+    /// Whether the cell mounts the web adapter ([`World::start_with_api`]).
+    api: bool,
 }
 
 /// What every cell of a world serves, and the per-cell parts by index:
@@ -2215,6 +2340,8 @@ struct WorldServe<'a> {
     custody: &'a [std::path::PathBuf],
     /// The limit of the public routes per peer, when a test sets one.
     public_limit: Option<fstp_cell::routes::Limit>,
+    /// Whether each cell mounts the web adapter (ADR-026).
+    api: bool,
 }
 
 /// Provisions every cell of `plans`, then the service databases, then
@@ -2231,6 +2358,7 @@ fn start_cells(
         dev,
         custody,
         public_limit,
+        api,
     } = serve;
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -2253,6 +2381,7 @@ fn start_cells(
                 dev: dev.get(i),
                 custody: custody.get(i).map(std::path::PathBuf::as_path),
                 public_limit,
+                api,
             },
             egress,
         )?);
@@ -3680,6 +3809,7 @@ fn start_cell(
         dev,
         custody: custody_socket,
         public_limit,
+        api,
     } = serve;
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
@@ -4032,7 +4162,12 @@ fn start_cell(
             })
             .collect(),
         custody: custody.clone(),
-        keystore: None,
+        // Lane L3: the keystore lives in its tables, over the keys login.
+        keystore: pg_config(
+            app_cluster.server(),
+            &app_db,
+            &login(CellDatabase::App, RoleName::Keys)?,
+        )?,
         keys: fstp_cell::process::CellKeys {
             anchor,
             ledger: std::sync::Arc::new(fstp_pgstore::LedgerKeys::new(ledger_key)),
@@ -4110,6 +4245,13 @@ fn start_cell(
         // by default, so its public pages are served. Claims built on a
         // world cell's public pages say so.
         organisation: fstp_cell::public::OrganisationPort { active: true },
+        // ADR-026: a world started with `World::start_with_api` mounts the
+        // web adapter over the cell's own ApiCore, with a stub UI shell.
+        web_assets: if api {
+            Some(fstp_cell::process::stub_web_assets().map_err(|e| fail("the web assets", &e))?)
+        } else {
+            None
+        },
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,
@@ -5050,8 +5192,8 @@ impl ReleaseClockSource {
 }
 
 /// What a world cell restarts from (lane m3/licence-update): every part
-/// of its first start but the keystore, which the running cell hands
-/// over, and the listen addresses, which the restarted cell binds again.
+/// of its first start but the listen addresses, which the restarted cell
+/// binds again. The keystore is read from its tables (lane L3).
 /// The composite `Anchor` key is kept as its encoded bytes, since the
 /// key has no `Clone`. The world is test-only and its keys synthetic.
 #[derive(Clone)]
@@ -5063,6 +5205,7 @@ struct RestartParts {
     app: fstp_pgwire::Config,
     registered_servers: Vec<fstp_cell::process::RegisteredSpki>,
     custody: WorldCustody,
+    keystore: fstp_pgwire::Config,
     anchor: Vec<u8>,
     ledger: std::sync::Arc<fstp_pgstore::LedgerKeys>,
     cred_lookup: [u8; 32],
@@ -5098,6 +5241,7 @@ impl RestartParts {
             app: parts.app.clone(),
             registered_servers: parts.registered_servers.clone(),
             custody: parts.custody.clone(),
+            keystore: parts.keystore.clone(),
             anchor: anchor.to_vec(),
             ledger: std::sync::Arc::clone(&parts.keys.ledger),
             cred_lookup: parts.keys.cred_lookup,
@@ -5113,10 +5257,9 @@ impl RestartParts {
         })
     }
 
-    /// The process parts of a restart over `keystore`, bound at `listen`.
+    /// The process parts of a restart, bound at `listen`.
     fn parts(
         &self,
-        keystore: fstp_cell::tasks::erasure::Keystore,
         listen: fstp_cell::process::Listen,
     ) -> Result<fstp_cell::process::CellProcessParts<WorldCustody, SharedVault>, WorldError> {
         let anchor = fstp_crypto::composite::CompositeSigningKey::from_bytes(&self.anchor)
@@ -5129,7 +5272,7 @@ impl RestartParts {
             app: self.app.clone(),
             registered_servers: self.registered_servers.clone(),
             custody: self.custody.clone(),
-            keystore: Some(keystore),
+            keystore: self.keystore.clone(),
             keys: fstp_cell::process::CellKeys {
                 anchor,
                 ledger: std::sync::Arc::clone(&self.ledger),
@@ -5160,21 +5303,21 @@ pub const RELEASE_NO_CALL: &str = "fstp_celltest::world release steps: the cell 
 impl CellHandle {
     /// Restarts the cell (lane m3/licence-update): the running process
     /// drains and stops, and a new one starts over the same databases,
-    /// with the keystore the old one held and the licence token it held
-    /// last. The vault, the witness, the relays and the stand-in keep
+    /// reads the keystore from its tables (lane L3), and holds the licence
+    /// token the old one held last. The vault, the witness, the relays and the stand-in keep
     /// running. The new process binds the same listen addresses, so the
     /// edge routes and the health address stay valid.
     ///
-    /// Claims, Interim, pending Daniel: the keystore passes in process,
-    /// since the keystore tables are not built, and the licence token
-    /// passes the same way, since the sealed licence store is not built.
+    /// Claims, Interim, pending Daniel: the licence token passes in
+    /// process, since the sealed licence store is not built. The keystore
+    /// does not: the new process loads it from the keystore tables.
     /// What `fstp_cell::routes::pg` keeps in process memory between two
     /// ceremony steps is lost, so a restart falls between cycle steps.
     ///
     /// # Errors
     ///
-    /// Fails when the cell runs no process, the old one gives no keystore
-    /// or does not stop, or the new one does not start.
+    /// Fails when the cell runs no process, the old one does not stop, or
+    /// the new one does not start.
     pub fn restart(&self) -> Result<(), WorldError> {
         let rt = self.runtime()?;
         let s = rt.services;
@@ -5183,15 +5326,11 @@ impl CellHandle {
             .cell
             .take()
             .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))?;
-        let keystore = s.rt.block_on(old.erasure().keystore());
         let hold = old.release().hold();
         let bound = old.bound();
         let stopped = s.rt.block_on(old.shutdown(CELL_DRAIN));
-        let keystore = keystore.ok_or_else(|| {
-            WorldError::Store("the restart: the old process gave no keystore".to_owned())
-        })?;
         stopped.map_err(|e| WorldError::Store(format!("the restart: the old process: {e}")))?;
-        let parts = rt.restart.parts(keystore, bound)?;
+        let parts = rt.restart.parts(bound)?;
         let mut options = rt.restart.options.clone();
         if hold.is_some() {
             options.licence = hold;
@@ -5203,6 +5342,24 @@ impl CellHandle {
         new.note_first_admin_email(*digest, email.clone());
         running.cell = Some(new);
         Ok(())
+    }
+
+    /// Lane L2: the cell's authorisation server
+    /// (`fstp_cell::process::RunningCell::oauth`), for the parts of the
+    /// OAuth flow that the API core serves once lane L1 mounts it: the
+    /// approval of `agents.consent` and the `Tokens` port.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process.
+    pub fn oauth(&self) -> Result<std::sync::Arc<fstp_cell::oauth::AuthServer>, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        running
+            .cell
+            .as_ref()
+            .map(|c| std::sync::Arc::clone(c.oauth()))
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
     }
 
     /// The payment port's `RecordChecks` of `request`, issued in process

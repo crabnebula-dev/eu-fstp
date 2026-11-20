@@ -44,12 +44,14 @@
 //!   certificates or witness endpoint (design section 9.5 fixes no
 //!   grammar). [`process::start`] takes them as parts.
 
+pub(crate) mod api;
 pub mod config;
 pub mod control;
 pub mod egress;
 pub mod engine;
 pub mod http;
 pub mod mail;
+pub mod oauth;
 pub mod process;
 pub mod public;
 pub mod routes;

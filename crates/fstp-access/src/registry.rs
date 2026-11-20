@@ -2313,6 +2313,15 @@ pub const OPS: &[OpSpec] = &[
         "/me/agents/{client}/activity",
     )
     .class(Personal),
+    // Lane L2 (ADR-013 amendment of 2026-11-20): the consent page reads
+    // the pending consent it asks about, by its handle. No tool: an agent
+    // never reads a consent (I-85), and the reply names no identity (I-86).
+    OpSpec::read(
+        "agents.consent_request",
+        RK::GetConsentRequest,
+        "/oauth/consents/{consent}",
+    )
+    .class(Personal),
     OpSpec::new(
         "agents.revoke",
         OpKind::Agent(AgentKind::Revoke),

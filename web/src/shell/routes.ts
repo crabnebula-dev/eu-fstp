@@ -18,6 +18,7 @@ import { JOURNEY_ROUTES } from "../journey/routes.js";
 import { MAILBOX_PAGE_ROUTES } from "../mailbox/routes.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
 import { PEOPLE_ROUTES } from "../people/routes.js";
+import { CONNECT_ROUTES } from "../connect/routes.js";
 import { JUDGING_PAGES } from "../reviewer/judging.js";
 import { SETUP_ROUTES } from "../setup/routes.js";
 import { PAGES as SITE_PAGES } from "../site/pages.js";
@@ -34,6 +35,7 @@ export function appRoutes(): readonly RouteDef[] {
     ...CREATOR_ROUTES.map(plain),
     ...ONBOARDING_ROUTES.map(plain),
     ...PEOPLE_ROUTES.map(plain),
+    ...CONNECT_ROUTES.map(plain),
     ...SETUP_ROUTES.map(plain),
     ...JOURNEY_ROUTES.map(plain),
     ...APPLICANT_PAGES.map(plain),

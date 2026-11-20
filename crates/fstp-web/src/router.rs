@@ -32,9 +32,14 @@ pub fn limits() -> Limits {
 pub struct WebConfig {
     tenant_origin: Origin,
     assets: AssetSet,
-    /// Whether the OAuth metadata may name a plain `http` issuer under
-    /// `.localhost` (feature `test-cell`). Never set in a shipped build.
-    test_cell: bool,
+    /// The hosts the OAuth metadata may name over plain `http`, besides
+    /// loopback, when a caller set a rule. Only the test kit's e2e cell
+    /// sets one. A shipped cell sets none.
+    local_http: Option<fn(&str) -> bool>,
+    /// The issuer, resource and lifetimes of the cell's own authorisation
+    /// server, when the cell runs one (ADR-026, lane L1), so the metadata
+    /// documents name exactly what that server issues.
+    oauth: Option<fstp_oauth::Config>,
 }
 
 impl WebConfig {
@@ -46,18 +51,29 @@ impl WebConfig {
         WebConfig {
             tenant_origin,
             assets,
-            test_cell: false,
+            local_http: None,
+            oauth: None,
         }
     }
 
-    /// The configuration of a test cell on a plain `http` `.localhost`
-    /// origin, such as the e2e cell's: its OAuth metadata documents name
-    /// that origin as the issuer (lane W3c). Only the test-only feature
-    /// `test-cell` builds it.
-    #[cfg(feature = "test-cell")]
+    /// The same configuration, whose OAuth metadata documents describe
+    /// `oauth`, the configuration of the cell's own authorisation server
+    /// (ADR-026, ADR-013 amendment of 2026-11-20). Without it the documents
+    /// describe a server on the tenant origin with the default lifetimes.
     #[must_use]
-    pub fn test_cell(mut self) -> WebConfig {
-        self.test_cell = true;
+    pub fn with_oauth(mut self, oauth: fstp_oauth::Config) -> WebConfig {
+        self.oauth = Some(oauth);
+        self
+    }
+
+    /// The configuration of a cell on a plain `http` origin whose host
+    /// `local_http` admits, such as the e2e cell's `.localhost` origin: its
+    /// OAuth metadata documents name that origin as the issuer (lane W3c).
+    /// The caller supplies the rule, and no shipped code holds one. It
+    /// replaces the former test-only feature `test-cell` (lane L2).
+    #[must_use]
+    pub fn with_local_http(mut self, local_http: fn(&str) -> bool) -> WebConfig {
+        self.local_http = Some(local_http);
         self
     }
 
@@ -129,7 +145,8 @@ pub(crate) fn build(backend: Backend, config: WebConfig) -> Result<WebRouter, We
         Backend::Core(core) => Some(crate::mcp::Mcp::new(
             Arc::clone(core),
             &config.tenant_origin,
-            config.test_cell,
+            config.local_http,
+            config.oauth.clone(),
         )?),
         Backend::Refusing => None,
     };

@@ -116,6 +116,15 @@ pub const OUTBOX_POSSIBLE_DELETION: i16 = 1;
 /// The most sessions one append may end.
 const MAX_SESSIONS_ENDED: usize = 65_536;
 
+/// The most audit events one append or one event transaction holds
+/// (ADR-010 amendment of 2026-11-20).
+pub const MAX_EVENTS: usize = 1024;
+
+/// The longest canonical body of one audit event, so its sealed form
+/// with the generation prefix, nonce and tag fits a kind 2 row of at
+/// most 65 536 bytes.
+pub const MAX_EVENT_PLAIN: usize = 65_536 - 4 - 12 - 16;
+
 /// The rows one read query asks for. A page whose rows exceed the
 /// client's result limit is asked for again in halves, down to one row.
 const READ_PAGE: usize = 1000;
@@ -131,6 +140,10 @@ const INSERT_ENTRY_SQL: &str = "INSERT INTO ledger.entry (seq, at, command, sche
 const CHAIN_HEAD_SQL: &str = "SELECT n, link FROM audit.chain ORDER BY n DESC LIMIT 1";
 const INSERT_CHAIN_SQL: &str = "INSERT INTO audit.chain \
      (n, at, kind, ledger_seq, stored_hash, body, link) VALUES ($1, $2, 1, $3, $4, NULL, $5)";
+const INSERT_EVENT_SQL: &str = "INSERT INTO audit.chain \
+     (n, at, kind, ledger_seq, stored_hash, body, link) VALUES ($1, $2, 2, NULL, $3, $4, $5)";
+const INSERT_PENDING_CONFIRMED_SQL: &str =
+    "INSERT INTO api.pending_confirmed (id, ledger_seq) VALUES ($1, $2)";
 const INSERT_STEPUP_SQL: &str =
     "INSERT INTO auth_log.stepup_consumed (challenge_id, ledger_seq) VALUES ($1, $2)";
 const INSERT_SESSION_END_SQL: &str =
@@ -250,6 +263,24 @@ pub struct SideEffects {
     /// Messages to enqueue: one sealed `ops.outbox` row each, under its
     /// own data key (design gap G12).
     pub outbox: Vec<OutboxRow>,
+    /// The pending action the batch confirms (ADR-026, I-85): one
+    /// `api.pending_confirmed` row naming the entry of `record`. A second
+    /// confirmation violates its primary key, and the whole append aborts.
+    pub pending_confirmed: Option<PendingConfirm>,
+    /// The canonical bodies of audit events (ADR-010 amendment of
+    /// 2026-11-20): one sealed kind 2 chain row each, after the batch's
+    /// ledger rows and under the same anchor.
+    pub events: Vec<Vec<u8>>,
+}
+
+/// The confirmation of a pending action: one `api.pending_confirmed` row
+/// (ADR-026).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PendingConfirm {
+    /// The pending action.
+    pub id: [u8; 16],
+    /// The index in the batch of the record whose entry the row names.
+    pub record: usize,
 }
 
 /// What a committed append left (design sections 5.3 and 7.2).
@@ -341,6 +372,9 @@ pub struct PgRecordStore<R: Runtime, T, W> {
 struct Staged {
     prev: (u64, Link),
     head: (u64, Link),
+    /// The chain row and link the commit reports: the last ledger entry
+    /// of a batch, or the last event of an event transaction.
+    reported: (u64, Link),
     stored_hashes: Vec<[u8; 32]>,
     new_head: Seq,
 }
@@ -478,8 +512,17 @@ fn check_side(side: &SideEffects, batch_len: usize) -> Result<(), StoreFault> {
             "more outbox rows than one append holds",
         ));
     }
+    if side.events.len() > MAX_EVENTS {
+        return Err(StoreFault::Refused(
+            "more audit events than one append holds",
+        ));
+    }
+    if side.events.iter().any(|e| e.len() > MAX_EVENT_PLAIN) {
+        return Err(StoreFault::Refused("an audit event over its limit"));
+    }
     let in_batch = |record: usize| record < batch_len;
     if side.stepup_consumed.is_some_and(|s| !in_batch(s.record))
+        || side.pending_confirmed.is_some_and(|p| !in_batch(p.record))
         || side.sessions_ended.iter().any(|s| !in_batch(s.record))
     {
         return Err(StoreFault::Refused(
@@ -1173,7 +1216,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             }
         };
         let result = self
-            .run_append(&mut client, expected, at, command, &batch, side)
+            .run_append(&mut client, expected, at, command, &batch, side, false)
             .await;
         client.release();
         if matches!(self.anchorer.phase(), Phase::MustAbort { .. }) {
@@ -1186,6 +1229,168 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         result
     }
 
+    /// Writes `events` as sealed kind 2 rows of the App chain in one
+    /// transaction of the append protocol, with no ledger entry (ADR-010
+    /// amendment of 2026-11-20): lock, chain rows, prepare, receipt,
+    /// anchor and commit, as [`PgRecordStore::append_committed`]. It
+    /// reports the ledger head, which it does not move, and the chain row
+    /// and link of its last event.
+    ///
+    /// # Errors
+    ///
+    /// [`AppendFault::Fault`] for no event, too many or too long events,
+    /// and every failure of [`PgRecordStore::append_committed`] after its
+    /// contract refusals. Only [`AppendFault::Unknown`] may have
+    /// committed.
+    pub async fn append_events(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+    ) -> Result<Committed, AppendFault>
+    where
+        T: Canonical,
+    {
+        if events.is_empty() {
+            return Err(StoreFault::Refused("an event transaction with no event").into());
+        }
+        let side = SideEffects {
+            events,
+            ..SideEffects::default()
+        };
+        check_side(&side, 0)?;
+        self.settle().await.map_err(AppendFault::Pending)?;
+        self.anchorer
+            .begin(true)
+            .map_err(|_| AppendFault::Pending(StoreFault::OutOfOrder))?;
+        let mut client = match self.pool.get().await {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = self.anchorer.failed();
+                return Err(AppendFault::Fault(StoreFault::Pool(e)));
+            }
+        };
+        let result = self
+            .run_append(&mut client, Seq::ZERO, at, [0; 16], &[], &side, true)
+            .await;
+        client.release();
+        if matches!(self.anchorer.phase(), Phase::MustAbort { .. }) {
+            let _ = self.settle().await;
+        }
+        result
+    }
+
+    /// Steps 1 to 6 of an event transaction: the lock, the chain rows of
+    /// the events, and no ledger entry or other side effect. The steps
+    /// that check or write ledger rows pass with nothing to do.
+    async fn stage_events(
+        &mut self,
+        tx: &mut Transaction<'_, R>,
+        at: i64,
+        side: &SideEffects,
+    ) -> Result<Staged, AppendFault> {
+        let step = |a: &mut Anchorer, s: Step| a.step_done(s).map_err(out_of_order);
+        tx.execute(LOCK_SQL, &[]).await.map_err(db)?;
+        step(&mut self.anchorer, Step::Lock)?;
+        step(&mut self.anchorer, Step::CommandCheck)?;
+        let row = tx.query_one(HEAD_SQL, &[]).await.map_err(db)?;
+        let head: i64 = row.get(0).map_err(db)?;
+        let head = u64_of(head)?;
+        if !(-MAX_AT..=MAX_AT).contains(&at) {
+            return Err(AppendFault::Refused(AppendError::Store(
+                StoreError::TimeOutOfRange,
+            )));
+        }
+        if side.events.len() > MAX_PREPARE_ROWS {
+            return Err(StoreFault::Refused("more events than one prepare holds").into());
+        }
+        step(&mut self.anchorer, Step::HeadCheck)?;
+        step(&mut self.anchorer, Step::SealLedger)?;
+        let prev = self.chain_head(tx).await?;
+        let mut writer = ChainWriter::resume(prev.0, prev.1);
+        let mut stored_hashes = Vec::with_capacity(side.events.len());
+        self.insert_events(tx, &mut writer, at, &side.events, &mut stored_hashes)
+            .await?;
+        step(&mut self.anchorer, Step::InsertChain)?;
+        step(&mut self.anchorer, Step::SideEffects)?;
+        Ok(Staged {
+            prev,
+            head: writer.head(),
+            reported: writer.head(),
+            stored_hashes,
+            new_head: Seq::from_raw(head),
+        })
+    }
+
+    /// The chain head under the lock: the last row's number and link, or
+    /// the genesis link of an empty chain.
+    async fn chain_head(&self, tx: &mut Transaction<'_, R>) -> Result<(u64, Link), AppendFault> {
+        Ok(match tx.query_opt(CHAIN_HEAD_SQL, &[]).await.map_err(db)? {
+            Some(row) => {
+                let n: i64 = row.get(0).map_err(db)?;
+                let link: Vec<u8> = row.get(1).map_err(db)?;
+                (u64_of(n)?, link_of(&link)?)
+            }
+            None => (
+                0,
+                fstp_audit::chain::genesis(self.audit_cell(), ChainId::App),
+            ),
+        })
+    }
+
+    /// Seals each of `events` and inserts it as the next kind 2 row of
+    /// `writer`, stamped `at`, pushing each stored hash (ADR-010
+    /// amendment of 2026-11-20). The row body is
+    /// `be32(key_ix) || nonce || ciphertext || tag` under
+    /// [`crate::seal::event_aad`] of its row number.
+    async fn insert_events(
+        &self,
+        tx: &mut Transaction<'_, R>,
+        writer: &mut ChainWriter,
+        at: i64,
+        events: &[Vec<u8>],
+        stored_hashes: &mut Vec<[u8; 32]>,
+    ) -> Result<(), AppendFault> {
+        for plain in events {
+            let n = writer
+                .head()
+                .0
+                .checked_add(1)
+                .ok_or(StoreFault::Corrupt("chain row number"))?;
+            let aad = crate::seal::event_aad(&self.cell, n);
+            let (key_ix, sealed) = self.keys.seal(&aad, plain)?;
+            let mut body = Vec::with_capacity(sealed.len().saturating_add(4));
+            body.extend_from_slice(&key_ix.to_be_bytes());
+            body.extend_from_slice(&sealed);
+            let row = writer
+                .append(
+                    self.audit_cell(),
+                    ChainId::App,
+                    at,
+                    RowKind::Event { body: body.clone() },
+                    None,
+                )
+                .map_err(StoreFault::Audit)?;
+            tx.execute(
+                INSERT_EVENT_SQL,
+                &[
+                    &i64_of(row.row.n)?,
+                    &row.row.at,
+                    &row.row.stored_hash.as_slice(),
+                    &body,
+                    &row.link.0.as_slice(),
+                ],
+            )
+            .await
+            .map_err(db)?;
+            stored_hashes.push(row.row.stored_hash);
+        }
+        Ok(())
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the parts of one append, and whether it writes events only"
+    )]
     async fn run_append(
         &mut self,
         client: &mut Client<R>,
@@ -1194,6 +1399,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         command: [u8; 16],
         batch: &[T],
         side: &SideEffects,
+        events_only: bool,
     ) -> Result<Committed, AppendFault>
     where
         T: Canonical,
@@ -1205,10 +1411,13 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                 return Err(db(e));
             }
         };
-        let staged = match self
-            .stage(&mut tx, expected, at, command, batch, side)
-            .await
-        {
+        let staged = if events_only {
+            self.stage_events(&mut tx, at, side).await
+        } else {
+            self.stage(&mut tx, expected, at, command, batch, side)
+                .await
+        };
+        let staged = match staged {
             Ok(s) => s,
             Err(e) => {
                 let _ = tx.rollback().await;
@@ -1332,8 +1541,8 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                 let _ = self.anchorer.outcome(CommitOutcome::Committed);
                 Ok(Committed {
                     head: staged.new_head,
-                    n: staged.head.0,
-                    link: staged.head.1,
+                    n: staged.reported.0,
+                    link: staged.reported.1,
                     witness_seq: receipt.fields.witness_seq,
                 })
             }
@@ -1399,7 +1608,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             .and_then(|len| head.raw().checked_add(len))
             .filter(|h| i64::try_from(*h).is_ok())
             .ok_or(AppendFault::Refused(AppendError::Store(StoreError::Full)))?;
-        if batch.len() > MAX_PREPARE_ROWS {
+        if batch.len().saturating_add(side.events.len()) > MAX_PREPARE_ROWS {
             return Err(StoreFault::Refused("a batch over the prepare limit").into());
         }
         check_side(side, batch.len())?;
@@ -1509,6 +1718,11 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             .map_err(db)?;
             stored_hashes.push(row.row.stored_hash);
         }
+        let reported = writer.head();
+        // The batch's audit events follow its entries (ADR-010 amendment
+        // of 2026-11-20), under the same anchor.
+        self.insert_events(tx, &mut writer, at, &side.events, &mut stored_hashes)
+            .await?;
         step(&mut self.anchorer, Step::InsertChain)?;
         // 6. Side effects, inserts only. Each auth_log row names the entry
         // of the record it belongs to.
@@ -1545,10 +1759,19 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         for row in &side.outbox {
             self.insert_outbox_row(tx, row, at).await?;
         }
+        if let Some(p) = side.pending_confirmed {
+            tx.execute(
+                INSERT_PENDING_CONFIRMED_SQL,
+                &[&p.id.as_slice(), &seq_of(p.record)?],
+            )
+            .await
+            .map_err(|e| side_fault(e, AppendFault::PendingConfirmed))?;
+        }
         step(&mut self.anchorer, Step::SideEffects)?;
         Ok(Staged {
             prev,
             head: writer.head(),
+            reported,
             stored_hashes,
             new_head: Seq::from_raw(new_head),
         })

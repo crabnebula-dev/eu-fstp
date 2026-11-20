@@ -315,6 +315,7 @@ fn i78_side_rows_name_the_entry_of_their_own_record() {
             },
         ],
         outbox: Vec::new(),
+        ..SideEffects::default()
     };
     assert_eq!(
         s.append_effects(Seq::ZERO, AT, fresh16(), recs(3, "three"), &side),

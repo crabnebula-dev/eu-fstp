@@ -205,6 +205,16 @@ pub trait Backend: Send + Sync + 'static {
         Arc::new(crate::public::NoPublicTexts)
     }
 
+    /// Lane L2 hook (H-21, I-79, issue 6 M5): ends every agent grant of
+    /// `account` at the cell's authorisation server (`crate::oauth`). The
+    /// recovery route calls it after a completion commits. The default
+    /// holds no server, so it ends nothing. The token check of
+    /// `crate::oauth` refuses every grant older than the recovery anyway.
+    fn revoke_all_agents(&self, account: AccountId) -> impl Future<Output = ()> + Send {
+        let _ = account;
+        std::future::ready(())
+    }
+
     /// The state folded to the engine's head.
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send;
 

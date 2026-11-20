@@ -114,6 +114,9 @@ pub enum CellAppendError {
     /// The batch's step-up was consumed by an earlier commit (design
     /// section 5.3). Nothing was committed.
     StepUpReplayed,
+    /// The pending action the batch confirms was confirmed by an earlier
+    /// commit (ADR-026, I-85). Nothing was committed.
+    PendingConfirmed,
 }
 
 impl From<AppendError> for CellAppendError {
@@ -129,9 +132,9 @@ impl CellAppendError {
     pub fn into_ledger(self) -> AppendError {
         match self {
             CellAppendError::Ledger(e) => e,
-            CellAppendError::StepUpStale | CellAppendError::StepUpReplayed => {
-                AppendError::Store(StoreError::Unavailable)
-            }
+            CellAppendError::StepUpStale
+            | CellAppendError::StepUpReplayed
+            | CellAppendError::PendingConfirmed => AppendError::Store(StoreError::Unavailable),
         }
     }
 }
@@ -231,6 +234,22 @@ pub trait CellStore: AsyncRecordStore<CellRecord> + Send + Sync + 'static {
     /// The cell whose ledger this is. The engine keys its reaction
     /// command ids by it (I-20, Daniel's decision of 2026-11-13).
     fn cell(&self) -> [u8; 16];
+
+    /// Writes `events` as sealed kind 2 rows of the App chain in one
+    /// transaction of the append protocol, with no ledger entry (ADR-010
+    /// amendment of 2026-11-20). The default is the seam of a store that
+    /// keeps no event rows: it fails as unavailable, so an API call on such
+    /// a cell fails closed.
+    fn append_events(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+    ) -> impl Future<Output = Result<(), CellAppendError>> + Send {
+        let _ = (at, events);
+        std::future::ready(Err(CellAppendError::Ledger(AppendError::Store(
+            StoreError::Unavailable,
+        ))))
+    }
 }
 
 /// Reads every entry of `store` after `after`, in pages.
@@ -454,9 +473,41 @@ pub enum StartError {
     Fold(FoldError),
 }
 
-struct Job {
-    admitted: Admitted,
-    reply: ReplyTx<Result<Done, EngineError>>,
+/// What a dry run found (ADR-026 "Dry run"): whether the command would
+/// be decided without refusal on the state after the last commit, and
+/// every vault answer it obtained, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DryRun {
+    /// `Ok` when the command would be appended.
+    pub result: Result<(), ExecError>,
+    /// Every vault answer the run obtained, refused or not (NOTE 5).
+    pub answers: Vec<fstp_domain::oracle::Answer>,
+}
+
+enum Job {
+    Command {
+        admitted: Admitted,
+        reply: ReplyTx<Result<Done, EngineError>>,
+    },
+    DryRun {
+        admitted: Admitted,
+        reply: ReplyTx<Result<DryRun, EngineError>>,
+    },
+    Events {
+        at: i64,
+        events: Vec<Vec<u8>>,
+        reply: ReplyTx<Result<(), EngineError>>,
+    },
+}
+
+impl Job {
+    fn refuse(self, e: EngineError) {
+        match self {
+            Job::Command { reply, .. } => reply.send(Err(e)),
+            Job::DryRun { reply, .. } => reply.send(Err(e)),
+            Job::Events { reply, .. } => reply.send(Err(e)),
+        }
+    }
 }
 
 /// A handle on the engine task of one cell. Cloning it gives another
@@ -468,6 +519,29 @@ pub struct CellEngine {
     snapshot: Arc<Mutex<Arc<CellState>>>,
     shutdown: Shutdown,
     clock: CommitClock,
+    engine_entries: EngineEntries,
+}
+
+/// The engine records of the committed ledger, in sequence order, as the
+/// API core's journal and journey reads fold them (ADR-026). The engine
+/// task appends the entries of each commit, so the API core's synchronous
+/// ledger port never reads the store.
+pub type EngineEntries = Arc<Mutex<Vec<Entry<fstp_engine::Record>>>>;
+
+/// The engine records of `entries`, with their sequence, instant,
+/// command id and schema kept.
+fn engine_records(entries: &[Entry<CellRecord>]) -> Vec<Entry<fstp_engine::Record>> {
+    entries
+        .iter()
+        .cloned()
+        .filter_map(|e| {
+            e.try_map_record(|_, r| match r {
+                CellRecord::Engine(r) => Ok(r),
+                _ => Err(()),
+            })
+            .ok()
+        })
+        .collect()
 }
 
 impl std::fmt::Debug for CellEngine {
@@ -523,7 +597,11 @@ impl CellEngine {
             .await
             .map_err(StartError::Store)?;
         let state = fstp_cell_core::replay(&entries).map_err(StartError::Fold)?;
-        Ok(CellEngine::spawn(rt, store, vault, state, shutdown, queue))
+        let mirror = Arc::new(Mutex::new(engine_records(&entries)));
+        drop(entries);
+        Ok(CellEngine::spawn(
+            rt, store, vault, state, shutdown, queue, mirror,
+        ))
     }
 
     /// Spawns the engine task over a state already replayed from `store`.
@@ -534,9 +612,11 @@ impl CellEngine {
         state: CellState,
         shutdown: &Shutdown,
         queue: usize,
+        engine_entries: EngineEntries,
     ) -> (CellEngine, JoinHandle<S>) {
         let (tx, rx) = chan::channel(queue);
         let cell = store.cell();
+        let state_head = state.head();
         let snapshot = Arc::new(Mutex::new(Arc::new(state.clone())));
         let signal = shutdown.signal();
         let task = EngineTask {
@@ -545,6 +625,8 @@ impl CellEngine {
             rt: rt.clone(),
             state,
             snapshot: Arc::clone(&snapshot),
+            engine_entries: Arc::clone(&engine_entries),
+            mirrored: state_head,
         };
         let handle = rt.spawn(task.run(rx, signal));
         (
@@ -554,6 +636,7 @@ impl CellEngine {
                 snapshot,
                 shutdown: shutdown.clone(),
                 clock: system_commit_clock(),
+                engine_entries,
             },
             handle,
         )
@@ -574,14 +657,61 @@ impl CellEngine {
             return Err(EngineError::ShuttingDown);
         }
         let (reply, rx) = chan::reply();
-        if self.tx.send(Job { admitted, reply }).await.is_err() {
+        self.send(Job::Command { admitted, reply }).await?;
+        rx.recv().await.unwrap_or(Err(EngineError::Stopped))
+    }
+
+    /// Runs `admitted` as a dry run on a copy of the state after the last
+    /// commit (ADR-026 "Dry run"). It asks the vault what the command
+    /// asks, and folds a reaction the vault is ahead by on the copy only.
+    /// It stops at the command's append, so it appends nothing and sends
+    /// no acknowledgement. The run goes through the engine task, so it
+    /// sees the state of the last commit and never a commit in flight.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::ShuttingDown`] once shutdown is triggered, and
+    /// [`EngineError::Stopped`] when the task has ended. A refusal is the
+    /// [`DryRun::result`].
+    pub async fn dry_run(&self, admitted: Admitted) -> Result<DryRun, EngineError> {
+        if self.shutdown.is_triggered() {
+            return Err(EngineError::ShuttingDown);
+        }
+        let (reply, rx) = chan::reply();
+        self.send(Job::DryRun { admitted, reply }).await?;
+        rx.recv().await.unwrap_or(Err(EngineError::Stopped))
+    }
+
+    /// Writes `events` as kind 2 rows of the App chain in one transaction
+    /// of the store, through the single writer (ADR-010 amendment of
+    /// 2026-11-20). An empty list writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Exec`] with [`ExecError::Store`] when the store
+    /// refused or failed, [`EngineError::ShuttingDown`] once shutdown is
+    /// triggered, and [`EngineError::Stopped`] when the task has ended.
+    pub async fn append_events(&self, at: i64, events: Vec<Vec<u8>>) -> Result<(), EngineError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        if self.shutdown.is_triggered() {
+            return Err(EngineError::ShuttingDown);
+        }
+        let (reply, rx) = chan::reply();
+        self.send(Job::Events { at, events, reply }).await?;
+        rx.recv().await.unwrap_or(Err(EngineError::Stopped))
+    }
+
+    async fn send(&self, job: Job) -> Result<(), EngineError> {
+        if self.tx.send(job).await.is_err() {
             return Err(if self.shutdown.is_triggered() {
                 EngineError::ShuttingDown
             } else {
                 EngineError::Stopped
             });
         }
-        rx.recv().await.unwrap_or(Err(EngineError::Stopped))
+        Ok(())
     }
 
     /// The state after the last committed command. Reads use it and never
@@ -589,6 +719,17 @@ impl CellEngine {
     /// refused).
     pub fn state(&self) -> Arc<CellState> {
         Arc::clone(&lock_snapshot(&self.snapshot))
+    }
+
+    /// The engine records of the committed ledger after `after`, in
+    /// sequence order ([`EngineEntries`]).
+    pub fn engine_entries_after(&self, after: Seq) -> Vec<Entry<fstp_engine::Record>> {
+        let all = self
+            .engine_entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let from = all.partition_point(|e| e.seq <= after);
+        all.get(from..).map(<[_]>::to_vec).unwrap_or_default()
     }
 
     /// Whether the cell's shutdown was triggered.
@@ -603,9 +744,27 @@ struct EngineTask<S, V, R> {
     rt: R,
     state: CellState,
     snapshot: Arc<Mutex<Arc<CellState>>>,
+    engine_entries: EngineEntries,
+    /// The ledger head the mirror has read up to.
+    mirrored: Seq,
 }
 
 impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
+    /// Appends the engine records committed after the mirror's head to
+    /// the mirror. A failed read leaves the mirror's head where it was, so
+    /// the next commit reads those entries again and none is lost.
+    async fn mirror_after(&mut self) {
+        if let Ok(new) = self.read_after(self.mirrored).await {
+            if let Some(last) = new.last() {
+                self.mirrored = last.seq;
+            }
+            self.engine_entries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(engine_records(&new));
+        }
+    }
+
     async fn run(mut self, mut rx: Receiver<Job>, signal: ShutdownSignal) -> S {
         loop {
             let next = race(rx.recv(), signal.notified()).await;
@@ -614,16 +773,43 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
                 Either::Left(None) | Either::Right(()) => break,
             };
             if signal.is_triggered() {
-                job.reply.send(Err(EngineError::ShuttingDown));
+                job.refuse(EngineError::ShuttingDown);
                 break;
             }
-            let result = self.execute(job.admitted).await;
-            *lock_snapshot(&self.snapshot) = Arc::new(self.state.clone());
-            job.reply.send(result);
+            match job {
+                Job::Command { admitted, reply } => {
+                    let result = self.execute(admitted).await;
+                    *lock_snapshot(&self.snapshot) = Arc::new(self.state.clone());
+                    if matches!(&result, Ok(d) if d.duplicate.is_none()) {
+                        self.mirror_after().await;
+                    }
+                    reply.send(result);
+                }
+                Job::DryRun { admitted, reply } => {
+                    let result = self.dry_run(admitted).await;
+                    reply.send(result);
+                }
+                Job::Events { at, events, reply } => {
+                    let rt = self.rt.clone();
+                    let result =
+                        fstp_rt::timeout(&rt, STORE_TIMEOUT, self.store.append_events(at, events))
+                            .await
+                            .unwrap_or(Err(CellAppendError::Ledger(AppendError::Store(
+                                StoreError::Unavailable,
+                            ))))
+                            .map_err(|e| {
+                                EngineError::Exec(ExecError::Store(match e {
+                                    CellAppendError::Ledger(AppendError::Store(s)) => s,
+                                    _ => StoreError::Unavailable,
+                                }))
+                            });
+                    reply.send(result);
+                }
+            }
         }
         rx.close();
         for job in rx.drain() {
-            job.reply.send(Err(EngineError::ShuttingDown));
+            job.refuse(EngineError::ShuttingDown);
         }
         drop(signal);
         self.store
@@ -631,6 +817,11 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
 
     /// Drives one `DriverCore` to its end.
     async fn execute(&mut self, admitted: Admitted) -> Result<Done, EngineError> {
+        // ADR-026: a dry-run admission checked no session and no step-up,
+        // so it never reaches an append.
+        if admitted.is_dry_run() {
+            return Err(EngineError::Exec(ExecError::NotACommand));
+        }
         let at = admitted.at();
         let mut driver = DriverCore::start(admitted).in_cell(self.store.cell());
         let mut event: Option<Event> = None;
@@ -651,6 +842,71 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
                 Step::Done(Err(e)) => return Err(EngineError::Exec(e)),
                 Step::Need(need) => {
                     event = Some(self.answer(need, at, &mut receipt).await?);
+                }
+            }
+        }
+    }
+
+    /// Drives one `DriverCore` on a copy of the state, up to the
+    /// command's append (ADR-026 "Dry run"). Reads and vault questions
+    /// are answered as in [`EngineTask::execute`], and every answer is
+    /// kept. A reaction's append is folded on the copy only, as if it
+    /// committed, and its acknowledgement is never sent. The command's own
+    /// append ends the run: the driver decided and folded its batch, so
+    /// the command would be appended.
+    async fn dry_run(&mut self, admitted: Admitted) -> Result<DryRun, EngineError> {
+        let at = admitted.at();
+        let mut copy = self.state.clone();
+        let mut driver = DriverCore::start(admitted).in_cell(self.store.cell());
+        let command = driver.command_id();
+        let mut event: Option<Event> = None;
+        let mut answers: Vec<fstp_domain::oracle::Answer> = Vec::new();
+        loop {
+            match driver.step(&mut copy, event.take()) {
+                Step::Done(r) => {
+                    return Ok(DryRun {
+                        result: r.map(|_| ()),
+                        answers,
+                    });
+                }
+                Step::Need(Need::ReadFrom(after)) => {
+                    event = Some(Event::Read(
+                        self.read_after(after).await.map_err(exec_store)?,
+                    ));
+                }
+                Step::Need(Need::Epoch) => {
+                    event = Some(Event::Epoch(self.bound_vault(self.vault.epoch()).await));
+                }
+                Step::Need(Need::Ask {
+                    queries,
+                    reaction_for,
+                }) => {
+                    let got = self
+                        .bound_vault(self.vault.ask(&queries, reaction_for, at))
+                        .await;
+                    if let Ok(a) = &got {
+                        answers.extend(queries.iter().filter_map(|q| a.get(q).cloned()));
+                    }
+                    event = Some(Event::Answers(got));
+                }
+                Step::Need(Need::Append {
+                    expected,
+                    command: id,
+                    batch,
+                    ..
+                }) => {
+                    if id == command {
+                        return Ok(DryRun {
+                            result: Ok(()),
+                            answers,
+                        });
+                    }
+                    let n = u64::try_from(batch.len()).unwrap_or(u64::MAX);
+                    let head = Seq::from_raw(expected.raw().saturating_add(n));
+                    event = Some(Event::Appended(Ok((head, [0; 32]))));
+                }
+                Step::Need(Need::Ack { .. }) => {
+                    event = Some(Event::Acked(Ok(())));
                 }
             }
         }
@@ -734,6 +990,12 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
                     Err(CellAppendError::StepUpStale | CellAppendError::StepUpReplayed) => {
                         return Err(EngineError::Exec(stepup_refusal()));
                     }
+                    // The pending action was confirmed by an earlier commit:
+                    // the command ends with the I-85 refusal and appends
+                    // nothing (ADR-026).
+                    Err(CellAppendError::PendingConfirmed) => {
+                        return Err(EngineError::Exec(pending_refusal()));
+                    }
                 }
             }
             Need::Ack { epoch, seq, link } => {
@@ -759,6 +1021,15 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
 pub fn stepup_refusal() -> ExecError {
     ExecError::Refused(CellRefusal::Domain(Refusal::new(
         RuleRef::I78,
+        RefusalReason::GuardFailed,
+    )))
+}
+
+/// The refusal of a commit whose pending action an earlier commit
+/// confirmed: I-85, as a refusal, never a store outage (ADR-026).
+pub fn pending_refusal() -> ExecError {
+    ExecError::Refused(CellRefusal::Domain(Refusal::new(
+        RuleRef::I85,
         RefusalReason::GuardFailed,
     )))
 }

@@ -255,6 +255,16 @@ fn pool_of(db: &CellDb, suffix: &str) -> Pool<TokioRuntime> {
     .unwrap_or_else(|e| panic!("the {suffix} pool: {e}"))
 }
 
+/// The API store of `db` over its app role (ADR-026), sealing under the
+/// last ledger key generation the cell drew.
+pub fn api_store(db: &CellDb) -> fstp_pgstore::ApiStore<TokioRuntime> {
+    fstp_pgstore::ApiStore::new(
+        pool_of(db, "app"),
+        Arc::new(ledger_keys_reusing_last(db.cell)),
+    )
+    .unwrap_or_else(|e| panic!("the api store: {e}"))
+}
+
 /// Signs anchors with a composite key through `fstp_crypto::composite`
 /// (design section 14.4). The witness does not check anchor signatures,
 /// so any key serves.
@@ -639,6 +649,7 @@ impl Store {
                 })
                 .collect(),
             outbox: Vec::new(),
+            ..SideEffects::default()
         };
         Ok(
             block_on(self.store.append_with(expected, at, command, batch, &side))
@@ -673,6 +684,16 @@ impl Store {
             self.store
                 .append_committed(expected, at, command, batch, side),
         )
+    }
+
+    /// `PgRecordStore::append_events`: audit events in one chain
+    /// transaction of their own.
+    pub fn append_events(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+    ) -> Result<fstp_pgstore::Committed, fstp_pgstore::AppendFault> {
+        block_on(self.store.append_events(at, events))
     }
 
     /// `PgRecordStore::stored_commit`.
@@ -2023,6 +2044,7 @@ pub fn injected_side() -> SideEffects {
             ..SessionEnd::default()
         }],
         outbox: vec![outbox_row(2, b"recovery mail")],
+        ..SideEffects::default()
     }
 }
 

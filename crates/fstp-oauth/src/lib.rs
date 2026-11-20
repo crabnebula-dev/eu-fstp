@@ -11,6 +11,10 @@
 //! - [`AuthorizationServer`] holds the clients, consents, codes, refresh
 //!   families and access tokens of one cell, in memory. Each endpoint takes
 //!   request bytes and the time and returns reply bytes.
+//! - [`Records`] are the durable part of a server: clients, refresh families
+//!   and refresh hashes. A shell that persists them takes the journal of
+//!   [`Change`]s of each call and restores a server from its rows (lane L2,
+//!   ADR-013 amendment of 2026-11-20).
 //! - The decoders ([`parse_url`], [`decode_form_urlencoded`],
 //!   [`decode_authorize_query`], [`decode_token_request`],
 //!   [`decode_revocation_request`], [`decode_client_metadata`],
@@ -24,6 +28,7 @@
 mod b64;
 mod form;
 mod metadata;
+mod records;
 mod request;
 mod scope;
 mod server;
@@ -36,6 +41,10 @@ pub use form::{
 pub use metadata::{
     ClientMetadata, MAX_CLIENT_NAME_CHARS, MAX_METADATA_BYTES, MAX_REDIRECT_URIS,
     decode_client_metadata,
+};
+pub use records::{
+    Change, ClientRecord, ConsentView, FamilyRecord, GrantGuard, NoGuard, Records, RefreshHash,
+    Restored,
 };
 pub use request::{
     AuthorizeRequest, BearerToken, MAX_BEARER_HEADER, RevocationRequest, TokenRequest,

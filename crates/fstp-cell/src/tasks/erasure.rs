@@ -47,8 +47,9 @@
 //!
 //! [`Keystore`] holds what survives a crash: the rows, the chain state at
 //! its last durable point and the reference of a root created for a batch
-//! not yet committed. Until the PostgreSQL keystore tables of lane W2e
-//! land it is held in memory by its owner. Steps 2 and 3 live in process
+//! not yet committed. Since lane L3 (ADR-004, decided by Daniel on
+//! 2026-11-20) it writes through to the keystore tables ([`tables`]), and
+//! a start loads it from them. Steps 2 and 3 live in process
 //! memory until the commit, so a restart before the commit starts the
 //! batch again from step 2 (`ChainState::restart`).
 //!
@@ -83,6 +84,9 @@ use fstp_rt::ShutdownSignal;
 use fstp_rt::future::{Either, race, yield_now};
 
 pub mod snapshot;
+pub mod tables;
+
+pub use tables::{KeystoreSink, SinkFuture};
 
 use super::Clock;
 use crate::CellError;
@@ -167,6 +171,9 @@ struct GroupRow {
     epoch: u64,
     nonce: [u8; aead::NONCE_LEN],
     body: Vec<u8>,
+    /// The group public key, as `keystore.group_key` holds it. Empty in
+    /// a row read from a keystore image, which holds none.
+    public: Vec<u8>,
 }
 
 /// A composite level 2 signing key of one purpose, sealed under the seal
@@ -220,8 +227,8 @@ pub fn normalise_email(email: &str) -> String {
 /// each live login email by `HMAC-SHA-256(Lookup, normalised address)`,
 /// and the text that holds each address, sealed like every text.
 ///
-/// Interim, pending Daniel: the index is held with the keystore, in its
-/// owner's memory, until the PostgreSQL keystore tables of lane W2e land.
+/// Since lane L3 the index lives in `keystore.login_digest` and
+/// `keystore.login_text`, written with the rest of the keystore.
 #[derive(Clone, Default)]
 struct LoginIndex {
     /// The keyed digest group of purpose `Lookup`, once a login email
@@ -287,12 +294,14 @@ pub struct Keystore {
     /// the call until its deferred `RecordKeyOp` is written (ADR-004
     /// "Reconciliation", the start-up exception).
     startup_unwrap: Option<RequestId>,
+    /// The write-through to the keystore tables ([`tables`], lane L3).
+    persist: tables::Persist,
 }
 
 impl std::fmt::Debug for Keystore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Keystore")
-            .field("epoch", &self.chain_state.epoch())
+            .field("epoch", &self.epoch())
             .field("roots", &self.roots.keys().collect::<Vec<_>>())
             .field("texts", &self.texts.len())
             .finish_non_exhaustive()
@@ -302,7 +311,12 @@ impl std::fmt::Debug for Keystore {
 impl Keystore {
     /// The current root epoch.
     pub fn epoch(&self) -> u64 {
-        self.chain_state.epoch().0
+        // A loaded keystore names its epoch beside its sealed chain state
+        // until the state opens (`tables`).
+        match (&self.persist.sealed, self.persist.closed) {
+            (Some((e, _)), true) => *e,
+            _ => self.chain_state.epoch().0,
+        }
     }
 
     /// The custody receipt digest of each destroyed epoch.
@@ -367,13 +381,17 @@ impl Keystore {
     ///
     /// [`CellError::Custody`] when custody refuses or cannot be reached.
     pub async fn unwrap_current<C: Custody>(&mut self, custody: &C) -> Result<SealKey, CellError> {
-        let epoch = self.chain_state.epoch().0;
+        let epoch = self.epoch();
+        let request = request_id()?;
+        self.startup_unwrap = Some(request);
+        // The request id is durable before the call (ADR-004
+        // "Reconciliation"). A keystore in memory only writes nothing.
+        self.persist.dirty.meta = true;
+        self.flush(None).await?;
         let row = self
             .roots
             .get(&epoch)
             .ok_or(keys_err("no root of the current epoch"))?;
-        let request = request_id()?;
-        self.startup_unwrap = Some(request);
         let aad = seal_aad(self.cell, epoch);
         with_request(request, || custody.unwrap(&row.root, &row.wrapped, &aad))
             .await
@@ -399,7 +417,9 @@ impl Keystore {
     /// # Errors
     ///
     /// [`CellError::Keys`] when a group secret does not open.
-    pub fn open_groups(&self, s: &SealKey) -> Result<OpenGroups, CellError> {
+    pub fn open_groups(&mut self, s: &SealKey) -> Result<OpenGroups, CellError> {
+        // A keystore loaded from its tables opens its chain state first.
+        self.open_chain_state(s)?;
         let mut secrets = BTreeMap::new();
         for ((g, generation), row) in &self.groups {
             if self.chain_state.generation(*g) == Some(*generation) {
@@ -493,6 +513,7 @@ fn seal_group(
         epoch,
         nonce: sealed.nonce,
         body: sealed.body,
+        public: sk.public().to_bytes().to_vec(),
     })
 }
 
@@ -698,6 +719,7 @@ impl<C: Custody> ErasureRunner<C> {
                 requested: BTreeSet::new(),
                 logins: LoginIndex::default(),
                 startup_unwrap: None,
+                persist: tables::Persist::default(),
             },
             chain: ChainState::genesis(Epoch(0)),
             work: Work::new(SealKey::generate().map_err(CellError::Custody)?),
@@ -764,12 +786,13 @@ impl<C: Custody> ErasureRunner<C> {
             .startup_unwrap
             .take()
             .ok_or(keys_err("no start-up unwrap request id"))?;
+        store.persist.dirty.meta = true;
         let chain = store.chain_state.restart();
         let epoch = store.chain_state.epoch().0;
         let mut work = Work::new(seal);
         work.secrets = groups.0;
         work.signers = open_signers(&work.current, &store)?;
-        let runner = ErasureRunner {
+        let mut runner = ErasureRunner {
             custody,
             engine,
             store,
@@ -781,12 +804,34 @@ impl<C: Custody> ErasureRunner<C> {
         runner
             .record_call_as(KeyCall::Unwrap, epoch, request)
             .await?;
+        // The owed record is written, so its request id leaves the row.
+        runner.flush().await?;
         Ok(runner)
     }
 
     /// The durable keystore, for a restart.
     pub fn keystore(&self) -> &Keystore {
         &self.store
+    }
+
+    /// Makes the keystore write through `sink` and writes it whole
+    /// (`tables`). A cell process does this once, after genesis.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Keys`] when the sink refuses the write.
+    pub async fn persist_to(
+        &mut self,
+        sink: std::sync::Arc<dyn KeystoreSink>,
+    ) -> Result<(), CellError> {
+        self.store.attach(sink);
+        self.flush().await
+    }
+
+    /// Writes the keystore's marked rows (`tables`), sealing a changed
+    /// chain state under the current seal key.
+    async fn flush(&mut self) -> Result<(), CellError> {
+        self.store.flush(Some(&self.work.current)).await
     }
 
     /// The texts whose erasure this runner completed, in order.
@@ -855,8 +900,18 @@ impl<C: Custody> ErasureRunner<C> {
             &key,
             super::system_now(),
         )?;
+        self.store
+            .persist
+            .dirty
+            .signers
+            .insert((purpose, generation));
         let public = row.public.clone();
         if let Some(old) = self.store.signers.insert(purpose, row) {
+            self.store
+                .persist
+                .dirty
+                .signers
+                .insert((purpose, old.generation));
             self.store
                 .retired
                 .insert((purpose, old.generation), old.public);
@@ -1016,6 +1071,7 @@ impl<C: Custody> ErasureRunner<C> {
         let epoch = self.store.chain_state.epoch().0;
         let row = seal_group(&self.work.current, self.store.cell, g, 1, epoch, &sk)?;
         self.store.groups.insert((g, 1), row);
+        self.store.persist.dirty.groups.insert((g, 1));
         self.store
             .chain_state
             .add_group_for(g, Purpose::Text)
@@ -1070,6 +1126,8 @@ impl<C: Custody> ErasureRunner<C> {
                 blob,
             },
         );
+        self.store.persist.dirty.keys.insert(dek);
+        self.store.persist.dirty.texts.insert(id);
         Ok(())
     }
 
@@ -1143,6 +1201,8 @@ impl<C: Custody> ErasureRunner<C> {
         self.store.groups.insert((g, 1), row);
         self.work.secrets.insert((g, 1), sk);
         self.store.logins.lookup = Some(g);
+        self.store.persist.dirty.groups.insert((g, 1));
+        self.store.persist.dirty.meta = true;
         Ok(g)
     }
 
@@ -1157,6 +1217,7 @@ impl<C: Custody> ErasureRunner<C> {
         let g = fstp_crypto::random_array::<16>().map_err(|_| keys_err("group id"))?;
         self.add_group(g)?;
         self.store.logins.group = Some(GroupId(g));
+        self.store.persist.dirty.meta = true;
         self.put_text(g, id, text)
     }
 
@@ -1216,6 +1277,8 @@ impl<C: Custody> ErasureRunner<C> {
         self.chain = chain;
         self.store.logins.texts.insert(account.raw(), id);
         self.store.logins.digests.insert(digest, account.raw());
+        self.store.persist.dirty.logins.insert(account.raw());
+        self.store.persist.dirty.digests.insert(digest);
         Ok(LoginEmailSet::Set)
     }
 
@@ -1335,6 +1398,16 @@ impl<C: Custody> ErasureRunner<C> {
     /// The step's failure. Nothing is half applied: a retry does the same
     /// step again.
     pub async fn step(&mut self) -> Result<Option<ErasureEvent>, CellError> {
+        // Rows a failed flush left marked are written before any further
+        // step, so no step and no custody call follows a step that is not
+        // durable (`tables`). The step's own rows are written after it.
+        self.flush().await?;
+        let event = self.step_once().await?;
+        self.flush().await?;
+        Ok(event)
+    }
+
+    async fn step_once(&mut self) -> Result<Option<ErasureEvent>, CellError> {
         let fresh = self.new_requests();
         if !fresh.is_empty() {
             let seq = self.engine.state().head().raw();
@@ -1356,6 +1429,11 @@ impl<C: Custody> ErasureRunner<C> {
             }
             self.store.chain_state = durable;
             self.chain = chain;
+            self.store
+                .persist
+                .dirty
+                .requested
+                .extend(fresh.iter().copied());
             self.store.requested.extend(fresh);
             return Ok(Some(self.emit(ErasureEvent::RequestRecorded)));
         }
@@ -1469,6 +1547,7 @@ impl<C: Custody> ErasureRunner<C> {
                         wrapped: WrappedSealKey(Vec::new()),
                     };
                     self.store.pending_root = Some(row.clone());
+                    self.store.persist.dirty.roots.insert(e.0);
                     self.work.new_root = Some(row);
                     return Ok(ErasureEvent::RootCreated { epoch: e.0 });
                 }
@@ -1547,19 +1626,35 @@ impl<C: Custody> ErasureRunner<C> {
         let mut chain = self.chain.clone();
         plan::apply(&mut chain, &Step::Commit(e)).map_err(|_| keys_err("planner step"))?;
         let mut store = self.store.clone();
+        // Every row below is marked, so the flush after this step writes
+        // the commit in one transaction (`tables`).
         store.roots.insert(e.0, root);
+        store.persist.dirty.roots.insert(e.0);
         for (k, row) in std::mem::take(&mut self.work.rows) {
             store.groups.insert(k, row);
+            store.persist.dirty.groups.insert(k);
         }
         for (purpose, row) in std::mem::take(&mut self.work.signer_rows) {
+            store
+                .persist
+                .dirty
+                .signers
+                .insert((purpose, row.generation));
             store.signers.insert(purpose, row);
         }
         for (dek, v) in std::mem::take(&mut self.work.resealed) {
             store.keys.insert(dek, v);
+            store.persist.dirty.keys.insert(dek);
         }
         let batch = chain.running_batch();
         for dek in &batch {
             store.keys.remove(dek);
+            store.persist.dirty.keys.insert(*dek);
+        }
+        for (account, id) in &store.logins.texts {
+            if batch.contains(&DekId(*id)) {
+                store.persist.dirty.logins.insert(*account);
+            }
         }
         // The erased login emails leave the index, and the live ones take
         // their digests under the new `Lookup` key (G24).
@@ -1568,6 +1663,11 @@ impl<C: Custody> ErasureRunner<C> {
             .texts
             .retain(|_, id| !batch.contains(&DekId(*id)));
         if let Some(digests) = self.work.new_logins.take() {
+            store
+                .persist
+                .dirty
+                .digests
+                .extend(store.logins.digests.keys().chain(digests.keys()).copied());
             store.logins.digests = digests;
         }
         store.pending_root = None;
@@ -1639,6 +1739,7 @@ impl<C: Custody> ErasureRunner<C> {
         let mut chain = self.chain.clone();
         plan::apply_destroy(&mut chain, e, digest).map_err(|_| keys_err("planner step"))?;
         self.store.receipts.insert(e.0, digest);
+        self.store.persist.dirty.roots.insert(e.0);
         self.store.chain_state = chain.clone();
         self.chain = chain;
         self.work.snapshot = None;
@@ -2040,15 +2141,33 @@ async fn run_task<C: Custody + Send + Sync + 'static, K: Clock>(
     drop(stop);
 }
 
+/// `done` once the runner's rows are durable: a change whose flush fails
+/// is refused, and the next flush writes it (`tables`).
+async fn durable<C: Custody, T>(
+    runner: &mut ErasureRunner<C>,
+    done: Result<T, CellError>,
+) -> Result<T, CellError> {
+    let flushed = runner.flush().await;
+    let out = done?;
+    flushed?;
+    Ok(out)
+}
+
 async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
     match req {
-        Request::AddGroup { group, reply } => reply.send(runner.add_group(group)),
+        Request::AddGroup { group, reply } => {
+            let done = runner.add_group(group);
+            reply.send(durable(runner, done).await);
+        }
         Request::PutText {
             group,
             id,
             text,
             reply,
-        } => reply.send(runner.put_text(group, id, &text)),
+        } => {
+            let done = runner.put_text(group, id, &text);
+            reply.send(durable(runner, done).await);
+        }
         Request::OpenText { id, reply } => {
             let state = runner.engine.state();
             let opened = runner
@@ -2059,16 +2178,21 @@ async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
         Request::Keystore { reply } => reply.send(runner.keystore().clone()),
         Request::Signer { purpose, reply } => {
             let made = runner.ensure_signer(purpose).await;
+            let made = durable(runner, made).await;
             reply.send(made.and_then(|_| runner.signer(purpose)));
         }
         Request::RotateSigner { purpose, reply } => {
-            reply.send(runner.rotate_signer(purpose).await);
+            let done = runner.rotate_signer(purpose).await;
+            reply.send(durable(runner, done).await);
         }
         Request::SetLoginEmail {
             account,
             email,
             reply,
-        } => reply.send(runner.set_login_email(account, &email)),
+        } => {
+            let done = runner.set_login_email(account, &email);
+            reply.send(durable(runner, done).await);
+        }
         Request::LoginAccount { email, reply } => reply.send(runner.login_account(&email)),
         Request::LoginEmail { account, reply } => {
             let state = runner.engine.state();

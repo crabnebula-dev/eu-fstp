@@ -19,10 +19,10 @@ fstp-public.workspace = true
 fstp-tenant.workspace = true
 fstp-access.workspace = true
 fstp-api-core.workspace = true
-fstp-oauth = { workspace = true, features = ["test-cell"] }
+fstp-oauth.workspace = true
 fstp-mcp.workspace = true
 fstp-signup.workspace = true
-fstp-web = { workspace = true, features = ["test-cell"] }
+fstp-web.workspace = true
 fstp-web-assets.workspace = true
 fstp-http.workspace = true
 fstp-domain.workspace = true

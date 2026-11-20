@@ -190,35 +190,35 @@ pub(crate) fn confirm_path(id: PendingId) -> String {
 
 /// One stored pending action (design section 3.7).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PendingAction {
+pub struct PendingAction {
     /// The id.
-    pub(crate) id: PendingId,
+    pub id: PendingId,
     /// The account whose agent prepared it, the only one who confirms.
-    pub(crate) account: AccountId,
+    pub account: AccountId,
     /// The agent client.
-    pub(crate) agent: AgentClientId,
+    pub agent: AgentClientId,
     /// The operation name.
-    pub(crate) op: &'static str,
+    pub op: String,
     /// The canonical pending request text, `{"op", "request"}`.
-    pub(crate) request: String,
+    pub request: String,
     /// The canonical request object alone, as the user sees it.
-    pub(crate) shown: String,
+    pub shown: String,
     /// The digest.
-    pub(crate) digest: ActionDigest,
+    pub digest: ActionDigest,
     /// When it was prepared.
-    pub(crate) created: Timestamp,
+    pub created: Timestamp,
     /// When it stops being confirmable.
-    pub(crate) expires: Timestamp,
+    pub expires: Timestamp,
     /// Its stored status. An open action past its expiry reads as
     /// expired.
-    pub(crate) status: PendingStatus,
+    pub status: PendingStatus,
     /// When it was confirmed, discarded or marked expired.
-    pub(crate) closed: Option<Timestamp>,
+    pub closed: Option<Timestamp>,
 }
 
 impl PendingAction {
     /// The status at `now`.
-    pub(crate) fn status_at(&self, now: Timestamp) -> PendingStatus {
+    pub fn status_at(&self, now: Timestamp) -> PendingStatus {
         if self.status == PendingStatus::Open && now >= self.expires {
             PendingStatus::Expired
         } else {
@@ -228,7 +228,7 @@ impl PendingAction {
 
     /// When it ended, at `now`: when it closed, or its expiry once that
     /// has passed. `None` while it is open.
-    pub(crate) fn ended_at(&self, now: Timestamp) -> Option<Timestamp> {
+    pub fn ended_at(&self, now: Timestamp) -> Option<Timestamp> {
         match self.status_at(now) {
             PendingStatus::Open => None,
             PendingStatus::Expired => Some(self.expires),
@@ -239,11 +239,11 @@ impl PendingAction {
     }
 
     /// The view at `now`.
-    pub(crate) fn view(&self, now: Timestamp) -> PendingView {
+    pub fn view(&self, now: Timestamp) -> PendingView {
         PendingView {
             id: self.id,
             agent: self.agent,
-            op: self.op.to_owned(),
+            op: self.op.clone(),
             request: self.shown.clone(),
             digest: self.digest,
             created: self.created,
@@ -365,6 +365,10 @@ impl PendingStore {
     /// confirmation. While it is claimed, no discard, expiry mark or
     /// second confirmation closes it. `false` when it is not open or is
     /// claimed already.
+    #[allow(
+        dead_code,
+        reason = "the store's own claims, which its unit tests pin; since ADR-026 the core claims in dispatch"
+    )]
     pub(crate) fn claim(&mut self, id: PendingId, account: AccountId, now: Timestamp) -> bool {
         let open = self
             .get(id, account)
@@ -373,11 +377,19 @@ impl PendingStore {
     }
 
     /// Releases a claim whose confirmation did not execute.
+    #[allow(
+        dead_code,
+        reason = "the store's own claims, which its unit tests pin; since ADR-026 the core claims in dispatch"
+    )]
     pub(crate) fn release(&mut self, id: PendingId) {
         self.claimed.remove(&id);
     }
 
     /// Closes the claimed action `id` as confirmed at `now`.
+    #[allow(
+        dead_code,
+        reason = "the store's own claims, which its unit tests pin; since ADR-026 the core claims in dispatch"
+    )]
     pub(crate) fn confirm(&mut self, id: PendingId, now: Timestamp) -> bool {
         if !self.claimed.remove(&id) {
             return false;
@@ -419,6 +431,102 @@ impl PendingStore {
     }
 }
 
+impl PendingStore {
+    /// Marks the open action `id` confirmed at `now`, for the memory
+    /// port, whose engine records no confirmation of its own.
+    pub(crate) fn mark_confirmed(&mut self, id: PendingId, now: Timestamp) -> bool {
+        match self.actions.get_mut(&id) {
+            Some(a) if a.status == PendingStatus::Open => {
+                a.status = PendingStatus::Confirmed;
+                a.closed = Some(now);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The pending actions of a core in process memory: the store a cell
+/// without a [`crate::port::PendingActions`] port uses, as test cells
+/// do. A restart loses every action, which fails closed (I-85). Bounded
+/// as [`PendingStore`] is.
+#[derive(Debug, Default)]
+pub struct MemoryPendingActions {
+    store: std::sync::Mutex<PendingStore>,
+}
+
+impl MemoryPendingActions {
+    fn lock(&self) -> std::sync::MutexGuard<'_, PendingStore> {
+        self.store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl crate::port::PendingActions for MemoryPendingActions {
+    fn insert(
+        &self,
+        a: PendingAction,
+        now: Timestamp,
+    ) -> crate::port::PendingFuture<'_, Result<(), crate::port::PendingInsertError>> {
+        let r = self.lock().insert(a, now).map_err(|e| match e {
+            InsertError::Taken => crate::port::PendingInsertError::Taken,
+            InsertError::Full => crate::port::PendingInsertError::Full,
+        });
+        Box::pin(std::future::ready(r))
+    }
+
+    fn get(
+        &self,
+        id: PendingId,
+        account: AccountId,
+    ) -> crate::port::PendingFuture<'_, Result<Option<PendingAction>, crate::port::PortError>> {
+        let r = self.lock().get(id, account).cloned();
+        Box::pin(std::future::ready(Ok(r)))
+    }
+
+    fn list(
+        &self,
+        account: AccountId,
+        now: Timestamp,
+    ) -> crate::port::PendingFuture<'_, Result<Vec<PendingAction>, crate::port::PortError>> {
+        let s = self.lock();
+        let ids: Vec<PendingId> = s.list(account, now).into_iter().map(|v| v.id).collect();
+        let r = ids
+            .into_iter()
+            .filter_map(|id| s.get(id, account).cloned())
+            .collect();
+        Box::pin(std::future::ready(Ok(r)))
+    }
+
+    fn close(
+        &self,
+        id: PendingId,
+        to: PendingStatus,
+        now: Timestamp,
+    ) -> crate::port::PendingFuture<'_, Result<bool, crate::port::PortError>> {
+        let r = self.lock().close(id, to, now);
+        Box::pin(std::future::ready(Ok(r)))
+    }
+
+    fn remove(
+        &self,
+        id: PendingId,
+    ) -> crate::port::PendingFuture<'_, Result<(), crate::port::PortError>> {
+        self.lock().remove(id);
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    fn confirmed(
+        &self,
+        id: PendingId,
+        now: Timestamp,
+    ) -> crate::port::PendingFuture<'_, Result<bool, crate::port::PortError>> {
+        let r = self.lock().mark_confirmed(id, now);
+        Box::pin(std::future::ready(Ok(r)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -430,7 +538,7 @@ mod tests {
             id: PendingId::from_raw(id),
             account: AccountId::from_raw(account),
             agent: AgentClientId::from_raw(9),
-            op: "call.publish",
+            op: "call.publish".to_owned(),
             request: String::new(),
             shown: String::new(),
             digest: ActionDigest([1; 32]),

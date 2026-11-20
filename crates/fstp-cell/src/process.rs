@@ -20,10 +20,14 @@
 //!    keys, the App chain's `Anchor` key, the witness client of the App
 //!    chain over [`crate::witness::link::TlsWitnessLink`] and the pinned
 //!    witness receipt keys (ADR-010 "Keys").
-//! 3. On a first start, with no keystore held, it creates epoch 0 of the
-//!    App key chain through custody (design section 9.2 step 8). Each
+//! 3. It loads the keystore of the App chain from its tables over the
+//!    `c_<cell>_keys` login (ADR-004, decided by Daniel on 2026-11-20,
+//!    lane L3). On a first start, with no keystore rows and an empty
+//!    ledger, it creates epoch 0 of the App key chain through custody
+//!    (design section 9.2 step 8) and writes it to the tables. Each
 //!    custody call is recorded first, through an engine over the same
 //!    store, so the genesis entries are anchored like every other entry.
+//!    No keystore rows beside a ledger that is not empty is refused.
 //! 4. It runs `crate::engine::startup::start_pg`: custody, the open
 //!    prepare, the replay, the chain against the witness log, and the
 //!    three listeners.
@@ -42,7 +46,7 @@
 //! What the caller still hands in, reported to Daniel and the lead: the
 //! ledger keys, the `Anchor` key and the CredLookup key, which the
 //! keystore groups of design section 3.5 do not give yet. The keystore
-//! itself is held in memory by its owner (`crate::tasks::erasure`). The
+//! itself lives in its tables (`crate::tasks::erasure::tables`). The
 //! outbox data keys are held in process memory ([`MemoryOutboxKeys`]).
 //!
 //! The caller hands in no claim about its database server. It hands in
@@ -137,8 +141,10 @@ pub struct CellProcessParts<C, V> {
     pub registered_servers: Vec<RegisteredSpki>,
     /// The App chain's custody backend.
     pub custody: C,
-    /// The keystore of the App chain, or `None` on a first start.
-    pub keystore: Option<Keystore>,
+    /// The `c_<cell>_keys` login of the keystore tables (ADR-004, decided
+    /// by Daniel on 2026-11-20). The keystore is loaded from them at each
+    /// start, and created there on a first start (lane L3).
+    pub keystore: fstp_pgwire::Config,
     /// The keys of module documentation.
     pub keys: CellKeys,
     /// The witness of the App chain.
@@ -189,6 +195,11 @@ pub struct RunningCell<R: Runtime> {
     reader: PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>,
     clock: crate::engine::CommitClock,
     release: crate::tasks::release::ReleaseView,
+    /// Lane L2: the authorisation server (`crate::oauth`).
+    oauth: Arc<crate::oauth::AuthServer>,
+    /// The ledger key generations, which also seal the API core's rows
+    /// (ADR-026).
+    ledger_keys: Arc<LedgerKeys>,
 }
 
 impl<R: Runtime> std::fmt::Debug for RunningCell<R> {
@@ -534,6 +545,10 @@ pub struct StartOptions {
     /// published yet" until the ledger records the activation. A test
     /// world from before the tenant part sets it active, and says so.
     pub organisation: crate::public::OrganisationPort,
+    /// The compiled journey UI (`web/dist/app`, loaded with
+    /// `fstp_web::load_dir`). With it, the cell mounts the web adapter over
+    /// its own `ApiCore` (ADR-026). `None` serves the cell table only.
+    pub web_assets: Option<fstp_web::AssetSet>,
 }
 
 impl Default for StartOptions {
@@ -551,6 +566,7 @@ impl Default for StartOptions {
             release_clock: None,
             auth_limits: crate::routes::AuthLimits::default(),
             organisation: crate::public::OrganisationPort::default(),
+            web_assets: None,
         }
     }
 }
@@ -607,6 +623,7 @@ where
         release_clock,
         auth_limits,
         organisation,
+        web_assets,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -616,6 +633,8 @@ where
     // server's OU and SPKI before its startup message.
     let server_check = application_server_check(&registered_servers);
     let writer = writer.server_check(server_check.clone());
+    // Lane L3: the keys login checks its server as the other two do.
+    let keystore = keystore.server_check(server_check.clone());
     let app = app.server_check(server_check);
     let reader_pool = Pool::open(rt.clone(), cell, Role::Writer, writer.clone(), 1)
         .await
@@ -668,20 +687,53 @@ where
         inner = inner.with_fault_point(f);
     }
     let store = PgCellStore::from_store(inner);
-    let (store, keystore) = match keystore {
-        Some(k) => (store, k),
-        None => {
-            genesis(
-                rt,
-                store,
-                vault.clone(),
-                custody.clone(),
-                cell,
-                Arc::clone(&clock),
-            )
-            .await?
+    // ---- Lane L3 `prod/keystore-pg`: the keystore load (ADR-004, decided
+    // by Daniel on 2026-11-20). The keystore lives in its tables and is
+    // written through `c_<cell>_keys` only (I-82). A start loads it. Genesis
+    // runs only on an empty ledger with no keystore rows. Either way the
+    // keystore handed on comes from the tables, its chain state sealed
+    // until the start-up opens it under `S(e)`.
+    let keys_pool = Pool::open(rt.clone(), cell, Role::Keys, keystore, 2)
+        .await
+        .map_err(pool_err)?;
+    let tables = Arc::new(
+        fstp_pgstore::KeystoreTables::new(keys_pool)
+            .map_err(store_err)?
+            .with_clock(Arc::new({
+                let clock = Arc::clone(&clock);
+                move || Some(clock())
+            })),
+    );
+    let sink: Arc<dyn crate::tasks::erasure::KeystoreSink> = tables.clone();
+    let mut rows = tables.load().await.map_err(store_err)?;
+    let store = if rows.chain.is_none() {
+        if !ledger_is_empty(&app_pool).await? {
+            // The ledger names key records of a keystore these tables do
+            // not hold. A fresh epoch 0 would leave every stored text
+            // unreadable, so the start refuses.
+            return Err(CellError::Keys(
+                "the keystore tables are empty but the ledger is not",
+            ));
         }
+        let store = genesis(
+            rt,
+            store,
+            vault.clone(),
+            custody.clone(),
+            cell,
+            Arc::clone(&clock),
+            Arc::clone(&sink),
+        )
+        .await?;
+        rows = tables.load().await.map_err(store_err)?;
+        store
+    } else {
+        store
     };
+    let keystore = Keystore::from_rows(cell, rows, sink)?;
+    // ---- End of lane L3's block.
+    // The API core asks the vault through a clone of the engine's client.
+    let api_vault = vault.clone();
     let started = start_pg(
         rt,
         PgStartParts {
@@ -738,19 +790,59 @@ where
         limits: auth_limits,
         organisation,
     };
+    // Lane L2 hook (ADR-013 amendment of 2026-11-20): the authorisation
+    // server over the `mcp` rows, its `/oauth` routes on the front, and its
+    // grants for the recovery route (H-21).
+    let oauth = crate::oauth::start_pg(
+        app_pool.clone(),
+        started.erasure.clone(),
+        started.engine.clone(),
+        Arc::clone(&clock),
+        &host,
+    )
+    .await?;
     let log = Arc::new(StderrLog);
-    let front = match pages {
-        #[cfg(feature = "dev-pages")]
-        Some(p) => Front::with_pages(front_cfg, p, Arc::clone(&backend), log),
-        #[cfg(not(feature = "dev-pages"))]
-        Some(_) => {
-            return Err(CellError::NotImplemented(
-                "the auth pages need the dev-pages feature",
-            ));
+    // ADR-026: with the compiled journey UI, the cell mounts the web
+    // adapter over one ApiCore of its own ports behind its table. The
+    // auth pages are served by every build (D2).
+    let front = match web_assets {
+        Some(assets) => {
+            let parts = crate::api::ApiParts {
+                cell,
+                engine: started.engine.clone(),
+                backend: Arc::clone(&backend),
+                store: fstp_pgstore::ApiStore::new(app_pool.clone(), Arc::clone(&keys.ledger))
+                    .map_err(store_err)?,
+                keys: Arc::clone(&keys.ledger),
+                vault: api_vault,
+                erasure: started.erasure.clone(),
+                organisation,
+            };
+            // Lane L2's token store over the same authorisation server.
+            let tokens = crate::oauth::tokens::CellTokens::new(Arc::clone(&oauth));
+            let core = crate::api::compose(parts, tokens);
+            let origin = fstp_web::parse_origin_header(format!("https://{host}").as_bytes())
+                .map_err(|_| CellError::Config(crate::config::ConfigError::Invalid("host")))?;
+            // One issuer and resource for the metadata documents and the
+            // server that issues the tokens (ADR-013 amendment).
+            let web_cfg =
+                fstp_web::WebConfig::new(origin, assets).with_oauth(oauth.config().clone());
+            let web = fstp_web::router(Arc::new(core), web_cfg).map_err(|_| {
+                CellError::NotImplemented("the web adapter refused its configuration")
+            })?;
+            Front::with_web(front_cfg, pages, web, Arc::clone(&backend), log)
         }
-        None => Front::new(front_cfg, Arc::clone(&backend), log),
+        None => match pages {
+            Some(p) => Front::with_pages(front_cfg, p, Arc::clone(&backend), log),
+            None => Front::new(front_cfg, Arc::clone(&backend), log),
+        },
     }
     .map_err(|_| CellError::Config(crate::config::ConfigError::Invalid("host")))?;
+    let _ = backend.set_agent_grants(Arc::clone(&oauth) as Arc<dyn crate::oauth::AgentGrants>);
+    let _ = front.mount_oauth(Arc::new(crate::oauth::OauthRoutes::new(
+        Arc::clone(&oauth),
+        &host,
+    )));
     let mut servers = Vec::with_capacity(3);
     let mut bound = listen;
     let fstp_cell_shutdown = started.shutdown.clone();
@@ -808,6 +900,8 @@ where
         release: started.release,
         app: app_pool,
         reader,
+        oauth,
+        ledger_keys: Arc::clone(&keys.ledger),
     })
 }
 
@@ -824,8 +918,25 @@ fn http_config(tls: Option<fstp_tls::ServerConfig>) -> fstp_http::ServerConfig {
     }
 }
 
+/// Whether the cell's ledger holds no entry, read as the app role, which
+/// holds SELECT on the ledger (lane L3).
+async fn ledger_is_empty<R: Runtime>(app: &Pool<R>) -> Result<bool, CellError> {
+    const SQL: &str = "SELECT NOT EXISTS (SELECT 1 FROM ledger.entry)";
+    let mut c = app.get().await.map_err(pool_err)?;
+    let row = c
+        .query_one(SQL, &[])
+        .await
+        .map_err(|_| CellError::Keys("the ledger head read"))?;
+    let empty: bool = row
+        .get(0)
+        .map_err(|_| CellError::Keys("the ledger head read"))?;
+    c.release();
+    Ok(empty)
+}
+
 /// Step 3 of the module documentation: epoch 0 of the App key chain,
-/// with each custody call recorded through an engine over `store`.
+/// with each custody call recorded through an engine over `store`. The
+/// keystore is written whole to `sink` before the engine stops (lane L3).
 async fn genesis<R, C, V>(
     rt: &R,
     store: PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>,
@@ -833,7 +944,8 @@ async fn genesis<R, C, V>(
     custody: C,
     cell: [u8; 16],
     clock: crate::engine::CommitClock,
-) -> Result<(PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>, Keystore), CellError>
+    sink: Arc<dyn crate::tasks::erasure::KeystoreSink>,
+) -> Result<PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>, CellError>
 where
     R: Runtime,
     C: Custody + Send + Sync + 'static,
@@ -845,12 +957,15 @@ where
             .await
             .map_err(store_err)?;
     let engine = engine.with_clock(clock);
-    let runner = ErasureRunner::genesis(custody, engine.clone(), cell).await;
+    let written = match ErasureRunner::genesis(custody, engine.clone(), cell).await {
+        Ok(mut runner) => runner.persist_to(sink).await,
+        Err(e) => Err(e),
+    };
     // The engine ends once its last handle drops, and gives the store back.
-    let keystore = runner.map(|r| r.keystore().clone());
     drop(engine);
     let store = task.await.map_err(store_err)?;
-    Ok((store, keystore?))
+    written?;
+    Ok(store)
 }
 
 impl<R: Runtime> RunningCell<R> {
@@ -902,9 +1017,47 @@ impl<R: Runtime> RunningCell<R> {
             .map_err(CellError::Store)
     }
 
+    /// Lane L2: the cell's authorisation server (`crate::oauth`). L1's
+    /// composition builds its `Tokens` port from it
+    /// (`crate::oauth::tokens::CellTokens`).
+    pub fn oauth(&self) -> &Arc<crate::oauth::AuthServer> {
+        &self.oauth
+    }
+
+    /// The API core's tables over the app pool, sealing under the cell's
+    /// ledger key generations (ADR-026), for a test that reads them.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Store`] for a pool of another role.
+    pub fn api_store(&self) -> Result<fstp_pgstore::ApiStore<R>, CellError> {
+        fstp_pgstore::ApiStore::new(self.app.clone(), Arc::clone(&self.ledger_keys))
+            .map_err(|e| CellError::Store(fstp_ledger::StoreError::from(e)))
+    }
+
+    /// The ledger key generations of the process (ADR-026).
+    pub fn ledger_keys(&self) -> &Arc<LedgerKeys> {
+        &self.ledger_keys
+    }
+
     /// The app pool, for reads of the operational rows.
     pub fn app_pool(&self) -> &Pool<R> {
         &self.app
+    }
+
+    /// Every row of the App chain, with the stored ledger rows and the
+    /// anchors, read through the cell's own reading store (ADR-010). The
+    /// kind 2 rows are the audit events (ADR-010 amendment of 2026-11-20).
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Store`] when the store cannot be read.
+    pub async fn chain_rows(&self) -> Result<fstp_pgstore::ChainRows, CellError> {
+        self.reader
+            .inner()
+            .read_chain_rows()
+            .await
+            .map_err(|e| CellError::Store(fstp_ledger::StoreError::from(e)))
     }
 
     /// Design section 9.2 step 10 (module documentation): draws the first
@@ -1071,4 +1224,18 @@ impl<R: Runtime> RunningCell<R> {
             Ok(())
         }
     }
+}
+
+/// The compiled journey UI a cell mounts, as `fstp_web` takes it.
+pub use fstp_web::{AssetSet as WebAssets, load_dir as load_web_assets};
+
+/// A one-module stub of the journey UI, for a test cell that drives the
+/// API core and needs no browser UI (ADR-026). Its shell loads one empty
+/// module.
+///
+/// # Errors
+///
+/// The asset set's refusal, which a fixed set never meets.
+pub fn stub_web_assets() -> Result<WebAssets, fstp_web::AssetError> {
+    WebAssets::from_files("main.js", &[("main.js", b"export {};\n".as_slice())])
 }

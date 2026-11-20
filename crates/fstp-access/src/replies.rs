@@ -1468,6 +1468,20 @@ pub const REPLIES: &[(&str, Shape)] = &[
             opt("until", Shape::String),
         ])),
     ),
+    // Lane L2 (ADR-013 amendment of 2026-11-20): the pending consent the
+    // consent page shows. The client name is the client's own untrusted
+    // text. No account, handle or digest (I-86).
+    (
+        "agents.consent_request",
+        Shape::Object(&[
+            m("client", Shape::Id),
+            opt("name", Shape::String),
+            m("redirect_host", Shape::String),
+            m("loopback", Shape::Bool),
+            m("scopes", Shape::Array(&Shape::Enum(SCOPE_NAMES))),
+            m("expires", Shape::String),
+        ]),
+    ),
     // R-MC-03: the caller's own calls through one agent client, newest
     // first. No request content.
     (

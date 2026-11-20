@@ -69,6 +69,9 @@ pub(crate) enum ParamKind {
     FieldKey,
     /// One of the previews of journey J1 (`creator::PREVIEWS`).
     Preview,
+    /// Lane L2: a consent handle of the authorisation server, 43
+    /// characters of base64url (`agents.consent_request`).
+    ConsentHandle,
 }
 
 /// The spelling of the path parameter `name`.
@@ -83,6 +86,8 @@ pub(crate) fn param_kind(name: &str) -> ParamKind {
         // Lane m4reg: the invitation landing, its acceptance and its
         // verification take the token of the link (SoD-09).
         "invitation_token" => ParamKind::LinkToken,
+        // Lane L2: the consent page reads a consent by its handle.
+        "consent" => ParamKind::ConsentHandle,
         _ => ParamKind::Id,
     }
 }
@@ -95,6 +100,11 @@ pub(crate) fn param_str_ok(name: &str, s: &str) -> bool {
         ParamKind::LinkToken => link_token(s),
         ParamKind::FieldKey => field_key(s),
         ParamKind::Preview => crate::creator::PREVIEWS.contains(&s),
+        ParamKind::ConsentHandle => {
+            s.len() == 43
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        }
     }
 }
 

@@ -197,6 +197,8 @@ jobs:
               --test r_nf_09_cell_to_cp_link --test r_sw_02_cell_erasure
               --test seeded_vault_chain --test slice_http --test slice_world
               --test teeth_m3_registry --test w1a_world
+              --test i85_concurrent_confirmations_execute_once --test keystore_restart_pg
+              --test l2_oauth_pg --test prod_mcp_slice_pg
               ; -p fstp-celltest --doc
             skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross t_iso_public_rate_limit_keys_are_per_cell
             timeout: 60

@@ -1,0 +1,355 @@
+//! The W6 composition: one `ApiCore` over the cell's engine, route
+//! backend and PostgreSQL (ADR-026, decided by Daniel on 2026-11-20; M4
+//! design section 1.3; production design gap G2).
+//!
+//! [`compose`] builds the opaque `ApiCore` from the cell's ports. One
+//! module per port group:
+//!
+//! - `engine`: `AsyncEngine` over [`crate::engine::CellEngine`]. Every
+//!   command goes through one of the gate's admissions: the agent
+//!   admission for an MCP call, the API step-up admission for a web call
+//!   (`fstp_cell_core::gate`). The dry run is the engine's own. The ledger
+//!   reads come from the engine's mirror of its committed engine records.
+//! - `session`: `Sessions` over the session cookie and `auth.session`,
+//!   `StepUp` over the cell's own step-up ceremony, and a fail-closed
+//!   `SessionsAdmin`.
+//! - `audit`: `AuditSink` and `VaultAudit` as kind 2 events of the App
+//!   chain, flushed through the engine's single writer before a call is
+//!   answered (ADR-010 amendment of 2026-11-20).
+//! - `content`: `TextStore` over the cell's erasure task, `Sealer` and
+//!   `Workspaces` over `workspace.drafts`, the `PendingActions` port over
+//!   `api.pending_actions`, and a fail-closed `BlobStore`.
+//! - `tenant`: `TenantConfig`, `Outbox`, `Clock` and `Ids`.
+//! - `closed`: the ports the production cell does not serve yet, each
+//!   failing closed: the vault's intake and Q35 queries, `Precheck`,
+//!   `Prober`, `Recovery`, `BreakGlass` and `Accounts::invite`.
+//!
+//! The token store is lane L2's (`crate::oauth::tokens::CellTokens`),
+//! through [`CellTokens`]: the `Tokens` port of `ApiCore` and the agent
+//! grant the agent admission reads.
+
+mod audit;
+mod closed;
+mod content;
+mod engine;
+mod session;
+mod tenant;
+
+use std::sync::Arc;
+
+use fstp_api_core::ApiCore;
+use fstp_api_core::port::{self, CellPorts};
+use fstp_cell_core::gate::AgentGrant;
+use fstp_domain::id::AccountId;
+use fstp_domain::time::Timestamp;
+use fstp_pgstore::{ApiStore, LedgerKeys};
+use fstp_rt::Runtime;
+
+use crate::engine::{CellEngine, VaultClient};
+use crate::public::OrganisationPort;
+use crate::routes::pg::PgBackend;
+use crate::tasks::erasure::ErasureHandle;
+
+/// The token store of the cell, as `ApiCore` and the agent admission
+/// reach it (ADR-026). Lane L2's store over the `mcp` schema implements
+/// it.
+pub(crate) trait CellTokens: port::Tokens + 'static {
+    /// The grant behind the agent client `client` of `account` at `now`,
+    /// as the gate's agent admission reads it, or `None` when no live
+    /// grant exists. The agent admission refuses a command without one.
+    fn agent_grant(
+        &self,
+        account: AccountId,
+        client: port::AgentClientId,
+        now: Timestamp,
+    ) -> impl std::future::Future<Output = Option<AgentGrant>> + Send;
+}
+
+/// What the composition takes from the serving cell.
+pub(crate) struct ApiParts<R: Runtime, V> {
+    /// The cell.
+    pub cell: [u8; 16],
+    /// The engine handle: the only path into `DriverCore`.
+    pub engine: CellEngine,
+    /// The route backend over `auth.*`.
+    pub backend: Arc<PgBackend<R>>,
+    /// The API core's tables over the app role.
+    pub store: ApiStore<R>,
+    /// The ledger key generations, which seal workspaces.
+    pub keys: Arc<LedgerKeys>,
+    /// The cell's vault client.
+    pub vault: V,
+    /// The erasure task, which holds the text store.
+    pub erasure: ErasureHandle,
+    /// The organisation port of ADR-021.
+    pub organisation: OrganisationPort,
+}
+
+/// The shared state of every port of one cell.
+pub(crate) struct Inner<R: Runtime, V> {
+    cell: [u8; 16],
+    engine: CellEngine,
+    backend: Arc<PgBackend<R>>,
+    store: ApiStore<R>,
+    keys: Arc<LedgerKeys>,
+    vault: V,
+    erasure: ErasureHandle,
+    organisation: OrganisationPort,
+    audit: audit::Buffer,
+    stepups: session::Begun,
+}
+
+impl<R: Runtime, V> Inner<R, V> {
+    /// The cell clock.
+    fn now(&self) -> Timestamp {
+        Timestamp::from_micros(self.engine.now())
+    }
+}
+
+/// Every port of one cell over `Inner`, with the token store `T`.
+pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
+    sessions: session::CellSessions<R, V>,
+    step_up: session::CellStepUp<R, V>,
+    sessions_admin: closed::ClosedSessionsAdmin,
+    accounts: closed::CellAccounts<R, V>,
+    vault: closed::CellVault<R, V>,
+    engine: engine::CellAsyncEngine<R, V, T>,
+    audit: audit::CellAudit<R, V>,
+    vault_audit: audit::CellVaultAudit<R, V>,
+    texts: content::CellTexts<R, V>,
+    blobs: closed::ClosedBlobs,
+    sealer: content::CellSealer<R, V>,
+    workspaces: content::CellWorkspaces<R, V>,
+    pending: content::CellPending<R, V>,
+    recovery: closed::ClosedRecovery,
+    break_glass: closed::ClosedBreakGlass,
+    tenant: tenant::CellTenant<R, V>,
+    outbox: tenant::CellOutbox,
+    prober: closed::ClosedProber,
+    clock: tenant::CellClock<R, V>,
+    ids: tenant::CellIds,
+    tokens: Arc<T>,
+}
+
+/// Builds the cell's `ApiCore` over `parts`, with the token store
+/// `tokens` (ADR-026 "Composition"). Only the cell's process calls it.
+pub(crate) fn compose<R, V, T>(parts: ApiParts<R, V>, tokens: T) -> ApiCore
+where
+    R: Runtime,
+    V: VaultClient + Clone,
+    T: CellTokens,
+{
+    let ApiParts {
+        cell,
+        engine,
+        backend,
+        store,
+        keys,
+        vault,
+        erasure,
+        organisation,
+    } = parts;
+    let inner = Arc::new(Inner {
+        cell,
+        audit: audit::Buffer::new(engine.clone()),
+        engine,
+        backend,
+        store,
+        keys,
+        vault,
+        erasure,
+        organisation,
+        stepups: session::Begun::default(),
+    });
+    let tokens = Arc::new(tokens);
+    let ports = Ports {
+        sessions: session::CellSessions(Arc::clone(&inner)),
+        step_up: session::CellStepUp(Arc::clone(&inner)),
+        sessions_admin: closed::ClosedSessionsAdmin,
+        accounts: closed::CellAccounts(Arc::clone(&inner)),
+        vault: closed::CellVault(Arc::clone(&inner)),
+        engine: engine::CellAsyncEngine::new(Arc::clone(&inner), Arc::clone(&tokens)),
+        audit: audit::CellAudit(Arc::clone(&inner)),
+        vault_audit: audit::CellVaultAudit(Arc::clone(&inner)),
+        texts: content::CellTexts(Arc::clone(&inner)),
+        blobs: closed::ClosedBlobs,
+        sealer: content::CellSealer(Arc::clone(&inner)),
+        workspaces: content::CellWorkspaces(Arc::clone(&inner)),
+        pending: content::CellPending(Arc::clone(&inner)),
+        recovery: closed::ClosedRecovery,
+        break_glass: closed::ClosedBreakGlass,
+        tenant: tenant::CellTenant(Arc::clone(&inner)),
+        outbox: tenant::CellOutbox,
+        prober: closed::ClosedProber,
+        clock: tenant::CellClock(Arc::clone(&inner)),
+        ids: tenant::CellIds,
+        tokens,
+    };
+    port::api_core(ports)
+}
+
+impl<R, V, T> CellPorts for Ports<R, V, T>
+where
+    R: Runtime,
+    V: VaultClient + Clone,
+    T: CellTokens,
+{
+    type Sessions = session::CellSessions<R, V>;
+    type StepUp = session::CellStepUp<R, V>;
+    type Accounts = closed::CellAccounts<R, V>;
+    type Vault = closed::CellVault<R, V>;
+    type Engine = engine::CellAsyncEngine<R, V, T>;
+    type Audit = audit::CellAudit<R, V>;
+    type Texts = content::CellTexts<R, V>;
+    type Blobs = closed::ClosedBlobs;
+    type Precheck = closed::NoPrecheck;
+    type Sealer = content::CellSealer<R, V>;
+    type Workspaces = content::CellWorkspaces<R, V>;
+    type VaultAudit = audit::CellVaultAudit<R, V>;
+    type SessionsAdmin = closed::ClosedSessionsAdmin;
+    type Recovery = closed::ClosedRecovery;
+    type BreakGlass = closed::ClosedBreakGlass;
+    type Tenant = tenant::CellTenant<R, V>;
+    type Outbox = tenant::CellOutbox;
+    type Prober = closed::ClosedProber;
+    type Clock = tenant::CellClock<R, V>;
+    type Ids = tenant::CellIds;
+    type Tokens = T;
+
+    fn sessions(&self) -> &Self::Sessions {
+        &self.sessions
+    }
+    fn step_up(&self) -> &Self::StepUp {
+        &self.step_up
+    }
+    fn accounts(&self) -> &Self::Accounts {
+        &self.accounts
+    }
+    fn vault(&self) -> &Self::Vault {
+        &self.vault
+    }
+    fn engine(&self) -> &Self::Engine {
+        &self.engine
+    }
+    fn audit(&self) -> &Self::Audit {
+        &self.audit
+    }
+    fn texts(&self) -> &Self::Texts {
+        &self.texts
+    }
+    fn blobs(&self) -> &Self::Blobs {
+        &self.blobs
+    }
+    /// Q38: a production cell has no pre-check provider.
+    fn precheck(&self) -> Option<&Self::Precheck> {
+        None
+    }
+    fn sealer(&self) -> &Self::Sealer {
+        &self.sealer
+    }
+    fn workspaces(&self) -> &Self::Workspaces {
+        &self.workspaces
+    }
+    fn vault_audit(&self) -> &Self::VaultAudit {
+        &self.vault_audit
+    }
+    fn sessions_admin(&self) -> &Self::SessionsAdmin {
+        &self.sessions_admin
+    }
+    fn recovery(&self) -> &Self::Recovery {
+        &self.recovery
+    }
+    fn break_glass(&self) -> &Self::BreakGlass {
+        &self.break_glass
+    }
+    fn tenant(&self) -> &Self::Tenant {
+        &self.tenant
+    }
+    fn outbox(&self) -> &Self::Outbox {
+        &self.outbox
+    }
+    fn prober(&self) -> &Self::Prober {
+        &self.prober
+    }
+    fn clock(&self) -> &Self::Clock {
+        &self.clock
+    }
+    fn ids(&self) -> &Self::Ids {
+        &self.ids
+    }
+    fn tokens(&self) -> &Self::Tokens {
+        &self.tokens
+    }
+    /// ADR-026: pending actions live in `api.pending_actions`.
+    fn pending_actions(&self) -> Option<&dyn port::PendingActions> {
+        Some(&self.pending)
+    }
+}
+
+/// A session id of the API core as the cell's 16 bytes.
+fn session_bytes(s: port::SessionId) -> [u8; 16] {
+    s.raw().to_be_bytes()
+}
+
+/// The cell's 16-byte session id as the API core's id.
+fn session_id(s: [u8; 16]) -> port::SessionId {
+    port::SessionId::from_raw(u128::from_be_bytes(s))
+}
+
+/// The API core's login method of a cell session method.
+fn login_method(m: fstp_auth::Method) -> port::LoginMethod {
+    match m {
+        fstp_auth::Method::Passkey => port::LoginMethod::Passkey,
+        fstp_auth::Method::MagicLink => port::LoginMethod::MagicLink,
+        fstp_auth::Method::EudiWallet => port::LoginMethod::EudiWallet,
+        fstp_auth::Method::Opaque => port::LoginMethod::Opaque,
+    }
+}
+
+/// Whether a cell session method is phishing resistant (I-77).
+fn phishing_resistant(m: fstp_auth::Method) -> bool {
+    matches!(
+        m,
+        fstp_auth::Method::Passkey | fstp_auth::Method::EudiWallet
+    )
+}
+
+/// The token store of a serving cell: lane L2's port over its
+/// authorisation server. The agent admission takes the account's live
+/// grants of the client: the oldest family start and a phishing-resistant
+/// consent only if every live grant had one, so a doubt refuses (I-77,
+/// I-79, I-85).
+impl CellTokens for crate::oauth::tokens::CellTokens {
+    async fn agent_grant(
+        &self,
+        account: AccountId,
+        client: port::AgentClientId,
+        now: Timestamp,
+    ) -> Option<AgentGrant> {
+        let grants = self
+            .server()
+            .read(|s, guard, _| {
+                let a = fstp_oauth::Account::from_raw(account.raw());
+                s.agents_of(a, now.micros())
+                    .into_iter()
+                    .filter(|g| u128::from(g.client.raw()) == client.raw())
+                    .filter(|g| !guard.refused(a, g.start))
+                    .map(|g| (g.start, g.consent_method))
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .ok()?;
+        let start = grants.iter().map(|(s, _)| *s).min()?;
+        let strong = grants.iter().all(|(_, m)| {
+            matches!(
+                m,
+                fstp_oauth::LoginMethod::Passkey | fstp_oauth::LoginMethod::EudiWallet
+            )
+        });
+        Some(AgentGrant {
+            account,
+            family_started: Timestamp::from_micros(start),
+            phishing_resistant: strong,
+        })
+    }
+}

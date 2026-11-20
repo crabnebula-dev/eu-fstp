@@ -88,6 +88,14 @@ pub struct SideEffects {
     /// The bodies of the messages the batch's `EventFired` records list,
     /// in their order (M6 design section 3.1).
     pub outbox: Vec<crate::timeline::MessageBody>,
+    /// The pending action this command confirms (ADR-026, I-85): the
+    /// store inserts its one `api.pending_confirmed` row, naming the last
+    /// entry of the batch, and a second confirmation aborts the append.
+    pub pending_confirmed: Option<[u8; 16]>,
+    /// The canonical bodies of the API call's audit events (ADR-010
+    /// amendment of 2026-11-20). The store seals each into one kind 2 row
+    /// after the batch's ledger rows, under the same anchor.
+    pub audit_events: Vec<Vec<u8>>,
 }
 
 /// What the driver needs from the shell.
@@ -770,6 +778,12 @@ impl DriverCore {
                 .map(<[_]>::to_vec)
                 .unwrap_or_default();
         }
+        // ADR-026: the API core's pending confirmation and audit events
+        // commit with the command, never with a reaction.
+        if let Some(api) = self.admitted.inputs().api() {
+            side.pending_confirmed = api.pending;
+            side.audit_events = api.events.clone();
+        }
         self.append(state, batch, self.command, Pending::Command, side)
     }
 
@@ -819,7 +833,14 @@ impl DriverCore {
         else {
             return;
         };
-        let ctx = crate::decide::account_engine_ctx(before, actor, cmd, at, Some(self.command));
+        let ctx = crate::decide::account_engine_ctx(
+            before,
+            actor,
+            cmd,
+            at,
+            Some(self.command),
+            self.admitted.inputs().via(),
+        );
         crate::creator::hold_appended(before, after, cmd, &ctx, batch);
     }
 

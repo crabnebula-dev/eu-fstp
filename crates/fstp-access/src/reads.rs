@@ -133,6 +133,9 @@ pub enum ReadKind {
     GetVaultOutcomes,
     ListMyAgents,
     ListMyAgentActivity,
+    /// Lane L2 (ADR-013 amendment of 2026-11-20): the pending consent the
+    /// consent page shows, by its handle. Web only (I-85, I-86).
+    GetConsentRequest,
     ListMyPendingActions,
     ListMySessions,
     ListNotifiableConflicts,
@@ -234,7 +237,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 78] = [
+    pub const ALL: [ReadKind; 79] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -268,6 +271,7 @@ impl ReadKind {
         ReadKind::GetVaultOutcomes,
         ReadKind::ListMyAgents,
         ReadKind::ListMyAgentActivity,
+        ReadKind::GetConsentRequest,
         ReadKind::ListMyPendingActions,
         ReadKind::ListMySessions,
         ReadKind::ListNotifiableConflicts,
@@ -614,6 +618,7 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     ),
     (ReadKind::ListMyAgents, ReadRule::Own, OPEN_ALWAYS),
     (ReadKind::ListMyAgentActivity, ReadRule::Own, OPEN_ALWAYS),
+    (ReadKind::GetConsentRequest, ReadRule::Own, OPEN_ALWAYS),
     (ReadKind::ListMyPendingActions, ReadRule::Own, OPEN_ALWAYS),
     (ReadKind::ListMySessions, ReadRule::Own, OPEN_ALWAYS),
     (
