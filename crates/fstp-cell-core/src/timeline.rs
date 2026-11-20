@@ -250,6 +250,12 @@ impl TimelineState {
         self.idems.get(idem)
     }
 
+    /// Every fired message's idempotency key with its event (the delivery
+    /// log read, ADR-026 record of lane L5).
+    pub fn fired_messages(&self) -> impl Iterator<Item = (&Idem, &EventId)> {
+        self.idems.iter()
+    }
+
     /// Every `OutboxEnqueued` record of the ledger, by its sequence, with
     /// its entry time (M6 design section 4, kind `Immediate`).
     pub fn enqueued(&self) -> impl Iterator<Item = (u64, i64, &OutboxEvent)> {

@@ -285,7 +285,19 @@ fn sod09_accepted_invitation_grants_the_role_under_the_sod_guards() {
     let cell = world.cell(0).unwrap();
     let client = AuthClient::new(cell);
     let (admin, p) = draft(&client);
-    let r = invite(&client, &admin, p, INVITEE_EMAIL, "programme_manager");
+    let _ = manager_by_invitation(&client, &admin, p);
+}
+
+/// The SoD-09 path of [`sod09_accepted_invitation_grants_the_role_under_the_sod_guards`]:
+/// the invitee's session and cell account once it holds the role.
+fn manager_by_invitation(
+    client: &AuthClient<'_>,
+    admin: &Cookie,
+    p: ProgrammeId,
+) -> (Cookie, AccountId) {
+    let cell = client.cell();
+    let admin = admin.clone();
+    let r = invite(client, &admin, p, INVITEE_EMAIL, "programme_manager");
     assert_eq!(r.status, 200, "creator.invite: {}", text(&r));
     let token = tokens(cell, INVITEE_EMAIL).pop().expect("the link token");
     let digest = fstp_auth::ceremony::token_digest(&fstp_auth::codec::Token(token));
@@ -341,7 +353,7 @@ fn sod09_accepted_invitation_grants_the_role_under_the_sod_guards() {
     let invitation = fstp_api_core_link_invitation(&t);
     let grant = || {
         stepped(
-            &client,
+            client,
             "POST",
             &format!("/api/v1/programmes/{}/roles", p.raw()),
             &admin,
@@ -386,6 +398,7 @@ fn sod09_accepted_invitation_grants_the_role_under_the_sod_guards() {
         text(&granted)
     );
     assert!(held(), "J2: the invitee holds the invited role");
+    (invitee, account)
 }
 
 /// The creator invitation id a link token names, as the API core derives
@@ -398,4 +411,93 @@ fn fstp_api_core_link_invitation(token: &str) -> String {
     let mut head = [0u8; 16];
     head.copy_from_slice(&digest[..16]);
     u128::from_be_bytes(head).to_string()
+}
+
+/// R-NT-01, I-23 (M6 design section 6, ADR-026 record of lane L5): the
+/// programme manager's timeline lists the programme's scheduled and fired
+/// events by due instant, and the same events after a restart of the cell
+/// process, since the ledger's timeline fold holds them. The delivery log
+/// read needs the tenant part, which a world cell's ledger does not hold,
+/// so `fstp-pgstore` tests its page
+/// (`i26_delivery_heads_page_one_head_per_message_newest_first`).
+#[test]
+fn r_nt_01_timeline_reads_the_scheduled_events_after_a_restart() {
+    let world = world();
+    let cell = world.cell(0).unwrap();
+    let client = AuthClient::new(cell);
+    let (admin, p) = draft(&client);
+    let (manager, _) = manager_by_invitation(&client, &admin, p);
+    // A second invitation event of the programme, due tomorrow, stays
+    // scheduled: the timeline's own plan never cancels the kind.
+    let tomorrow = fstp_domain::time::Timestamp::from_micros(cell.clock().now() + 86_400_000_000);
+    let later = fstp_timeline::role_invitation_event(p, 0x0155_F00D, tomorrow);
+    let plan = fstp_cell_core::timeline::TimelineCommand::Plan {
+        records: vec![later.scheduled()],
+    };
+    cell.with_running(async |c| {
+        let engine = c.engine();
+        let id = fstp_timeline::command_id(engine.cell(), &plan);
+        let now = fstp_domain::time::Timestamp::from_micros(engine.now());
+        let admitted = fstp_cell_core::gate::admit_system(
+            &engine.state(),
+            fstp_cell_core::gate::Action::Command(fstp_cell_core::CellCommand::Timeline(
+                plan.clone(),
+            )),
+            fstp_cell_core::SystemTask::Timeline,
+            id,
+            now,
+        )
+        .unwrap();
+        engine.execute(admitted).await.unwrap();
+    })
+    .unwrap();
+    cell.timeline_tick().unwrap();
+    let path = format!("/api/v1/programmes/{}/timeline", p.raw());
+    let read = |who: &Cookie| {
+        let r = web(cell, "GET", &path, who, "");
+        assert_eq!(r.status, 200, "programme.timeline: {}", text(&r));
+        json(&r)
+    };
+    let rows = |v: &Value| -> Vec<(String, String, String)> {
+        let list = v
+            .as_array()
+            .cloned()
+            .or_else(|| v.get("events").and_then(Value::as_array).cloned())
+            .unwrap_or_else(|| panic!("no rows: {}", v.to_compact()));
+        list.iter()
+            .map(|e| {
+                let s = |k: &str| {
+                    e.get(k)
+                        .map(|x| x.as_str().map_or_else(|| x.to_compact(), str::to_owned))
+                        .unwrap_or_default()
+                };
+                (s("event"), s("kind"), s("status"))
+            })
+            .collect()
+    };
+    let before = rows(&read(&manager));
+    let kinds: Vec<(&str, &str)> = before
+        .iter()
+        .map(|(_, k, s)| (k.as_str(), s.as_str()))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ("role_invitation", "fired"),
+            ("role_invitation", "scheduled")
+        ],
+        "R-NT-01: {before:?}"
+    );
+    assert_eq!(before[1].0, hex(&later.id()));
+    cell.restart().unwrap_or_else(|e| panic!("{e}"));
+    cell.clock().advance(1);
+    let manager = client
+        .login(INVITEE, RefMethod::Passkey)
+        .unwrap()
+        .expect("the manager's session after the restart");
+    assert_eq!(
+        rows(&read(&manager)),
+        before,
+        "I-23: the timeline after a restart"
+    );
 }

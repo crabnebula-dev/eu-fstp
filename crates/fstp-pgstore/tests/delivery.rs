@@ -237,3 +237,41 @@ fn i26_ended_commit_lease_is_in_doubt_and_never_resent() {
         Vec::<[u8; 16]>::new()
     );
 }
+
+/// I-26, I-27, M6 design section 6 (ADR-026 record of lane L5): the
+/// delivery log page holds one head per message with a delivery row,
+/// newest head first, each with the facts of its last commit point when
+/// it has one. It holds no body. A page past the end is empty.
+#[test]
+fn i26_delivery_heads_page_one_head_per_message_newest_first() {
+    let (db, log, sent) = world();
+    let claimed = outbox_row(&db);
+    let _unsent = outbox_row(&db);
+    let at = |sql: String, t: i64| sql.replacen(", 1, '", &format!(", {t}, '"), 1);
+    for (o, a, p, t) in [
+        (&sent, 1, Phase::Claimed, 10),
+        (&sent, 1, Phase::Committing, 11),
+        (&sent, 1, Phase::Sent, 12),
+        (&claimed, 1, Phase::Claimed, 20),
+    ] {
+        db.psql_as("app", &at(insert(o, a, p), t))
+            .unwrap_or_else(|e| panic!("{e:?}"));
+    }
+    let heads = block_on(log.heads(10, 0)).unwrap();
+    let got: Vec<([u8; 16], Phase, i64, bool)> = heads
+        .iter()
+        .map(|(h, c)| (h.outbox, h.phase, h.at, c.is_some()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (claimed, Phase::Claimed, 20, false),
+            (sent, Phase::Sent, 12, true),
+        ]
+    );
+    assert_eq!(heads[1].1.map(|c| c.event), Some([1; 32]));
+    let second = block_on(log.heads(1, 1)).unwrap();
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].0.outbox, sent);
+    assert!(block_on(log.heads(10, 2)).unwrap().is_empty());
+}

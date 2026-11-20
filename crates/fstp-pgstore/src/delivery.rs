@@ -251,6 +251,16 @@ const HEAD_SQL: &str = "SELECT outbox_id, attempt, phase, at, worker, lease_unti
      template_version, body_digest, reply_code FROM ops.delivery WHERE outbox_id = $1 \
      ORDER BY attempt DESC, phase DESC LIMIT 1";
 
+const HEADS_SQL: &str = "SELECT d.outbox_id, d.attempt, d.phase, d.at, d.worker, d.lease_until, \
+     d.event, d.template_version, d.body_digest, d.reply_code FROM ops.delivery d \
+     WHERE NOT EXISTS (SELECT 1 FROM ops.delivery x WHERE x.outbox_id = d.outbox_id \
+     AND (x.attempt, x.phase) > (d.attempt, d.phase)) \
+     ORDER BY d.at DESC, d.outbox_id LIMIT $1 OFFSET $2";
+
+const COMMIT_SQL: &str = "SELECT outbox_id, attempt, phase, at, worker, lease_until, event, \
+     template_version, body_digest, reply_code FROM ops.delivery WHERE outbox_id = $1 \
+     AND phase = 2 ORDER BY attempt DESC LIMIT 1";
+
 const ROWS_SQL: &str = "SELECT outbox_id, attempt, phase, at, worker, lease_until, event, \
      template_version, body_digest, reply_code FROM ops.delivery WHERE outbox_id = $1 \
      ORDER BY attempt, phase";
@@ -346,6 +356,44 @@ impl<R: Runtime> DeliveryLog<R> {
             .await?;
         client.release();
         row.as_ref().map(row_of).transpose()
+    }
+
+    /// One page of the head rows of every message with a delivery row,
+    /// newest head first, then by row id: `limit` heads after the first
+    /// `offset` (the tenant's delivery log, M6 design section 6, ADR-026
+    /// record of lane L5). Each head comes with the facts of its message's
+    /// last COMMITTING row, if any, which name its event and template
+    /// version. A row holds no body and no address (I-27).
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault, or a stored row outside its constraints.
+    pub async fn heads(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<(DeliveryRow, Option<CommitFacts>)>, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let rows = client
+            .query(HEADS_SQL, &[&i64::from(limit), &i64::from(offset)])
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let head = row_of(r)?;
+            let commit = match head.commit {
+                Some(c) => Some(c),
+                None => client
+                    .query_opt(COMMIT_SQL, &[&Uuid::from_bytes(head.outbox)])
+                    .await?
+                    .as_ref()
+                    .map(row_of)
+                    .transpose()?
+                    .and_then(|c| c.commit),
+            };
+            out.push((head, commit));
+        }
+        client.release();
+        Ok(out)
     }
 
     /// Up to `limit` outbox rows of `kind` without a terminal delivery

@@ -757,6 +757,96 @@ pub fn role_invitation_firing(
     })
 }
 
+/// The programme the event `e` belongs to, read from its source, for the
+/// programme timeline (M6 design section 6, R-NT-01, ADR-026 record of
+/// lane L5). `None` for a cell-wide event, such as a signer rotation or a
+/// disabled passkey, and for a source the state no longer resolves.
+///
+/// A sweep event's source is the digest of its command, so it is matched
+/// against the sweep commands each proposal of the cell could have: its
+/// stage 2 expiry, start of execution, completion, and re-entry into each
+/// call of its programme.
+pub fn event_programme(
+    s: &CellState,
+    e: &fstp_cell_core::timeline::ScheduledEvent,
+) -> Option<ProgrammeId> {
+    let core = &s.engine().core;
+    let of_call = |c: CallId| fstp_domain::programme::call(core, c).map(|v| v.programme());
+    let of_proposal = |p: ProposalId| s.proposal(p).and_then(|(c, _)| of_call(c));
+    let id16 = |b: &[u8]| -> Option<u128> {
+        let head: [u8; 16] = b.get(..16)?.try_into().ok()?;
+        Some(u128::from_be_bytes(head))
+    };
+    match e.kind {
+        kind::IMMEDIATE => {
+            let seq = immediate_seq(&e.source)?;
+            let (_, _, ev) = s.timeline().enqueued().find(|(q, _, _)| *q == seq)?;
+            match ev {
+                OutboxEvent::ProposalOutcome { proposal, .. }
+                | OutboxEvent::IrcConcern { proposal, .. }
+                | OutboxEvent::NotifiableConflict { proposal, .. }
+                | OutboxEvent::CopyRequested { proposal, .. } => of_proposal(*proposal),
+                OutboxEvent::BindingEnded { binding } => {
+                    core.roster().binding(*binding).map(|b| b.programme)
+                }
+            }
+        }
+        kind::CORRIGENDUM => of_call(CallId::from_raw(id16(&e.source)?)),
+        kind::RETENTION_END => of_proposal(ProposalId::from_raw(id16(&e.source)?)),
+        kind::REPORTING_PERIOD_END | kind::REPORT_DEADLINE => {
+            id16(&e.source).map(ProgrammeId::from_raw)
+        }
+        kind::ROLE_INVITATION => role_invitation_programme(&e.source),
+        kind::STAGE2_EXPIRY | kind::RE_ENTER | kind::START_EXECUTION | kind::COMPLETE => {
+            s.proposals().find_map(|(proposal, call)| {
+                let programme = of_call(call)?;
+                let mut candidates = vec![
+                    fstp_domain::Command::ExpireStage2 { proposal },
+                    fstp_domain::Command::StartExecution { proposal },
+                    fstp_domain::Command::Complete { proposal },
+                ];
+                for (next, _) in core.calls().iter() {
+                    if of_call(next) == Some(programme) {
+                        candidates.push(fstp_domain::Command::ReEnter {
+                            proposal,
+                            call: next,
+                        });
+                    }
+                }
+                candidates
+                    .iter()
+                    .any(|c| command_source(c) == e.source)
+                    .then_some(programme)
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The template of the email an event fires, by its kind and, for an
+/// immediate event, its outbox record (the delivery log read, ADR-026
+/// record of lane L5). `None` for an event that sends no email.
+pub fn event_template(s: &CellState, event: &EventId) -> Option<TemplateId> {
+    let e = s.timeline().event(event)?;
+    match e.kind {
+        kind::IMMEDIATE => {
+            let seq = immediate_seq(&e.source)?;
+            let (_, _, ev) = s.timeline().enqueued().find(|(q, _, _)| *q == seq)?;
+            match ev {
+                OutboxEvent::ProposalOutcome { .. } => Some(TemplateId::ProposalOutcome),
+                OutboxEvent::IrcConcern { .. } => Some(TemplateId::IrcConcern),
+                OutboxEvent::NotifiableConflict { .. } => Some(TemplateId::NotifiableConflict),
+                OutboxEvent::CopyRequested { .. } => Some(TemplateId::SubmissionCopy),
+                OutboxEvent::BindingEnded { .. } => None,
+            }
+        }
+        kind::CORRIGENDUM => Some(TemplateId::Corrigendum),
+        kind::PASSKEY_DISABLED => Some(TemplateId::PasskeyDisabled),
+        kind::ROLE_INVITATION => Some(TemplateId::RoleInvitation),
+        _ => None,
+    }
+}
+
 /// Whether the tenant set a mail relay (ADR-018). Without one no email
 /// leaves the cell, so a notice by email is skipped.
 pub fn mail_relay_set(s: &CellState) -> bool {

@@ -140,7 +140,7 @@ pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     recovery: closed::ClosedRecovery,
     break_glass: closed::ClosedBreakGlass,
     tenant: tenant::CellTenant<R, V>,
-    outbox: tenant::CellOutbox,
+    outbox: tenant::CellOutbox<R, V>,
     prober: closed::ClosedProber,
     clock: tenant::CellClock<R, V>,
     ids: tenant::CellIds,
@@ -201,7 +201,7 @@ where
         recovery: closed::ClosedRecovery,
         break_glass: closed::ClosedBreakGlass,
         tenant: tenant::CellTenant(Arc::clone(&inner)),
-        outbox: tenant::CellOutbox,
+        outbox: tenant::CellOutbox(Arc::clone(&inner)),
         prober: closed::ClosedProber,
         clock: tenant::CellClock(Arc::clone(&inner)),
         ids: tenant::CellIds,
@@ -232,7 +232,7 @@ where
     type Recovery = closed::ClosedRecovery;
     type BreakGlass = closed::ClosedBreakGlass;
     type Tenant = tenant::CellTenant<R, V>;
-    type Outbox = tenant::CellOutbox;
+    type Outbox = tenant::CellOutbox<R, V>;
     type Prober = closed::ClosedProber;
     type Clock = tenant::CellClock<R, V>;
     type Ids = tenant::CellIds;

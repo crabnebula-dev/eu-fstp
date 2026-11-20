@@ -114,3 +114,42 @@ fn i26_role_invitation_fires_one_message_once() {
     assert!(role_invitation_firing(&c.state, &d.id(), &m, b"again".to_vec(), at).is_none());
     assert!(c.run(f.command, f.bodies, at).is_err(), "I-26: fired twice");
 }
+
+/// R-NT-01 (M6 design section 6, ADR-026 record of lane L5): an
+/// invitation event belongs to its programme only, and every immediate
+/// event of the scenario resolves to the programme of its proposal, so
+/// the programme timeline read lists each event under one programme.
+#[test]
+fn r_nt_01_events_resolve_to_their_programme() {
+    let mut c = cell();
+    let at = now(&c, 1);
+    c.enqueue(
+        at.micros(),
+        fstp_domain::record::OutboxEvent::NotifiableConflict {
+            proposal: fstp_domain_testkit::r#gen::review::PR1,
+        },
+    );
+    let d = role_invitation_event(PROGRAMME, 79, at);
+    c.run(
+        TimelineCommand::Plan {
+            records: vec![d.scheduled()],
+        },
+        Vec::new(),
+        at,
+    )
+    .unwrap();
+    c.tick(at).unwrap();
+    let t = c.state.timeline();
+    let e = t.event(&d.id()).unwrap();
+    assert_eq!(fstp_timeline::event_programme(&c.state, e), Some(PROGRAMME));
+    let mut immediate = 0;
+    for (_, e) in t.events().filter(|(_, e)| e.kind == kind::IMMEDIATE) {
+        immediate += 1;
+        let p = fstp_timeline::event_programme(&c.state, e);
+        assert!(
+            p.is_some_and(|p| p != PROGRAMME),
+            "an immediate event without its programme: {e:?}"
+        );
+    }
+    assert!(immediate > 0, "the scenario enqueued nothing");
+}
