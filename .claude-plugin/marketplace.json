@@ -1,0 +1,11 @@
+{
+  "name": "eu-fstp",
+  "owner": { "name": "CrabNebula Ltd" },
+  "plugins": [
+    {
+      "name": "fstp-programmes",
+      "source": "./integrations/claude/fstp-programmes",
+      "description": "Set up and manage FSTP funding programmes and calls on an EU FSTP cell through its MCP server."
+    }
+  ]
+}
