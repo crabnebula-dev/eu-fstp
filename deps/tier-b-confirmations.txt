@@ -12,8 +12,11 @@
 # deps/allowlist.txt pins. For a git package it is the full commit id of
 # its allowlist source string (ADR-001 A3).
 # No confirmation is recorded in M3.
+# moduletto: confirmed by Daniel on 2026-11-20 on the Mythos 5.2 review of
+# 2026-11-20 and its remediation (ADR-001 release gate table).
 tier-b moduletto
 tier-b der
 tier-b spki
 tier-b x509-cert
 tier-b cms
+confirmed moduletto 0.1.0 ded73e577220b7ae620d3a3db8d66f07904aa726 2026-11-20 moduletto audits/README.md at ded73e57, Mythos 5.2 review 2026-11-20

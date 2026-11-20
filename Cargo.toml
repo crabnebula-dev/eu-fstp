@@ -121,7 +121,7 @@ rustls-webpki = { version = "=0.103.16", default-features = false, features = ["
 zeroize = { version = "=1.9.1" }
 # ADR-001 Tier B, A2 and A3: git dependency pinned to one full commit, default features only.
 # Release-gated (I-74). Only fstp-crypto depends on it (design section 2.4 rule 8).
-moduletto = { git = "https://github.com/crabnebula-dev/moduletto", rev = "6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683" }
+moduletto = { git = "https://github.com/crabnebula-dev/moduletto", rev = "ded73e577220b7ae620d3a3db8d66f07904aa726" }
 # ADR-001 Tier B, record of 2026-11-06 (M5 lane L-PDF): the RustCrypto formats crates for
 # CMS signed attributes and certificate parsing in fstp-pki only. Release-gated (I-74).
 der = { version = "=0.7.10", default-features = false, features = ["alloc", "oid"] }
