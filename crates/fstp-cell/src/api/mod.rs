@@ -16,6 +16,8 @@
 //! - `audit`: `AuditSink` and `VaultAudit` as kind 2 events of the App
 //!   chain, flushed through the engine's single writer before a call is
 //!   answered (ADR-010 amendment of 2026-11-20).
+//! - `facts`: the seam of the shell facts the engine port reads (lane L6
+//!   plugs in at merge).
 //! - `content`: `TextStore` over the cell's erasure task, `Sealer` and
 //!   `Workspaces` over `workspace.drafts`, the `PendingActions` port over
 //!   `api.pending_actions`, and a fail-closed `BlobStore`.
@@ -38,6 +40,7 @@ mod audit;
 mod closed;
 mod content;
 mod engine;
+pub(crate) mod facts;
 pub(crate) mod mail;
 mod session;
 mod tenant;
@@ -97,6 +100,10 @@ pub(crate) struct ApiParts<R: Runtime, V> {
     /// The relay the ports deliver through, if the cell has one (ADR-026
     /// record of lane L5).
     pub relay: Option<mail::SharedRelay>,
+    /// The shell facts the engine port decides creator commands and
+    /// publications with, and the API core's creator inputs (`facts`).
+    /// `None` reads the route backend's facts, as before.
+    pub facts: Option<Arc<dyn facts::ShellFacts>>,
 }
 
 /// The shared state of every port of one cell.
@@ -112,6 +119,7 @@ pub(crate) struct Inner<R: Runtime, V> {
     host: String,
     app: fstp_pgstore::Pool<R>,
     relay: Option<mail::SharedRelay>,
+    facts: Arc<dyn facts::ShellFacts>,
     audit: audit::Buffer,
     stepups: session::Begun,
 }
@@ -168,7 +176,9 @@ where
         host,
         app,
         relay,
+        facts,
     } = parts;
+    let facts = facts.unwrap_or_else(|| Arc::new(facts::BackendFacts(Arc::clone(&backend))));
     let inner = Arc::new(Inner {
         cell,
         audit: audit::Buffer::new(engine.clone()),
@@ -182,6 +192,7 @@ where
         host,
         app,
         relay,
+        facts,
         stepups: session::Begun::default(),
     });
     let tokens = Arc::new(tokens);

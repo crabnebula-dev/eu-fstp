@@ -123,16 +123,18 @@ where
     T: CellTokens,
 {
     /// The creator facts and Guide inputs a command reads, as the cell's
-    /// command route adds them.
-    fn with_facts(&self, s: &CellState, a: Admitted) -> Admitted {
+    /// command route adds them, from the shell facts seam
+    /// (`super::facts::ShellFacts`).
+    async fn with_facts(&self, s: &CellState, a: Admitted) -> Admitted {
+        let shell = &self.inner.facts;
         let facts = match a.action() {
             Action::Command(CellCommand::Engine(fstp_engine::Command::Creator(c))) => {
-                Some(self.inner.backend.creator_facts(s, c))
+                Some(shell.creator_facts(s, c).await)
             }
             Action::Command(CellCommand::Engine(fstp_engine::Command::Core(
                 fstp_domain::command::Command::PublishCall { call, .. },
             ))) => Some(fstp_cell_core::creator::CreatorFacts {
-                guide: self.inner.backend.guide_inputs(s, *call),
+                guide: shell.guide_inputs(s, *call).await,
                 ..Default::default()
             }),
             _ => None,
@@ -226,7 +228,7 @@ where
         let action = Action::Command(CellCommand::Engine(cmd.clone()));
         let admitted = match gate::admit_dry_run(&s, account, action, ctx.command.bytes(), ctx.now)
         {
-            Ok(a) => self.with_facts(&s, a),
+            Ok(a) => self.with_facts(&s, a).await,
             Err(d) => {
                 let r = match denied(d) {
                     ExecError::Refused(r) => r,
@@ -291,6 +293,7 @@ where
         .ok_or(ExecError::Port(PortError::Refused))?;
         let admitted = self
             .with_facts(&s, admitted)
+            .await
             .with_sessions(session_rows(&rows))
             .with_api(ApiEffects {
                 pending: meta.pending.map(|p| p.raw().to_be_bytes()),
@@ -330,6 +333,20 @@ where
         let e = Arc::new(s.engine().clone());
         *cached = Some((s, Arc::clone(&e)));
         e
+    }
+
+    /// The shell facts seam's inputs, or the API core's default
+    /// (`super::facts`).
+    fn creator_inputs(
+        &self,
+        state: &EngineState,
+        cmd: &fstp_creator::CreatorCommand,
+        ctx: &Ctx,
+    ) -> fstp_creator::CreatorInputs {
+        self.inner
+            .facts
+            .creator_inputs(state, cmd, ctx)
+            .unwrap_or_else(|| super::facts::default_creator_inputs(state, cmd, ctx))
     }
 
     fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {

@@ -838,6 +838,9 @@ where
                 host: host.clone(),
                 app: app_pool.clone(),
                 relay: api_relay,
+                // Lane L5 seam: the shell facts of lane L6 plug in here at
+                // merge. `None` reads the route backend's facts.
+                facts: None,
             };
             // Lane L2's token store over the same authorisation server.
             let tokens = crate::oauth::tokens::CellTokens::new(Arc::clone(&oauth));
