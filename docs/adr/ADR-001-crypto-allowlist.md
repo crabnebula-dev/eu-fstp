@@ -47,7 +47,7 @@ Tier B crates may be used throughout development. No release ships a Tier B crat
 
 | Crate | Version | Source hash | Confirmed on | Findings |
 | --- | --- | --- | --- | --- |
-| moduletto | 0.1.0 | git commit `ded73e577220b7ae620d3a3db8d66f07904aa726` | 2026-11-20 | Claude Mythos 5.2 review of 2026-11-20, recorded in moduletto `audits/README.md` at `ded73e57`: findings re-checked at `6c1ae92`, the three low findings remediated in `0970a00`, informational items open. Daniel confirmed `ded73e57` for release on 2026-11-20, accepting the remediation without a further review |
+| moduletto | 0.1.0 | ded73e577220b7ae620d3a3db8d66f07904aa726 | 2026-11-20 | moduletto audits/README.md at ded73e57, Mythos 5.2 review 2026-11-20 |
 
 ## Hybrid rule (I-75, I-90)
 
