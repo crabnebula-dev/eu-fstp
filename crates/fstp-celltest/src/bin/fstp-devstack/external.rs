@@ -23,6 +23,11 @@
 //! The binary must be built first: `tools/devstack/run.sh external-cell`
 //! builds it.
 
+#![allow(
+    clippy::disallowed_macros,
+    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
+)]
+
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
