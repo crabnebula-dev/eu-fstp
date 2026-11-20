@@ -28,6 +28,13 @@
 //! the route answers 404 and passkeys work as before. The flag, its route
 //! and its bypass live in this test-only binary only (layering rule A9).
 //!
+//! Lane mcp-demo: each cell origin also serves the OAuth endpoints of its
+//! token port's authorisation server ([`oauth`]), so an MCP client such
+//! as Claude Code connects to its `/mcp`. With `--public-origin <origin>`
+//! cell `a` names that origin everywhere, as behind an HTTPS tunnel.
+//! With `--log-requests <file>` each request to a cell origin is logged
+//! to the file, with no query, body, cookie or token.
+//!
 //! Interim readings, pending Daniel:
 //!
 //! - The cells are plain HTTP on loopback. A host under `.localhost` is a
@@ -55,6 +62,7 @@ mod demo;
 mod demo_signin;
 mod grantdemo;
 mod maildemo;
+mod oauth;
 mod onboarding;
 #[cfg(test)]
 mod pagegate;
@@ -64,6 +72,10 @@ mod pump;
 mod scenario;
 mod wire;
 
+#[cfg(test)]
+mod mcpdemo_tests;
+
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -104,6 +116,16 @@ struct Config {
     manifest_out: Option<PathBuf>,
     /// Whether the demo sign-in of [`demo_signin`] is on (`--demo-signin`).
     demo_signin: bool,
+    /// The public origin of cell `a`, when it is reached through an HTTPS
+    /// tunnel (`--public-origin`). The cell's pages, its CSRF and `Origin`
+    /// rules, its OAuth issuer and its MCP resource all name it, so a
+    /// remote MCP client such as a claude.ai connector can use the cell.
+    /// The listener stays on loopback.
+    public_origin: Option<String>,
+    /// The file that logs each request to a cell origin, one line each,
+    /// with its method, path, MCP fields and status (`--log-requests`).
+    /// No query, body, cookie or token is logged.
+    log_requests: Option<PathBuf>,
 }
 
 impl Config {
@@ -114,6 +136,8 @@ impl Config {
             web: None,
             manifest_out: None,
             demo_signin: false,
+            public_origin: None,
+            log_requests: None,
         }
     }
 
@@ -142,6 +166,15 @@ impl Config {
                     ));
                 }
                 "--demo-signin" => cfg.demo_signin = true,
+                "--public-origin" => {
+                    let v = args.next().ok_or("--public-origin needs an origin")?;
+                    cfg.public_origin = Some(public_origin(&v)?);
+                }
+                "--log-requests" => {
+                    cfg.log_requests = Some(PathBuf::from(
+                        args.next().ok_or("--log-requests needs a file")?,
+                    ));
+                }
                 // M7 lane L-DEMO: `synthetic` (the default) or `replay:<dir>`.
                 "--assessor" => crate::assess::set_mode(crate::assess::Mode::parse(
                     &args.next().ok_or("--assessor needs a value")?,
@@ -160,6 +193,23 @@ impl Config {
             self.port.saturating_add(i)
         };
         SocketAddr::from(([127, 0, 0, 1], port))
+    }
+}
+
+/// The serialised public origin `v`: an `https` origin, as a tunnel
+/// gives, or plain `http` to a loopback or `.localhost` host. Anything
+/// else is refused, so no cell names a plain `http` origin on the network.
+fn public_origin(v: &str) -> Result<String, String> {
+    let o = parse_origin_header(v.as_bytes()).map_err(|e| format!("--public-origin {v}: {e}"))?;
+    let text = o.to_string();
+    let host = o.host();
+    let local = host == "127.0.0.1" || host == "[::1]" || host.ends_with(".localhost");
+    if text.starts_with("https://") || (text.starts_with("http://") && local) {
+        Ok(text)
+    } else {
+        Err(format!(
+            "--public-origin {v}: use https, or http on loopback"
+        ))
     }
 }
 
@@ -200,7 +250,10 @@ impl Inner {
             r.endpoint = Some(crate::assess::endpoint());
         }
         seams.settings = Arc::new(settings);
-        let ports = FakePorts::new(world, seams).map_err(|e| e.to_string())?;
+        let mut ports = FakePorts::new(world, seams).map_err(|e| e.to_string())?;
+        // Lane mcp-demo: the authorisation server of the cell's origin,
+        // shared by every state, with every earlier grant ended.
+        ports.tokens = site.tokens.sharing_oauth();
         // ADR-021: a cell whose ledger holds no tenant part is not active,
         // so every scene must found its organisation through onboarding.
         ports.tenant.set_organisation_active(false);
@@ -267,6 +320,10 @@ pub(crate) struct SiteInfo {
     pub(crate) auth_assets: Arc<AuthAssets>,
     /// Whether the demo sign-in is on (`--demo-signin`).
     pub(crate) demo_signin: bool,
+    /// The token port whose authorisation server every state of the cell
+    /// shares, so an agent's registration outlives a reset or a scene and
+    /// its grants do not (lane mcp-demo, [`oauth`]).
+    pub(crate) tokens: fstp_api_testkit::fake::FakeTokens,
 }
 
 /// One cell: what it is and its current state.
@@ -327,13 +384,57 @@ fn vault_page(req: &Request) -> Response {
     r
 }
 
-/// The handler of a cell origin listener.
-struct CellOrigin(Arc<Site>);
+/// The request log of `--log-requests`: a file shared by the listeners.
+type RequestLog = Arc<Mutex<std::fs::File>>;
+
+/// The handler of a cell origin listener, and the request log of
+/// `--log-requests`, if any.
+struct CellOrigin(Arc<Site>, Option<RequestLog>);
+
+/// The value of header `name` of `req` for the request log: printable
+/// ASCII of at most 96 bytes, else `-`.
+fn log_field(req: &Request, name: &str) -> String {
+    req.headers
+        .get(name)
+        .map(|v| v.as_bytes())
+        .filter(|b| b.len() <= 96 && b.iter().all(|c| (0x20..=0x7e).contains(c)))
+        .map_or_else(
+            || "-".to_owned(),
+            |b| String::from_utf8_lossy(b).into_owned(),
+        )
+}
 
 impl Handler for CellOrigin {
     fn handle(&self, req: Request) -> impl Future<Output = Response> + Send {
         let site = Arc::clone(&self.0);
+        let log = self.1.clone();
         async move {
+            let Some(log) = log else {
+                return Self::answer(&site, req).await;
+            };
+            // Lane mcp-demo: what an MCP client sends, for the ADR-013
+            // record. No query, body, cookie or token is written.
+            let line = format!(
+                "{} {} mcp-method={} mcp-name={} mcp-protocol-version={} session={} auth={} ua={}",
+                req.method,
+                req.target.path(),
+                log_field(&req, "mcp-method"),
+                log_field(&req, "mcp-name"),
+                log_field(&req, "mcp-protocol-version"),
+                req.headers.get("mcp-session-id").is_some(),
+                req.headers.get("authorization").is_some(),
+                log_field(&req, "user-agent"),
+            );
+            let r = Self::answer(&site, req).await;
+            let _ = writeln!(lock(&log), "{line} -> {}", r.status.as_u16());
+            r
+        }
+    }
+}
+
+impl CellOrigin {
+    async fn answer(site: &Site, req: Request) -> Response {
+        {
             if for_vault(&site.info, &req) {
                 if let Some(r) = grantdemo::vault_read(&site.inner(), &req) {
                     return r;
@@ -346,7 +447,7 @@ impl Handler for CellOrigin {
             // already; this covers the M3 pages, their assets and the
             // demo routes.
             let page = serves_pages(req.target.path()) && fstp_http::is_page_navigation(&req);
-            let r = cell_origin(&site, req).await;
+            let r = cell_origin(site, req).await;
             if page && matches!(r.status.as_u16(), 400 | 404) {
                 return to_home();
             }
@@ -414,6 +515,11 @@ async fn cell_origin(site: &Site, req: Request) -> Response {
             None => r,
         };
     }
+    // Lane mcp-demo: the OAuth endpoints of the cell's authorisation
+    // server, in front of the ADR-013 refusal of `fstp-web`.
+    if oauth::is_route(&path) {
+        return oauth::handle(&site.info, &inner, req).await;
+    }
     if path == onboarding::INVITE_ROUTE && req.method == Method::POST {
         return onboarding::invite_admin(&inner, req).await;
     }
@@ -437,6 +543,10 @@ impl Handler for ControlBase {
 /// The running cells. They serve until dropped.
 struct Running {
     sites: Vec<Arc<Site>>,
+    /// The loopback address of each cell origin listener, in the order
+    /// of `sites`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    cell_addrs: Vec<SocketAddr>,
     _servers: Vec<ServerHandle<TokioRuntime>>,
     _rt: TokioRuntime,
 }
@@ -476,6 +586,17 @@ fn start(cfg: &Config) -> Result<Running, String> {
         ..ServerConfig::default()
     };
     let mut sites = Vec::new();
+    let mut cell_addrs = Vec::new();
+    let log: Option<RequestLog> = match &cfg.log_requests {
+        Some(path) => Some(Arc::new(Mutex::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|e| format!("open {}: {e}", path.display()))?,
+        ))),
+        None => None,
+    };
     let mut servers = Vec::new();
     for (i, name) in (0u16..).zip(CELLS) {
         let cell_listener = rt
@@ -486,10 +607,22 @@ fn start(cfg: &Config) -> Result<Running, String> {
             .map_err(|e| e.to_string())?;
         let cell_addr = cell_listener.local_addr().map_err(|e| e.to_string())?;
         let control_addr = control_listener.local_addr().map_err(|e| e.to_string())?;
-        let host = format!("{name}.{PARENT}");
+        let (host, origin) = match (&cfg.public_origin, i) {
+            // `--public-origin` names cell `a`, the demo cell.
+            (Some(o), 0) => {
+                let parsed = parse_origin_header(o.as_bytes()).map_err(|e| e.to_string())?;
+                (parsed.host().to_owned(), o.clone())
+            }
+            _ => {
+                let host = format!("{name}.{PARENT}");
+                let origin = format!("http://{host}:{}", cell_addr.port());
+                (host, origin)
+            }
+        };
         let info = SiteInfo {
             name,
-            origin: format!("http://{host}:{}", cell_addr.port()),
+            tokens: fstp_api_testkit::fake::FakeTokens::for_test_cell(&origin)?,
+            origin,
             control: format!("http://{control_addr}"),
             host,
             assets: assets.clone(),
@@ -502,21 +635,27 @@ fn start(cfg: &Config) -> Result<Running, String> {
             info,
         });
         servers.push(
-            Server::new(rt.clone(), server_cfg(), CellOrigin(Arc::clone(&site)))
-                .serve(cell_listener)
-                .map_err(|e| e.to_string())?,
+            Server::new(
+                rt.clone(),
+                server_cfg(),
+                CellOrigin(Arc::clone(&site), log.clone()),
+            )
+            .serve(cell_listener)
+            .map_err(|e| e.to_string())?,
         );
         servers.push(
             Server::new(rt.clone(), server_cfg(), ControlBase(Arc::clone(&site)))
                 .serve(control_listener)
                 .map_err(|e| e.to_string())?,
         );
+        cell_addrs.push(cell_addr);
         sites.push(site);
     }
     pump::spawn(sites.clone());
     maildemo::start(&rt, sites.iter().take(1).cloned().collect())?;
     let running = Running {
         sites,
+        cell_addrs,
         _servers: servers,
         _rt: rt,
     };
@@ -756,5 +895,23 @@ mod tests {
         );
         assert!(!Config::from_args(Vec::new()).unwrap().demo_signin);
         assert_eq!(Config::from_args(Vec::new()).unwrap(), Config::loopback());
+        // Lane mcp-demo: a public origin is https, or http on loopback.
+        let public =
+            Config::from_args(["--public-origin".to_owned(), "https://x.example".to_owned()]);
+        assert_eq!(
+            public.unwrap().public_origin.as_deref(),
+            Some("https://x.example")
+        );
+        assert!(
+            Config::from_args(["--public-origin".to_owned(), "http://x.example".to_owned()])
+                .is_err()
+        );
+        assert!(Config::from_args(["--public-origin".to_owned()]).is_err());
+        assert!(
+            Config::from_args(["--log-requests".to_owned(), "r.log".to_owned()])
+                .unwrap()
+                .log_requests
+                .is_some()
+        );
     }
 }
