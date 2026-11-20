@@ -35,7 +35,11 @@ Ask Claude, for example: "Set up a new programme from the Horizon Europe funder 
 
 ## Trying it on the demo cell
 
-The demo cell runs on your own machine with synthetic data. Follow `docs/guide/claude-connector-demo.md`. When the plugin asks for the URL, enter `http://localhost:8640/mcp`.
+The demo cell runs on your own machine with synthetic data. Follow `docs/guide/claude-connector-demo.md`. When the plugin asks for the URL, enter the demo address below.
+
+```text
+http://localhost:8640/mcp
+```
 
 ## Confirming prepared actions
 

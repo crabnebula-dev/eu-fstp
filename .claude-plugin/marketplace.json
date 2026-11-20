@@ -1,6 +1,7 @@
 {
   "name": "eu-fstp",
   "owner": { "name": "CrabNebula Ltd" },
+  "description": "Claude plugins for EU FSTP cells.",
   "plugins": [
     {
       "name": "fstp-programmes",
