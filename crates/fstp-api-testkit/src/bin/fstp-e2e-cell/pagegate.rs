@@ -54,6 +54,7 @@ fn info() -> SiteInfo {
             .unwrap(),
         auth_assets: std::sync::Arc::new(crate::assets::AuthAssets::empty()),
         demo_signin: false,
+        tokens: fstp_api_testkit::fake::FakeTokens::default(),
     }
 }
 

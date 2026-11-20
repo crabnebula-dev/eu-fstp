@@ -241,3 +241,69 @@ Every Allow mark is a read or an edit of a draft record. Interim, pending Daniel
 - A reviewer pool as its own object. The pool is the committee and IRC invitations and grants of a programme, which the tools above prepare.
 - A separate budget, envelope, criteria, timeline or Guide editor. Each is a draft field or narrative of the creator, saved through `creator.save_fields` or `creator.edit_narrative`, and a call's dates and budget through `call.draft` and `call.edit`.
 - Setting P-75 or P-77 on an active programme. After activation the creator saves P-09 alone (lane m4/fast-flow), so neither has an edit route there.
+
+## Record of lane mcp-demo (2026-11-20)
+
+Daniel asked that Claude Code and claude.ai act on the demo cell through its MCP server. This record states what the current Claude Code sends, and what the lane built so that both it and the pinned revision work. Every fact about the revision is a paraphrase. No specification text is quoted.
+
+### Evidence
+
+- The client was the real Claude Code CLI, version 2.1.328 for darwin arm64, run with its own configuration directory so no setting of Daniel's changed.
+- The first capture used `nc` as a listener, before the cell served anything. Every later fact comes from the e2e cell started with `--log-requests`, which writes method, path, MCP fields and status, and never a query, body, cookie or token.
+- The browser side of the OAuth flow was played with `curl`: the demo sign-in of programme manager M1, the consent page, the approval and the demo step-up. Claude Code's own loopback callback then received the code and redeemed it.
+- One non-interactive `claude -p` call with the model Haiku then called two tools against the cell, with an access token passed in a temporary MCP configuration.
+
+### What Claude Code 2.1.328 sends
+
+| Step | Observed |
+| --- | --- |
+| First request | `POST /mcp` with the method `server/discover`, the string id `server-discover-probe-1`, `_meta` naming revision 2026-07-28 and the client's identity and capabilities. The headers carry `MCP-Protocol-Version: 2026-07-28` and `Mcp-Method: server/discover`, and accept both JSON and an event stream |
+| Discovery after a 401 | It reads `resource_metadata` from the challenge, then fetches the protected resource metadata and the authorisation server metadata. These two GETs carry `MCP-Protocol-Version: 2025-11-25` |
+| Discovery without a 401 | `claude mcp login` asks first for the path form `/.well-known/oauth-protected-resource/mcp`. When that failed, it fell back to the server metadata at the root, then sent the authorisation request with neither `resource` nor `scope`, which the server refused as `invalid_target` |
+| Registration | Open registration succeeds. The client names itself `Claude Code (<server name>)` and registers one redirect URI, `http://localhost:<random port>/callback` |
+| Authorisation | PKCE `S256`, a `state`, `resource` equal to the MCP URL, and `scope` listing every scope of `scopes_supported` |
+| Token | It refuses to send a token request to a plain `http` endpoint unless the host is `localhost`, `127.0.0.1` or `::1`. A `.localhost` subdomain such as `a.fstp.localhost` is not exempt |
+| After the token | `server/discover`, then `tools/list`, both modern, with no session id. Each `tools/call` carries `Mcp-Name` equal to the tool name |
+| Legacy fallback | Before this lane the server spoke the legacy revision only. `claude mcp list` still reported `/mcp/public` as connected, which matches the fallback to `initialize` on a 400 that carries no modern error |
+| A restarted cell | The client keeps the `client_id` it registered. A restarted cell no longer knows it and refuses the request as `invalid_client`. `claude mcp logout <name>` drops it, and the next login registers again |
+| User agents | `claude-code/2.1.328 (...)` on `/mcp`, and `Bun/1.4.4` on discovery, registration and the token endpoint |
+
+### Facts of revision 2026-07-28 used here
+
+- A modern request names its protocol version in `_meta`. The `MCP-Protocol-Version` header must equal it.
+- Each request names its method in `Mcp-Method`. A tool call names its tool in `Mcp-Name`. A missing or different value gets 400 with JSON-RPC error -32020.
+- A version the server does not serve gets 400 with error -32022. Its data lists the supported versions and the requested one.
+- A method the server does not offer gets 404 with -32601.
+- `server/discover` is mandatory. It answers the supported versions, the capabilities and the server's identity under `_meta`.
+- Every result names its `resultType`. No session exists, and a server ignores a session id it receives.
+- A server may serve both eras on one endpoint. A request with modern `_meta` is served without a session, and `initialize` selects the legacy rules.
+- A client that meets a 400 without a recognised modern error falls back to `initialize`.
+
+### What the lane built
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Two eras | `fstp-mcp` serves a request with a `_meta` protocol version as a modern request of 2026-07-28. Every other request keeps the legacy rules of the floor revision, with `initialize` and a session. The Transport rows above hold for legacy requests | Pinned revision; Claude Code 2.1.328 |
+| Modern rules | The shared rules run first: `GET` gets 405, then `Origin`, then the bearer token on `/mcp`, then media types and the JSON-RPC body. Then the header checks, the version check, and the method | Pinned revision |
+| Modern methods | `server/discover`, `tools/list` and `tools/call`. `server/discover` and `tools/list` on `/mcp` judge the token like `initialize` does. Any other method, the legacy `ping` included, gets 404 | Pinned revision; Methods row |
+| Discovery result | `supportedVersions` names 2026-07-28 only, since the legacy floor is reached through `initialize`. The capabilities offer tools. The white-labelled name sits under `_meta`. No `instructions` member is sent | Q43; `serverInfo.name` row |
+| `Mcp-Name` | Compared byte for byte. A Base64 sentinel value is refused as a mismatch, since no tool name of the registry needs it | Interim, pending Daniel |
+| Unsupported version | Its error data echoes the requested version. The header admits only visible ASCII of at most 32 bytes, so the echo stays bounded | Interim, pending Daniel |
+| Resource metadata | `fstp-web` also serves it at `/.well-known/oauth-protected-resource/mcp`, the RFC 9728 path form. Challenges still name the root form, as the "Metadata location" reading says | RFC 9728; Claude Code 2.1.328 |
+| OAuth endpoints | The e2e cell mounts `/oauth/register`, `/oauth/authorize`, `/oauth/token` and `/oauth/revoke` over the `fstp-oauth` server of its token port. `fstp-web` keeps the typed refusal, so the production cell is unchanged | Consequences; lane m4/api-gaps record |
+| Token port | The fake token port resolves access tokens of its `fstp-oauth` server for the API core, so dispatch judges a real token on every call (I-84) | I-84; Roles row |
+| Consent page | Server-rendered, with no script. It shows the client name as unverified text, the redirect host and each scope in plain words. Approval calls `agents.consent` through the cell's own API with the browser's session, so I-77, I-85 and I-78 run there | Consent row |
+| Form posts | A plain form cannot send `X-FSTP-Request`. The consent forms are admitted only when `Origin` is the cell origin and `Sec-Fetch-Site`, when present, is `same-origin` | Interim, pending Daniel |
+| Demo step-up | Only with `--demo-signin`, and only for a session a demo sign-in opened, the step-up of a consent confirms with a button. Without the flag the route answers 404, which a test proves | Layering rule A9; I-78 |
+| Consent texts | The e2e cell writes its own plain-language text per scope | Interim, pending Daniel; consent texts open |
+| Public origin | `--public-origin <origin>` makes cell `a` name that origin as its page origin, `Origin` rule, issuer and MCP resource. It admits `https`, or `http` to `localhost`, `127.0.0.1`, `[::1]` or a `.localhost` host | Claude Code token rule; claude.ai needs https |
+| Local demo origin | For Claude Code the demo cell runs with `--public-origin http://localhost:<port>`, so the token endpoint is on an exempt host | Claude Code 2.1.328 |
+| Grants on a reset | A reset or a new scene replaces the cell's accounts. The authorisation server then ends every consent, code and token, and keeps the registered clients, through `AuthorizationServer::end_all_grants` | R-MC-03 |
+| Registration limit | The test cell admits 200 registrations per rate key and hour. Every client behind a tunnel shares one loopback peer | Interim, test cell only |
+
+### Not verified, open for Daniel
+
+- **claude.ai custom connector.** Not exercised, since it needs a public tunnel and Daniel's claude.ai account. The flow it uses was checked by design: the 401 challenge, both metadata documents under the public origin, and an `https` redirect URI within the URL subset. Three points are unknown. Its registration may ask for a token endpoint authentication method other than `none`, which the decoder refuses. Its servers may send an `Origin` header, which gets 403 unless it is the tenant origin. Which era it speaks is not known; both are served.
+- **Transport rows.** This record adds the modern era next to the rows and changes none. Daniel decides whether the rows are amended to name both eras.
+- **Production cell.** `fstp-cell` still refuses `/oauth/**`. It needs a token store port, the endpoints above, and a consent page in the platform that runs the passkey step-up.
+- **Restarts.** The e2e cell keeps its records in memory, so a restart forces `claude mcp logout` before the next login. The `mcp` schema seam of the W1e record would remove this.

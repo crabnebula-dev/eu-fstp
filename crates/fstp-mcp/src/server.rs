@@ -7,6 +7,11 @@
 //! - The server speaks the ADR-013 floor revision, 2025-06-18, as design
 //!   section 3.8 lists its methods. `initialize` for any other revision
 //!   answers the floor.
+//! - A request whose params carry `_meta` with a protocol version is a
+//!   modern request of the pinned revision 2026-07-28 (lane mcp-demo).
+//!   It is served with no session by [`McpServer::serve`]'s modern rules,
+//!   after the rules both eras share. Every other request keeps the rules
+//!   below.
 //! - Order of checks on a request: `GET` answers 405 first. Then the
 //!   `Origin` rule (403 foreign, 400 duplicated or unparsable). Then, on
 //!   `/mcp`, the bearer token: none gets 401 with the RFC 9728 challenge,
@@ -46,10 +51,31 @@ use fstp_json::{Object, ToJson, Value};
 use crate::jsonrpc::{self, JsonRpcId, RpcError};
 use crate::origin::{self, OriginRefusal, OriginSeen};
 use crate::result::{self, McpResponse};
-use crate::{McpError, McpHeaders, McpMessage, Surface};
+use crate::{Field, MAX_FIELD_BYTES, McpError, McpHeaders, McpMessage, Surface};
 
-/// The MCP revision the server speaks: the ADR-013 floor.
+/// The legacy MCP revision the server speaks after `initialize`: the
+/// ADR-013 floor.
 pub const FLOOR_REVISION: &str = "2025-06-18";
+
+/// The modern MCP revision the server speaks with no session: the
+/// revision ADR-013 pins.
+pub const PINNED_REVISION: &str = "2026-07-28";
+
+/// The `_meta` key of the protocol version of a modern request.
+const META_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+
+/// The `_meta` key of the server identity in a discovery result.
+const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+
+/// -32020: the request metadata headers are missing, malformed or differ
+/// from the body (revision 2026-07-28).
+const HEADER_MISMATCH: RpcError = RpcError {
+    code: -32020,
+    message: "the request metadata headers do not match the body",
+};
+
+/// -32022: the protocol version is not served (revision 2026-07-28).
+const UNSUPPORTED_VERSION: i64 = -32022;
 
 /// The most sessions each table holds.
 pub(crate) const MAX_SESSIONS: usize = 4096;
@@ -180,17 +206,45 @@ enum Step {
         version: String,
         cred: Credential,
     },
+    /// A modern `server/discover`, once its token is judged on `/mcp`.
+    Discover {
+        id: JsonRpcId,
+        cred: Credential,
+    },
     /// `tools/list` on `/mcp`, filtered by the token's rights.
     List {
         id: JsonRpcId,
         cred: Credential,
+        modern: bool,
     },
     Call {
         id: JsonRpcId,
         cred: Credential,
         name: String,
         arguments: String,
+        modern: bool,
     },
+}
+
+/// `r` with `resultType: complete` when `modern` holds and `r` is a
+/// result object (revision 2026-07-28 names it on every result).
+fn era_result(r: Result<Value, RpcError>, modern: bool) -> Result<Value, RpcError> {
+    match r {
+        Ok(Value::Object(mut o)) if modern => {
+            let _ = o.insert("resultType", Value::from("complete"));
+            Ok(Value::Object(o))
+        }
+        other => other,
+    }
+}
+
+/// The protocol version of a modern request: the `_meta` version member
+/// of its params. `None` marks a legacy request. `Some(None)` is a
+/// `_meta` version that is not a string.
+fn modern_version(m: &crate::JsonRpcMessage) -> Option<Option<String>> {
+    let meta = m.params()?.get("_meta")?.as_object()?;
+    let v = meta.get(META_VERSION)?;
+    Some(v.as_str().map(str::to_owned))
 }
 
 impl McpServer {
@@ -247,8 +301,12 @@ impl McpServer {
                 Ok(_) => self.initialize(surface, &id, &version, peer),
                 Err(e) => self.refused_token(e, &id),
             },
-            Step::List { id, cred } => match self.rights(cred).await {
-                Ok(rights) => rpc_reply(&id, Ok(list_result(Some(&rights)))),
+            Step::Discover { id, cred } => match self.rights(cred).await {
+                Ok(_) => rpc_reply(&id, Ok(self.discover_result())),
+                Err(e) => self.refused_token(e, &id),
+            },
+            Step::List { id, cred, modern } => match self.rights(cred).await {
+                Ok(rights) => rpc_reply(&id, era_result(Ok(list_result(Some(&rights))), modern)),
                 Err(e) => self.refused_token(e, &id),
             },
             Step::Call {
@@ -256,6 +314,7 @@ impl McpServer {
                 cred,
                 name,
                 arguments,
+                modern,
             } => {
                 let called = self
                     .call(surface, cred, &name, arguments.as_bytes(), peer)
@@ -263,7 +322,7 @@ impl McpServer {
                 if called.unauthenticated && surface == Surface::Mcp {
                     return self.challenge(StatusCode::UNAUTHORIZED, Some("invalid_token"));
                 }
-                rpc_reply(&id, called.result)
+                rpc_reply(&id, era_result(called.result, modern))
             }
         }
     }
@@ -272,9 +331,10 @@ impl McpServer {
     pub(crate) fn transport_only(&self, surface: Surface, req: &Request) -> Response {
         match self.step(surface, req, PeerKey::shared()) {
             Step::Reply(r) => r,
-            Step::Initialize { id, .. } | Step::List { id, .. } | Step::Call { id, .. } => {
-                rpc_reply(&id, Err(RpcError::INTERNAL))
-            }
+            Step::Initialize { id, .. }
+            | Step::Discover { id, .. }
+            | Step::List { id, .. }
+            | Step::Call { id, .. } => rpc_reply(&id, Err(RpcError::INTERNAL)),
         }
     }
 
@@ -494,6 +554,9 @@ impl McpServer {
             crate::JsonRpcMessage::Request { id, .. } => Some(id.clone()),
             crate::JsonRpcMessage::Notification { .. } => None,
         };
+        if let Some(version) = modern_version(&message) {
+            return self.modern_step(surface, &h, message, version, cred, request_id);
+        }
         let msg = match crate::mcp_message(message) {
             Ok(m) => m,
             Err(b) => {
@@ -552,13 +615,21 @@ impl McpServer {
                 reply(Response::new(StatusCode::ACCEPTED))
             }
             McpMessage::Ping { id } => reply(rpc_reply(&id, Ok(Value::Object(Object::new())))),
-            McpMessage::Unknown { id } => reply(rpc_reply(&id, Err(RpcError::METHOD_NOT_FOUND))),
+            // `server/discover` is a modern method only: in a legacy
+            // session it is not offered.
+            McpMessage::Unknown { id } | McpMessage::Discover { id } => {
+                reply(rpc_reply(&id, Err(RpcError::METHOD_NOT_FOUND)))
+            }
             McpMessage::ToolsList { id } | McpMessage::ToolsCall { id, .. } if !initialized => {
                 reply(rpc_reply(&id, Err(RpcError::NOT_INITIALIZED)))
             }
             McpMessage::ToolsList { id } => match surface {
                 Surface::Public => reply(rpc_reply(&id, Ok(list_result(None)))),
-                Surface::Mcp => Step::List { id, cred },
+                Surface::Mcp => Step::List {
+                    id,
+                    cred,
+                    modern: false,
+                },
             },
             McpMessage::ToolsCall {
                 id,
@@ -569,11 +640,131 @@ impl McpServer {
                 cred,
                 name,
                 arguments,
+                modern: false,
             },
             McpMessage::Initialize { id, .. } => {
                 reply(rpc_reply(&id, Err(RpcError::INVALID_REQUEST)))
             }
         }
+    }
+
+    /// The rules of a modern request (revision 2026-07-28), after the
+    /// rules both eras share: `Origin`, the bearer token on `/mcp`, the
+    /// media types and the JSON-RPC body. `version` is the `_meta`
+    /// version, `None` when it is not a string.
+    ///
+    /// - `MCP-Protocol-Version` must equal the `_meta` version, and
+    ///   `Mcp-Method` the method; `tools/call` needs `Mcp-Name` equal to
+    ///   the tool name. Otherwise 400 with -32020. A Base64 sentinel
+    ///   `Mcp-Name` is refused the same way: no tool name needs it.
+    /// - A version other than the pinned one gets 400 with -32022.
+    /// - `server/discover`, `tools/list` and `tools/call` are served with
+    ///   no session. A session id is ignored and none is minted. Any other
+    ///   method gets 404 with -32601. A notification gets 202.
+    fn modern_step(
+        &self,
+        surface: Surface,
+        h: &McpHeaders,
+        message: crate::JsonRpcMessage,
+        version: Option<String>,
+        cred: Credential,
+        rid: Option<JsonRpcId>,
+    ) -> Step {
+        let reply = Step::Reply;
+        let mismatch = |rid: Option<&JsonRpcId>| {
+            Step::Reply(status_rpc(StatusCode::BAD_REQUEST, rid, HEADER_MISMATCH))
+        };
+        let Some(version) = version else {
+            return reply(status_rpc(
+                StatusCode::BAD_REQUEST,
+                rid.as_ref(),
+                RpcError::INVALID_PARAMS,
+            ));
+        };
+        if h.version.as_deref() != Some(version.as_str()) {
+            return mismatch(rid.as_ref());
+        }
+        if version != PINNED_REVISION {
+            return reply(unsupported_version(rid.as_ref(), &version));
+        }
+        if rid.is_none() {
+            return reply(Response::new(StatusCode::ACCEPTED));
+        }
+        if h.method.one() != Some(message.method()) {
+            return mismatch(rid.as_ref());
+        }
+        let msg = match crate::mcp_message(message) {
+            Ok(m) => m,
+            Err(b) => {
+                return reply(status_rpc(
+                    StatusCode::OK,
+                    Some(&b.id),
+                    RpcError::INVALID_PARAMS,
+                ));
+            }
+        };
+        match msg {
+            McpMessage::Discover { id } => match surface {
+                Surface::Public => reply(rpc_reply(&id, Ok(self.discover_result()))),
+                Surface::Mcp => Step::Discover { id, cred },
+            },
+            McpMessage::ToolsList { id } => match surface {
+                Surface::Public => reply(rpc_reply(&id, era_result(Ok(list_result(None)), true))),
+                Surface::Mcp => Step::List {
+                    id,
+                    cred,
+                    modern: true,
+                },
+            },
+            McpMessage::ToolsCall {
+                id,
+                name,
+                arguments,
+            } => {
+                if h.name.one() != Some(name.as_str()) {
+                    return mismatch(Some(&id));
+                }
+                Step::Call {
+                    id,
+                    cred,
+                    name,
+                    arguments,
+                    modern: true,
+                }
+            }
+            McpMessage::Initialize { id, .. }
+            | McpMessage::Ping { id }
+            | McpMessage::Unknown { id } => reply(status_rpc(
+                StatusCode::NOT_FOUND,
+                Some(&id),
+                RpcError::METHOD_NOT_FOUND,
+            )),
+            McpMessage::Initialized | McpMessage::OtherNotification => {
+                reply(Response::new(StatusCode::ACCEPTED))
+            }
+        }
+    }
+
+    /// The `DiscoverResult` (revision 2026-07-28): the pinned revision,
+    /// the tools capability and the white-labelled name under `_meta`. No
+    /// `instructions` member is sent (ADR-013, Q43).
+    fn discover_result(&self) -> Value {
+        let mut caps = Object::new();
+        let _ = caps.insert("tools", Value::Object(Object::new()));
+        let mut info = Object::new();
+        let _ = info.insert("name", Value::from(self.name.as_str()));
+        let _ = info.insert("version", Value::from(env!("CARGO_PKG_VERSION")));
+        let mut meta = Object::new();
+        let _ = meta.insert(META_SERVER_INFO, Value::Object(info));
+        let mut res = Object::new();
+        let _ = res.insert("resultType", Value::from("complete"));
+        let _ = res.insert(
+            "supportedVersions",
+            Value::from(vec![Value::from(PINNED_REVISION)]),
+        );
+        let _ = res.insert("capabilities", Value::Object(caps));
+        let _ = res.insert("_meta", Value::Object(meta));
+        Value::Object(res)
     }
 
     /// The bearer credential of a `/mcp` request, or its challenge.
@@ -727,6 +918,29 @@ fn status_rpc(status: StatusCode, id: Option<&JsonRpcId>, e: RpcError) -> Respon
     )
 }
 
+/// 400 with -32022 for a modern request at `requested`, a version the
+/// server does not serve: its data names the pinned revision as the one
+/// supported, and the requested version. The version is visible ASCII of
+/// at most 32 bytes, as `read_headers` admitted it.
+fn unsupported_version(id: Option<&JsonRpcId>, requested: &str) -> Response {
+    let mut data = Object::new();
+    let _ = data.insert("supported", Value::from(vec![Value::from(PINNED_REVISION)]));
+    let _ = data.insert("requested", Value::from(requested));
+    let mut e = Object::new();
+    let _ = e.insert("code", Value::from(UNSUPPORTED_VERSION));
+    let _ = e.insert("message", Value::from("the protocol version is not served"));
+    let _ = e.insert("data", Value::Object(data));
+    let mut o = Object::new();
+    let _ = o.insert("jsonrpc", Value::from("2.0"));
+    let _ = o.insert("id", id.map_or(Value::Null, JsonRpcId::to_value));
+    let _ = o.insert("error", Value::Object(e));
+    Response::with_body(
+        StatusCode::BAD_REQUEST,
+        "application/json",
+        Value::Object(o).to_compact().into_bytes(),
+    )
+}
+
 /// The media type of a field value: the part before `;`, trimmed and
 /// lowercase.
 fn media_type(v: &[u8]) -> String {
@@ -831,7 +1045,26 @@ pub(crate) fn read_headers(h: &Headers, tenant_origins: &[String]) -> Result<Mcp
         origin,
         session,
         version,
+        method: field(h, "mcp-method"),
+        name: field(h, "mcp-name"),
     })
+}
+
+/// The modern request metadata field `name` of `h`.
+fn field(h: &Headers, name: &'static str) -> Field {
+    let mut all = h.get_all(name);
+    match (all.next(), all.next()) {
+        (None, _) => Field::Absent,
+        (Some(v), None) => {
+            let b = v.as_bytes();
+            if !b.is_empty() && b.len() <= MAX_FIELD_BYTES && b.iter().all(u8::is_ascii_graphic) {
+                Field::One(String::from_utf8_lossy(b).into_owned())
+            } else {
+                Field::Bad
+            }
+        }
+        (Some(_), Some(_)) => Field::Bad,
+    }
 }
 
 #[cfg(test)]
