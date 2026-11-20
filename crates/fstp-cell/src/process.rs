@@ -197,6 +197,9 @@ pub struct RunningCell<R: Runtime> {
     release: crate::tasks::release::ReleaseView,
     /// Lane L2: the authorisation server (`crate::oauth`).
     oauth: Arc<crate::oauth::AuthServer>,
+    /// The ledger key generations, which also seal the API core's rows
+    /// (ADR-026).
+    ledger_keys: Arc<LedgerKeys>,
 }
 
 impl<R: Runtime> std::fmt::Debug for RunningCell<R> {
@@ -898,6 +901,7 @@ where
         app: app_pool,
         reader,
         oauth,
+        ledger_keys: Arc::clone(&keys.ledger),
     })
 }
 
@@ -1018,6 +1022,22 @@ impl<R: Runtime> RunningCell<R> {
     /// (`crate::oauth::tokens::CellTokens`).
     pub fn oauth(&self) -> &Arc<crate::oauth::AuthServer> {
         &self.oauth
+    }
+
+    /// The API core's tables over the app pool, sealing under the cell's
+    /// ledger key generations (ADR-026), for a test that reads them.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Store`] for a pool of another role.
+    pub fn api_store(&self) -> Result<fstp_pgstore::ApiStore<R>, CellError> {
+        fstp_pgstore::ApiStore::new(self.app.clone(), Arc::clone(&self.ledger_keys))
+            .map_err(|e| CellError::Store(fstp_ledger::StoreError::from(e)))
+    }
+
+    /// The ledger key generations of the process (ADR-026).
+    pub fn ledger_keys(&self) -> &Arc<LedgerKeys> {
+        &self.ledger_keys
     }
 
     /// The app pool, for reads of the operational rows.
