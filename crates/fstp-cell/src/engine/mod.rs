@@ -642,6 +642,59 @@ impl CellEngine {
         )
     }
 
+    /// Makes the cell react to a vault epoch it has not reacted to yet
+    /// (NOTE 4), for a caller about to dry-run a command (wave 2 merge,
+    /// ADR-026 "Vault epoch before a dry run").
+    ///
+    /// A dry run folds a reaction on its copy only and never acknowledges
+    /// it, so the vault answers no question on its new epoch to it. This
+    /// runs the timeline task's firing of an event that does not exist,
+    /// through the gate and `DriverCore`. The driver reacts to the vault's
+    /// epoch and commits the reaction with its acknowledgement, as before
+    /// any command. The firing itself is then refused as not scheduled, so
+    /// it appends nothing. No oracle check changes: the dry run still asks
+    /// the vault every question of its command.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] when the engine stops, the gate refuses the firing,
+    /// or the driver failed before the firing's own refusal, such as a vault
+    /// fault during the reaction.
+    pub async fn react_to_vault(&self, now: Timestamp) -> Result<(), EngineError> {
+        // Without a random id nothing runs, and the dry run answers as
+        // before: it fails closed.
+        let (Ok(suffix), Ok(event)) = (
+            fstp_crypto::random_array::<8>(),
+            fstp_crypto::random_array::<32>(),
+        ) else {
+            return Ok(());
+        };
+        let action = fstp_cell_core::gate::Action::Command(fstp_cell_core::CellCommand::Timeline(
+            fstp_cell_core::timeline::TimelineCommand::Fire {
+                event,
+                templates: Vec::new(),
+                messages: Vec::new(),
+                then: None,
+            },
+        ));
+        let admitted = fstp_cell_core::gate::admit_system(
+            &self.state(),
+            action,
+            fstp_cell_core::SystemTask::Timeline,
+            fstp_cell_core::system_command_id(suffix),
+            now,
+        )
+        .map_err(|_| {
+            EngineError::Exec(ExecError::Refused(CellRefusal::NotImplemented(
+                "the timeline task's firing was not admitted",
+            )))
+        })?;
+        match self.execute(admitted).await {
+            Ok(_) | Err(EngineError::Exec(ExecError::Refused(_))) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Runs one admitted command and gives its result (design section
     /// 5.4: the only way a command reaches `DriverCore`).
     ///

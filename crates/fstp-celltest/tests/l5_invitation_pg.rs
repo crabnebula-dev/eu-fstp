@@ -285,7 +285,21 @@ fn sod09_accepted_invitation_grants_the_role_under_the_sod_guards() {
     let cell = world.cell(0).unwrap();
     let client = AuthClient::new(cell);
     let (admin, p) = draft(&client);
-    let _ = manager_by_invitation(&client, &admin, p);
+    let _ = manager_by_invitation(&client, &admin, p, true);
+}
+
+/// NOTE 4, I-85, SoD-09 (wave 2 merge, lane L5's question 2): a grant right
+/// after the invitee's verification succeeds. The verification moves the
+/// vault to a new epoch, and the API core's dry run of the grant must not
+/// answer `unavailable` until some other command made the cell react to
+/// it. No probe command runs between the verification and the grant.
+#[test]
+fn note4_grant_right_after_verification_succeeds() {
+    let world = world();
+    let cell = world.cell(0).unwrap();
+    let client = AuthClient::new(cell);
+    let (admin, p) = draft(&client);
+    let _ = manager_by_invitation(&client, &admin, p, false);
 }
 
 /// The SoD-09 path of [`sod09_accepted_invitation_grants_the_role_under_the_sod_guards`]:
@@ -294,6 +308,7 @@ fn manager_by_invitation(
     client: &AuthClient<'_>,
     admin: &Cookie,
     p: ProgrammeId,
+    probe: bool,
 ) -> (Cookie, AccountId) {
     let cell = client.cell();
     let admin = admin.clone();
@@ -384,12 +399,14 @@ fn manager_by_invitation(
     // The cell answers no question on the new vault epoch until it has
     // reacted to it, which its next command does (NOTE 4). A withdrawal of
     // a proposal no one drafts is refused after that reaction.
-    let probe = fstp_cell_core::CellCommand::Engine(fstp_engine::Command::Core(
+    let probe_command = fstp_cell_core::CellCommand::Engine(fstp_engine::Command::Core(
         fstp_domain::Command::Withdraw {
             proposal: fstp_domain::id::ProposalId::from_raw(0x0155_DEAD),
         },
     ));
-    let _ = client.command_reply(&admin, &probe, false).unwrap();
+    if probe {
+        let _ = client.command_reply(&admin, &probe_command, false).unwrap();
+    }
     let granted = grant();
     assert_eq!(
         granted.status,
@@ -426,7 +443,7 @@ fn r_nt_01_timeline_reads_the_scheduled_events_after_a_restart() {
     let cell = world.cell(0).unwrap();
     let client = AuthClient::new(cell);
     let (admin, p) = draft(&client);
-    let (manager, _) = manager_by_invitation(&client, &admin, p);
+    let (manager, _) = manager_by_invitation(&client, &admin, p, true);
     // A second invitation event of the programme, due tomorrow, stays
     // scheduled: the timeline's own plan never cancels the kind.
     let tomorrow = fstp_domain::time::Timestamp::from_micros(cell.clock().now() + 86_400_000_000);

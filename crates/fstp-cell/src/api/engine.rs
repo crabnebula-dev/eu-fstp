@@ -224,6 +224,15 @@ where
                 Vec::new(),
             );
         };
+        // NOTE 4 (wave 2 merge, ADR-026 "Vault epoch before a dry run"): a
+        // dry run never acknowledges a reaction, so the cell first reacts
+        // to a vault epoch it has not reacted to. A failure leaves the dry
+        // run to answer as before, which fails closed.
+        if let Ok(theirs) = self.inner.vault.epoch().await
+            && theirs > self.inner.engine.state().engine().epoch()
+        {
+            let _ = self.inner.engine.react_to_vault(ctx.now).await;
+        }
         let s = self.inner.engine.state();
         let action = Action::Command(CellCommand::Engine(cmd.clone()));
         let admitted = match gate::admit_dry_run(&s, account, action, ctx.command.bytes(), ctx.now)
