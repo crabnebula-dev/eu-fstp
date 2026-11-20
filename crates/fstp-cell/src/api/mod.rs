@@ -16,22 +16,32 @@
 //! - `audit`: `AuditSink` and `VaultAudit` as kind 2 events of the App
 //!   chain, flushed through the engine's single writer before a call is
 //!   answered (ADR-010 amendment of 2026-11-20).
+//! - `facts`: the seam of the shell facts the engine port reads (lane L6
+//!   plugs in at merge).
 //! - `content`: `TextStore` over the cell's erasure task, `Sealer` and
 //!   `Workspaces` over `workspace.drafts`, the `PendingActions` port over
 //!   `api.pending_actions`, and a fail-closed `BlobStore`.
 //! - `tenant`: `TenantConfig`, `Outbox`, `Clock` and `Ids`.
+//! - `accounts`: `Accounts`, with the invitation of a programme role and
+//!   its mail (ADR-026 record of lane L5).
+//! - `mail`: the delivery of a message a port enqueued, through the
+//!   cell's `Relay` (I-26).
 //! - `closed`: the ports the production cell does not serve yet, each
 //!   failing closed: the vault's intake and Q35 queries, `Precheck`,
-//!   `Prober`, `Recovery`, `BreakGlass` and `Accounts::invite`.
+//!   `Prober`, `Recovery` and `BreakGlass`.
 //!
 //! The token store is lane L2's (`crate::oauth::tokens::CellTokens`),
 //! through [`CellTokens`]: the `Tokens` port of `ApiCore` and the agent
 //! grant the agent admission reads.
 
+mod accounts;
+mod admin;
 mod audit;
 mod closed;
 mod content;
 mod engine;
+pub(crate) mod facts;
+pub(crate) mod mail;
 mod session;
 mod tenant;
 
@@ -83,6 +93,17 @@ pub(crate) struct ApiParts<R: Runtime, V> {
     pub erasure: ErasureHandle,
     /// The organisation port of ADR-021.
     pub organisation: OrganisationPort,
+    /// The cell host, whose origin the links of a message name.
+    pub host: String,
+    /// The app pool, over which a port writes `ops.delivery`.
+    pub app: fstp_pgstore::Pool<R>,
+    /// The relay the ports deliver through, if the cell has one (ADR-026
+    /// record of lane L5).
+    pub relay: Option<mail::SharedRelay>,
+    /// The shell facts the engine port decides creator commands and
+    /// publications with, and the API core's creator inputs (`facts`).
+    /// `None` reads the route backend's facts, as before.
+    pub facts: Option<Arc<dyn facts::ShellFacts>>,
 }
 
 /// The shared state of every port of one cell.
@@ -95,6 +116,10 @@ pub(crate) struct Inner<R: Runtime, V> {
     vault: V,
     erasure: ErasureHandle,
     organisation: OrganisationPort,
+    host: String,
+    app: fstp_pgstore::Pool<R>,
+    relay: Option<mail::SharedRelay>,
+    facts: Arc<dyn facts::ShellFacts>,
     audit: audit::Buffer,
     stepups: session::Begun,
 }
@@ -110,21 +135,21 @@ impl<R: Runtime, V> Inner<R, V> {
 pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     sessions: session::CellSessions<R, V>,
     step_up: session::CellStepUp<R, V>,
-    sessions_admin: closed::ClosedSessionsAdmin,
-    accounts: closed::CellAccounts<R, V>,
+    sessions_admin: admin::CellSessionsAdmin<R, V>,
+    accounts: accounts::CellAccounts<R, V>,
     vault: closed::CellVault<R, V>,
     engine: engine::CellAsyncEngine<R, V, T>,
     audit: audit::CellAudit<R, V>,
     vault_audit: audit::CellVaultAudit<R, V>,
     texts: content::CellTexts<R, V>,
-    blobs: closed::ClosedBlobs,
+    blobs: content::CellBlobs<R, V>,
     sealer: content::CellSealer<R, V>,
     workspaces: content::CellWorkspaces<R, V>,
     pending: content::CellPending<R, V>,
-    recovery: closed::ClosedRecovery,
+    recovery: admin::CellRecovery<R, V>,
     break_glass: closed::ClosedBreakGlass,
     tenant: tenant::CellTenant<R, V>,
-    outbox: tenant::CellOutbox,
+    outbox: tenant::CellOutbox<R, V>,
     prober: closed::ClosedProber,
     clock: tenant::CellClock<R, V>,
     ids: tenant::CellIds,
@@ -148,7 +173,12 @@ where
         vault,
         erasure,
         organisation,
+        host,
+        app,
+        relay,
+        facts,
     } = parts;
+    let facts = facts.unwrap_or_else(|| Arc::new(facts::BackendFacts(Arc::clone(&backend))));
     let inner = Arc::new(Inner {
         cell,
         audit: audit::Buffer::new(engine.clone()),
@@ -159,27 +189,31 @@ where
         vault,
         erasure,
         organisation,
+        host,
+        app,
+        relay,
+        facts,
         stepups: session::Begun::default(),
     });
     let tokens = Arc::new(tokens);
     let ports = Ports {
         sessions: session::CellSessions(Arc::clone(&inner)),
         step_up: session::CellStepUp(Arc::clone(&inner)),
-        sessions_admin: closed::ClosedSessionsAdmin,
-        accounts: closed::CellAccounts(Arc::clone(&inner)),
+        sessions_admin: admin::CellSessionsAdmin(Arc::clone(&inner)),
+        accounts: accounts::CellAccounts(Arc::clone(&inner)),
         vault: closed::CellVault(Arc::clone(&inner)),
         engine: engine::CellAsyncEngine::new(Arc::clone(&inner), Arc::clone(&tokens)),
         audit: audit::CellAudit(Arc::clone(&inner)),
         vault_audit: audit::CellVaultAudit(Arc::clone(&inner)),
         texts: content::CellTexts(Arc::clone(&inner)),
-        blobs: closed::ClosedBlobs,
+        blobs: content::CellBlobs(Arc::clone(&inner)),
         sealer: content::CellSealer(Arc::clone(&inner)),
         workspaces: content::CellWorkspaces(Arc::clone(&inner)),
         pending: content::CellPending(Arc::clone(&inner)),
-        recovery: closed::ClosedRecovery,
+        recovery: admin::CellRecovery(Arc::clone(&inner)),
         break_glass: closed::ClosedBreakGlass,
         tenant: tenant::CellTenant(Arc::clone(&inner)),
-        outbox: tenant::CellOutbox,
+        outbox: tenant::CellOutbox(Arc::clone(&inner)),
         prober: closed::ClosedProber,
         clock: tenant::CellClock(Arc::clone(&inner)),
         ids: tenant::CellIds,
@@ -196,21 +230,21 @@ where
 {
     type Sessions = session::CellSessions<R, V>;
     type StepUp = session::CellStepUp<R, V>;
-    type Accounts = closed::CellAccounts<R, V>;
+    type Accounts = accounts::CellAccounts<R, V>;
     type Vault = closed::CellVault<R, V>;
     type Engine = engine::CellAsyncEngine<R, V, T>;
     type Audit = audit::CellAudit<R, V>;
     type Texts = content::CellTexts<R, V>;
-    type Blobs = closed::ClosedBlobs;
+    type Blobs = content::CellBlobs<R, V>;
     type Precheck = closed::NoPrecheck;
     type Sealer = content::CellSealer<R, V>;
     type Workspaces = content::CellWorkspaces<R, V>;
     type VaultAudit = audit::CellVaultAudit<R, V>;
-    type SessionsAdmin = closed::ClosedSessionsAdmin;
-    type Recovery = closed::ClosedRecovery;
+    type SessionsAdmin = admin::CellSessionsAdmin<R, V>;
+    type Recovery = admin::CellRecovery<R, V>;
     type BreakGlass = closed::ClosedBreakGlass;
     type Tenant = tenant::CellTenant<R, V>;
-    type Outbox = tenant::CellOutbox;
+    type Outbox = tenant::CellOutbox<R, V>;
     type Prober = closed::ClosedProber;
     type Clock = tenant::CellClock<R, V>;
     type Ids = tenant::CellIds;

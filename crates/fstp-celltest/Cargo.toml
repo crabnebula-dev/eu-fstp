@@ -76,6 +76,8 @@ fstp-cell = { workspace = true, features = ["dev-pages", "memory"] }
 # M9 lane C2: the notice companion verifier row of the I-90 sweep.
 fstp-contract.workspace = true
 fstp-mail.workspace = true
+# Lane L5: the invitation event kind and template code (`tests/l5_invitation_pg.rs`).
+fstp-timeline.workspace = true
 fstp-smtp.workspace = true
 fstp-api-core.workspace = true
 # Lane L2: the OAuth form encoder and the grant facts of the production

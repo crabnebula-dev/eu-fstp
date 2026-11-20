@@ -559,3 +559,44 @@ fn adr008_enrolment_refuses_a_registered_credential_id() {
     let other = |id: &[u8]| id == [0u8; 4].as_slice();
     assert!(enrol_by_self_registration(WHO, true, true, true, &reg, &other).is_ok());
 }
+
+/// J2, SoD-09 (ADR-026 record of lane L5): the accounts port issues a
+/// programme role invitation only while its creator invitation is live.
+/// It is never the first admin's and never split, so its enrolment grants
+/// no tenant admin role, and it needs an account no record names.
+#[test]
+fn j2_role_invitation_issuer() {
+    let d = token_digest(&TOKEN);
+    for mode in [Deployment::Saas, Deployment::SelfHosted] {
+        let live = Issuer::RoleInvitation {
+            invitation_live: true,
+        };
+        assert_eq!(
+            issue_invitation(live, mode, [2; 16], WHO, d, true),
+            Ok(AuthRecord::InvitationIssued {
+                invitation: [2; 16],
+                account: WHO,
+                token_digest: d,
+                first_admin: false,
+                split: false,
+            })
+        );
+        assert_eq!(
+            issue_invitation(live, mode, [2; 16], WHO, d, false),
+            Err(EnrolDeny::InviteeNotNew)
+        );
+        assert_eq!(
+            issue_invitation(
+                Issuer::RoleInvitation {
+                    invitation_live: false
+                },
+                mode,
+                [2; 16],
+                WHO,
+                d,
+                true
+            ),
+            Err(EnrolDeny::InvitationIssuer)
+        );
+    }
+}

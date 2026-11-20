@@ -61,6 +61,25 @@ pub enum TenantCommand {
         /// `fstp_auth::ceremony::token_digest` of the one token.
         token_digest: [u8; 32],
     },
+    /// The accounts port issues the enrolment invitation of a person
+    /// invited by address to a programme role (J2, ADR-026 record of lane
+    /// L5). Only the system task `SystemTask::Provisioning` issues it, for
+    /// the cell's own accounts port, after `creator.invite` appended the
+    /// creator invitation. The invitation id is the creator invitation id,
+    /// big-endian, so one creator invitation has at most one. The decider
+    /// refuses it unless that creator invitation is live on `programme`,
+    /// and refuses an account any record names. The token is the link
+    /// token of the creator invitation, and only its digest is recorded.
+    IssueRoleInvitation {
+        /// The draft programme.
+        programme: fstp_domain::id::ProgrammeId,
+        /// The creator invitation, by address.
+        role_invitation: u128,
+        /// The invited account, new to the cell.
+        account: AccountId,
+        /// `fstp_auth::ceremony::token_digest` of the link token.
+        token_digest: [u8; 32],
+    },
     /// Enrol the first passkey of an invited account (design section 8.3,
     /// ceremony 1). Only the ceremony route admission
     /// `gate::admit_invitation_enrolment` admits it, after it verified the

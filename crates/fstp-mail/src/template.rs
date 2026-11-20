@@ -44,11 +44,13 @@ pub enum TemplateId {
     SubmissionCopy,
     /// A passkey of the account was disabled (ADR-008, 2026-11-19).
     PasskeyDisabled,
+    /// An invitation to a programme role (J2, ADR-026 record of lane L5).
+    RoleInvitation,
 }
 
 impl TemplateId {
     /// Every template id.
-    pub const ALL: [TemplateId; 9] = [
+    pub const ALL: [TemplateId; 10] = [
         TemplateId::ProposalOutcome,
         TemplateId::IrcConcern,
         TemplateId::NotifiableConflict,
@@ -58,6 +60,7 @@ impl TemplateId {
         TemplateId::ContractNotice,
         TemplateId::SubmissionCopy,
         TemplateId::PasskeyDisabled,
+        TemplateId::RoleInvitation,
     ];
 
     /// The stable code, as `X-FSTP-Template` and the ledger record carry it.
@@ -72,6 +75,7 @@ impl TemplateId {
             TemplateId::ContractNotice => "contract-notice",
             TemplateId::SubmissionCopy => "submission-copy",
             TemplateId::PasskeyDisabled => "passkey-disabled",
+            TemplateId::RoleInvitation => "role-invitation",
         }
     }
 }
@@ -503,6 +507,23 @@ pub static TEMPLATES: &[Template] = &[
         body: &[
             T(
                 "A passkey of your account on the platform was disabled.\n\nSign in with another passkey, or recover your account, to see your passkeys and add a new one:\n",
+            ),
+            S(Slot::Link),
+        ],
+    },
+    // TODO(legal): draft wording for the invitation to a programme role
+    // (J2, ADR-026 record of lane L5). It names no programme, no role, no
+    // inviter and no address (I-86). The landing shows the role and the
+    // confidentiality terms once the link is opened.
+    Template {
+        id: TemplateId::RoleInvitation,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[T("You are invited to a role on the platform")],
+        body: &[
+            T(
+                "You are invited to take a role in a funding programme on the platform.\n\nOpen this link to see the role and its terms, and to accept it. The link works once and only for you:\n",
             ),
             S(Slot::Link),
         ],

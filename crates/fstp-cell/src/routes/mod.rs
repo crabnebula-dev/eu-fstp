@@ -32,6 +32,7 @@ pub mod memory;
 pub mod pg;
 
 pub use auth::{CHALLENGE_US, MAGIC_LINK_US};
+pub(crate) use auth::{holds, live as live_session, send_enrolment_by};
 pub use backend::{
     AnchorRow, Backend, BackendFault, ChallengePurpose, ChallengeRow, ErasureRow, SessionRow,
     TokenKind, TokenRow,
