@@ -35,7 +35,7 @@ use fstp_mcp::Surface;
 use mcp_support::{McpCell, call, list, listed_names, obj, observed, op_of_tool, structured};
 
 /// Every scope M4 issues (design section 3.8).
-const EVERY_SCOPE: [Scope; 12] = [
+const EVERY_SCOPE: [Scope; 13] = [
     Scope::CallsRead,
     Scope::ProposalsRead,
     Scope::ProposalsDraft,
@@ -48,6 +48,7 @@ const EVERY_SCOPE: [Scope; 12] = [
     Scope::CreatorDraft,
     Scope::CallsDraft,
     Scope::AuditRead,
+    Scope::TenantDraft,
 ];
 
 /// How many commands of `kind` the engine appended.
@@ -75,7 +76,9 @@ fn high_risk_through_mcp(c: &McpCell) -> usize {
 }
 
 /// I-85, ADR-013: in the registry, every high-risk operation has no tool
-/// or a prepare-only one. Green now, and it must stay green.
+/// or a prepare-only one. Green now, and it must stay green. The ADR-013
+/// amendment of 2026-11-20 adds the prepare-only setup tools, each named
+/// `fstp_prepare_*`.
 #[test]
 fn i85_mcp_registry_high_risk_ops_have_no_tool_or_a_prepare_only_one() {
     for op in OPS.iter().filter(|o| o.high_risk) {
@@ -88,7 +91,16 @@ fn i85_mcp_registry_high_risk_ops_have_no_tool_or_a_prepare_only_one() {
         }
     }
     let prepare: Vec<&str> = tools().filter(|t| t.prepare_only).map(|t| t.name).collect();
-    assert_eq!(prepare, ["fstp_prepare_call_publication"]);
+    assert_eq!(prepare.len(), 15, "{prepare:?}");
+    assert!(prepare.contains(&"fstp_prepare_call_publication"));
+    for name in &prepare {
+        assert!(name.starts_with("fstp_prepare_"), "{name}");
+    }
+    let named: Vec<&str> = tools()
+        .filter(|t| t.name.starts_with("fstp_prepare_"))
+        .map(|t| t.name)
+        .collect();
+    assert_eq!(named, prepare, "every fstp_prepare_* tool only prepares");
 }
 
 /// I-85, I-84: through the MCP server, for every world account with

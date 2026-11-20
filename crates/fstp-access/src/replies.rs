@@ -371,6 +371,7 @@ const SCOPE_NAMES: &[&str] = &[
     "creator:draft",
     "calls:draft",
     "audit:read",
+    "tenant:draft",
 ];
 
 /// The party kinds of an unmask (ADR-023), as

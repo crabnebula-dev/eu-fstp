@@ -82,10 +82,11 @@ use fstp_tenant::{
 };
 
 use super::{
-    Call, Seams, ask_vault, dry_run, exec_failed, label_of, lock, port_failed, step_up,
+    Call, Seams, ask_vault, dry_run, exec_failed, label_of, lock, port_failed, prepare, step_up,
     vault_read_admitted,
 };
 use crate::model::{AdminRow, TenantAdmins};
+use crate::port::PendingId;
 use crate::port::{
     AsyncEngine, CellPorts, DisplayHandle, ExecMeta, OpName, Outcome, ProbeKind as PortProbe,
     ProbeOutcome as PortOutcome, Prober, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore,
@@ -94,6 +95,7 @@ use crate::tenant::{
     ActivationView, SaveRequest, SettingsView, SignatoryList, SignatoryRow, StepView, TenantView,
 };
 use crate::{ApiError, ErrorCode, Op, OpResult, ReadModel};
+use fstp_access::ChannelVerdict;
 
 // ---------------------------------------------------------------------------
 // What the ledger governs (module documentation)
@@ -478,15 +480,39 @@ fn precheck_error(e: PrecheckError) -> ApiError {
 }
 
 /// A tenant command operation (module documentation).
+///
+/// Through MCP (ADR-013 amendment of 2026-11-20), a tenant command runs
+/// only as a pending action, which stops after the dry run (step 6), and
+/// the brand check, which records nothing. Everything else stays web only
+/// (I-85). `pending` names the action a web confirmation runs, which the
+/// execution records.
 pub(super) async fn command<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
     kind: TenantKind,
+    verdict: ChannelVerdict,
+    pending: Option<PendingId>,
 ) -> Result<OpResult, ApiError> {
-    if call.caller.via() != Via::Web {
+    let prepared = verdict == ChannelVerdict::Prepare;
+    if call.caller.via() != Via::Web
+        && !prepared
+        && !(kind == TenantKind::CheckBranding && !call.spec.high_risk)
+    {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
     let (account, ts) = admin(call)?;
+    // A self-grant approval and the brand check are never prepared: the
+    // one has no tool, and the other records nothing.
+    if prepared
+        && matches!(
+            kind,
+            TenantKind::ApproveSelfGrant | TenantKind::CheckBranding
+        )
+    {
+        return Err(call.refuse(ApiError::NotImplemented(
+            "a tenant operation that is never prepared",
+        )));
+    }
     if kind == TenantKind::ApproveSelfGrant {
         return approve_self_grant(call, op, account, ts).await;
     }
@@ -524,6 +550,11 @@ pub(super) async fn command<P: Seams>(
     dry_run(call, account, &cmd, ctx)
         .await
         .map_err(|e| call.refuse(e))?;
+    // Step 6 (I-85): nothing is stored or appended for a prepared call
+    // but the pending action.
+    if prepared {
+        return prepare(call, op, account);
+    }
     let proof = if call.spec.high_risk {
         match step_up(call, call.digest)
             .await
@@ -572,7 +603,7 @@ pub(super) async fn command<P: Seams>(
         op: OpName(call.spec.name),
         request: call.digest,
         step_up: proof,
-        pending: None,
+        pending,
         second_tenant_admin: None,
     };
     match call.ports.engine().execute(cmd, ctx, meta).await {
