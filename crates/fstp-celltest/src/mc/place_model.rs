@@ -184,6 +184,11 @@ pub fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             "ledger" | "auth_log" => SI,
             "audit" if matches!(object, "audit.chain" | "audit.anchor") => SI,
             "ops" if object == "ops.outbox" => SI,
+            // ADR-026 "Pending actions", decided by Daniel on 2026-11-20:
+            // the writer inserts the one confirmation of a pending action
+            // in the append that executes it, and keeps INSERT and SELECT
+            // only (ADR-007).
+            "api" if object == "api.pending_confirmed" => SI,
             _ => &[],
         },
         RoleName::App => match schema {
@@ -203,6 +208,14 @@ pub fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             // M4 design section 4.3 "Roles", lane L2: the authorisation
             // server registers, rotates, revokes and purges its rows.
             "mcp" => FULL,
+            // M4 design section 4.3 "Roles": the application role keeps
+            // the `api` and `workspace` schemas. ADR-026 "Pending
+            // actions" and "Workspaces": it stores, closes and sweeps the
+            // pending actions, and reads, writes and deletes the workspace
+            // rows. The confirmations are the writer's insert-only rows
+            // (ADR-026, ADR-007), so the app role only reads them.
+            "api" if object == "api.pending_confirmed" => S,
+            "api" | "workspace" => FULL,
             _ => &[],
         },
         RoleName::Keys => match schema {
