@@ -654,7 +654,7 @@ body    = anchor composite secret (64) || CredLookup key (32)
           || n x (be32(key_ix) || data key id (16) || ledger key (32))
 ```
 
-- Interim, pending Daniel: the layout. It follows the witness receipt key file (`fstp_witness::config`). The handle and the wrapped key are 1 to 4096 bytes each. The body holds 1 to 1024 generations, in increasing `key_ix`, with distinct indexes and data key ids. The last one is the current generation.
+- Interim, pending Daniel: the layout. It follows the witness receipt key file (`fstp_witness::config`). The handle and the wrapped key are 1 to 4096 bytes each. The body holds 1 to 4096 generations, in increasing `key_ix`, with distinct indexes and data key ids. The last one is the current generation.
 - The decoder accepts exactly this form and re-encodes it byte for byte. Its fuzz target `cell_key_file_decode` exists from the first commit.
 - The file never holds an open key (I-80, `i80_cell_key_file_holds_no_open_key`). Errors name a rule and never quote file bytes (R-NF-02).
 - Interim, pending Daniel: the ticket key now always exists, so the vault ticket routes no longer answer 501 on a production cell.

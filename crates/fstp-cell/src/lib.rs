@@ -50,6 +50,7 @@ pub mod control;
 pub mod egress;
 pub mod engine;
 pub mod http;
+pub mod keyfile;
 pub mod mail;
 pub mod oauth;
 pub mod process;

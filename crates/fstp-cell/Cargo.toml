@@ -47,6 +47,8 @@ fstp-audit.workspace = true
 fstp-keys.workspace = true
 fstp-json.workspace = true
 fstp-crypto.workspace = true
+# ADR-001 record of 2026-11-20: wipes the plain body of the cell key file.
+zeroize.workspace = true
 # In-house edges of lane int5: the database client of the route backend
 # and of the pools, and the witness connection protocol and its async
 # lock (design sections 4.2 and 7.2).

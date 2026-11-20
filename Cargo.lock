@@ -361,6 +361,7 @@ dependencies = [
  "fstp-web",
  "fstp-webauthn",
  "fstp-witness",
+ "zeroize",
 ]
 
 [[package]]
