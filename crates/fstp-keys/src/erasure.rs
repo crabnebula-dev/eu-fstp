@@ -56,6 +56,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::hierarchy::{DekId, Epoch, GroupId, Purpose};
 
+pub mod codec;
+
 /// The most data keys one group holds (ADR-004 part 2 "Chains").
 pub const GROUP_LIMIT: usize = 256;
 
