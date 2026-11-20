@@ -63,14 +63,16 @@ fstp-json.workspace = true
 # A normal dependency, so the library oracles under src/reference can name it.
 # This crate never ships, and layering rule 9 keeps the post-quantum oracles inside it.
 aws-lc-rs.workspace = true
+# The loopback SMTP sink: the moved dispatch and mail relay tests, and the
+# platform relay of a cell run by the fstp-cell binary (lane L4,
+# `crate::external_cell`). Test only, as this crate is.
+fstp-api-testkit = { path = "../fstp-api-testkit" }
 
 [dev-dependencies]
 # Test only: the local cell over the in-memory backend, for the cell's own
 # ticket routes (lane m3/cell-routes). Only test builds of this crate
 # enable it.
 fstp-cell = { workspace = true, features = ["dev-pages", "memory"] }
-# Test only: the loopback SMTP sink for the moved dispatch and mail relay tests.
-fstp-api-testkit = { path = "../fstp-api-testkit" }
 # M9 lane C2: the notice companion verifier row of the I-90 sweep.
 fstp-contract.workspace = true
 fstp-mail.workspace = true

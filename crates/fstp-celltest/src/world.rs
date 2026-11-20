@@ -799,13 +799,21 @@ impl CellHandle {
         )))
     }
 
+    /// The `fstp-cell` process of a cell started by
+    /// [`World::start_external`] (lane L4), or `None`.
+    pub fn external(&self) -> Option<std::sync::Arc<crate::external_cell::ExternalCell>> {
+        self.runtime.as_ref().and_then(|r| r.external.clone())
+    }
+
     /// The cell's ledger after decryption, read through the cell's own
     /// store at a quiescent point (design sections 5.3 and 7.2), in
-    /// sequence order.
+    /// sequence order. A cell run by the `fstp-cell` binary has none in
+    /// this process: its keys stay in its own process
+    /// ([`CellHandle::external`]).
     ///
     /// # Errors
     ///
-    /// Fails when the store cannot be read or an entry does not decode.
+    /// Fails when the cell runs in no listener of this process.
     pub fn ledger(
         &self,
     ) -> Result<Vec<fstp_ledger::Entry<fstp_cell_core::CellRecord>>, WorldError> {
@@ -1324,7 +1332,7 @@ impl World {
                 host: Some(crate::world_host::WorldHost::start(&spec)?),
             });
         }
-        World::start_in_process(spec, pages, dev, &[], None, false)
+        World::start_in_process(spec, pages, dev, &[], None, false, None)
     }
 
     /// The world of a `fstp-world-host` process ([`crate::world_host`]):
@@ -1344,7 +1352,7 @@ impl World {
                 "a hosted world runs in this process, with one custody socket per cell".to_owned(),
             ));
         }
-        World::start_in_process(spec, None, &[], custody, None, false)
+        World::start_in_process(spec, None, &[], custody, None, false, None)
     }
 
     /// [`World::start`] whose cells limit their public routes to `limit`
@@ -1365,7 +1373,7 @@ impl World {
                 "fstp_celltest::world::World in process mode sets no public limit",
             )));
         }
-        World::start_in_process(spec, None, &[], &[], Some(limit), false)
+        World::start_in_process(spec, None, &[], &[], Some(limit), false, None)
     }
 
     /// [`World::start`] whose cells mount the web adapter over their own
@@ -1383,7 +1391,32 @@ impl World {
                 "fstp_celltest::world::World in process mode mounts no API core",
             )));
         }
-        World::start_in_process(spec, None, &[], &[], None, true)
+        World::start_in_process(spec, None, &[], &[], None, true, None)
+    }
+
+    /// A one-cell world whose cell runs as the production `fstp-cell`
+    /// binary from its configuration file (lane L4,
+    /// [`crate::external_cell`]). The cell's custody is the
+    /// `fstp-custody-sim --serve` process on `custody`, and its key file
+    /// root lives in the one on `external.key_file_custody`. The cell
+    /// serves after `fstp-cell first-admin` ran. Its proofs go to the test
+    /// SMTP sink, which the cell's mail capture reads.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`], and a refusal of any spec but one SaaS or
+    /// self-hosted cell outside process mode.
+    pub fn start_external(
+        spec: WorldSpec,
+        custody: std::path::PathBuf,
+        external: &crate::external_cell::ExternalSpec,
+    ) -> Result<World, WorldError> {
+        if spec.process_mode || spec.cells != 1 {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::world::World::start_external runs one cell outside process mode",
+            )));
+        }
+        World::start_in_process(spec, None, &[], &[custody], None, true, Some(external))
     }
 
     fn start_in_process(
@@ -1393,6 +1426,7 @@ impl World {
         custody: &[std::path::PathBuf],
         public_limit: Option<fstp_cell::routes::Limit>,
         api: bool,
+        external: Option<&crate::external_cell::ExternalSpec>,
     ) -> Result<World, WorldError> {
         // One world start at a time in the process (lead decision,
         // 2026-11-13, lane F-ERASE): worlds that start in parallel race
@@ -1424,6 +1458,7 @@ impl World {
                     custody,
                     public_limit,
                     api,
+                    external,
                 },
                 &egress,
             ) {
@@ -2326,6 +2361,8 @@ struct CellServe<'a> {
     public_limit: Option<fstp_cell::routes::Limit>,
     /// Whether the cell mounts the web adapter ([`World::start_with_api`]).
     api: bool,
+    /// The cell runs as the `fstp-cell` binary ([`World::start_external`]).
+    external: Option<&'a crate::external_cell::ExternalSpec>,
 }
 
 /// What every cell of a world serves, and the per-cell parts by index:
@@ -2342,6 +2379,8 @@ struct WorldServe<'a> {
     public_limit: Option<fstp_cell::routes::Limit>,
     /// Whether each cell mounts the web adapter (ADR-026).
     api: bool,
+    /// The first cell runs as the `fstp-cell` binary.
+    external: Option<&'a crate::external_cell::ExternalSpec>,
 }
 
 /// Provisions every cell of `plans`, then the service databases, then
@@ -2359,6 +2398,7 @@ fn start_cells(
         custody,
         public_limit,
         api,
+        external,
     } = serve;
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -2382,6 +2422,7 @@ fn start_cells(
                 custody: custody.get(i).map(std::path::PathBuf::as_path),
                 public_limit,
                 api,
+                external: if i == 0 { external } else { None },
             },
             egress,
         )?);
@@ -3590,6 +3631,8 @@ struct CellRuntime {
     /// The cell's CrabNebula stand-in and release clock (lane
     /// m3/licence-update).
     release: ReleaseWorld,
+    /// The `fstp-cell` process of an external cell (lane L4).
+    external: Option<std::sync::Arc<crate::external_cell::ExternalCell>>,
 }
 
 impl fmt::Debug for CellRuntime {
@@ -3606,6 +3649,9 @@ const CELL_DRAIN: Duration = Duration::from_secs(20);
 impl CellRuntime {
     /// Stops the cell and its vault, and removes its routes.
     fn stop(&self, cell: &[u8; 16]) {
+        if let Some(ext) = &self.external {
+            let _ = ext.stop();
+        }
         let (running, vault_addr) = {
             let mut r = lock(&self.running);
             (r.cell.take(), r.vault.internal_addr())
@@ -3810,6 +3856,7 @@ fn start_cell(
         custody: custody_socket,
         public_limit,
         api,
+        external,
     } = serve;
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
@@ -4125,6 +4172,93 @@ fn start_cell(
             .issue(CertKind::Server, &host, None, &[&host], &[])?,
     );
     let cell_internal = cell_ca.issue(CertKind::Server, "cell", None, &[], &loopback)?;
+    // Lane L4: a cell run by the `fstp-cell` binary gets its files here,
+    // with the keys the witness and the vault already pin.
+    let external = match external {
+        None => None,
+        Some(ext) => {
+            let prepared = (|| {
+                let socket = custody_socket.ok_or_else(|| {
+                    WorldError::Store("an external cell needs a custody socket".to_owned())
+                })?;
+                let db = |role: RoleName| -> Result<_, WorldError> {
+                    Ok(login(CellDatabase::App, role)?.conn_params(app_cluster.server(), &app_db))
+                };
+                let (writer, app, keys) = (
+                    db(RoleName::Writer)?,
+                    db(RoleName::App)?,
+                    db(RoleName::Keys)?,
+                );
+                let pem = |i: &pki::Issued| crate::external_cell::Pem {
+                    cert: i.cert_pem.clone(),
+                    key: i.key_pem.clone(),
+                };
+                let login_of = |p: &fstp_pgtest::ConnParams| crate::external_cell::DbLogin {
+                    password: p.password.clone(),
+                    cert_pem: p.client_cert_pem.to_vec(),
+                    key_pem: p.client_key_pem.to_vec(),
+                };
+                let cred_lookup = fstp_crypto::random_array::<32>()
+                    .map_err(|e| fail("the CredLookup key", &e))?;
+                let key_body =
+                    fstp_cell::keyfile::KeyBody::from_keys(&anchor, &cred_lookup, &ticket)
+                        .map_err(|e| fail("the cell key file", &e))?;
+                crate::external_cell::ExternalCell::prepare(
+                    &s.rt,
+                    ext,
+                    crate::external_cell::ExternalParts {
+                        cell,
+                        host: host.clone(),
+                        self_hosted: spec.self_hosted,
+                        db_host: writer.host.clone(),
+                        db_port: writer.port,
+                        dbname: app_db.clone(),
+                        db_ca: writer.server_ca_pem.to_vec(),
+                        writer: login_of(&writer),
+                        app: login_of(&app),
+                        keys: login_of(&keys),
+                        registered: server_keys
+                            .iter()
+                            .map(|(digest, kind)| {
+                                (
+                                    *digest,
+                                    match kind {
+                                        ClusterKind::Application => "application",
+                                        ClusterKind::Vault => "vault",
+                                        ClusterKind::Control => "control",
+                                        ClusterKind::Witness => "witness",
+                                    },
+                                )
+                            })
+                            .collect(),
+                        keyd_socket: socket.to_path_buf(),
+                        witness_addr: relays.witness,
+                        witness_name: witness.name.clone(),
+                        witness_ca: witness.ca_pem.clone(),
+                        witness_ca_digest: witness.ca_digest,
+                        witness_client: pem(&cell_witness),
+                        receipt_keys: vec![witness.handle.receipt_public_key()],
+                        vault_addr: relays.vault,
+                        vault_ca: cell_ca.pem.clone(),
+                        vault_client: pem(&cell_app),
+                        tunnel: pem(&cell_tunnel),
+                        tunnel_ca: s.control.pem.clone(),
+                        origin: pem(&cell_origin),
+                        internal: pem(&cell_internal),
+                        cell_ca: cell_ca.pem.clone(),
+                        key_body,
+                    },
+                )
+            })();
+            match prepared {
+                Ok(e) => Some(std::sync::Arc::new(e)),
+                Err(e) => {
+                    let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+                    return Err(e);
+                }
+            }
+        }
+    };
     let ledger_key = fstp_pgstore::LedgerKey::new(
         1,
         fstp_keys::DekId(fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?),
@@ -4260,17 +4394,43 @@ fn start_cell(
             return Err(e);
         }
     };
-    let running = match s
-        .rt
-        .block_on(fstp_cell::process::start_with(&s.rt, parts, options))
-    {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
-            return Err(fail("the cell", &e));
+    // Lane L4: an external cell runs `fstp-cell first-admin` before it
+    // serves, so its invitation comes from the token file.
+    let (running, bound, first_token) = match &external {
+        None => match s
+            .rt
+            .block_on(fstp_cell::process::start_with(&s.rt, parts, options))
+        {
+            Ok(r) => {
+                let bound = r.bound();
+                (Some(r), bound, None)
+            }
+            Err(e) => {
+                let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+                return Err(fail("the cell", &e));
+            }
+        },
+        Some(ext) => {
+            drop((parts, options));
+            let token = ext.first_admin().and_then(|t| ext.start().map(|()| t));
+            match token {
+                Ok(t) => (
+                    None,
+                    fstp_cell::process::Listen {
+                        tunnel: ext.tunnel(),
+                        internal: ext.tunnel(),
+                        health: ext.health(),
+                    },
+                    Some(t),
+                ),
+                Err(e) => {
+                    let _ = ext.stop();
+                    let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+                    return Err(e);
+                }
+            }
         }
     };
-    let bound = running.bound();
     // Step 4: the routes.
     let route = || -> Result<(), WorldError> {
         let h = fstp_edge::HostName::parse(host.as_bytes())
@@ -4293,23 +4453,40 @@ fn start_cell(
     };
     // Step 5: the first admin's invitation.
     let invitation = route().and_then(|()| {
-        s.rt.block_on(running.issue_first_admin_invitation())
-            .map_err(|e| fail("the first admin invitation", &e))
-            .and_then(|t| match (t.second, spec.self_hosted) {
-                (Some(second), false) => Ok(Invitation::Split(FirstAdminInvitation {
-                    first: t.first,
-                    second,
-                })),
-                // A self-hosted install hands the token over whole, in its
-                // token file (design section 8.3, Q35).
-                (None, true) => Ok(Invitation::Whole(t.first)),
-                (Some(_), true) => Err(WorldError::Store(format!(
-                    "cell {index}: a self-hosted invitation came in halves"
-                ))),
-                (None, false) => Err(WorldError::Store(format!(
-                    "cell {index}: a SaaS invitation came whole"
-                ))),
-            })
+        let issued = match (&running, first_token) {
+            (Some(r), _) => {
+                s.rt.block_on(r.issue_first_admin_invitation())
+                    .map_err(|e| fail("the first admin invitation", &e))
+            }
+            (None, Some(t)) => {
+                let half = |i: usize| -> Result<[u8; 32], WorldError> {
+                    t.chunks_exact(32)
+                        .nth(i)
+                        .and_then(|h| <[u8; 32]>::try_from(h).ok())
+                        .ok_or_else(|| fail("the first admin token", &"its length"))
+                };
+                Ok(fstp_cell::process::FirstAdminToken {
+                    first: half(0)?,
+                    second: if t.len() == 64 { Some(half(1)?) } else { None },
+                })
+            }
+            (None, None) => Err(fail("the first admin invitation", &"no cell")),
+        };
+        issued.and_then(|t| match (t.second, spec.self_hosted) {
+            (Some(second), false) => Ok(Invitation::Split(FirstAdminInvitation {
+                first: t.first,
+                second,
+            })),
+            // A self-hosted install hands the token over whole, in its
+            // token file (design section 8.3, Q35).
+            (None, true) => Ok(Invitation::Whole(t.first)),
+            (Some(_), true) => Err(WorldError::Store(format!(
+                "cell {index}: a self-hosted invitation came in halves"
+            ))),
+            (None, false) => Err(WorldError::Store(format!(
+                "cell {index}: a SaaS invitation came whole"
+            ))),
+        })
     });
     // A self-hosted install writes its configuration and credential
     // files once the token exists (design section 9.5, R-NF-05).
@@ -4322,14 +4499,21 @@ fn start_cell(
     let invitation = match invitation {
         Ok(i) => i,
         Err(e) => {
-            let _ = s.rt.block_on(running.shutdown(CELL_DRAIN));
+            if let Some(r) = running {
+                let _ = s.rt.block_on(r.shutdown(CELL_DRAIN));
+            }
+            if let Some(ext) = &external {
+                let _ = ext.stop();
+            }
             let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
             lock(&s.edge.table).remove_cell_by_id(&cell);
             return Err(e);
         }
     };
     // The first admin's login email, as the tenant contact's address that
-    // provisioning names (lane m3/login-m2http). Synthetic.
+    // provisioning names (lane m3/login-m2http). Synthetic. An external
+    // cell keeps none: `fstp-cell first-admin` names no address (ADR-026
+    // "First admin"), so its first admin has no login email.
     let first_admin = {
         use fstp_auth::ceremony::{split_token_digest, token_digest};
         use fstp_auth::codec::Token;
@@ -4338,8 +4522,16 @@ fn start_cell(
             Invitation::Whole(t) => token_digest(&Token(*t)),
         };
         let email = login_email_of(&host, fstp_domain_testkit::r#gen::roster::ADMIN);
-        running.note_first_admin_email(digest, email.clone());
+        if let Some(r) = &running {
+            r.note_first_admin_email(digest, email.clone());
+        }
         (digest, email)
+    };
+    // An external cell's proofs reach the test SMTP sink, which its mail
+    // capture reads ([`crate::world_mail::WorldMail::with_source`]).
+    let mail = match &external {
+        Some(ext) => crate::world_mail::WorldMail::with_source(ext.mail_source()),
+        None => mail,
     };
     Ok(CellHandle {
         index,
@@ -4357,7 +4549,7 @@ fn start_cell(
         runtime: Some(std::sync::Arc::new(CellRuntime {
             services: s,
             running: Mutex::new(Running {
-                cell: Some(running),
+                cell: running,
                 vault,
                 invitation,
             }),
@@ -4370,6 +4562,7 @@ fn start_cell(
                 ..restart
             },
             release,
+            external,
         })),
     })
 }

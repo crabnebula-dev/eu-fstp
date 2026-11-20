@@ -3326,6 +3326,12 @@ pub mod http {
             if !self.register(&token, &mut device)? {
                 return Ok(false);
             }
+            // A cell run by the `fstp-cell` binary keeps its ledger keys in
+            // its own process (lane L4), so the client reads the new
+            // account from `GET /auth/devices` in a passkey session.
+            if self.cell.external().is_some() {
+                return self.enrol_first_admin_by_session(device);
+            }
             let ledger = self.cell.ledger().map_err(|_| failed())?;
             let cell = ledger
                 .iter()
@@ -3344,6 +3350,30 @@ pub mod http {
                 },
             );
             let admin = self.passkey_login(FIRST_ADMIN)?.ok_or_else(failed)?;
+            self.known().admin = Some(admin);
+            Ok(true)
+        }
+
+        /// The rest of [`AuthClient::enrol_first_admin`] for a cell run by
+        /// the `fstp-cell` binary: logs in with the new passkey and reads
+        /// the account from `GET /auth/devices` (lane L4).
+        fn enrol_first_admin_by_session(&self, device: Device) -> Result<bool, NotImplemented> {
+            self.known().people.insert(
+                FIRST_ADMIN,
+                Person {
+                    cell: AccountId::from_raw(0),
+                    devices: vec![device],
+                },
+            );
+            let admin = self.passkey_login(FIRST_ADMIN)?.ok_or_else(failed)?;
+            let listed = self.devices(&admin)?.ok_or_else(failed)?;
+            let account = json_str(&listed, "account")
+                .and_then(|s| s.parse::<u128>().ok())
+                .map(AccountId::from_raw)
+                .ok_or_else(failed)?;
+            if let Some(p) = self.known().people.get_mut(&FIRST_ADMIN) {
+                p.cell = account;
+            }
             self.known().admin = Some(admin);
             Ok(true)
         }

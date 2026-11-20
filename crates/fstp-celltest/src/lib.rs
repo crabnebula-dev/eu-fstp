@@ -24,6 +24,7 @@ pub mod custody_sim;
 pub mod cycle;
 pub mod egress;
 pub mod erase_cell;
+pub mod external_cell;
 pub mod m2_http;
 pub mod mc;
 pub mod procmem;
