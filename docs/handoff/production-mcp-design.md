@@ -122,7 +122,8 @@ Daniel answered on 2026-11-20:
 - D2, D4 to D8, D10 and D11: accepted as recommended. Lanes write them into the ADRs as decided by Daniel on 2026-11-20.
 - D3: a platform relay named in the cell configuration, as recommended.
 - D12: no. Build everything now, but no real user uses a production cell until the release gate passes, including the M10 Mythos confirmation (I-74).
-- D9: the lead runs the claude.ai trace before L2 merges.
+
+D9 is not answered yet. The lead plans a claude.ai trace before L2 merges, which needs a tunnel and Daniel's claude.ai account.
 
 | Id | Question | Recommendation |
 | --- | --- | --- |

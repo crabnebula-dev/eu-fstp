@@ -312,7 +312,7 @@ Daniel asked that Claude Code and claude.ai act on the demo cell through its MCP
 
 ### Basis
 
-`docs/handoff/production-mcp-design.md` section 2.1 drafted these rows, and section 3.4 gives them to lane L2. Daniel answered the design questions on 2026-11-20 (section 2.2). D9 bears on two rows below and is marked decided. D12 is no: the lane builds everything, and no real user uses a production cell until the release gate passes, the M10 Mythos confirmation included (I-74). Every other row is interim, pending Daniel. The rows supersede the "Records" reading of lane W1e and the "Production cell" point of lane mcp-demo.
+`docs/handoff/production-mcp-design.md` section 2.1 drafted these rows, and section 3.4 gives them to lane L2. Daniel answered the design questions on 2026-11-20 (section 2.2). D9 bears on two rows below. Daniel has not answered it, so both rows are interim. D12 is no: the lane builds everything, and no real user uses a production cell until the release gate passes, the M10 Mythos confirmation included (I-74). Every other row is interim, pending Daniel. The rows supersede the "Records" reading of lane W1e and the "Production cell" point of lane mcp-demo.
 
 ### Rows of the design
 
@@ -324,8 +324,8 @@ Daniel asked that Claude Code and claude.ai act on the demo cell through its MCP
 | Endpoints | `/oauth/register`, `/oauth/authorize`, `/oauth/token` and `/oauth/revoke`, served by `fstp-cell` over the same server as the `Tokens` port. `fstp-web` serves the two metadata documents from the same `fstp_oauth::Config` | Interim, pending Daniel; G5a |
 | Consent page | `/oauth/authorize` answers 303 to the consent page of the platform. The page reads `agents.consent_request`, a new web-only read naming the client name as unverified text, the redirect host and the scopes. Approval calls `agents.consent` with `withStepUp`, then follows the redirect. No demo button exists in production | Interim, pending Daniel; G5a; I-78; I-77; I-86 |
 | Recovery | A grant whose family started at or before the account's last completed recovery is refused on every call. The recovery route also calls `revoke_all_agents` after the commit | Interim, pending Daniel; G6; H-21; I-79 |
-| Agent origins | `/mcp` accepts a request without `Origin`, or with the tenant origin, as now. A configured list `mcp.agent_origins`, empty by default, would add origins for `/mcp` only, with the bearer token still required. It is built only after a claude.ai trace shows the need | Decided by Daniel on 2026-11-20 (D9): the lead runs the trace before L2 merges |
-| Token auth method | `none` only, until a claude.ai trace shows another method | Decided by Daniel on 2026-11-20 (D9) |
+| Agent origins | `/mcp` accepts a request without `Origin`, or with the tenant origin, as now. A configured list `mcp.agent_origins`, empty by default, would add origins for `/mcp` only, with the bearer token still required. It is built only after a claude.ai trace shows the need | Interim, pending Daniel (D9). The lead runs a claude.ai trace before L2 merges |
+| Token auth method | `none` only, until a claude.ai trace shows another method | Interim, pending Daniel (D9) |
 | Consent texts | The e2e cell's texts become the production texts. They move to the platform message catalogue of the consent page | Interim, pending Daniel; "Scopes" |
 | Real users | No real user uses a production cell before the release gate passes | Decided by Daniel on 2026-11-20 (D12) |
 
