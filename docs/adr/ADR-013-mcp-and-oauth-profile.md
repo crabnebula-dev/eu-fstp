@@ -45,8 +45,9 @@ Each row below names its basis:
 | Topic | Proposed decision | Basis |
 | --- | --- | --- |
 | Tool table | Names, descriptions and input schemas are `const` data in the `OPS` registry of `fstp-access`, the only tool table. `fstp-mcp` serves `fstp_api_core::meta::tools()` and defines no tool of its own (TH-63) | Design |
-| Tool set | Only the capability table of `mcp-server.md`, plus the prepare-only tool `fstp_prepare_call_publication` (Q32). No coordinator, ballot, IRC or tenant admin tools | Decided by Daniel on 2026-10-31 (Q8, with the Q32 prepare-only tool) |
+| Tool set | Only the capability table of `mcp-server.md`, plus the prepare-only tool `fstp_prepare_call_publication` (Q32). No coordinator, ballot, IRC or tenant admin tools | Decided by Daniel on 2026-10-31 (Q8, with the Q32 prepare-only tool). Amended by Daniel on 2026-11-20: prepare-only tools and draft tools for tenant and programme setup, with a Tenant admin row. See "Amendment 2026-11-20" below |
 | High-risk operations | `channel_policy` returns `Prepare` for every high-risk operation that has a tool. Every other high-risk operation has no tool and gets `Deny(NotExposed)` | Design |
+| Prepare-only tools on other operations | `channel_policy` also returns `Prepare` for a tool marked prepare-only on an operation that is not high-risk. Creator, bridge, import and tenant operations can be prepared, as core commands can | Amendment 2026-11-20 (Daniel), with each mark interim, pending Daniel |
 | Results | The read model goes in `structuredContent.data`, with `classification` and `untrusted`, the JSON pointers to user-supplied text. The `content` text block is a fixed sentence naming the classification and never holds user text (TH-60) | Design |
 | MCP safety | MCP response construction requires `fstp_api_core::McpSafe`, implemented by hand for identity-free read models only (I-86) | Design |
 
@@ -69,7 +70,7 @@ Each row below names its basis:
 
 ## Scopes
 
-Issued in M4: `calls:read`, `proposals:read`, `proposals:draft`, `proposals:binding`, `stage2:draft`, `review:read`, `review:draft`, `ranking:read`, `findings:read`, `creator:draft`, `calls:draft` and `audit:read`. Each has consent text. A scope never adds a right that the roles lack. Scopes for M5 and later are reserved names and are never issued. Basis: Design.
+Issued in M4: `calls:read`, `proposals:read`, `proposals:draft`, `proposals:binding`, `stage2:draft`, `review:read`, `review:draft`, `ranking:read`, `findings:read`, `creator:draft`, `calls:draft` and `audit:read`. Each has consent text. The amendment of 2026-11-20 adds `tenant:draft`, with the consent text stated there. A scope never adds a right that the roles lack. Scopes for M5 and later are reserved names and are never issued. Basis: Design.
 
 The consent texts are not written yet. They are open.
 
@@ -142,3 +143,101 @@ Daniel decided on 2026-11-15 to wire `agents.consent` to the real flow. This rec
 | Step-up binding | The API core takes the step-up bound to its own request digest, which covers the handle (I-78). The token port then attests that step-up to `AuthorizationServer::approve`, bound to the consent's own digest, which `consent_step_up_digest` reads for a live handle. The server still checks the attested proof itself | Consent row; I-78 |
 | Order | A magic-link session is refused first (I-77), then the channel (web only, I-85), then the step-up. A handle the server does not hold is refused under `Input` after the step-up | Design section 3.7 |
 | Shell | The API core's `Tokens::approve_consent` port reaches the server. The test cells' fake port holds a real `fstp-oauth` server. `fstp-web` still answers `/oauth/**` with the typed refusal of this ADR, so the authorize, token and revocation endpoints wait for the lane that mounts the server with its token store | Consequences |
+
+## Amendment 2026-11-20: prepare-only setup tools (Daniel)
+
+### Decision
+
+Daniel amended his Q8 decision on 2026-11-20. He wants to set up funding programmes through an agent that uses the cell's MCP server. The tool set grows by prepare-only tools for tenant and programme setup, and by the reads and ordinary draft edits those steps need. An agent prepares. A human confirms in the platform with a step-up where the operation is high-risk (I-85, I-78). The Q8 row of "Tools" keeps its first decision and points here.
+
+These rules hold unchanged, and the tests of each new tool name them:
+
+- I-84: every new tool sits on an operation that already has a web route under the same roles. No operation was added for a tool.
+- I-85: a high-risk operation has no tool or a prepare-only one. A prepare-only tool always returns a pending action, never the effect.
+- I-86: no new tool returns an email, a display name, an identity attribute, bank details or vault contents. The invitation list, the team list and the member list stay web only.
+- I-21: no new tool reads a proposal draft or another user's workspace.
+- TH-60, TH-63: names, descriptions and schemas are fixed platform text in the `OPS` registry. User text sits only in `structuredContent.data`.
+- Separation of duties: the confirmation runs the stored request as the confirming person through the web, with every guard of the direct web path. An agent acting for a builder cannot approve an activation, since that approval has no tool. An agent acting for a call's drafter can prepare the call's approval, but the dry run refuses it before anything is stored (R-PC-03).
+
+### When a tool prepares
+
+`channel_policy` returns `Prepare` for every high-risk operation (I-78), as before. Under this amendment it also returns `Prepare` for a tool marked prepare-only on an operation that is not high-risk. That mark is set for anything that activates, publishes, grants a role, invites a person, records a human judgement the design asks of a named person, or changes who can see what. Ordinary draft edits and reads return `Allow`.
+
+A prepared action is confirmed at `POST /api/v1/pending-actions/{pending}/confirmation`, by the same account, through the web. A high-risk operation also needs a fresh step-up bound to the stored digest. A prepared operation that is not high-risk needs no step-up on its direct web path, so its confirmation needs none either. Interim, pending Daniel: the confirmation itself is the human act, and a step-up is asked only where the web path asks one.
+
+Before this amendment only core commands could be prepared. Creator, bridge, import and tenant operations can now be prepared too. Their confirmation runs the same dispatch as their web route.
+
+### Scopes
+
+`creator:draft` and `calls:draft` are reused. One scope is added, `tenant:draft`, for the tenant-level setup tools. Its consent text: "Read your organisation's funder profiles and check brand colours. Prepare changes to funder profiles, brand tokens and interface labels. Nothing changes until you confirm each change in the platform." Interim, pending Daniel: the scope name and its text.
+
+### New tools, Programme staff row
+
+| Tool | Operation | Roles | Scope | Channel |
+| --- | --- | --- | --- | --- |
+| `fstp_creator_list_programmes` | `creator.list_programmes` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_list_templates` | `creator.list_templates` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_apply_start` | `creator.apply_start` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_edit_narrative` | `creator.edit_narrative` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_get_preview` | `creator.preview` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_get_impact` | `creator.impact` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_upload_import` | `import.upload` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_list_import_proposals` | `import.list` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_remove_import` | `import.remove` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_prepare_narrative_acceptance` | `creator.accept_narrative` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_warning_acknowledgement` | `creator.acknowledge` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_import_resolution` | `import.resolve` | Programme manager | `creator:draft` | Prepare |
+| `fstp_prepare_invitation` | `creator.invite` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_activation_request` | `creator.request_activation` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_prepare_tenant_template` | `creator.save_as_template` | Programme manager, tenant admin | `creator:draft` | Prepare |
+| `fstp_list_calls` | `call.list` | Programme manager, call drafter, FSTP coordinator, tenant admin | `calls:read` | Allow |
+| `fstp_get_programme_timeline` | `programme.timeline` | Programme manager | `calls:read` | Allow |
+| `fstp_prepare_call_approval` | `call.approve` | Programme manager | `calls:draft` | Prepare |
+
+### New tools, Tenant admin row
+
+| Tool | Operation | Roles | Scope | Channel |
+| --- | --- | --- | --- | --- |
+| `fstp_prepare_programme_draft` | `creator.open_draft` | Tenant admin | `creator:draft` | Prepare (high-risk: creating a programme counts as activating it) |
+| `fstp_list_programme_roles` | `roles.list` | Tenant admin | `creator:draft` | Allow |
+| `fstp_prepare_role_grant` | `roles.grant` | Tenant admin | `creator:draft` | Prepare (high-risk) |
+| `fstp_prepare_role_end` | `roles.end` | Tenant admin | `creator:draft` | Prepare (high-risk) |
+| `fstp_tenant_list_funder_profiles` | `tenant.funder_profiles` | Tenant admin | `tenant:draft` | Allow |
+| `fstp_prepare_funder_profile_copy` | `tenant.funder_profile.copy` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+| `fstp_prepare_funder_profile_save` | `tenant.funder_profile.save` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+| `fstp_tenant_check_branding` | `tenant.branding.check` | Tenant admin | `tenant:draft` | Allow (it records nothing) |
+| `fstp_prepare_branding` | `tenant.branding.set` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+| `fstp_prepare_terminology` | `tenant.terminology.set` | Tenant admin | `tenant:draft` | Prepare (high-risk) |
+
+Reasons for each Prepare mark on an operation that is not high-risk, all interim, pending Daniel:
+
+- `creator.accept_narrative`: template text applies only once a person accepts it (TH-49).
+- `creator.acknowledge`: an acknowledged warning clears the I-66 gate, and it makes the acknowledging account a builder (I-67).
+- `import.resolve`: I-65 asks a named programme manager to confirm or edit each imported value.
+- `creator.invite`: it invites a person.
+- `creator.request_activation`: it starts the activation of a programme.
+- `creator.save_as_template`: it makes the draft's text readable to the tenant's other staff.
+- `call.approve`: it is the second-person approval of R-PC-03 before publication.
+
+Every Allow mark is a read or an edit of a draft record. Interim, pending Daniel: P-75 and P-77 are draft policy fields, saved through `fstp_creator_save_fields` like any other field. They take effect only through an activation that a second person approves in the web with a step-up, so their saves stay Allow.
+
+### Operations that stay web only
+
+| Operation | Reason |
+| --- | --- |
+| `creator.approve_activation`, `creator.override_activation` | The I-67 approval or override is the second person's own judgement, with a written reason for the override. No tool reaches `ActivateProgramme` (I-66 test) |
+| `creator.withdraw_invitation` | No tool can name an invitation: its list holds emails and stays web only (I-86) |
+| `creator.invitations`, `team.list`, `admin.members`, `tenant.list_admins`, `tenant.list_signatories` | They name emails or display names (I-86) |
+| `roles.reinstate` | Reinstating a suspended binding is not a setup step |
+| `tenant.save_step`, `tenant.complete`, `tenant.request_activation`, `tenant.approve_activation` | Onboarding runs before activation. The setup gate (ADR-021) refuses `agents.consent` until then, so no agent exists to call them |
+| `tenant.invite_admin`, `tenant.grant_signatory`, `tenant.end_signatory`, `admin.*` | Tenant governance, not programme setup. Interim, pending Daniel |
+| `tenant.set_login_methods`, `tenant.set_step_up_freshness`, `tenant.set_session_lifetimes`, `tenant.set_mcp` | They set the controls of sign-in and of agents themselves |
+| `tenant.set_mail_relay`, `tenant.clear_mail_relay`, `tenant.get_mail_relay` | The relay holds a credential |
+| `tenant.set_payment_mode`, `tenant.set_template_licence` | Interim, pending Daniel: tenant money and licence settings, outside programme setup |
+| `tenant.set_guide_notice` | The Guide's data protection texts are legal wording. Interim, pending Daniel |
+
+### Setup steps with no web route, so no tool
+
+- A reviewer pool as its own object. The pool is the committee and IRC invitations and grants of a programme, which the tools above prepare.
+- A separate budget, envelope, criteria, timeline or Guide editor. Each is a draft field or narrative of the creator, saved through `creator.save_fields` or `creator.edit_narrative`, and a call's dates and budget through `call.draft` and `call.edit`.
+- Setting P-75 or P-77 on an active programme. After activation the creator saves P-09 alone (lane m4/fast-flow), so neither has an edit route there.

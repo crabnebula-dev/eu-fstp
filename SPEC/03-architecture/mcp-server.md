@@ -21,8 +21,9 @@ Status: scope decided by Daniel on 2026-10-10 (O-40).
 | Applicant | Read open calls and the Guide; draft and edit proposals; run the pre-check within its quota (P-23); read own notifications and stage 2 questions; draft answers |
 | Grantee | Read own grant, milestones and balances; draft payment requests and reallocation requests; read reviewer decisions |
 | Reviewer and committee | Read assignments, ranking view and findings within P-10 and P-75; draft scores and comments |
-| Programme staff | Programme creator drafts, call drafting, timeline and reminder status, reporting drafts |
+| Programme staff | Programme creator drafts, call drafting, timeline and reminder status, reporting drafts. Prepare invitations, activation requests, call approvals and other setup steps for a person to confirm in the platform (ADR-013 amendment of 2026-11-20) |
 | Finance roles | Payment queue status and reconciliation views |
+| Tenant admin | Prepare new programme drafts, role grants and ends, funder profile versions, brand tokens and interface labels, for a person to confirm in the platform with a step-up. Read programme roles by account id and funder profiles (ADR-013 amendment of 2026-11-20) |
 | Auditor | Read-only audit views and aggregates |
 | Anyone, without an account | Public research tools: open calls, Guides for Applicants, eligibility and deadlines, and published subgrants within each grantee's publication choice |
 
