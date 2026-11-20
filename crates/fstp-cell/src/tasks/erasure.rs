@@ -47,8 +47,9 @@
 //!
 //! [`Keystore`] holds what survives a crash: the rows, the chain state at
 //! its last durable point and the reference of a root created for a batch
-//! not yet committed. Until the PostgreSQL keystore tables of lane W2e
-//! land it is held in memory by its owner. Steps 2 and 3 live in process
+//! not yet committed. Since lane L3 (ADR-004, decided by Daniel on
+//! 2026-11-20) it writes through to the keystore tables ([`tables`]), and
+//! a start loads it from them. Steps 2 and 3 live in process
 //! memory until the commit, so a restart before the commit starts the
 //! batch again from step 2 (`ChainState::restart`).
 //!
@@ -226,8 +227,8 @@ pub fn normalise_email(email: &str) -> String {
 /// each live login email by `HMAC-SHA-256(Lookup, normalised address)`,
 /// and the text that holds each address, sealed like every text.
 ///
-/// Interim, pending Daniel: the index is held with the keystore, in its
-/// owner's memory, until the PostgreSQL keystore tables of lane W2e land.
+/// Since lane L3 the index lives in `keystore.login_digest` and
+/// `keystore.login_text`, written with the rest of the keystore.
 #[derive(Clone, Default)]
 struct LoginIndex {
     /// The keyed digest group of purpose `Lookup`, once a login email

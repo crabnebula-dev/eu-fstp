@@ -11,9 +11,9 @@
 //!
 //! Interim, pending Daniel:
 //!
-//! - The keystore is still held in memory by its owner (W2e has not
-//!   moved it into the `keystore` tables), so the image stands for those
-//!   tables. The texts are in it too, as `blob.text` would hold them.
+//! - The image holds the rows of the keystore tables (`super::tables`,
+//!   lane L3) that open texts: roots, group secrets, data keys, texts and
+//!   the login digests. The texts are in it as `keystore.text` holds them.
 //! - The level 2 signing key rows and the chain state are not in it yet.
 //!   They open nothing that the tests here read.
 //! - The bytes below are this lane's own:
