@@ -553,7 +553,7 @@ pub(super) async fn command<P: Seams>(
     // Step 6 (I-85): nothing is stored or appended for a prepared call
     // but the pending action.
     if prepared {
-        return prepare(call, op, account);
+        return prepare(call, op, account).await;
     }
     let proof = if call.spec.high_risk {
         match step_up(call, call.digest)

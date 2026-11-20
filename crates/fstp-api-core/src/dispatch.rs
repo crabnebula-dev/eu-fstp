@@ -113,15 +113,16 @@ use crate::forms::{self, BuildCtx, CmdForm};
 use crate::journal::{Journal, RoundStatus, ThreadEntry, Unknown};
 use crate::model::{AssignmentSummary, CallSummary, ProposalSummary, SessionSummary};
 use crate::pending::{
-    InsertError, PENDING_LIFETIME_MICROS, PendingAction, PendingReceipt, PendingStatus,
-    PendingStore, confirm_path,
+    MemoryPendingActions, PENDING_LIFETIME_MICROS, PendingAction, PendingReceipt, PendingStatus,
+    confirm_path,
 };
 use crate::port::{
     Accounts, AgentClientId, AsyncEngine, AsyncIdentityOracle, AuditEntry, BreakGlass,
     BreakGlassId, CellPorts, Clock, ExecError, ExecMeta, Ids, LoginMethod, OpName, Outcome,
-    PendingId, PortError, QueryDigest, Recovery, RecoveryId, SealOwner, Sealer, SessionId,
-    Sessions, SessionsAdmin, StepUp, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore,
-    Tokens, Vault, VaultAudit, VerificationPurpose, WorkspaceSlot, Workspaces,
+    PendingActions, PendingId, PendingInsertError, PortError, QueryDigest, Recovery, RecoveryId,
+    SealOwner, Sealer, SessionId, Sessions, SessionsAdmin, StepUp, StepUpRef, TenantConfig,
+    TextClass, TextOwner, TextStore, Tokens, Vault, VaultAudit, VerificationPurpose, WorkspaceSlot,
+    Workspaces,
 };
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
@@ -215,7 +216,11 @@ pub(crate) trait Seams: CellPorts {
     reason = "port.rs holds it beside the ports once the lead closes the seams"
 )]
 pub(crate) struct State {
-    pending: Mutex<PendingStore>,
+    /// The pending actions of a cell with no port of its own (ADR-026).
+    pending: MemoryPendingActions,
+    /// The pending actions a confirmation or a discard is closing. Nothing
+    /// else closes or executes them meanwhile (I-85).
+    claims: Mutex<BTreeSet<PendingId>>,
     rates: Mutex<Rates>,
     content: Mutex<ContentStore>,
     journal: Mutex<Journal>,
@@ -818,7 +823,7 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         OpKind::Command(_) => command(call, op, verdict).await,
         OpKind::Read(kind) => read(call, op, kind).await,
         OpKind::Pending(PendingKind::Confirm) => confirm(call, op).await,
-        OpKind::Pending(PendingKind::Discard) => discard(call, op),
+        OpKind::Pending(PendingKind::Discard) => discard(call, op).await,
         OpKind::Agent(kind) => agent(call, op, kind).await,
         OpKind::M3Port(kind) => m3_port(call, op, kind).await,
         OpKind::Creator(_) | OpKind::Bridge(_) | OpKind::Import(_) => {
@@ -1337,7 +1342,7 @@ async fn command<P: Seams>(
         .map_err(|e| call.refuse(former_lead_guard(e, lead)))?;
     // Step 6.
     if verdict == ChannelVerdict::Prepare {
-        return prepare(call, op, account);
+        return prepare(call, op, account).await;
     }
     // Step 7.
     let proof = if call.spec.high_risk && call.caller.via() == Via::Web {
@@ -1465,7 +1470,7 @@ fn accepted(form: &CmdForm, ids: &[u128]) -> ReadModel {
 }
 
 /// Step 6: stores a pending action for a web confirmation (I-85).
-fn prepare<P: Seams>(
+async fn prepare<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
     account: AccountId,
@@ -1485,7 +1490,7 @@ fn prepare<P: Seams>(
         id,
         account,
         agent,
-        op: call.spec.name,
+        op: call.spec.name.to_owned(),
         request,
         shown,
         digest: call.digest,
@@ -1494,19 +1499,23 @@ fn prepare<P: Seams>(
         status: PendingStatus::Open,
         closed: None,
     };
-    match lock(&call.st.pending).insert(action, call.now) {
+    let store = pendings(call.ports, call.st);
+    match store.insert(action, call.now).await {
         Ok(()) => {}
-        Err(InsertError::Taken) => {
+        Err(PendingInsertError::Taken) => {
             return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "ids")));
         }
-        Err(InsertError::Full) => {
+        Err(PendingInsertError::Full) => {
             return Err(call.refuse(ApiError::refused(ErrorCode::RateLimited, "I-85")));
+        }
+        Err(PendingInsertError::Port(e)) => {
+            return Err(call.refuse(port_failed(e, "I-85")));
         }
     }
     // The action is confirmable only with its audit entry: a failed write
     // removes it again.
     if let Err(e) = call.accepted(None) {
-        lock(&call.st.pending).remove(id);
+        let _ = store.remove(id).await;
         return Err(e);
     }
     Ok(OpResult::Pending(PendingReceipt {
@@ -1516,8 +1525,14 @@ fn prepare<P: Seams>(
     }))
 }
 
+/// The pending actions of the cell: its port, or the core's memory for a
+/// cell that has none (ADR-026).
+pub(crate) fn pendings<'a, P: Seams>(ports: &'a P, st: &'a State) -> &'a dyn PendingActions {
+    ports.pending_actions().unwrap_or(&st.pending)
+}
+
 /// The pending action a confirmation or discard names.
-fn pending_of<P: Seams>(
+async fn pending_of<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
 ) -> Result<(AccountId, PendingAction), ApiError> {
@@ -1526,9 +1541,11 @@ fn pending_of<P: Seams>(
     };
     let id = forms::id_param(&op.request, "pending")
         .ok_or(ApiError::bad_request(forms::REQUEST_RULE))?;
-    let found = lock(&call.st.pending)
+    let store = pendings(call.ports, call.st);
+    let found = store
         .get(PendingId::from_raw(id), account)
-        .cloned();
+        .await
+        .map_err(|e| port_failed(e, "I-85"))?;
     // I-85: an action is found only by its own account. An id that
     // names no open action of the caller is an input refusal, alike for
     // an unknown id and another account's action, outside authorisation
@@ -1537,7 +1554,9 @@ fn pending_of<P: Seams>(
     match a.status_at(call.now) {
         PendingStatus::Open => Ok((account, a)),
         PendingStatus::Expired => {
-            lock(&call.st.pending).close(a.id, PendingStatus::Expired, call.now);
+            if let Some(_claim) = Claim::take(&call.st.claims, a.id) {
+                let _ = store.close(a.id, PendingStatus::Expired, call.now).await;
+            }
             Err(ApiError::refused(ErrorCode::Expired, "I-85"))
         }
         PendingStatus::Confirmed | PendingStatus::Discarded => {
@@ -1546,30 +1565,52 @@ fn pending_of<P: Seams>(
     }
 }
 
-/// A confirmation's claim on its pending action. Dropping it releases
-/// the claim, which is a no-op once the action is confirmed.
+/// A confirmation's or a discard's claim on its pending action. While it
+/// is held, no other confirmation, discard or expiry mark closes the
+/// action. Dropping it releases the claim.
 struct Claim<'a> {
-    store: &'a Mutex<PendingStore>,
+    claims: &'a Mutex<BTreeSet<PendingId>>,
     id: PendingId,
 }
 
 impl<'a> Claim<'a> {
-    /// Claims the open action `id` of `account`, or `None`.
-    fn take(
-        store: &'a Mutex<PendingStore>,
-        id: PendingId,
-        account: AccountId,
-        now: Timestamp,
-    ) -> Option<Claim<'a>> {
-        lock(store)
-            .claim(id, account, now)
-            .then_some(Claim { store, id })
+    /// Claims `id`, or `None` when another claim holds it.
+    fn take(claims: &'a Mutex<BTreeSet<PendingId>>, id: PendingId) -> Option<Claim<'a>> {
+        lock(claims).insert(id).then_some(Claim { claims, id })
     }
 }
 
 impl Drop for Claim<'_> {
     fn drop(&mut self) {
-        lock(self.store).release(self.id);
+        lock(self.claims).remove(&self.id);
+    }
+}
+
+/// The listed pending actions of `account`, or none when the store
+/// cannot answer: the mailbox shows what it can (I-85).
+async fn pending_list<P: Seams>(call: &Call<'_, P>, account: AccountId) -> Vec<PendingAction> {
+    pendings(call.ports, call.st)
+        .list(account, call.now)
+        .await
+        .unwrap_or_default()
+}
+
+/// Claims the action `a` of `account`, then reads it again: a claim
+/// holds only an action that is still open after it was taken (I-85).
+async fn claim_open<'a, P: Seams>(
+    call: &'a Call<'_, P>,
+    a: &PendingAction,
+    account: AccountId,
+) -> Result<Claim<'a>, ApiError> {
+    let refused = || call.refuse(ApiError::refused(ErrorCode::Refused, "I-85"));
+    let claim = Claim::take(&call.st.claims, a.id).ok_or_else(refused)?;
+    let again = pendings(call.ports, call.st)
+        .get(a.id, account)
+        .await
+        .map_err(|e| call.refuse(port_failed(e, "I-85")))?;
+    match again {
+        Some(x) if x.status_at(call.now) == PendingStatus::Open => Ok(claim),
+        _ => Err(refused()),
     }
 }
 
@@ -1581,7 +1622,7 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     if call.caller.via() != Via::Web {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
-    let (account, a) = pending_of(call, op).map_err(|e| call.refuse(e))?;
+    let (account, a) = pending_of(call, op).await.map_err(|e| call.refuse(e))?;
     let shown = op
         .request
         .get("shown")
@@ -1610,11 +1651,10 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     if !fstp_access::session_admits(stored.spec, &call.caller.p) {
         return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-77")));
     }
-    // Claimed before the first await: a discard, an expiry mark or a
+    // Claimed before the command is built: a discard, an expiry mark or a
     // second confirmation meanwhile is refused. Dropping the claim
-    // releases it unless the execution confirmed the action.
-    let _claim = Claim::take(&call.st.pending, a.id, account, call.now)
-        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Refused, "I-85")))?;
+    // releases it.
+    let _claim = claim_open(call, &a, account).await?;
     let mut ids = Vec::new();
     let cmd =
         build(call, &form, &stored, &BTreeMap::new(), &mut ids).map_err(|e| call.refuse(e))?;
@@ -1658,7 +1698,9 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     match call.ports.engine().execute(cmd, ctx, meta).await {
         Ok(seq) => {
             executed(call, account, &appended).await;
-            let _ = lock(&call.st.pending).confirm(a.id, call.now);
+            let _ = pendings(call.ports, call.st)
+                .confirmed(a.id, call.now)
+                .await;
             Ok(OpResult::Done {
                 body: accepted(&form, &ids),
                 seq: Some(seq),
@@ -1686,8 +1728,7 @@ async fn confirm_other<P: Seams>(
     if !fstp_access::session_admits(stored.spec, &call.caller.p) {
         return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-77")));
     }
-    let _claim = Claim::take(&call.st.pending, a.id, account, call.now)
-        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Refused, "I-85")))?;
+    let _claim = claim_open(call, a, account).await?;
     let sub = Call {
         ports: call.ports,
         st: call.st,
@@ -1716,18 +1757,25 @@ async fn confirm_other<P: Seams>(
         ))),
     };
     if let Ok(OpResult::Done { seq: Some(_), .. }) = &result {
-        let _ = lock(&call.st.pending).confirm(a.id, call.now);
+        let _ = pendings(call.ports, call.st)
+            .confirmed(a.id, call.now)
+            .await;
     }
     result
 }
 
 /// `pending.discard`: the user discards an open action of their own.
-fn discard<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiError> {
+async fn discard<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiError> {
     if call.caller.via() != Via::Web {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
-    let (_, a) = pending_of(call, op).map_err(|e| call.refuse(e))?;
-    if !lock(&call.st.pending).close(a.id, PendingStatus::Discarded, call.now) {
+    let (account, a) = pending_of(call, op).await.map_err(|e| call.refuse(e))?;
+    let _claim = claim_open(call, &a, account).await?;
+    let closed = pendings(call.ports, call.st)
+        .close(a.id, PendingStatus::Discarded, call.now)
+        .await
+        .map_err(|e| call.refuse(port_failed(e, "I-85")))?;
+    if !closed {
         return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-85")));
     }
     call.accept(ReadModel::Accepted)
@@ -1819,7 +1867,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let Some(a) = account else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
-            ReadModel::PendingActions(lock(&call.st.pending).list(a, call.now))
+            let list = pendings(call.ports, call.st)
+                .list(a, call.now)
+                .await
+                .map_err(|e| call.refuse(port_failed(e, "I-85")))?;
+            ReadModel::PendingActions(list.iter().map(|p| p.view(call.now)).collect())
         }
         // R-MC-03, lane m4/ops-roles-agents.
         ReadKind::ListMyAgents => {
@@ -2117,7 +2169,8 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             let Some(a) = account else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
             };
-            ReadModel::Mailbox(mailbox::read(call, a))
+            let pending = pending_list(call, a).await;
+            ReadModel::Mailbox(mailbox::read(call, a, &pending))
         }
         // Lane j2, `SPEC/12-journey-ui.md` section 10 (I-92, I-93, I-97).
         ReadKind::GetJourney => {
@@ -2652,7 +2705,8 @@ async fn m3_port<P: Seams>(
             // ADR-020: only a notice of the caller's own mailbox at this
             // instant. Any other id gets the one refusal, so the answer
             // reveals no other account's notices (I-86).
-            let own = mailbox::read(call, account)
+            let pending = pending_list(call, account).await;
+            let own = mailbox::read(call, account, &pending)
                 .messages
                 .iter()
                 .any(|m| !m.kind.action() && m.id() == message);

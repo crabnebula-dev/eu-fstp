@@ -70,9 +70,16 @@ pub(crate) async fn admit<P: Seams>(
         };
         match judge(ports, st, &caller, &state, now, &op) {
             Verdict::Admitted => {
-                let listed = row.listed.is_none_or(|(param, how)| {
-                    account.is_some_and(|a| lists(st, &state, a, now, &params, param, how))
-                });
+                let listed = match (row.listed, account) {
+                    (None, _) => true,
+                    (Some(_), None) => false,
+                    // I-85: a pending action page lists the caller's own
+                    // actions, read from the cell's store (ADR-026).
+                    (Some((param, Listed::PendingAction)), Some(a)) => {
+                        pending_listed(ports, st, a, now, &params, param).await
+                    }
+                    (Some((param, how)), Some(a)) => lists(&state, a, &params, param, how),
+                };
                 return if listed {
                     PageAdmission::Open
                 } else {
@@ -219,13 +226,34 @@ fn read_admits<P: Seams>(
     }
 }
 
+/// Whether the pending action named by `param` is one of `account`'s
+/// listed actions (I-85).
+async fn pending_listed<P: Seams>(
+    ports: &P,
+    st: &State,
+    account: AccountId,
+    now: Timestamp,
+    params: &[(&'static str, String)],
+    param: &str,
+) -> bool {
+    let Some(want) = params
+        .iter()
+        .find(|(n, _)| *n == param)
+        .and_then(|(_, v)| v.parse::<u128>().ok())
+    else {
+        return false;
+    };
+    super::pendings(ports, st)
+        .list(account, now)
+        .await
+        .is_ok_and(|l| l.iter().any(|p| p.id == PendingId::from_raw(want)))
+}
+
 /// Whether the page id `param` is one the page's read lists for
 /// `account` ([`Listed`]).
 fn lists(
-    st: &State,
     state: &EngineState,
     account: AccountId,
-    now: Timestamp,
     params: &[(&'static str, String)],
     param: &str,
     how: Listed,
@@ -256,10 +284,8 @@ fn lists(
                 .summaries()
                 .any(|s| s.grant.raw() == grant && s.request.raw() == want)
         }
-        Listed::PendingAction => super::lock(&st.pending)
-            .list(account, now)
-            .iter()
-            .any(|p| p.id == PendingId::from_raw(want)),
+        // Judged by `pending_listed`, which reads the store.
+        Listed::PendingAction => false,
     }
 }
 

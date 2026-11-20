@@ -453,7 +453,7 @@ pub(super) async fn command<P: Seams>(
     // Step 6 (I-85): nothing is stored, mailed or appended for a prepared
     // call but the pending action.
     if verdict == ChannelVerdict::Prepare {
-        return prepare(call, op, account);
+        return prepare(call, op, account).await;
     }
     // A second line under `channel_policy`: a high-risk operation never
     // executes through MCP (I-85).

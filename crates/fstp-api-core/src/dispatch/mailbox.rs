@@ -27,9 +27,13 @@ use crate::mailbox::{MailItem, MailKind, MailRefs, MailboxView};
 use crate::pending::PendingStatus;
 
 /// The caller's mailbox at the read instant.
-pub(super) fn read<P: Seams>(call: &Call<'_, P>, account: AccountId) -> MailboxView {
+pub(super) fn read<P: Seams>(
+    call: &Call<'_, P>,
+    account: AccountId,
+    listed: &[crate::pending::PendingAction],
+) -> MailboxView {
     let mut out = Vec::new();
-    pending(call, account, &mut out);
+    pending(call, listed, &mut out);
     receiving(call, account, &mut out);
     assignments(call, account, &mut out);
     staff(call, account, &mut out);
@@ -123,8 +127,12 @@ fn state_of<P: Seams>(call: &Call<'_, P>, p: ProposalId) -> Option<StateTag> {
 }
 
 /// I-85: each open, unexpired pending action of the caller's agents.
-fn pending<P: Seams>(call: &Call<'_, P>, account: AccountId, out: &mut Vec<MailItem>) {
-    for v in lock(&call.st.pending).list(account, call.now) {
+fn pending<P: Seams>(
+    call: &Call<'_, P>,
+    listed: &[crate::pending::PendingAction],
+    out: &mut Vec<MailItem>,
+) {
+    for v in listed.iter().map(|p| p.view(call.now)) {
         if v.status != PendingStatus::Open {
             continue;
         }

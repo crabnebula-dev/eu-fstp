@@ -1002,6 +1002,77 @@ pub struct AgentInfo {
 pub trait AuditSink: Send + Sync {
     /// Records one entry.
     fn record(&self, tx: &mut Tx, e: AuditEntry) -> Result<(), PortError>;
+    /// Makes every entry recorded before this call durable (ADR-010
+    /// amendment of 2026-11-20). [`ApiCore`] awaits it before it answers a
+    /// call, and a failure turns the answer into a 503 refusal. The
+    /// default is the seam of a sink whose `record` is durable at once.
+    fn flush(&self) -> impl Future<Output = Result<(), PortError>> + Send {
+        std::future::ready(Ok(()))
+    }
+}
+
+/// A boxed future of a [`PendingActions`] call, so the port is object
+/// safe and a cell passes it as `&dyn PendingActions`.
+pub type PendingFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Why [`PendingActions::insert`] stored nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingInsertError {
+    /// The id is taken.
+    Taken,
+    /// The account holds the most open actions it may hold.
+    Full,
+    /// The port failed.
+    Port(PortError),
+}
+
+/// The pending actions of a cell (I-85, ADR-026): stored with their
+/// canonical request, found by their own account only. The API core keeps
+/// the claims of confirmations in flight in its own memory, so a store
+/// holds statuses only.
+///
+/// The production cell stores them in `api.pending_actions`, and records
+/// a confirmation in the append that executes it, so a second
+/// confirmation aborts that append.
+pub trait PendingActions: Send + Sync {
+    /// Stores a new open action at `now`, within the bounds of
+    /// `crate::pending::OPEN_PER_ACCOUNT`.
+    fn insert(
+        &self,
+        a: crate::pending::PendingAction,
+        now: Timestamp,
+    ) -> PendingFuture<'_, Result<(), PendingInsertError>>;
+    /// The action `id` of `account`, or `None`, also when another account
+    /// holds it.
+    fn get(
+        &self,
+        id: PendingId,
+        account: AccountId,
+    ) -> PendingFuture<'_, Result<Option<crate::pending::PendingAction>, PortError>>;
+    /// Every listed action of `account` at `now`, in id order.
+    fn list(
+        &self,
+        account: AccountId,
+        now: Timestamp,
+    ) -> PendingFuture<'_, Result<Vec<crate::pending::PendingAction>, PortError>>;
+    /// Closes the open, unconfirmed action `id` as `to` at `now`. `false`
+    /// when it is not open.
+    fn close(
+        &self,
+        id: PendingId,
+        to: crate::pending::PendingStatus,
+        now: Timestamp,
+    ) -> PendingFuture<'_, Result<bool, PortError>>;
+    /// Removes `id` entirely, such as a preparation whose audit entry
+    /// could not be written.
+    fn remove(&self, id: PendingId) -> PendingFuture<'_, Result<(), PortError>>;
+    /// Whether `id` is confirmed, after the engine executed it at `now`.
+    /// A store whose engine records no confirmation marks it here.
+    fn confirmed(
+        &self,
+        id: PendingId,
+        now: Timestamp,
+    ) -> PendingFuture<'_, Result<bool, PortError>>;
 }
 
 /// Free text, each under its own data key (ADR-004, ADR-007).
@@ -1643,6 +1714,12 @@ pub trait CellPorts: Send + Sync + 'static {
     fn ids(&self) -> &Self::Ids;
     /// The MCP token grants.
     fn tokens(&self) -> &Self::Tokens;
+    /// The cell's durable pending actions (ADR-026). `None` keeps them in
+    /// the core's memory, as a test cell does: a restart loses them,
+    /// which fails closed (I-85).
+    fn pending_actions(&self) -> Option<&dyn PendingActions> {
+        None
+    }
 }
 
 /// The object-safe dispatch behind [`ApiCore`]. Private to this crate.
@@ -1681,13 +1758,18 @@ impl<P: CellPorts> Dispatch for Core<P> {
         head: &'a RequestHead,
         op: Op,
     ) -> DispatchFuture<'a> {
-        Box::pin(crate::dispatch::run(
-            &self.ports,
-            &self.state,
-            cred,
-            head,
-            op,
-        ))
+        Box::pin(async move {
+            let reply = crate::dispatch::run(&self.ports, &self.state, cred, head, op).await;
+            // ADR-010 amendment of 2026-11-20: the call's audit entries are
+            // durable before it is answered. A failed flush answers 503.
+            match self.ports.audit().flush().await {
+                Ok(()) => reply,
+                Err(_) => Err(crate::ApiError::refused(
+                    crate::ErrorCode::Unavailable,
+                    "I-24",
+                )),
+            }
+        })
     }
 
     fn tool_rights(&self, cred: Credential) -> RightsFuture<'_> {

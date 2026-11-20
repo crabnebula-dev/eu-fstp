@@ -15,9 +15,16 @@ use super::lock;
 pub struct FakeAudit {
     entries: Arc<Mutex<Vec<AuditEntry>>>,
     failing: Arc<AtomicBool>,
+    flush_failing: Arc<AtomicBool>,
 }
 
 impl FakeAudit {
+    /// Makes every later flush fail with `PortError::Unavailable`, or
+    /// succeed again (ADR-010 amendment of 2026-11-20).
+    pub fn set_flush_failing(&self, failing: bool) {
+        self.flush_failing.store(failing, Ordering::SeqCst);
+    }
+
     /// Every entry, in order.
     pub fn entries(&self) -> Vec<AuditEntry> {
         lock(&self.entries).clone()
@@ -38,6 +45,14 @@ impl AuditSink for FakeAudit {
         }
         lock(&self.entries).push(e);
         Ok(())
+    }
+
+    fn flush(&self) -> impl std::future::Future<Output = Result<(), PortError>> + Send {
+        std::future::ready(if self.flush_failing.load(Ordering::SeqCst) {
+            Err(PortError::Unavailable)
+        } else {
+            Ok(())
+        })
     }
 }
 
