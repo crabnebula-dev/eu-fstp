@@ -82,6 +82,8 @@ pub struct RouteInputs {
     ticket: Option<VerifiedTicket>,
     outbox: Option<Vec<crate::timeline::MessageBody>>,
     creator: Option<crate::creator::CreatorFacts>,
+    agent: bool,
+    api: Option<ApiEffects>,
 }
 
 impl RouteInputs {
@@ -168,4 +170,53 @@ impl RouteInputs {
     pub fn creator(&self) -> Option<&crate::creator::CreatorFacts> {
         self.creator.as_ref()
     }
+
+    /// The same inputs for a command an agent sent through MCP, under
+    /// its grant (ADR-026 "Channel in the decision"). Only the agent
+    /// admission sets it ([`crate::gate::admit_agent_command`]). The
+    /// decision then runs with `Via::Mcp`, which can only add refusals.
+    #[must_use]
+    pub(crate) fn with_agent(mut self) -> RouteInputs {
+        self.agent = true;
+        self
+    }
+
+    /// The channel the command came through: `Via::Mcp` for an agent's
+    /// command, `Via::Web` otherwise.
+    pub fn via(&self) -> fstp_domain::Via {
+        if self.agent {
+            fstp_domain::Via::Mcp
+        } else {
+            fstp_domain::Via::Web
+        }
+    }
+
+    /// The same inputs with the API core's side effects `effects`
+    /// (ADR-026, ADR-010 amendment of 2026-11-20): the pending action
+    /// the command confirms and the call's audit events. They are data:
+    /// they change no check of the gate and no decision, and the store
+    /// writes them in the command's append transaction.
+    #[must_use]
+    pub fn with_api(mut self, effects: ApiEffects) -> RouteInputs {
+        self.api = Some(effects);
+        self
+    }
+
+    /// The API core's side effects, if given.
+    pub fn api(&self) -> Option<&ApiEffects> {
+        self.api.as_ref()
+    }
+}
+
+/// The side effects of an `ApiCore` call that join its command's append
+/// (ADR-026 "Pending actions", ADR-010 amendment of 2026-11-20).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApiEffects {
+    /// The pending action the command confirms (I-85). The store inserts
+    /// its one `api.pending_confirmed` row, and a second confirmation
+    /// aborts the append.
+    pub pending: Option<[u8; 16]>,
+    /// The canonical bodies of the call's audit events, in order. The
+    /// store seals each into one kind 2 row of the App chain (I-24).
+    pub events: Vec<Vec<u8>>,
 }

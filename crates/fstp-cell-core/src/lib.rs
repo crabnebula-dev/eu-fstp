@@ -64,7 +64,7 @@ pub use decide::{
     attest_at, decide_reaction, decide_reaction_with_inputs, reaction_queries, route_inputs,
     self_grant_digest, stepup_id, try_action_digest, vault_changed, without_vault_outcomes,
 };
-pub use inputs::{RouteInputs, SessionRows};
+pub use inputs::{ApiEffects, RouteInputs, SessionRows};
 pub use state::CellState;
 pub use state::{
     SYSTEM_PREFIX, is_reaction_command_id, is_system_command_id, reaction_command_id,
