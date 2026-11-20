@@ -400,4 +400,110 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("reply_code", Enum),
         ],
     ),
+    // Lane L2 (ADR-013 amendment of 2026-11-20): the durable records of
+    // the OAuth 2.1 authorisation server. Interim readings, pending
+    // Daniel: `metadata_text` names a sealed text, so it is a `RandomId`
+    // like the other text ids; `scopes` is a set of a closed enum and
+    // `revoked` a closed flag, so both are `Enum`; `account` is the raw
+    // account id, a `RandomId`. Both hash columns are SHA-256 digests of
+    // 256-bit random tokens (`SecretDigest`, ADR-013 "Token storage").
+    table(
+        "mcp",
+        "client",
+        TableClass::Operational,
+        &[
+            col("number", Sequence),
+            col("client_id", RandomId),
+            col("metadata_text", RandomId),
+            col("registered_at", Time),
+        ],
+    ),
+    table(
+        "mcp",
+        "family",
+        TableClass::Operational,
+        &[
+            col("id", Sequence),
+            col("client", Sequence),
+            col("account", RandomId),
+            col("scopes", Enum),
+            col("started_at", Time),
+            col("ends_at", Time),
+            col("current_hash", SecretDigest),
+            col("refreshes", Count),
+            col("revoked", Enum),
+            col("method", Enum),
+            col("version", Sequence),
+        ],
+    ),
+    table(
+        "mcp",
+        "refresh",
+        TableClass::Operational,
+        &[col("hash", SecretDigest), col("family", Sequence)],
+    ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// R-NF-08, TH-61, lane L2: every column of the `mcp` schema has a
+    /// class, none holds content in clear, and each token column is a
+    /// digest of a random secret. The tables are operational, since they
+    /// hold no tenant content: client text lives in a sealed text.
+    #[test]
+    fn r_nf_08_mcp_columns_are_classed() {
+        let mcp: Vec<&TableSpec> = CATALOGUE.iter().filter(|t| t.schema == "mcp").collect();
+        let names: Vec<&str> = mcp.iter().map(|t| t.name).collect();
+        assert_eq!(names, ["client", "family", "refresh"]);
+        for t in &mcp {
+            assert_eq!(t.class, TableClass::Operational, "mcp.{}", t.name);
+            for c in t.columns {
+                let class = c
+                    .class
+                    .unwrap_or_else(|| panic!("R-NF-08: mcp.{}.{} unclassed", t.name, c.name));
+                assert!(
+                    !matches!(class, ColumnClass::Infrastructure | ColumnClass::Sealed),
+                    "mcp.{}.{} holds content",
+                    t.name,
+                    c.name
+                );
+            }
+        }
+        let class = |table: &str, column: &str| {
+            mcp.iter()
+                .find(|t| t.name == table)
+                .and_then(|t| t.columns.iter().find(|c| c.name == column))
+                .and_then(|c| c.class)
+        };
+        assert_eq!(class("family", "current_hash"), Some(SecretDigest));
+        assert_eq!(class("refresh", "hash"), Some(SecretDigest));
+        assert_eq!(class("client", "client_id"), Some(RandomId));
+        assert_eq!(class("client", "metadata_text"), Some(RandomId));
+        assert_eq!(class("family", "account"), Some(RandomId));
+    }
+
+    /// R-NF-08, lane L2: the catalogue lists the columns of
+    /// `0010_mcp.sql` in declaration order. The database comparison of
+    /// `tests/schema.rs` checks the same on a migrated cluster.
+    #[test]
+    fn r_nf_08_mcp_catalogue_follows_the_migration() {
+        let sql = include_str!("../migrations/app/0010_mcp.sql");
+        for t in CATALOGUE.iter().filter(|t| t.schema == "mcp") {
+            let head = format!("CREATE TABLE mcp.{} (", t.name);
+            let body = sql
+                .split_once(head.as_str())
+                .and_then(|(_, rest)| rest.split_once("\n);"))
+                .map(|(b, _)| b)
+                .unwrap_or_else(|| panic!("no table mcp.{}", t.name));
+            let declared: Vec<&str> = body
+                .lines()
+                .filter_map(|l| l.split_whitespace().next())
+                .filter(|w| *w != "CHECK")
+                .collect();
+            let listed: Vec<&str> = t.columns.iter().map(|c| c.name).collect();
+            assert_eq!(declared, listed, "mcp.{}", t.name);
+        }
+    }
+}

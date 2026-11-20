@@ -25,6 +25,8 @@ use fstp_migrate::Migration;
 ///    runner it changes nothing.
 /// 8. `column_classes`: the length checks of the column classes of
 ///    Daniel's Q-A answer (2026-11-07, design section 4.5, R-NF-08).
+/// 10. `mcp`: the durable records of the OAuth 2.1 authorisation server
+///    (ADR-013 amendment of 2026-11-20, lane L2).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -54,6 +56,11 @@ pub const MIGRATIONS: &[Migration] = &[
         "column_classes",
         include_str!("../migrations/app/0008_column_classes.sql"),
     ),
+    // Lane L2 (prod/oauth-pg). The file number 10 is fixed by
+    // production-mcp-design.md section 3.2. Until lane L1 adds
+    // `0009_api.sql`, the set must stay contiguous, so this entry takes
+    // version 9. The rebase onto L1 sets it to 10.
+    Migration::new(9, "mcp", include_str!("../migrations/app/0010_mcp.sql")),
 ];
 
 #[cfg(test)]
