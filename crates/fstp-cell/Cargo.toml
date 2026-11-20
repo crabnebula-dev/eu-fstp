@@ -37,6 +37,11 @@ fstp-guide.workspace = true
 fstp-money.workspace = true
 # M6 lane L6-TL: the timeline engine the timeline task runs.
 fstp-timeline.workspace = true
+# Lane L2 (prod/oauth-pg): the authorisation server of ADR-013, and the
+# API core's `Tokens` port it serves (`crate::oauth`).
+fstp-oauth.workspace = true
+fstp-api-core.workspace = true
+fstp-access.workspace = true
 fstp-ledger.workspace = true
 fstp-audit.workspace = true
 fstp-keys.workspace = true

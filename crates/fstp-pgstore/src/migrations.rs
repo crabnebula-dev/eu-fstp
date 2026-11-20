@@ -26,7 +26,7 @@ use fstp_migrate::Migration;
 /// 8. `column_classes`: the length checks of the column classes of
 ///    Daniel's Q-A answer (2026-11-07, design section 4.5, R-NF-08).
 /// 10. `mcp`: the durable records of the OAuth 2.1 authorisation server
-///    (ADR-013 amendment of 2026-11-20, lane L2).
+///     (ADR-013 amendment of 2026-11-20, lane L2).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(

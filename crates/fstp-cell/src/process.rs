@@ -189,6 +189,8 @@ pub struct RunningCell<R: Runtime> {
     reader: PgCellStore<R, WitnessClient<TlsWitnessLink<R>>>,
     clock: crate::engine::CommitClock,
     release: crate::tasks::release::ReleaseView,
+    /// Lane L2: the authorisation server (`crate::oauth`).
+    oauth: Arc<crate::oauth::AuthServer>,
 }
 
 impl<R: Runtime> std::fmt::Debug for RunningCell<R> {
@@ -751,6 +753,21 @@ where
         None => Front::new(front_cfg, Arc::clone(&backend), log),
     }
     .map_err(|_| CellError::Config(crate::config::ConfigError::Invalid("host")))?;
+    // Lane L2 hook (ADR-013 amendment of 2026-11-20): the authorisation
+    // server over the `mcp` rows, its `/oauth` routes on the front, and its
+    // grants for the recovery route (H-21).
+    let oauth = crate::oauth::start_pg(
+        app_pool.clone(),
+        started.erasure.clone(),
+        started.engine.clone(),
+        Arc::clone(&clock),
+        &host,
+    )
+    .await?;
+    let _ = front.mount_oauth(Arc::new(crate::oauth::OauthRoutes::new(
+        Arc::clone(&oauth),
+        &host,
+    )));
     let mut servers = Vec::with_capacity(3);
     let mut bound = listen;
     let fstp_cell_shutdown = started.shutdown.clone();
@@ -808,6 +825,7 @@ where
         release: started.release,
         app: app_pool,
         reader,
+        oauth,
     })
 }
 
@@ -900,6 +918,13 @@ impl<R: Runtime> RunningCell<R> {
         crate::engine::read_after(&self.reader, fstp_ledger::Seq::ZERO)
             .await
             .map_err(CellError::Store)
+    }
+
+    /// Lane L2: the cell's authorisation server (`crate::oauth`). L1's
+    /// composition builds its `Tokens` port from it
+    /// (`crate::oauth::tokens::CellTokens`).
+    pub fn oauth(&self) -> &Arc<crate::oauth::AuthServer> {
+        &self.oauth
     }
 
     /// The app pool, for reads of the operational rows.
