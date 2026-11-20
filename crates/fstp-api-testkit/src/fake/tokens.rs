@@ -85,12 +85,21 @@ impl Default for OauthSetup {
 /// default of 10 would end a demo early (lane mcp-demo).
 const TEST_CELL_REGISTRATIONS: u32 = 200;
 
+/// Whether a test cell may serve `host` over plain `http`: a name under
+/// `.localhost`, which resolves to loopback only (RFC 6761 section 6.3).
+/// The rule lives in this test-only crate, so no shipped binary holds it
+/// (lane W3c; lane L2 moved it out of `fstp-oauth`).
+pub fn test_cell_host(host: &str) -> bool {
+    host.ends_with(".localhost")
+}
+
 /// The server of `setup`.
 fn build_server(setup: &OauthSetup) -> Result<fstp_oauth::AuthorizationServer, String> {
     let mut cfg = fstp_oauth::Config::new(&setup.issuer, &setup.resource, OAUTH_P72, OAUTH_P71);
     if setup.test_cell {
         cfg.registration_max = TEST_CELL_REGISTRATIONS;
-        return fstp_oauth::AuthorizationServer::new_test_cell(cfg).map_err(|e| e.to_string());
+        return fstp_oauth::AuthorizationServer::new_with_local_http(cfg, test_cell_host)
+            .map_err(|e| e.to_string());
     }
     fstp_oauth::AuthorizationServer::new(cfg).map_err(|e| e.to_string())
 }
@@ -276,7 +285,7 @@ impl FakeTokens {
             .ok()??;
         let method = port_method(g.consent_method);
         Some(TokenGrant {
-            account: AccountId::from_raw(u128::from(g.account.raw())),
+            account: AccountId::from_raw(g.account.raw()),
             client: AgentClientId::from_raw(u128::from(g.client.raw())),
             scopes: port_scopes(g.scopes),
             consented_with: method,
@@ -390,8 +399,7 @@ impl FakeTokens {
     /// core's step-up, attested under the consent's own digest at the
     /// instant of the approval (ADR-013 "Consent", I-78).
     fn approve(&self, c: &ConsentApproval) -> Result<String, PortError> {
-        let account = u64::try_from(c.account.raw()).map_err(|_| PortError::Refused)?;
-        let account = fstp_oauth::Account::from_raw(account);
+        let account = fstp_oauth::Account::from_raw(c.account.raw());
         let method = match c.method {
             LoginMethod::Passkey => fstp_oauth::LoginMethod::Passkey,
             LoginMethod::MagicLink => fstp_oauth::LoginMethod::MagicLink,
@@ -493,11 +501,11 @@ impl FakeTokens {
                 }
             }
         }
-        if let (Ok(a), Ok(c)) = (u64::try_from(account.raw()), u64::try_from(client.raw()))
+        if let Ok(c) = u64::try_from(client.raw())
             && let Some(o) = lock(&self.oauth).as_mut()
         {
             let n = o.server.revoke_agent_by_number(
-                fstp_oauth::Account::from_raw(a),
+                fstp_oauth::Account::from_raw(account.raw()),
                 fstp_oauth::ClientNumber::from_raw(c),
                 0,
             );
@@ -526,13 +534,10 @@ impl FakeTokens {
             });
             e.scopes.extend(g.scopes.iter().copied());
         }
-        let Ok(a) = u64::try_from(account.raw()) else {
-            return by.into_values().collect();
-        };
         if let Some(o) = lock(&self.oauth).as_ref() {
             for g in o
                 .server
-                .agents_of(fstp_oauth::Account::from_raw(a), now.micros())
+                .agents_of(fstp_oauth::Account::from_raw(account.raw()), now.micros())
             {
                 let client = AgentClientId::from_raw(u128::from(g.client.raw()));
                 let e = by.entry(client).or_insert_with(|| AgentInfo {
@@ -556,6 +561,31 @@ impl FakeTokens {
             }
         }
         by.into_values().collect()
+    }
+
+    /// The pending consent `handle` at `now` as the consent page shows it
+    /// (lane L2, `agents.consent_request`).
+    ///
+    /// # Errors
+    ///
+    /// [`PortError::Refused`] for a handle the server does not hold.
+    pub fn consent_request(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<fstp_api_core::port::ConsentRequestInfo, PortError> {
+        let v = self
+            .with_oauth(|o| o.server.consent_view(handle, now.micros()))
+            .map_err(|_| PortError::Unavailable)?
+            .ok_or(PortError::Refused)?;
+        Ok(fstp_api_core::port::ConsentRequestInfo {
+            client: AgentClientId::from_raw(u128::from(v.client.raw())),
+            name: v.client_name,
+            redirect_host: v.redirect_host,
+            loopback: v.loopback_redirect,
+            scopes: port_scopes(v.scopes),
+            expires: Timestamp::from_micros(v.expires),
+        })
     }
 
     /// How many tokens were issued.
@@ -592,5 +622,13 @@ impl fstp_api_core::port::Tokens for FakeTokens {
         now: Timestamp,
     ) -> Result<Vec<AgentInfo>, PortError> {
         Ok(FakeTokens::agents(self, account, now))
+    }
+
+    async fn consent_request(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<fstp_api_core::port::ConsentRequestInfo, PortError> {
+        FakeTokens::consent_request(self, handle, now)
     }
 }

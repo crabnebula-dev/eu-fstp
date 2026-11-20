@@ -32,9 +32,10 @@ pub fn limits() -> Limits {
 pub struct WebConfig {
     tenant_origin: Origin,
     assets: AssetSet,
-    /// Whether the OAuth metadata may name a plain `http` issuer under
-    /// `.localhost` (feature `test-cell`). Never set in a shipped build.
-    test_cell: bool,
+    /// The hosts the OAuth metadata may name over plain `http`, besides
+    /// loopback, when a caller set a rule. Only the test kit's e2e cell
+    /// sets one. A shipped cell sets none.
+    local_http: Option<fn(&str) -> bool>,
 }
 
 impl WebConfig {
@@ -46,18 +47,18 @@ impl WebConfig {
         WebConfig {
             tenant_origin,
             assets,
-            test_cell: false,
+            local_http: None,
         }
     }
 
-    /// The configuration of a test cell on a plain `http` `.localhost`
-    /// origin, such as the e2e cell's: its OAuth metadata documents name
-    /// that origin as the issuer (lane W3c). Only the test-only feature
-    /// `test-cell` builds it.
-    #[cfg(feature = "test-cell")]
+    /// The configuration of a cell on a plain `http` origin whose host
+    /// `local_http` admits, such as the e2e cell's `.localhost` origin: its
+    /// OAuth metadata documents name that origin as the issuer (lane W3c).
+    /// The caller supplies the rule, and no shipped code holds one. It
+    /// replaces the former test-only feature `test-cell` (lane L2).
     #[must_use]
-    pub fn test_cell(mut self) -> WebConfig {
-        self.test_cell = true;
+    pub fn with_local_http(mut self, local_http: fn(&str) -> bool) -> WebConfig {
+        self.local_http = Some(local_http);
         self
     }
 
@@ -129,7 +130,7 @@ pub(crate) fn build(backend: Backend, config: WebConfig) -> Result<WebRouter, We
         Backend::Core(core) => Some(crate::mcp::Mcp::new(
             Arc::clone(core),
             &config.tenant_origin,
-            config.test_cell,
+            config.local_http,
         )?),
         Backend::Refusing => None,
     };

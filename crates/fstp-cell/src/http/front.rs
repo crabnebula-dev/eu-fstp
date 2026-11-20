@@ -210,6 +210,8 @@ struct Inner<B, L> {
     router: Router,
     host: String,
     log: Arc<L>,
+    /// Lane L2 hook: the OAuth endpoints of the cell (`crate::oauth`).
+    oauth: std::sync::OnceLock<Arc<dyn crate::oauth::Mount>>,
     _backend: std::marker::PhantomData<B>,
 }
 
@@ -445,9 +447,17 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 router,
                 host: cfg.host,
                 log,
+                oauth: std::sync::OnceLock::new(),
                 _backend: std::marker::PhantomData,
             }),
         })
+    }
+
+    /// Lane L2 hook (ADR-013 amendment of 2026-11-20): mounts the OAuth
+    /// endpoints of the cell, which then serve every path below `/oauth`
+    /// after the host check. `false` when a mount is set already.
+    pub fn mount_oauth(&self, mount: Arc<dyn crate::oauth::Mount>) -> bool {
+        self.inner.oauth.set(mount).is_ok()
     }
 
     /// Serves one request on the tunnel listener (module documentation).
@@ -458,7 +468,11 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         let public = is_public_path(req.target.path());
         let (mut resp, rule) = match self.precheck(&req) {
             Some(refused) => refused,
-            None => (self.inner.router.handle(req).await, None),
+            None => match self.inner.oauth.get() {
+                // Lane L2 hook: `/oauth/**` goes to the authorisation server.
+                Some(o) if crate::oauth::is_route(req.target.path()) => (o.serve(req).await, None),
+                _ => (self.inner.router.handle(req).await, None),
+            },
         };
         let logged = resp.headers.remove(LOGGED) > 0;
         let from_web = resp.headers.remove(WEB) > 0;

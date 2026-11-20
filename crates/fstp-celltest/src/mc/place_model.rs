@@ -100,7 +100,7 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 /// The tables of the application database, from design section 4.2, and
 /// the journey read model of ADR-015 "Storage and roles", and the delivery
 /// log of the M6 design section 3.2.
-pub const APP_TABLES: [&str; 32] = [
+pub const APP_TABLES: [&str; 38] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -129,6 +129,15 @@ pub const APP_TABLES: [&str; 32] = [
     "doc.blob",
     // Daniel, 2026-11-07 (m4-design section 15.0): the delivery log.
     "ops.delivery",
+    // Lane L1 (ADR-026): the API core's pending actions and workspaces.
+    "api.pending_actions",
+    "api.pending_confirmed",
+    "workspace.drafts",
+    // Lane L2 (ADR-013 amendment of 2026-11-20, M4 design section 4.3
+    // "Roles"): the authorisation server's durable records.
+    "mcp.client",
+    "mcp.family",
+    "mcp.refresh",
     // Lane L3 (ADR-004, decided by Daniel on 2026-11-20): the keystore
     // tables of migration `0011_keystore.sql`. Only the keys role holds a
     // right on them, as on every `keystore` table.
@@ -191,6 +200,9 @@ pub fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             "journey" => SI,
             // M5 design section 4.3, I-30: write-once documents.
             "doc" => SI,
+            // M4 design section 4.3 "Roles", lane L2: the authorisation
+            // server registers, rotates, revokes and purges its rows.
+            "mcp" => FULL,
             _ => &[],
         },
         RoleName::Keys => match schema {

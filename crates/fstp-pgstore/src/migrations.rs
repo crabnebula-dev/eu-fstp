@@ -27,13 +27,10 @@ use fstp_migrate::Migration;
 ///    Daniel's Q-A answer (2026-11-07, design section 4.5, R-NF-08).
 /// 9. `api`: the pending actions and their confirmations, and the sealed
 ///    workspaces of the API core (ADR-026, lane L1).
-///
-/// Lane L3 `prod/keystore-pg` (ADR-004, decided by Daniel on 2026-11-20):
-///
-/// - `keystore`: the keystore tables of the App chain, file
-///   `0011_keystore.sql` as the production design fixes it. Its version
-///   follows the last migration on the branch it lands on, since a set
-///   has no gap: 9 on this lane alone, 10 after lane L1, 11 after L2.
+/// 10. `mcp`: the durable records of the OAuth 2.1 authorisation server
+///     (ADR-013 amendment of 2026-11-20, lane L2).
+/// 11. `keystore`: the keystore tables of the App chain (ADR-004, decided
+///     by Daniel on 2026-11-20, lane L3).
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -65,9 +62,11 @@ pub const MIGRATIONS: &[Migration] = &[
     ),
     // Lane L1 (ADR-026): pending actions and workspaces.
     Migration::new(9, "api", include_str!("../migrations/app/0009_api.sql")),
-    // Lane L3: see the list above for its version.
+    // Lane L2 (ADR-013 amendment of 2026-11-20): the authorisation server.
+    Migration::new(10, "mcp", include_str!("../migrations/app/0010_mcp.sql")),
+    // Lane L3 (ADR-004, decided by Daniel on 2026-11-20): the keystore.
     Migration::new(
-        10,
+        11,
         "keystore",
         include_str!("../migrations/app/0011_keystore.sql"),
     ),

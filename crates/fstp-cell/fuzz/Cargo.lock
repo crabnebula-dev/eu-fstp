@@ -229,6 +229,7 @@ dependencies = [
  "fstp-keys",
  "fstp-ledger",
  "fstp-money",
+ "fstp-oauth",
  "fstp-obs",
  "fstp-pgstore",
  "fstp-pgwire",

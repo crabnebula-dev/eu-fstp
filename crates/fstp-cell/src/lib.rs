@@ -51,6 +51,7 @@ pub mod egress;
 pub mod engine;
 pub mod http;
 pub mod mail;
+pub mod oauth;
 pub mod process;
 pub mod public;
 pub mod routes;

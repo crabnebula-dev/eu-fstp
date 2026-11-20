@@ -80,6 +80,13 @@ pub fn schemas_of(db: CellDatabase) -> &'static [&'static str] {
             "journey",
             // M5 design section 4.3: write-once documents (I-30).
             "doc",
+            // M4 design section 4.3, ADR-026: the API core's pending
+            // actions and workspaces (lane L1).
+            "api",
+            "workspace",
+            // ADR-013 amendment of 2026-11-20: the authorisation server
+            // (lane L2).
+            "mcp",
         ],
         CellDatabase::Vault => &["vault", "keystore", "vault_audit", "fstp_meta"],
     }

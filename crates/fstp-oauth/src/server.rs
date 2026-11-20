@@ -1,7 +1,9 @@
 //! The authorisation server state machine (ADR-013, design section 3.8).
 //!
 //! The server is sans-IO: each endpoint takes the request bytes and the
-//! time, and returns the reply bytes. It keeps its records in memory. Every
+//! time, and returns the reply bytes. It keeps its records in memory, and a
+//! shell persists the durable ones through the journal of
+//! [`crate::records`]. Every
 //! code, token and consent handle is 256 bits from
 //! [`fstp_crypto::random_bytes`]. The server stores only its SHA-256 hash,
 //! under a label per kind, and compares hashes with
@@ -19,6 +21,10 @@ use crate::OauthError;
 use crate::b64::{decode_base64url, encode_base64url};
 use crate::form::push_encoded;
 use crate::metadata::decode_client_metadata;
+use crate::records::{
+    Change, ClientRecord, ConsentView, FamilyRecord, GrantGuard, NoGuard, Records, RefreshHash,
+    Restored,
+};
 use crate::request::{
     TokenRequest, decode_authorize_query, decode_revocation_request, decode_token_request,
     parse_bearer_header,
@@ -62,16 +68,16 @@ const LABEL_DIGEST: &[u8] = b"fstp-oauth consent digest v1\0";
 
 /// An account of the cell, by its raw id only (I-86).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Account(u64);
+pub struct Account(u128);
 
 impl Account {
     /// The account with raw id `raw`.
-    pub const fn from_raw(raw: u64) -> Account {
+    pub const fn from_raw(raw: u128) -> Account {
         Account(raw)
     }
 
     /// The raw id.
-    pub const fn raw(self) -> u64 {
+    pub const fn raw(self) -> u128 {
         self.0
     }
 }
@@ -344,6 +350,9 @@ pub struct Grant {
     pub consent_method: LoginMethod,
     /// When the token expires.
     pub expires: Micros,
+    /// When its family started: the redemption of its code. A shell
+    /// compares it with the account's last completed recovery (I-79).
+    pub start: Micros,
 }
 
 /// One live grant of an account, for the "My agents" page (R-MC-03). The
@@ -482,6 +491,7 @@ struct Family {
     refreshes: u32,
     revoked: bool,
     method: LoginMethod,
+    version: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -595,6 +605,11 @@ pub struct AuthorizationServer {
     next_family: u64,
     refresh: BTreeMap<Selector, RefreshRecord>,
     access: BTreeMap<Selector, AccessRecord>,
+    /// The changes of the durable records since the shell last took them,
+    /// when the journal is on (`crate::records`).
+    journal: Option<Vec<Change>>,
+    /// The change counter: the version of the last family change.
+    version: u64,
 }
 
 impl std::fmt::Debug for AuthorizationServer {
@@ -620,28 +635,27 @@ impl AuthorizationServer {
     /// capacities must be positive. Loopback `http` is accepted for both,
     /// for test cells on one host.
     pub fn new(cfg: Config) -> Result<AuthorizationServer, OauthError> {
-        AuthorizationServer::build(cfg, parse_url, |_| false)
+        AuthorizationServer::build(cfg, |_| false)
     }
 
-    /// A server of a test cell: as [`AuthorizationServer::new`], except
-    /// that the issuer and the resource may also be plain `http` to a
-    /// `.localhost` host, such as the e2e cell's `http://a.fstp.localhost`
-    /// (lane W3c). Only the test-only feature `test-cell` builds it, and
-    /// no shipped binary calls it.
-    #[cfg(feature = "test-cell")]
-    pub fn new_test_cell(cfg: Config) -> Result<AuthorizationServer, OauthError> {
-        AuthorizationServer::build(
-            cfg,
-            crate::url::parse_test_cell_url,
-            crate::url::test_cell_host,
-        )
-    }
-
-    fn build(
+    /// A server as [`AuthorizationServer::new`] builds it, except that the
+    /// issuer and the resource may also be plain `http` to a host that
+    /// `local_http` admits. Every other rule holds.
+    ///
+    /// The caller supplies the rule, and no shipped code holds one: the
+    /// test kit admits `.localhost` names for its e2e cell (lane W3c). A
+    /// production cell calls [`AuthorizationServer::new`], which admits no
+    /// plain `http` host but loopback. It replaces the former test-only
+    /// feature `test-cell` (lane L2, ADR-013 amendment of 2026-11-20).
+    pub fn new_with_local_http(
         cfg: Config,
-        parse: fn(&[u8]) -> Result<Url, OauthError>,
         local_http: fn(&str) -> bool,
     ) -> Result<AuthorizationServer, OauthError> {
+        AuthorizationServer::build(cfg, local_http)
+    }
+
+    fn build(cfg: Config, local_http: fn(&str) -> bool) -> Result<AuthorizationServer, OauthError> {
+        let parse = |b: &[u8]| crate::url::parse_url_with(b, local_http);
         let issuer = parse(cfg.issuer.as_bytes())
             .map_err(|_| OauthError::InvalidConfig("the issuer is outside the URL subset"))?;
         if !issuer.path_and_query().is_empty() {
@@ -682,6 +696,8 @@ impl AuthorizationServer {
             next_family: 0,
             refresh: BTreeMap::new(),
             access: BTreeMap::new(),
+            journal: None,
+            version: 0,
         })
     }
 
@@ -852,6 +868,14 @@ impl AuthorizationServer {
         );
         o.insert("response_types", strings(&["code"]));
         o.insert("token_endpoint_auth_method", Value::from("none"));
+        if let Some(j) = self.journal.as_mut() {
+            j.push(Change::Client(ClientRecord {
+                number: client.number,
+                client_id: id.clone(),
+                metadata: stored_metadata(&client),
+                registered: now,
+            }));
+        }
         self.numbers.insert(client.number, id.clone());
         self.clients.insert(id, client);
         Reply::json(201, Value::Object(o))
@@ -1196,6 +1220,13 @@ impl AuthorizationServer {
     /// rotates the refresh token. Presenting a rotated one revokes the
     /// family. No family outlives P-72 from its code's redemption.
     pub fn token(&mut self, body: &[u8], now: Micros) -> Reply {
+        self.token_guarded(body, now, &NoGuard)
+    }
+
+    /// [`AuthorizationServer::token`] under `guard` (I-79, H-21): a code
+    /// whose issue `guard` refuses is burned, and a family whose start it
+    /// refuses is revoked. Either gets `invalid_grant`.
+    pub fn token_guarded(&mut self, body: &[u8], now: Micros, guard: &dyn GrantGuard) -> Reply {
         match decode_token_request(body) {
             Err(OauthError::UnsupportedGrantType) => Reply::error(400, "unsupported_grant_type"),
             Err(_) => Reply::error(400, "invalid_request"),
@@ -1208,10 +1239,13 @@ impl AuthorizationServer {
             }) => self.code_grant(
                 &code,
                 &client_id,
-                redirect_uri.as_deref(),
-                code_verifier.as_deref(),
-                resource.as_deref(),
+                (
+                    redirect_uri.as_deref(),
+                    code_verifier.as_deref(),
+                    resource.as_deref(),
+                ),
                 now,
+                guard,
             ),
             Ok(TokenRequest::RefreshToken {
                 refresh_token,
@@ -1224,6 +1258,7 @@ impl AuthorizationServer {
                 scope.as_deref(),
                 resource.as_deref(),
                 now,
+                guard,
             ),
         }
     }
@@ -1232,17 +1267,35 @@ impl AuthorizationServer {
         if let Some(fam) = self.families.get_mut(&f) {
             fam.revoked = true;
         }
+        self.note_family(f);
     }
 
+    /// Records a change of family `f`: a new version, journalled when the
+    /// journal is on.
+    fn note_family(&mut self, f: u64) {
+        self.version = self.version.saturating_add(1);
+        let version = self.version;
+        let Some(fam) = self.families.get_mut(&f) else {
+            return;
+        };
+        fam.version = version;
+        let rec = family_record(f, fam);
+        if let Some(j) = self.journal.as_mut() {
+            j.push(Change::Family(rec));
+        }
+    }
+
+    /// The code grant. `checked` is the redirect URI, the PKCE verifier and
+    /// the resource of the request.
     fn code_grant(
         &mut self,
         code: &str,
         client_id: &str,
-        redirect_uri: Option<&str>,
-        verifier: Option<&str>,
-        resource: Option<&str>,
+        checked: (Option<&str>, Option<&str>, Option<&str>),
         now: Micros,
+        guard: &dyn GrantGuard,
     ) -> Reply {
+        let (redirect_uri, verifier, resource) = checked;
         if !self.clients.contains_key(client_id) {
             return Reply::error(401, "invalid_client");
         }
@@ -1265,7 +1318,7 @@ impl AuthorizationServer {
             CodeState::Fresh => {}
         }
         let alive = (0..CODE_LIFETIME_MICROS).contains(&now.saturating_sub(c.issued));
-        let failure = if c.client_id != client_id || !alive {
+        let failure = if c.client_id != client_id || !alive || guard.refused(c.account, c.issued) {
             Some("invalid_grant")
         } else if redirect_uri.is_none() {
             Some("invalid_request")
@@ -1302,6 +1355,7 @@ impl AuthorizationServer {
                 refreshes: 0,
                 revoked: false,
                 method: c.method,
+                version: 0,
             },
         );
         match self.issue(f, c.scopes, now) {
@@ -1309,6 +1363,7 @@ impl AuthorizationServer {
                 if let Some(stored) = self.codes.get_mut(&key) {
                     stored.state = CodeState::Redeemed(f);
                 }
+                self.note_family(f);
                 reply
             }
             Err(_) => {
@@ -1325,6 +1380,7 @@ impl AuthorizationServer {
         scope: Option<&str>,
         resource: Option<&str>,
         now: Micros,
+        guard: &dyn GrantGuard,
     ) -> Reply {
         if !self.clients.contains_key(client_id) {
             return Reply::error(401, "invalid_client");
@@ -1343,6 +1399,10 @@ impl AuthorizationServer {
             return Reply::error(400, "invalid_grant");
         };
         if fam.revoked || now >= fam.end || fam.client_id != client_id {
+            return Reply::error(400, "invalid_grant");
+        }
+        if guard.refused(fam.account, fam.start) {
+            self.revoke_family(f);
             return Reply::error(400, "invalid_grant");
         }
         if !fstp_crypto::constant_time_eq(&fam.current, &hash) {
@@ -1368,6 +1428,7 @@ impl AuthorizationServer {
                 if let Some(fam) = self.families.get_mut(&f) {
                     fam.refreshes = fam.refreshes.saturating_add(1);
                 }
+                self.note_family(f);
                 reply
             }
             Err(_) => Reply::error(500, "server_error"),
@@ -1411,6 +1472,12 @@ impl AuthorizationServer {
                 family: f,
             },
         );
+        if let Some(j) = self.journal.as_mut() {
+            j.push(Change::Refresh(RefreshHash {
+                hash: refresh_hash,
+                family: f,
+            }));
+        }
         self.access.insert(
             selector(&access_hash),
             AccessRecord {
@@ -1483,13 +1550,16 @@ impl AuthorizationServer {
     /// `client_id` for `account`, at once. Returns how many families it
     /// revoked.
     pub fn revoke_agent(&mut self, account: Account, client_id: &str, _now: Micros) -> usize {
-        let mut n = 0usize;
-        for fam in self.families.values_mut() {
-            if fam.account == account && fam.client_id == client_id && !fam.revoked {
-                fam.revoked = true;
-                n = n.saturating_add(1);
-            }
+        let ended: Vec<u64> = self
+            .families
+            .iter()
+            .filter(|(_, fam)| fam.account == account && fam.client_id == client_id && !fam.revoked)
+            .map(|(f, _)| *f)
+            .collect();
+        for f in &ended {
+            self.revoke_family(*f);
         }
+        let n = ended.len();
         for c in self.codes.values_mut() {
             if c.account == account && c.client_id == client_id && c.state == CodeState::Fresh {
                 c.state = CodeState::Burned;
@@ -1503,13 +1573,16 @@ impl AuthorizationServer {
     /// Account recovery calls it on completion (I-79, issue 6 M5, H-21).
     /// Returns how many families it revoked.
     pub fn revoke_all_agents(&mut self, account: Account, _now: Micros) -> usize {
-        let mut n = 0usize;
-        for fam in self.families.values_mut() {
-            if fam.account == account && !fam.revoked {
-                fam.revoked = true;
-                n = n.saturating_add(1);
-            }
+        let ended: Vec<u64> = self
+            .families
+            .iter()
+            .filter(|(_, fam)| fam.account == account && !fam.revoked)
+            .map(|(f, _)| *f)
+            .collect();
+        for f in &ended {
+            self.revoke_family(*f);
         }
+        let n = ended.len();
         for c in self.codes.values_mut() {
             if c.account == account && c.state == CodeState::Fresh {
                 c.state = CodeState::Burned;
@@ -1552,6 +1625,19 @@ impl AuthorizationServer {
         resource: &str,
         now: Micros,
     ) -> Result<Grant, Reply> {
+        self.authenticate_guarded(authorization, resource, now, &NoGuard)
+    }
+
+    /// [`AuthorizationServer::authenticate`] under `guard` (I-79, H-21): a
+    /// token of a family whose start `guard` refuses gets 401
+    /// `invalid_token`.
+    pub fn authenticate_guarded(
+        &self,
+        authorization: Option<&[u8]>,
+        resource: &str,
+        now: Micros,
+        guard: &dyn GrantGuard,
+    ) -> Result<Grant, Reply> {
         let Some(header) = authorization else {
             return Err(self.challenge(401, None, None));
         };
@@ -1571,6 +1657,7 @@ impl AuthorizationServer {
             || now >= fam.end
             || now < fam.start
             || resource != self.cfg.resource
+            || guard.refused(fam.account, fam.start)
         {
             return Err(invalid());
         }
@@ -1583,6 +1670,7 @@ impl AuthorizationServer {
             consent_strength: fam.method.strength(),
             consent_method: fam.method,
             expires: rec.expires,
+            start: fam.start,
         })
     }
 
@@ -1597,6 +1685,9 @@ impl AuthorizationServer {
     pub fn end_all_grants(&mut self) {
         self.tickets.clear();
         self.codes.clear();
+        if let Some(j) = self.journal.as_mut() {
+            j.extend(self.families.keys().map(|f| Change::FamilyDropped(*f)));
+        }
         self.families.clear();
         self.refresh.clear();
         self.access.clear();
@@ -1611,7 +1702,14 @@ impl AuthorizationServer {
     pub fn purge(&mut self, now: Micros) {
         self.tickets.retain(|_, t| Self::ticket_live(t, now));
         self.access.retain(|_, a| now < a.expires);
-        self.families.retain(|_, f| now < f.end);
+        let journal = &mut self.journal;
+        self.families.retain(|id, f| {
+            let keep = now < f.end;
+            if !keep && let Some(j) = journal.as_mut() {
+                j.push(Change::FamilyDropped(*id));
+            }
+            keep
+        });
         let families = &self.families;
         self.refresh.retain(|_, r| families.contains_key(&r.family));
         self.codes.retain(|_, c| match c.state {
@@ -1640,7 +1738,230 @@ impl AuthorizationServer {
         });
         for n in dropped {
             self.numbers.remove(&n);
+            if let Some(j) = self.journal.as_mut() {
+                j.push(Change::ClientDropped(n));
+            }
         }
+    }
+}
+
+/// The metadata of `client` as a shell stores it: RFC 7591 JSON with the
+/// redirect URIs and, when given, the client name. It decodes with
+/// [`decode_client_metadata`] again.
+fn stored_metadata(client: &Client) -> Vec<u8> {
+    let mut o = Object::new();
+    o.insert(
+        "redirect_uris",
+        Value::Array(
+            client
+                .redirect_uris
+                .iter()
+                .map(|u| Value::from(u.as_str()))
+                .collect(),
+        ),
+    );
+    if let Some(n) = &client.name {
+        o.insert("client_name", Value::from(n.as_str()));
+    }
+    Value::Object(o).to_compact().into_bytes()
+}
+
+/// The durable record of family `id`.
+fn family_record(id: u64, fam: &Family) -> FamilyRecord {
+    FamilyRecord {
+        id,
+        client: fam.client,
+        account: fam.account,
+        scopes: fam.scopes,
+        start: fam.start,
+        end: fam.end,
+        current: fam.current,
+        refreshes: fam.refreshes,
+        revoked: fam.revoked,
+        method: fam.method,
+        version: fam.version,
+    }
+}
+
+impl AuthorizationServer {
+    // -----------------------------------------------------------------
+    // Durable records (`crate::records`, lane L2)
+    // -----------------------------------------------------------------
+
+    /// This server with its journal on: every change of a durable record
+    /// is kept until [`AuthorizationServer::take_changes`] takes it.
+    #[must_use]
+    pub fn with_journal(mut self) -> AuthorizationServer {
+        self.journal = Some(Vec::new());
+        self
+    }
+
+    /// The changes since the last call, in the order the server made them.
+    /// Empty when the journal is off.
+    pub fn take_changes(&mut self) -> Vec<Change> {
+        self.journal
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// Every durable record, as a shell would hold it after writing every
+    /// change: clients by number, families by id, and refresh hashes.
+    pub fn records(&self) -> Records {
+        let mut clients: Vec<ClientRecord> = self
+            .clients
+            .iter()
+            .map(|(id, c)| ClientRecord {
+                number: c.number,
+                client_id: id.clone(),
+                metadata: stored_metadata(c),
+                registered: c.registered,
+            })
+            .collect();
+        clients.sort_by_key(|c| c.number);
+        Records {
+            clients,
+            families: self
+                .families
+                .iter()
+                .map(|(f, fam)| family_record(*f, fam))
+                .collect(),
+            refresh: self
+                .refresh
+                .values()
+                .map(|r| RefreshHash {
+                    hash: r.hash,
+                    family: r.family,
+                })
+                .collect(),
+        }
+    }
+
+    /// A server with `cfg`, holding `records` as a shell read them back,
+    /// with its journal on and no consent, code or access token.
+    ///
+    /// A record that does not hold is dropped and counted: a client whose
+    /// metadata does not decode or whose id or number repeats, a family
+    /// of no restored client or with no scope, an end not after its start
+    /// or a repeated id, and a refresh hash of no restored family. A
+    /// dropped record ends its grant, which fails closed.
+    ///
+    /// # Errors
+    ///
+    /// The configuration errors of [`AuthorizationServer::new`].
+    pub fn restore(cfg: Config, records: Records) -> Result<Restored, OauthError> {
+        let mut s = AuthorizationServer::new(cfg)?.with_journal();
+        let mut dropped = 0usize;
+        for c in records.clients {
+            let decoded = decode_client_metadata(&c.metadata);
+            let fresh = !c.client_id.is_empty()
+                && c.client_id.len() <= 64
+                && !s.clients.contains_key(&c.client_id)
+                && !s.numbers.contains_key(&c.number);
+            let Ok(meta) = decoded else {
+                dropped = dropped.saturating_add(1);
+                continue;
+            };
+            if !fresh {
+                dropped = dropped.saturating_add(1);
+                continue;
+            }
+            s.next_client = s.next_client.max(c.number.raw());
+            s.numbers.insert(c.number, c.client_id.clone());
+            s.clients.insert(
+                c.client_id,
+                Client {
+                    number: c.number,
+                    redirect_uris: meta.redirect_uris().to_vec(),
+                    name: meta.client_name().map(str::to_owned),
+                    registered: c.registered,
+                },
+            );
+        }
+        for f in records.families {
+            let client_id = s.numbers.get(&f.client).cloned();
+            let holds = !f.scopes.is_empty() && f.start < f.end && !s.families.contains_key(&f.id);
+            let Some(client_id) = client_id.filter(|_| holds) else {
+                dropped = dropped.saturating_add(1);
+                continue;
+            };
+            s.next_family = s.next_family.max(f.id.saturating_add(1));
+            s.version = s.version.max(f.version);
+            s.families.insert(
+                f.id,
+                Family {
+                    client_id,
+                    client: f.client,
+                    account: f.account,
+                    scopes: f.scopes,
+                    start: f.start,
+                    end: f.end,
+                    current: f.current,
+                    refreshes: f.refreshes,
+                    revoked: f.revoked,
+                    method: f.method,
+                    version: f.version,
+                },
+            );
+        }
+        for r in records.refresh {
+            let key = selector(&r.hash);
+            if !s.families.contains_key(&r.family) || s.refresh.contains_key(&key) {
+                dropped = dropped.saturating_add(1);
+                continue;
+            }
+            s.refresh.insert(
+                key,
+                RefreshRecord {
+                    hash: r.hash,
+                    family: r.family,
+                },
+            );
+        }
+        Ok(Restored { server: s, dropped })
+    }
+
+    /// Revokes every live family whose start `guard` refuses, and burns
+    /// every fresh code whose issue it refuses (I-79, H-21). A shell calls
+    /// it at start, which closes the window between a recovery's commit
+    /// and its call to [`AuthorizationServer::revoke_all_agents`]. Returns
+    /// how many families it revoked.
+    pub fn revoke_refused(&mut self, guard: &dyn GrantGuard) -> usize {
+        let ended: Vec<u64> = self
+            .families
+            .iter()
+            .filter(|(_, fam)| !fam.revoked && guard.refused(fam.account, fam.start))
+            .map(|(f, _)| *f)
+            .collect();
+        for f in &ended {
+            self.revoke_family(*f);
+        }
+        for c in self.codes.values_mut() {
+            if c.state == CodeState::Fresh && guard.refused(c.account, c.issued) {
+                c.state = CodeState::Burned;
+            }
+        }
+        ended.len()
+    }
+
+    /// What the consent page shows for the live consent `handle` at `now`
+    /// (`agents.consent_request`), or `None` for a handle the server does
+    /// not hold or that expired. It names no account, no handle and no
+    /// digest (I-86).
+    pub fn consent_view(&self, handle: &str, now: Micros) -> Option<ConsentView> {
+        let (_, t) = self
+            .find_ticket(handle)
+            .filter(|(_, t)| Self::ticket_live(t, now))?;
+        let client = self.clients.get(&t.client_id)?;
+        let redirect = parse_url(t.redirect_uri.as_bytes()).ok()?;
+        Some(ConsentView {
+            client: client.number,
+            client_name: client.name.clone(),
+            redirect_host: redirect.host().to_owned(),
+            loopback_redirect: redirect.is_loopback(),
+            scopes: t.scopes,
+            expires: t.created.saturating_add(CONSENT_LIFETIME_MICROS),
+        })
     }
 }
 
@@ -1854,7 +2175,8 @@ mod tests {
     /// ADR-013, lane W3c: a production configuration refuses a plain
     /// `http` issuer and resource under `.localhost`, such as the e2e
     /// cell's, whatever features the build has. Only
-    /// `AuthorizationServer::new_test_cell` admits them.
+    /// `AuthorizationServer::new_with_local_http` admits them, with a rule
+    /// the caller supplies.
     #[test]
     fn adr013_production_config_refuses_http_localhost_issuer() {
         for (i, r) in [
@@ -1873,18 +2195,26 @@ mod tests {
         }
     }
 
-    /// ADR-013, lane W3c: the test-cell constructor admits `http` to a
-    /// `.localhost` host, and keeps every other rule: a non-local `http`
-    /// host, a path on the issuer and a query on the resource are refused.
-    #[cfg(feature = "test-cell")]
+    /// The `.localhost` rule of the test kit's e2e cell (lane W3c).
+    fn localhost(host: &str) -> bool {
+        host.ends_with(".localhost")
+    }
+
+    /// ADR-013, lanes W3c and L2: the constructor with a local `http` rule
+    /// admits `http` to a host the rule admits, and keeps every other rule:
+    /// a non-local `http` host, a path on the issuer and a query on the
+    /// resource are refused.
     #[test]
     fn adr013_test_cell_admits_http_localhost_only() {
-        let ok = AuthorizationServer::new_test_cell(Config::new(
-            "http://a.fstp.localhost:8985",
-            "http://a.fstp.localhost:8985/mcp",
-            1,
-            1,
-        ))
+        let ok = AuthorizationServer::new_with_local_http(
+            Config::new(
+                "http://a.fstp.localhost:8985",
+                "http://a.fstp.localhost:8985/mcp",
+                1,
+                1,
+            ),
+            localhost,
+        )
         .unwrap();
         let doc = fstp_json::parse(&ok.resource_metadata().body).unwrap();
         assert_eq!(
@@ -1904,7 +2234,8 @@ mod tests {
             ("http://a.fstp.localhost", "http://cell-a.example/mcp"),
         ] {
             assert!(
-                AuthorizationServer::new_test_cell(Config::new(i, r, 1, 1)).is_err(),
+                AuthorizationServer::new_with_local_http(Config::new(i, r, 1, 1), localhost)
+                    .is_err(),
                 "{i} {r} accepted"
             );
         }

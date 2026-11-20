@@ -1886,6 +1886,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             };
             ReadModel::AgentActivity(agents::activity(call, op, a)?)
         }
+        // Lane L2: the consent page's read of a pending consent.
+        ReadKind::GetConsentRequest => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            ReadModel::ConsentRequest(agents::consent_request(call, op, a).await?)
+        }
         // J1, lane m4/ops-roles-agents: the read rule admitted a tenant admin.
         ReadKind::ListBindings => {
             let p = forms::id_param(&op.request, "programme")

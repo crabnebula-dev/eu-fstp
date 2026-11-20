@@ -909,11 +909,9 @@ impl CellHandle {
         }
     }
 
-    /// Runs `f` on the cell's runtime to its end (lane F-ERASE).
-    pub(crate) fn block_on<T>(
-        &self,
-        f: impl std::future::Future<Output = T>,
-    ) -> Result<T, WorldError> {
+    /// Runs `f` on the cell's runtime to its end (lane F-ERASE). Public
+    /// for the authorisation server tests of lane L2.
+    pub fn block_on<T>(&self, f: impl std::future::Future<Output = T>) -> Result<T, WorldError> {
         Ok(self.runtime()?.services.rt.block_on(f))
     }
 
@@ -1558,6 +1556,26 @@ impl World {
             set.push("edge/log", lock(&s.edge.log).clone());
         }
         Ok(set)
+    }
+
+    /// Lane L2: runs `sql` as the superuser in the application database
+    /// of cell `i`, on the application cluster. A test uses it to put a
+    /// row back as a crash would have left it. Its output is `psql`'s.
+    ///
+    /// # Errors
+    ///
+    /// Fails for an unknown cell, or when `psql` refuses.
+    pub fn app_superuser_sql(&self, i: u8, sql: &str) -> Result<String, WorldError> {
+        let cell = self
+            .cell(i)
+            .ok_or_else(|| WorldError::Store(format!("no cell {i}")))?;
+        let cluster = self
+            .clusters
+            .iter()
+            .find(|c| c.kind() == ClusterKind::Application)
+            .ok_or_else(|| WorldError::Store("no application cluster".to_owned()))?;
+        superuser_sql(cluster, &cell.app_database(), sql)
+            .map_err(|e| step_failed(cluster, "superuser sql", &e))
     }
 
     /// Every database of every cluster, with what attributes a store to
@@ -5324,6 +5342,24 @@ impl CellHandle {
         new.note_first_admin_email(*digest, email.clone());
         running.cell = Some(new);
         Ok(())
+    }
+
+    /// Lane L2: the cell's authorisation server
+    /// (`fstp_cell::process::RunningCell::oauth`), for the parts of the
+    /// OAuth flow that the API core serves once lane L1 mounts it: the
+    /// approval of `agents.consent` and the `Tokens` port.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the cell runs no process.
+    pub fn oauth(&self) -> Result<std::sync::Arc<fstp_cell::oauth::AuthServer>, WorldError> {
+        let rt = self.runtime()?;
+        let running = lock(&rt.running);
+        running
+            .cell
+            .as_ref()
+            .map(|c| std::sync::Arc::clone(c.oauth()))
+            .ok_or(WorldError::NotImplemented(NotImplemented::new(NOT_STARTED)))
     }
 
     /// The payment port's `RecordChecks` of `request`, issued in process
