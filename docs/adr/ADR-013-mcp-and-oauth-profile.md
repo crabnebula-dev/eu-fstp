@@ -48,6 +48,7 @@ Each row below names its basis:
 | Tool set | Only the capability table of `mcp-server.md`, plus the prepare-only tool `fstp_prepare_call_publication` (Q32). No coordinator, ballot, IRC or tenant admin tools | Decided by Daniel on 2026-10-31 (Q8, with the Q32 prepare-only tool). Amended by Daniel on 2026-11-20: prepare-only tools and draft tools for tenant and programme setup, with a Tenant admin row. See "Amendment 2026-11-20" below |
 | High-risk operations | `channel_policy` returns `Prepare` for every high-risk operation that has a tool. Every other high-risk operation has no tool and gets `Deny(NotExposed)` | Design |
 | Prepare-only tools on other operations | `channel_policy` also returns `Prepare` for a tool marked prepare-only on an operation that is not high-risk. Creator, bridge, import and tenant operations can be prepared, as core commands can | Amendment 2026-11-20 (Daniel), with each mark interim, pending Daniel |
+| P-75 and P-77 through MCP | A creator call through MCP whose decoded request sets or clears P-75 or P-77 is prepared as a whole, although its tool is not prepare-only. The web route executes it directly | Decided by Daniel on 2026-11-20. See "P-75 and P-77 through MCP" below |
 | Results | The read model goes in `structuredContent.data`, with `classification` and `untrusted`, the JSON pointers to user-supplied text. The `content` text block is a fixed sentence naming the classification and never holds user text (TH-60) | Design |
 | MCP safety | MCP response construction requires `fstp_api_core::McpSafe`, implemented by hand for identity-free read models only (I-86) | Design |
 
@@ -78,7 +79,7 @@ The consent texts are not written yet. They are open.
 
 - Q8: the pinned revision, after a check of its published text; the registration mode; the tool set.
 - Q25: the token, refresh and pending-action lifetimes.
-- The consent text of each scope.
+- The consent text of each scope. Daniel decided the text of `tenant:draft` on 2026-11-20.
 - The checks the design marks "I believe", listed under MCP revision above.
 
 ## Consequences
@@ -163,13 +164,13 @@ These rules hold unchanged, and the tests of each new tool name them:
 
 `channel_policy` returns `Prepare` for every high-risk operation (I-78), as before. Under this amendment it also returns `Prepare` for a tool marked prepare-only on an operation that is not high-risk. That mark is set for anything that activates, publishes, grants a role, invites a person, records a human judgement the design asks of a named person, or changes who can see what. Ordinary draft edits and reads return `Allow`.
 
-A prepared action is confirmed at `POST /api/v1/pending-actions/{pending}/confirmation`, by the same account, through the web. A high-risk operation also needs a fresh step-up bound to the stored digest. A prepared operation that is not high-risk needs no step-up on its direct web path, so its confirmation needs none either. Interim, pending Daniel: the confirmation itself is the human act, and a step-up is asked only where the web path asks one.
+A prepared action is confirmed at `POST /api/v1/pending-actions/{pending}/confirmation`, by the same account, through the web. A high-risk operation also needs a fresh step-up bound to the stored digest. A prepared operation that is not high-risk needs no step-up on its direct web path, so its confirmation needs none either. Decided by Daniel on 2026-11-20: the confirmation itself is the human act, and a step-up is asked only where the web path asks one.
 
 Before this amendment only core commands could be prepared. Creator, bridge, import and tenant operations can now be prepared too. Their confirmation runs the same dispatch as their web route.
 
 ### Scopes
 
-`creator:draft` and `calls:draft` are reused. One scope is added, `tenant:draft`, for the tenant-level setup tools. Its consent text: "Read your organisation's funder profiles and check brand colours. Prepare changes to funder profiles, brand tokens and interface labels. Nothing changes until you confirm each change in the platform." Interim, pending Daniel: the scope name and its text.
+`creator:draft` and `calls:draft` are reused. One scope is added, `tenant:draft`, for the tenant-level setup tools. Its consent text: "Read your organisation's funder profiles and check brand colours. Prepare changes to funder profiles, brand tokens and interface labels. Nothing changes until you confirm each change in the platform." Decided by Daniel on 2026-11-20: the scope name and its text.
 
 ### New tools, Programme staff row
 
@@ -177,7 +178,8 @@ Before this amendment only core commands could be prepared. Creator, bridge, imp
 | --- | --- | --- | --- | --- |
 | `fstp_creator_list_programmes` | `creator.list_programmes` | Programme manager, tenant admin | `creator:draft` | Allow |
 | `fstp_creator_list_templates` | `creator.list_templates` | Programme manager, tenant admin | `creator:draft` | Allow |
-| `fstp_creator_apply_start` | `creator.apply_start` | Programme manager, tenant admin | `creator:draft` | Allow |
+| `fstp_creator_apply_start` | `creator.apply_start` | Programme manager, tenant admin | `creator:draft` | Allow. Prepare for a start from a template or a clone (P-75, P-77) |
+| `fstp_creator_save_fields` (an M4 tool, listed for its new rule) | `creator.save_fields` | Programme manager, tenant admin | `creator:draft` | Allow. Prepare when the request sets or clears P-75 or P-77 |
 | `fstp_creator_edit_narrative` | `creator.edit_narrative` | Programme manager, tenant admin | `creator:draft` | Allow |
 | `fstp_creator_get_preview` | `creator.preview` | Programme manager, tenant admin | `creator:draft` | Allow |
 | `fstp_creator_get_impact` | `creator.impact` | Programme manager, tenant admin | `creator:draft` | Allow |
@@ -219,7 +221,29 @@ Reasons for each Prepare mark on an operation that is not high-risk, all interim
 - `creator.save_as_template`: it makes the draft's text readable to the tenant's other staff.
 - `call.approve`: it is the second-person approval of R-PC-03 before publication.
 
-Every Allow mark is a read or an edit of a draft record. Interim, pending Daniel: P-75 and P-77 are draft policy fields, saved through `fstp_creator_save_fields` like any other field. They take effect only through an activation that a second person approves in the web with a step-up, so their saves stay Allow.
+Every Allow mark is a read or an edit of a draft record. The one exception is a call that sets P-75 or P-77, below.
+
+### P-75 and P-77 through MCP
+
+The interim reading of this amendment kept saves of P-75 and P-77 at Allow, since both take effect only through an approved activation. Daniel answered on 2026-11-20 and changed it. P-75 decides whether reviewers' agents read proposal content. P-77 decides whether agents complete binding actions. So an agent never sets either one directly.
+
+The rule, decided by Daniel on 2026-11-20:
+
+- Through MCP, a call that sets P-75 or P-77 stores a pending action and changes nothing. The person confirms it in the platform.
+- The confirmation runs the stored request through the dispatch of the web route, as for every prepared creator command. Neither operation is high-risk, so the confirmation asks no step-up, as decided above.
+- A save of other fields stays Allow and executes.
+- A save that mixes P-75 or P-77 with other fields is prepared as a whole. Nothing of it executes until the confirmation. This is the simplest safe reading Daniel named.
+- The web routes execute directly, as before.
+
+Readings of lane p75-p77, which apply the rule to each tool:
+
+- `fstp_creator_save_fields` prepares when its `fields` or its `clear` names `evaluation.p75_agent_content_reads` or `evaluation.p77_mcp_binding_actions`. A clear counts, since it removes the value the draft holds.
+- `fstp_creator_apply_start` prepares for a start from a template or a clone. Each writes the source's values of P-75 and P-77 into the draft policy, unless the draft saved its own. A blank start and a start from an import apply no value of either. At most they return an unsaved value to a gap, which I-66 refuses at activation until a save fills it, and that save prepares.
+- No other tool sets either parameter. The import marks both as not importable, so `import.resolve` never names them, and it is prepare-only anyway. `creator.accept_narrative` and `creator.edit_narrative` take narrative fields and P-09 only.
+- The decision needs the decoded request, so it is made where the creator command is built, before the dry run. `fstp_access::creator_channel_policy` refines the verdict of `channel_policy` for a decoded creator command. It turns `Execute` through MCP into `Prepare` and changes no other verdict. The tool table stays the only one (TH-63). Only the two descriptions name the rule. The tools sit on the same operations under the same roles, and the dry run refuses through MCP exactly what the web refuses (I-84).
+- The test reference (`reference::authz`) and M-PARITY model the rule from the request each sends: the matrix starts from the SuperSAFE template and saves P-28 alone.
+
+Before this decision, the amendment kept P-75 and P-77 saves at Allow as an interim reading, pending Daniel. That open question is answered and closed.
 
 ### Operations that stay web only
 

@@ -1234,6 +1234,11 @@ pub struct RefTool {
     /// Whether it only prepares a pending action although its operation
     /// is not high-risk (ADR-013 amendment of 2026-11-20).
     pub prepare: bool,
+    /// Whether a request that sets P-75 or P-77 prepares through it,
+    /// although the tool is not prepare-only (ADR-013, Daniel's decision of
+    /// 2026-11-20). Set for `fstp_creator_save_fields` and
+    /// `fstp_creator_apply_start`.
+    pub agent_policy: bool,
 }
 
 /// One operation as the reference knows it.
@@ -1266,6 +1271,11 @@ pub struct RefOp {
     pub draft_gate: bool,
     /// The MCP tool, if any.
     pub tool: Option<RefTool>,
+    /// Whether the request the matrix sends for this operation sets P-75 or
+    /// P-77. The harness starts `creator.apply_start` from the SuperSAFE
+    /// template, which applies both, and saves P-28 alone through
+    /// `creator.save_fields`. False for every other operation.
+    pub sets_agent_policy: bool,
 }
 
 impl RefOp {
@@ -1281,6 +1291,7 @@ impl RefOp {
             binding: false,
             draft_gate: false,
             tool: None,
+            sets_agent_policy: false,
         }
     }
 
@@ -1297,6 +1308,7 @@ impl RefOp {
                 name,
                 scoped: false,
                 prepare: false,
+                agent_policy: false,
             }),
             None => None,
         };
@@ -1344,6 +1356,7 @@ impl RefOp {
                 name,
                 scoped: true,
                 prepare: false,
+                agent_policy: false,
             }),
             ..self
         }
@@ -1358,9 +1371,36 @@ impl RefOp {
                 name,
                 scoped: true,
                 prepare: true,
+                agent_policy: false,
             }),
             ..self
         }
+    }
+
+    /// A tool through which a request that sets P-75 or P-77 prepares
+    /// (ADR-013, Daniel's decision of 2026-11-20). `sets` says whether the
+    /// matrix request of the operation does.
+    const fn agent_policy_tool(self, name: &'static str, sets: bool) -> RefOp {
+        RefOp {
+            tool: Some(RefTool {
+                name,
+                scoped: true,
+                prepare: false,
+                agent_policy: true,
+            }),
+            sets_agent_policy: sets,
+            ..self
+        }
+    }
+
+    /// Whether an admitted MCP call of this operation, with the request
+    /// the matrix sends, becomes a pending action: a prepare-only tool, or
+    /// a request that sets P-75 or P-77 through a tool that prepares such
+    /// requests (ADR-013 amendment and Daniel's decision of 2026-11-20).
+    /// The high-risk and P-77 rules come on top.
+    pub fn prepares(&self) -> bool {
+        self.tool
+            .is_some_and(|t| t.prepare || (t.agent_policy && self.sets_agent_policy))
     }
 }
 
@@ -1467,10 +1507,12 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // NOTE): a tenant admin takes every set-up act of the programme
     // manager and the call drafter, without a Drafting binding, and then
     // counts as a builder (I-67). The approval rules are unchanged.
+    // P-75, P-77 (Daniel, 2026-11-20): the matrix starts from the SuperSAFE
+    // template, which sets both, and saves P-28 alone.
     RefOp::act("creator.apply_start", T::Programme, R::DraftManager)
-        .tool("fstp_creator_apply_start"),
+        .agent_policy_tool("fstp_creator_apply_start", true),
     RefOp::act("creator.save_fields", T::Programme, R::DraftManager)
-        .tool("fstp_creator_save_fields"),
+        .agent_policy_tool("fstp_creator_save_fields", false),
     // TH-49: the manager accepts template narrative before it applies.
     RefOp::act("creator.accept_narrative", T::Programme, R::DraftManager)
         .prepare_tool("fstp_prepare_narrative_acceptance"),
@@ -2393,8 +2435,7 @@ pub fn expected(
         return Expected::Deny(AuthClass::Draft);
     }
     if mcp {
-        let prepare_only = op.tool.is_some_and(|t| t.prepare);
-        if op.high_risk || prepare_only || (op.binding && policy.p77_draft_only) {
+        if op.high_risk || op.prepares() || (op.binding && policy.p77_draft_only) {
             return Expected::Pending;
         }
         return Expected::Allow;

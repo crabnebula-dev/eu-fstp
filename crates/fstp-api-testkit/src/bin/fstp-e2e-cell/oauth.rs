@@ -65,7 +65,7 @@ pub(crate) fn is_route(path: &str) -> bool {
 
 /// The plain-language text of each scope on the consent page. Interim,
 /// pending Daniel: ADR-013 leaves the consent texts open, so the test cell
-/// writes its own.
+/// writes its own. Daniel decided the `tenant:draft` text on 2026-11-20.
 fn scope_text(s: fstp_oauth::Scope) -> &'static str {
     use fstp_oauth::Scope as S;
     match s {

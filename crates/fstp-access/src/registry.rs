@@ -1325,7 +1325,7 @@ pub const OPS: &[OpSpec] = &[
     .acting(MANAGER_OR_ADMIN)
     .tool(
         "fstp_creator_apply_start",
-        "Start a draft programme from blank, a clone, a template or an imported document. The draft stays a draft.",
+        "Start a draft programme from blank, a clone, a template or an imported document. A start from a clone or a template sets P-75 and P-77, so it gives a pending action that the person confirms in the platform. The draft stays a draft.",
         &IN_PROGRAMME_BODY,
         Scope::CreatorDraft,
     ),
@@ -1338,7 +1338,7 @@ pub const OPS: &[OpSpec] = &[
     .acting(MANAGER_OR_ADMIN)
     .tool(
         "fstp_creator_save_fields",
-        "Save field values of a draft programme. The values stay a draft until a person requests activation in the platform.",
+        "Save field values of a draft programme. A save that sets or clears P-75 or P-77 gives a pending action that the person confirms in the platform. The values stay a draft until a person requests activation in the platform.",
         &IN_PROGRAMME_BODY,
         Scope::CreatorDraft,
     ),

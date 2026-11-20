@@ -408,8 +408,10 @@ async fn store<P: Seams>(
 /// A creator, bridge or import command: steps 5 to 9 of design section
 /// 3.7. With `ChannelVerdict::Prepare` it stops after the dry run and its
 /// gates and stores a pending action (step 6, ADR-013 amendment of
-/// 2026-11-20). `pending` names the action a web confirmation runs, which
-/// the execution records.
+/// 2026-11-20). A call through MCP that sets P-75 or P-77 is prepared
+/// too, by `fstp_access::creator_channel_policy` (Daniel, 2026-11-20).
+/// `pending` names the action a web confirmation runs, which the
+/// execution records.
 pub(super) async fn command<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
@@ -441,6 +443,14 @@ pub(super) async fn command<P: Seams>(
         ..Supplied::placeholder(account)
     };
     let cmd = build(call, form, op, &placeholder, None, &mut ids).map_err(|e| call.refuse(e))?;
+    // P-75, P-77 (ADR-013, Daniel's decision of 2026-11-20): through MCP,
+    // a command that sets either one is prepared as a whole. The decoded
+    // command names its fields, so the verdict is refined here, after the
+    // channel rules and before the dry run.
+    let verdict = match &cmd {
+        Command::Creator(c) => fstp_access::creator_channel_policy(verdict, &call.caller.p, c),
+        _ => verdict,
+    };
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
     // Step 5.
