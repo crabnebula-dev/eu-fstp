@@ -1231,6 +1231,9 @@ pub struct RefTool {
     pub name: &'static str,
     /// Whether a token needs a scope for it. Public tools need none.
     pub scoped: bool,
+    /// Whether it only prepares a pending action although its operation
+    /// is not high-risk (ADR-013 amendment of 2026-11-20).
+    pub prepare: bool,
 }
 
 /// One operation as the reference knows it.
@@ -1293,6 +1296,7 @@ impl RefOp {
             Some(name) => Some(RefTool {
                 name,
                 scoped: false,
+                prepare: false,
             }),
             None => None,
         };
@@ -1336,7 +1340,25 @@ impl RefOp {
 
     const fn tool(self, name: &'static str) -> RefOp {
         RefOp {
-            tool: Some(RefTool { name, scoped: true }),
+            tool: Some(RefTool {
+                name,
+                scoped: true,
+                prepare: false,
+            }),
+            ..self
+        }
+    }
+
+    /// A prepare-only tool (I-85, ADR-013 amendment of 2026-11-20). Through
+    /// MCP a call the rules admit becomes a pending action, whether or not
+    /// the operation is high-risk.
+    const fn prepare_tool(self, name: &'static str) -> RefOp {
+        RefOp {
+            tool: Some(RefTool {
+                name,
+                scoped: true,
+                prepare: true,
+            }),
             ..self
         }
     }
@@ -1397,10 +1419,14 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("tenant.approve_activation", T::None, R::TenantAdmin),
     // M9 lane B1: a tenant admin checks and sets the brand tokens. The
     // set is high-risk by the strict reading (I-78, interim).
-    RefOp::act("tenant.branding.check", T::None, R::TenantAdmin),
-    RefOp::act("tenant.branding.set", T::None, R::TenantAdmin).hr(),
+    RefOp::act("tenant.branding.check", T::None, R::TenantAdmin).tool("fstp_tenant_check_branding"),
+    RefOp::act("tenant.branding.set", T::None, R::TenantAdmin)
+        .hr()
+        .prepare_tool("fstp_prepare_branding"),
     // M9 lane T1: interface labels and the Voyage switch (I-72, interim).
-    RefOp::act("tenant.terminology.set", T::None, R::TenantAdmin).hr(),
+    RefOp::act("tenant.terminology.set", T::None, R::TenantAdmin)
+        .hr()
+        .prepare_tool("fstp_prepare_terminology"),
     // M6 lane L6-EGR, ADR-018: the mail relay, high-risk by the strict
     // reading of settings.
     RefOp::act("tenant.set_mail_relay", T::None, R::TenantAdmin).hr(),
@@ -1411,19 +1437,29 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Daniel, 2026-11-15 (late): tenant copies of funder profiles. The
     // copy and each save are high-risk by the strict reading, as the brand
     // tokens are, and web only.
-    RefOp::read("tenant.funder_profiles", T::None, R::TenantAdmin),
-    RefOp::act("tenant.funder_profile.copy", T::None, R::TenantAdmin).hr(),
-    RefOp::act("tenant.funder_profile.save", T::None, R::TenantAdmin).hr(),
+    // ADR-013 amendment of 2026-11-20: the tenant admin's setup tools.
+    RefOp::read("tenant.funder_profiles", T::None, R::TenantAdmin)
+        .tool("fstp_tenant_list_funder_profiles"),
+    RefOp::act("tenant.funder_profile.copy", T::None, R::TenantAdmin)
+        .hr()
+        .prepare_tool("fstp_prepare_funder_profile_copy"),
+    RefOp::act("tenant.funder_profile.save", T::None, R::TenantAdmin)
+        .hr()
+        .prepare_tool("fstp_prepare_funder_profile_save"),
     // Lane m4reg: the caller's own verification state, beside
     // `me.begin_verification`. Reading: any account reads its own state,
     // as it may begin its own verification.
     RefOp::read("me.get_verification", T::None, R::AnyAccount),
     // J1: the creator and import.
-    RefOp::act("creator.open_draft", T::None, R::TenantAdmin).hr(),
+    RefOp::act("creator.open_draft", T::None, R::TenantAdmin)
+        .hr()
+        .prepare_tool("fstp_prepare_programme_draft"),
     // Lane m4reg, the creator start page: clone sources and templates.
-    RefOp::read("creator.list_programmes", T::None, R::CreatorStart),
-    RefOp::read("creator.list_templates", T::None, R::CreatorStart),
-    RefOp::act("creator.invite", T::Programme, R::Inviter),
+    RefOp::read("creator.list_programmes", T::None, R::CreatorStart)
+        .tool("fstp_creator_list_programmes"),
+    RefOp::read("creator.list_templates", T::None, R::CreatorStart)
+        .tool("fstp_creator_list_templates"),
+    RefOp::act("creator.invite", T::Programme, R::Inviter).prepare_tool("fstp_prepare_invitation"),
     RefOp::read("creator.invitations", T::Programme, R::DraftManager),
     // Reading: whoever may invite may withdraw the invitation.
     RefOp::act("creator.withdraw_invitation", T::Programme, R::Inviter),
@@ -1431,21 +1467,26 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // NOTE): a tenant admin takes every set-up act of the programme
     // manager and the call drafter, without a Drafting binding, and then
     // counts as a builder (I-67). The approval rules are unchanged.
-    RefOp::act("creator.apply_start", T::Programme, R::DraftManager),
+    RefOp::act("creator.apply_start", T::Programme, R::DraftManager)
+        .tool("fstp_creator_apply_start"),
     RefOp::act("creator.save_fields", T::Programme, R::DraftManager)
         .tool("fstp_creator_save_fields"),
     // TH-49: the manager accepts template narrative before it applies.
-    RefOp::act("creator.accept_narrative", T::Programme, R::DraftManager),
+    RefOp::act("creator.accept_narrative", T::Programme, R::DraftManager)
+        .prepare_tool("fstp_prepare_narrative_acceptance"),
     // Daniel, 2026-11-15: the manager edits narrative the draft holds.
-    RefOp::act("creator.edit_narrative", T::Programme, R::DraftManager),
+    RefOp::act("creator.edit_narrative", T::Programme, R::DraftManager)
+        .tool("fstp_creator_edit_narrative"),
     RefOp::read("creator.get_draft", T::Programme, R::KnockOutReader)
         .tool("fstp_creator_get_draft"),
     RefOp::read("creator.get_report", T::Programme, R::DraftManager)
         .tool("fstp_creator_get_report"),
-    RefOp::act("creator.acknowledge", T::Programme, R::DraftManager),
-    RefOp::read("creator.preview", T::Programme, R::DraftManager),
-    RefOp::read("creator.impact", T::Programme, R::DraftManager),
-    RefOp::act("creator.request_activation", T::Programme, R::DraftManager),
+    RefOp::act("creator.acknowledge", T::Programme, R::DraftManager)
+        .prepare_tool("fstp_prepare_warning_acknowledgement"),
+    RefOp::read("creator.preview", T::Programme, R::DraftManager).tool("fstp_creator_get_preview"),
+    RefOp::read("creator.impact", T::Programme, R::DraftManager).tool("fstp_creator_get_impact"),
+    RefOp::act("creator.request_activation", T::Programme, R::DraftManager)
+        .prepare_tool("fstp_prepare_activation_request"),
     RefOp::act("creator.approve_activation", T::Programme, R::ApproverAdmin).hr(),
     // ADR-022 (Daniel, 2026-11-15): I-67 amended. A tenant admin who
     // built the draft may approve it as an override, with a reason and a
@@ -1454,15 +1495,18 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // R-PG-05, Q17 interim: a tenant-private template. Reading: the
     // programme's manager or a tenant admin saves it, as either reads the
     // draft it comes from.
-    RefOp::act("creator.save_as_template", T::Programme, R::DraftManager),
-    RefOp::act("import.upload", T::Programme, R::DraftManager),
-    RefOp::read("import.list", T::Programme, R::DraftManager),
+    RefOp::act("creator.save_as_template", T::Programme, R::DraftManager)
+        .prepare_tool("fstp_prepare_tenant_template"),
+    RefOp::act("import.upload", T::Programme, R::DraftManager).tool("fstp_creator_upload_import"),
+    RefOp::read("import.list", T::Programme, R::DraftManager)
+        .tool("fstp_creator_list_import_proposals"),
     // I-65 names "a named programme manager" for every imported value, and
     // an invariant outranks SA-12, so the resolution stays the manager's.
-    RefOp::act("import.resolve", T::Programme, R::ProgrammeManager),
+    RefOp::act("import.resolve", T::Programme, R::ProgrammeManager)
+        .prepare_tool("fstp_prepare_import_resolution"),
     // Daniel, 2026-11-15: the manager removes an imported document, a
     // draft record, as a resolution is.
-    RefOp::act("import.remove", T::Programme, R::DraftManager),
+    RefOp::act("import.remove", T::Programme, R::DraftManager).tool("fstp_creator_remove_import"),
     // J1 and J2: people and roles.
     // Lane m4reg, the invitation landing (J2). Reading: the invitation
     // token in the request is the capability. The invitee reads the
@@ -1474,12 +1518,18 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::read("people.get_invitation", T::None, R::Anyone),
     RefOp::act("people.accept_invitation", T::None, R::AnyAccount),
     RefOp::act("people.begin_verification", T::None, R::AnyAccount),
-    RefOp::read("roles.list", T::Programme, R::TenantAdmin),
+    RefOp::read("roles.list", T::Programme, R::TenantAdmin).tool("fstp_list_programme_roles"),
     // SA-11 (Daniel, 2026-11-15, night): "Readers. Tenant admins and the
     // programme's manager." The team page needs no step-up to read.
     RefOp::read("team.list", T::Programme, R::DraftManager),
-    RefOp::act("roles.grant", T::Programme, R::TenantAdmin).hr(),
-    RefOp::act("roles.end", T::Programme, R::TenantAdmin).hr(),
+    RefOp::act("roles.grant", T::Programme, R::TenantAdmin)
+        .hr()
+        .binding()
+        .prepare_tool("fstp_prepare_role_grant"),
+    RefOp::act("roles.end", T::Programme, R::TenantAdmin)
+        .hr()
+        .binding()
+        .prepare_tool("fstp_prepare_role_end"),
     RefOp::act("roles.reinstate", T::SuspendedBinding, R::TenantAdmin).hr(),
     // J3: calls.
     RefOp::act("call.draft", T::Programme, R::CallAuthor)
@@ -1492,7 +1542,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
         .tool("fstp_edit_call"),
     RefOp::act("call.approve", T::Call, R::CallApprover)
         .gated()
-        .binding(),
+        .binding()
+        .prepare_tool("fstp_prepare_call_approval"),
     RefOp::act("call.publish", T::Call, R::CallPublisher)
         .gated()
         .binding()
@@ -1502,9 +1553,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane mcreator: the Studio list of the programme's calls. Reading: the
     // staff who read a call's board read the list of its calls.
     // SA-12: and a tenant admin, who drafts calls.
-    RefOp::read("call.list", T::Programme, R::CallLister),
-    // M6 lane L6-API, M6 design section 6: the programme manager, web only.
-    RefOp::read("programme.timeline", T::Programme, R::ProgrammeManager),
+    RefOp::read("call.list", T::Programme, R::CallLister).tool("fstp_list_calls"),
+    // M6 lane L6-API, M6 design section 6: the programme manager. A read
+    // tool since the ADR-013 amendment of 2026-11-20.
+    RefOp::read("programme.timeline", T::Programme, R::ProgrammeManager)
+        .tool("fstp_get_programme_timeline"),
     // J4: public pages, open calls and applicants.
     RefOp::public(
         "public.programme",
@@ -2277,8 +2330,9 @@ pub fn setup_admits(op: &RefOp, who: Who) -> bool {
 ///   reference refuses it on every account operation.
 /// - Through MCP: no tool gives `NotExposed`, a token without the scope
 ///   `Scope`, and P-74 `P74`. A call the rule admits becomes `Pending`
-///   when the operation is high-risk (I-85), or binding under P-77 "draft
-///   only". Otherwise it is `Allow`.
+///   when the operation is high-risk (I-85), when its tool is prepare-only
+///   (ADR-013 amendment of 2026-11-20), or when it is binding under P-77
+///   "draft only". Otherwise it is `Allow`.
 /// - Through the web, a high-risk operation needs a fresh step-up (I-78).
 pub fn expected(
     op: &RefOp,
@@ -2339,7 +2393,8 @@ pub fn expected(
         return Expected::Deny(AuthClass::Draft);
     }
     if mcp {
-        if op.high_risk || (op.binding && policy.p77_draft_only) {
+        let prepare_only = op.tool.is_some_and(|t| t.prepare);
+        if op.high_risk || prepare_only || (op.binding && policy.p77_draft_only) {
             return Expected::Pending;
         }
         return Expected::Allow;

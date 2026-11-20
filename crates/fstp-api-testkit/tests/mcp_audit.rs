@@ -31,7 +31,7 @@ use fstp_mcp::Surface;
 use mcp_support::{McpCell, call, dec, obj, observed};
 
 /// Every scope M4 issues (design section 3.8).
-const EVERY_SCOPE: [Scope; 12] = [
+const EVERY_SCOPE: [Scope; 13] = [
     Scope::CallsRead,
     Scope::ProposalsRead,
     Scope::ProposalsDraft,
@@ -44,6 +44,7 @@ const EVERY_SCOPE: [Scope; 12] = [
     Scope::CreatorDraft,
     Scope::CallsDraft,
     Scope::AuditRead,
+    Scope::TenantDraft,
 ];
 
 /// The `ReadContent` executions on PX, with their channel and agent.

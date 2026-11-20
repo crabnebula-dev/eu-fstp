@@ -27,11 +27,13 @@ pub enum Scope {
     CallsDraft,
     /// `audit:read`.
     AuditRead,
+    /// `tenant:draft` (ADR-013 amendment of 2026-11-20).
+    TenantDraft,
 }
 
 impl Scope {
     /// Every scope issued in M4, in canonical order.
-    pub const ALL: [Scope; 12] = [
+    pub const ALL: [Scope; 13] = [
         Scope::CallsRead,
         Scope::ProposalsRead,
         Scope::ProposalsDraft,
@@ -44,6 +46,7 @@ impl Scope {
         Scope::CreatorDraft,
         Scope::CallsDraft,
         Scope::AuditRead,
+        Scope::TenantDraft,
     ];
 
     /// The wire spelling.
@@ -61,6 +64,7 @@ impl Scope {
             Scope::CreatorDraft => "creator:draft",
             Scope::CallsDraft => "calls:draft",
             Scope::AuditRead => "audit:read",
+            Scope::TenantDraft => "tenant:draft",
         }
     }
 

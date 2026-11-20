@@ -682,11 +682,12 @@ fn i85_high_risk_creator_operations_have_no_running_tool() {
 
 /// I-85, I-78, design sections 3.6 and 3.7 step 3: opening a draft
 /// through MCP is never run. A bearer request on its web route, from a
-/// tenant admin's phishing-resistant token with every creator scope, is
-/// refused with `Deny(NotExposed)`. No step-up is begun, no pending
-/// action is stored, and the engine port executes nothing.
+/// tenant admin's phishing-resistant token with every creator scope, only
+/// prepares: since the ADR-013 amendment of 2026-11-20 its tool
+/// `fstp_prepare_programme_draft` is prepare-only. One pending action is
+/// stored, no step-up is begun, and the engine port executes nothing.
 #[test]
-fn i85_open_draft_through_mcp_is_not_exposed_and_never_runs() {
+fn i85_open_draft_through_mcp_only_prepares_and_never_runs() {
     let c = cell();
     let token = c.token(
         ADMIN,
@@ -695,9 +696,8 @@ fn i85_open_draft_through_mcp_is_not_exposed_and_never_runs() {
         LoginMethod::Passkey,
     );
     let r = c.mcp(&token, rq::open_draft());
-    assert_eq!(
-        class(&r),
-        Class::Refused(ErrorCode::NotExposed),
+    assert!(
+        matches!(r, Ok(OpResult::Pending(_))),
         "creator.open_draft through MCP: {r:?}"
     );
     assert!(c.ports.engine.executions().is_empty(), "the engine ran");
@@ -705,9 +705,10 @@ fn i85_open_draft_through_mcp_is_not_exposed_and_never_runs() {
     let pending = c
         .pending(&login(&c, ADMIN))
         .unwrap_or_else(|e| panic!("{e}"));
-    assert!(
-        pending.is_empty(),
-        "a pending action was stored: {pending:?}"
+    assert_eq!(pending.len(), 1, "the one pending action: {pending:?}");
+    assert_eq!(
+        pending.first().map(|v| v.op.as_str()),
+        Some("creator.open_draft")
     );
 }
 
