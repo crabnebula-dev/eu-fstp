@@ -16,6 +16,11 @@
 //!   stored: a request for activation of a draft whose report is not clean
 //!   is refused under I-66, and nothing is stored.
 //! - No tool reaches the I-67 approval or override of an activation.
+//! - Daniel's decision of 2026-11-20 on P-75 and P-77: a save through MCP
+//!   that sets or clears either one, alone or mixed with other fields, and
+//!   a start from a template, give a pending action. A save of other
+//!   fields, a blank start and the web route execute. The confirmation
+//!   asks no step-up and applies once.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::arithmetic_side_effects)]
@@ -31,7 +36,7 @@ use fstp_api_testkit::fake::WebLogin;
 use fstp_api_testkit::fake::fixture::AGENT;
 use fstp_api_testkit::fake::requests;
 use fstp_domain::Via;
-use fstp_json::ToJson;
+use fstp_json::{ToJson, Value};
 use signatories::{A1, FINANCIAL, LEGAL, S1, active, appended, done, text};
 
 /// Brand tokens that pass I-70, from `m9b1_branding_dispatch.rs`.
@@ -270,4 +275,318 @@ fn i67_adr013_no_tool_reaches_an_activation_approval() {
             op.name
         );
     }
+}
+
+/// The `<step>.<member>` key of P-75 (`fstp_programme::FieldId::key`).
+const P75: &str = "evaluation.p75_agent_content_reads";
+/// The key of P-77.
+const P77: &str = "evaluation.p77_mcp_binding_actions";
+/// The key of P-28, a policy field that neither P-75 nor P-77 governs.
+const P28: &str = "evaluation.p28_rubric_bands";
+
+/// A draft A1 opens through the web with a step-up, and its programme
+/// id.
+fn web_draft(c: &FakeCell, l1: &WebLogin) -> String {
+    let v = done(
+        signatories::stepped(c, l1, &fstp_api_testkit::fake::creator_requests::open_draft),
+        "creator.open_draft",
+    );
+    text(&v, "programme")
+}
+
+/// The programme id `p` names.
+fn programme_id(p: &str) -> fstp_domain::id::ProgrammeId {
+    fstp_domain::id::ProgrammeId::from_raw(p.parse().unwrap())
+}
+
+/// The head revision of draft `p`, as `creator.get_draft` shows it.
+fn head(c: &FakeCell, l1: &WebLogin, p: &str) -> String {
+    let view = done(
+        c.web(
+            l1,
+            fstp_api_testkit::fake::creator_requests::get_draft(programme_id(p)),
+        ),
+        "creator.get_draft",
+    );
+    text(&view, "revision")
+}
+
+/// The fields draft `p` holds.
+fn held(c: &FakeCell, p: &str) -> std::collections::BTreeSet<fstp_programme::FieldId> {
+    c.ports
+        .engine
+        .state()
+        .creator
+        .draft(programme_id(p))
+        .map(|d| d.set_fields())
+        .unwrap_or_default()
+}
+
+/// The field id of a key.
+fn field(key: &str) -> fstp_programme::FieldId {
+    fstp_programme::FieldId::from_key(key).unwrap()
+}
+
+/// `fstp_creator_save_fields` on draft `p` at `base`, with `fields` as
+/// `[{field, value}]` JSON and an optional `clear` JSON array.
+fn save_tool(p: &str, base: &str, fields: &str, clear: Option<&str>) -> Result<Op, ApiError> {
+    let clear = clear.map(|c| format!(r#","clear":{c}"#)).unwrap_or_default();
+    tool(
+        "fstp_creator_save_fields",
+        &format!(r#"{{"programme":"{p}","base":"{base}","fields":{fields}{clear}}}"#),
+    )
+}
+
+/// `fstp_creator_apply_start` on draft `p` at `base` with `start` JSON.
+fn start_tool(p: &str, base: &str, start: &str) -> Result<Op, ApiError> {
+    tool(
+        "fstp_creator_apply_start",
+        &format!(r#"{{"programme":"{p}","base":"{base}","start":{start}}}"#),
+    )
+}
+
+/// The confirmed pending action's appended entry: `op` through the web,
+/// naming the action and the agent, with no step-up (decision 2 of
+/// 2026-11-20: the operation is not high-risk).
+fn confirmed_without_step_up(
+    c: &FakeCell,
+    l1: &WebLogin,
+    p: &fstp_api_core::PendingReceipt,
+    op: &str,
+) {
+    let before = appended(c);
+    let (r, stepped) = confirm(c, l1, p.id);
+    assert!(!stepped, "{op} asks no step-up on the web, so none here");
+    let _ = done(r, "the confirmation");
+    assert_eq!(appended(c), before + 1, "one entry once confirmed");
+    let e = c.ports.engine.appended().last().cloned().unwrap();
+    assert_eq!(e.meta.op.0, op);
+    assert_eq!(e.meta.via, Via::Web, "I-85: completed through the web");
+    assert_eq!(e.meta.pending, Some(p.id), "the entry names the action");
+    assert_eq!(e.meta.agent, Some(AGENT), "the entry names the agent");
+    assert!(e.meta.step_up.is_none());
+}
+
+/// P-75, I-85, ADR-013 decision of Daniel of 2026-11-20: a save of P-75
+/// through MCP gives a pending action and changes nothing. A1 confirms it
+/// in the platform without a step-up, and only then does the draft hold
+/// P-75.
+#[test]
+fn p75_i85_save_through_mcp_is_pending_until_confirmed() {
+    let (c, l1, token) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let before = appended(&c);
+    let receipt = pending(
+        c.mcp(
+            &token,
+            save_tool(&p, &base, &format!(r#"[{{"field":"{P75}","value":true}}]"#), None),
+        ),
+        "a save of P-75 through MCP",
+    );
+    assert_eq!(appended(&c), before, "I-85: preparing saves nothing");
+    assert!(!held(&c, &p).contains(&field(P75)), "P-75 changed");
+    assert_eq!(head(&c, &l1, &p), base, "the draft revision moved");
+    confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
+    assert!(held(&c, &p).contains(&field(P75)), "the confirmed save holds");
+}
+
+/// P-77, I-85, ADR-013 decision of Daniel of 2026-11-20: a save of P-77
+/// through MCP gives a pending action and changes nothing until A1
+/// confirms it in the platform.
+#[test]
+fn p77_i85_save_through_mcp_is_pending_until_confirmed() {
+    let (c, l1, token) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let before = appended(&c);
+    let receipt = pending(
+        c.mcp(
+            &token,
+            save_tool(
+                &p,
+                &base,
+                &format!(r#"[{{"field":"{P77}","value":"allowed"}}]"#),
+                None,
+            ),
+        ),
+        "a save of P-77 through MCP",
+    );
+    assert_eq!(appended(&c), before, "I-85: preparing saves nothing");
+    assert!(!held(&c, &p).contains(&field(P77)), "P-77 changed");
+    confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
+    assert!(held(&c, &p).contains(&field(P77)), "the confirmed save holds");
+}
+
+/// P-75, P-77, I-85, ADR-013 decision of Daniel of 2026-11-20: a save that
+/// mixes P-77 with another field is prepared as a whole. Neither field
+/// changes until A1 confirms, and the confirmation saves both.
+#[test]
+fn p77_i85_mixed_save_through_mcp_is_pending_as_a_whole() {
+    let (c, l1, token) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let before = appended(&c);
+    let fields =
+        format!(r#"[{{"field":"{P28}","value":false}},{{"field":"{P77}","value":"draft_only"}}]"#);
+    let receipt = pending(
+        c.mcp(&token, save_tool(&p, &base, &fields, None)),
+        "a mixed save through MCP",
+    );
+    assert_eq!(appended(&c), before, "I-85: no part of the save executes");
+    let fields_held = held(&c, &p);
+    assert!(!fields_held.contains(&field(P28)), "P-28 was saved alone");
+    assert!(!fields_held.contains(&field(P77)), "P-77 changed");
+    confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
+    let fields_held = held(&c, &p);
+    assert!(fields_held.contains(&field(P28)) && fields_held.contains(&field(P77)));
+}
+
+/// P-77, I-85, ADR-013 decision of Daniel of 2026-11-20: a clear of P-77
+/// through MCP removes the value the draft holds, so it is prepared too.
+#[test]
+fn p77_i85_clear_through_mcp_is_pending_until_confirmed() {
+    let (c, l1, token) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let _ = done(
+        c.web(
+            &l1,
+            fstp_api_testkit::fake::creator_requests::save_fields(
+                programme_id(&p),
+                &base,
+                &[(P77, Value::String("draft_only".to_owned()))],
+            ),
+        ),
+        "the web save of P-77",
+    );
+    let base = head(&c, &l1, &p);
+    let before = appended(&c);
+    let receipt = pending(
+        c.mcp(
+            &token,
+            save_tool(&p, &base, "[]", Some(&format!(r#"["{P77}"]"#))),
+        ),
+        "a clear of P-77 through MCP",
+    );
+    assert_eq!(appended(&c), before, "I-85: preparing clears nothing");
+    assert!(held(&c, &p).contains(&field(P77)), "P-77 was cleared");
+    confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
+    assert!(!held(&c, &p).contains(&field(P77)), "the confirmed clear holds");
+}
+
+/// I-84, P-75, P-77, ADR-013 decision of Daniel of 2026-11-20: a save of
+/// other fields through MCP still executes, with `Via::Mcp`.
+#[test]
+fn i84_p75_p77_save_of_other_fields_through_mcp_executes() {
+    let (c, l1, token) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let before = appended(&c);
+    let _ = done(
+        c.mcp(
+            &token,
+            save_tool(&p, &base, &format!(r#"[{{"field":"{P28}","value":true}}]"#), None),
+        ),
+        "a save of P-28 through MCP",
+    );
+    assert_eq!(appended(&c), before + 1);
+    let e = c.ports.engine.appended().last().cloned().unwrap();
+    assert_eq!(e.meta.op.0, "creator.save_fields");
+    assert_eq!(e.meta.via, Via::Mcp);
+    assert_eq!(e.meta.pending, None);
+    assert!(held(&c, &p).contains(&field(P28)));
+}
+
+/// I-84, P-75, ADR-013 decision of Daniel of 2026-11-20: the web route
+/// saves P-75 directly, as before. Only the MCP channel prepares it.
+#[test]
+fn i84_p75_web_save_executes_directly() {
+    let (c, l1, _) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let before = appended(&c);
+    let _ = done(
+        c.web(
+            &l1,
+            fstp_api_testkit::fake::creator_requests::save_fields(
+                programme_id(&p),
+                &base,
+                &[(P75, Value::Bool(true))],
+            ),
+        ),
+        "the web save of P-75",
+    );
+    assert_eq!(appended(&c), before + 1);
+    let e = c.ports.engine.appended().last().cloned().unwrap();
+    assert_eq!(e.meta.via, Via::Web);
+    assert_eq!(e.meta.pending, None);
+    assert!(held(&c, &p).contains(&field(P75)));
+}
+
+/// I-85, P-75, P-77, ADR-013 decision of Daniel of 2026-11-20: the pending
+/// save applies once. A second confirmation is refused and appends
+/// nothing, and the confirmed action is no longer open.
+#[test]
+fn p75_i85_confirmation_applies_the_save_once() {
+    let (c, l1, token) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let receipt = pending(
+        c.mcp(
+            &token,
+            save_tool(&p, &base, &format!(r#"[{{"field":"{P75}","value":false}}]"#), None),
+        ),
+        "a save of P-75 through MCP",
+    );
+    confirmed_without_step_up(&c, &l1, &receipt, "creator.save_fields");
+    let after = appended(&c);
+    let digest = c
+        .pending(&l1)
+        .unwrap()
+        .into_iter()
+        .find(|v| v.id == receipt.id)
+        .map(|v| v.digest)
+        .expect("the confirmed action stays listed");
+    let again = c.web(&l1, requests::pending_confirm(receipt.id, &digest));
+    assert!(
+        matches!(again, Err(ApiError::Refused { .. })),
+        "I-85: a confirmed action confirms once: {again:?}"
+    );
+    assert_eq!(appended(&c), after, "the second confirmation saved again");
+}
+
+/// P-75, P-77, I-85, ADR-013 decision of Daniel of 2026-11-20: a start from
+/// a template through MCP applies the template's P-75 and P-77, so it is
+/// prepared and changes nothing until A1 confirms it. A blank start
+/// applies neither and executes.
+#[test]
+fn p75_p77_i85_template_start_through_mcp_is_pending_and_blank_executes() {
+    let (c, l1, token) = cell();
+    let p = web_draft(&c, &l1);
+    let base = head(&c, &l1, &p);
+    let before = appended(&c);
+    let template = fstp_api_testkit::fake::creator_requests::supersafe_start().to_compact();
+    let receipt = pending(
+        c.mcp(&token, start_tool(&p, &base, &template)),
+        "a template start through MCP",
+    );
+    assert_eq!(appended(&c), before, "I-85: preparing applies nothing");
+    let fields_held = held(&c, &p);
+    assert!(!fields_held.contains(&field(P75)) && !fields_held.contains(&field(P77)));
+    confirmed_without_step_up(&c, &l1, &receipt, "creator.apply_start");
+    let fields_held = held(&c, &p);
+    assert!(fields_held.contains(&field(P75)) && fields_held.contains(&field(P77)));
+
+    let q = web_draft(&c, &l1);
+    let base = head(&c, &l1, &q);
+    let before = appended(&c);
+    let _ = done(
+        c.mcp(&token, start_tool(&q, &base, r#"{"kind":"blank"}"#)),
+        "a blank start through MCP",
+    );
+    assert_eq!(appended(&c), before + 1);
+    let e = c.ports.engine.appended().last().cloned().unwrap();
+    assert_eq!(e.meta.op.0, "creator.apply_start");
+    assert_eq!(e.meta.via, Via::Mcp);
 }
