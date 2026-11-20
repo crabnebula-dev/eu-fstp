@@ -20,18 +20,24 @@
 //!   `Workspaces` over `workspace.drafts`, the `PendingActions` port over
 //!   `api.pending_actions`, and a fail-closed `BlobStore`.
 //! - `tenant`: `TenantConfig`, `Outbox`, `Clock` and `Ids`.
+//! - `accounts`: `Accounts`, with the invitation of a programme role and
+//!   its mail (ADR-026 record of lane L5).
+//! - `mail`: the delivery of a message a port enqueued, through the
+//!   cell's `Relay` (I-26).
 //! - `closed`: the ports the production cell does not serve yet, each
 //!   failing closed: the vault's intake and Q35 queries, `Precheck`,
-//!   `Prober`, `Recovery`, `BreakGlass` and `Accounts::invite`.
+//!   `Prober`, `Recovery` and `BreakGlass`.
 //!
 //! The token store is lane L2's (`crate::oauth::tokens::CellTokens`),
 //! through [`CellTokens`]: the `Tokens` port of `ApiCore` and the agent
 //! grant the agent admission reads.
 
+mod accounts;
 mod audit;
 mod closed;
 mod content;
 mod engine;
+pub(crate) mod mail;
 mod session;
 mod tenant;
 
@@ -83,6 +89,13 @@ pub(crate) struct ApiParts<R: Runtime, V> {
     pub erasure: ErasureHandle,
     /// The organisation port of ADR-021.
     pub organisation: OrganisationPort,
+    /// The cell host, whose origin the links of a message name.
+    pub host: String,
+    /// The app pool, over which a port writes `ops.delivery`.
+    pub app: fstp_pgstore::Pool<R>,
+    /// The relay the ports deliver through, if the cell has one (ADR-026
+    /// record of lane L5).
+    pub relay: Option<mail::SharedRelay>,
 }
 
 /// The shared state of every port of one cell.
@@ -95,6 +108,9 @@ pub(crate) struct Inner<R: Runtime, V> {
     vault: V,
     erasure: ErasureHandle,
     organisation: OrganisationPort,
+    host: String,
+    app: fstp_pgstore::Pool<R>,
+    relay: Option<mail::SharedRelay>,
     audit: audit::Buffer,
     stepups: session::Begun,
 }
@@ -111,7 +127,7 @@ pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     sessions: session::CellSessions<R, V>,
     step_up: session::CellStepUp<R, V>,
     sessions_admin: closed::ClosedSessionsAdmin,
-    accounts: closed::CellAccounts<R, V>,
+    accounts: accounts::CellAccounts<R, V>,
     vault: closed::CellVault<R, V>,
     engine: engine::CellAsyncEngine<R, V, T>,
     audit: audit::CellAudit<R, V>,
@@ -148,6 +164,9 @@ where
         vault,
         erasure,
         organisation,
+        host,
+        app,
+        relay,
     } = parts;
     let inner = Arc::new(Inner {
         cell,
@@ -159,6 +178,9 @@ where
         vault,
         erasure,
         organisation,
+        host,
+        app,
+        relay,
         stepups: session::Begun::default(),
     });
     let tokens = Arc::new(tokens);
@@ -166,7 +188,7 @@ where
         sessions: session::CellSessions(Arc::clone(&inner)),
         step_up: session::CellStepUp(Arc::clone(&inner)),
         sessions_admin: closed::ClosedSessionsAdmin,
-        accounts: closed::CellAccounts(Arc::clone(&inner)),
+        accounts: accounts::CellAccounts(Arc::clone(&inner)),
         vault: closed::CellVault(Arc::clone(&inner)),
         engine: engine::CellAsyncEngine::new(Arc::clone(&inner), Arc::clone(&tokens)),
         audit: audit::CellAudit(Arc::clone(&inner)),
@@ -196,7 +218,7 @@ where
 {
     type Sessions = session::CellSessions<R, V>;
     type StepUp = session::CellStepUp<R, V>;
-    type Accounts = closed::CellAccounts<R, V>;
+    type Accounts = accounts::CellAccounts<R, V>;
     type Vault = closed::CellVault<R, V>;
     type Engine = engine::CellAsyncEngine<R, V, T>;
     type Audit = audit::CellAudit<R, V>;

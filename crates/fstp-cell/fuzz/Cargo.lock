@@ -229,6 +229,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-mail",
  "fstp-money",
  "fstp-oauth",
  "fstp-obs",

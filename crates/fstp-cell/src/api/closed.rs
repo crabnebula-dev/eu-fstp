@@ -9,19 +9,16 @@
 //! - No pre-check provider, prober, recovery or break-glass approval, and
 //!   no session or passkey administration through the API core: the
 //!   cell's own `/auth` routes serve those.
-//! - Invitations are issued through the cell's command route. The API
-//!   core reads display handles and login emails only.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use fstp_access::ReadClearance;
 use fstp_api_core::port::{
-    Accounts, Affiliations, AsyncIdentityOracle, BirthDate, BlobOwner, BlobRef, BlobStore,
-    BreakGlass, BreakGlassId, CountryCode, DisplayHandle, ExclusionClasses, InvitationLink,
-    InviteKind, PasskeyRegistration, PortError, Precheck, ProbeKind, ProbeOutcome, Prober, Receipt,
-    Recovery, RecoveryId, SessionId, SessionInfo, SessionsAdmin, StepUpProof, Vault, VaultBound,
-    VerificationPurpose, VerificationRedirect,
+    Affiliations, AsyncIdentityOracle, BirthDate, BlobOwner, BlobRef, BlobStore, BreakGlass,
+    BreakGlassId, CountryCode, ExclusionClasses, PasskeyRegistration, PortError, Precheck,
+    ProbeKind, ProbeOutcome, Prober, Receipt, Recovery, RecoveryId, SessionId, SessionInfo,
+    SessionsAdmin, StepUpProof, Vault, VaultBound, VerificationPurpose, VerificationRedirect,
 };
 use fstp_domain::id::{AccountId, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
@@ -102,32 +99,6 @@ impl<R: Runtime, V: VaultClient> Vault for CellVault<R, V> {
     ) -> Result<Answer, OracleDown> {
         let _ = (programme, orgs);
         Err(OracleDown)
-    }
-}
-
-/// The accounts port: display handles and login emails only.
-pub(crate) struct CellAccounts<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
-
-impl<R: Runtime, V: Send + Sync> Accounts for CellAccounts<R, V> {
-    async fn invite(&self, kind: InviteKind) -> Result<InvitationLink, PortError> {
-        let _ = kind;
-        Err(PortError::Unavailable)
-    }
-
-    /// A pseudonymous handle from the account id. Never an email.
-    async fn display_handle(&self, a: AccountId) -> Result<DisplayHandle, PortError> {
-        let h = fstp_crypto::sha256(&a.raw().to_be_bytes());
-        let tail: String = h.iter().take(3).map(|b| format!("{b:02x}")).collect();
-        Ok(DisplayHandle(format!("member-{tail}")))
-    }
-
-    /// The cell's login email index (SA-11, I-86).
-    async fn login_email(&self, a: AccountId) -> Result<Option<String>, PortError> {
-        self.0
-            .erasure
-            .login_email(a)
-            .await
-            .map_err(|_| PortError::Unavailable)
     }
 }
 

@@ -1033,7 +1033,10 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
-            | CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. })
+            | CellCommand::Tenant(
+                TenantCommand::IssueFirstAdminInvitation { .. }
+                    | TenantCommand::IssueRoleInvitation { .. }
+            )
             | CellCommand::Auth(fstp_auth::AuthCommand::MarkCredentialSuspect { .. })
     )
 }
@@ -1810,6 +1813,12 @@ pub fn admit_system(
         (
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. }),
+        ) => true,
+        // J2 (ADR-026 record of lane L5): the accounts port's enrolment
+        // invitation of a programme role invitation by address.
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueRoleInvitation { .. }),
         ) => true,
         (
             SystemTask::LoginVerifier,

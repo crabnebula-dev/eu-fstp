@@ -177,6 +177,14 @@ pub enum Issuer {
         /// The outcome of [`crate::stepup::admit_step_up`].
         stepup: Result<(), StepUpDeny>,
     },
+    /// The cell's accounts port, for the invitation of a person by address
+    /// to a programme role (J2, ADR-026 record of lane L5). It issues only
+    /// for a creator invitation that is live: recorded, by address, not
+    /// withdrawn and not accepted. The enrolment grants no role.
+    RoleInvitation {
+        /// Whether the creator invitation is live.
+        invitation_live: bool,
+    },
 }
 
 /// An invitation as the fold holds it.
@@ -220,6 +228,9 @@ pub enum InvitationProof {
 ///   token, which `fstp-cell first-admin` prints.
 /// - A tenant admin issues any other invitation, with a step-up. It is
 ///   never split.
+/// - The accounts port issues the invitation of a programme role by
+///   address, only while its creator invitation is live (J2). It is never
+///   split and is no first admin's.
 /// - `invitee_new` is true when the invitation creates the account: no
 ///   record names it before, other than invitations that no enrolment
 ///   used. An existing account is refused. It adds a further passkey only
@@ -244,6 +255,12 @@ pub fn issue_invitation(
         }
         Issuer::TenantAdmin { admin, stepup } => {
             if !admin || stepup.is_err() {
+                return Err(EnrolDeny::InvitationIssuer);
+            }
+            false
+        }
+        Issuer::RoleInvitation { invitation_live } => {
+            if !invitation_live {
                 return Err(EnrolDeny::InvitationIssuer);
             }
             false

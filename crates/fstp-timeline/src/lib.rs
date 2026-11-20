@@ -113,6 +113,13 @@ pub mod kind {
     /// at the first tick that sees it. It fires once, with one email to the
     /// holder when the tenant has a mail relay and none otherwise.
     pub const PASSKEY_DISABLED: u16 = 15;
+    /// The invitation of a person to a programme role by address (J2,
+    /// ADR-026 record of lane L5). Sourced by the programme and the
+    /// creator invitation ([`role_invitation_source`]), due when the
+    /// accounts port schedules it. Only that port fires it, since only it
+    /// holds the link token the one email carries. The plan never cancels
+    /// it, and [`firing`] never builds its entry.
+    pub const ROLE_INVITATION: u16 = 16;
 }
 
 /// A level 2 signing key is due for replacement this long after its
@@ -169,6 +176,22 @@ pub const fn sweep_kind(k: SweepKind) -> u16 {
 pub fn template_code(id: TemplateId) -> u16 {
     let at = TemplateId::ALL.iter().position(|t| *t == id).unwrap_or(0);
     u16::try_from(at).map_or(0, |n| n.saturating_add(1))
+}
+
+/// The source of the `ROLE_INVITATION` event of the creator invitation
+/// `invitation` on `programme`: both ids, big-endian (ADR-026 record of
+/// lane L5).
+pub fn role_invitation_source(programme: ProgrammeId, invitation: u128) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32);
+    out.extend_from_slice(&programme.raw().to_be_bytes());
+    out.extend_from_slice(&invitation.to_be_bytes());
+    out
+}
+
+/// The programme of a `ROLE_INVITATION` event source, if it is one.
+pub fn role_invitation_programme(source: &[u8]) -> Option<ProgrammeId> {
+    let head: [u8; 16] = source.get(..16)?.try_into().ok()?;
+    (source.len() == 32).then(|| ProgrammeId::from_raw(u128::from_be_bytes(head)))
 }
 
 /// The `ops.outbox` row id of the message with key `idem`: the first 16
@@ -460,7 +483,12 @@ pub fn diff(t: &TimelineState, derived: &BTreeMap<EventId, Derived>) -> Vec<Time
         .map(|(_, d)| d.scheduled())
         .collect();
     for (id, e) in t.events() {
-        if e.status != EventStatus::Scheduled || derived.contains_key(id) {
+        // J2: the accounts port schedules and fires an invitation event
+        // itself, so no derived set ever holds one (`kind::ROLE_INVITATION`).
+        if e.status != EventStatus::Scheduled
+            || derived.contains_key(id)
+            || e.kind == kind::ROLE_INVITATION
+        {
             continue;
         }
         let superseded_by = derived
@@ -557,6 +585,9 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
         // operator rotates the key by hand, with step-up, through the
         // control plane (`fstp_control::api::CpApiRequest::RotateNoticeKey`).
         kind::SIGNER_ROTATION_DUE => Vec::new(),
+        // J2: only the accounts port fires an invitation, with the body it
+        // composed (`kind::ROLE_INVITATION`).
+        kind::ROLE_INVITATION => return None,
         // ADR-008, 2026-11-19: one email to the holder of the flagged
         // passkey, when the tenant has a relay.
         kind::PASSKEY_DISABLED => {
@@ -637,6 +668,92 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
             then,
         },
         bodies,
+    })
+}
+
+/// The `ROLE_INVITATION` event of the creator invitation `invitation` on
+/// `programme`, due at `now` (J2, ADR-026 record of lane L5). One creator
+/// invitation has one event, so a retried schedule names the same event.
+pub fn role_invitation_event(programme: ProgrammeId, invitation: u128, now: Timestamp) -> Derived {
+    Derived {
+        kind: kind::ROLE_INVITATION,
+        lead: 0,
+        source: role_invitation_source(programme, invitation),
+        source_version: 0,
+        due: now.micros(),
+        offset_minutes: 0,
+    }
+}
+
+/// The one message of a `ROLE_INVITATION` firing before it is composed:
+/// its row id, key and template version.
+#[derive(Clone, Copy, Debug)]
+pub struct InvitationMessage {
+    /// The `ops.outbox` row id.
+    pub outbox: [u8; 16],
+    /// The idempotency key, of the event, the address and email (I-26).
+    pub idem: Idem,
+    /// The template version, `role-invitation` at its latest version.
+    pub template: &'static Template,
+}
+
+/// The message of the invitation event `event` to the address whose
+/// SHA-256 digest is `address` (I-26: one event, one recipient, one
+/// channel, one key).
+pub fn role_invitation_message(event: &EventId, address: [u8; 32]) -> Option<InvitationMessage> {
+    let template = Template::latest(TemplateId::RoleInvitation, Locale::En)?;
+    let idem = message_idem(event, Recipient::Address(address), CHANNEL_EMAIL);
+    Some(InvitationMessage {
+        outbox: outbox_id(&idem),
+        idem,
+        template,
+    })
+}
+
+/// The firing of the scheduled invitation event `event` at `now`, with
+/// the composed message `body` of `message` (J2, I-25). It records the
+/// template version first when the ledger does not hold it, and lists the
+/// one message. `None` when the event is not a scheduled, due invitation.
+pub fn role_invitation_firing(
+    s: &CellState,
+    event: &EventId,
+    message: &InvitationMessage,
+    body: Vec<u8>,
+    now: Timestamp,
+) -> Option<Firing> {
+    let t = s.timeline();
+    let e = t.event(event)?;
+    if e.kind != kind::ROLE_INVITATION || e.status != EventStatus::Scheduled || e.due > now.micros()
+    {
+        return None;
+    }
+    let code = template_code(message.template.id());
+    let version = u16::try_from(message.template.version()).ok()?;
+    let templates = match t.template(code, version) {
+        Some(_) => Vec::new(),
+        None => vec![TimelineRecord::TemplateVersionRecorded {
+            template: code,
+            version,
+            locale: Locale::En.code().to_owned(),
+            digest: message.template.digest(),
+        }],
+    };
+    Some(Firing {
+        command: TimelineCommand::Fire {
+            event: *event,
+            templates,
+            messages: vec![FiredMessage {
+                outbox: message.outbox,
+                idem: message.idem,
+                template: code,
+                version,
+            }],
+            then: None,
+        },
+        bodies: vec![MessageBody {
+            outbox: message.outbox,
+            body,
+        }],
     })
 }
 

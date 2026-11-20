@@ -169,8 +169,21 @@ impl Moment {
     }
 }
 
+/// The one-time link token of a programme role invitation (J2, ADR-026
+/// record of lane L5). It is a random capability, not an id of a person
+/// or of content, so it holds no identity attribute (I-27). Its `Debug`
+/// never shows it, so no log line carries it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InvitationToken(pub [u8; 32]);
+
+impl std::fmt::Debug for InvitationToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InvitationToken(..)")
+    }
+}
+
 /// A page of the platform a message links to. Each target is a fixed
-/// route plus at most one id.
+/// route plus at most one id, or the link token of an invitation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LinkTarget {
     /// The platform home, `/app/` (ADR-008, 2026-11-19: the holder email
@@ -186,6 +199,10 @@ pub enum LinkTarget {
     CallGuide(CallId),
     /// A call's notifiable conflicts, `/app/calls/{call}/notifiable-conflicts`.
     NotifiableConflicts(CallId),
+    /// The landing of a programme role invitation,
+    /// `/app/invitation#<token>` (J2). The token travels in the fragment
+    /// only, so no request line to the server carries it.
+    RoleInvitation(InvitationToken),
 }
 
 impl LinkTarget {
@@ -199,6 +216,13 @@ impl LinkTarget {
             LinkTarget::CallGuide(c) => format!("/app/calls/{}/guide", c.raw()),
             LinkTarget::NotifiableConflicts(c) => {
                 format!("/app/calls/{}/notifiable-conflicts", c.raw())
+            }
+            LinkTarget::RoleInvitation(t) => {
+                let mut path = String::from("/app/invitation#");
+                for b in t.0 {
+                    path.push_str(&format!("{b:02x}"));
+                }
+                path
             }
         }
     }

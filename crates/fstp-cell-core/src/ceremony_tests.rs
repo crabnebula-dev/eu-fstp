@@ -682,3 +682,78 @@ fn adr008_tenant_admin_invitation_enrols_a_new_account() {
             .any(|r| matches!(r, CellRecord::Auth(AuthRecord::FirstAdminEnrolled { .. })))
     );
 }
+
+/// J2, SoD-09 (ADR-026 record of lane L5): only the system task
+/// `Provisioning` issues `IssueRoleInvitation`, never a session or another
+/// task, and `decide` refuses it without a live creator invitation by
+/// address on that programme. So no path enrols an account the
+/// `creator.invite` of a draft did not invite.
+#[test]
+fn j2_role_invitation_needs_provisioning_and_a_live_creator_invitation() {
+    let s = state_of(&[issued_split()]);
+    let c = CellCommand::Tenant(TenantCommand::IssueRoleInvitation {
+        programme: fstp_domain::id::ProgrammeId::from_raw(0x51),
+        role_invitation: 0x77,
+        account: AccountId::from_raw(0x0B0B),
+        token_digest: token_digest(&Token([0x33; 32])),
+    });
+    let session = SessionView {
+        id: [0x5E; 16],
+        account: ADMIN,
+        method: Method::Passkey,
+        started: NOW,
+        last_used: NOW,
+    };
+    let policy = gate::LoginPolicy {
+        stepup_freshness_us: crate::tenant::P71_DEFAULT_US,
+    };
+    assert_eq!(
+        gate::admit_command(
+            &s,
+            &session,
+            Action::Command(c.clone()),
+            [1; 16],
+            None,
+            NOW,
+            &policy
+        )
+        .err(),
+        Some(Deny::NotPermitted),
+        "a session issues it"
+    );
+    let id = crate::system_command_id(*b"role-inv");
+    for task in [SystemTask::Timeline, SystemTask::ErasureRunner] {
+        assert_eq!(
+            gate::admit_system(&s, Action::Command(c.clone()), task, id, NOW).err(),
+            Some(Deny::NotPermitted),
+            "{task:?} issues it"
+        );
+    }
+    let admitted = gate::admit_system(
+        &s,
+        Action::Command(c.clone()),
+        SystemTask::Provisioning,
+        id,
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        admitted.principal(),
+        Principal::System(SystemTask::Provisioning)
+    );
+    let decided = crate::decide_system_with_inputs(
+        &s,
+        &c,
+        &crate::SystemCtx {
+            task: SystemTask::Provisioning,
+            at: NOW.micros(),
+        },
+        id,
+        admitted.inputs(),
+        &Answers::new(),
+    );
+    assert!(
+        decided.is_err(),
+        "SoD-09: an enrolment invitation without a live creator invitation: {decided:?}"
+    );
+}

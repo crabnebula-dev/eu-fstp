@@ -1182,6 +1182,20 @@ impl<C: Custody> ErasureRunner<C> {
         digest_key(sk, Purpose::Lookup).map(Some)
     }
 
+    /// The delivery body digest key, derived from the `Lookup` key with
+    /// `crate::tasks::dispatch::digest_key` (m4-design section 15.0 row
+    /// "Delivery body digest key", ADR-026 record of lane L5). `None`
+    /// while the cell has no `Lookup` group. The `Lookup` key never leaves
+    /// the runner.
+    fn delivery_digest_key(&self) -> Result<Option<fstp_dispatch::DigestKey>, CellError> {
+        let Some(k) = self.lookup_key()? else {
+            return Ok(None);
+        };
+        crate::tasks::dispatch::digest_key(k.expose())
+            .map(Some)
+            .map_err(|_| keys_err("delivery digest key"))
+    }
+
     /// Creates the `Lookup` keyed digest group at generation 1 (design
     /// section 3.1), sealed under the current seal key.
     fn add_lookup_group(&mut self) -> Result<GroupId, CellError> {
@@ -1858,6 +1872,9 @@ enum Request {
         account: fstp_domain::id::AccountId,
         reply: ReplyTx<Result<Option<String>, CellError>>,
     },
+    DeliveryDigestKey {
+        reply: ReplyTx<Result<Option<fstp_dispatch::DigestKey>, CellError>>,
+    },
 }
 
 impl Request {
@@ -1874,6 +1891,7 @@ impl Request {
             Request::SetLoginEmail { reply, .. } => reply.send(Err(gone)),
             Request::LoginAccount { reply, .. } => reply.send(Err(gone)),
             Request::LoginEmail { reply, .. } => reply.send(Err(gone)),
+            Request::DeliveryDigestKey { reply } => reply.send(Err(gone)),
             // Dropping the slot answers `None`.
             Request::Keystore { reply } => drop(reply),
         }
@@ -2041,6 +2059,19 @@ impl ErasureHandle {
             .unwrap_or(Err(keys_err("the erasure task is not running")))
     }
 
+    /// The delivery body digest key of the App chain `Lookup` key, or
+    /// `None` while the cell has no `Lookup` group (ADR-026 record of lane
+    /// L5). The `Lookup` key itself never leaves the task.
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn delivery_digest_key(&self) -> Result<Option<fstp_dispatch::DigestKey>, CellError> {
+        self.ask(|reply| Request::DeliveryDigestKey { reply })
+            .await
+            .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
     /// Every event of the task so far, in order.
     pub fn events(&self) -> Vec<ErasureEvent> {
         self.progress().events.clone()
@@ -2198,6 +2229,7 @@ async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
             let state = runner.engine.state();
             reply.send(runner.login_email(&state, account));
         }
+        Request::DeliveryDigestKey { reply } => reply.send(runner.delivery_digest_key()),
     }
 }
 

@@ -24,7 +24,7 @@ pub struct CapturedMail {
 
 /// The mail capture of one world cell. Clones share the capture.
 #[derive(Clone, Debug, Default)]
-pub struct WorldMail(Arc<Mutex<Vec<CapturedMail>>>);
+pub struct WorldMail(Arc<Mutex<Vec<CapturedMail>>>, WorldRelay);
 
 impl WorldMail {
     /// Every captured mail, in order.
@@ -93,5 +93,107 @@ impl ProofMail for WorldMail {
                 token,
             });
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The relay of the API core's ports (ADR-026 record of lane L5).
+
+/// The address a world cell's mail is sent from. Synthetic.
+pub const WORLD_SENDER: &str = "noreply@fstp-world.invalid";
+
+/// One message the world relay accepted: the envelope recipient and the
+/// bytes after the final dot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelayedMail {
+    /// The envelope recipient. Synthetic.
+    pub to: String,
+    /// The message as sent.
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+struct RelayState {
+    staged: usize,
+    sent: Vec<RelayedMail>,
+}
+
+/// The relay of a world cell (`fstp_cell::process::Relay`): it accepts
+/// every message with 250 and keeps it, so a test reads it as the
+/// recipient would. Claims built on it say so: no message leaves the
+/// host. Lane L4's configured relay takes its place in production.
+#[derive(Clone, Debug, Default)]
+pub struct WorldRelay(Arc<Mutex<RelayState>>);
+
+impl WorldRelay {
+    /// Every message the relay accepted, in order.
+    pub fn sent(&self) -> Vec<RelayedMail> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .sent
+            .clone()
+    }
+
+    /// How many sessions staged a body, sent or not.
+    pub fn staged(&self) -> usize {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).staged
+    }
+}
+
+struct Staged {
+    relay: WorldRelay,
+    mail: RelayedMail,
+}
+
+impl fstp_cell::process::StagedMail for Staged {
+    fn end_of_data(
+        self: Box<Self>,
+    ) -> fstp_cell::process::RelayFuture<'static, fstp_dispatch::EndOfData> {
+        self.relay
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .sent
+            .push(self.mail);
+        Box::pin(std::future::ready(fstp_dispatch::EndOfData::Reply(250)))
+    }
+
+    fn abandon(self: Box<Self>) -> fstp_cell::process::RelayFuture<'static, ()> {
+        Box::pin(std::future::ready(()))
+    }
+}
+
+impl fstp_cell::process::Relay for WorldRelay {
+    fn sender(&self) -> &str {
+        WORLD_SENDER
+    }
+
+    fn stage<'a>(
+        &'a self,
+        envelope: &'a fstp_dispatch::Envelope,
+        body: &'a [u8],
+    ) -> fstp_cell::process::RelayFuture<
+        'a,
+        Result<Box<dyn fstp_cell::process::StagedMail>, fstp_dispatch::Refused>,
+    > {
+        let mut s = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        s.staged = s.staged.saturating_add(1);
+        let staged: Box<dyn fstp_cell::process::StagedMail> = Box::new(Staged {
+            relay: self.clone(),
+            mail: RelayedMail {
+                to: envelope.to.clone(),
+                body: body.to_vec(),
+            },
+        });
+        Box::pin(std::future::ready(Ok(staged)))
+    }
+}
+
+impl WorldMail {
+    /// The relay of the API core's ports, which shares this capture's
+    /// life (ADR-026 record of lane L5).
+    pub fn relay(&self) -> &WorldRelay {
+        &self.1
     }
 }

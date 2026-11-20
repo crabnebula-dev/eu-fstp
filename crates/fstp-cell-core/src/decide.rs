@@ -430,7 +430,10 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
-            | CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. })
+            | CellCommand::Tenant(
+                TenantCommand::IssueFirstAdminInvitation { .. }
+                    | TenantCommand::IssueRoleInvitation { .. }
+            )
     )
 }
 
@@ -780,6 +783,15 @@ fn decide_system(
                 token_digest,
             }),
         ) => issue_first_admin_invitation(s, *invitation, *account, *token_digest, now, inputs),
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueRoleInvitation {
+                programme,
+                role_invitation,
+                account,
+                token_digest,
+            }),
+        ) => issue_role_invitation(s, *programme, *role_invitation, *account, *token_digest),
         (
             SystemTask::Timeline,
             CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account }),
@@ -1514,6 +1526,7 @@ fn decide_tenant(
         // Provisioning issues the first one as a system task, and only a
         // ceremony admission enrols. Neither reaches this point.
         TenantCommand::IssueFirstAdminInvitation { .. }
+        | TenantCommand::IssueRoleInvitation { .. }
         | TenantCommand::EnrolByInvitation { .. }
         | TenantCommand::EnrolBySelfRegistration { .. } => Err(wrong_actor()),
     }
@@ -1561,6 +1574,52 @@ fn issue_first_admin_invitation(
     let record = fstp_auth::ceremony::issue_invitation(
         issuer,
         mode,
+        invitation,
+        account,
+        token_digest,
+        !account_known(s, account),
+    )
+    .map_err(|e| match e {
+        fstp_auth::ceremony::EnrolDeny::InviteeNotNew => reused(),
+        _ => refuse(RuleRef::Input, RefusalReason::WrongState),
+    })?;
+    Ok(vec![CellRecord::Auth(record)])
+}
+
+/// `IssueRoleInvitation` of the system task `Provisioning` for the accounts
+/// port (J2, ADR-026 record of lane L5). The rule is
+/// `fstp_auth::ceremony::issue_invitation` with the issuer `RoleInvitation`:
+/// the creator invitation `role_invitation` of the draft `programme` is
+/// live, by address, not withdrawn and not accepted, and no record names
+/// the account. The invitation id is the creator invitation id, so a
+/// second issue for one creator invitation is a reuse. The batch grants
+/// nothing: the role comes only from the acceptance and the grant.
+fn issue_role_invitation(
+    s: &CellState,
+    programme: fstp_domain::id::ProgrammeId,
+    role_invitation: u128,
+    account: AccountId,
+    token_digest: [u8; 32],
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let invitation = role_invitation.to_be_bytes();
+    if s.auth().invitation(invitation).is_some() {
+        return Err(reused());
+    }
+    let live = s.engine().creator.draft(programme).is_some_and(|d| {
+        d.invitations()
+            .get(&fstp_creator::InvitationId::from_raw(role_invitation))
+            .is_some_and(|i| {
+                !i.withdrawn
+                    && i.accepted.is_none()
+                    && matches!(i.invitee, fstp_creator::Invitee::Pending { .. })
+            })
+    });
+    let issuer = fstp_auth::ceremony::Issuer::RoleInvitation {
+        invitation_live: live,
+    };
+    let record = fstp_auth::ceremony::issue_invitation(
+        issuer,
+        fstp_auth::recovery::Deployment::Saas,
         invitation,
         account,
         token_digest,

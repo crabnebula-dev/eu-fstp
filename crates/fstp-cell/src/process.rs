@@ -478,6 +478,14 @@ where
     start_with(rt, parts, StartOptions::default()).await
 }
 
+// ---- Lane L5 `prod/api-ports` (ADR-026 record of lane L5): the relay
+// the API core's ports deliver through (`crate::api::mail`).
+pub use crate::api::mail::{Relay, RelayFuture, StagedMail};
+
+/// The relay of [`StartOptions::api_relay`].
+pub type ApiRelay = std::sync::Arc<dyn Relay>;
+// ---- End of lane L5's block.
+
 /// What a caller may set beyond [`CellProcessParts`]. The default is the
 /// production cell: the system clock and [`crate::shell::ProductionShell`].
 #[derive(Clone)]
@@ -549,6 +557,13 @@ pub struct StartOptions {
     /// `fstp_web::load_dir`). With it, the cell mounts the web adapter over
     /// its own `ApiCore` (ADR-026). `None` serves the cell table only.
     pub web_assets: Option<fstp_web::AssetSet>,
+    // ---- Lane L5 `prod/api-ports` (ADR-026 record of lane L5).
+    /// The relay the API core's ports deliver their mail through, such
+    /// as a programme role invitation. `None` refuses each invitation
+    /// before it records anything. Lane L4's configured relay plugs in
+    /// here at merge. A test world passes one of its own.
+    pub api_relay: Option<ApiRelay>,
+    // ---- End of lane L5's block.
 }
 
 impl Default for StartOptions {
@@ -567,6 +582,7 @@ impl Default for StartOptions {
             auth_limits: crate::routes::AuthLimits::default(),
             organisation: crate::public::OrganisationPort::default(),
             web_assets: None,
+            api_relay: None,
         }
     }
 }
@@ -624,6 +640,7 @@ where
         auth_limits,
         organisation,
         web_assets,
+        api_relay,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -817,6 +834,10 @@ where
                 vault: api_vault,
                 erasure: started.erasure.clone(),
                 organisation,
+                // Lane L5: the invitation mail and its delivery.
+                host: host.clone(),
+                app: app_pool.clone(),
+                relay: api_relay,
             };
             // Lane L2's token store over the same authorisation server.
             let tokens = crate::oauth::tokens::CellTokens::new(Arc::clone(&oauth));

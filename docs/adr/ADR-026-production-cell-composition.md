@@ -29,6 +29,18 @@ Decided by Daniel on 2026-11-20.
 | Tokens until lane L2 | The `Tokens` port of the production cell refuses every token, so `/mcp` answers 401 and no agent call is admitted. Lane L2 replaces it with the token store over the `mcp` schema | G5 |
 | Fail-closed ports | The production cell has no pre-check provider, no prober, no recovery or break-glass approval through the API core, and no vault Q35 queries. Each port answers unavailable | G13; Q38 |
 
+## Record of lane L5 `prod/api-ports`
+
+Written by lane L5 before its code. Each row is interim, pending Daniel, unless it says otherwise. The ports below replace the fail-closed ports of the row "Fail-closed ports" one by one.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Invitation port | `Accounts::invite` takes the programme role invitation that `creator.invite` appended. An address with a login email account needs no enrolment: its holder signs in and accepts. An address without one gets a new random account and an M3 enrolment invitation for the same link token, so the landing page enrols the first passkey at `/auth/invitations/{token}/register`. The address is noted for that enrolment, which binds it as the login email, as the command route notes it | J2; ADR-008 "Ceremonies and the first passkey"; design section 4.2 |
+| Enrolment invitation | A new cell command `TenantCommand::IssueRoleInvitation`, issued only by the system task `Provisioning` for the accounts port. `decide` admits it only for a live creator invitation by address on that programme, not withdrawn and not accepted. The M3 invitation id is the creator invitation id, so one creator invitation has at most one. The rule is `fstp_auth::ceremony::issue_invitation` with the new issuer `RoleInvitation`. It grants nothing: roles come only from the acceptance and the grant under the SoD guards | J2; SoD-09; I-78 |
+| Invitation mail (I-25) | A timeline event of the new kind `ROLE_INVITATION`, sourced by the programme and the creator invitation. The accounts port schedules it through `TimelineCommand::Plan` and fires it at once through `TimelineCommand::Fire`, both under the system task `Timeline`. The fire entry records the template version first and lists the one message, whose body is the composed mail sealed in its `ops.outbox` row in the same append. The timeline's own plan never cancels an event of this kind, and its own firing skips it, since only the port holds the link token | I-25; M6 design sections 3.1 and 4 |
+| Invitation template | `role-invitation` version 1, with one slot: the link `/app/invitation#<token>`. The token travels in the URL fragment, so no server request line carries it. The wording is a draft marked `TODO(legal)` | I-27; J2 |
+| Delivery (I-26) | Right after the fire entry commits, the port runs one `fstp_dispatch::Worker` over `ops.delivery` for that outbox row, through a `Relay` the cell is started with. The attempt protocol of M6 design section 5.1 holds as for the dispatcher: the COMMITTING row before the final dot, and an unknown outcome left IN_DOUBT, never sent again. The body digest key is derived from the App chain `Lookup` key, as `tasks::dispatch::digest_key` does. Lane L4's configured relay plugs in behind `Relay` at merge. A cell started with no relay refuses the invitation before it records anything, so no invitation waits for a mail that cannot leave | I-26; ADR-018; m4-design section 15.0 "Delivery body digest key" |
+
 ## Configuration
 
 Written by lane L4 before its code (`docs/handoff/production-mcp-design.md` section 2.1, rows "Configuration", "Secrets", "Decoder" and "Deployment of the pilot").

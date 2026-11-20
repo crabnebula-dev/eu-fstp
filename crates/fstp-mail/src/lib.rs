@@ -27,7 +27,7 @@ use fstp_domain::time::Timestamp;
 pub use address::{DisplayName, Mailbox, Origin};
 pub use dkim::{DkimKey, DkimPublicKey, DkimSigner, verify as dkim_verify};
 pub use mime::{HeaderField, ParsedMessage, ParsedPart, parse};
-pub use placeholder::{Bindings, LinkTarget, Moment, Slot, Value, ValueKind};
+pub use placeholder::{Bindings, InvitationToken, LinkTarget, Moment, Slot, Value, ValueKind};
 pub use template::{
     BANK_DETAILS_SENTENCE, Locale, Part, Rendered, TEMPLATES, Template, TemplateId,
 };
