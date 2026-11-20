@@ -1386,6 +1386,26 @@ impl World {
         World::start_in_process(spec, None, &[], &[], None, true)
     }
 
+    /// [`World::start`] whose cells read their creator facts from `shell`
+    /// in place of [`crate::world_shell::WorldShell`] (ADR-027), such as
+    /// the production shell of `fstp_cell::shell::facts` over a fake
+    /// prober. The spec must not ask for process mode.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`], and a refusal of a spec in process mode.
+    pub fn start_with_shell(
+        spec: WorldSpec,
+        shell: std::sync::Arc<dyn fstp_cell::shell::CreatorShell>,
+    ) -> Result<World, WorldError> {
+        if spec.process_mode {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::world::World in process mode takes no creator shell",
+            )));
+        }
+        World::start_in_process_with(spec, None, &[], &[], None, false, Some(shell))
+    }
+
     fn start_in_process(
         spec: WorldSpec,
         pages: Option<fstp_cell::http::pages::Pages>,
@@ -1393,6 +1413,22 @@ impl World {
         custody: &[std::path::PathBuf],
         public_limit: Option<fstp_cell::routes::Limit>,
         api: bool,
+    ) -> Result<World, WorldError> {
+        World::start_in_process_with(spec, pages, dev, custody, public_limit, api, None)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the parts a world serves, as each start names them"
+    )]
+    fn start_in_process_with(
+        spec: WorldSpec,
+        pages: Option<fstp_cell::http::pages::Pages>,
+        dev: &[DevCell],
+        custody: &[std::path::PathBuf],
+        public_limit: Option<fstp_cell::routes::Limit>,
+        api: bool,
+        shell: Option<std::sync::Arc<dyn fstp_cell::shell::CreatorShell>>,
     ) -> Result<World, WorldError> {
         // One world start at a time in the process (lead decision,
         // 2026-11-13, lane F-ERASE): worlds that start in parallel race
@@ -1424,6 +1460,7 @@ impl World {
                     custody,
                     public_limit,
                     api,
+                    shell: shell.as_ref(),
                 },
                 &egress,
             ) {
@@ -2326,6 +2363,8 @@ struct CellServe<'a> {
     public_limit: Option<fstp_cell::routes::Limit>,
     /// Whether the cell mounts the web adapter ([`World::start_with_api`]).
     api: bool,
+    /// The creator shell, if not the world's ([`World::start_with_shell`]).
+    shell: Option<&'a std::sync::Arc<dyn fstp_cell::shell::CreatorShell>>,
 }
 
 /// What every cell of a world serves, and the per-cell parts by index:
@@ -2342,6 +2381,8 @@ struct WorldServe<'a> {
     public_limit: Option<fstp_cell::routes::Limit>,
     /// Whether each cell mounts the web adapter (ADR-026).
     api: bool,
+    /// The creator shell of every cell, if not the world's.
+    shell: Option<&'a std::sync::Arc<dyn fstp_cell::shell::CreatorShell>>,
 }
 
 /// Provisions every cell of `plans`, then the service databases, then
@@ -2359,6 +2400,7 @@ fn start_cells(
         custody,
         public_limit,
         api,
+        shell,
     } = serve;
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -2382,6 +2424,7 @@ fn start_cells(
                 custody: custody.get(i).map(std::path::PathBuf::as_path),
                 public_limit,
                 api,
+                shell,
             },
             egress,
         )?);
@@ -3810,6 +3853,7 @@ fn start_cell(
         custody: custody_socket,
         public_limit,
         api,
+        shell,
     } = serve;
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
@@ -4214,7 +4258,10 @@ fn start_cell(
     let public = crate::world_public::WorldPublic::default();
     let options = fstp_cell::process::StartOptions {
         clock: clock.commit_clock(),
-        creator_shell: std::sync::Arc::new(crate::world_shell::WorldShell),
+        creator_shell: shell.cloned().unwrap_or_else(|| {
+            std::sync::Arc::new(crate::world_shell::WorldShell)
+                as std::sync::Arc<dyn fstp_cell::shell::CreatorShell>
+        }),
         proof_mail: std::sync::Arc::new(mail.clone()),
         operator_key: Some(operator.0.public_key().to_bytes().to_vec()),
         // P-70: the world's tenant enables magic links, as the auth
