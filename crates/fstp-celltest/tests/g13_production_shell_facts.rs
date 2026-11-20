@@ -18,7 +18,9 @@
 //!   text store, a synthetic platform address and synthetic data
 //!   protection texts.
 //! - The funder profile is the shipped one with synthetic wording in
-//!   place of each legal marker (`world_profile`). The shipped profile
+//!   place of each legal marker (`world_profile`), which the test's own
+//!   wrapper puts in. The production shell reads the shipped profiles only
+//!   (rule A9b). The shipped profile
 //!   differs only there, so on a production cell `LegalWordingPending`
 //!   is the one failure left. Its wording waits for Daniel (`TODO(legal)`).
 
@@ -32,13 +34,18 @@
 
 use std::sync::Arc;
 
+use fstp_cell::public::TextOpener;
 use fstp_cell::shell::facts::{FactsShell, PlatformNotice};
 use fstp_cell::shell::probe::{ProbeFuture, Prober};
+use fstp_cell::shell::{CreatorShell, ShellFuture};
 use fstp_cell_core::CellRecord;
+use fstp_cell_core::CellState;
+use fstp_cell_core::creator::{CreatorFacts, GuideInputs};
 use fstp_celltest::vault_seed::SeedSource;
 use fstp_celltest::world::{CellHandle, CycleScript, DbMode, VaultLayout, World, WorldSpec};
 use fstp_celltest::world_shell::{SYNTHETIC_WORDING, world_profile};
-use fstp_creator::{CreatorRecord, ProbeKind, ProbeOutcome};
+use fstp_creator::{CreatorCommand, CreatorRecord, ProbeKind, ProbeOutcome};
+use fstp_domain::id::CallId;
 use fstp_guide::ProfileSource;
 use fstp_vault_core::{Fact, Org};
 use fstp_vault_proto::{WireAccount, WireClass, WireList};
@@ -57,16 +64,80 @@ impl Prober for ReachableProber {
     }
 }
 
-/// The shell of the test (module documentation).
-fn shell() -> FactsShell {
-    FactsShell::new(Some(Arc::new(ReachableProber)))
-        .with_profiles(Arc::new(world_profile))
-        .with_notice(PlatformNotice {
-            summary: SYNTHETIC_WORDING.to_owned(),
-            privacy_statement_url: "https://privacy.fstp.test/".to_owned(),
-            approved: true,
+/// The production shell with the world profile's synthetic wording in
+/// place of the shipped legal markers (module documentation). Everything
+/// else is the [`FactsShell`]'s own.
+struct SyntheticWording(FactsShell);
+
+impl SyntheticWording {
+    fn profile(state: &CellState, cmd: &CreatorCommand) -> Option<fstp_guide::FunderProfile> {
+        fstp_engine::compose::profile_ref(state.engine(), cmd)
+            .and_then(|r| fstp_engine::compose::profile_name(&r))
+            .and_then(|name| world_profile(&name))
+    }
+
+    fn reworded(state: &CellState, call: CallId, g: Option<GuideInputs>) -> Option<GuideInputs> {
+        let mut g = g?;
+        let engine = state.engine();
+        let programme = fstp_domain::programme::call(&engine.core, call)?.programme();
+        let head = fstp_domain::policy::head(&engine.core, programme)?;
+        let name = fstp_engine::compose::profile_name(&head.frozen.p53)?;
+        let profile = world_profile(&name)?;
+        g.template = fstp_guide::parse_template(profile.guide_template().as_bytes()).ok()?;
+        Some(g)
+    }
+}
+
+impl CreatorShell for SyntheticWording {
+    fn facts(&self, state: &CellState, cmd: &CreatorCommand) -> CreatorFacts {
+        CreatorFacts {
+            profile: Self::profile(state, cmd),
+            ..self.0.facts(state, cmd)
+        }
+    }
+
+    fn guide(&self, state: &CellState, call: CallId) -> Option<GuideInputs> {
+        Self::reworded(state, call, self.0.guide(state, call))
+    }
+
+    fn facts_fresh<'a>(
+        &'a self,
+        state: &'a CellState,
+        cmd: &'a CreatorCommand,
+    ) -> ShellFuture<'a, CreatorFacts> {
+        Box::pin(async move {
+            let f = self.0.facts_fresh(state, cmd).await;
+            CreatorFacts {
+                profile: Self::profile(state, cmd),
+                ..f
+            }
         })
-        .with_platform_url(Some("https://platform.fstp.test/".to_owned()))
+    }
+
+    fn guide_fresh<'a>(
+        &'a self,
+        state: &'a CellState,
+        call: CallId,
+        texts: &'a dyn TextOpener,
+    ) -> ShellFuture<'a, Option<GuideInputs>> {
+        Box::pin(async move {
+            let g = self.0.guide_fresh(state, call, texts).await;
+            Self::reworded(state, call, g)
+        })
+    }
+}
+
+/// The shell of the test (module documentation).
+fn shell() -> SyntheticWording {
+    SyntheticWording(
+        FactsShell::new(Some(Arc::new(ReachableProber)))
+            .with_notice(PlatformNotice {
+                summary: SYNTHETIC_WORDING.to_owned(),
+                privacy_statement_url: "https://privacy.fstp.test/".to_owned(),
+                approved: true,
+            })
+            .with_platform_url(Some("https://platform.fstp.test/".to_owned())),
+    )
 }
 
 /// The P-13 classes and P-38 lists of the cycle's synthetic programme.

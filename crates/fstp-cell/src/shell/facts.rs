@@ -23,8 +23,8 @@
 //!   applies the shell gives no Guide, and the publication is refused
 //!   with I-52.
 //!
-//! A test world may build a [`FactsShell`] with its own prober, profiles
-//! and data protection texts. Claims built on it say so.
+//! A test world may build a [`FactsShell`] with its own prober and data
+//! protection texts. It reads the shipped profiles only (rule A9b). Claims built on it say so.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
@@ -84,16 +84,12 @@ impl PlatformNotice {
     }
 }
 
-/// The funder profile of a P-53 profile name.
-pub type Profiles = Arc<dyn Fn(&str) -> Option<FunderProfile> + Send + Sync>;
-
 /// The cell clock, UTC microseconds.
 pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
 /// The creator shell of a configured serving cell (module documentation).
 pub struct FactsShell {
     prober: Option<Arc<dyn Prober>>,
-    profiles: Profiles,
     notice: PlatformNotice,
     platform_url: Option<String>,
     ports: PortPresence,
@@ -141,19 +137,12 @@ impl FactsShell {
     pub fn new(prober: Option<Arc<dyn Prober>>) -> FactsShell {
         FactsShell {
             prober,
-            profiles: Arc::new(|name| fstp_guide::ShippedProfiles.profile(name).ok()),
             notice: PlatformNotice::platform_default(),
             platform_url: None,
             ports: PortPresence::default(),
             clock: Arc::new(system_now),
             last: Mutex::new(BTreeMap::new()),
         }
-    }
-
-    /// The same shell reading funder profiles from `profiles`.
-    pub fn with_profiles(mut self, profiles: Profiles) -> FactsShell {
-        self.profiles = profiles;
-        self
     }
 
     /// The same shell with `notice` as the data protection texts of a
@@ -232,7 +221,7 @@ impl FactsShell {
             return None;
         }
         let name = fstp_engine::compose::profile_name(&head.frozen.p53)?;
-        let profile = (self.profiles)(&name)?;
+        let profile = shipped(&name)?;
         let template = fstp_guide::parse_template(profile.guide_template().as_bytes()).ok()?;
         let platform_url = self.platform_url.clone()?;
         let (summary, privacy) = match engine.tenant.state().map(|ts| ts.settings().guide_notice())
@@ -260,6 +249,12 @@ impl FactsShell {
             precheck_available: self.ports.precheck,
         })
     }
+}
+
+/// The shipped funder profile `name`: production loads no other (rule
+/// A9b).
+fn shipped(name: &str) -> Option<FunderProfile> {
+    fstp_guide::ShippedProfiles.profile(name).ok()
 }
 
 /// Whether `cmd` runs every probe in its request (design 3.2 "Fresh
@@ -308,7 +303,7 @@ impl CreatorShell for FactsShell {
     fn facts(&self, state: &CellState, cmd: &CreatorCommand) -> CreatorFacts {
         let profile = fstp_engine::compose::profile_ref(state.engine(), cmd)
             .and_then(|r| fstp_engine::compose::profile_name(&r))
-            .and_then(|name| (self.profiles)(&name));
+            .and_then(|name| shipped(&name));
         CreatorFacts {
             probes: self.probes(cmd),
             exclusion_classes_known: None,
