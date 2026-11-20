@@ -25,6 +25,13 @@ use fstp_migrate::Migration;
 ///    runner it changes nothing.
 /// 8. `column_classes`: the length checks of the column classes of
 ///    Daniel's Q-A answer (2026-11-07, design section 4.5, R-NF-08).
+///
+/// Lane L3 `prod/keystore-pg` (ADR-004, decided by Daniel on 2026-11-20):
+///
+/// - `keystore`: the keystore tables of the App chain, file
+///   `0011_keystore.sql` as the production design fixes it. Its version
+///   follows the last migration on the branch it lands on, since a set
+///   has no gap: 9 on this lane alone, 10 after lane L1, 11 after L2.
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -53,6 +60,12 @@ pub const MIGRATIONS: &[Migration] = &[
         8,
         "column_classes",
         include_str!("../migrations/app/0008_column_classes.sql"),
+    ),
+    // Lane L3: see the list above for its version.
+    Migration::new(
+        9,
+        "keystore",
+        include_str!("../migrations/app/0011_keystore.sql"),
     ),
 ];
 

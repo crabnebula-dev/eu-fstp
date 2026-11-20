@@ -227,7 +227,7 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 /// The tables of the application database (design section 4.2, and the
 /// journey read model of ADR-015 "Storage and roles", and the delivery
 /// log of the M6 design section 3.2), in the order of the migration set.
-pub const APP_TABLES: [&str; 26] = [
+pub const APP_TABLES: [&str; 32] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -255,6 +255,15 @@ pub const APP_TABLES: [&str; 26] = [
     // M5 design section 4.3: write-once documents (I-30).
     "doc.blob",
     "ops.delivery",
+    // Lane L3 (ADR-004, decided by Daniel on 2026-11-20): the keystore
+    // tables of migration `0011_keystore.sql`. Only the keys role holds a
+    // right on them, as on every `keystore` table.
+    "keystore.chain",
+    "keystore.text",
+    "keystore.signer",
+    "keystore.login_digest",
+    "keystore.login_text",
+    "keystore.erasure_request",
 ];
 
 /// The tables of the vault database (design section 4.3, with the

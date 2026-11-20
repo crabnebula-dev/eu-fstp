@@ -153,6 +153,8 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("created_at", Time),
             col("destroyed_at", Time),
             col("receipt", Signature),
+            // Lane L3, migration `0011_keystore.sql`: the receipt digest.
+            col("receipt_digest", PublicDigest),
         ],
     ),
     table(
@@ -399,5 +401,65 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("body_digest", KeyedDigest),
             col("reply_code", Enum),
         ],
+    ),
+    // Lane L3 (ADR-004, decided by Daniel on 2026-11-20), migration
+    // `0011_keystore.sql`: the keystore of the App chain in its tables.
+    // The chain state, the signer secrets and the texts are sealed. The
+    // login digests are HMACs under the `Lookup` key, which erasure
+    // replaces (decision 27).
+    table(
+        "keystore",
+        "chain",
+        TableClass::KeyMaterial,
+        &[
+            col("chain", Enum),
+            col("epoch", Sequence),
+            col("state", Sealed),
+            col("lookup_group", RandomId),
+            col("login_group", RandomId),
+            col("startup_unwrap", RandomId),
+        ],
+    ),
+    table(
+        "keystore",
+        "text",
+        TableClass::SealedContent,
+        &[
+            col("id", RandomId),
+            col("dek", RandomId),
+            col("generation", Sequence),
+            col("envelope", Sealed),
+        ],
+    ),
+    table(
+        "keystore",
+        "signer",
+        TableClass::KeyMaterial,
+        &[
+            col("purpose", Enum),
+            col("generation", Sequence),
+            col("public_key", PublicKeyMaterial),
+            col("created_at", Time),
+            col("epoch", Sequence),
+            col("sealed_secret", Sealed),
+        ],
+    ),
+    table(
+        "keystore",
+        "login_digest",
+        TableClass::KeyMaterial,
+        &[col("digest", KeyedDigest), col("account", RandomId)],
+    ),
+    table(
+        "keystore",
+        "login_text",
+        TableClass::KeyMaterial,
+        &[col("account", RandomId), col("text_id", RandomId)],
+    ),
+    table(
+        "keystore",
+        "erasure_request",
+        TableClass::KeyMaterial,
+        &[col("text_id", RandomId)],
     ),
 ];
