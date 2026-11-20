@@ -9,8 +9,10 @@
 //! - A pending request is sealed under the current ledger key generation
 //!   with the AAD of [`pending_aad`]. Its row keeps the generation index.
 //! - A workspace value is sealed by [`seal_workspace`], under the same
-//!   generation and the AAD of [`workspace_aad`]. The store keeps the
-//!   sealed bytes as given and opens nothing.
+//!   generation and the AAD of [`workspace_aad`], as `be32(key_ix) ||
+//!   nonce || ciphertext || tag`. The store keeps the generation in the
+//!   row's `key_ix` column and `nonce || ciphertext || tag` in `sealed`,
+//!   and opens nothing.
 //! - A pending action is confirmed when its `api.pending_confirmed` row
 //!   exists. A discard or an expiry mark updates an open, unconfirmed row
 //!   only, so it never closes a confirmed action.
@@ -370,12 +372,15 @@ impl<R: Runtime> ApiStore<R> {
         sealed: &[u8],
         at: i64,
     ) -> Result<(), StoreFault> {
-        let (ix, _) = split_ix(sealed).map_err(|_| StoreFault::Refused("a sealed value"))?;
+        // The generation goes to its own column, so the stored value is
+        // `nonce 12 || ciphertext || tag` as in every table with a `key_ix`
+        // column (ADR-004 "Sealed blobs").
+        let (ix, body) = split_ix(sealed).map_err(|_| StoreFault::Refused("a sealed value"))?;
         let mut client = self.pool.get().await?;
         client
             .execute(
                 PUT_WORKSPACE_SQL,
-                &[&proposal.as_slice(), &slot, &ix_column(ix), &sealed, &at],
+                &[&proposal.as_slice(), &slot, &ix_column(ix), &body, &at],
             )
             .await?;
         client.release();
@@ -386,8 +391,7 @@ impl<R: Runtime> ApiStore<R> {
     ///
     /// # Errors
     ///
-    /// A pool or database fault, or a row whose generation differs from
-    /// its value's.
+    /// A pool or database fault, or a stored value too short to be sealed.
     pub async fn workspace(
         &self,
         proposal: [u8; 16],
@@ -402,13 +406,16 @@ impl<R: Runtime> ApiStore<R> {
             return Ok(None);
         };
         let ix: i32 = row.get(0)?;
-        let sealed: Vec<u8> = row.get(1)?;
-        match split_ix(&sealed) {
-            Ok((v, _)) if v == ix_of(ix) => Ok(Some(sealed)),
-            _ => Err(StoreFault::Corrupt(
-                "a workspace row whose generation differs",
-            )),
+        let body: Vec<u8> = row.get(1)?;
+        if body.len() < NONCE_LEN {
+            return Err(StoreFault::Corrupt(
+                "a workspace row too short to be sealed",
+            ));
         }
+        let mut sealed = Vec::with_capacity(body.len().saturating_add(4));
+        sealed.extend_from_slice(&ix_of(ix).to_be_bytes());
+        sealed.extend_from_slice(&body);
+        Ok(Some(sealed))
     }
 
     fn decode(&self, r: &fstp_pgwire::Row) -> Result<PendingRow, StoreFault> {

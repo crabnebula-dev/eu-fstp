@@ -741,6 +741,33 @@ const VAULT_SEALED: &[(&str, &str, &str)] = &[
     ("vault_audit", "chain", "body"),
 ];
 
+/// The application columns whose values are `nonce 12 || ciphertext ||
+/// tag` in a table with no `key_ix` column (ADR-004 "Application sealed
+/// values", lane L1, 2026-11-20): the chain state and the secrets sealed
+/// under the epoch seal key `S(e)`, and the outbox bodies under their own
+/// data keys.
+const APP_SEALED: &[(&str, &str, &str)] = &[
+    ("keystore", "chain", "state"),
+    ("keystore", "group_key", "sealed_secret"),
+    ("keystore", "signer", "sealed_secret"),
+    ("ops", "outbox", "body"),
+];
+
+/// The length of a seal key wrapped by `fstp-keyd` or the custody
+/// simulator: nonce 12, `S(e)` 32 and tag 16 (ADR-004 "Application
+/// sealed values"). A wrap of another length is another backend's, whose
+/// layout no ADR records yet.
+const WRAPPED_SEAL_KEY_LEN: usize = 60;
+
+/// The magic and version of a sealed blob of `fstp_keys::envelope`, and
+/// the length of its header: `"FSB1" | version 1 | aead u16`.
+const BLOB_MAGIC_V1: &[u8] = b"FSB1\x01";
+const BLOB_HEADER_LEN: usize = 7;
+
+/// The offset of the nonce in an App chain event body: after the
+/// big-endian ledger key generation (ADR-010 amendment of 2026-11-20).
+const EVENT_NONCE_AT: usize = 4;
+
 /// The offset of the nonce in `value`, a value of sealed column `column`
 /// of `table`.
 ///
@@ -751,6 +778,11 @@ const VAULT_SEALED: &[(&str, &str, &str)] = &[
 ///   section 4.2), nonce at offset 0.
 /// - The vault's sealed values (ADR-004 "Vault sealed values"): nonce 12,
 ///   then the ciphertext and tag, nonce at offset 0.
+/// - The application values of ADR-004 "Application sealed values": a
+///   sealed blob that starts with `FSB1` and version 1 (nonce at 7), the
+///   values of [`APP_SEALED`] (nonce at 0), a wrapped seal key of exactly
+///   [`WRAPPED_SEAL_KEY_LEN`] bytes (nonce at 0), and an App chain event
+///   body (nonce at 4).
 ///
 /// The layout of any other sealed blob belongs to the ADR that owns its
 /// table (ADR-004, "Sealed blobs"). Such a value is reported as unread
@@ -772,6 +804,23 @@ fn nonce_offset(
         .any(|(s, t, c)| *s == table.schema && *t == table.name && *c == column)
     {
         return Ok(0);
+    }
+    if value.starts_with(BLOB_MAGIC_V1) {
+        return Ok(BLOB_HEADER_LEN);
+    }
+    if APP_SEALED
+        .iter()
+        .any(|(s, t, c)| *s == table.schema && *t == table.name && *c == column)
+    {
+        return Ok(0);
+    }
+    if (table.schema, table.name, column) == ("keystore", "root", "wrapped_seal_key")
+        && value.len() == WRAPPED_SEAL_KEY_LEN
+    {
+        return Ok(0);
+    }
+    if (table.schema, table.name, column) == ("audit", "chain", "body") {
+        return Ok(EVENT_NONCE_AT);
     }
     Err(fstp_celltest::NotImplemented::new(
         "the nonce of a sealed blob whose layout no ADR records (ADR-004 \"Sealed blobs\")",

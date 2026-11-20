@@ -152,6 +152,22 @@ aad    = column name || "|" || row key
 - Columns with this layout: `vault.epoch.affected`, `vault.fact.body`, `vault.negotiation.sealed_accounts` and `vault_audit.chain.body`. The chain body's row key is its entry sequence number as a big-endian `u64`.
 - A reader that checks the nonce rule, such as the R-NF-08 test, reads the nonce from offset 0 of these values.
 
+**Application sealed values.** Recorded by lane L1 on 2026-11-20, from the code of lanes L1, L2 and L3, for the nonce check of R-NF-08 (`r_nf_08_aborted_append_never_reuses_a_nonce`). Every value below is an AES-256-GCM seal through `fstp_crypto::aead::seal`, with a random nonce under the rule below. None uses a deterministic key wrap, so every column has a nonce a reader can check.
+
+| Layout | Nonce at | Columns |
+| --- | --- | --- |
+| `nonce 12 \| ciphertext \| tag 16`, in a table whose `key_ix` column names the ledger key generation | 0 | `ledger.entry.body`, `ops.checkpoint.body`, `api.pending_actions.request`, `workspace.drafts.sealed` |
+| `nonce 12 \| ciphertext \| tag 16`, under the epoch seal key `S(e)` | 0 | `keystore.chain.state` (AAD `"fstp-chain-state-v1"`, cell, chain, epoch), `keystore.group_key.sealed_secret`, `keystore.signer.sealed_secret` |
+| `nonce 12 \| ciphertext \| tag 16`, under the row's own outbox data key | 0 | `ops.outbox.body` |
+| A wrapped seal key of `fstp-keyd` or the custody simulator: `nonce 12 \| S(e) 32 \| tag 16`, exactly 60 bytes, under the root `R(e)` | 0 | `keystore.root.wrapped_seal_key` |
+| A sealed blob of `fstp_keys::envelope`: `"FSB1" \| version u8 = 1 \| aead u16 = 1 \| nonce 12 \| ciphertext \| tag 16` | 7 | `blob.text.envelope`, `keystore.text.envelope`, and any other column holding that form |
+| A sealed key (section "Sealed key format"): 1210 bytes from `"FSK1"` | 1150 | `keystore.data_key.sealed` |
+| An App chain event (ADR-010 amendment of 2026-11-20): `be32(key_ix) \| nonce 12 \| ciphertext \| tag 16` under the ledger key generation `key_ix` | 4 | `audit.chain.body` of a kind 2 row |
+
+- A wrapped seal key of another backend, such as OKMS, has the layout of that backend. It is recorded here before that backend wraps a production root. Until then a reader that meets another length reports the value as unread, so the check fails closed.
+- `keystore.erasure_intent.plan`, `ops.licence_state.sealed_token` and `doc.blob.envelope` have no writer in the cell yet. Their layout is recorded here with their first writer. Until then a reader that meets a value reports it as unread.
+- `workspace.drafts.sealed` holds the seal without the generation prefix of `fstp_pgstore::seal_workspace`. The prefix lives in the row's `key_ix` column, and the store puts it back on read.
+
 ### Purpose code table
 
 Status: Accepted by Daniel Thompson-Yvetot on 2026-11-07 (m3-finish Q-E). The table is frozen.
