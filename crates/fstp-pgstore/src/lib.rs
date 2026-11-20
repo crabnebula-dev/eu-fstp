@@ -52,6 +52,7 @@
     clippy::arithmetic_side_effects
 )]
 
+mod api;
 mod catalogue;
 mod checkpoint;
 mod delivery;
@@ -65,6 +66,10 @@ mod store;
 mod stored;
 mod text;
 
+pub use api::{
+    ApiStore, MAX_API_PLAIN, PendingRow, StoredPendingStatus, open_workspace, pending_aad,
+    seal_workspace, workspace_aad,
+};
 pub use catalogue::CATALOGUE;
 pub use checkpoint::{Checkpoint, Checkpoints, MAX_CHECKPOINT_LEN};
 pub use delivery::{
@@ -77,13 +82,14 @@ pub use migrations::MIGRATIONS;
 pub use outbox::{KeyFuture, MAX_OUTBOX_BODY, MAX_OUTBOX_ROWS, OutboxKey, OutboxKeys, OutboxRow};
 pub use pool::{MAX_POOL_CLIENTS, Pool, PoolError, Role, database_name, role_name};
 pub use seal::{
-    LEDGER_KEY_SEALS, LedgerKey, LedgerKeys, checkpoint_aad, ledger_aad, open_stored_entry,
-    outbox_aad,
+    LEDGER_KEY_SEALS, LedgerKey, LedgerKeys, checkpoint_aad, event_aad, ledger_aad,
+    open_event_body, open_stored_entry, outbox_aad,
 };
 pub use store::{
-    AnchorSigner, ChainRows, Clock, Committed, Decode, OUTBOX_POSSIBLE_DELETION, PgRecordStore,
-    SESSION_END_BY_RECORD, SESSION_END_CREDENTIAL_DISABLED, SessionEnd, SideEffects, StepUpUse,
-    StoredCommit, possible_deletion_idem, system_clock,
+    AnchorSigner, ChainRows, Clock, Committed, Decode, MAX_EVENT_PLAIN, MAX_EVENTS,
+    OUTBOX_POSSIBLE_DELETION, PendingConfirm, PgRecordStore, SESSION_END_BY_RECORD,
+    SESSION_END_CREDENTIAL_DISABLED, SessionEnd, SideEffects, StepUpUse, StoredCommit,
+    possible_deletion_idem, system_clock,
 };
 pub use stored::{
     MAX_SEALED_LEN, MIN_SEALED_LEN, STORED_ENTRY_FORMAT, StoredEntry, decode_stored_entry,

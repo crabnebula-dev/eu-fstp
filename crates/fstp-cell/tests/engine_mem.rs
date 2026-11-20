@@ -469,3 +469,66 @@ fn i23_reference_counts_a_retry_as_a_duplicate() {
         && ledger.iter().all(|e| is_system_command_id(e.command));
     assert!(ok, "results {results:?}, ledger {ledger:?}");
 }
+
+/// The dry run results, the execution results, and the final ledger.
+type DryAndDone = (Vec<bool>, Vec<bool>, Vec<Stored>);
+
+/// Runs a dry run of each of `admitted` on a fresh engine over an empty
+/// store, then executes each, and gives both result lists and the ledger
+/// after the dry runs.
+fn dry_then_execute(
+    vault: Vault,
+    admitted: &[Admitted],
+) -> Result<DryAndDone, &'static str> {
+    let rt = runtime()?;
+    let rt2 = rt.clone();
+    let admitted = admitted.to_vec();
+    rt.block_on(async move {
+        let store = Unanchored::open(MemStore::new(), CELL)
+            .await
+            .map_err(|_| "the store did not open")?;
+        let shutdown = Shutdown::new();
+        let (engine, task) = CellEngine::start(&rt2, store, ScriptedVault(vault), &shutdown, 16)
+            .await
+            .map_err(|_| "the engine did not start")?;
+        let mut dry = Vec::new();
+        for a in &admitted {
+            let d = engine
+                .dry_run(a.clone())
+                .await
+                .map_err(|_| "the dry run did not run")?;
+            dry.push(d.result.is_ok());
+        }
+        // Nothing was appended by the dry runs: read through the engine's
+        // state, which equals the replay of the store (I-23).
+        if engine.state().head() != Seq::ZERO {
+            return Err("a dry run appended");
+        }
+        let mut done = Vec::new();
+        for a in &admitted {
+            done.push(exec_result(engine.execute(a.clone()).await)?.is_ok());
+        }
+        drop(engine);
+        let store = task.await.map_err(|_| "the engine task failed")?;
+        Ok((dry, done, whole(&store).await?))
+    })
+}
+
+/// ADR-026 "Dry run", NOTE 5: a dry run appends nothing and agrees with
+/// the execution that follows it on the same state: it is admitted
+/// exactly when the execution commits, with a reachable vault and with an
+/// unreachable one (NOTE 2).
+#[test]
+fn adr026_dry_run_appends_nothing_and_agrees_with_execution() {
+    let ops: Vec<Admitted> = (0..3)
+        .map(|n| admit_key_op(key_op(n), runner_id(b'0' + u8::try_from(n).unwrap())))
+        .collect();
+    for vault in [Vault::Genesis, Vault::Unavailable] {
+        let (dry, done, _) = dry_then_execute(vault, &ops[..1]).unwrap();
+        assert_eq!(dry, done, "{vault:?}");
+    }
+    let (dry, done, ledger) = dry_then_execute(Vault::Genesis, &ops).unwrap();
+    assert_eq!(dry, vec![true; 3]);
+    assert_eq!(done, vec![true; 3]);
+    assert_eq!(ledger.len(), 3, "only the executions appended");
+}
