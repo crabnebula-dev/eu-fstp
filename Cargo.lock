@@ -355,6 +355,7 @@ dependencies = [
  "fstp-report",
  "fstp-rt",
  "fstp-smtp",
+ "fstp-tenant",
  "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",

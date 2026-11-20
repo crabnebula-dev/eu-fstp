@@ -90,6 +90,9 @@ fn adr009_cell_egress_connect_builds_the_closed_set_only() {
         Destination::MailSubmission {
             host: fstp_cell::egress::MailHost::parse("smtp.relay.example").unwrap(),
         },
+        Destination::DnsResolver {
+            addr: std::net::SocketAddr::from(([127, 0, 0, 53], 53)),
+        },
     ] {
         let want = match d {
             Destination::AppDatabase
@@ -98,7 +101,8 @@ fn adr009_cell_egress_connect_builds_the_closed_set_only() {
             | Destination::ControlPlane
             | Destination::Witness
             | Destination::CrabNebula(_)
-            | Destination::MailSubmission { .. } => Ok(()),
+            | Destination::MailSubmission { .. }
+            | Destination::DnsResolver { .. } => Ok(()),
             Destination::KeystoreSnapshots => {
                 Err(fstp_cell::CellError::Egress(EgressRefusal::PendingDecision))
             }

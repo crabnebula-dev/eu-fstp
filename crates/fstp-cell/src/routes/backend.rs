@@ -190,6 +190,28 @@ pub trait Backend: Send + Sync + 'static {
         None
     }
 
+    /// The creator shell facts of `cmd` on `state` for its request: the
+    /// shell may run its probes first (ADR-027). The default is
+    /// [`Backend::creator_facts`].
+    fn creator_facts_fresh<'a>(
+        &'a self,
+        state: &'a CellState,
+        cmd: &'a fstp_creator::CreatorCommand,
+    ) -> impl Future<Output = fstp_cell_core::creator::CreatorFacts> + Send + 'a {
+        std::future::ready(self.creator_facts(state, cmd))
+    }
+
+    /// The Guide inputs of the publication of `call` on `state`, with the
+    /// stored texts the shell reads in the request (ADR-027). The default
+    /// is [`Backend::guide_inputs`].
+    fn guide_inputs_fresh<'a>(
+        &'a self,
+        state: &'a CellState,
+        call: fstp_domain::id::CallId,
+    ) -> impl Future<Output = Option<fstp_cell_core::creator::GuideInputs>> + Send + 'a {
+        std::future::ready(self.guide_inputs(state, call))
+    }
+
     /// The cell's vault ticket key: the Ed25519 key of purpose `Ticket`
     /// on the App chain (ADR-004, design section 6.5), whose public key
     /// the vault pins. `None` when the cell holds none, and then no ticket

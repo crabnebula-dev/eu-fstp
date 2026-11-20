@@ -421,6 +421,32 @@ impl<R: Runtime> Backend for PgBackend<R> {
         self.shell.guide(state, call)
     }
 
+    /// ADR-027: the shell runs its probes in the request.
+    fn creator_facts_fresh<'a>(
+        &'a self,
+        state: &'a CellState,
+        cmd: &'a fstp_creator::CreatorCommand,
+    ) -> impl Future<Output = fstp_cell_core::creator::CreatorFacts> + Send + 'a {
+        self.shell.facts_fresh(state, cmd)
+    }
+
+    /// ADR-027: the shell reads the stored texts of the Guide from the
+    /// cell's text store, as the public copy does. A cell without the
+    /// store reads none.
+    async fn guide_inputs_fresh(
+        &self,
+        state: &CellState,
+        call: fstp_domain::id::CallId,
+    ) -> Option<fstp_cell_core::creator::GuideInputs> {
+        match self.keys.as_ref() {
+            Some(store) => {
+                let texts = crate::public::CellTexts { store, state };
+                self.shell.guide_fresh(state, call, &texts).await
+            }
+            None => self.shell.guide(state, call),
+        }
+    }
+
     fn state(&self) -> impl Future<Output = Result<Arc<CellState>, BackendFault>> + Send {
         std::future::ready(Ok(self.engine.state()))
     }
