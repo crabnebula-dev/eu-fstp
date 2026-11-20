@@ -170,6 +170,511 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The configuration file of `fstp-cell` (ADR-026 "Configuration", lane L4).
+//
+// One JSON object with a closed member set. It names every part of
+// `crate::process::CellProcessParts` that is not a secret, and the
+// credentials directory that holds the secrets by fixed name.
+//
+// ```text
+// {"assets_dir": "/opt/fstp/web",                                   optional
+//  "cell": "<32 hex>", "credentials_dir": "/etc/fstp/cell",
+//  "database": {"dbname": "c_<32 hex>", "host": "db.internal", "port": 5432},
+//  "eudi_relying_party": "tenant_registration",                     optional
+//  "host": "grants.example.eu",
+//  "key_file_keyd_socket": "/run/fstp-keyd/cell-keys.sock",
+//  "keyd_socket": "/run/fstp-keyd/cell.sock",
+//  "licence": "<32 hex>",                                          self-hosted only
+//  "listen": {"health": "127.0.0.1:9090", "internal": "0.0.0.0:7444",
+//             "tunnel": "0.0.0.0:7443"},
+//  "mail": {"address": "127.0.0.1:2465", "relay": "smtp.example.eu",
+//           "sender": "noreply@example.eu", "username": "cell"},     optional
+//  "mode": "saas",
+//  "organisation_active": false,                                   optional
+//  "registered_servers": [{"kind": "application", "spki_sha256": "<64 hex>"}],
+//  "vault": {"address": "127.0.0.1:4100"},
+//  "version": "0.3.0",
+//  "witness": {"address": "10.0.0.5:7443", "ca_spki_sha256": "<64 hex>",
+//              "server_name": "witness.internal"}}
+// ```
+
+use std::net::SocketAddr;
+use std::path::PathBuf;
+
+use fstp_json::{Object, ParseLimits, Value};
+
+/// The largest configuration file accepted, in bytes.
+pub const MAX_FILE_LEN: usize = 8192;
+
+/// The longest path the file names, in bytes.
+pub const MAX_PATH_LEN: usize = 1024;
+
+/// The most registered server keys the file names.
+pub const MAX_REGISTERED: usize = 32;
+
+/// The most witness receipt keys `witness-receipt-keys` holds.
+pub const MAX_RECEIPT_KEYS: usize = 8;
+
+/// The longest encoded witness receipt key, in bytes.
+pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
+
+const FILE_MEMBERS: [&str; 17] = [
+    "assets_dir",
+    "cell",
+    "credentials_dir",
+    "database",
+    "eudi_relying_party",
+    "host",
+    "key_file_keyd_socket",
+    "keyd_socket",
+    "licence",
+    "listen",
+    "mail",
+    "mode",
+    "organisation_active",
+    "registered_servers",
+    "vault",
+    "version",
+    "witness",
+];
+
+const CORE_MEMBERS: [&str; 5] = ["cell", "mode", "eudi_relying_party", "licence", "version"];
+
+/// The cluster kind a server key was registered for (`cp.cluster`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServerKind {
+    /// An application cluster.
+    Application,
+    /// A vault cluster.
+    Vault,
+    /// A control plane cluster.
+    Control,
+    /// A witness cluster.
+    Witness,
+}
+
+/// One registered cluster server key (design section 9.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisteredServer {
+    /// SHA-256 over the server certificate's SubjectPublicKeyInfo DER.
+    pub spki_sha256: [u8; 32],
+    /// The kind of cluster it was registered for.
+    pub kind: ServerKind,
+}
+
+/// The cell database (design section 4.7).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DatabaseConfig {
+    /// The server host.
+    pub host: String,
+    /// The server port.
+    pub port: u16,
+    /// The database name: `c_<cell>`.
+    pub dbname: String,
+}
+
+/// The witness of the App chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WitnessConfig {
+    /// Where it listens.
+    pub address: SocketAddr,
+    /// The name its server certificate carries.
+    pub server_name: String,
+    /// SHA-256 over the witness CA's SubjectPublicKeyInfo DER.
+    pub ca_spki_sha256: [u8; 32],
+}
+
+/// The vault's internal listener. Its certificate names the address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VaultConfig {
+    /// Where it listens.
+    pub address: SocketAddr,
+}
+
+/// Where the cell listens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListenConfig {
+    /// The tunnel listener, which the edge reaches.
+    pub tunnel: SocketAddr,
+    /// The internal mutual TLS listener.
+    pub internal: SocketAddr,
+    /// The health listener, on loopback only.
+    pub health: SocketAddr,
+}
+
+/// The platform submission relay (D3, ADR-018 amendment of 2026-11-20).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailConfig {
+    /// The relay host, which its certificate must name.
+    pub relay: String,
+    /// The envelope and `From` sender.
+    pub sender: String,
+    /// The AUTH PLAIN user. The password is `mail.password`.
+    pub username: String,
+    /// The pinned relay address, in place of a DNS lookup (interim,
+    /// pending Daniel).
+    pub address: Option<SocketAddr>,
+}
+
+/// The configuration file of one cell process (ADR-026).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileConfig {
+    /// The core members, which name the one cell (I-19).
+    pub core: CellConfig,
+    /// The cell host: the relying party id and the origin host.
+    pub host: String,
+    /// The credentials directory.
+    pub credentials_dir: PathBuf,
+    /// The compiled web assets, if any.
+    pub assets_dir: Option<PathBuf>,
+    /// The cell database.
+    pub database: DatabaseConfig,
+    /// The registered cluster server keys.
+    pub registered_servers: Vec<RegisteredServer>,
+    /// The cell's own `fstp-keyd` socket: the App chain.
+    pub keyd_socket: PathBuf,
+    /// The dedicated `fstp-keyd` socket of the cell key file root.
+    pub key_file_keyd_socket: PathBuf,
+    /// The witness.
+    pub witness: WitnessConfig,
+    /// The vault.
+    pub vault: VaultConfig,
+    /// The listeners.
+    pub listen: ListenConfig,
+    /// The platform relay, if any.
+    pub mail: Option<MailConfig>,
+    /// The organisation port's answer for a ledger with no tenant part
+    /// (ADR-021, interim, pending Daniel).
+    pub organisation_active: bool,
+}
+
+fn file_limits() -> ParseLimits {
+    ParseLimits::default()
+        .with_max_input_bytes(MAX_FILE_LEN)
+        .with_max_depth(3)
+        .with_max_container_len(MAX_REGISTERED)
+        .with_max_string_bytes(MAX_PATH_LEN)
+}
+
+/// Whether `name` is a host name: lowercase letters, digits and hyphens in
+/// dot-separated labels of 1 to 63 bytes, at least two labels, at most 253
+/// bytes, with a last label that is not all digits.
+#[must_use]
+pub fn is_host_name(name: &str) -> bool {
+    let label_ok = |l: &str| {
+        (1..=63).contains(&l.len())
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    (1..=253).contains(&name.len())
+        && name.contains('.')
+        && name.split('.').all(label_ok)
+        && name
+            .rsplit('.')
+            .next()
+            .is_some_and(|l| !l.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn members(o: &Object, allowed: &[&str], rule: &'static str) -> Result<(), ConfigError> {
+    if o.keys().any(|k| k.is_empty() || !allowed.contains(&k)) {
+        return Err(ConfigError::Invalid(rule));
+    }
+    Ok(())
+}
+
+fn text<'a>(o: &'a Object, name: &str, rule: &'static str) -> Result<&'a str, ConfigError> {
+    o.get(name)
+        .ok_or(ConfigError::MissingMember(rule))?
+        .as_str()
+        .ok_or(ConfigError::Invalid(rule))
+}
+
+fn object<'a>(o: &'a Object, name: &str, rule: &'static str) -> Result<&'a Object, ConfigError> {
+    o.get(name)
+        .ok_or(ConfigError::MissingMember(rule))?
+        .as_object()
+        .ok_or(ConfigError::Invalid(rule))
+}
+
+fn path_of(s: &str, rule: &'static str) -> Result<PathBuf, ConfigError> {
+    if !s.starts_with('/') || s.len() > MAX_PATH_LEN || s.contains('\0') {
+        return Err(ConfigError::Invalid(rule));
+    }
+    Ok(PathBuf::from(s))
+}
+
+fn addr_of(s: &str, rule: &'static str) -> Result<SocketAddr, ConfigError> {
+    s.parse::<SocketAddr>()
+        .map_err(|_| ConfigError::Invalid(rule))
+}
+
+fn hex32(s: &str, rule: &'static str) -> Result<[u8; 32], ConfigError> {
+    let bytes = s.as_bytes();
+    if bytes.len() != 64 {
+        return Err(ConfigError::Invalid(rule));
+    }
+    let mut out = [0u8; 32];
+    for (slot, pair) in out.iter_mut().zip(bytes.chunks_exact(2)) {
+        let hi = nibble(pair.first().copied()).ok_or(ConfigError::Invalid(rule))?;
+        let lo = nibble(pair.get(1).copied()).ok_or(ConfigError::Invalid(rule))?;
+        *slot = (hi << 4) | lo;
+    }
+    Ok(out)
+}
+
+/// The lowercase hex digit of the low four bits of `n`.
+fn hex_digit(n: u8) -> u8 {
+    b"0123456789abcdef"
+        .get(usize::from(n & 0xf))
+        .copied()
+        .unwrap_or(b'0')
+}
+
+/// The database name of `cell`: `c_<32 hex>` (design section 4.7).
+#[must_use]
+pub fn database_name(cell: &CellId) -> String {
+    let mut s = String::from("c_");
+    for b in cell.0 {
+        s.push(char::from(hex_digit(b >> 4)));
+        s.push(char::from(hex_digit(b)));
+    }
+    s
+}
+
+/// Decodes and checks a configuration file (module documentation,
+/// ADR-026). Fuzzed (`cell_config_decode`).
+///
+/// # Errors
+///
+/// [`ConfigError`] naming the rule broken. It never quotes the input
+/// (R-NF-02).
+pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
+    if bytes.len() > MAX_FILE_LEN {
+        return Err(ConfigError::Invalid("length"));
+    }
+    let value =
+        fstp_json::parse_with(bytes, &file_limits()).map_err(|_| ConfigError::NotAnObject)?;
+    let o = value.as_object().ok_or(ConfigError::NotAnObject)?;
+    if o.keys().any(|k| k.is_empty() || !FILE_MEMBERS.contains(&k)) {
+        return Err(ConfigError::UnknownMember);
+    }
+    // The core members go through the M3 decoder, so the I-38 and B12
+    // rules hold for the file as for the core form.
+    let mut core = Object::new();
+    for name in CORE_MEMBERS {
+        if let Some(v) = o.get(name) {
+            core.insert(name, v.clone());
+        }
+    }
+    let core = decode(fstp_json::to_compact(&Value::Object(core)).as_bytes())?;
+    let host = text(o, "host", "host")?;
+    if !is_host_name(host) {
+        return Err(ConfigError::Invalid("host"));
+    }
+    let credentials_dir = path_of(
+        text(o, "credentials_dir", "credentials_dir")?,
+        "credentials_dir",
+    )?;
+    let assets_dir = match o.get("assets_dir") {
+        None => None,
+        Some(v) => Some(path_of(
+            v.as_str().ok_or(ConfigError::Invalid("assets_dir"))?,
+            "assets_dir",
+        )?),
+    };
+    let db = object(o, "database", "database")?;
+    members(db, &["dbname", "host", "port"], "database")?;
+    let db_host = text(db, "host", "database.host")?;
+    if db_host.is_empty() || db_host.len() > 253 || !db_host.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(ConfigError::Invalid("database.host"));
+    }
+    let port = db
+        .get("port")
+        .ok_or(ConfigError::MissingMember("database.port"))?
+        .as_u64()
+        .and_then(|p| u16::try_from(p).ok())
+        .filter(|p| *p != 0)
+        .ok_or(ConfigError::Invalid("database.port"))?;
+    let dbname = text(db, "dbname", "database.dbname")?;
+    // I-19, I-83: the one application database of the one cell. A vault
+    // database `v_<cell>` or another cell's database is refused here,
+    // before the start check reads the placement marker.
+    if dbname != database_name(&core.cell) {
+        return Err(ConfigError::Invalid("database.dbname"));
+    }
+    let database = DatabaseConfig {
+        host: db_host.to_owned(),
+        port,
+        dbname: dbname.to_owned(),
+    };
+    let list = o
+        .get("registered_servers")
+        .ok_or(ConfigError::MissingMember("registered_servers"))?
+        .as_array()
+        .ok_or(ConfigError::Invalid("registered_servers"))?;
+    if list.is_empty() || list.len() > MAX_REGISTERED {
+        return Err(ConfigError::Invalid("registered_servers"));
+    }
+    let mut registered_servers = Vec::with_capacity(list.len());
+    for item in list.iter() {
+        let r = item
+            .as_object()
+            .ok_or(ConfigError::Invalid("registered_servers"))?;
+        members(r, &["kind", "spki_sha256"], "registered_servers")?;
+        let kind = match text(r, "kind", "registered_servers.kind")? {
+            "application" => ServerKind::Application,
+            "vault" => ServerKind::Vault,
+            "control" => ServerKind::Control,
+            "witness" => ServerKind::Witness,
+            _ => return Err(ConfigError::Invalid("registered_servers.kind")),
+        };
+        let spki_sha256 = hex32(
+            text(r, "spki_sha256", "registered_servers.spki_sha256")?,
+            "registered_servers.spki_sha256",
+        )?;
+        registered_servers.push(RegisteredServer { spki_sha256, kind });
+    }
+    let keyd_socket = path_of(text(o, "keyd_socket", "keyd_socket")?, "keyd_socket")?;
+    let key_file_keyd_socket = path_of(
+        text(o, "key_file_keyd_socket", "key_file_keyd_socket")?,
+        "key_file_keyd_socket",
+    )?;
+    // ADR-004 record of lane L4: the key file root has its own entry.
+    if key_file_keyd_socket == keyd_socket {
+        return Err(ConfigError::Invalid("key_file_keyd_socket"));
+    }
+    let w = object(o, "witness", "witness")?;
+    members(w, &["address", "ca_spki_sha256", "server_name"], "witness")?;
+    let server_name = text(w, "server_name", "witness.server_name")?;
+    if !is_host_name(server_name) {
+        return Err(ConfigError::Invalid("witness.server_name"));
+    }
+    let witness = WitnessConfig {
+        address: addr_of(text(w, "address", "witness.address")?, "witness.address")?,
+        server_name: server_name.to_owned(),
+        ca_spki_sha256: hex32(
+            text(w, "ca_spki_sha256", "witness.ca_spki_sha256")?,
+            "witness.ca_spki_sha256",
+        )?,
+    };
+    let v = object(o, "vault", "vault")?;
+    members(v, &["address"], "vault")?;
+    let vault = VaultConfig {
+        address: addr_of(text(v, "address", "vault.address")?, "vault.address")?,
+    };
+    let l = object(o, "listen", "listen")?;
+    members(l, &["health", "internal", "tunnel"], "listen")?;
+    let listen = ListenConfig {
+        tunnel: addr_of(text(l, "tunnel", "listen.tunnel")?, "listen.tunnel")?,
+        internal: addr_of(text(l, "internal", "listen.internal")?, "listen.internal")?,
+        health: addr_of(text(l, "health", "listen.health")?, "listen.health")?,
+    };
+    // Design section 2.3: the health listener serves loopback only.
+    if !listen.health.ip().is_loopback() {
+        return Err(ConfigError::Invalid("listen.health"));
+    }
+    let mail = match o.get("mail") {
+        None => None,
+        Some(m) => {
+            let m = m.as_object().ok_or(ConfigError::Invalid("mail"))?;
+            members(m, &["address", "relay", "sender", "username"], "mail")?;
+            let relay = text(m, "relay", "mail.relay")?;
+            crate::egress::MailHost::parse(relay)
+                .map_err(|_| ConfigError::Invalid("mail.relay"))?;
+            let sender = text(m, "sender", "mail.sender")?;
+            if !fstp_smtp::command::valid_mailbox(sender) {
+                return Err(ConfigError::Invalid("mail.sender"));
+            }
+            let username = text(m, "username", "mail.username")?;
+            if fstp_smtp::client::Credentials::try_new(username, "x").is_err() {
+                return Err(ConfigError::Invalid("mail.username"));
+            }
+            let address = match m.get("address") {
+                None => None,
+                Some(a) => Some(addr_of(
+                    a.as_str().ok_or(ConfigError::Invalid("mail.address"))?,
+                    "mail.address",
+                )?),
+            };
+            Some(MailConfig {
+                relay: relay.to_owned(),
+                sender: sender.to_owned(),
+                username: username.to_owned(),
+                address,
+            })
+        }
+    };
+    let organisation_active = match o.get("organisation_active") {
+        None => false,
+        Some(v) => v
+            .as_bool()
+            .ok_or(ConfigError::Invalid("organisation_active"))?,
+    };
+    Ok(FileConfig {
+        core,
+        host: host.to_owned(),
+        credentials_dir,
+        assets_dir,
+        database,
+        registered_servers,
+        keyd_socket,
+        key_file_keyd_socket,
+        witness,
+        vault,
+        listen,
+        mail,
+        organisation_active,
+    })
+}
+
+/// Decodes `witness-receipt-keys`: one encoded receipt public key per
+/// line, in lowercase hex, each line ended by `\n`. Fuzzed
+/// (`cell_config_decode`).
+///
+/// # Errors
+///
+/// [`ConfigError::Invalid`] for no key, more than [`MAX_RECEIPT_KEYS`],
+/// a key longer than [`MAX_RECEIPT_KEY_LEN`], an odd or empty line, a byte
+/// that is not lowercase hex, or a last line without its end.
+pub fn decode_receipt_keys(bytes: &[u8]) -> Result<Vec<Vec<u8>>, ConfigError> {
+    const RULE: ConfigError = ConfigError::Invalid("witness-receipt-keys");
+    let body = bytes.strip_suffix(b"\n").ok_or(RULE)?;
+    let mut keys = Vec::new();
+    for line in body.split(|b| *b == b'\n') {
+        if line.is_empty() || line.len() % 2 != 0 || line.len() > MAX_RECEIPT_KEY_LEN * 2 {
+            return Err(RULE);
+        }
+        if keys.len() >= MAX_RECEIPT_KEYS {
+            return Err(RULE);
+        }
+        let mut key = Vec::with_capacity(line.len() / 2);
+        for pair in line.chunks_exact(2) {
+            let hi = nibble(pair.first().copied()).ok_or(RULE)?;
+            let lo = nibble(pair.get(1).copied()).ok_or(RULE)?;
+            key.push((hi << 4) | lo);
+        }
+        keys.push(key);
+    }
+    Ok(keys)
+}
+
+/// Encodes `keys` in the form [`decode_receipt_keys`] reads.
+#[must_use]
+pub fn encode_receipt_keys(keys: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for k in keys {
+        for b in k {
+            out.push(hex_digit(b >> 4));
+            out.push(hex_digit(*b));
+        }
+        out.push(b'\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,5 +728,171 @@ mod tests {
             decode(&cfg("\"mode\":\"saas\"")).map(|c| c.cell.0[15]),
             Ok(15)
         );
+    }
+}
+
+#[cfg(test)]
+pub(crate) use file_tests::file as tests_file;
+
+#[cfg(test)]
+mod file_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
+    use super::*;
+
+    const CELL: &str = "000102030405060708090a0b0c0d0e0f";
+
+    /// A complete SaaS configuration file, with `extra` members added.
+    pub(crate) fn file(extra: &str) -> String {
+        let spki = "ab".repeat(32);
+        format!(
+            r#"{{"cell":"{CELL}","credentials_dir":"/etc/fstp/cell","database":{{"dbname":"c_{CELL}","host":"db.internal","port":5432}},"host":"grants.example.test","key_file_keyd_socket":"/run/fstp-keyd/cell-keys.sock","keyd_socket":"/run/fstp-keyd/cell.sock","listen":{{"health":"127.0.0.1:9090","internal":"0.0.0.0:7444","tunnel":"0.0.0.0:7443"}},"mode":"saas","registered_servers":[{{"kind":"application","spki_sha256":"{spki}"}}],"vault":{{"address":"127.0.0.1:4100"}},"version":"0.3.0","witness":{{"address":"10.0.0.5:7443","ca_spki_sha256":"{spki}","server_name":"witness.internal"}}{extra}}}"#
+        )
+    }
+
+    /// ADR-026: the full grammar decodes, with and without its optional
+    /// members, and the core members keep their M3 meaning.
+    #[test]
+    fn adr026_config_file_decodes_every_member() {
+        let c = decode_file(file("").as_bytes()).unwrap();
+        assert_eq!(c.core.mode, Mode::Saas);
+        assert_eq!(c.database.port, 5432);
+        assert!(c.mail.is_none() && c.assets_dir.is_none() && !c.organisation_active);
+        let full = file(
+            r#","assets_dir":"/opt/fstp/web","mail":{"address":"127.0.0.1:2465","relay":"smtp.example.test","sender":"noreply@example.test","username":"cell"},"organisation_active":true"#,
+        );
+        let c = decode_file(full.as_bytes()).unwrap();
+        assert_eq!(
+            c.mail.unwrap().address,
+            Some("127.0.0.1:2465".parse().unwrap())
+        );
+        assert!(c.organisation_active);
+    }
+
+    /// I-19: the file names exactly one cell. The cell member is one id,
+    /// not a list, the database is that cell's own, and a second cell
+    /// member is refused.
+    #[test]
+    fn i19_config_names_one_cell() {
+        let list = file("").replace(
+            &format!(r#""cell":"{CELL}""#),
+            &format!(r#""cell":["{CELL}","{CELL}"]"#),
+        );
+        assert!(decode_file(list.as_bytes()).is_err());
+        let other = file("").replace(&format!("c_{CELL}"), "c_ffffffffffffffffffffffffffffffff");
+        assert_eq!(
+            decode_file(other.as_bytes()),
+            Err(ConfigError::Invalid("database.dbname"))
+        );
+        let twice = file(&format!(r#","cell":"{CELL}""#));
+        assert!(decode_file(twice.as_bytes()).is_err());
+        let source = include_str!("config.rs");
+        let fields = source
+            .split("pub struct FileConfig {")
+            .nth(1)
+            .and_then(|s| s.split("\n}").next())
+            .unwrap();
+        assert_eq!(
+            fields.matches("CellId").count(),
+            0,
+            "FileConfig names a second cell"
+        );
+        assert_eq!(fields.matches("CellConfig").count(), 1);
+    }
+
+    /// I-16, design section 14.4: no type of the configuration grammar
+    /// holds a payment account, a debtor account or a bank detail.
+    #[test]
+    fn i16_config_types_hold_no_debtor_account() {
+        let source = include_str!("config.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        let mut structs = 0;
+        for block in code.split("pub struct ").skip(1) {
+            structs += 1;
+            let body = block.split("\n}").next().unwrap().to_ascii_lowercase();
+            for word in [
+                "iban", "bic", "debtor", "creditor", "account", "payment", "bank",
+            ] {
+                let field_types: Vec<&str> = body
+                    .lines()
+                    .filter(|l| l.trim_start().starts_with("pub ") && l.contains(':'))
+                    .collect();
+                for f in field_types {
+                    assert!(!f.contains(word), "a config field holds {word}: {f}");
+                }
+            }
+        }
+        assert!(structs >= 8, "the scan saw {structs} structs");
+    }
+
+    /// I-83: the file cannot name a vault database. `v_<cell>` is
+    /// refused before any connection, and the start check refuses a vault
+    /// cluster's server key on the live connection
+    /// (`crate::process::check_database`).
+    #[test]
+    fn i83_config_start_refuses_a_vault_cluster() {
+        let vault = file("").replace(&format!("\"c_{CELL}\""), &format!("\"v_{CELL}\""));
+        assert_eq!(
+            decode_file(vault.as_bytes()),
+            Err(ConfigError::Invalid("database.dbname"))
+        );
+        let c = decode_file(file("").as_bytes()).unwrap();
+        assert_eq!(c.database.dbname, format!("c_{CELL}"));
+        assert_eq!(c.registered_servers[0].kind, ServerKind::Application);
+    }
+
+    /// ADR-026: an unknown member, an empty or relative path, two equal
+    /// keyd sockets, a health listener off loopback, a bad relay and a
+    /// file over the limit are refused.
+    #[test]
+    fn adr026_config_file_refuses_what_breaks_its_rules() {
+        for (bad, rule) in [
+            (file(r#","x":1"#), ConfigError::UnknownMember),
+            (
+                file("").replace("/etc/fstp/cell", "etc/fstp/cell"),
+                ConfigError::Invalid("credentials_dir"),
+            ),
+            (
+                file("").replace("cell-keys.sock", "cell.sock"),
+                ConfigError::Invalid("key_file_keyd_socket"),
+            ),
+            (
+                file("").replace("127.0.0.1:9090", "0.0.0.0:9090"),
+                ConfigError::Invalid("listen.health"),
+            ),
+            (
+                file(r#","mail":{"relay":"10.0.0.1","sender":"a@b.test","username":"u"}"#),
+                ConfigError::Invalid("mail.relay"),
+            ),
+            (
+                file(
+                    r#","mail":{"relay":"smtp.crabnebula.dev","sender":"a@b.test","username":"u"}"#,
+                ),
+                ConfigError::Invalid("mail.relay"),
+            ),
+            (
+                file("").replace("\"saas\"", "\"cloud\""),
+                ConfigError::Invalid("mode"),
+            ),
+        ] {
+            assert_eq!(decode_file(bad.as_bytes()), Err(rule), "{bad}");
+        }
+        let long = file(&format!(r#","assets_dir":"/{}""#, "a".repeat(MAX_FILE_LEN)));
+        assert!(decode_file(long.as_bytes()).is_err());
+    }
+
+    /// ADR-010 "Keys": the receipt key list round-trips and refuses an
+    /// empty list, a missing line end, odd or upper-case hex and too many
+    /// keys.
+    #[test]
+    fn adr010_receipt_key_list_round_trips() {
+        let keys = vec![vec![1u8, 2, 0xfe], vec![0xab; 40]];
+        let bytes = encode_receipt_keys(&keys);
+        assert_eq!(decode_receipt_keys(&bytes).unwrap(), keys);
+        for bad in [&b""[..], b"\n", b"0102", b"010\n", b"0A\n", b"01\n\n02\n"] {
+            assert!(decode_receipt_keys(bad).is_err(), "{bad:?}");
+        }
+        let many = encode_receipt_keys(&vec![vec![1u8]; MAX_RECEIPT_KEYS + 1]);
+        assert!(decode_receipt_keys(&many).is_err());
     }
 }
