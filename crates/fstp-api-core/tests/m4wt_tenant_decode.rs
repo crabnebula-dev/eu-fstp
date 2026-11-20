@@ -26,7 +26,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use fstp_access::{OPS, OpKind};
+use fstp_access::{OPS, OpKind, TenantKind};
+
 use fstp_api_core::decode::{Method, decode_route, decode_tool};
 use fstp_api_core::{ApiError, ErrorCode, Op};
 
@@ -416,22 +417,112 @@ fn r_tn_01_get_step_refuses_an_unknown_step() {
     }
 }
 
-/// I-85, design 2.2 J0: no tenant operation is an MCP tool. Every tenant
-/// operation completes or grants tenant administration, so an agent never
-/// reaches one, and `decode_tool` has no name for it.
+/// The tenant operations with a tool that executes (ADR-013 amendment of
+/// 2026-11-20): a read and a check, each of which records nothing.
+const TENANT_ALLOW: [(&str, &str); 2] = [
+    ("tenant.branding.check", "fstp_tenant_check_branding"),
+    ("tenant.funder_profiles", "fstp_tenant_list_funder_profiles"),
+];
+
+/// The tenant operations whose tool only prepares (ADR-013 amendment of
+/// 2026-11-20). Each is high-risk, so its confirmation in the platform
+/// needs a step-up.
+const TENANT_PREPARE: [(&str, &str); 4] = [
+    ("tenant.branding.set", "fstp_prepare_branding"),
+    ("tenant.terminology.set", "fstp_prepare_terminology"),
+    (
+        "tenant.funder_profile.copy",
+        "fstp_prepare_funder_profile_copy",
+    ),
+    (
+        "tenant.funder_profile.save",
+        "fstp_prepare_funder_profile_save",
+    ),
+];
+
+/// I-85, design 2.2 J0, ADR-013 amendment of 2026-11-20: a tenant operation
+/// (a `tenant.*` name or a tenant command) has a tool only as the amendment
+/// lists it. Exactly the two of [`TENANT_ALLOW`] execute through MCP, and
+/// each records nothing: a read, or the brand check. Exactly the four of
+/// [`TENANT_PREPARE`] have a prepare-only tool, on a high-risk operation.
+/// Every other tenant operation has no tool, among them each one that
+/// grants tenant administration or a signatory role, or runs onboarding or
+/// the organisation's activation. The tool table is the registry, so no
+/// tool name reaches those, and `decode_tool` refuses each operation's
+/// name.
 #[test]
-fn i85_no_tenant_operation_is_an_mcp_tool() {
+fn i85_tenant_operations_have_only_the_amendment_tools() {
     let tenant: Vec<_> = OPS
         .iter()
-        .filter(|s| matches!(s.kind, OpKind::Tenant(_)))
+        .filter(|s| matches!(s.kind, OpKind::Tenant(_)) || s.name.starts_with("tenant."))
         .collect();
     assert!(!tenant.is_empty());
-    for spec in tenant {
-        assert!(spec.tool.is_none(), "I-85: {} has a tool", spec.name);
+    let mut allow = Vec::new();
+    let mut prepare = Vec::new();
+    for spec in &tenant {
         assert!(
             decode_tool(spec.name, b"{}").is_err(),
             "I-85: {} decodes as a tool",
             spec.name
         );
+        let Some(t) = spec.tool else { continue };
+        if t.prepare_only {
+            assert!(
+                spec.high_risk,
+                "{} prepares but is not high-risk",
+                spec.name
+            );
+            prepare.push((spec.name, t.name));
+        } else {
+            assert!(!spec.high_risk, "I-85: high-risk {} executes", spec.name);
+            assert!(
+                matches!(
+                    spec.kind,
+                    OpKind::Read(_) | OpKind::Tenant(TenantKind::CheckBranding)
+                ),
+                "I-85: {} executes and records something",
+                spec.name
+            );
+            allow.push((spec.name, t.name));
+        }
+    }
+    assert_eq!(allow, TENANT_ALLOW, "the executing tenant tools");
+    assert_eq!(prepare, TENANT_PREPARE, "the prepare-only tenant tools");
+    // Tenant administration, signatories, onboarding and activation.
+    let governing: Vec<_> = tenant
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.kind,
+                OpKind::Tenant(
+                    TenantKind::SaveStep
+                        | TenantKind::Complete
+                        | TenantKind::InviteAdmin
+                        | TenantKind::ApproveSelfGrant
+                        | TenantKind::GrantSignatory
+                        | TenantKind::EndSignatory
+                        | TenantKind::RequestActivation
+                        | TenantKind::ApproveActivation
+                )
+            )
+        })
+        .collect();
+    let names: Vec<&str> = governing.iter().map(|s| s.name).collect();
+    assert_eq!(
+        names,
+        [
+            "tenant.save_step",
+            "tenant.complete",
+            "tenant.invite_admin",
+            "tenant.grant_signatory",
+            "tenant.end_signatory",
+            "tenant.request_activation",
+            "tenant.approve_activation",
+            "admin.approve_self_grant",
+        ],
+        "the governing tenant operations"
+    );
+    for spec in governing {
+        assert!(spec.tool.is_none(), "I-85: {} has a tool", spec.name);
     }
 }

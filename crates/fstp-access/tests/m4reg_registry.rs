@@ -26,7 +26,7 @@
 use std::collections::BTreeSet;
 
 use fstp_access::{
-    Classification, OPS, OpKind, OpSpec, READ_RULES, ReadKind, ReadRule, RoleOrApplicant,
+    Classification, OPS, OpKind, OpSpec, READ_RULES, ReadKind, ReadRule, RoleOrApplicant, Scope,
     SessionNeed,
 };
 use fstp_domain::StateTag;
@@ -48,6 +48,9 @@ struct Want {
     acting: &'static [RoleOrApplicant],
     /// How MCP responses would classify its data.
     classification: Classification,
+    /// The read tool and scope the ADR-013 amendment of 2026-11-20 gives
+    /// it, if any. Every other m4reg operation keeps no tool.
+    tool: Option<(&'static str, Scope)>,
 }
 
 /// Every role, and an account with no binding.
@@ -88,7 +91,7 @@ fn the_op(name: &str) -> &'static OpSpec {
 }
 
 /// Checks one operation against `w`. Every m4reg operation has a web
-/// route, no MCP tool and no scope, is not high-risk, and admits any
+/// route, the tool of `w.tool` and its scope or none, is not high-risk, and admits any
 /// session strength that I-77 allows. A command's binding flag follows
 /// the domain; a read is never binding.
 fn check(w: &Want) {
@@ -100,8 +103,13 @@ fn check(w: &Want) {
         w.name
     );
     assert_eq!(format!("{:?}", o.kind), w.kind, "{} kind", w.name);
-    assert!(o.tool.is_none(), "{} has a tool", w.name);
-    assert_eq!(o.scope, None, "{} scope", w.name);
+    assert_eq!(o.tool.map(|t| (t.name, t.scope)), w.tool, "{} tool", w.name);
+    assert!(
+        !o.tool.is_some_and(|t| t.prepare_only),
+        "{} prepares",
+        w.name
+    );
+    assert_eq!(o.scope, w.tool.map(|(_, s)| s), "{} scope", w.name);
     assert!(!o.high_risk, "{} is high-risk", w.name);
     assert_eq!(o.session, SessionNeed::Any, "{} session", w.name);
     match o.kind {
@@ -131,6 +139,7 @@ fn sod07_registry_tenant_list_admins() {
         kind: "Read(ListTenantAdmins)",
         acting: ADMIN,
         classification: Classification::Personal,
+        tool: None,
     });
 }
 
@@ -147,6 +156,7 @@ fn i86_registry_me_get_verification() {
         kind: "Read(GetMyVerification)",
         acting: EVERY,
         classification: Classification::Personal,
+        tool: None,
     });
 }
 
@@ -162,6 +172,7 @@ fn r_pg_02_registry_creator_list_programmes() {
         kind: "Read(ListProgrammes)",
         acting: MANAGER_OR_ADMIN,
         classification: Classification::Confidential,
+        tool: Some(("fstp_creator_list_programmes", Scope::CreatorDraft)),
     });
 }
 
@@ -177,6 +188,7 @@ fn r_pg_02_registry_creator_list_templates() {
         kind: "Read(ListTemplates)",
         acting: MANAGER_OR_ADMIN,
         classification: Classification::Confidential,
+        tool: Some(("fstp_creator_list_templates", Scope::CreatorDraft)),
     });
 }
 
@@ -195,6 +207,7 @@ fn sod09_registry_people_get_invitation() {
         kind: "Read(GetInvitation)",
         acting: EVERY,
         classification: Classification::Personal,
+        tool: None,
     });
     let accept = the_op("people.accept_invitation");
     let accept_params: Vec<&str> = accept
@@ -220,6 +233,7 @@ fn r_ac_01_registry_review_assignments() {
         kind: "Read(ListProposalAssignments)",
         acting: COORDINATOR,
         classification: Classification::Confidential,
+        tool: None,
     });
 }
 
@@ -235,6 +249,7 @@ fn r_ev_08_registry_committee_open_round() {
         kind: "Command(OpenCutOffRound)",
         acting: COMMITTEE,
         classification: Classification::Confidential,
+        tool: None,
     });
 }
 
@@ -249,6 +264,7 @@ fn r_ev_09_registry_committee_cast() {
         kind: "Command(CastBallot)",
         acting: COMMITTEE,
         classification: Classification::Confidential,
+        tool: None,
     });
 }
 
@@ -263,6 +279,7 @@ fn r_ev_09_registry_committee_delegate() {
         kind: "Command(DelegateVote)",
         acting: COMMITTEE,
         classification: Classification::Confidential,
+        tool: None,
     });
 }
 

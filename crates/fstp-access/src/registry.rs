@@ -14,6 +14,11 @@
 //! tool is `fstp_prepare_call_publication` (Q32), and every tenant setting
 //! is high-risk (Q10).
 //!
+//! Daniel amended Q8 on 2026-11-20 (ADR-013, "Amendment 2026-11-20"): the
+//! setup tools of the programme staff and tenant admin rows. Each sits on
+//! an operation that already had its web route. A `prepare_tool` only
+//! prepares, whether or not its operation is high-risk.
+//!
 //! Lane m4reg added the operations the M4 demo pages call that the
 //! journey tables leave out or that waited for change D5:
 //!
@@ -71,11 +76,14 @@ pub enum Scope {
     CallsDraft,
     /// `audit:read`.
     AuditRead,
+    /// `tenant:draft`: the tenant admin's setup tools (ADR-013 amendment
+    /// of 2026-11-20).
+    TenantDraft,
 }
 
 impl Scope {
     /// Every scope, in declaration order.
-    pub const ALL: [Scope; 12] = [
+    pub const ALL: [Scope; 13] = [
         Scope::CallsRead,
         Scope::ProposalsRead,
         Scope::ProposalsDraft,
@@ -88,6 +96,7 @@ impl Scope {
         Scope::CreatorDraft,
         Scope::CallsDraft,
         Scope::AuditRead,
+        Scope::TenantDraft,
     ];
 
     /// The scope as the OAuth server spells it.
@@ -105,6 +114,7 @@ impl Scope {
             Scope::CreatorDraft => "creator:draft",
             Scope::CallsDraft => "calls:draft",
             Scope::AuditRead => "audit:read",
+            Scope::TenantDraft => "tenant:draft",
         }
     }
 }
@@ -506,8 +516,11 @@ pub struct ToolDef {
     /// The scope the tool needs. Public tools need no token, so the MCP
     /// channel never checks it for them.
     pub scope: Scope,
-    /// Whether the tool only prepares a pending action (I-85). Only
-    /// high-risk operations have one.
+    /// Whether the tool only prepares a pending action (I-85). Every tool
+    /// of a high-risk operation does. The ADR-013 amendment of 2026-11-20
+    /// adds prepare-only tools on operations that activate, publish,
+    /// invite, record a named person's judgement or change who can see
+    /// what.
     pub prepare_only: bool,
 }
 
@@ -761,6 +774,31 @@ const IN_ASSIGNMENT_SCORE_BODY: Schema = Schema {
     params: &["assignment", "score"],
     body: true,
 };
+/// A request object with no path parameter.
+const IN_BODY: Schema = Schema {
+    params: &[],
+    body: true,
+};
+const IN_PROGRAMME_FIELD_BODY: Schema = Schema {
+    params: &["programme", "field"],
+    body: true,
+};
+const IN_PROGRAMME_PREVIEW: Schema = Schema {
+    params: &["programme", "preview"],
+    body: false,
+};
+const IN_PROGRAMME_IMPORT_PROPOSAL_BODY: Schema = Schema {
+    params: &["programme", "import_proposal"],
+    body: true,
+};
+const IN_PROGRAMME_IMPORT_DOCUMENT_BODY: Schema = Schema {
+    params: &["programme", "import_document"],
+    body: true,
+};
+const IN_PROGRAMME_BINDING_BODY: Schema = Schema {
+    params: &["programme", "binding"],
+    body: true,
+};
 
 impl OpSpec {
     /// A plain operation: no tool, not high-risk, not binding, any session,
@@ -861,6 +899,29 @@ impl OpSpec {
             }),
             scope: if public { None } else { Some(scope) },
             ..self
+        }
+    }
+
+    /// A prepare-only tool on an operation that need not be high-risk
+    /// (ADR-013 amendment of 2026-11-20). Through MCP it always gives a
+    /// pending action, which the user confirms in the platform (I-85).
+    const fn prepare_tool(
+        self,
+        name: &'static str,
+        description: &'static str,
+        input: &'static Schema,
+        scope: Scope,
+    ) -> OpSpec {
+        let op = self.tool(name, description, input, scope);
+        match op.tool {
+            Some(t) => OpSpec {
+                tool: Some(ToolDef {
+                    prepare_only: true,
+                    ..t
+                }),
+                ..op
+            },
+            None => op,
         }
     }
 }
@@ -968,7 +1029,13 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/admin/branding/check",
     )
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .tool(
+        "fstp_tenant_check_branding",
+        "Check brand tokens for contrast. It lists the failing colour pairs and saves nothing.",
+        &IN_BODY,
+        Scope::TenantDraft,
+    ),
     OpSpec::new(
         "tenant.branding.set",
         OpKind::Tenant(TenantKind::SetBranding),
@@ -976,7 +1043,13 @@ pub const OPS: &[OpSpec] = &[
         "/admin/branding",
     )
     .hr()
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .prepare_tool(
+        "fstp_prepare_branding",
+        "Prepare new brand tokens for the tenant. The user confirms them in the platform with a step-up.",
+        &IN_BODY,
+        Scope::TenantDraft,
+    ),
     // M9 lane T1: interface label overrides and the Voyage switch (I-72,
     // O-55). It changes what every interface shows, so it is high-risk by
     // the strict reading, as the brand tokens are (interim, pending Daniel).
@@ -987,7 +1060,13 @@ pub const OPS: &[OpSpec] = &[
         "/admin/terminology",
     )
     .hr()
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .prepare_tool(
+        "fstp_prepare_terminology",
+        "Prepare new interface labels for the tenant. The user confirms them in the platform with a step-up.",
+        &IN_BODY,
+        Scope::TenantDraft,
+    ),
     // M6 lane L6-EGR, ADR-018 (proposed): the tenant's mail submission
     // relay. It decides where every message of the tenant goes, so it is
     // high-risk by the strict reading of settings (interim, pending Daniel).
@@ -1029,7 +1108,13 @@ pub const OPS: &[OpSpec] = &[
         RK::ListFunderProfiles,
         "/admin/funder-profiles",
     )
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .tool(
+        "fstp_tenant_list_funder_profiles",
+        "List the funder profiles of the platform and of the tenant.",
+        &IN_NONE,
+        Scope::TenantDraft,
+    ),
     OpSpec::new(
         "tenant.funder_profile.copy",
         OpKind::Tenant(TenantKind::SaveFunderProfile),
@@ -1037,7 +1122,13 @@ pub const OPS: &[OpSpec] = &[
         "/admin/funder-profiles/copies",
     )
     .hr()
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .prepare_tool(
+        "fstp_prepare_funder_profile_copy",
+        "Prepare a copy of a funder profile into a profile of the tenant. The user confirms it in the platform with a step-up.",
+        &IN_BODY,
+        Scope::TenantDraft,
+    ),
     OpSpec::new(
         "tenant.funder_profile.save",
         OpKind::Tenant(TenantKind::SaveFunderProfile),
@@ -1045,7 +1136,13 @@ pub const OPS: &[OpSpec] = &[
         "/admin/funder-profiles",
     )
     .hr()
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .prepare_tool(
+        "fstp_prepare_funder_profile_save",
+        "Prepare a new version of a funder profile of the tenant. The user confirms it in the platform with a step-up.",
+        &IN_BODY,
+        Scope::TenantDraft,
+    ),
     // I-86: the caller's own verification state, never through MCP.
     OpSpec::read(
         "me.get_verification",
@@ -1164,7 +1261,13 @@ pub const OPS: &[OpSpec] = &[
         "/programmes",
     )
     .hr()
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .prepare_tool(
+        "fstp_prepare_programme_draft",
+        "Prepare a new draft programme. The user confirms it in the platform with a step-up.",
+        &IN_BODY,
+        Scope::CreatorDraft,
+    ),
     // R-PG-02: the clone sources and the template catalogue of the
     // creator start page.
     OpSpec::read(
@@ -1172,16 +1275,34 @@ pub const OPS: &[OpSpec] = &[
         RK::ListProgrammes,
         "/programmes",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_list_programmes",
+        "List the programmes of the tenant the caller may build from, by id.",
+        &IN_NONE,
+        Scope::CreatorDraft,
+    ),
     OpSpec::read("creator.list_templates", RK::ListTemplates, "/templates")
-        .acting(MANAGER_OR_ADMIN),
+        .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_list_templates",
+        "List the programme templates the caller may start a draft from.",
+        &IN_NONE,
+        Scope::CreatorDraft,
+    ),
     OpSpec::new(
         "creator.invite",
         OpKind::Creator(CreatorKind::Invite),
         Post,
         "/programmes/{programme}/invitations",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .prepare_tool(
+        "fstp_prepare_invitation",
+        "Prepare the invitation of a person to a role on a programme. The user confirms it in the platform.",
+        &IN_PROGRAMME_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::new(
         "creator.withdraw_invitation",
         OpKind::Creator(CreatorKind::WithdrawInvitation),
@@ -1201,7 +1322,13 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/draft/start",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_apply_start",
+        "Start a draft programme from blank, a clone, a template or an imported document. The draft stays a draft.",
+        &IN_PROGRAMME_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::new(
         "creator.save_fields",
         OpKind::Creator(CreatorKind::SaveFields),
@@ -1222,7 +1349,13 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/draft/narratives/{field}/acceptance",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .prepare_tool(
+        "fstp_prepare_narrative_acceptance",
+        "Prepare the acceptance of template text in a draft programme. The user confirms it in the platform.",
+        &IN_PROGRAMME_FIELD_BODY,
+        Scope::CreatorDraft,
+    ),
     // Daniel, 2026-11-15: narrative text the draft holds is edited, an
     // edit that voids the report (I-66).
     OpSpec::new(
@@ -1231,7 +1364,13 @@ pub const OPS: &[OpSpec] = &[
         Put,
         "/programmes/{programme}/draft/narratives/{field}",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_edit_narrative",
+        "Edit one narrative text of a draft programme. The text stays a draft.",
+        &IN_PROGRAMME_FIELD_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::read(
         "creator.get_draft",
         RK::GetDraft,
@@ -1262,26 +1401,50 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/draft/acknowledgements",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .prepare_tool(
+        "fstp_prepare_warning_acknowledgement",
+        "Prepare the acknowledgement of a validation warning of a draft programme. The user confirms it in the platform.",
+        &IN_PROGRAMME_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::read(
         "creator.preview",
         RK::GetPreview,
         "/programmes/{programme}/draft/previews/{preview}",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_get_preview",
+        "Read a preview of a draft programme, such as its Guide for Applicants or its public page.",
+        &IN_PROGRAMME_PREVIEW,
+        Scope::CreatorDraft,
+    ),
     OpSpec::read(
         "creator.impact",
         RK::GetImpact,
         "/programmes/{programme}/draft/impact",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_get_impact",
+        "List the calls that a change to a programme would affect.",
+        &IN_PROGRAMME,
+        Scope::CreatorDraft,
+    ),
     OpSpec::new(
         "creator.request_activation",
         OpKind::Creator(CreatorKind::RequestActivation),
         Post,
         "/programmes/{programme}/activation-request",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .prepare_tool(
+        "fstp_prepare_activation_request",
+        "Prepare the request to activate a draft programme. The user confirms it in the platform, and a second person approves it.",
+        &IN_PROGRAMME_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::new(
         "creator.approve_activation",
         OpKind::Creator(CreatorKind::ApproveActivation),
@@ -1307,27 +1470,51 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/templates",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .prepare_tool(
+        "fstp_prepare_tenant_template",
+        "Prepare saving a programme as a template for the tenant's own staff. The user confirms it in the platform.",
+        &IN_PROGRAMME_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::new(
         "import.upload",
         OpKind::Import(ImportKind::RegisterDocument),
         Post,
         "/programmes/{programme}/imports",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_upload_import",
+        "Upload the text of a funding document to a draft programme. Its values arrive as proposals that a programme manager must confirm.",
+        &IN_PROGRAMME_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::read(
         "import.list",
         RK::ListImportProposals,
         "/programmes/{programme}/imports/proposals",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_list_import_proposals",
+        "List the values proposed by the documents imported into a draft programme.",
+        &IN_PROGRAMME,
+        Scope::CreatorDraft,
+    ),
     OpSpec::new(
         "import.resolve",
         OpKind::Bridge(BridgeKind::ResolveImport),
         Post,
         "/programmes/{programme}/imports/proposals/{import_proposal}/resolution",
     )
-    .acting(MANAGER),
+    .acting(MANAGER)
+    .prepare_tool(
+        "fstp_prepare_import_resolution",
+        "Prepare the confirmation, edit or dismissal of an imported value. The programme manager confirms it in the platform.",
+        &IN_PROGRAMME_IMPORT_PROPOSAL_BODY,
+        Scope::CreatorDraft,
+    ),
     // Daniel, 2026-11-15: a draft record removes an imported document, so
     // its open proposals no longer count. It voids the report (I-66).
     OpSpec::new(
@@ -1336,7 +1523,13 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/imports/{import_document}/removal",
     )
-    .acting(MANAGER_OR_ADMIN),
+    .acting(MANAGER_OR_ADMIN)
+    .tool(
+        "fstp_creator_remove_import",
+        "Remove an imported document from a draft programme, so its open proposals no longer count.",
+        &IN_PROGRAMME_IMPORT_DOCUMENT_BODY,
+        Scope::CreatorDraft,
+    ),
     // J1 and J2: people and roles. SoD-09: the invitation landing, read
     // before the invitee enrols. The link token is its only capability.
     OpSpec::read(
@@ -1364,7 +1557,13 @@ pub const OPS: &[OpSpec] = &[
         RK::ListBindings,
         "/programmes/{programme}/roles",
     )
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .tool(
+        "fstp_list_programme_roles",
+        "List the staff roles of a programme, by account id.",
+        &IN_PROGRAMME,
+        Scope::CreatorDraft,
+    ),
     // SA-11: the team of a programme, open invitations included, for its
     // manager and the tenant admins. Web only (I-86).
     OpSpec::read(
@@ -1380,14 +1579,26 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/programmes/{programme}/roles",
     )
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .prepare_tool(
+        "fstp_prepare_role_grant",
+        "Prepare the grant of a staff role on a programme. The user confirms it in the platform with a step-up.",
+        &IN_PROGRAMME_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::command(
         "roles.end",
         CK::EndRole,
         Post,
         "/programmes/{programme}/roles/{binding}/end",
     )
-    .acting(ADMIN),
+    .acting(ADMIN)
+    .prepare_tool(
+        "fstp_prepare_role_end",
+        "Prepare the end of a staff role on a programme. The user confirms it in the platform with a step-up.",
+        &IN_PROGRAMME_BINDING_BODY,
+        Scope::CreatorDraft,
+    ),
     OpSpec::command(
         "roles.reinstate",
         CK::ReinstateBinding,
@@ -1423,7 +1634,13 @@ pub const OPS: &[OpSpec] = &[
         Post,
         "/calls/{call}/approval",
     )
-    .acting(MANAGER),
+    .acting(MANAGER)
+    .prepare_tool(
+        "fstp_prepare_call_approval",
+        "Prepare the approval of a call for publication. The user confirms it in the platform, and the approver must not have drafted the call.",
+        &IN_CALL_BODY,
+        Scope::CallsDraft,
+    ),
     OpSpec::command(
         "call.publish",
         CK::PublishCall,
@@ -1448,7 +1665,13 @@ pub const OPS: &[OpSpec] = &[
     // Lane mcreator: the Planning Studio's list of a programme's calls,
     // each with its state and whether the caller may approve it (R-PC-03).
     // SA-12: and a tenant admin, who drafts calls.
-    OpSpec::read("call.list", RK::ListCalls, "/programmes/{programme}/calls").acting(CALL_LISTER),
+    OpSpec::read("call.list", RK::ListCalls, "/programmes/{programme}/calls").acting(CALL_LISTER)
+    .tool(
+        "fstp_list_calls",
+        "List the calls of a programme with their states.",
+        &IN_PROGRAMME,
+        Scope::CallsRead,
+    ),
     // M6 lane L6-API: the scheduled, cancelled and fired events of a
     // programme (M6 design section 6). Web only.
     OpSpec::read(
@@ -1456,7 +1679,13 @@ pub const OPS: &[OpSpec] = &[
         RK::GetProgrammeTimeline,
         "/programmes/{programme}/timeline",
     )
-    .acting(MANAGER),
+    .acting(MANAGER)
+    .tool(
+        "fstp_get_programme_timeline",
+        "Read the scheduled, cancelled and fired events of a programme.",
+        &IN_PROGRAMME,
+        Scope::CallsRead,
+    ),
     // J4: public pages, open calls and applicants.
     OpSpec::public("public.programme", PublicKind::Programme, "/p/{slug}").tool(
         "fstp_public_get_programme",

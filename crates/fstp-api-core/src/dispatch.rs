@@ -788,10 +788,12 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
     };
     let verdict = match verdict {
         ChannelVerdict::Deny(d) => return Err(call.refuse(denial(d))),
-        // Only a command is prepared (step 6). Any other kind answered
-        // with `Prepare` is refused here, so no later arm can run it
-        // directly through MCP (I-85).
-        ChannelVerdict::Prepare if !matches!(spec.kind, OpKind::Command(_)) => {
+        // Only a core command, and since the ADR-013 amendment of
+        // 2026-11-20 a creator, bridge, import or tenant command, is
+        // prepared (step 6). Any other kind answered with `Prepare` is
+        // refused here, so no later arm can run it directly through MCP
+        // (I-85).
+        ChannelVerdict::Prepare if !preparable(spec.kind) => {
             return Err(call.refuse(ApiError::NotImplemented(
                 "a prepared operation that is not a command (I-85)",
             )));
@@ -820,9 +822,9 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         OpKind::Agent(kind) => agent(call, op, kind).await,
         OpKind::M3Port(kind) => m3_port(call, op, kind).await,
         OpKind::Creator(_) | OpKind::Bridge(_) | OpKind::Import(_) => {
-            creator_ops::command(call, op).await
+            creator_ops::command(call, op, verdict, None).await
         }
-        OpKind::Tenant(kind) => tenant::command(call, op, kind).await,
+        OpKind::Tenant(kind) => tenant::command(call, op, kind, verdict, None).await,
         OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(call, op).await,
         OpKind::Finding(fstp_access::FindingKind::RequestRerun) => finding_rerun(call, op).await,
         // `Record`, `Regenerate` and `RecordRefusals` are the assessor's,
@@ -966,6 +968,22 @@ fn denial(d: ChannelDenial) -> ApiError {
         ChannelDenial::P74 => ErrorCode::P74,
     };
     ApiError::refused(code, d.spec_id())
+}
+
+/// Whether dispatch can store a pending action of an operation of `kind`
+/// (I-85, step 6): a core command, and a creator, bridge, import or
+/// tenant command (ADR-013 amendment of 2026-11-20). Each of these runs a
+/// dry run before it prepares, and its confirmation runs the dispatch of
+/// its web route.
+fn preparable(kind: OpKind) -> bool {
+    matches!(
+        kind,
+        OpKind::Command(_)
+            | OpKind::Creator(_)
+            | OpKind::Bridge(_)
+            | OpKind::Import(_)
+            | OpKind::Tenant(_)
+    )
 }
 
 /// Whether a `Prepare` verdict may depend on P-77: a binding command that
@@ -1576,6 +1594,9 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
     let stored = decode_pending_request(a.request.as_bytes())
         .map_err(|e| call.refuse(e))?
         .into_op();
+    if preparable(stored.spec.kind) && !matches!(stored.spec.kind, OpKind::Command(_)) {
+        return confirm_other(call, &stored, account, &a).await;
+    }
     let (Some(form), OpKind::Command(_)) = (
         forms::request_form(stored.spec, &stored.request),
         stored.spec.kind,
@@ -1645,6 +1666,59 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
         }
         Err(e) => Err(call.refuse(exec_failed(e))),
     }
+}
+
+/// `pending.confirm` of a creator, bridge, import or tenant command (ADR-013
+/// amendment of 2026-11-20). The checks of [`confirm`] up to the stored
+/// request have passed. The confirming session must be strong enough for
+/// the stored operation (I-77). The action is claimed before the first
+/// await. The stored request then runs through the dispatch of its web
+/// route, as the confirming account through the web: its dry run, its
+/// gates, and for a high-risk operation a fresh step-up bound to the
+/// stored digest (I-78, I-85). The execution names the pending action and
+/// its agent. The action is confirmed only once the command is appended.
+async fn confirm_other<P: Seams>(
+    call: &Call<'_, P>,
+    stored: &Op,
+    account: AccountId,
+    a: &PendingAction,
+) -> Result<OpResult, ApiError> {
+    if !fstp_access::session_admits(stored.spec, &call.caller.p) {
+        return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-77")));
+    }
+    let _claim = Claim::take(&call.st.pending, a.id, account, call.now)
+        .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Refused, "I-85")))?;
+    let sub = Call {
+        ports: call.ports,
+        st: call.st,
+        caller: Caller {
+            p: call.caller.p.clone(),
+            session: call.caller.session,
+            agent: Some(a.agent),
+            token: call.caller.token,
+        },
+        spec: stored.spec,
+        digest: a.digest,
+        now: call.now,
+        state: call.state.clone(),
+        quiet: call.quiet,
+        peer: call.peer,
+    };
+    let result = match stored.spec.kind {
+        OpKind::Creator(_) | OpKind::Bridge(_) | OpKind::Import(_) => {
+            creator_ops::command(&sub, stored, ChannelVerdict::Execute, Some(a.id)).await
+        }
+        OpKind::Tenant(kind) => {
+            tenant::command(&sub, stored, kind, ChannelVerdict::Execute, Some(a.id)).await
+        }
+        _ => Err(sub.refuse(ApiError::NotImplemented(
+            "a pending action of an operation that is not preparable",
+        ))),
+    };
+    if let Ok(OpResult::Done { seq: Some(_), .. }) = &result {
+        let _ = lock(&call.st.pending).confirm(a.id, call.now);
+    }
+    result
 }
 
 /// `pending.discard`: the user discards an open action of their own.

@@ -388,9 +388,31 @@ fn creator_route(k: CreatorKind) -> (&'static str, &'static str) {
     }
 }
 
+/// The MCP tool of each creator kind's operation. The match has no
+/// wildcard. Beyond the draft save, the tools are those of the ADR-013
+/// amendment of 2026-11-20. The approval and the override of an
+/// activation keep none (I-67), nor does the withdrawal of an invitation,
+/// which no tool can name (I-86).
+fn creator_tool(k: CreatorKind) -> Option<&'static str> {
+    match k {
+        CreatorKind::OpenDraft => Some("fstp_prepare_programme_draft"),
+        CreatorKind::ApplyStart => Some("fstp_creator_apply_start"),
+        CreatorKind::SaveFields => Some("fstp_creator_save_fields"),
+        CreatorKind::AcceptNarrative => Some("fstp_prepare_narrative_acceptance"),
+        CreatorKind::EditNarrative => Some("fstp_creator_edit_narrative"),
+        CreatorKind::Invite => Some("fstp_prepare_invitation"),
+        CreatorKind::WithdrawInvitation => None,
+        CreatorKind::AcknowledgeWarning => Some("fstp_prepare_warning_acknowledgement"),
+        CreatorKind::RequestActivation => Some("fstp_prepare_activation_request"),
+        CreatorKind::ApproveActivation => None,
+        CreatorKind::OverrideActivation => None,
+        CreatorKind::SaveAsTenantTemplate => Some("fstp_prepare_tenant_template"),
+    }
+}
+
 /// TH-49, R-PG-02, R-PG-05, I-84, design section 3.2: a person issues
 /// every `CreatorCommand`, so each creator kind has exactly one operation,
-/// with its web route and no tool beyond the draft save. Accepting
+/// with its web route and the tool of [`creator_tool`]. Accepting
 /// template narrative (TH-49), withdrawing an invitation and saving a
 /// tenant-private template (R-PG-05) are reachable from the creator pages.
 #[test]
@@ -408,7 +430,7 @@ fn th49_r_pg_05_ops_cover_every_creator_kind_once() {
             Some((method, path)),
             "{k:?} route"
         );
-        assert_eq!(o.tool.is_some(), k == CreatorKind::SaveFields, "{k:?} tool");
+        assert_eq!(o.tool.map(|t| t.name), creator_tool(k), "{k:?} tool");
     }
     let creator_ops = OPS
         .iter()
@@ -688,9 +710,13 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
 }
 
 /// I-85, I-78, design section 3.6 `i85_every_high_risk_tool_is_prepare_only`:
-/// every tool whose operation is high-risk is prepare-only, and the
-/// reverse. Under the Q32 interim reading the one prepare-only tool is
-/// `fstp_prepare_call_publication` on `call.publish`.
+/// every tool whose operation is high-risk is prepare-only. Under the Q32
+/// interim reading the one prepare-only tool was
+/// `fstp_prepare_call_publication` on `call.publish`. The ADR-013
+/// amendment of 2026-11-20 (Daniel) adds prepare-only tools on high-risk
+/// operations, and on the operations of [`PREPARED_NOT_HIGH_RISK`] that are
+/// not high-risk. The set of prepare-only tools is exact in both directions,
+/// so a prepare-only mark can be neither added nor dropped unseen.
 #[test]
 fn i85_every_high_risk_tool_is_prepare_only() {
     let publish = require(&["call.publish"]);
@@ -704,35 +730,80 @@ fn i85_every_high_risk_tool_is_prepare_only() {
         "fstp_prepare_call_publication is prepare-only"
     );
 
-    let mut prepare_only = Vec::new();
+    let mut prepare_only = BTreeSet::new();
     for o in OPS {
         if let Some(t) = o.tool {
-            assert_eq!(
-                t.prepare_only, o.high_risk,
-                "{}: prepare_only equals high_risk for {}",
-                t.name, o.name
-            );
-            if t.prepare_only {
-                prepare_only.push(t.name);
+            if o.high_risk {
+                assert!(
+                    t.prepare_only,
+                    "{}: the tool of high-risk {} executes",
+                    t.name, o.name
+                );
+            } else {
+                assert_eq!(
+                    t.prepare_only,
+                    PREPARED_NOT_HIGH_RISK.contains(&o.name),
+                    "{}: prepare_only of {}, which is not high-risk",
+                    t.name,
+                    o.name
+                );
             }
+            if t.prepare_only {
+                prepare_only.insert(t.name);
+            }
+            assert_eq!(
+                t.name.starts_with("fstp_prepare_"),
+                t.prepare_only,
+                "{}: a prepare-only tool is named fstp_prepare_*",
+                t.name
+            );
         }
     }
-    assert_eq!(
-        prepare_only,
-        vec!["fstp_prepare_call_publication"],
-        "Q32 interim"
-    );
+    let want: BTreeSet<&str> = [
+        "fstp_prepare_call_publication",
+        "fstp_prepare_call_approval",
+        "fstp_prepare_programme_draft",
+        "fstp_prepare_narrative_acceptance",
+        "fstp_prepare_warning_acknowledgement",
+        "fstp_prepare_import_resolution",
+        "fstp_prepare_invitation",
+        "fstp_prepare_activation_request",
+        "fstp_prepare_tenant_template",
+        "fstp_prepare_role_grant",
+        "fstp_prepare_role_end",
+        "fstp_prepare_funder_profile_copy",
+        "fstp_prepare_funder_profile_save",
+        "fstp_prepare_branding",
+        "fstp_prepare_terminology",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(prepare_only, want, "ADR-013 amendment of 2026-11-20");
 }
+
+/// The operations that are not high-risk but whose tool only prepares
+/// (ADR-013 amendment of 2026-11-20): each activates, publishes, invites,
+/// records a named person's judgement, or changes who can see what.
+const PREPARED_NOT_HIGH_RISK: [&str; 7] = [
+    "call.approve",
+    "creator.accept_narrative",
+    "creator.acknowledge",
+    "import.resolve",
+    "creator.invite",
+    "creator.request_activation",
+    "creator.save_as_template",
+];
 
 /// I-84, design section 3.6 `i84_every_tool_has_a_web_route`: no tool
 /// exists that the user's roles could not perform in the interface, so
 /// every operation with a tool has a web route. The capability table of
 /// design section 3.8 holds 35 tools, and M5 design 12.1 adds three
-/// read-only ones. Daniel added `fstp_list_contracts_to_sign` on 2026-11-13.
+/// read-only ones. Daniel added `fstp_list_contracts_to_sign` on 2026-11-13,
+/// and the ADR-013 amendment of 2026-11-20 adds 28 setup tools.
 #[test]
 fn i84_every_tool_has_a_web_route() {
     let tools: Vec<&OpSpec> = OPS.iter().filter(|o| o.tool.is_some()).collect();
-    assert_eq!(tools.len(), 39, "operations with a tool");
+    assert_eq!(tools.len(), 67, "operations with a tool");
     let routeless: Vec<&str> = tools
         .iter()
         .filter(|o| o.route.is_none())
@@ -760,7 +831,7 @@ fn i84_every_tool_maps_to_one_op() {
             }
         }
     }
-    assert_eq!(by_tool.len(), 39, "distinct tool names");
+    assert_eq!(by_tool.len(), 67, "distinct tool names");
     let shared: Vec<(&str, Vec<&str>)> = by_tool
         .into_iter()
         .filter(|(_, ops)| ops.len() != 1)
@@ -794,7 +865,7 @@ fn i84_op_names_are_unique() {
 /// The capability table of `mcp-server.md`, row by row, mapped to the M4
 /// tools of design section 3.8. An empty row names the milestone that
 /// brings its tools.
-const CAPABILITY_ROWS: [(&str, &[&str], &str); 7] = [
+const CAPABILITY_ROWS: [(&str, &[&str], &str); 8] = [
     (
         "Applicant",
         &[
@@ -847,6 +918,43 @@ const CAPABILITY_ROWS: [(&str, &[&str], &str); 7] = [
             "fstp_edit_call",
             "fstp_get_call_board",
             "fstp_prepare_call_publication",
+            // ADR-013 amendment of 2026-11-20 (Daniel).
+            "fstp_creator_list_programmes",
+            "fstp_creator_list_templates",
+            "fstp_creator_apply_start",
+            "fstp_creator_edit_narrative",
+            "fstp_creator_get_preview",
+            "fstp_creator_get_impact",
+            "fstp_creator_upload_import",
+            "fstp_creator_list_import_proposals",
+            "fstp_creator_remove_import",
+            "fstp_prepare_narrative_acceptance",
+            "fstp_prepare_warning_acknowledgement",
+            "fstp_prepare_import_resolution",
+            "fstp_prepare_invitation",
+            "fstp_prepare_activation_request",
+            "fstp_prepare_tenant_template",
+            "fstp_list_calls",
+            "fstp_get_programme_timeline",
+            "fstp_prepare_call_approval",
+        ],
+        "",
+    ),
+    // ADR-013 amendment of 2026-11-20 (Daniel): the tenant admin's
+    // setup tools.
+    (
+        "Tenant admin",
+        &[
+            "fstp_prepare_programme_draft",
+            "fstp_list_programme_roles",
+            "fstp_prepare_role_grant",
+            "fstp_prepare_role_end",
+            "fstp_tenant_list_funder_profiles",
+            "fstp_prepare_funder_profile_copy",
+            "fstp_prepare_funder_profile_save",
+            "fstp_tenant_check_branding",
+            "fstp_prepare_branding",
+            "fstp_prepare_terminology",
         ],
         "",
     ),
