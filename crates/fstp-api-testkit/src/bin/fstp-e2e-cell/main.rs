@@ -203,7 +203,7 @@ fn public_origin(v: &str) -> Result<String, String> {
     let o = parse_origin_header(v.as_bytes()).map_err(|e| format!("--public-origin {v}: {e}"))?;
     let text = o.to_string();
     let host = o.host();
-    let local = host == "127.0.0.1" || host == "[::1]" || host.ends_with(".localhost");
+    let local = matches!(host, "127.0.0.1" | "[::1]" | "localhost") || host.ends_with(".localhost");
     if text.starts_with("https://") || (text.starts_with("http://") && local) {
         Ok(text)
     } else {

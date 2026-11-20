@@ -228,6 +228,10 @@ fn discover_and_register(c: &Client) -> Agent {
     let prm = c
         .send("GET", "/.well-known/oauth-protected-resource", &[], "")
         .json();
+    // RFC 9728 section 3.1: the path form, where a client looks first
+    // when no challenge named the document, answers the same.
+    let pathed = c.send("GET", "/.well-known/oauth-protected-resource/mcp", &[], "");
+    assert_eq!(pathed.json().to_compact(), prm.to_compact());
     let resource = prm
         .get("resource")
         .and_then(Value::as_str)
@@ -498,6 +502,20 @@ fn r_mc_03_connector_flow_behind_a_public_origin() {
     assert!(public_origin("http://demo-tunnel.example").is_err());
     assert!(public_origin("https://demo-tunnel.example/path").is_err());
     assert!(public_origin("http://127.0.0.1:8640").is_ok());
+    assert!(public_origin("http://localhost:8640").is_ok());
+}
+
+/// R-MC-03, ADR-013 (lane mcp-demo): Claude Code 2.1.328 sends no
+/// credential to a plain `http` token endpoint unless its host is
+/// `localhost`, `127.0.0.1` or `::1`, so the local demo runs on
+/// `--public-origin http://localhost:<port>`. The whole flow works there.
+#[test]
+fn r_mc_03_connector_flow_on_plain_localhost() {
+    connector_flow(&Config {
+        demo_signin: true,
+        public_origin: Some(public_origin("http://localhost").unwrap()),
+        ..Config::loopback()
+    });
 }
 
 /// Layering rule A9, I-78 (lane mcp-demo): without `--demo-signin` the
