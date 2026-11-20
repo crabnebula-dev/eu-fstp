@@ -534,6 +534,10 @@ pub struct StartOptions {
     /// published yet" until the ledger records the activation. A test
     /// world from before the tenant part sets it active, and says so.
     pub organisation: crate::public::OrganisationPort,
+    /// The compiled journey UI (`web/dist/app`, loaded with
+    /// `fstp_web::load_dir`). With it, the cell mounts the web adapter over
+    /// its own `ApiCore` (ADR-026). `None` serves the cell table only.
+    pub web_assets: Option<fstp_web::AssetSet>,
 }
 
 impl Default for StartOptions {
@@ -551,6 +555,7 @@ impl Default for StartOptions {
             release_clock: None,
             auth_limits: crate::routes::AuthLimits::default(),
             organisation: crate::public::OrganisationPort::default(),
+            web_assets: None,
         }
     }
 }
@@ -607,6 +612,7 @@ where
         release_clock,
         auth_limits,
         organisation,
+        web_assets,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -682,6 +688,8 @@ where
             .await?
         }
     };
+    // The API core asks the vault through a clone of the engine's client.
+    let api_vault = vault.clone();
     let started = start_pg(
         rt,
         PgStartParts {
@@ -739,16 +747,36 @@ where
         organisation,
     };
     let log = Arc::new(StderrLog);
-    let front = match pages {
-        #[cfg(feature = "dev-pages")]
-        Some(p) => Front::with_pages(front_cfg, p, Arc::clone(&backend), log),
-        #[cfg(not(feature = "dev-pages"))]
-        Some(_) => {
-            return Err(CellError::NotImplemented(
-                "the auth pages need the dev-pages feature",
-            ));
+    // ADR-026: with the compiled journey UI, the cell mounts the web
+    // adapter over one ApiCore of its own ports behind its table. The
+    // auth pages are served by every build (D2).
+    let front = match web_assets {
+        Some(assets) => {
+            let parts = crate::api::ApiParts {
+                cell,
+                engine: started.engine.clone(),
+                backend: Arc::clone(&backend),
+                store: fstp_pgstore::ApiStore::new(app_pool.clone(), Arc::clone(&keys.ledger))
+                    .map_err(store_err)?,
+                keys: Arc::clone(&keys.ledger),
+                vault: api_vault,
+                erasure: started.erasure.clone(),
+                organisation,
+            };
+            // Lane L2 replaces the refusing token store here.
+            let core = crate::api::compose(parts, crate::api::NoTokens);
+            let origin = fstp_web::parse_origin_header(format!("https://{host}").as_bytes())
+                .map_err(|_| CellError::Config(crate::config::ConfigError::Invalid("host")))?;
+            let web = fstp_web::router(Arc::new(core), fstp_web::WebConfig::new(origin, assets))
+                .map_err(|_| {
+                    CellError::NotImplemented("the web adapter refused its configuration")
+                })?;
+            Front::with_web(front_cfg, pages, web, Arc::clone(&backend), log)
         }
-        None => Front::new(front_cfg, Arc::clone(&backend), log),
+        None => match pages {
+            Some(p) => Front::with_pages(front_cfg, p, Arc::clone(&backend), log),
+            None => Front::new(front_cfg, Arc::clone(&backend), log),
+        },
     }
     .map_err(|_| CellError::Config(crate::config::ConfigError::Invalid("host")))?;
     let mut servers = Vec::with_capacity(3);
@@ -1071,4 +1099,18 @@ impl<R: Runtime> RunningCell<R> {
             Ok(())
         }
     }
+}
+
+/// The compiled journey UI a cell mounts, as `fstp_web` takes it.
+pub use fstp_web::{AssetSet as WebAssets, load_dir as load_web_assets};
+
+/// A one-module stub of the journey UI, for a test cell that drives the
+/// API core and needs no browser UI (ADR-026). Its shell loads one empty
+/// module.
+///
+/// # Errors
+///
+/// The asset set's refusal, which a fixed set never meets.
+pub fn stub_web_assets() -> Result<WebAssets, fstp_web::AssetError> {
+    WebAssets::from_files("main.js", &[("main.js", b"export {};\n".as_slice())])
 }

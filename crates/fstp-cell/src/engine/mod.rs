@@ -519,6 +519,29 @@ pub struct CellEngine {
     snapshot: Arc<Mutex<Arc<CellState>>>,
     shutdown: Shutdown,
     clock: CommitClock,
+    engine_entries: EngineEntries,
+}
+
+/// The engine records of the committed ledger, in sequence order, as the
+/// API core's journal and journey reads fold them (ADR-026). The engine
+/// task appends the entries of each commit, so the API core's synchronous
+/// ledger port never reads the store.
+pub type EngineEntries = Arc<Mutex<Vec<Entry<fstp_engine::Record>>>>;
+
+/// The engine records of `entries`, with their sequence, instant,
+/// command id and schema kept.
+fn engine_records(entries: &[Entry<CellRecord>]) -> Vec<Entry<fstp_engine::Record>> {
+    entries
+        .iter()
+        .cloned()
+        .filter_map(|e| {
+            e.try_map_record(|_, r| match r {
+                CellRecord::Engine(r) => Ok(r),
+                _ => Err(()),
+            })
+            .ok()
+        })
+        .collect()
 }
 
 impl std::fmt::Debug for CellEngine {
@@ -574,7 +597,11 @@ impl CellEngine {
             .await
             .map_err(StartError::Store)?;
         let state = fstp_cell_core::replay(&entries).map_err(StartError::Fold)?;
-        Ok(CellEngine::spawn(rt, store, vault, state, shutdown, queue))
+        let mirror = Arc::new(Mutex::new(engine_records(&entries)));
+        drop(entries);
+        Ok(CellEngine::spawn(
+            rt, store, vault, state, shutdown, queue, mirror,
+        ))
     }
 
     /// Spawns the engine task over a state already replayed from `store`.
@@ -585,9 +612,11 @@ impl CellEngine {
         state: CellState,
         shutdown: &Shutdown,
         queue: usize,
+        engine_entries: EngineEntries,
     ) -> (CellEngine, JoinHandle<S>) {
         let (tx, rx) = chan::channel(queue);
         let cell = store.cell();
+        let state_head = state.head();
         let snapshot = Arc::new(Mutex::new(Arc::new(state.clone())));
         let signal = shutdown.signal();
         let task = EngineTask {
@@ -596,6 +625,8 @@ impl CellEngine {
             rt: rt.clone(),
             state,
             snapshot: Arc::clone(&snapshot),
+            engine_entries: Arc::clone(&engine_entries),
+            mirrored: state_head,
         };
         let handle = rt.spawn(task.run(rx, signal));
         (
@@ -605,6 +636,7 @@ impl CellEngine {
                 snapshot,
                 shutdown: shutdown.clone(),
                 clock: system_commit_clock(),
+                engine_entries,
             },
             handle,
         )
@@ -689,6 +721,17 @@ impl CellEngine {
         Arc::clone(&lock_snapshot(&self.snapshot))
     }
 
+    /// The engine records of the committed ledger after `after`, in
+    /// sequence order ([`EngineEntries`]).
+    pub fn engine_entries_after(&self, after: Seq) -> Vec<Entry<fstp_engine::Record>> {
+        let all = self
+            .engine_entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let from = all.partition_point(|e| e.seq <= after);
+        all.get(from..).map(<[_]>::to_vec).unwrap_or_default()
+    }
+
     /// Whether the cell's shutdown was triggered.
     pub fn is_shutting_down(&self) -> bool {
         self.shutdown.is_triggered()
@@ -701,9 +744,27 @@ struct EngineTask<S, V, R> {
     rt: R,
     state: CellState,
     snapshot: Arc<Mutex<Arc<CellState>>>,
+    engine_entries: EngineEntries,
+    /// The ledger head the mirror has read up to.
+    mirrored: Seq,
 }
 
 impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
+    /// Appends the engine records committed after the mirror's head to
+    /// the mirror. A failed read leaves the mirror's head where it was, so
+    /// the next commit reads those entries again and none is lost.
+    async fn mirror_after(&mut self) {
+        if let Ok(new) = self.read_after(self.mirrored).await {
+            if let Some(last) = new.last() {
+                self.mirrored = last.seq;
+            }
+            self.engine_entries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(engine_records(&new));
+        }
+    }
+
     async fn run(mut self, mut rx: Receiver<Job>, signal: ShutdownSignal) -> S {
         loop {
             let next = race(rx.recv(), signal.notified()).await;
@@ -719,6 +780,9 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
                 Job::Command { admitted, reply } => {
                     let result = self.execute(admitted).await;
                     *lock_snapshot(&self.snapshot) = Arc::new(self.state.clone());
+                    if matches!(&result, Ok(d) if d.duplicate.is_none()) {
+                        self.mirror_after().await;
+                    }
                     reply.send(result);
                 }
                 Job::DryRun { admitted, reply } => {
@@ -753,6 +817,11 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
 
     /// Drives one `DriverCore` to its end.
     async fn execute(&mut self, admitted: Admitted) -> Result<Done, EngineError> {
+        // ADR-026: a dry-run admission checked no session and no step-up,
+        // so it never reaches an append.
+        if admitted.is_dry_run() {
+            return Err(EngineError::Exec(ExecError::NotACommand));
+        }
         let at = admitted.at();
         let mut driver = DriverCore::start(admitted).in_cell(self.store.cell());
         let mut event: Option<Event> = None;

@@ -320,6 +320,8 @@ dependencies = [
 name = "fstp-cell"
 version = "0.1.0"
 dependencies = [
+ "fstp-access",
+ "fstp-api-core",
  "fstp-audit",
  "fstp-auth",
  "fstp-cell",
@@ -352,6 +354,7 @@ dependencies = [
  "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
+ "fstp-web",
  "fstp-webauthn",
  "fstp-witness",
 ]

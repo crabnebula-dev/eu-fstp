@@ -53,6 +53,12 @@ fstp-dispatch.workspace = true
 # the funder profiles of the page footer (I-69).
 fstp-public.workspace = true
 fstp-report.workspace = true
+# Lane L1 (ADR-026): the W6 composition. The cell builds one ApiCore over
+# its ports and mounts the web adapter behind its own table. fstp-access
+# names the clearance and grant types the ports take.
+fstp-api-core.workspace = true
+fstp-access.workspace = true
+fstp-web.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
@@ -71,10 +77,9 @@ fstp-cell = { workspace = true, features = ["memory", "dev-pages"] }
 # Test only: `routes::memory`, the in-memory backend and the local cell
 # (design section 14.3). The `fstp-cell` binary never builds them.
 memory = []
-# Test and dev stack only: `http::Front::with_pages`, which serves the
-# compiled auth pages of design section 11.2 (`routes::page_table`).
-# Section 8.7 does not list those routes yet, so no shipped build enables
-# it.
+# No longer gates anything: Daniel decided on 2026-11-20 (D2, ADR-026)
+# that every build serves the compiled auth pages. Kept so the crates that
+# name it still build.
 dev-pages = []
 
 [lints]

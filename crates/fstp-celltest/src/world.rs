@@ -1241,7 +1241,7 @@ impl World {
                 host: Some(crate::world_host::WorldHost::start(&spec)?),
             });
         }
-        World::start_in_process(spec, pages, dev, &[], None)
+        World::start_in_process(spec, pages, dev, &[], None, false)
     }
 
     /// The world of a `fstp-world-host` process ([`crate::world_host`]):
@@ -1261,7 +1261,7 @@ impl World {
                 "a hosted world runs in this process, with one custody socket per cell".to_owned(),
             ));
         }
-        World::start_in_process(spec, None, &[], custody, None)
+        World::start_in_process(spec, None, &[], custody, None, false)
     }
 
     /// [`World::start`] whose cells limit their public routes to `limit`
@@ -1282,7 +1282,25 @@ impl World {
                 "fstp_celltest::world::World in process mode sets no public limit",
             )));
         }
-        World::start_in_process(spec, None, &[], &[], Some(limit))
+        World::start_in_process(spec, None, &[], &[], Some(limit), false)
+    }
+
+    /// [`World::start`] whose cells mount the web adapter over their own
+    /// `ApiCore` behind the cell table (ADR-026, lane L1), with a stub
+    /// journey UI shell. The API, MCP and OAuth metadata surfaces then run
+    /// over the cell's PostgreSQL ports. The spec must not ask for process
+    /// mode.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::start`], and a refusal of a spec in process mode.
+    pub fn start_with_api(spec: WorldSpec) -> Result<World, WorldError> {
+        if spec.process_mode {
+            return Err(WorldError::NotImplemented(NotImplemented::new(
+                "fstp_celltest::world::World in process mode mounts no API core",
+            )));
+        }
+        World::start_in_process(spec, None, &[], &[], None, true)
     }
 
     fn start_in_process(
@@ -1291,6 +1309,7 @@ impl World {
         dev: &[DevCell],
         custody: &[std::path::PathBuf],
         public_limit: Option<fstp_cell::routes::Limit>,
+        api: bool,
     ) -> Result<World, WorldError> {
         // One world start at a time in the process (lead decision,
         // 2026-11-13, lane F-ERASE): worlds that start in parallel race
@@ -1321,6 +1340,7 @@ impl World {
                     dev,
                     custody,
                     public_limit,
+                    api,
                 },
                 &egress,
             ) {
@@ -2201,6 +2221,8 @@ struct CellServe<'a> {
     /// The limit of the public routes per peer, when a test sets one
     /// ([`World::start_with_public_limit`]).
     public_limit: Option<fstp_cell::routes::Limit>,
+    /// Whether the cell mounts the web adapter ([`World::start_with_api`]).
+    api: bool,
 }
 
 /// What every cell of a world serves, and the per-cell parts by index:
@@ -2215,6 +2237,8 @@ struct WorldServe<'a> {
     custody: &'a [std::path::PathBuf],
     /// The limit of the public routes per peer, when a test sets one.
     public_limit: Option<fstp_cell::routes::Limit>,
+    /// Whether each cell mounts the web adapter (ADR-026).
+    api: bool,
 }
 
 /// Provisions every cell of `plans`, then the service databases, then
@@ -2231,6 +2255,7 @@ fn start_cells(
         dev,
         custody,
         public_limit,
+        api,
     } = serve;
     let index = |i: usize| {
         u8::try_from(i).map_err(|_| WorldError::Store("a world holds at most 255 cells".to_owned()))
@@ -2253,6 +2278,7 @@ fn start_cells(
                 dev: dev.get(i),
                 custody: custody.get(i).map(std::path::PathBuf::as_path),
                 public_limit,
+                api,
             },
             egress,
         )?);
@@ -3680,6 +3706,7 @@ fn start_cell(
         dev,
         custody: custody_socket,
         public_limit,
+        api,
     } = serve;
     use fstp_cell::engine::startup::ClusterRole;
     use fstp_pki::cert::CertKind;
@@ -4110,6 +4137,13 @@ fn start_cell(
         // by default, so its public pages are served. Claims built on a
         // world cell's public pages say so.
         organisation: fstp_cell::public::OrganisationPort { active: true },
+        // ADR-026: a world started with `World::start_with_api` mounts the
+        // web adapter over the cell's own ApiCore, with a stub UI shell.
+        web_assets: if api {
+            Some(fstp_cell::process::stub_web_assets().map_err(|e| fail("the web assets", &e))?)
+        } else {
+            None
+        },
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,

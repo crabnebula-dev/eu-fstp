@@ -84,6 +84,7 @@ pub struct RouteInputs {
     creator: Option<crate::creator::CreatorFacts>,
     agent: bool,
     api: Option<ApiEffects>,
+    dry: bool,
 }
 
 impl RouteInputs {
@@ -200,6 +201,20 @@ impl RouteInputs {
     pub fn with_api(mut self, effects: ApiEffects) -> RouteInputs {
         self.api = Some(effects);
         self
+    }
+
+    /// The same inputs for a dry run only (ADR-026 "Dry run"). Only the
+    /// gate's dry-run admission sets it, and the engine executes no
+    /// admission that carries it.
+    #[must_use]
+    pub(crate) fn with_dry(mut self) -> RouteInputs {
+        self.dry = true;
+        self
+    }
+
+    /// Whether the admission is for a dry run only.
+    pub fn dry_run(&self) -> bool {
+        self.dry
     }
 
     /// The API core's side effects, if given.

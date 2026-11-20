@@ -49,6 +49,8 @@ const CLOSE_SQL: &str = "UPDATE api.pending_actions p SET status = $2, closed_at
 const SWEEP_SQL: &str = "DELETE FROM api.pending_actions p \
      WHERE NOT EXISTS (SELECT 1 FROM api.pending_confirmed c WHERE c.id = p.id) \
      AND ((p.status <> 'open' AND p.closed_at <= $1) OR (p.status = 'open' AND p.expires_at <= $1))";
+const DELETE_PENDING_SQL: &str = "DELETE FROM api.pending_actions p WHERE p.id = $1 \
+     AND NOT EXISTS (SELECT 1 FROM api.pending_confirmed c WHERE c.id = p.id)";
 const PUT_WORKSPACE_SQL: &str = "INSERT INTO workspace.drafts \
      (proposal, slot, revision, key_ix, sealed, updated_at) VALUES ($1, $2, 1, $3, $4, $5) \
      ON CONFLICT (proposal, slot) DO UPDATE SET revision = workspace.drafts.revision + 1, \
@@ -322,6 +324,19 @@ impl<R: Runtime> ApiStore<R> {
         let n = client
             .execute(CLOSE_SQL, &[&id.as_slice(), &to.as_str(), &at])
             .await?;
+        client.release();
+        Ok(n == 1)
+    }
+
+    /// Deletes the unconfirmed action `id`, such as a preparation whose
+    /// audit entry could not be written. `false` when none was deleted.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn delete_pending(&self, id: [u8; 16]) -> Result<bool, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let n = client.execute(DELETE_PENDING_SQL, &[&id.as_slice()]).await?;
         client.release();
         Ok(n == 1)
     }

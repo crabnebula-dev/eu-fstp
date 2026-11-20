@@ -476,10 +476,7 @@ type DryAndDone = (Vec<bool>, Vec<bool>, Vec<Stored>);
 /// Runs a dry run of each of `admitted` on a fresh engine over an empty
 /// store, then executes each, and gives both result lists and the ledger
 /// after the dry runs.
-fn dry_then_execute(
-    vault: Vault,
-    admitted: &[Admitted],
-) -> Result<DryAndDone, &'static str> {
+fn dry_then_execute(vault: Vault, admitted: &[Admitted]) -> Result<DryAndDone, &'static str> {
     let rt = runtime()?;
     let rt2 = rt.clone();
     let admitted = admitted.to_vec();

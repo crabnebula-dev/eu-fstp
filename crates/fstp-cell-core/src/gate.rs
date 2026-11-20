@@ -587,6 +587,21 @@ impl Admitted {
         self
     }
 
+    /// The same admission with the API core's side effects `effects`:
+    /// the pending action the command confirms and the call's audit
+    /// events (ADR-026). They change no check and no decision.
+    #[must_use]
+    pub fn with_api(mut self, effects: crate::inputs::ApiEffects) -> Admitted {
+        self.inputs = self.inputs.with_api(effects);
+        self
+    }
+
+    /// Whether this admission is for a dry run only
+    /// ([`admit_dry_run`]). The engine executes no such admission.
+    pub fn is_dry_run(&self) -> bool {
+        self.inputs.dry_run()
+    }
+
     /// The same admission with the message bodies of a timeline firing
     /// (M6 design section 4 step 2). Only the timeline task calls it. The
     /// decider refuses bodies that do not name exactly the fired messages.
@@ -774,6 +789,42 @@ pub fn admit_api_command(
         policy,
         Some(request_digest),
     )
+}
+
+/// Admits `action` of `account` for a dry run only (ADR-026 "Dry run"):
+/// the command is decided on a copy of the state and never appended, so
+/// no session or step-up is checked here. The API core resolved the
+/// caller first, and an execution passes [`admit_api_command`] or
+/// [`admit_agent_command`] with every check. A read, a system-only and a
+/// route-only command are refused, and so is an unclassified high-risk
+/// kind.
+///
+/// # Errors
+///
+/// [`Deny::NotPermitted`] as above.
+pub fn admit_dry_run(
+    s: &CellState,
+    account: AccountId,
+    action: Action,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, Deny> {
+    let _ = s;
+    let Action::Command(c) = &action else {
+        return Err(Deny::NotPermitted);
+    };
+    if system_only(c) || route_only(c) {
+        return Err(Deny::NotPermitted);
+    }
+    let _ = HighRiskAction::of(&action)?;
+    Ok(Admitted {
+        action,
+        principal: Principal::Account(account),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none().with_dry(),
+    })
 }
 
 fn admit_inner(
