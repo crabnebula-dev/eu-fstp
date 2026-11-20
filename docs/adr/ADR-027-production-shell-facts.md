@@ -23,7 +23,7 @@ Status: Proposed. Drafted 2026-11-20 by lane L6 `prod/shell-facts` for gap G13 o
 | Who asks | The cell's decision asks both queries for the commands that read the report (acknowledging a warning, requesting, approving and overriding activation). It asks only when the shell supplies no answer of its own. A test shell may stand in for the vault with its own answers | NOTE 8; `fstp_cell_core::creator` |
 | Unanswered | A vault that cannot answer refuses the command and records nothing (NOTE 2). This is stricter than leaving the rows standing as not checked, and no activation follows from either | NOTE 2 |
 | Recording | The vault logs every asked query in its own query log. The ledger records no `VaultOutcome` for the two answers yet, as for the SoD preview answers | NOTE 5; open point |
-| Probes run | The command route asks the shell for fresh facts before admission. For a request for activation, an approval and an override, the shell runs every probe in that request. Every other command reads the last results | Design 3.2 "Fresh probes" |
+| Probes run | The command route asks the shell for fresh facts once the gate admitted the command. For a request for activation, an approval and an override, the shell runs every probe in that request. Every other command reads the last results | Design 3.2 "Fresh probes" |
 | Stale probes | A caller that reads the synchronous facts of an approval gets results no older than 60 seconds. An older or missing result counts as absent, so the check fails closed | Q5; I-66 |
 | Channel probe | P-32 enables email only. The probe opens the configured submission relay through `Destination::MailSubmission`, completes the TLS handshake and reads a `220` greeting, then sends `QUIT` | ADR-018; P-32 |
 | Sending domain probe | SPF, DKIM and DMARC records of the configured sending domain, read as TXT records. SPF: exactly one record starting `v=spf1` (RFC 7208 section 4.5). DMARC: exactly one record at `_dmarc.<domain>` starting `v=DMARC1` with a valid `p` tag (RFC 7489 section 6.6.3). DKIM: a record at `<selector>._domainkey.<domain>` with a non-empty `p` tag (RFC 6376 section 3.6.1). All three must pass | Spec "sending domain with SPF, DKIM and DMARC checks" |
@@ -59,16 +59,18 @@ DnsResolver { addr: SocketAddr },   // the configured resolver, TCP port 53 only
 
 ## Tests
 
-- `q35_classes_defined_answers_known_and_unknown`, `q35_proximity_lists_declared_answers_known_and_unknown` in `fstp-vault-core`.
-- `q35_queries_round_trip_on_the_wire` in `fstp-vault-proto`.
-- `q35_report_commands_ask_the_vault_without_shell_answers` in `fstp-cell-core`.
-- `q5_fake_prober_reachable_passes`, `q5_fake_prober_unreachable_fails`, `q5_absent_prober_reports_failure` in `fstp-cell`.
-- `i66_dns_txt_decode_never_panics` and the fuzz target `dns_txt_decode`.
-- `i51_i52_guide_inputs_resolve_on_a_pg_world` and `i66_production_facts_leave_only_legal_wording` in `fstp-celltest`.
+- `q35_classes_defined_answers_known_and_unknown`, `q35_classes_defined_counts_effective_facts_only`, `q35_proximity_lists_declared_answers_known_and_unknown` and `q35_answers_are_set_inclusion_over_random_facts` in `fstp-vault-core`.
+- `q35_queries_take_codes_13_and_14`, `q35_queries_round_trip_on_the_wire`, `q35_query_args_are_checked_against_their_kind` and `q35_answers_name_no_account` in `fstp-vault-proto`.
+- `q35_questions_name_the_draft_classes_and_lists`, `q35_only_report_commands_on_a_policy_ask` and `q35_report_commands_ask_the_vault_without_shell_answers` in `fstp-cell-core`.
+- `q5_fake_prober_reachable_passes`, `q5_fake_prober_unreachable_fails`, `q5_absent_prober_reports_failure`, `i66_stale_probe_results_are_absent_at_approval` and `adr027_sending_domain_probe_over_a_fake_resolver` in `fstp-cell`, with the unit tests of the DNS codec and the record checks.
+- The fuzz target `dns_txt_decode` of `fstp-cell`.
+- `q6_shipped_wording_is_the_only_profile_difference`, `i66_i51_i52_production_shell_facts_activate_and_publish_on_pg` and `i66_q35_unknown_class_keeps_the_programme_a_draft_on_pg` in `fstp-celltest`.
+- `i16_cell_egress_has_no_payment_destination`, `i38_only_egress_reaches_crabnebula_hosts` and `adr009_cell_egress_connect_builds_the_closed_set_only` enumerate `DnsResolver`.
 
 ## Open points
 
 - Whether a class counts as defined only through a declared member, or through a class register in the vault.
 - Whether the ledger records the two Q35 answers as `VaultOutcome` records in an approval entry.
 - How the inference probe reaches P-21: through the assessor, or through an ADR-009 member.
+- The API core path. `CellAsyncEngine` in `crates/fstp-cell/src/api/` still reads the synchronous shell facts and `AsyncEngine::creator_inputs` keeps its default, so a report read and a request for activation through the API core see no probe and no Q35 answer. Lane L5 or the lead calls `creator_facts_fresh` and `guide_inputs_fresh` there.
 - The approved wording of the shipped profiles and of the platform data protection texts (`TODO(legal)`).
