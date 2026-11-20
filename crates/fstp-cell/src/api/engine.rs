@@ -41,11 +41,18 @@ use crate::routes::{Backend, SessionRow};
 pub(crate) struct CellAsyncEngine<R: Runtime, V, T> {
     inner: Arc<Inner<R, V>>,
     tokens: Arc<T>,
+    /// The engine state of the last committed cell state, cloned once per
+    /// commit rather than once per call.
+    snapshot: std::sync::Mutex<Option<(Arc<CellState>, Arc<EngineState>)>>,
 }
 
 impl<R: Runtime, V, T> CellAsyncEngine<R, V, T> {
     pub(super) fn new(inner: Arc<Inner<R, V>>, tokens: Arc<T>) -> CellAsyncEngine<R, V, T> {
-        CellAsyncEngine { inner, tokens }
+        CellAsyncEngine {
+            inner,
+            tokens,
+            snapshot: std::sync::Mutex::new(None),
+        }
     }
 }
 
@@ -327,7 +334,19 @@ where
     }
 
     fn snapshot(&self) -> Arc<EngineState> {
-        Arc::new(self.inner.engine.state().engine().clone())
+        let s = self.inner.engine.state();
+        let mut cached = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((at, e)) = cached.as_ref()
+            && Arc::ptr_eq(at, &s)
+        {
+            return Arc::clone(e);
+        }
+        let e = Arc::new(s.engine().clone());
+        *cached = Some((s, Arc::clone(&e)));
+        e
     }
 
     fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {

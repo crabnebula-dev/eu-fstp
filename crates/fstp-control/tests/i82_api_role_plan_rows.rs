@@ -86,3 +86,28 @@ fn i82_role_plan_grants_api_and_workspace_to_app_only() {
         },
     );
 }
+
+/// I-82, ADR-007, M4 design section 9: the app role, which now writes the
+/// API core's tables, still holds SELECT only on the ledger, the audit
+/// chain and the auth log of every cell. Only the writer appends there.
+#[test]
+fn t_db_app_role_has_no_ledger_update() {
+    fstp_prop::check("t_db_app_role_has_no_ledger_update", |g: &mut Gen| {
+        let b = g.bytes(16..=16);
+        let cell = CellId(b.try_into().unwrap_or([0; 16]));
+        let plan = cell_role_plan(cell).map_err(|e| format!("{e:?}"))?;
+        for row in plan.grants.iter().filter(|r| r.role == RoleName::App) {
+            let schema = row.object.split_once('.').map_or(row.object, |(s, _)| s);
+            if matches!(schema, "ledger" | "audit" | "auth_log")
+                || row.object == "api.pending_confirmed"
+            {
+                fstp_prop::prop_assert_eq!(
+                    row.privileges.as_slice(),
+                    &[Privilege::Select][..],
+                    "{row:?}"
+                );
+            }
+        }
+        Ok(())
+    });
+}
