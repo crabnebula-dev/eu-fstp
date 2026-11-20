@@ -57,6 +57,9 @@ const PUT_WORKSPACE_SQL: &str = "INSERT INTO workspace.drafts \
      (proposal, slot, revision, key_ix, sealed, updated_at) VALUES ($1, $2, 1, $3, $4, $5) \
      ON CONFLICT (proposal, slot) DO UPDATE SET revision = workspace.drafts.revision + 1, \
      key_ix = EXCLUDED.key_ix, sealed = EXCLUDED.sealed, updated_at = EXCLUDED.updated_at";
+const PUT_DOCUMENT_SQL: &str = "INSERT INTO doc.blob (digest, kind, dek, envelope, stored_at) \
+     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (digest) DO NOTHING";
+const GET_DOCUMENT_SQL: &str = "SELECT dek, envelope FROM doc.blob WHERE digest = $1";
 const GET_WORKSPACE_SQL: &str =
     "SELECT key_ix, sealed FROM workspace.drafts WHERE proposal = $1 AND slot = $2";
 
@@ -451,6 +454,62 @@ impl<R: Runtime> ApiStore<R> {
                 .map(|s| u64::try_from(s).map_err(|_| StoreFault::Corrupt("a negative sequence")))
                 .transpose()?,
         })
+    }
+
+    /// Inserts the sealed document `envelope` of data key `dek` under the
+    /// SHA-256 `digest` of its clear bytes into `doc.blob` (M5 design
+    /// section 4.3, I-30, ADR-026 record of lane L5). Returns `false`, and
+    /// writes nothing, when the digest is stored already.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn put_document(
+        &self,
+        digest: [u8; 32],
+        kind: i16,
+        dek: [u8; 16],
+        envelope: &[u8],
+        at: i64,
+    ) -> Result<bool, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let n = client
+            .execute(
+                PUT_DOCUMENT_SQL,
+                &[
+                    &digest.as_slice(),
+                    &kind,
+                    &fstp_pgwire::Uuid::from_bytes(dek),
+                    &envelope,
+                    &at,
+                ],
+            )
+            .await?;
+        client.release();
+        Ok(n == 1)
+    }
+
+    /// The data key and sealed envelope of the document whose clear bytes
+    /// hash to `digest`, or `None`.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn document(
+        &self,
+        digest: [u8; 32],
+    ) -> Result<Option<([u8; 16], Vec<u8>)>, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let row = client
+            .query_opt(GET_DOCUMENT_SQL, &[&digest.as_slice()])
+            .await?;
+        client.release();
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let dek: fstp_pgwire::Uuid = row.get(0)?;
+        let envelope: Vec<u8> = row.get(1)?;
+        Ok(Some((*dek.as_bytes(), envelope)))
     }
 }
 

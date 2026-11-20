@@ -134,7 +134,7 @@ pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     audit: audit::CellAudit<R, V>,
     vault_audit: audit::CellVaultAudit<R, V>,
     texts: content::CellTexts<R, V>,
-    blobs: closed::ClosedBlobs,
+    blobs: content::CellBlobs<R, V>,
     sealer: content::CellSealer<R, V>,
     workspaces: content::CellWorkspaces<R, V>,
     pending: content::CellPending<R, V>,
@@ -195,7 +195,7 @@ where
         audit: audit::CellAudit(Arc::clone(&inner)),
         vault_audit: audit::CellVaultAudit(Arc::clone(&inner)),
         texts: content::CellTexts(Arc::clone(&inner)),
-        blobs: closed::ClosedBlobs,
+        blobs: content::CellBlobs(Arc::clone(&inner)),
         sealer: content::CellSealer(Arc::clone(&inner)),
         workspaces: content::CellWorkspaces(Arc::clone(&inner)),
         pending: content::CellPending(Arc::clone(&inner)),
@@ -224,7 +224,7 @@ where
     type Engine = engine::CellAsyncEngine<R, V, T>;
     type Audit = audit::CellAudit<R, V>;
     type Texts = content::CellTexts<R, V>;
-    type Blobs = closed::ClosedBlobs;
+    type Blobs = content::CellBlobs<R, V>;
     type Precheck = closed::NoPrecheck;
     type Sealer = content::CellSealer<R, V>;
     type Workspaces = content::CellWorkspaces<R, V>;

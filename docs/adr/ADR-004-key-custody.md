@@ -160,12 +160,13 @@ aad    = column name || "|" || row key
 | `nonce 12 \| ciphertext \| tag 16`, under the epoch seal key `S(e)` | 0 | `keystore.chain.state` (AAD `"fstp-chain-state-v1"`, cell, chain, epoch), `keystore.group_key.sealed_secret`, `keystore.signer.sealed_secret` |
 | `nonce 12 \| ciphertext \| tag 16`, under the row's own outbox data key | 0 | `ops.outbox.body` |
 | A wrapped seal key of `fstp-keyd` or the custody simulator: `nonce 12 \| S(e) 32 \| tag 16`, exactly 60 bytes, under the root `R(e)` | 0 | `keystore.root.wrapped_seal_key` |
-| A sealed blob of `fstp_keys::envelope`: `"FSB1" \| version u8 = 1 \| aead u16 = 1 \| nonce 12 \| ciphertext \| tag 16` | 7 | `blob.text.envelope`, `keystore.text.envelope`, and any other column holding that form |
+| A sealed blob of `fstp_keys::envelope`: `"FSB1" \| version u8 = 1 \| aead u16 = 1 \| nonce 12 \| ciphertext \| tag 16` | 7 | `blob.text.envelope`, `keystore.text.envelope`, `doc.blob.envelope`, and any other column holding that form |
 | A sealed key (section "Sealed key format"): 1210 bytes from `"FSK1"` | 1150 | `keystore.data_key.sealed` |
 | An App chain event (ADR-010 amendment of 2026-11-20): `be32(key_ix) \| nonce 12 \| ciphertext \| tag 16` under the ledger key generation `key_ix` | 4 | `audit.chain.body` of a kind 2 row |
 
 - A wrapped seal key of another backend, such as OKMS, has the layout of that backend. It is recorded here before that backend wraps a production root. Until then a reader that meets another length reports the value as unread, so the check fails closed.
-- `keystore.erasure_intent.plan`, `ops.licence_state.sealed_token` and `doc.blob.envelope` have no writer in the cell yet. Their layout is recorded here with their first writer. Until then a reader that meets a value reports it as unread.
+- `keystore.erasure_intent.plan` and `ops.licence_state.sealed_token` have no writer in the cell yet. Their layout is recorded here with their first writer. Until then a reader that meets a value reports it as unread.
+- `doc.blob.envelope` (lane L5, 2026-11-21, the blob store of the API core): a sealed blob of `fstp_keys::envelope`, nonce at 7, under a fresh data key of a group of its own, so erasing the group erases the blob. The data key is kept in `keystore.data_key` like a text's, and its id is `doc.blob.dek`. The blob's context is the text context of the cell, the group and the data key id at generation 0, so a later re-seal of the data key at another generation still opens it. The plaintext is `"fstpblb1" \| owner kind u8 = 1 \| programme 16 \| bytes`, and `doc.blob.digest` is the SHA-256 of the bytes.
 - `workspace.drafts.sealed` holds the seal without the generation prefix of `fstp_pgstore::seal_workspace`. The prefix lives in the row's `key_ix` column, and the store puts it back on read.
 
 ### Purpose code table

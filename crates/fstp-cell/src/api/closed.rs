@@ -16,11 +16,10 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use fstp_access::ReadClearance;
 use fstp_api_core::port::{
-    Affiliations, AsyncIdentityOracle, BirthDate, BlobOwner, BlobRef, BlobStore, BreakGlass,
-    BreakGlassId, CountryCode, ExclusionClasses, PortError, Precheck, ProbeKind, ProbeOutcome,
-    Prober, Receipt, StepUpProof, Vault, VaultBound, VerificationPurpose, VerificationRedirect,
+    Affiliations, AsyncIdentityOracle, BirthDate, BreakGlass, BreakGlassId, CountryCode,
+    ExclusionClasses, PortError, Precheck, ProbeKind, ProbeOutcome, Prober, Receipt, StepUpProof,
+    Vault, VaultBound, VerificationPurpose, VerificationRedirect,
 };
 use fstp_domain::id::{AccountId, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
@@ -131,26 +130,6 @@ impl BreakGlass for ClosedBreakGlass {
         proof: StepUpProof,
     ) -> Result<(), PortError> {
         let _ = (approver, b, approve, proof);
-        Err(PortError::Unavailable)
-    }
-}
-
-/// No blob store yet (R-PG-02 imports).
-pub(crate) struct ClosedBlobs;
-
-impl BlobStore for ClosedBlobs {
-    async fn put(&self, owner: BlobOwner, bytes: &[u8]) -> Result<BlobRef, PortError> {
-        let _ = (owner, bytes);
-        Err(PortError::Unavailable)
-    }
-
-    async fn get(
-        &self,
-        owner: BlobOwner,
-        r: BlobRef,
-        clearance: &ReadClearance,
-    ) -> Result<Vec<u8>, PortError> {
-        let _ = (owner, r, clearance);
         Err(PortError::Unavailable)
     }
 }

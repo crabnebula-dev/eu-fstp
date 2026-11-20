@@ -1131,6 +1131,82 @@ impl<C: Custody> ErasureRunner<C> {
         Ok(())
     }
 
+    /// Seals `bytes` as document `id` under a fresh data key of the
+    /// existing group `group`, and returns the sealed blob in its stored
+    /// form (`doc.blob.envelope`, ADR-026 record of lane L5). The data key
+    /// is kept like a text's, so erasing the group erases the document.
+    /// The blob's context names generation 0, so a later re-seal of the
+    /// data key at another generation still opens it.
+    ///
+    /// # Errors
+    ///
+    /// An unknown group, a planner refusal, or a failed seal.
+    pub fn seal_document(
+        &mut self,
+        group: [u8; 16],
+        id: [u8; 16],
+        bytes: &[u8],
+    ) -> Result<Vec<u8>, CellError> {
+        let g = GroupId(group);
+        let generation = self
+            .store
+            .chain_state
+            .generation(g)
+            .ok_or(keys_err("unknown group"))?;
+        let sk = self
+            .work
+            .secrets
+            .get(&(g, generation))
+            .ok_or(keys_err("group secret not open"))?;
+        let dek = DekId(id);
+        let mut chain = self.chain.clone();
+        chain.admit(g, dek).map_err(|_| keys_err("key admission"))?;
+        let data_key = DataKey::generate().map_err(|_| keys_err("data key"))?;
+        let blob = envelope::seal_blob(&data_key, &ctx_for(self.store.cell, g, 0, id), bytes)
+            .map_err(|_| keys_err("document seal"))?;
+        let stored = envelope::encode_sealed_blob(&blob).map_err(|_| keys_err("document form"))?;
+        let ctx = ctx_for(self.store.cell, g, generation, id);
+        let sealed = envelope::seal_key(sk.public(), &data_key, &ctx)
+            .map_err(|_| keys_err("data key seal"))?;
+        self.store
+            .chain_state
+            .admit(g, dek)
+            .map_err(|_| keys_err("key admission"))?;
+        self.chain = chain;
+        self.store.keys.insert(dek, (g, generation, sealed));
+        self.store.persist.dirty.keys.insert(dek);
+        Ok(stored)
+    }
+
+    /// Opens the sealed document `stored` of data key `id`
+    /// ([`ErasureRunner::seal_document`]), or refuses it once its key is
+    /// erased.
+    ///
+    /// # Errors
+    ///
+    /// [`OpenRefusal`] as for a text.
+    pub fn open_document(
+        &self,
+        id: [u8; 16],
+        stored: &[u8],
+    ) -> Result<impl std::ops::Deref<Target = Vec<u8>> + use<C>, OpenRefusal> {
+        let dek = DekId(id);
+        if self.chain.refused_for_open(dek) {
+            return Err(OpenRefusal::Erased);
+        }
+        let (g, generation, sealed) = self.store.keys.get(&dek).ok_or(OpenRefusal::Unknown)?;
+        let sk = self
+            .work
+            .secrets
+            .get(&(*g, *generation))
+            .ok_or(OpenRefusal::Keys)?;
+        let ctx = ctx_for(self.store.cell, *g, *generation, id);
+        let dk = envelope::open_key(sk, sealed, &ctx).map_err(|_| OpenRefusal::Keys)?;
+        let blob = envelope::decode_sealed_blob(stored).map_err(|_| OpenRefusal::Keys)?;
+        envelope::open_blob(&dk, &ctx_for(self.store.cell, *g, 0, id), &blob)
+            .map_err(|_| OpenRefusal::Keys)
+    }
+
     /// Opens text `id` for `state`, or refuses it (design section 3.4).
     ///
     /// # Errors
@@ -1848,6 +1924,17 @@ enum Request {
         id: [u8; 16],
         reply: ReplyTx<Result<Plaintext, OpenRefusal>>,
     },
+    SealDocument {
+        group: [u8; 16],
+        id: [u8; 16],
+        bytes: Vec<u8>,
+        reply: ReplyTx<Result<Vec<u8>, CellError>>,
+    },
+    OpenDocument {
+        id: [u8; 16],
+        stored: Vec<u8>,
+        reply: ReplyTx<Result<Plaintext, OpenRefusal>>,
+    },
     Keystore {
         reply: ReplyTx<Keystore>,
     },
@@ -1886,6 +1973,10 @@ impl Request {
                 reply.send(Err(gone));
             }
             Request::OpenText { reply, .. } => reply.send(Err(OpenRefusal::Keys)),
+            Request::SealDocument { reply, .. } => {
+                reply.send(Err(keys_err("the erasure task is not running")))
+            }
+            Request::OpenDocument { reply, .. } => reply.send(Err(OpenRefusal::Keys)),
             Request::Signer { reply, .. } => reply.send(Err(gone)),
             Request::RotateSigner { reply, .. } => reply.send(Err(gone)),
             Request::SetLoginEmail { reply, .. } => reply.send(Err(gone)),
@@ -1976,6 +2067,46 @@ impl ErasureHandle {
     /// task ended.
     pub async fn open_text(&self, id: [u8; 16]) -> Result<Plaintext, OpenRefusal> {
         self.ask(|reply| Request::OpenText { id, reply })
+            .await
+            .unwrap_or(Err(OpenRefusal::Keys))
+    }
+
+    /// Seals `bytes` as document `id` in `group`
+    /// ([`ErasureRunner::seal_document`]): the stored envelope, once its
+    /// data key is durable.
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn seal_document(
+        &self,
+        group: [u8; 16],
+        id: [u8; 16],
+        bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, CellError> {
+        self.ask(|reply| Request::SealDocument {
+            group,
+            id,
+            bytes,
+            reply,
+        })
+        .await
+        .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// Opens the stored document envelope `stored` of data key `id`
+    /// ([`ErasureRunner::open_document`]).
+    ///
+    /// # Errors
+    ///
+    /// The runner's [`OpenRefusal`], or [`OpenRefusal::Keys`] once the
+    /// task ended.
+    pub async fn open_document(
+        &self,
+        id: [u8; 16],
+        stored: Vec<u8>,
+    ) -> Result<Plaintext, OpenRefusal> {
+        self.ask(|reply| Request::OpenDocument { id, stored, reply })
             .await
             .unwrap_or(Err(OpenRefusal::Keys))
     }
@@ -2203,6 +2334,21 @@ async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
             let state = runner.engine.state();
             let opened = runner
                 .open_text(&state, id)
+                .map(|t| Box::new(t) as Plaintext);
+            reply.send(opened);
+        }
+        Request::SealDocument {
+            group,
+            id,
+            bytes,
+            reply,
+        } => {
+            let done = runner.seal_document(group, id, &bytes);
+            reply.send(durable(runner, done).await);
+        }
+        Request::OpenDocument { id, stored, reply } => {
+            let opened = runner
+                .open_document(id, &stored)
                 .map(|t| Box::new(t) as Plaintext);
             reply.send(opened);
         }
