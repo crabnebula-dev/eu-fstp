@@ -28,6 +28,14 @@
 //! a pending exposure. Every other one is a direct exposure, so `Pending`
 //! through MCP stays a violation for it.
 //!
+//! Daniel's decision of 2026-11-20 on P-75 and P-77 adds a pending
+//! exposure by request: `creator.apply_start` from the SuperSAFE template
+//! sets both, so it is one (`RefOp::prepares`). The model's cells stay
+//! true under it. In every state of [`PATH`] the programme P is active,
+//! so the creator refuses a start, and a save other than P-09 alone, in
+//! the dry run on both channels, before any pending action. Such a cell
+//! gives the same refusal on both channels, which either exposure admits.
+//!
 //! Properties:
 //!
 //! - `transition("I-84 direct")`: for a direct exposure, the MCP outcome
@@ -118,10 +126,10 @@ pub enum Exposure {
 
 /// The exposure of `op` under `policy`. A prepare-only tool on an operation
 /// that is not high-risk is a pending exposure (ADR-013 amendment of
-/// 2026-11-20). The reference names exactly those tools.
+/// 2026-11-20), and so is a matrix request that sets P-75 or P-77 (Daniel,
+/// 2026-11-20). The reference names exactly those (`RefOp::prepares`).
 pub fn exposure(op: &RefOp, policy: &Policy) -> Exposure {
-    let prepare_only = op.tool.is_some_and(|t| t.prepare);
-    if op.high_risk || prepare_only || (op.binding && policy.p77_draft_only) {
+    if op.high_risk || op.prepares() || (op.binding && policy.p77_draft_only) {
         Exposure::Pending
     } else {
         Exposure::Direct
@@ -600,9 +608,13 @@ mod tests {
 
     /// I-84, I-85, ADR-013 amendment of 2026-11-20: exactly the seven
     /// operations that are not high-risk but whose tool only prepares are
-    /// pending exposures under either P-77 value. Every other operation
-    /// with a tool that is neither high-risk nor binding stays a direct
-    /// exposure, so `Pending` through MCP is a violation for it.
+    /// pending exposures under either P-77 value. P-75 and P-77 (Daniel,
+    /// 2026-11-20): the two tools that prepare a request setting either
+    /// one are those of `creator.save_fields` and `creator.apply_start`.
+    /// Of their matrix requests, only the template start sets them, so it
+    /// is a pending exposure too. Every other operation with a tool that is
+    /// neither high-risk nor binding stays a direct exposure, so `Pending`
+    /// through MCP is a violation for it.
     #[test]
     fn i84_m_parity_prepare_only_tools_are_pending_exposures() {
         let reference = authz_reference().unwrap();
@@ -622,10 +634,29 @@ mod tests {
         ];
         want.sort_unstable();
         assert_eq!(prepared, want, "the prepare-only operations");
+        let agent_policy: Vec<&str> = reference
+            .ops()
+            .filter(|o| o.tool.is_some_and(|t| t.agent_policy))
+            .map(|o| o.name)
+            .collect();
+        assert_eq!(
+            agent_policy,
+            ["creator.apply_start", "creator.save_fields"],
+            "the tools that prepare a request setting P-75 or P-77"
+        );
+        let by_request: Vec<&str> = reference
+            .ops()
+            .filter(|o| o.sets_agent_policy)
+            .map(|o| o.name)
+            .collect();
+        assert_eq!(by_request, ["creator.apply_start"], "P-75, P-77 requests");
         for op in reference.ops().filter(|o| o.tool.is_some()) {
             for p77 in [true, false] {
                 let got = exposure(op, &policy(p77));
-                let pending = op.high_risk || prepared.contains(&op.name) || (op.binding && p77);
+                let pending = op.high_risk
+                    || prepared.contains(&op.name)
+                    || by_request.contains(&op.name)
+                    || (op.binding && p77);
                 let want = if pending {
                     Exposure::Pending
                 } else {

@@ -697,3 +697,159 @@ fn i67_adr013_second_person_approvals_keep_no_executing_tool() {
         );
     }
 }
+
+/// The creator commands of the P-75 and P-77 rule (ADR-013, Daniel's
+/// decision of 2026-11-20), over draft 7 at revision 1.
+mod agent_policy {
+    use fstp_creator::{
+        CreatorCommand, DraftRevision, FieldEdit, ImportDocumentId, Provenance, StartingPoint,
+        TemplateId, ValueDigest,
+    };
+    use fstp_domain::id::{ContentDigest, ProgrammeId};
+    use fstp_domain::policy::{FunderProfileRef, McpBindingActions};
+    use fstp_programme::{FieldId, FieldValue};
+
+    pub(super) const P: ProgrammeId = ProgrammeId::from_raw(7);
+
+    pub(super) fn base() -> DraftRevision {
+        DraftRevision::new(1, fstp_ledger::Seq::from_raw(1))
+    }
+
+    pub(super) fn edit(value: FieldValue) -> FieldEdit {
+        FieldEdit {
+            field: value.field(),
+            value,
+            digest: ValueDigest::new(ContentDigest::from_bytes([0; 32])),
+            provenance: Provenance::Manual,
+        }
+    }
+
+    pub(super) fn p75() -> FieldEdit {
+        edit(FieldValue::P75(true))
+    }
+
+    pub(super) fn p77() -> FieldEdit {
+        edit(FieldValue::P77(McpBindingActions::Allowed))
+    }
+
+    pub(super) fn p28() -> FieldEdit {
+        edit(FieldValue::P28(false))
+    }
+
+    pub(super) fn save(fields: Vec<FieldEdit>, clear: Vec<FieldId>) -> CreatorCommand {
+        CreatorCommand::SaveFields {
+            programme: P,
+            base: base(),
+            fields,
+            clear,
+        }
+    }
+
+    pub(super) fn start(start: StartingPoint) -> CreatorCommand {
+        CreatorCommand::ApplyStart {
+            programme: P,
+            base: base(),
+            start,
+        }
+    }
+
+    pub(super) fn template() -> StartingPoint {
+        StartingPoint::Template {
+            template: TemplateId::from_raw(1),
+            version: 1,
+        }
+    }
+
+    pub(super) fn clone_of(source: u128) -> StartingPoint {
+        StartingPoint::Clone {
+            source: ProgrammeId::from_raw(source),
+        }
+    }
+
+    pub(super) fn blank() -> StartingPoint {
+        StartingPoint::Blank {
+            profile: FunderProfileRef(
+                fstp_domain::policy::OpaqueValue::from_value(&fstp_json::Value::from("blank"))
+                    .unwrap(),
+            ),
+        }
+    }
+
+    pub(super) fn import() -> StartingPoint {
+        StartingPoint::Import {
+            document: ImportDocumentId::from_raw(3),
+        }
+    }
+}
+
+/// P-75, P-77, ADR-013 decision of Daniel of 2026-11-20: a creator command
+/// sets P-75 or P-77 exactly when a save or a clear names either field, or
+/// a start applies a template or a clone. A save of other fields, a blank
+/// start and an import start set neither.
+#[test]
+fn p75_p77_sets_agent_policy_by_the_decoded_command() {
+    use agent_policy::*;
+    use fstp_programme::FieldId;
+    let sets = |c| sets_agent_policy(&c);
+    assert!(sets(save(vec![p75()], vec![])), "P-75 save");
+    assert!(sets(save(vec![p77()], vec![])), "P-77 save");
+    assert!(sets(save(vec![p28(), p77()], vec![])), "mixed save");
+    assert!(sets(save(vec![p28()], vec![FieldId::P75])), "P-75 clear");
+    assert!(sets(save(vec![], vec![FieldId::P77])), "P-77 clear");
+    assert!(!sets(save(vec![p28()], vec![])), "P-28 save");
+    assert!(!sets(save(vec![], vec![FieldId::P28])), "P-28 clear");
+    assert!(sets(start(template())), "template start");
+    assert!(sets(start(clone_of(5))), "clone start");
+    assert!(!sets(start(blank())), "blank start");
+    assert!(!sets(start(import())), "import start");
+}
+
+/// I-85, I-84, P-75, P-77, ADR-013 decision of Daniel of 2026-11-20:
+/// through MCP, `creator_channel_policy` turns `Execute` into `Prepare`
+/// for a creator command that sets P-75 or P-77, mixed saves included. It
+/// leaves every other verdict, and every web call, as `channel_policy`
+/// gave it.
+#[test]
+fn i85_p75_p77_creator_channel_policy_prepares_only_mcp_calls_that_set_them() {
+    use agent_policy::*;
+    use fstp_programme::FieldId;
+    let s = EngineState::genesis();
+    let agent = mcp(ADMIN, &Scope::ALL, &s);
+    let person = web(ADMIN, LoginMethod::Passkey, &[ADMIN], &s);
+    let touching = [
+        save(vec![p75()], vec![]),
+        save(vec![p77()], vec![]),
+        save(vec![p28(), p75()], vec![]),
+        save(vec![], vec![FieldId::P77]),
+        start(template()),
+        start(clone_of(5)),
+    ];
+    let other = [save(vec![p28()], vec![]), start(blank()), start(import())];
+    let denied = ChannelVerdict::Deny(ChannelDenial::Scope);
+    for c in &touching {
+        assert_eq!(
+            creator_channel_policy(ChannelVerdict::Execute, &agent, c),
+            ChannelVerdict::Prepare,
+            "{c:?} through MCP"
+        );
+        assert_eq!(
+            creator_channel_policy(ChannelVerdict::Prepare, &agent, c),
+            ChannelVerdict::Prepare
+        );
+        assert_eq!(creator_channel_policy(denied, &agent, c), denied);
+        assert_eq!(
+            creator_channel_policy(ChannelVerdict::Execute, &person, c),
+            ChannelVerdict::Execute,
+            "{c:?} through the web"
+        );
+    }
+    for c in &other {
+        for p in [&agent, &person] {
+            assert_eq!(
+                creator_channel_policy(ChannelVerdict::Execute, p, c),
+                ChannelVerdict::Execute,
+                "{c:?}"
+            );
+        }
+    }
+}

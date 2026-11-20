@@ -1,14 +1,19 @@
 //! The channel rules (M4 design sections 3.6 and 3.7, I-77, I-84, I-85).
 //!
 //! [`channel_policy`] is the only function where the web and MCP channels
-//! differ. It reads nothing but its arguments. [`session_admits`] is the
+//! differ by operation. It reads nothing but its arguments. For a decoded
+//! creator command, [`creator_channel_policy`] refines its verdict by the
+//! request: through MCP, a call that sets P-75 or P-77 is prepared
+//! (ADR-013, Daniel, 2026-11-20). [`session_admits`] is the
 //! session strength rule that dispatch applies before it, on both
 //! channels.
 
 use std::collections::BTreeSet;
 
+use fstp_creator::{CreatorCommand, StartingPoint};
 use fstp_domain::Via;
 use fstp_domain::policy::McpBindingActions;
+use fstp_programme::FieldId;
 
 use crate::principal::Principal;
 use crate::registry::{OpKind, OpSpec, RoleOrApplicant, SessionNeed};
@@ -143,6 +148,46 @@ pub fn channel_policy(
         return ChannelVerdict::Prepare;
     }
     ChannelVerdict::Execute
+}
+
+/// Whether a creator command sets P-75 or P-77 (ADR-013, Daniel's
+/// decision of 2026-11-20). A save or a clear that names either field
+/// sets it, alone or mixed with other fields. So does a start from a
+/// template or a clone, which applies the source's values of both. An
+/// accepted or edited narrative names either field only in a request the
+/// creator refuses, and it counts too. A blank start and a start from an
+/// import apply no value of either.
+pub fn sets_agent_policy(cmd: &CreatorCommand) -> bool {
+    let named = |f: &FieldId| matches!(f, FieldId::P75 | FieldId::P77);
+    match cmd {
+        CreatorCommand::SaveFields { fields, clear, .. } => {
+            fields.iter().any(|e| named(&e.field)) || clear.iter().any(named)
+        }
+        CreatorCommand::ApplyStart { start, .. } => matches!(
+            start,
+            StartingPoint::Template { .. } | StartingPoint::Clone { .. }
+        ),
+        CreatorCommand::AcceptNarrative { field, .. } => named(field),
+        CreatorCommand::EditNarrative { edit, .. } => named(&edit.field),
+        _ => false,
+    }
+}
+
+/// The verdict for a decoded creator command, from the verdict
+/// [`channel_policy`] gave its operation (ADR-013, Daniel's decision of
+/// 2026-11-20). Through MCP, `Execute` becomes `Prepare` when the command
+/// sets P-75 or P-77 ([`sets_agent_policy`]), so the whole call waits for
+/// a confirmation in the platform (I-85). Every other verdict, and every
+/// web call, is returned unchanged. Total and pure.
+pub fn creator_channel_policy(
+    verdict: ChannelVerdict,
+    p: &Principal,
+    cmd: &CreatorCommand,
+) -> ChannelVerdict {
+    if verdict == ChannelVerdict::Execute && p.via() == Via::Mcp && sets_agent_policy(cmd) {
+        return ChannelVerdict::Prepare;
+    }
+    verdict
 }
 
 /// Whether the caller's session is strong enough for the operation
