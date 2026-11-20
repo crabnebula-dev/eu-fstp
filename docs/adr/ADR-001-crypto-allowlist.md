@@ -122,7 +122,7 @@ Exact versions and resolved trees at first use. `deps/allowlist.txt` ties each c
 | rustls-pki-types | A | 1.15.1 (`=1.15.1`) | `std`, with default features off. Resolved: `alloc`, `default`, `std` | 2026-10-24, M1, `fstp-tls` |
 | rustls-webpki | A | 0.103.16 (through rustls) | `alloc`, `aws-lc-rs`, `std` | 2026-10-24, M1, through rustls |
 | zeroize | A tree, root since A1 | 1.9.1 (`=1.9.1`) | Default features, which enable `alloc`. Resolved: `alloc`, `default`. `derive` is refused | 2026-10-28, M3 lane W0: direct dependency of `fstp-crypto`, `fstp-keys`, `fstp-custody` and `fstp-keyd` |
-| moduletto | B | 0.1.0, git commit `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683` (moved 2026-10-29 from `46754f2fccb0a501be278fb2fab63b670101a33d`, A2 pin move record) | Default features only. Resolved: `alloc`, `default`, `libm`, `std` | 2026-10-28, M3 lane W0: `fstp-crypto` only (A2) |
+| moduletto | B | 0.1.0, git commit `ded73e577220b7ae620d3a3db8d66f07904aa726` (moved 2026-11-20 from `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683`, which was moved 2026-10-29 from `46754f2fccb0a501be278fb2fab63b670101a33d`; A2 pin move records) | Default features only. Resolved: `alloc`, `default`, `libm`, `std` | 2026-10-28, M3 lane W0: `fstp-crypto` only (A2) |
 | der | B | 0.7.10 (`=0.7.10`) | `alloc` and `oid`, with default features off. cms and x509-cert add `derive` and `pem`. Resolved: `alloc`, `derive`, `flagset`, `oid`, `pem`, `zeroize` | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms`; 2026-11-06, M5 lane L-CON: `fstp-sigval` |
 | spki | B | 0.7.3 (`=0.7.3`) | `alloc`, with default features off. x509-cert adds `pem`. Resolved: `alloc`, `pem` | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms` |
 | x509-cert | B | 0.2.5 (`=0.2.5`) | Default features off. cms adds `pem`. Resolved: `pem`. `std`, `builder`, `hazmat`, `sct` and `arbitrary` are refused | 2026-11-06, M5 lane L-PDF: `fstp-pki::cms`; 2026-11-06, M5 lane L-CON: `fstp-sigval` |
@@ -275,6 +275,16 @@ Pin move record, 2026-10-29 (the M3 dependency owner, design section 2.5):
 - Resolved tree: unchanged. moduletto brings `libm 0.2.16`, `subtle 2.6.1` and `zeroize 1.9.1`, with the versions, checksums and features recorded above (`cargo tree --locked -e normal -p moduletto`, 2026-10-29). No package enters or leaves the platform tree.
 - Primitives at the new pin: ML-KEM-512 and ML-KEM-768 (FIPS 203), and ML-DSA-65 (FIPS 204). ML-DSA-65 has deterministic key generation from a seed and signing with explicit randomness. Its ACVP keyGen, sigGen and sigVer vectors run in moduletto's own tests at that commit.
 - `mldsa` and `composite` in `fstp-crypto` may now call moduletto's ML-DSA-65. The aws-lc-rs ML-DSA stays a test oracle only (A6).
+
+Pin move record, 2026-11-20 (lead, at Daniel's report that the second Mythos review is done and its findings fixed):
+
+- moduletto records the 2026-11-20 review by Claude Mythos 5.2 in its `audits/README.md`. It reviewed `46754f2` and re-checked its findings at `6c1ae92`, the previous pin. It found 1 medium, 3 low and 4 informational. The medium was already fixed by `19a4d3a`. A follow-up the same day reviewed `src/dsa.rs`, `src/keccak.rs` and the `src/kem.rs` changes at `6c1ae92`, with no finding above informational.
+- The three low findings were remediated in `0970a00` and merged as moduletto pull request #15. Its merge commit is `ded73e577220b7ae620d3a3db8d66f07904aa726`. The informational items stay open in moduletto's record.
+- The pin moves from `6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683` to that commit. Lockfile source: `git+https://github.com/crabnebula-dev/moduletto?rev=ded73e577220b7ae620d3a3db8d66f07904aa726#ded73e577220b7ae620d3a3db8d66f07904aa726`. The workspace `Cargo.lock`, every fuzz project `Cargo.lock` and `deps/allowlist.txt` record that string.
+- Changes between the two commits touch `src/modn.rs`, `src/ntt.rs`, `src/wasm.rs`, two examples, CI, the fuzz project and the documents. moduletto's manifest is unchanged, so its dependency lines and features are unchanged.
+- Resolved tree: unchanged. moduletto brings `libm 0.2.16`, `subtle 2.6.1` and `zeroize 1.9.1`. Features resolved: `alloc`, `default`, `libm`, `std` (`cargo tree --locked`, 2026-11-20). No package enters or leaves the platform tree.
+- Every `fstp-crypto` test passes at the new pin, including the ML-KEM-768 and ML-DSA-65 ACVP vectors. The ML-DSA vector file keeps its provenance line naming `6c1ae92`, the commit the vectors were extracted with.
+- The move counts as a version change for the release gate. `deps/tier-b-confirmations.txt` holds no confirmation for the new commit, so `deps-check --release` still fails on it (I-74). Whether this review confirms `ded73e57` for release is Daniel's decision, and the low-finding fixes have not been re-reviewed.
 
 ### A3. deps-check git-source rule
 

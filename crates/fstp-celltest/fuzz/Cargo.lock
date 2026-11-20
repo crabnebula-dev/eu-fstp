@@ -846,7 +846,7 @@ dependencies = [
 [[package]]
 name = "moduletto"
 version = "0.1.0"
-source = "git+https://github.com/crabnebula-dev/moduletto?rev=6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683#6c1ae92f2bf14eb56b5d48d1e7fc6f7ca5843683"
+source = "git+https://github.com/crabnebula-dev/moduletto?rev=ded73e577220b7ae620d3a3db8d66f07904aa726#ded73e577220b7ae620d3a3db8d66f07904aa726"
 dependencies = [
  "libm",
  "subtle",
