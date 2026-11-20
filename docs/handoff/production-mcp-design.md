@@ -116,6 +116,14 @@ These are interim choices for Daniel. No ADR file is written yet. Each lane writ
 
 ### 2.2 Decisions that need Daniel
 
+Daniel answered on 2026-11-20:
+
+- D1: the single-host pilot, as recommended.
+- D2, D4 to D8, D10 and D11: accepted as recommended. Lanes write them into the ADRs as decided by Daniel on 2026-11-20.
+- D3: a platform relay named in the cell configuration, as recommended.
+- D12: no. Build everything now, but no real user uses a production cell until the release gate passes, including the M10 Mythos confirmation (I-74).
+- D9: the lead runs the claude.ai trace before L2 merges.
+
 | Id | Question | Recommendation |
 | --- | --- | --- |
 | D1 | Which deployment comes first? | A single-host SaaS pilot with `fstp-keyd` custody and the devstack topology. OKMS, the control plane listener and remote edges come later. R-KY-01 is not claimed for the pilot |
