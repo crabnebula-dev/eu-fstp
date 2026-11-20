@@ -430,3 +430,21 @@ fn oauth_routes_refuse_other_methods_and_paths() {
     ));
     assert_eq!(r.status, StatusCode::NOT_FOUND, "no demo step-up route");
 }
+
+/// Issue 6 item 9, ADR-013 reading "Test-cell issuers": the shipped cell
+/// never builds a server that admits a plain `http` issuer. No source of
+/// its composition names the constructors that take a local `http` rule.
+#[test]
+fn h21_issue6_cell_never_admits_a_local_http_issuer() {
+    let needle = concat!("with_local", "_http");
+    for (name, src) in [
+        ("oauth/mod.rs", include_str!("mod.rs")),
+        ("oauth/routes.rs", include_str!("routes.rs")),
+        ("oauth/store.rs", include_str!("store.rs")),
+        ("oauth/tokens.rs", include_str!("tokens.rs")),
+        ("process.rs", include_str!("../process.rs")),
+        ("lib.rs", include_str!("../lib.rs")),
+    ] {
+        assert!(!src.contains(needle), "{name} names {needle}");
+    }
+}

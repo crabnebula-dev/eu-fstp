@@ -85,12 +85,21 @@ impl Default for OauthSetup {
 /// default of 10 would end a demo early (lane mcp-demo).
 const TEST_CELL_REGISTRATIONS: u32 = 200;
 
+/// Whether a test cell may serve `host` over plain `http`: a name under
+/// `.localhost`, which resolves to loopback only (RFC 6761 section 6.3).
+/// The rule lives in this test-only crate, so no shipped binary holds it
+/// (lane W3c; lane L2 moved it out of `fstp-oauth`).
+pub fn test_cell_host(host: &str) -> bool {
+    host.ends_with(".localhost")
+}
+
 /// The server of `setup`.
 fn build_server(setup: &OauthSetup) -> Result<fstp_oauth::AuthorizationServer, String> {
     let mut cfg = fstp_oauth::Config::new(&setup.issuer, &setup.resource, OAUTH_P72, OAUTH_P71);
     if setup.test_cell {
         cfg.registration_max = TEST_CELL_REGISTRATIONS;
-        return fstp_oauth::AuthorizationServer::new_test_cell(cfg).map_err(|e| e.to_string());
+        return fstp_oauth::AuthorizationServer::new_with_local_http(cfg, test_cell_host)
+            .map_err(|e| e.to_string());
     }
     fstp_oauth::AuthorizationServer::new(cfg).map_err(|e| e.to_string())
 }

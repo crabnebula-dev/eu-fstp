@@ -635,28 +635,27 @@ impl AuthorizationServer {
     /// capacities must be positive. Loopback `http` is accepted for both,
     /// for test cells on one host.
     pub fn new(cfg: Config) -> Result<AuthorizationServer, OauthError> {
-        AuthorizationServer::build(cfg, parse_url, |_| false)
+        AuthorizationServer::build(cfg, |_| false)
     }
 
-    /// A server of a test cell: as [`AuthorizationServer::new`], except
-    /// that the issuer and the resource may also be plain `http` to a
-    /// `.localhost` host, such as the e2e cell's `http://a.fstp.localhost`
-    /// (lane W3c). Only the test-only feature `test-cell` builds it, and
-    /// no shipped binary calls it.
-    #[cfg(feature = "test-cell")]
-    pub fn new_test_cell(cfg: Config) -> Result<AuthorizationServer, OauthError> {
-        AuthorizationServer::build(
-            cfg,
-            crate::url::parse_test_cell_url,
-            crate::url::test_cell_host,
-        )
-    }
-
-    fn build(
+    /// A server as [`AuthorizationServer::new`] builds it, except that the
+    /// issuer and the resource may also be plain `http` to a host that
+    /// `local_http` admits. Every other rule holds.
+    ///
+    /// The caller supplies the rule, and no shipped code holds one: the
+    /// test kit admits `.localhost` names for its e2e cell (lane W3c). A
+    /// production cell calls [`AuthorizationServer::new`], which admits no
+    /// plain `http` host but loopback. It replaces the former test-only
+    /// feature `test-cell` (lane L2, ADR-013 amendment of 2026-11-20).
+    pub fn new_with_local_http(
         cfg: Config,
-        parse: fn(&[u8]) -> Result<Url, OauthError>,
         local_http: fn(&str) -> bool,
     ) -> Result<AuthorizationServer, OauthError> {
+        AuthorizationServer::build(cfg, local_http)
+    }
+
+    fn build(cfg: Config, local_http: fn(&str) -> bool) -> Result<AuthorizationServer, OauthError> {
+        let parse = |b: &[u8]| crate::url::parse_url_with(b, local_http);
         let issuer = parse(cfg.issuer.as_bytes())
             .map_err(|_| OauthError::InvalidConfig("the issuer is outside the URL subset"))?;
         if !issuer.path_and_query().is_empty() {
@@ -2176,7 +2175,8 @@ mod tests {
     /// ADR-013, lane W3c: a production configuration refuses a plain
     /// `http` issuer and resource under `.localhost`, such as the e2e
     /// cell's, whatever features the build has. Only
-    /// `AuthorizationServer::new_test_cell` admits them.
+    /// `AuthorizationServer::new_with_local_http` admits them, with a rule
+    /// the caller supplies.
     #[test]
     fn adr013_production_config_refuses_http_localhost_issuer() {
         for (i, r) in [
@@ -2195,18 +2195,26 @@ mod tests {
         }
     }
 
-    /// ADR-013, lane W3c: the test-cell constructor admits `http` to a
-    /// `.localhost` host, and keeps every other rule: a non-local `http`
-    /// host, a path on the issuer and a query on the resource are refused.
-    #[cfg(feature = "test-cell")]
+    /// The `.localhost` rule of the test kit's e2e cell (lane W3c).
+    fn localhost(host: &str) -> bool {
+        host.ends_with(".localhost")
+    }
+
+    /// ADR-013, lanes W3c and L2: the constructor with a local `http` rule
+    /// admits `http` to a host the rule admits, and keeps every other rule:
+    /// a non-local `http` host, a path on the issuer and a query on the
+    /// resource are refused.
     #[test]
     fn adr013_test_cell_admits_http_localhost_only() {
-        let ok = AuthorizationServer::new_test_cell(Config::new(
-            "http://a.fstp.localhost:8985",
-            "http://a.fstp.localhost:8985/mcp",
-            1,
-            1,
-        ))
+        let ok = AuthorizationServer::new_with_local_http(
+            Config::new(
+                "http://a.fstp.localhost:8985",
+                "http://a.fstp.localhost:8985/mcp",
+                1,
+                1,
+            ),
+            localhost,
+        )
         .unwrap();
         let doc = fstp_json::parse(&ok.resource_metadata().body).unwrap();
         assert_eq!(
@@ -2226,7 +2234,8 @@ mod tests {
             ("http://a.fstp.localhost", "http://cell-a.example/mcp"),
         ] {
             assert!(
-                AuthorizationServer::new_test_cell(Config::new(i, r, 1, 1)).is_err(),
+                AuthorizationServer::new_with_local_http(Config::new(i, r, 1, 1), localhost)
+                    .is_err(),
                 "{i} {r} accepted"
             );
         }

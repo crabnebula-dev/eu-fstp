@@ -299,19 +299,15 @@ pub fn parse_url(bytes: &[u8]) -> Result<Url, OauthError> {
     parse_inner(bytes, |_| false).map_err(OauthError::Url)
 }
 
-/// Whether a test cell may serve `host` over plain `http`: a name under
-/// `.localhost`, which resolves to loopback only (RFC 6761 section 6.3).
-#[cfg(feature = "test-cell")]
-pub(crate) fn test_cell_host(host: &str) -> bool {
-    host.ends_with(".localhost")
-}
-
-/// Parses a URL as [`parse_url`] does, except that plain `http` to a
-/// `.localhost` host is admitted too. Only a test cell's configuration
-/// reaches it (feature `test-cell`, lane W3c).
-#[cfg(feature = "test-cell")]
-pub(crate) fn parse_test_cell_url(bytes: &[u8]) -> Result<Url, OauthError> {
-    parse_inner(bytes, test_cell_host).map_err(OauthError::Url)
+/// Parses a URL as [`parse_url`] does, except that plain `http` to a host
+/// that `local_http` admits is accepted too. Only
+/// `AuthorizationServer::new_with_local_http` reaches it, for the issuer
+/// and the resource of its configuration.
+pub(crate) fn parse_url_with(
+    bytes: &[u8],
+    local_http: fn(&str) -> bool,
+) -> Result<Url, OauthError> {
+    parse_inner(bytes, local_http).map_err(OauthError::Url)
 }
 
 /// Whether `presented` matches `registered` (ADR-013, TW-4): byte for
