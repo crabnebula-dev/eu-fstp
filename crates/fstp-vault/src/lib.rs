@@ -10,6 +10,9 @@
 //! - [`service`]: the run loop of the internal listener and the vault
 //!   origin, over the database and the sans-IO core (lane int5).
 //! - [`config`]: the process configuration, with a closed member set.
+//! - [`keystore`]: the vault keystore in the `keystore` tables, under the
+//!   vault's own `fstp-keyd` entry (ADR-004 record of lane L8).
+//! - [`run`]: the binary's commands over a configuration file (G12).
 //! - [`match_key`]: the identity match key of design section 6.4 (Q17).
 //! - [`egress`]: the closed set of outbound destinations (B4a).
 //!
@@ -23,8 +26,10 @@ pub mod chain;
 pub mod codec;
 pub mod config;
 pub mod egress;
+pub mod keystore;
 mod messages;
 pub mod origin;
+pub mod run;
 pub mod service;
 pub mod start;
 pub mod store;
@@ -96,6 +101,9 @@ pub enum VaultError {
     /// The database refused a second use of something single-use. It
     /// names what.
     Conflict(&'static str),
+    /// A configuration or credential was refused. It names the rule or
+    /// the file, never the bytes (R-NF-02).
+    Config(&'static str),
 }
 
 impl std::fmt::Display for VaultError {
@@ -105,6 +113,7 @@ impl std::fmt::Display for VaultError {
             VaultError::Malformed(what) => write!(f, "malformed {what}"),
             VaultError::Unavailable(what) => write!(f, "{what} is unavailable"),
             VaultError::Conflict(what) => write!(f, "{what} was refused as a repeat"),
+            VaultError::Config(rule) => write!(f, "configuration refused: {rule}"),
         }
     }
 }
@@ -122,18 +131,16 @@ pub fn match_key(key: &[u8; 32], tuple: &[u8]) -> [u8; MATCH_KEY_LEN] {
     fstp_crypto::hmac_sha256(key, tuple)
 }
 
-/// The binary's entry. It refuses: the process configuration and the
-/// vault keystore that gives the sealing and anchor keys are not built.
-/// [`service::serve`] is the run loop, which a world starts with the
-/// parts it holds.
+/// The binary's entry: serves the vault named by the configuration file in
+/// `FSTP_VAULT_CONFIG` until a termination signal drains it
+/// ([`run::serve`], ADR-026 record of lane L8).
 ///
 /// # Errors
 ///
-/// [`VaultError::NotImplemented`].
+/// [`VaultError::Config`] for a missing or refused configuration or
+/// credential, and the first start step that fails.
 pub fn run() -> Result<(), VaultError> {
-    Err(VaultError::NotImplemented(
-        "fstp_vault::run: the process configuration and the vault keystore; fstp_vault::service::serve is the run loop",
-    ))
+    run::run_command(&run::Command::Serve)
 }
 
 #[cfg(test)]

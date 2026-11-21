@@ -279,7 +279,7 @@ fn endpoint_key(addr: &SocketAddr) -> (IpAddr, u16) {
 }
 
 /// Whether `a` and `b` name the same endpoint (see [`endpoint_key`]).
-fn same_endpoint(a: &SocketAddr, b: &SocketAddr) -> bool {
+pub(crate) fn same_endpoint(a: &SocketAddr, b: &SocketAddr) -> bool {
     endpoint_key(a) == endpoint_key(b)
 }
 

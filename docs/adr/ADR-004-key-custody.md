@@ -659,3 +659,22 @@ body    = anchor composite secret (64) || CredLookup key (32)
 - The decoder accepts exactly this form and re-encodes it byte for byte. Its fuzz target `cell_key_file_decode` exists from the first commit.
 - The file never holds an open key (I-80, `i80_cell_key_file_holds_no_open_key`). Errors name a rule and never quote file bytes (R-NF-02).
 - Interim, pending Daniel: the ticket key now always exists, so the vault ticket routes no longer answer 501 on a production cell.
+
+## Written by lane L8 `prod/vault-run`, 2026-11-21: the vault keystore
+
+Written by lane L8 before its code (gap G12 of `docs/handoff/production-mcp-design.md`). Every row is interim, pending Daniel. The vault keystore gives `fstp_vault::run` its sealing key, its query digest key and the Vault chain's anchor key. It persists across restarts, so the vault no longer depends on keys handed in by a test world.
+
+| Topic | Reading |
+| --- | --- |
+| Where | The rows live in the vault database `v_<cell>`, in the `keystore` tables that vault migration 3 created in M3: `keystore.root`, `keystore.group_key` and `keystore.data_key`. No new migration. They are read and written through `v_<cell>_keys` only, which the `fstp-control` role plan grants every `keystore` table to (I-82) |
+| Custody | The root lives in the vault's own `fstp-keyd` entry, reached through a socket of the `vault` client role. That role reaches the Vault chain only (`fstp_keyd::access`). The cell's entries never hold it (R-NG-01, I-83) |
+| Root | One root, labelled cell, chain Vault, epoch 1. A fresh seal key `S(1)` is wrapped under it with the AAD `"fstp-vault-seal-key-v1" \|\| cell \|\| chain code \|\| be64(epoch)`. The row holds the backend code, the custody handle and the wrapped `S(1)` only (I-80) |
+| Groups | Three group rows, generation 1, each secret sealed under `S(1)` with AES-256-GCM as `nonce \|\| ciphertext`. The AAD is `"fstp-vault-group-v1" \|\| cell \|\| purpose code \|\| group \|\| be32(generation) \|\| be64(epoch)`, as the test harness `fstp_celltest::vault_keys` seals its groups. `Anchor` holds the composite public key and the composite secret of the Vault chain's anchor key. `Fact` and `Match` each hold a hybrid KEM public key and its secret |
+| Data key | One `Fact` data key, sealed to the `Fact` group key in the FSK1 form (`fstp_keys::envelope::seal_key`). Its id is the `dek` of every sealed vault value (`fstp_vault::service::AeadSealer`) |
+| Query digest key | `HKDF-SHA-256(Match secret, "fstp-vault-query-digest-v1")`. It keys the digests of `vault.query_log`. The identity match key of design section 6.4 will take its own label from the same group |
+| Genesis | `fstp-vault init-keys <dir>` refuses a keystore that holds any root row. It runs the I-83 start check over the vault login first. It creates the root through custody, then writes every row in one transaction. It writes `anchor.pub`, the Vault chain anchor public key in lowercase hex, which the witness registers for the Vault chain |
+| Load | Each start reads the rows, unwraps `S(1)` through custody and opens the groups and the data key. A keystore without a root row, or with rows that do not open, is refused. The start never runs genesis |
+| Errors | An error names a rule and never quotes row bytes (R-NF-02) |
+| Not built | Rotation and erasure on the Vault chain (design section 3.5): the vault does not yet rotate `S(e)` or the `Match` group when an identity is erased. The test world still plays that keystore in `fstp_celltest::vault_keys`. A crash after `create_root` and before the rows commit leaves a root that no row names, and the next `init-keys` creates another |
+
+Tests: `i80_vault_keystore_rows_hold_no_open_key`, `adr004_vault_keystore_rows_round_trip`, `adr004_vault_keystore_survives_a_restart` (over PostgreSQL), `r_nf_02_vault_keystore_errors_never_quote_bytes`, and the end-to-end test `g12_vault_binary_answers_the_cell_binary`.

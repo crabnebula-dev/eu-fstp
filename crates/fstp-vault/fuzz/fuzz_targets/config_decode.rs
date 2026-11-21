@@ -1,5 +1,5 @@
 //! Fuzz target `config_decode` of `fstp-vault` (H-05, M3 design sections
-//! 6.1, 6.9 and 15).
+//! 6.1, 6.9 and 15, ADR-026 record of lane L8).
 //!
 //! Design checks: no panic. For every input:
 //!
@@ -7,6 +7,9 @@
 //! - An accepted configuration pins one to four ticket keys, and its
 //!   input is the canonical spelling of the closed member set, so no
 //!   extra member such as a fact source can pass.
+//! - An accepted configuration names the vault database of its own cell,
+//!   never a cell database (I-83).
+//! - A refusal names a rule and never quotes the input (R-NF-02).
 
 #![no_main]
 
@@ -22,15 +25,27 @@ fuzz_target!(|data: &[u8]| {
         fstp_vault::config::decode_config(data),
         "decode is not deterministic"
     );
-    if let Ok(c) = got {
-        assert!(
-            (1..=MAX_PINNED_KEYS).contains(&c.ticket_keys.len()),
-            "{} pinned keys",
-            c.ticket_keys.len()
-        );
-        let text = String::from_utf8_lossy(data);
-        for member in fstp_vault::config::CONFIG_MEMBERS {
-            assert!(text.contains(&format!("\"{member}\":")), "no {member}");
+    match got {
+        Ok(c) => {
+            assert!(
+                (1..=MAX_PINNED_KEYS).contains(&c.ticket_keys.len()),
+                "{} pinned keys",
+                c.ticket_keys.len()
+            );
+            let text = String::from_utf8_lossy(data);
+            for member in fstp_vault::config::CONFIG_MEMBERS {
+                assert!(text.contains(&format!("\"{member}\":")), "no {member}");
+            }
+            assert_eq!(
+                c.database.dbname,
+                fstp_vault::config::vault_dbname(&c.cell),
+                "I-83: a database other than v_<cell>"
+            );
+        }
+        Err(e) => {
+            // R-NF-02: the error is one of the fixed rule names.
+            let shown = format!("{e:?}");
+            assert!(shown.len() < 80, "an error quotes input: {shown}");
         }
     }
 });

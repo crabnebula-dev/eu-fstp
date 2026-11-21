@@ -118,6 +118,34 @@ Sealed bytes under a cell's keys on a shared cluster, or in a cluster backup, st
 
 Correction to design section 2.3: it lists an internal mTLS port on `fstp-cell` "for the vault". Under B4a the vault never calls its cell, so `fstp-cell` has no listener for the vault.
 
+## Pilot edge configuration
+
+Written by lane L9 `prod/edgerun` before its code, for gap G12 of `docs/handoff/production-mcp-design.md`. Rows marked "interim, pending Daniel" are the lane's own readings. The grammar follows ADR-026 "Configuration". This is a pilot, not a release.
+
+| Topic | Decision | Basis |
+| --- | --- | --- |
+| Deployment | Interim, pending Daniel. The D1 pilot runs one `fstp-edge` with no control plane. It serves a static route table read from a route file at start. It never polls `fstp-control`, so `RouteFeed` is unused. A change of routes needs a restart. A release serves the signed route feed instead | D1; G12 |
+| TLS role | Pass-through by SNI, as "Edge and tunnel" above says. The edge terminates no client TLS and holds no origin key (B5). The cell holds the origin certificate of its host (`origin.pem`, ADR-026). This lane adds no TLS role | B5; layering rule 5 |
+| File | One JSON object in the file that `FSTP_EDGE_CONFIG` names, at most 4 KiB, decoded by `fstp_json` with depth, member and string limits. The member set is closed. An unknown member, a member given twice or a missing required member is refused | ADR-026 "File" |
+| Members | `credentials_dir` (an absolute path), `listen` (`public`, a socket address), `routes` (the absolute path of the route file) and `limits` (optional: `connections`, `per_client`, `hello_seconds`, `open_seconds`, `lifetime_seconds`). No member holds a secret | ADR-026 "Members" |
+| Public listen address | Interim, pending Daniel. `listen.public` is the address the edge binds. The public origin is `https://<tenant domain>` with no port, since WebAuthn and claude.ai need it. So the address the tenant domain resolves to must accept TCP port 443 and reach this listener, directly or through a TCP forwarder that passes the ClientHello byte for byte. The edge cannot see the public port, so it does not check it | ADR-008; ADR-013; "OVHcloud verify items" |
+| Origin agreement | The cell derives its origin, its OAuth issuer and resource, and its WebAuthn relying party id from the `host` of its configuration. A route's `host` must equal that `host` byte for byte, in lowercase. The cell refuses a tunnel whose header host is not its host, and a ClientHello whose SNI differs from the header, so a mismatch fails closed | ADR-026 "Members"; "Edge and tunnel" |
+| Route file | Interim, pending Daniel. One JSON object `{"routes": [...]}`, at most 64 KiB and 64 routes. Each route has `cell` (32 lowercase hex digits), `host`, and the endpoints `app` and `vault`. Each endpoint has `address`, `server_name` and `cert_sha256`. The rules of `RouteTable::add_cell` hold: a host maps to one cell and one kind, `id.<host>` goes to the vault, a cell has one host, and no tunnel address serves two routes. Two endpoints never share a pin | I-19; design section 1.5 |
+| Decoders | `fstp_edge::config::decode_config` and `fstp_edge::config::decode_routes`, fuzzed by `edge_config_decode` and `edge_routes_decode`. A refusal names its rule and never quotes the input | CLAUDE.md fuzz rule; R-NF-02 |
+| Credentials | The credentials directory holds, by fixed name, readable by the edge's OS user only: `tunnel.pem` and `tunnel.key`, the edge's tunnel client chain and key; `tunnel-ca.pem`, the CA of the cells' and vaults' tunnel server certificates. In the cell's directory, `tunnel-ca.pem` is the CA of the edge's client certificate. So in each process it names the CA of the peer's tunnel certificate | ADR-026 "Secrets" |
+| Pilot tunnel CA | Interim, pending Daniel. A pilot has no control-plane CA. The operator's own tunnel CA stands in for it. It issues the edge's client certificate and the tunnel server certificate of each cell and vault. It is kept apart from the cell CA and from the public origin CA. Its custody is the open point "Self-hosted issuers" below | "Certificate authorities"; D1 |
+| Tunnel server pin | Interim, pending Daniel. `cert_sha256` is the SHA-256 of the DER of the tunnel server's end-entity certificate. The handshake first verifies the chain to `tunnel-ca.pem` and the name `server_name`. The edge then compares the digest of the leaf it received, and closes on a mismatch before it writes the tunnel header. So a certificate the tunnel CA issued in error never receives a client's bytes. A pin over the certificate keeps an X.509 reader out of the edge. A renewed tunnel certificate needs a new pin and a restart | I-19; B5 |
+| Limits | Interim, pending Daniel. `connections`: open client connections, default 1024, 1 to 65536. `per_client`: open connections per client IP address, default 64, at most `connections`. `hello_seconds`: the ClientHello deadline, default 10, 1 to 60. `open_seconds`: the tunnel open deadline, handshake and pin included, default 10, 1 to 60. `lifetime_seconds`: the life of one connection, default 7200, 60 to 86400. A connection over a cap closes before any byte is read. The client address lives in memory only and is never logged | Q19; ADR-024 |
+| Process | One tokio runtime through `fstp-rt` (ADR-002). SIGTERM or SIGINT stops the accept loop. Open connections get 20 seconds to end, and then the process exits with status 0. Logs are typed events only: `Started`, `ShuttingDown`, `Drained` or `DrainTimedOut`, with no host and no address. A refused configuration exits with status 2, any other failure with status 1, as `fstp-cell` does | ADR-002; R-NF-02 |
+
+Tests of this section:
+
+- `adr009_l9_edge_config_refuses_bad_input` and `adr009_l9_route_file_refuses_bad_input`.
+- `r_nf_02_edge_config_refusals_never_quote_input`.
+- `i19_pilot_unknown_sni_gets_no_route` and `i19_pilot_two_tenants_never_cross`.
+- `i19_tunnel_pin_mismatch_opens_no_tunnel`.
+- `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs`: the `fstp-edge` binary, started from its file, in front of the `fstp-cell` binary of `World::start_external`. An HTTPS request with the tenant SNI reaches the protected resource metadata, which names `https://<host>/mcp` with no port.
+
 ## Outbound destinations
 
 Each process opens connections only through one closed enum. Its connector refuses every other address, and the host firewall holds the same list.
