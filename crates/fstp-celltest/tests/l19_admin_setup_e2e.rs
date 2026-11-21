@@ -21,8 +21,6 @@
     clippy::panic,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
     reason = "test code"
 )]
 
@@ -252,7 +250,6 @@ fn host() -> Host {
 fn adr028_l19_setup_status_and_route_add_on_a_fresh_host() {
     let h = host();
     let first = h.expect_ok(&["setup"]);
-    eprintln!("{first}");
     assert!(first.contains("Setup is complete."), "{first}");
     assert!(
         h.root.join("tokens/fstp-first-admin.token").is_file(),
@@ -262,7 +259,6 @@ fn adr028_l19_setup_status_and_route_add_on_a_fresh_host() {
     // Every service answers.
     let status = h.admin(&["status"]);
     let text = String::from_utf8_lossy(&status.stdout).into_owned();
-    eprintln!("{text}");
     assert_eq!(status.status.code(), Some(0), "{text}\n{}", h.logs());
     assert!(text.contains("Next: "), "{text}");
     assert!(
@@ -273,7 +269,6 @@ fn adr028_l19_setup_status_and_route_add_on_a_fresh_host() {
 
     // A second run skips what is done and changes nothing.
     let second = h.expect_ok(&["setup"]);
-    eprintln!("{second}");
     assert!(second.contains("skipped  cell keys"), "{second}");
     assert!(second.contains("skipped  edge running"), "{second}");
     assert!(second.contains("skipped  witness registration"), "{second}");
