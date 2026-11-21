@@ -27,6 +27,7 @@ import { act, anyObject, buttonEl, formEl, link, onSubmit, section } from "../..
 import { ROLES, plausibleEmail } from "../../people/model.js";
 import { frame, idRoute, inputEl, pageI18n, readOp, selectEl, type Frame, type JudgingPage, type PageEnv } from "../../reviewer/kit.js";
 import { TEAM_LABELS } from "./messages.en.js";
+import { verifyControl } from "./verify.js";
 import {
   TEAM_PATHS,
   dayOf,
@@ -276,6 +277,7 @@ function membersTable(env: PageEnv, t: I18n, f: Frame, r: MembersReply, reload: 
           h("td", {}, [
             ...(m.tenantAdmin ? [h("p", {}, [t.label("team.tenant_admin")])] : []),
             memberRoles(env, t, f, m.roles, r.actions, reload),
+            verifyControl(t, f, m.account),
           ]),
         ]),
       ),

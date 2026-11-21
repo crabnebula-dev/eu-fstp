@@ -8,13 +8,14 @@ import {
   birthDateOk,
   identityNameOk,
   issuingStateOk,
+  personOf,
   verificationBody,
 } from "../src/vault/verification.js";
 import { assert, eq, test } from "./support/harness.js";
 
 /** R-ID-02: the body has the canonical members and labels of the vault. */
 test("adr008_vault_verification_body_spelling", () => {
-  const body = verificationBody("501", "manual", "passport", ["photo_match", "document_authentic"], {
+  const body = verificationBody("manual", "passport", ["photo_match", "document_authentic"], {
     familyNames: "Alpha",
     givenNames: "Synthetic",
     birthDate: "1990-02-28",
@@ -23,7 +24,7 @@ test("adr008_vault_verification_body_spelling", () => {
   assert(body !== null, "a valid entry was refused");
   eq(
     canonical(body),
-    '{"account":"501","checks":["document_authentic","photo_match"],"document_type":"passport","identity":{"birth_date":"1990-02-28","family_names":"Alpha","given_names":"Synthetic","issuing_state":"DEU"},"method":"manual"}',
+    '{"checks":["document_authentic","photo_match"],"document_type":"passport","identity":{"birth_date":"1990-02-28","family_names":"Alpha","given_names":"Synthetic","issuing_state":"DEU"},"method":"manual"}',
     "the canonical body",
   );
   eq(
@@ -48,7 +49,7 @@ test("adr008_vault_verification_field_bounds", () => {
   assert(!issuingStateOk("DE"), "alpha-2");
   assert(!issuingStateOk("D3U"), "digit");
   eq(
-    verificationBody("501", "manual", "passport", [], {
+    verificationBody("manual", "passport", [], {
       familyNames: "Alpha",
       givenNames: "Synthetic",
       birthDate: "1990-02-28",
@@ -57,14 +58,28 @@ test("adr008_vault_verification_field_bounds", () => {
     null,
     "no check",
   );
+  eq(personOf("person:501"), "501", "the person of the scope");
+  eq(personOf("person:0501"), null, "a non-canonical account id");
+  eq(personOf("programme:5"), null, "another scope");
+});
+
+/** ADR-004 record of lane L13b, row "Staff app": the member page asks for a ticket naming the person, and opens only this cell's vault write page. */
+test("adr008_member_page_requests_the_person_ticket", async () => {
+  const { verificationRequest, isVaultWriteUrl } = await import("../src/admin/team/verify.js");
   eq(
-    verificationBody("0501", "manual", "passport", ["photo_match"], {
-      familyNames: "Alpha",
-      givenNames: "Synthetic",
-      birthDate: "1990-02-28",
-      issuingState: "DEU",
-    }),
-    null,
-    "a non-canonical account id",
+    canonical(verificationRequest("501", "00112233445566778899aabbccddeeff")),
+    '{"account":"501","command_id":"00112233445566778899aabbccddeeff"}',
+    "the request body",
   );
+  const here = { protocol: "https:", hostname: "grants.example.eu", port: "" };
+  assert(isVaultWriteUrl("https://id.grants.example.eu/w#ab12", here), "the vault write page");
+  for (const bad of [
+    "https://id.grants.example.eu/r#ab12",
+    "https://id.evil.example/w#ab12",
+    "http://id.grants.example.eu/w#ab12",
+    "https://id.grants.example.eu/w",
+    "https://id.grants.example.eu/w?x=1#ab12",
+  ]) {
+    assert(!isVaultWriteUrl(bad, here), `${bad} accepted`);
+  }
 });

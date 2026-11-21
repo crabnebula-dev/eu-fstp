@@ -66,4 +66,7 @@ export const TEAM_LABELS: Readonly<Record<string, string>> = {
   "team.members_link": "All members of the organisation",
   "team.account_link": "Set your own display name on your account page",
   "team.back": "Back to home",
+  "team.verify.open": "Record verification",
+  "team.verify.opening": "Opening the identity form of the vault.",
+  "team.verify.refused": "You cannot record a verification for this person now. Only a verified tenant admin can, and never for themselves.",
 };

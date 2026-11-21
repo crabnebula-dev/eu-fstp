@@ -9,9 +9,10 @@
 
 import type { Json } from '../auth/encoding.js';
 
-/** A decimal id as the claims spell it: no sign and no leading zero (`page.ts` `isId`). */
-function isId(v: string): boolean {
-  return /^(?:0|[1-9][0-9]{0,38})$/.test(v);
+/** The person a ticket scope names: `person:<id>`, or null. */
+export function personOf(scope: string): string | null {
+  const m = /^person:(0|[1-9][0-9]{0,38})$/.exec(scope);
+  return m === null ? null : (m[1] ?? null);
 }
 
 /** The longest name field, in characters (`MAX_NAME_CHARS`). */
@@ -63,12 +64,12 @@ export function issuingStateOk(s: string): boolean {
 }
 
 /**
- * The canonical body of a verification of `account`, or null when a field
- * is outside what the vault takes. The state is upper-cased and the checks
+ * The canonical body of a verification, or null when a field is outside
+ * what the vault takes. The person comes from the ticket, never from the
+ * body (Daniel, 2026-11-21). The state is upper-cased and the checks
  * are put in label order.
  */
 export function verificationBody(
-  account: string,
   method: VerificationMethod,
   documentType: DocumentType,
   checks: readonly VerificationCheck[],
@@ -77,7 +78,6 @@ export function verificationBody(
   const state = identity.issuingState.trim().toUpperCase();
   const picked = VERIFICATION_CHECKS.filter((c) => checks.includes(c));
   const ok =
-    isId(account) &&
     picked.length > 0 &&
     identityNameOk(identity.familyNames) &&
     identityNameOk(identity.givenNames) &&
@@ -85,7 +85,6 @@ export function verificationBody(
     issuingStateOk(state);
   if (!ok) return null;
   return {
-    account,
     checks: [...picked],
     document_type: documentType,
     identity: {

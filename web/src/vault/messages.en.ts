@@ -68,8 +68,7 @@ const MESSAGES = {
   'verify.legend': 'Record an identity check',
   'verify.intro':
     'Enter what you checked on the identity document. Do not enter the document number. The application does not see these details.',
-  'verify.account': 'Account id of the person checked',
-  'verify.account.missing': 'Enter the account id shown with the request.',
+  'verify.person': 'Person checked: account {person}',
   'verify.method': 'How the identity was checked',
   'verify.method.manual': 'Manual check of an identity document',
   'verify.document': 'Document checked',

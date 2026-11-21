@@ -29,9 +29,9 @@
 // The recorder's verification (R-ID-02, I-17, ADR-008, ADR-004 record of
 // lane L13b, `./verification.ts`):
 //
-// - `write:verification_recorded`: the account id of the person checked,
-//   the method, the document type, the checks, and the four identity
-//   fields. The vault sets the time and the verifier, and resolves the
+// - `write:verification_recorded`: for the person the ticket names (its
+//   scope `person:<id>`), the method, the document type, the checks, and
+//   the four identity fields. The vault sets the time and the verifier, and resolves the
 //   identity from the fields. The cell never sees them.
 //
 // The M5 bank and hardship kinds (I-33, I-86, R-PR-04, `./bank.ts`):
@@ -69,6 +69,7 @@ import {
   birthDateOk,
   identityNameOk,
   issuingStateOk,
+  personOf,
   verificationBody,
 } from './verification.js';
 import type { VaultMessageId } from './messages.en.js';
@@ -300,8 +301,7 @@ function hardshipVerifyForm(c: ClaimsView, grant: string): KindForm {
   };
 }
 
-function verificationForm(): KindForm {
-  const account = textField('verify-account', 'verify.account', { type: 'text', inputmode: 'numeric', autocomplete: 'off' });
+function verificationForm(person: string): KindForm {
   const method = h(
     'select',
     { id: 'verify-method', required: true },
@@ -323,7 +323,7 @@ function verificationForm(): KindForm {
     fields: h('fieldset', {}, [
       h('legend', {}, [t('verify.legend')]),
       h('p', {}, [t('verify.intro')]),
-      account.row,
+      h('p', { id: 'verify-person' }, [t('verify.person', { person })]),
       h('div', { class: 'field' }, [h('label', { for: 'verify-method' }, [t('verify.method')]), method]),
       h('div', { class: 'field' }, [h('label', { for: 'verify-document' }, [t('verify.document')]), documentType]),
       ...checks.map((k) => k.box.row),
@@ -336,7 +336,6 @@ function verificationForm(): KindForm {
       const picked = checks.filter((k) => k.box.input.checked).map((k) => k.key);
       const m = VERIFICATION_METHODS.find((x) => x === method.value) ?? 'manual';
       const d = DOCUMENT_TYPES.find((x) => x === documentType.value) ?? 'passport';
-      const id = account.input.value.trim();
       const entry = {
         familyNames: family.input.value,
         givenNames: given.input.value,
@@ -344,7 +343,6 @@ function verificationForm(): KindForm {
         issuingState: state.input.value,
       };
       const pieces: readonly [HTMLInputElement, HTMLElement, boolean, VaultMessageId][] = [
-        [account.input, account.error, isId(id), 'verify.account.missing'],
         [family.input, family.error, identityNameOk(entry.familyNames), 'verify.name.missing'],
         [given.input, given.error, identityNameOk(entry.givenNames), 'verify.name.missing'],
         [birth.input, birth.error, birthDateOk(entry.birthDate), 'verify.birth.missing'],
@@ -361,7 +359,7 @@ function verificationForm(): KindForm {
         focus.focus();
         return null;
       }
-      return verificationBody(id, m, d, picked, entry);
+      return verificationBody(m, d, picked, entry);
     },
   };
 }
@@ -384,8 +382,10 @@ function formOf(c: ClaimsView): KindForm | null {
       return grant === null ? null : hardshipForm(c, grant);
     case 'write:hardship_verification':
       return grant === null ? null : hardshipVerifyForm(c, grant);
-    case 'write:verification_recorded':
-      return grant === null ? null : verificationForm();
+    case 'write:verification_recorded': {
+      const person = personOf(c.scope);
+      return person === null ? null : verificationForm(person);
+    }
     default:
       return null;
   }

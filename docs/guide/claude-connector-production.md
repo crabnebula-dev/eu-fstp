@@ -157,17 +157,50 @@ Each start runs the database check, opens the keystore through its custody entry
 
 The running vault holds a lock on its keystore through its `<dbname>_keys` connection. It checks that connection every 5 seconds. If the connection drops, the vault takes the lock again on a new one and keeps serving. If another process took the lock meanwhile, such as an `erase-identity` run, the vault stops serving at once. Every request then answers 503, the log shows `{"event":"serving_stopped","rule":"I-81"}`, and the process drains and exits with status 1. Start it again once the other process is done (ADR-004 record of lane L13b).
 
-### Erase an identity
+### Verify the first admins
+
+The technical admin verifies the first admins on the host (ADR-008, decided by Daniel on 2026-11-21). Check the person's identity document yourself. Then write the details into a file, as root, with no document number:
+
+```json
+{
+  "method": "manual",
+  "document_type": "passport",
+  "checks": ["document_authentic", "document_valid", "photo_match"],
+  "identity": {
+    "family_names": "Example",
+    "given_names": "Alex",
+    "birth_date": "1990-01-31",
+    "issuing_state": "DEU"
+  }
+}
+```
+
+`document_type` is `passport`, `identity_card` or `residence_permit`. `checks` names one or more of `data_match`, `document_authentic`, `document_valid` and `photo_match`. `issuing_state` is the three-letter code of the state that issued the document. Then, with the vault stopped:
+
+```sh
+systemctl stop fstp-vault
+FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault verify-first-admin 01234567-89ab-cdef-0123-456789abcdef /root/admin.json
+systemctl start fstp-vault
+shred -u /root/admin.json
+```
+
+- The command asks nothing and prints nothing. Exit status 0 means the verification is recorded. Running it again for the same person changes nothing. Status 2 means a refused argument or file. Status 1 means another failure, such as a vault that still runs.
+- It verifies at most two accounts per vault, the first admins. The verifier of record is the operator.
+- The cell learns of the verification when the vault serves again.
+
+### Record a verification on the web
+
+A verified tenant admin records everyone else. On "Members" (`/app/admin/members`), choose "Record verification" next to the person. The vault's form opens for that person. Type only the identity details from their document, and save. The vault registers the person's identity and records the verification in one step. The cell never sees these details. A failed save keeps the link valid, and saving again completes it.
+
+The cell offers the form only to a verified tenant admin with no Judging role, never for themselves or a person who shares their identity. An applicant is verified only once their proposal is in NEGOTIATION, under a ticket for that proposal (ADR-004 record of lane L13b, row "Ticket").
+
+The vault serves its form pages when its configuration names `assets_dir`, such as `"assets_dir":"/opt/fstp/web"`. That directory holds `vault/` (the compiled `web/dist/vault/*.js` and `web/src/vault/shell.html`) and `auth/` (`dom.js`, `encoding.js`, `i18n.js`, `tokens.css` and `auth.css`), as the cell's `auth/` does. A missing file refuses the start.
 
 ### Register an identity
 
-The vault seals an account's bank details and hardship evidence under its identity's own fact key, so an erasure of that identity reaches them (ADR-004 record of lane L13). The vault therefore refuses those writes, with 403 on the vault origin, until the account is registered.
+The vault seals an account's bank details and hardship evidence under its identity's own fact key, so an erasure of that identity reaches them (ADR-004 record of lane L13). The vault therefore refuses those writes, with 403 on the vault origin, until the account is registered. A verification registers the account. So bank details work once the person is verified.
 
-The cell registers an account on the vault's internal listener, `POST /v1/identity`, with its `cell-app` certificate. The request names the account and its attribute tuple. The vault resolves the identity from the tuple, stores the sealed tuple in its keystore, and binds the account. The reply is `acked` and names no identity. A repeat changes nothing. Two accounts with the same tuple share one identity. An account bound to one identity is never moved to another: such a request is refused as malformed.
-
-The usual path is the identity verification (ADR-004 record of lane L13b, decided by Daniel on 2026-11-21). A tenant admin asks the cell for a verification ticket, `POST /api/v1/verifications` with `{command_id, proposal}`. The cell issues it only to a tenant admin whom the vault knows as verified, who holds no Judging binding and no binding on the proposal, and who shares no identity with its accounts, for a proposal in NEGOTIATION or later. The recorder opens the vault origin's write page with that ticket and enters the account id of the person checked, the method, the document type, the checks, the family names, the given names, the date of birth and the issuing state. The vault registers the person's identity and records the verification in one step. The cell never sees these entries. A failed save keeps the link valid, and saving again completes it.
-
-No account is verified in production before the operator path of ADR-008, so no tenant admin can be issued a verification ticket yet, and a pilot vault takes no bank details from a browser until then. The shipped vault serves `POST /w` and `POST /r`, but not yet the static write page itself, the third route group of ADR-009. Only the test world serves it.
+The cell can also register an account on the vault's internal listener, `POST /v1/identity`, with its `cell-app` certificate. The request names the account and its attribute tuple. The reply is `acked` and names no identity. A repeat changes nothing. An account bound to one identity is never moved to another.
 
 ### Erase an identity
 
