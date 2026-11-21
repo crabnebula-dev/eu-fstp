@@ -1,6 +1,6 @@
 # Connect Claude to a production cell
 
-This guide is for two readers. Sections 1 to 4 are for the operator who runs the cell. Sections 5 to 7 are for a programme manager who connects Claude to it.
+This guide is for two readers. Sections 1 to 5 are for the operator who runs the cell and its edge. Sections 6 to 8 are for a programme manager who connects Claude to it.
 
 **A pilot is not a release.** Daniel decided on 2026-11-20 that a clearly labelled pilot may have real users, since moduletto is confirmed for release. A release still needs the Mythos confirmation of the Tier B formats crates `der`, `spki`, `x509-cert` and `cms` (I-74), and the legal wording marked `TODO(legal)`. Label every pilot cell as a pilot to its users. `deps-check --release` fails on such a build.
 
@@ -17,7 +17,7 @@ The pilot is one host in SaaS mode, with `fstp-keyd` custody and no control plan
 - **Custody.** Two `fstp-keyd` entries for the cell, each with its own socket and passphrase as a systemd credential. One serves the cell's App chain. The other holds only the dedicated root of the cell key file. The cell refuses to start when both name the same socket.
 - **Witness.** `fstp-witness` from its own configuration, with the cell CA and the cell's anchor public key registered.
 - **Vault.** The cell's vault, which pins the cell's ticket public key.
-- **Edge.** The edge that routes the tenant domain to the cell's tunnel listener.
+- **Edge.** The `fstp-edge` binary, which routes the tenant domain to the cell's tunnel listener by SNI. Section 5 sets it up.
 - **Mail.** An account on a submission relay for proof mail: sign-up proofs, magic links and recovery proofs (D3). A tenant's own relay replaces it once the tenant sets one (ADR-018).
 - **Backups.** Object storage under ADR-012. The S3 client of `fstp-backup` is still a stub.
 - **claude.ai.** A claude.ai plan that allows custom connectors, if staff use claude.ai. The claude.ai trace of D9 is still open, so claude.ai is not yet verified against a production cell.
@@ -108,7 +108,86 @@ The first admin opens `https://<host>/auth/invite#<first half><second half>` and
 
 The first admin has no login email after this step, so recovery by email does not apply to that account. A second tenant admin can approve its recovery.
 
-## 5. Install the plugin (programme manager)
+## 5. Run the edge
+
+The edge is the only public listener. It reads the SNI of each browser's ClientHello and passes the whole TLS connection through to the cell's tunnel listener. It never terminates the browser's TLS and holds no origin key: the cell does, with `origin.pem` and `origin.key`. The grammar is ADR-009 "Pilot edge configuration". A pilot edge reads its routes from a file, since no control plane runs.
+
+**Public origin.** The cell's origin is `https://<host>`, with no port. WebAuthn and claude.ai need exactly that. So:
+
+- the DNS name `host` of the cell configuration resolves to the edge's host;
+- that address accepts TCP port 443. Either the edge listens on port 443 itself, or a TCP forwarder in front passes the ClientHello byte for byte;
+- the route file names the same `host`, in lowercase, as the cell configuration. The cell refuses a tunnel for any other host.
+
+**Tunnel CA.** A pilot has no control-plane CA, so you run your own tunnel CA. Keep it apart from the cell CA and from the public origin CA. It issues three certificates:
+
+- the edge's client certificate (client authentication);
+- the cell's tunnel server certificate, `tunnel.pem` of the cell, for a server name such as `cell.tunnel.internal`;
+- the vault's tunnel server certificate, for its own server name.
+
+Put the tunnel CA's certificate into the cell's credentials directory as `tunnel-ca.pem`, and into the edge's as well. In each process, `tunnel-ca.pem` is the CA of the peer's tunnel certificate.
+
+**Credentials directory**, readable by the edge's OS user only:
+
+| File | Holds |
+| --- | --- |
+| `tunnel.pem`, `tunnel.key` | The edge's tunnel client certificate chain and key |
+| `tunnel-ca.pem` | The tunnel CA, which issued the cell's and the vault's tunnel server certificates |
+
+**Pins.** The edge pins each tunnel server's certificate. A pin is the SHA-256 of the certificate in DER, as 64 lowercase hex digits:
+
+```sh
+openssl x509 -in tunnel.pem -outform der | sha256sum
+```
+
+When you renew a tunnel certificate, update its pin in the route file and restart the edge.
+
+**Route file**, for example `/etc/fstp/edge-routes.json`. One route per cell. `host` routes to `app`, the cell's tunnel listener (`listen.tunnel` of the cell). `id.<host>` routes to `vault`, the vault's tunnel listener for the vault origin.
+
+```json
+{"routes": [
+  {"cell": "<the cell id, 32 lowercase hex digits>",
+   "host": "grants.example.eu",
+   "app":   {"address": "10.0.0.4:7443", "server_name": "cell.tunnel.internal",
+             "cert_sha256": "<64 hex digits>"},
+   "vault": {"address": "10.0.0.6:7446", "server_name": "vault.tunnel.internal",
+             "cert_sha256": "<64 hex digits>"}}
+]}
+```
+
+The edge refuses a host, a cell or a tunnel address given twice, a cell whose two endpoints share an address, and two endpoints with one pin.
+
+**Configuration**, named by `FSTP_EDGE_CONFIG`. It holds no secret. `limits` and each of its members are optional; the values below are the defaults.
+
+```json
+{
+  "credentials_dir": "/etc/fstp/edge",
+  "limits": {"connections": 1024, "per_client": 64, "hello_seconds": 10,
+             "open_seconds": 10, "lifetime_seconds": 7200},
+  "listen": {"public": "0.0.0.0:443"},
+  "routes": "/etc/fstp/edge-routes.json"
+}
+```
+
+- `connections` caps open connections, and `per_client` caps them per client IP address. The address stays in memory and is never logged.
+- `hello_seconds` bounds the wait for the ClientHello, `open_seconds` the tunnel handshake and pin check, and `lifetime_seconds` one connection.
+
+**Start** it, for example as a systemd service with the capability to bind port 443:
+
+```sh
+FSTP_EDGE_CONFIG=/etc/fstp/edge.json fstp-edge
+```
+
+The edge logs `Started` once it listens. SIGTERM stops it from accepting, gives open connections 20 seconds, and exits with status 0. A refused configuration, route file or credential exits with status 2, any other failure with status 1. A change of the route file needs a restart.
+
+**Check** it from outside, with the public CA your browsers trust:
+
+```sh
+curl https://grants.example.eu/.well-known/oauth-protected-resource/mcp
+```
+
+The answer names `"resource": "https://grants.example.eu/mcp"`, with no port. A host the route file does not name gets no answer at all: the edge closes the connection.
+
+## 6. Install the plugin (programme manager)
 
 You need an account on the cell with a programme staff or tenant admin role, and a passkey. Your operator gives you the cell's MCP URL, `https://<cell domain>/mcp`.
 
@@ -123,13 +202,13 @@ Claude Code asks for the cell MCP URL when you enable the plugin. The plugin is 
 
 On claude.ai, add a custom connector with the same URL, and upload the skill as `integrations/claude/fstp-programmes/README.md` describes.
 
-## 6. Connect and approve
+## 7. Connect and approve
 
 In Claude Code, run `/mcp`, choose `fstp` and sign in. Your browser opens the cell's consent page. It shows the agent's name as unverified text, the host the browser returns to, and each permission in plain words.
 
 Sign in with your passkey if the page asks. Choose **Approve**. The cell asks for a passkey step-up, since connecting an agent links a new device. A magic-link session cannot approve.
 
-## 7. Work with Claude and confirm in the platform
+## 8. Work with Claude and confirm in the platform
 
 Ask Claude, for example: "Set up a new programme draft called Green Valleys 2027". Claude prepares the draft. Nothing changes until you confirm.
 
@@ -139,4 +218,4 @@ Access tokens live 10 minutes. Claude refreshes them while your grant lasts, als
 
 ## Checked by
 
-`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 6 and 7 against the `fstp-cell` binary over local PostgreSQL. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
+`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` runs section 5: the `fstp-edge` binary from its files in front of that binary. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
