@@ -58,8 +58,12 @@ pub const EXPORT_VERSION: u8 = 1;
 pub const EXPORT_KDF: u8 = 1;
 /// The length of the clear header of a copy.
 pub const EXPORT_HEADER_LEN: usize = 50;
-/// The longest copy accepted.
-pub const MAX_EXPORT_LEN: usize = 16 << 20;
+/// The longest copy accepted: room for a usage log at twice its size
+/// bound, as create and destroy may grow it (ADR-004 record of lane L16,
+/// Q-L16-2).
+pub const MAX_EXPORT_LEN: usize = 160 << 20;
+/// The name of the usage log in a copy and on the volume.
+pub const USAGE_LOG_FILE: &str = crate::usage::USAGE_FILE;
 /// The longest file name in a copy.
 pub const MAX_NAME_LEN: usize = 64;
 /// The hold marker of an imported volume.
@@ -642,6 +646,12 @@ pub fn export_volume(
         crate::table::encode_key_table(passphrase, sealed.iterations(), &clone_table(&table))?,
     )];
     files.extend(live_files(&table, &read)?);
+    // Q-L16-2, decided by Daniel on 2026-11-21: the copy carries the
+    // usage log, so reconciliation after a restore covers the time before
+    // the loss. It holds no key bytes.
+    if let Some(log) = read(USAGE_LOG_FILE)? {
+        files.push((USAGE_LOG_FILE.to_owned(), log));
+    }
     let header = ExportHeader {
         iterations: DEFAULT_ITERATIONS,
         salt: fstp_crypto::random_array().map_err(KeydError::Crypto)?,
@@ -696,7 +706,8 @@ fn open_copy(copy: &[u8], passphrase: &Passphrase) -> Result<(ExportHeader, File
             .map(|(_, b)| b.clone()))
     };
     let expected = live_files(&table, &find)?;
-    if expected.len().saturating_add(1) != files.len() {
+    let usage = usize::from(files.iter().any(|(n, _)| n == USAGE_LOG_FILE));
+    if expected.len().saturating_add(1).saturating_add(usage) != files.len() {
         return Err(bad("a copy holds a file its key table does not name"));
     }
     Ok((header, files))

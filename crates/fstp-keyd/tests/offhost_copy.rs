@@ -384,3 +384,43 @@ fn adr004_keyd_volume_lock_excludes_a_second_holder() {
     a.stop();
     assert!(export_volume(a.volume(), &pass()).is_ok());
 }
+
+/// ADR-004 "Reconciliation", record of lane L16 (Q-L16-2, decided by
+/// Daniel on 2026-11-21), I-80: a copy carries the usage log, sealed with
+/// the rest. After the loss of the host, the restored entry answers the
+/// usage records made before the copy, in the same order, and release's
+/// destroys follow them.
+#[test]
+fn adr004_offhost_copy_carries_the_usage_log_for_reconciliation() {
+    use fstp_custody::UsageCursor;
+    let a = Host::new("l16-usage-a");
+    let (_console, cell) = a.start();
+    let r1 = create(&cell, Chain::App, 1);
+    wrap(&cell, &r1, 0x91);
+    let r2 = create(&cell, Chain::App, 2);
+    wrap(&cell, &r2, 0x92);
+    let before = block_on(cell.usage_since(&r1, UsageCursor::default()))
+        .unwrap()
+        .operations;
+    assert!(before.len() >= 2, "the source logged no use of the root");
+    a.stop();
+    let (_, copy) = export_volume(a.volume(), &pass()).unwrap();
+    a.lose_volume();
+
+    let b = Host::new("l16-usage-b");
+    import_volume(&copy, b.volume(), &pass()).unwrap();
+    release_import(b.volume(), &pass(), &[(Chain::App, Epoch(2))]).unwrap();
+    let (_console, cell) = b.start();
+    let after = block_on(cell.usage_since(&r1, UsageCursor::default()))
+        .unwrap()
+        .operations;
+    assert!(
+        after.len() > before.len(),
+        "release's destroy is not logged"
+    );
+    assert_eq!(&after[..before.len()], &before[..]);
+    let r2_after = block_on(cell.usage_since(&r2, UsageCursor::default()))
+        .unwrap()
+        .operations;
+    assert!(!r2_after.is_empty());
+}
