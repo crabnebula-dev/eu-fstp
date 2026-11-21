@@ -437,6 +437,7 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Tenant(
                 TenantCommand::IssueFirstAdminInvitation { .. }
                     | TenantCommand::IssueRoleInvitation { .. }
+                    | TenantCommand::ProvisionTenant { .. }
             )
     )
 }
@@ -762,7 +763,7 @@ fn decide_unchecked(
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
         CellCommand::Text(cmd) => decide_text(s, cmd, actor, now),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
-        CellCommand::Ops(cmd) => decide_ops(s, cmd, actor, now),
+        CellCommand::Ops(cmd) => decide_ops(s, cmd, actor, now, stepup_at),
         // `system_only` refused these above.
         CellCommand::Key(_) | CellCommand::Timeline(_) => Err(wrong_actor()),
     }
@@ -796,6 +797,13 @@ fn decide_system(
                 token_digest,
             }),
         ) => issue_first_admin_invitation(s, *invitation, *account, *token_digest, now, inputs),
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::ProvisionTenant {
+                first_admin,
+                agreements,
+            }),
+        ) => provision_tenant(s, *first_admin, *agreements, now, inputs),
         (
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueRoleInvitation {
@@ -1540,6 +1548,7 @@ fn decide_tenant(
         // ceremony admission enrols. Neither reaches this point.
         TenantCommand::IssueFirstAdminInvitation { .. }
         | TenantCommand::IssueRoleInvitation { .. }
+        | TenantCommand::ProvisionTenant { .. }
         | TenantCommand::EnrolByInvitation { .. }
         | TenantCommand::EnrolBySelfRegistration { .. } => Err(wrong_actor()),
     }
@@ -1580,6 +1589,13 @@ fn issue_first_admin_invitation(
     if s.auth().invitation(invitation).is_some() {
         return Err(reused());
     }
+    // ADR-026 record of lane L12: once the tenant part names the first
+    // admin, the first-admin invitation invites exactly that account.
+    if let Some(p) = s.engine().tenant.provisioning()
+        && p.first_admin != account
+    {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
     let issuer = fstp_auth::ceremony::Issuer::Provisioning {
         first_admin_enrolled: s.auth().any_first_admin(),
         invitation_open: s.auth().first_admin_invitation_open(now),
@@ -1597,6 +1613,51 @@ fn issue_first_admin_invitation(
         _ => refuse(RuleRef::Input, RefusalReason::WrongState),
     })?;
     Ok(vec![CellRecord::Auth(record)])
+}
+
+/// `ProvisionTenant` of the system task `Provisioning` (ADR-026 "Tenant
+/// provisioning", decided by Daniel on 2026-11-21, and the record of lane
+/// L12): the genesis of the tenant part, the domain record
+/// `fstp_engine::TenantEntry::Provisioned`.
+///
+/// - A ledger that holds a tenant part refuses it, so it records once.
+/// - The kind of cell is the deployment mode, a task input. A self-hosted
+///   cell names no agreement versions.
+/// - The first admin is the cell's own first admin, enrolled or invited by
+///   provisioning, when it has one. Else it is an account no record names.
+fn provision_tenant(
+    s: &CellState,
+    first_admin: AccountId,
+    agreements: Option<fstp_engine::AgreementVersions>,
+    now: Timestamp,
+    inputs: &RouteInputs,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let Some(mode) = inputs.mode() else {
+        return Err(needs(RouteInput::DeploymentMode));
+    };
+    if s.engine().tenant.provisioning().is_some() {
+        return Err(reused());
+    }
+    let cell = match mode {
+        fstp_auth::recovery::Deployment::Saas => fstp_engine::CellKind::Saas,
+        fstp_auth::recovery::Deployment::SelfHosted => fstp_engine::CellKind::SelfHosted,
+    };
+    if cell == fstp_engine::CellKind::SelfHosted && agreements.is_some() {
+        return Err(invalid());
+    }
+    match s.auth().first_admin_account(now) {
+        Some(a) if a == first_admin => {}
+        Some(_) => return Err(refuse(RuleRef::Input, RefusalReason::WrongState)),
+        None if account_known(s, first_admin) => return Err(reused()),
+        None => {}
+    }
+    Ok(vec![CellRecord::Engine(fstp_engine::Record::Tenant(
+        fstp_engine::TenantEntry::Provisioned(fstp_engine::Provisioning {
+            first_admin,
+            cell,
+            agreements,
+        }),
+    ))])
 }
 
 /// `IssueRoleInvitation` of the system task `Provisioning` for the accounts
@@ -2279,6 +2340,7 @@ fn decide_ops(
     cmd: &OpsCommand,
     actor: AccountId,
     now: Timestamp,
+    stepup_at: Option<Timestamp>,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     use crate::ops::OpsRecord;
     match cmd {
@@ -2328,6 +2390,18 @@ fn decide_ops(
             Ok(vec![CellRecord::Ops(OpsRecord::BreakGlassEnded {
                 grant: *grant,
             })])
+        }
+        // ADR-013 "Consent page", I-78 (ADR-026 record of lane L12): the
+        // approval of an agent's consent records nothing of its own. The
+        // gate admitted it with a step-up bound to its request digest, and
+        // the driver adds that step-up's `StepUpConsumed` to the batch, so
+        // the step-up approves one consent only. Without a step-up there
+        // is nothing to spend, so it is refused and appends nothing.
+        OpsCommand::ApproveAgentConsent { .. } => {
+            if stepup_at.is_none() {
+                return Err(refuse(RuleRef::I78, RefusalReason::GuardFailed));
+            }
+            Ok(Vec::new())
         }
         // System paths only: `decide_with` refuses them for an account.
         OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. } => {

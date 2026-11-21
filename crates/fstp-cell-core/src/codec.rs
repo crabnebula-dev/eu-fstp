@@ -1282,6 +1282,22 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
                 ("token_digest", hex(token_digest)),
             ],
         ),
+        TenantCommand::ProvisionTenant {
+            first_admin,
+            agreements,
+        } => {
+            // An absent `agreements` is the only spelling of none, as in
+            // the stored provisioning record (`fstp_engine::tenant`).
+            let mut members = vec![("first_admin", account_json(*first_admin))];
+            if let Some(a) = agreements {
+                let mut v = Object::with_capacity(3);
+                v.insert("dpa", dec_u128(u128::from(a.dpa)));
+                v.insert("saas_terms", dec_u128(u128::from(a.saas_terms)));
+                v.insert("sub_processors", dec_u128(u128::from(a.sub_processors)));
+                members.push(("agreements", Value::Object(v)));
+            }
+            tagged("ProvisionTenant", members)
+        }
         TenantCommand::IssueInvitation {
             invitation,
             account,
@@ -1364,6 +1380,34 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
                 invitation: array_from(o, "invitation")?,
                 account: account_from(o, "account")?,
                 token_digest: array_from(o, "token_digest")?,
+            })
+        }
+        "ProvisionTenant" => {
+            let agreements = match o.get("agreements") {
+                None => {
+                    fields(o, &["first_admin"])?;
+                    None
+                }
+                Some(v) => {
+                    fields(o, &["agreements", "first_admin"])?;
+                    let a = expect_object(v).map_err(|e| e.at_field("agreements"))?;
+                    reject_unknown(a, &["dpa", "saas_terms", "sub_processors"])?;
+                    let version = |name: &'static str| -> Result<u32, FromJsonError> {
+                        u32::try_from(u128_from(a, name)?).map_err(|_| {
+                            FromJsonError::new(FromJsonErrorKind::OutOfRange { target: "u32" })
+                                .at_field(name)
+                        })
+                    };
+                    Some(fstp_engine::AgreementVersions {
+                        saas_terms: version("saas_terms")?,
+                        dpa: version("dpa")?,
+                        sub_processors: version("sub_processors")?,
+                    })
+                }
+            };
+            Ok(TenantCommand::ProvisionTenant {
+                first_admin: account_from(o, "first_admin")?,
+                agreements,
             })
         }
         "IssueInvitation" => {
@@ -1586,6 +1630,10 @@ fn ops_command_json(c: &OpsCommand) -> Value {
             "EndSessionsAtBindingEnd",
             vec![("account", account_json(*account))],
         ),
+        OpsCommand::ApproveAgentConsent { request_digest } => tagged(
+            "ApproveAgentConsent",
+            vec![("request_digest", hex(request_digest))],
+        ),
     }
 }
 
@@ -1617,6 +1665,12 @@ fn ops_command(v: &Value) -> Result<OpsCommand, FromJsonError> {
             fields(o, &["account"])?;
             Ok(OpsCommand::EndSessionsAtBindingEnd {
                 account: account_from(o, "account")?,
+            })
+        }
+        "ApproveAgentConsent" => {
+            fields(o, &["request_digest"])?;
+            Ok(OpsCommand::ApproveAgentConsent {
+                request_digest: array_from(o, "request_digest")?,
             })
         }
         _ => Err(unknown_variant()),

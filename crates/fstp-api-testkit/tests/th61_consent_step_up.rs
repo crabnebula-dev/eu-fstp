@@ -203,3 +203,49 @@ fn th61_consent_shows_client_name_redirect_host_and_scopes_reference() {
         |g| shown(Backend::Reference, g),
     );
 }
+
+/// I-78, ADR-013 "Consent page", ADR-026 record of lane L12: the API core
+/// spends the step-up of `agents.consent` before it asks for the code, so
+/// one step-up approves one consent (decided by Daniel on 2026-11-21,
+/// production design section 2.4, decision 5).
+///
+/// On the fake cell, an approval without a step-up asks for one and
+/// spends nothing. The approval with the proved step-up is served, and
+/// the step-up port saw exactly that proof spent, in that session and for
+/// that request digest. The same request again asks for a new step-up and
+/// spends nothing more.
+#[test]
+fn i78_consent_spends_its_step_up_once() {
+    use fstp_api_core::OpResult;
+    use fstp_api_core::decode::{Method as RouteMethod, decode_route};
+    use fstp_api_core::port::LoginMethod;
+    use fstp_api_testkit::fake::FakeCell;
+    use fstp_api_testkit::fake::fixture::OWNER;
+
+    let c = FakeCell::new().unwrap_or_else(|e| panic!("the fake cell: {e}"));
+    let login = c.login(OWNER, LoginMethod::Passkey);
+    let now = c.ports.clock.read();
+    let start = c.ports.tokens.begin_consent(now).unwrap();
+    let body = format!(r#"{{"consent":"{}"}}"#, start.handle);
+    let op = || decode_route(RouteMethod::Post, "/oauth/consent", body.as_bytes());
+    let digest = match c.web(&login, op()) {
+        Ok(OpResult::StepUpRequired(ch)) => ch.action,
+        other => panic!("I-78: a consent without a step-up: {other:?}"),
+    };
+    assert!(c.ports.step_up.spent().is_empty(), "I-78: spent too early");
+    let proof = c.ports.step_up.approve(login.session, digest).unwrap();
+    match c.web(&login, op()) {
+        Ok(OpResult::Done { .. }) => {}
+        other => panic!("I-78: the consent with its step-up: {other:?}"),
+    }
+    let spent = c.ports.step_up.spent();
+    assert_eq!(spent.len(), 1, "I-78: the consent spent {spent:?}");
+    assert_eq!(spent[0].step_up, proof);
+    assert_eq!(spent[0].session, login.session);
+    assert_eq!(spent[0].action, digest);
+    match c.web(&login, op()) {
+        Ok(OpResult::StepUpRequired(_)) => {}
+        other => panic!("I-78: a spent step-up served the consent again: {other:?}"),
+    }
+    assert_eq!(c.ports.step_up.spent().len(), 1, "I-78: spent twice");
+}

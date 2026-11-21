@@ -64,7 +64,7 @@ Options considered for the WebAuthn implementation (Q10):
 
 - `fstp-auth` holds the login policy, sessions, step-up, recovery, magic links and the ceremonies. It is a pure crate.
 - `admit_method` applies I-77 at login. `admit_session` applies it again on every request, inside `Gate::admit`.
-- Holdings count active, scheduled and suspended bindings of the Drafting, Judging and Operations groups, plus tenant admin. Voided bindings do not count. A binding whose end is scheduled counts until its end instant.
+- Holdings count active, scheduled and suspended bindings of the Drafting, Judging and Operations groups, plus tenant admin. Voided bindings do not count. A binding whose end is scheduled counts until its end instant. Decided by Daniel on 2026-11-21: a suspended Drafting, Judging or Operations binding counts as held for I-77.
 - A grant of a Drafting, Judging, Operations or tenant admin role ends that account's weak sessions in the same batch.
 
 ### Magic links

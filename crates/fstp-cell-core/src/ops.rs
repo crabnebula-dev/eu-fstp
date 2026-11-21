@@ -41,6 +41,17 @@ pub enum OpsCommand {
         /// The account.
         account: AccountId,
     },
+    /// Spend the passkey step-up of an agent consent approval
+    /// (`agents.consent`, I-78, ADR-026 record of lane L12). Connecting an
+    /// agent links a device (`HighRiskAction::LinkDevice`), so the gate
+    /// admits it only with a step-up bound to `request_digest`, the API
+    /// core's request digest. It records nothing of its own: its batch is
+    /// the `StepUpConsumed` record of that step-up, so the step-up approves
+    /// one consent only.
+    ApproveAgentConsent {
+        /// The API core's digest of the approval request.
+        request_digest: [u8; 32],
+    },
 }
 
 /// An ops record.

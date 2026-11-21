@@ -53,7 +53,7 @@ Notes on the members:
 - `listen.health` must be a loopback address.
 - `assets_dir` holds `auth/` (the compiled auth pages, with `shell.html` and the stylesheets beside them) and `app/` (the packed journey UI with its `asset-manifest.json`). Without it, the cell serves the API, `/mcp` and the OAuth endpoints with an empty `/app` page and no sign-in pages.
 - `mail.address` may pin the relay's socket address in place of a DNS lookup. Interim, pending Daniel: the public address and port 465 rules of ADR-018 then do not apply. Leave it out for a public relay.
-- `organisation_active` is an interim reading, pending Daniel. A pilot cell records no tenant provisioning, since no control plane runs. Without this member, the ADR-021 gate refuses every programme operation, so no draft can be prepared.
+- `organisation_active` stands for the organisation's activation on a ledger with no tenant part. Daniel decided on 2026-11-21 that `fstp-cell provision-tenant` (section 3, "Provision the tenant") replaces it. Until a provisioned pilot can be activated, keep the member and do not provision (interim, pending Daniel, ADR-026 row "Organisation port until onboarding runs"). Without it, the ADR-021 gate refuses every programme operation, so no draft can be prepared.
 
 The credentials directory holds these files, readable by the cell's OS user only:
 
@@ -93,6 +93,22 @@ FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell
 ```
 
 Each start opens the key file through its custody entry, draws a new ledger key generation, and rewrites the file before it seals anything. The first start on an empty database creates the keystore. The cell is ready when `GET /healthz` on the health listener answers 200. SIGTERM drains it. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
+
+### Provision the tenant
+
+`fstp-cell provision-tenant` records the tenant part of the cell's ledger (`TenantProvisioned`), as the control plane does on a SaaS cell. The ADR-021 setup gate then reads the real organisation: not active until onboarding completes and a second tenant admin approves the activation. The design is ADR-026 "Tenant provisioning", decided by Daniel on 2026-11-21.
+
+**Not yet on a pilot.** A provisioned pilot cannot be activated today, so it could prepare no programme draft. No second tenant admin can join the tenant part, the cell's onboarding prober fails every probe, and no pilot vault route verifies an admin's identity. Until those exist, skip this step and keep `organisation_active` (section 2). Once a cell is provisioned, `organisation_active` has no effect on it.
+
+When the step applies, stop the cell and run it after `init-keys` and before `first-admin`:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell provision-tenant --agreements 1,1,1
+```
+
+- `--agreements` names the versions of the SaaS terms, the data processing agreement and the sub-processor list that the tenant accepted, in that order. A SaaS cell needs it. A self-hosted cell refuses it. The agreement texts are `TODO(legal)`.
+- The command draws the first admin's account. `first-admin` then invites exactly that account.
+- It refuses a ledger that holds a tenant part, so it records once. It writes no output. Exit status 0 means the tenant part is recorded.
 
 ## 3a. Configure and start the vault
 
@@ -228,17 +244,17 @@ An identity whose attribute tuple the vault never stored cannot be erased this w
 
 ## 4. Create the first admin
 
-Stop the cell first. Then run:
+Stop the cell first. Then run, with the first admin's own address:
 
 ```sh
-FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell first-admin /root/first-admin.token
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell first-admin --email admin@grants.example.eu /root/first-admin.token
 ```
 
-The command starts the cell with its listeners on loopback, records the first admin's invitation, and writes the token once to the new file, with mode 0600 (D4). On a SaaS cell the file holds two lines, one for each half. Hand each half to the first admin through a different staff channel. The command refuses an existing file, and a cell whose first admin is already invited or enrolled. Start the cell again afterwards.
+The command starts the cell with its listeners on loopback, records the first admin's login email and invitation, and writes the token once to the new file, with mode 0600 (D4). The address is sealed and fingerprinted as every login email is (ADR-026 "First admin email", decided by Daniel on 2026-11-21). `--email` is optional. On a SaaS cell the file holds two lines, one for each half. Hand each half to the first admin through a different staff channel. The command refuses an existing file, and a cell whose first admin is already invited or enrolled. Start the cell again afterwards.
 
 The first admin opens `https://<host>/auth/invite#<first half><second half>` and enrols a passkey. The first admin then invites the other staff from the platform.
 
-The first admin has no login email after this step, so recovery by email does not apply to that account. A second tenant admin can approve its recovery.
+With `--email`, recovery by email works for the first admin from day one. Before the first admin enrols, the address opens nothing: no magic link and no recovery case. Only both token halves enrol the first admin. Without `--email`, the first admin has no login email, and a second tenant admin approves its recovery. The command refuses an address that is another account's login email.
 
 ## 5. Run the edge
 
@@ -338,7 +354,7 @@ On claude.ai, add a custom connector with the same URL, and upload the skill as 
 
 In Claude Code, run `/mcp`, choose `fstp` and sign in. Your browser opens the cell's consent page. It shows the agent's name as unverified text, the host the browser returns to, and each permission in plain words.
 
-Sign in with your passkey if the page asks. Choose **Approve**. The cell asks for a passkey step-up, since connecting an agent links a new device. A magic-link session cannot approve.
+Sign in with your passkey if the page asks. Choose **Approve**. The cell asks for a passkey step-up, since connecting an agent links a new device. Each step-up approves one consent only (I-78). A magic-link session cannot approve.
 
 ## 8. Work with Claude and confirm in the platform
 
@@ -350,7 +366,7 @@ Access tokens live 10 minutes. Claude refreshes them while your grant lasts, als
 
 ## Checked by
 
-`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` runs section 5: the `fstp-edge` binary from its files in front of that binary. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` runs the backup section: a base backup and WAL from a configuration file, and two restores to the same ledger head. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
+`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` runs section 5: the `fstp-edge` binary from its files in front of that binary. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` runs the backup section: a base backup and WAL from a configuration file, and two restores to the same ledger head. `crates/fstp-celltest/tests/l12_cell_decisions_pg.rs` runs the tenant provisioning of section 3 and the first admin email of section 4 on a world cell. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
 
 ## Backups and restore (operator)
 

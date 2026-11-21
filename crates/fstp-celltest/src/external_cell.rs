@@ -16,7 +16,7 @@
 //!    library;
 //! 3. writes `cell.json`, with the tunnel, internal and health ports drawn
 //!    here, so the edge can route to the tunnel before the cell starts;
-//! 4. runs `fstp-cell first-admin`, then `fstp-cell` itself, and waits
+//! 4. runs `fstp-cell first-admin --email`, then `fstp-cell` itself, and waits
 //!    until `GET /healthz` answers 200.
 //!
 //! The binary's own process holds every key: this process never sees the
@@ -353,17 +353,21 @@ impl ExternalCell {
         c
     }
 
-    /// Runs `fstp-cell first-admin` (D4) and gives the token as the
-    /// first admin types it: both halves joined, or the whole token.
+    /// Runs `fstp-cell first-admin --email <email> <file>` (D4, ADR-026
+    /// "First admin email") and gives the token as the first admin types
+    /// it: both halves joined, or the whole token. The address becomes the
+    /// first admin's login email.
     ///
     /// # Errors
     ///
     /// Fails when the command fails or its token file does not read.
-    pub fn first_admin(&self) -> Result<Vec<u8>, WorldError> {
+    pub fn first_admin(&self, email: &str) -> Result<Vec<u8>, WorldError> {
         let out = self.spec.dir.join("first-admin.token");
         let status = self
             .command()
             .arg("first-admin")
+            .arg("--email")
+            .arg(email)
             .arg(&out)
             .status()
             .map_err(|e| fail("fstp-cell first-admin", &e))?;

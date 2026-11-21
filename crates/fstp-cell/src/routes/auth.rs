@@ -438,12 +438,18 @@ fn decode_email(bytes: &[u8]) -> Result<String, BodyRefusal> {
 async fn issue_magic_link<B: Backend>(ctx: &Ctx<B>, account: Option<AccountId>) -> Result<(), ()> {
     let state = ctx.backend.state().await;
     let now = ctx.backend.now();
+    // ADR-026 record of lane L12: the first admin's login email, recorded
+    // before its enrolment, opens no session. Only both token halves enrol
+    // it (Q35). The rule still runs, so the steps stay uniform.
     let allowed = match (&state, account) {
-        (Ok(s), Some(a)) => may_issue_magic_link(
-            holds(s, a, now),
-            &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
-        )
-        .is_ok(),
+        (Ok(s), Some(a)) => {
+            may_issue_magic_link(
+                holds(s, a, now),
+                &s.tenant().policy().enabled_methods(&ctx.cfg.enabled),
+            )
+            .is_ok()
+                && !s.first_admin_unenrolled(a)
+        }
         // The rule still runs for an unknown address, with no holdings.
         (Ok(s), None) => {
             let _ = may_issue_magic_link(
@@ -1961,8 +1967,11 @@ async fn open_recovery<B: Backend>(ctx: &Ctx<B>, account: Option<AccountId>) -> 
     let command_id = random::<16>();
     let state = ctx.backend.state().await;
     let now = ctx.backend.now();
+    // ADR-026 record of lane L12: the first admin before its enrolment has
+    // nothing to recover, and its login email alone opens no case. The
+    // decoys keep the steps uniform.
     let admitted = match (&state, account, mode, &case, &command_id) {
-        (Ok(s), Some(a), Some(mode), Ok(case), Ok(command_id)) => {
+        (Ok(s), Some(a), Some(mode), Ok(case), Ok(command_id)) if !s.first_admin_unenrolled(a) => {
             fstp_cell_core::gate::admit_recovery_request(s, *case, a, mode, *command_id, now).ok()
         }
         _ => None,

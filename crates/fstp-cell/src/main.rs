@@ -5,8 +5,11 @@
 //! (`fstp_cell::run`):
 //!
 //! - no argument: serve the cell until SIGTERM or SIGINT drains it;
-//! - `first-admin <file>`: record the first admin's invitation and write
-//!   its token once to the new file (D4);
+//! - `first-admin [--email <address>] <file>`: record the first admin's
+//!   invitation, and its login email if given, and write its token once
+//!   to the new file (D4, ADR-026 "First admin email");
+//! - `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`:
+//!   record the tenant part of the ledger (ADR-026 "Tenant provisioning");
 //! - `init-keys <dir>`: create the sealed cell key file at genesis and
 //!   write the public keys the witness and the vault pin into `<dir>`.
 //!
