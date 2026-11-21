@@ -163,7 +163,9 @@ You choose whether your grant appears on our public pages, and at what level of 
 
 Proposals are confidential. They are shared only with assigned reviewers and, for selected proposals, the independent review committee. Identity data is requested only at contract negotiation.
 
-Personal data transferred to the granting authority is processed under the Funding & Tenders Portal Privacy Statement: {{funder.privacy_statement_url}}.
+The privacy notice explains how your personal data is used, who the controller is and how to exercise your rights: {{funder.privacy_statement_url}}.
+
+Personal data transferred to the granting authority is processed under the Funding & Tenders Portal Privacy Statement: TODO(legal): the Portal Privacy Statement address (L-09).
 
 Records are kept for {{P-41}} after the final payment of {{action.acronym}}.
 

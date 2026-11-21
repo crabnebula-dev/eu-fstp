@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 These texts are spoken by the programme operator to applicants and grantees. CrabNebula Ltd only operates the platform. Request items W5, W6 and W9.
 

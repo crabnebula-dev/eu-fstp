@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Used where: the footer element "Data Act information" on tenant admin pages (`footer.data_act_information` in `web/src/creator/messages.en.ts`, `public.footer.data_act` in `crates/fstp-public/src/html.rs`), and the help text `help.field.funder.p46_switch_retrieval_period` in `web/src/help/messages.en.ts`. Request item P4 (L-04).
 

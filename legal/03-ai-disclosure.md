@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Requirement: R-LA-08. Applicants are told that AI assessment is used, in the call text and at the pre-check. `SPEC/05-compliance/ai-act.md` ties it to the AI Act transparency duty.
 

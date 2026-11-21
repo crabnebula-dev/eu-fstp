@@ -2,15 +2,15 @@
 
 Status: draft outline for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Replaces: `agreements.text.dpa` in `crates/fstp-signup/src/render.rs` ("TODO(legal): the text of the data processing agreement is pending."). Request item P2.
 
-Basis in the specification: `SPEC/05-compliance/gdpr.md` names the tenant as controller of programme data and CrabNebula as processor for the SaaS. Daniel's words in ADR-023 call coordinators "data controllers". README.md, Q1, asks Daniel to confirm this reading. This agreement is written for it.
+Basis: Daniel's answer to Q1 (2026-11-21), as in `SPEC/05-compliance/gdpr.md`. On a funder tenant, the funder is controller of programme data and CrabNebula Ltd is its processor. This agreement is written for that case.
 
 TODO(legal): check this outline against the content the GDPR requires of a processor contract. Nothing here quotes or cites the Regulation.
 
-Where CrabNebula Ltd runs a programme itself, as for SuperSAFE, it is controller, and no processor agreement exists for that tenant (`SPEC/05-compliance/other.md`).
+CrabNebula Ltd also coordinates two grant programmes of its own (TODO(legal): the names of both programmes). For those it is the controller, and no processor agreement exists for that tenant (`SPEC/05-compliance/other.md`).
 
 ---
 
@@ -18,6 +18,7 @@ Where CrabNebula Ltd runs a programme itself, as for SuperSAFE, it is controller
 
 - The Customer, as controller of the personal data of its programmes.
 - CrabNebula Ltd, TODO(legal): registered address and company number, as processor.
+- The Data Protection Officer of CrabNebula Ltd is Daniel Thompson-Yvetot. Contact: TODO(legal): the dedicated DPO email and postal address.
 
 ## 2. Subject and duration
 

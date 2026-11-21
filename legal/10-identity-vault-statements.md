@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Code sites: `web/src/vault/messages.en.ts` (marker at the top: "the consent and attestation statements below are interim wording"), `web/src/applicant/messages.en.ts` (`submit.dob.*`, marker L-02), `web/src/vault/write.ts` and `web/src/applicant/submit.ts` (marker L-02). Request items W4 and D2.
 

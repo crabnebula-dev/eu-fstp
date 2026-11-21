@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Used where: section 11 of the privacy notice summarises this text. The full text suits a help page linked from the tenant admin's erasure page (`/app/admin/erasures`, `crates/fstp-api-core/src/erasure.rs`) and from the privacy notice. ADR-007 says the person concerned receives a confirmation of erasure, so section C drafts that message.
 

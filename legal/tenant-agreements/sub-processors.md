@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Replaces: `agreements.text.sub_processors` in `crates/fstp-signup/src/render.rs` ("TODO(legal): the sub-processor list is pending."). Request items P2 and P3 (L-15).
 

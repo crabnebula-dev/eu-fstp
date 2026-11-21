@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Used where: the page behind the footer element "Accessibility statement" (`public.footer.accessibility` in `crates/fstp-public/src/html.rs`, `footer.accessibility` in `web/src/auth/messages.en.ts` and `web/src/applicant/messages.en.ts`, `footer.accessibility_statement` in `web/src/creator/messages.en.ts`). `{{tenant.*}}` values come from the tenant.
 

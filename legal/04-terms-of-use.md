@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Used where: the sign-up page and the sign-in page ("Terms and privacy wording" and "access terms" in `docs/design/03-applicant-screens.md`). No catalogue entry or route for terms exists yet.
 
@@ -17,7 +17,7 @@ Drafting notes for Daniel (not part of the terms):
 
 ## 1. Who we are
 
-The platform is operated by CrabNebula Ltd, TODO(legal): registered address and company number. Each funding programme on the platform is run by an organisation, called the "programme operator" here. The programme operator, not CrabNebula Ltd, decides on proposals, grants and payments.
+The platform is operated by CrabNebula Ltd, TODO(legal): registered address and company number. Each funding programme on the platform is run by an organisation, called the "programme operator" here. The programme operator decides on proposals, grants and payments. For most programmes, the programme operator is a funder, and CrabNebula Ltd only operates the platform. For two programmes, CrabNebula Ltd is itself the programme operator (TODO(legal): the names of both programmes).
 
 ## 2. Your account
 

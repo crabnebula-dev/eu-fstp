@@ -2,7 +2,7 @@
 
 Status: draft outline for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Replaces: `agreements.text.saas_terms` in `crates/fstp-signup/src/render.rs` ("TODO(legal): the text of the SaaS terms is pending."). The tenant accepts a version during onboarding. The control plane records the version only (`crates/fstp-signup/src/types.rs`). Request item P1.
 
@@ -32,7 +32,7 @@ CrabNebula provides the FSTP platform as a hosted service. The Customer uses it 
 
 ## 4. Data protection
 
-The data processing agreement (`dpa.md`) governs programme data. The sub-processor list (`sub-processors.md`) is part of it. TODO(legal): the controller and processor roles (README.md, Q1).
+The data processing agreement (`dpa.md`) governs programme data. The sub-processor list (`sub-processors.md`) is part of it. The Customer is the controller of its programme data and CrabNebula is its processor (README.md, Q1, answered).
 
 ## 5. Availability and support
 

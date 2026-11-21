@@ -2,51 +2,63 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Used where: the page behind the footer element "Privacy notice" on every interface and public page, when the tenant has set no privacy notice of its own. See `README.md` for the code sites.
 
 Drafting notes for Daniel (not part of the notice):
 
-- Section 1 offers two readings of who is responsible. Keep one and delete the other. `README.md`, question Q1, explains the choice.
+- Section 1 names the controller through the per-tenant value `{{controller.*}}` (`README.md`, Q1, answered). For a funder tenant it names that tenant. For the two programmes CrabNebula Ltd coordinates itself, it names CrabNebula Ltd. Section 1 shows the rendered text for each case.
 - Every legal basis, every right and every authority stays `TODO(legal)`. Nothing here cites an article.
 - Lines marked `[NOT BUILT: ...]` describe a rule of the specification that the code does not carry out yet. Remove the line or wait for the build before approval.
-- `{{tenant.*}}` names a value the tenant supplies. The platform has no such placeholder yet (see `README.md`, wiring).
+- `{{controller.*}}` and `{{tenant.*}}` name values the tenant supplies. The platform has no such placeholder yet (see `README.md`, wiring).
 
 ---
 
 ## 1. Who is responsible for your data
 
-This service runs funding programmes. An organisation that runs a programme on the service is called the "tenant" in this notice. CrabNebula Ltd builds and operates the service.
+This service runs funding programmes. An organisation that runs a programme on the service is called the "programme operator" in this notice. CrabNebula Ltd builds and operates the service.
 
-### Reading A: the tenant decides, CrabNebula Ltd processes
+The programme operator decides why and how your data is used for its programme. It is the controller of that data. This covers your account in its programme space, your proposals, reviews, contracts, payments and identity checks.
 
-- For the data of a funding programme, the tenant decides why and how your data is used. This covers proposals, reviews, contracts, payments and identity checks. The tenant is: {{tenant.legal_name}}, {{tenant.address}}.
-- CrabNebula Ltd processes that data for the tenant, under a data processing agreement and on the tenant's instructions.
-- For the tenant's own sign-up and billing with CrabNebula Ltd, CrabNebula Ltd decides why and how that data is used.
-- Where CrabNebula Ltd runs a programme itself, CrabNebula Ltd decides for that programme's data too.
+The controller of this programme is: {{controller.legal_name}}, {{controller.address}}.
 
-### Reading B: CrabNebula Ltd decides for platform accounts
+### When a funder runs the programme
 
-- For your account on the service, CrabNebula Ltd decides why and how your data is used. This covers your email address, your passkeys, your sign-ins and your display name.
-- For the data of a funding programme, the tenant decides, and CrabNebula Ltd processes that data for the tenant. The tenant is: {{tenant.legal_name}}, {{tenant.address}}.
+The programme operator is a funder or a consortium. It is the controller. CrabNebula Ltd processes your data for it, as its processor, under a data processing agreement and only on its instructions.
 
-TODO(legal): choose Reading A or Reading B (README.md, Q1).
+Rendered example: "The controller of this programme is {{tenant.legal_name}}, {{tenant.address}}. CrabNebula Ltd processes your data on its behalf."
+
+### When CrabNebula Ltd runs the programme
+
+CrabNebula Ltd coordinates two grant programmes of its own on this service:
+
+- TODO(legal): name of the first programme coordinated by CrabNebula Ltd.
+- TODO(legal): name of the second programme coordinated by CrabNebula Ltd.
+
+For these programmes, CrabNebula Ltd is the controller. No other organisation processes your data as its processor on the platform side.
+
+Rendered example: "The controller of this programme is CrabNebula Ltd, TODO(legal): registered address."
+
+### Data CrabNebula Ltd controls for every tenant
+
+CrabNebula Ltd is also the controller of the data an organisation gives when it signs up for the service: its legal name, billing address, contracting signatory and the agreements it accepts. The same holds for licence registration data of self-hosted installations.
 
 ### CrabNebula Ltd
 
 - Name: CrabNebula Ltd.
 - Registered address: TODO(legal): registered address of CrabNebula Ltd.
 - Company number: TODO(legal): company registration number and register.
-- Email: TODO(legal): contact email address for data protection questions.
+- Email: TODO(legal): general contact email address.
 
-## 2. Contact for data protection
+## 2. Data Protection Officer
 
-Daniel Thompson-Yvetot is the responsible data officer of CrabNebula Ltd. Write to TODO(legal): the address or email for data protection requests.
+CrabNebula Ltd has designated Daniel Thompson-Yvetot as its Data Protection Officer (DPO).
 
-TODO(legal): confirm whether Daniel's role is a formally designated data protection officer under the GDPR, or a contact person only. The heading and wording change with the answer.
+- DPO contact: TODO(legal): the dedicated DPO email address.
+- DPO postal address: TODO(legal): the DPO postal address.
 
-For a programme's data, you can also contact the tenant: {{tenant.privacy_contact}}.
+For a programme a funder runs, contact the funder first: {{controller.privacy_contact}}. The funder's own DPO, if it has one: {{controller.dpo_contact}}. You can also write to the DPO of CrabNebula Ltd, who passes your request to the funder.
 
 ## 3. What this notice covers
 
@@ -187,7 +199,7 @@ You can ask for:
 
 Where we rely on your consent, you can withdraw it at any time. A withdrawal does not affect what happened before it.
 
-To use a right, write to the contact in section 2. For a programme's data, the tenant answers your request. We help the tenant do so.
+To use a right, write to the controller of the programme or to the DPO in section 2. The controller answers your request. Where a funder is the controller, CrabNebula Ltd helps it answer. Where CrabNebula Ltd is the controller, the DPO answers.
 
 TODO(legal): confirm the list of rights, which rights apply to each legal basis, and the response time to state.
 

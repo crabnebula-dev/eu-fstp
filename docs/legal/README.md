@@ -24,4 +24,4 @@ Answers from a model are advice for Daniel, not approved text. Daniel decides wh
 
 ## Drafts of the texts
 
-`legal/` at the repository root holds markdown drafts of every user-facing legal text, from lane L14 (2026-11-21). CrabNebula Ltd is the legal party and Daniel Thompson-Yvetot the responsible data officer. `legal/README.md` maps each draft to the code site it would replace and lists every point Daniel must supply or verify. The drafts carry the request item IDs used here.
+`legal/` at the repository root holds markdown drafts of every user-facing legal text, from lane L14 (2026-11-21). CrabNebula Ltd is the legal party and Daniel Thompson-Yvetot its designated Data Protection Officer. `legal/README.md` maps each draft to the code site it would replace and lists every point Daniel must supply or verify. The drafts carry the request item IDs used here.

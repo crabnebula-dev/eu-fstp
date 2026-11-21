@@ -2,7 +2,7 @@
 
 Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
 
-Legal party: CrabNebula Ltd. Responsible data officer: Daniel Thompson-Yvetot.
+Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
 Requirement: J2 (design section 2.2). A person invited to a Drafting or Judging role accepts confidentiality terms before a role is granted. The accepted text and its version are recorded (`TERMS_VERSION` in `crates/fstp-api-core/src/people.rs`). A grant without accepted terms is refused (`crates/fstp-domain/src/roles/commands.rs`).
 

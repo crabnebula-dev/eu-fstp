@@ -3,7 +3,7 @@
 Status: drafts for Daniel's review, 2026-11-21 (lane L14). Nothing here is approved, and nothing is wired into the product.
 
 - Legal party: **CrabNebula Ltd**.
-- Responsible data officer: **Daniel Thompson-Yvetot**.
+- Data Protection Officer (DPO) of CrabNebula Ltd: **Daniel Thompson-Yvetot**, formally designated (Daniel, 2026-11-21).
 
 Daniel's instruction of 2026-11-21: "I want you to draft all the legal texts, but create a folder for them under /legal and write them in markdown. CrabNebula Ltd. Is the legal party and I am the responsible data officer."
 
@@ -43,19 +43,21 @@ Daniel's instruction of 2026-11-21: "I want you to draft all the legal texts, bu
 
 ## Questions for Daniel
 
-**Q1. Who is controller, and who is processor?** The drafts support both readings, and Daniel chooses.
+**Q1. Who is controller, and who is processor? Answered by Daniel, 2026-11-21.**
 
-- Reading A, the one the specification holds: the tenant is controller of all programme data, applicants' and reviewers' accounts included. CrabNebula Ltd is its processor. CrabNebula Ltd is controller only of control plane data (tenant sign-up, billing) and licence registration data. Evidence: `SPEC/05-compliance/gdpr.md` (Roles table), I-20 (per-tenant accounts), and Daniel's words in ADR-023: "coordinators (as data controllers)".
-- Reading B, raised in the lane brief: CrabNebula Ltd is controller of platform accounts, and the tenant is controller of programme data.
-- What the code does: every user account lives in the tenant's own cell. No account spans tenants (I-20). Under Reading B, CrabNebula Ltd would be controller of data stored in each tenant's cell. That fits less well with the cell boundary, and the gdpr.md note says per-tenant accounts exist to avoid it.
-- Where CrabNebula Ltd runs a programme itself, as for SuperSAFE, it is controller of that programme's data under both readings (`SPEC/05-compliance/other.md`).
-- Affected drafts: `01-privacy-notice.md` section 1, `02-...` section A, `tenant-agreements/dpa.md`, `tenant-agreements/saas-terms.md` section 4.
+- On a funder tenant, the funder is the controller of its programme data, and CrabNebula Ltd is its processor, as in `SPEC/05-compliance/gdpr.md`.
+- CrabNebula Ltd also coordinates two grant programmes of its own. For those it is the controller, as tenant and coordinator. Names: TODO(legal): the names of both programmes.
+- CrabNebula Ltd is controller of control plane data (tenant sign-up, billing) and licence registration data.
+- The earlier alternative, CrabNebula Ltd as controller of platform accounts, is dropped.
+- The controller identity is a per-tenant value, `{{controller.legal_name}}`, `{{controller.address}}`, `{{controller.privacy_contact}}` and `{{controller.dpo_contact}}`. A funder tenant names itself. The tenant of the two CrabNebula programmes names CrabNebula Ltd. No setting holds this value yet (see Q4).
+- Where the value cannot be a placeholder, the drafts give one text per case. The Guide summary has a platform default for funders (02, A1) and a tenant override for CrabNebula's programmes (02, A2), through the existing `GuideNoticeOverride`.
+- Updated drafts: `01-privacy-notice.md` sections 1, 2 and 13; `02-...` sections A, C and D; `04-terms-of-use.md` section 1; `tenant-agreements/dpa.md`; `tenant-agreements/saas-terms.md` section 4.
 
-**Q2. Daniel's title.** Is "responsible data officer" a formally designated data protection officer under the GDPR, or a contact person? The heading of section 2 of the privacy notice and the imprint change with the answer.
+**Q2. Daniel's title. Answered by Daniel, 2026-11-21.** Daniel Thompson-Yvetot is the formally designated Data Protection Officer (DPO) of CrabNebula Ltd. The drafts name him as DPO with a dedicated DPO contact. The address stays TODO(legal).
 
-**Q3. The Guide's privacy statement address.** `PLATFORM_PRIVACY_STATEMENT_URL` fills `{{funder.privacy_statement_url}}`. The Guide sentence around it names the Funding & Tenders Portal Privacy Statement. So the default must be that Portal address, not the platform privacy notice. Please confirm, and supply the address.
+**Q3. The Guide's privacy statement address. Answered by Daniel, 2026-11-21.** `PLATFORM_PRIVACY_STATEMENT_URL` stays the address of the platform privacy notice. The Guide sentence is reworded to name the platform notice. The Funding & Tenders Portal Privacy Statement gets a separate sentence where Horizon Europe requires it: section 12 of the Horizon Europe Guide and the two R-NG-06 notices. Its address stays TODO(legal) (L-09).
 
-**Q4. Tenant values.** The privacy notice and the accessibility statement need tenant values: legal name, address, privacy contact, accessibility contact. No setting holds them today. A tenant setting, or a profile field, is needed before wiring.
+**Q4. Tenant values.** The privacy notice and the accessibility statement need tenant values: the controller identity of Q1, the tenant's legal name and address, and the accessibility contact. No setting holds them today. A tenant setting, or a profile field, is needed before wiring.
 
 **Q5. Outcome emails.** One template serves every outcome today. W10 asks for a wording per outcome. Keep one neutral template (draft A0), or add a template id per outcome (A1 to A4)?
 
@@ -63,7 +65,7 @@ Daniel's instruction of 2026-11-21: "I want you to draft all the legal texts, bu
 
 **Q7. Funder profile wording store.** The report profile stores a wording ref and the status `TODO(legal)` only. Approved wording needs a store behind each ref, a second status value and a new profile version.
 
-**Q8. The drafted Guide still holds markers.** `funder-profiles/horizon-europe/guide.v1.md` keeps one `TODO(legal)` line in each of sections 9 and 11. Each asks Daniel to verify the drafted text against the signed grant agreement. With those lines, `LegalWordingPending` still fails, as it should. Once Daniel verifies the text and deletes both lines, the file passes I-66.
+**Q8. The drafted Guide still holds markers.** `funder-profiles/horizon-europe/guide.v1.md` keeps one `TODO(legal)` line in each of sections 9 and 11. Each asks Daniel to verify the drafted text against the signed grant agreement. Section 12 holds a third marker, for the Portal Privacy Statement address (Q3). With these markers, `LegalWordingPending` still fails, as it should. Once Daniel clears all three, the file passes I-66.
 
 ## Inventory of `TODO(legal)` markers
 
@@ -74,8 +76,8 @@ The repository holds about 450 occurrences of `TODO(legal)` in about 210 files (
 | Code site | Marker or refusal | Draft | How it would be wired |
 | --- | --- | --- | --- |
 | `crates/fstp-tenant/src/state.rs` `PLATFORM_DATA_PROTECTION_SUMMARY` | Placeholder text; `crates/fstp-cell/src/shell/facts.rs` `PlatformNotice::platform_default` sets `approved: false`, so publication is refused under I-52 | 02, section A | Replace the constant; set `approved` true once Daniel approves; update `crates/fstp-tenant/tests/guide_notice.rs` and `crates/fstp-celltest/tests/g13_production_shell_facts.rs`, which pin the marker |
-| `crates/fstp-tenant/src/state.rs` `PLATFORM_PRIVACY_STATEMENT_URL` | `https://privacy-statement.invalid/todo-legal` | 02, section B | Replace the constant with the Portal address (Q3) |
-| `crates/fstp-guide/profiles/horizon-europe/guide.v1.md` lines 113 and 152 (and the byte-equal copy `SPEC/profiles/horizon-europe/guide-for-applicants.md`) | `LegalWordingPending` (Q6, I-66); refusal tested by `crates/fstp-api-testkit/tests/i66_pending_legal_wording_is_a_failure.rs` | `funder-profiles/horizon-europe/guide.v1.md` | Copy over both files once the two remaining lines are cleared. It follows the structure of `crates/fstp-api-testkit/profiles/synthetic-wording/horizon-europe/guide.v1.md`: same headings, the marker lines replaced. A new Guide wording may need a new template version |
+| `crates/fstp-tenant/src/state.rs` `PLATFORM_PRIVACY_STATEMENT_URL` | `https://privacy-statement.invalid/todo-legal` | 02, section B | Replace the constant with the address of the published platform privacy notice (Q3, answered) |
+| `crates/fstp-guide/profiles/horizon-europe/guide.v1.md` lines 113 and 152 (and the byte-equal copy `SPEC/profiles/horizon-europe/guide-for-applicants.md`) | `LegalWordingPending` (Q6, I-66); refusal tested by `crates/fstp-api-testkit/tests/i66_pending_legal_wording_is_a_failure.rs` | `funder-profiles/horizon-europe/guide.v1.md` | Copy over both files once the three remaining markers are cleared (Q8). It follows the structure of `crates/fstp-api-testkit/profiles/synthetic-wording/horizon-europe/guide.v1.md`: same headings, the marker lines replaced. A new Guide wording may need a new template version |
 | `crates/fstp-report/profiles/horizon-europe/profile.v1.json` `visibility_elements` | Status `TODO(legal)` | `funder-profiles/horizon-europe/visibility-elements.md` | New store, status and profile version (Q7) |
 | `crates/fstp-public/src/html.rs` `public.footer.*`, `public.footer.funder_element` | Placeholder footer texts | 15 | Replace catalogue entries; add pages and links (Q6) |
 | `crates/fstp-public/src/html.rs` `public.ai.disclosure` | Placeholder AI disclosure | 03, section A | Replace catalogue entry |
@@ -170,7 +172,7 @@ Facts about CrabNebula Ltd:
 2. Company number and register.
 3. VAT number, if one applies.
 4. General contact email.
-5. Data protection contact email.
+5. Dedicated DPO email and postal address (Daniel Thompson-Yvetot, DPO).
 6. Support email or URL.
 7. Accessibility contact email.
 8. Switching contact.
@@ -181,7 +183,7 @@ Facts about CrabNebula Ltd:
 
 Decisions:
 
-13. Q1 to Q8 above.
+13. Q4 to Q8 above, and the names of the two programmes CrabNebula Ltd coordinates (Q1).
 14. Versions and dates of each approved text.
 15. Fees, service levels, liability, term and termination of the SaaS terms.
 16. Sub-processor change notice and objection periods; breach notification time; audit terms in the DPA.
@@ -199,7 +201,7 @@ Legal readings and citations:
 25. L-06: the funder retention period and the records it covers; deferred erasure; the skeleton as anonymous data.
 26. L-07: opt-in as the basis for publication, including for natural persons and group teams.
 27. L-08: the EU funding acknowledgement wording and emblem rules.
-28. L-09: the Portal Privacy Statement address; the data passed to the granting authority; reporting fields.
+28. L-09: the Portal Privacy Statement address; the address of the published platform privacy notice; the data passed to the granting authority; reporting fields.
 29. L-11: hardship contributions as eligible costs.
 30. L-12: the flow-down obligations and contract clauses against the signed grant agreement.
 31. L-14: governing law and external redress for applicants and recipients; complaint windows P-61 to P-64.
