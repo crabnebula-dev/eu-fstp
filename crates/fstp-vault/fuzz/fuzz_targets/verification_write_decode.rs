@@ -20,7 +20,11 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let got = decode_verification_write(data);
-    assert_eq!(got, decode_verification_write(data), "decoding is not deterministic");
+    assert_eq!(
+        got,
+        decode_verification_write(data),
+        "decoding is not deterministic"
+    );
     if let Ok(w) = got {
         let bytes = encode_verification_write(&w).expect("an accepted body re-encodes");
         assert_eq!(bytes, data, "an accepted body has another spelling");
