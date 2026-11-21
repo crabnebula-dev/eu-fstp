@@ -1581,8 +1581,9 @@ pub(crate) async fn add_passkey<B: Backend>(ctx: &Ctx<B>, req: &Request, caller:
 
 /// Whether session `row` of the caller's account is live at `now`, as the
 /// gate would admit it: not ended by a record, no binding end after its
-/// start, and inside P-72 under I-77 (design sections 5.4 and 8.2).
-fn live(s: &CellState, row: &SessionRow, holdings: bool, now: Timestamp) -> bool {
+/// start, and inside P-72 under I-77 (design sections 5.4 and 8.2). The API
+/// core's session port reads the same rule (ADR-026 record of lane L5).
+pub(crate) fn live(s: &CellState, row: &SessionRow, holdings: bool, now: Timestamp) -> bool {
     let view = view_of(row);
     !s.auth().session_ended(row.id)
         && !s.binding_ended_between(row.account, row.started, now)
@@ -2107,17 +2108,31 @@ async fn put_enrolment<B: Backend>(
 /// above). A failure here is not shown: the step itself is recorded, and
 /// a later approval or ticket sends a new token.
 async fn send_enrolment<B: Backend>(ctx: &Ctx<B>, case: [u8; 16]) {
-    let Ok(s) = ctx.backend.state().await else {
+    send_enrolment_by(&*ctx.backend, case).await;
+}
+
+/// [`send_enrolment`] through `backend` alone, as the API core's recovery
+/// port sends it after its approval (ADR-026 record of lane L5).
+pub(crate) async fn send_enrolment_by<B: Backend>(backend: &B, case: [u8; 16]) {
+    let Ok(s) = backend.state().await else {
         return;
     };
     let Some(c) = s.auth().recovery(case) else {
         return;
     };
-    let now = ctx.backend.now();
-    if let Ok(token) = put_enrolment(ctx, case, c.account, now).await {
-        let _ = ctx
-            .backend
-            .send_recovery_enrolment(c.account, case, token)
+    let now = backend.now();
+    let Ok(enrolment) = fstp_crypto::random_array::<32>() else {
+        return;
+    };
+    let row = TokenRow {
+        digest: fstp_cell_core::gate::recovery_token_digest(case, &enrolment),
+        kind: TokenKind::RecoveryEnrolment,
+        account: c.account,
+        issued_at: now,
+    };
+    if backend.put_token(row).await.is_ok() {
+        let _ = backend
+            .send_recovery_enrolment(c.account, case, enrolment)
             .await;
     }
 }

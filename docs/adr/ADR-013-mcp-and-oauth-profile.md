@@ -238,7 +238,7 @@ The rule, decided by Daniel on 2026-11-20:
 Readings of lane p75-p77, which apply the rule to each tool:
 
 - `fstp_creator_save_fields` prepares when its `fields` or its `clear` names `evaluation.p75_agent_content_reads` or `evaluation.p77_mcp_binding_actions`. A clear counts, since it removes the value the draft holds.
-- `fstp_creator_apply_start` prepares for a start from a template or a clone. Each writes the source's values of P-75 and P-77 into the draft policy, unless the draft saved its own. A blank start and a start from an import apply no value of either. At most they return an unsaved value to a gap, which I-66 refuses at activation until a save fills it, and that save prepares.
+- `fstp_creator_apply_start` prepares for a start from a template or a clone. Only these two starts are prepare-only through MCP. Daniel kept this as built: decided by Daniel on 2026-11-20. Each writes the source's values of P-75 and P-77 into the draft policy, unless the draft saved its own. A blank start and a start from an import apply no value of either. At most they return an unsaved value to a gap, which I-66 refuses at activation until a save fills it, and that save prepares.
 - No other tool sets either parameter. The import marks both as not importable, so `import.resolve` never names them, and it is prepare-only anyway. `creator.accept_narrative` and `creator.edit_narrative` take narrative fields and P-09 only.
 - The decision needs the decoded request, so it is made where the creator command is built, before the dry run. `fstp_access::creator_channel_policy` refines the verdict of `channel_policy` for a decoded creator command. It turns `Execute` through MCP into `Prepare` and changes no other verdict. The tool table stays the only one (TH-63). Only the two descriptions name the rule. The tools sit on the same operations under the same roles, and the dry run refuses through MCP exactly what the web refuses (I-84).
 - The test reference (`reference::authz`) and M-PARITY model the rule from the request each sends: the matrix starts from the SuperSAFE template and saves P-28 alone.
@@ -336,7 +336,7 @@ Daniel asked that Claude Code and claude.ai act on the demo cell through its MCP
 
 ### Basis
 
-`docs/handoff/production-mcp-design.md` section 2.1 drafted these rows, and section 3.4 gives them to lane L2. Daniel answered the design questions on 2026-11-20 (section 2.2). D9 bears on two rows below. Daniel has not answered it, so both rows are interim. D12 is no: the lane builds everything, and no real user uses a production cell until the release gate passes, the M10 Mythos confirmation included (I-74). Every other row is interim, pending Daniel. The rows supersede the "Records" reading of lane W1e and the "Production cell" point of lane mcp-demo.
+`docs/handoff/production-mcp-design.md` section 2.1 drafted these rows, and section 3.4 gives them to lane L2. Daniel answered the design questions on 2026-11-20 (section 2.2). D9 bears on two rows below. Daniel has not answered it, so both rows are interim. D12 was first no. Daniel changed it on 2026-11-20: moduletto is confirmed for release, so a clearly labelled pilot may have real users. A pilot is not a release, and `der`, `spki`, `x509-cert` and `cms` stay unconfirmed (I-74). Every other row is interim, pending Daniel, unless it says otherwise. The rows supersede the "Records" reading of lane W1e and the "Production cell" point of lane mcp-demo.
 
 ### Rows of the design
 
@@ -351,7 +351,7 @@ Daniel asked that Claude Code and claude.ai act on the demo cell through its MCP
 | Agent origins | `/mcp` accepts a request without `Origin`, or with the tenant origin, as now. A configured list `mcp.agent_origins`, empty by default, would add origins for `/mcp` only, with the bearer token still required. It is built only after a claude.ai trace shows the need | Interim, pending Daniel (D9). The lead runs a claude.ai trace before L2 merges |
 | Token auth method | `none` only, until a claude.ai trace shows another method | Interim, pending Daniel (D9) |
 | Consent texts | The e2e cell's texts become the production texts. They move to the platform message catalogue of the consent page | Interim, pending Daniel; "Scopes" |
-| Real users | No real user uses a production cell before the release gate passes | Decided by Daniel on 2026-11-20 (D12) |
+| Real users | A clearly labelled pilot may have real users, since moduletto is confirmed for release. A pilot is not a release. `der`, `spki`, `x509-cert` and `cms` stay unconfirmed | Decided by Daniel on 2026-11-20 (D12, changed the same day) |
 
 ### Readings of lane L2
 
@@ -365,7 +365,7 @@ Each reading below is interim, pending Daniel. The lane needed it to build the r
 | Accounts | `fstp_oauth::Account` holds the full 128-bit account id. The production cell draws account ids at random over 128 bits | I-86 |
 | Client metadata | A client row holds the client id and a text reference. The registration metadata, the redirect URIs and the client name, is stored as one sealed text in the cell's text store, in one text group of the authorisation server. A client whose text does not open at start is dropped with its families, which fails closed | R-NF-08 column classes; ADR-007 |
 | Family rows | Each change of a family carries a version from the server's change counter. A row is replaced only by a higher version, so two endpoint calls that commit out of order leave the later state | G5 |
-| Failed write | When the transaction of a call fails, the reply is 503 and the server is reloaded from the tables before the next call. Records held in memory only are then lost, as on a restart | Fails closed |
+| Failed write | When the transaction of a call fails, the reply is 503 and the server is reloaded from the tables before the next call. Records held in memory only are then lost, as on a restart. So the reload drops in-memory codes, consents and access tokens | Fails closed. Decided by Daniel on 2026-11-20 |
 | Recovery check | The instant compared is the code's issue for a code redemption, and the family's start for a refresh or an access token. A code issued at or before the last completed recovery is burned. The start of the cell also revokes every stored family the check refuses, which closes the window between a recovery's commit and its call to `revoke_all_agents` | I-79; H-21 |
 | Rate keys | The registration rate key is the tunnel peer's address. The consent rate key is the SHA-256 of the session cookie when one is sent, and the peer's address otherwise | ADR-024 |
 | Lifetimes | The production server reads P-71 and P-72 from the cell's defaults: 5 minutes and 12 hours. A tenant setting of P-71 or P-72 takes effect at the next start | P-71; P-72 (proposed) |

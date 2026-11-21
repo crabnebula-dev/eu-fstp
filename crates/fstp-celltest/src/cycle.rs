@@ -141,6 +141,10 @@ pub mod self_hosted;
 pub const NOT_LOGGED_IN: &str =
     "fstp_celltest::cycle: the step needs the login step first (its script has none before it)";
 
+/// The step prefix `acknowledge-warning:<check>`: the creator path also
+/// acknowledges the warning of that check on the draft (ADR-027).
+pub const ACK_PREFIX: &str = "acknowledge-warning:";
+
 /// A step that needs `create-programme` first.
 pub const NO_PROGRAMME: &str = "fstp_celltest::cycle: the step needs the create-programme step first (its script has none before it)";
 
@@ -194,7 +198,7 @@ pub const GROUND_TRUTH_SEAM: &str = "fstp_celltest::cycle seed:ground-truth step
 pub const M2_SETUP_SEAM: &str = "fstp_celltest::cycle m2 and m2-suite steps: the cycle drives no M2 generator over HTTP yet (each needs an enrolled cell account per generator account at the generator's own id, the generator's programme through the creator path, and its instants on the cell clock; the cycle's own path from signup to GRANTED runs over HTTP since lane F-CYCLE3)";
 
 /// A step name outside the vocabulary of the module documentation.
-pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, judging:read-every-route, drafting:read-every-route, vault-origin:write:<canary> and vault-origin:write:<kind>:<text>, state-country:<text>, the value steps <kind>:<text> and authenticator:<hex>, and the self-hosted steps seed:<kind>:<text>, restart, licence-refresh, licence-refresh:<outcome>, update-check, services-down:<fault>, services-up, submit, stage1, stage2, irc-review, request-payment, release-payment, notify, export, catalogue-to-granted, payment-commands, enqueue-outbox and export-entry-point); the cell erasure step of other tests is not defined yet";
+pub const UNKNOWN_STEP_SEAM: &str = "fstp_celltest::cycle: the step is outside the cycle vocabulary (login, acknowledge-warning:<check>, create-programme, publish-call, signup, verify-identity, submit-proposal, score, rank, negotiate, grant, call-cycle, erase-text, erase-one-text, base-backup, wal-archive, keystore-snapshot, rotate-chain, erase-account, erase-identity, upload-document, record-verification, abort-next-append, retry, replay-step-up, the minor-applicant steps, m2-suite:<invariant>:reduced, m2:random-commands, m2:path-to-<state>, seed:ground-truth:life-setup-adult, judging:read-every-route, drafting:read-every-route, vault-origin:write:<canary> and vault-origin:write:<kind>:<text>, state-country:<text>, the value steps <kind>:<text> and authenticator:<hex>, and the self-hosted steps seed:<kind>:<text>, restart, licence-refresh, licence-refresh:<outcome>, update-check, services-down:<fault>, services-up, submit, stage1, stage2, irc-review, request-payment, release-payment, notify, export, catalogue-to-granted, payment-commands, enqueue-outbox and export-entry-point); the cell erasure step of other tests is not defined yet";
 
 /// An evaluation step that needs a proposal the cycle drafted, or a
 /// Judging staff member it granted.
@@ -360,6 +364,7 @@ pub struct CycleMemory {
     pending: Option<(AccountId, Cookie)>,
     current: Option<Run>,
     values: Person,
+    acks: Vec<CheckId>,
 }
 
 impl std::fmt::Debug for CycleMemory {
@@ -399,6 +404,8 @@ pub struct Cycle<'w> {
     current: Option<Run>,
     /// The values of the next applicant ([`Person`]).
     values: Person,
+    /// The warnings the creator path also acknowledges ([`ACK_PREFIX`]).
+    acks: Vec<CheckId>,
 }
 
 impl<'w> Cycle<'w> {
@@ -421,6 +428,7 @@ impl<'w> Cycle<'w> {
             pending: None,
             current: None,
             values: Person::default(),
+            acks: Vec::new(),
         }
     }
 
@@ -443,6 +451,7 @@ impl<'w> Cycle<'w> {
             pending: memory.pending,
             current: memory.current,
             values: memory.values,
+            acks: memory.acks,
         }
     }
 
@@ -531,6 +540,7 @@ impl<'w> Cycle<'w> {
             pending: self.pending,
             current: self.current,
             values: self.values,
+            acks: self.acks,
         }
     }
 
@@ -633,6 +643,17 @@ impl<'w> Cycle<'w> {
             // The cell erasure of lane m3/erase-cell (`crate::erase_cell`).
             "erase-cell" => {
                 Self::backup_step("erase-cell", crate::erase_cell::erase(self.client.cell()))
+            }
+            // ADR-027: a warning the creator path also acknowledges before it
+            // requests activation, such as `PrecheckUnavailable` on a cell
+            // with no pre-check provider.
+            s if s.starts_with(ACK_PREFIX) => {
+                let check = s
+                    .strip_prefix(ACK_PREFIX)
+                    .and_then(CheckId::from_name)
+                    .ok_or(NotImplemented::new(UNKNOWN_STEP_SEAM))?;
+                self.acks.push(check);
+                Ok(())
             }
             "upload-document" => self.upload_document(),
             "record-verification" => self.record_verification(),
@@ -996,6 +1017,23 @@ impl<'w> Cycle<'w> {
             }),
             false,
         )?;
+        for check in self.acks.clone() {
+            let head = self.head(STEP)?;
+            self.command(
+                STEP,
+                "an acknowledgement the script names",
+                &builder,
+                creator(CreatorCommand::AcknowledgeWarning {
+                    programme: P1,
+                    revision: head,
+                    warning: WarningKey {
+                        check,
+                        subject: ack_subject(check),
+                    },
+                }),
+                false,
+            )?;
+        }
         let head = self.head(STEP)?;
         self.command(
             STEP,
@@ -2207,4 +2245,16 @@ pub(crate) fn save_of(spec: &ProgrammeSpec) -> Vec<FieldEdit> {
             Field::Unset => None,
         })
         .collect()
+}
+
+/// The subject of the warning of `check` on the draft: the probe of a
+/// probe check, else the draft (`fstp_creator::validate`).
+fn ack_subject(check: CheckId) -> CheckSubject {
+    use fstp_creator::ProbeKind;
+    match check {
+        CheckId::ChannelUnreachable => CheckSubject::Probe(ProbeKind::Channel),
+        CheckId::SendingDomainUnverified => CheckSubject::Probe(ProbeKind::SendingDomain),
+        CheckId::InferenceUnreachable => CheckSubject::Probe(ProbeKind::Inference),
+        _ => CheckSubject::Draft,
+    }
 }

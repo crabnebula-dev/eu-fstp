@@ -90,6 +90,12 @@ fn i_27_placeholder_enum_is_enumerated() {
                         let _: CallId = c;
                         x
                     }
+                    // J2, ADR-026 record of lane L5: a random link token,
+                    // which names no person and holds no content.
+                    LinkTarget::RoleInvitation(t) => {
+                        let _: [u8; 32] = t.0;
+                        x
+                    }
                 };
                 ValueKind::Link
             }
@@ -298,4 +304,36 @@ const PINNED: &[(&str, &str)] = &[
         "passkey-disabled/1/en",
         "d9dfd5d285250333a9e04b3e00c7840f0c8d7d81d13b92b9826e2c66e7d92b54",
     ),
+    // J2, ADR-026 record of lane L5: the programme role invitation.
+    (
+        "role-invitation/1/en",
+        "2497713e93972f0aec49c6d8292acd568a74abe3330682c2f6c52a96e3fe332d",
+    ),
 ];
+
+/// I-27, J2 (ADR-026 record of lane L5): the invitation link is the fixed
+/// landing route with the token in the fragment, as 64 lowercase hex
+/// digits and nothing else. The token never shows in a debug print of
+/// the value, so no log line carries it.
+#[test]
+fn i_27_invitation_link_holds_the_token_in_the_fragment_only() {
+    let origin = Origin::new("https://demo-cell.example").unwrap();
+    check(
+        "i_27_invitation_link_holds_the_token_in_the_fragment_only",
+        |g| {
+            let mut token = [0u8; 32];
+            for (t, b) in token.iter_mut().zip(g.bytes(32..=32)) {
+                *t = b;
+            }
+            let v = Value::Link(LinkTarget::RoleInvitation(fstp_mail::InvitationToken(
+                token,
+            )));
+            let s = v.render(&origin).map_err(|e| format!("{e}"))?;
+            let hex: String = token.iter().map(|b| format!("{b:02x}")).collect();
+            prop_assert_eq!(s, format!("https://demo-cell.example/app/invitation#{hex}"));
+            let printed = format!("{v:?}");
+            prop_assert!(!printed.contains(&hex), "the token in a print: {printed}");
+            Ok(())
+        },
+    );
+}

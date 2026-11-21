@@ -389,7 +389,7 @@ fn i24_cell_witness_client_treats_a_receipt_for_another_cell_as_owing_an_abort()
 }
 
 /// The configuration file is read with a bound: a path that never ends,
-/// such as `/dev/zero`, is refused one byte past `MAX_CONFIG_LEN` and is
+/// such as `/dev/zero`, is refused one byte past `MAX_FILE_LEN` and is
 /// never read whole.
 #[test]
 fn cell_config_read_stops_one_byte_past_the_limit() {

@@ -14,8 +14,9 @@
 //! Interim, pending Daniel: one host process runs every cell and vault of
 //! the world, beside the test world's own parts (the edge, the witness,
 //! the relays and the cycle's clients). Design section 14.1 asks for the
-//! real `fstp-cell` and `fstp-vault` binaries, but `fstp_cell::run` still
-//! refuses (its configuration names no logins, custody or keys), and the
+//! real `fstp-cell` and `fstp-vault` binaries. `fstp_vault::run` still refuses.
+//! `fstp_cell::run` serves a cell from its file since lane L4
+//! (`crate::external_cell`), but process mode keeps its host, since the
 //! world drives each cell through in-process handles (its clock, store
 //! fault point, keystore and mail). A clean memory scan of the host
 //! process thus covers every cell and vault process the world would have.

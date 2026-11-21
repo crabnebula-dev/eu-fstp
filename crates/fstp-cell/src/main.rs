@@ -1,17 +1,26 @@
-//! The `fstp-cell` binary (design section 2.3).
+//! The `fstp-cell` binary (design section 2.3, ADR-026 "Configuration").
 //!
-//! It decodes the configuration named by `FSTP_CELL_CONFIG` and serves the
-//! cell through `fstp_cell::run`, on the one tokio runtime behind
-//! `fstp_rt`, until SIGTERM drains it through `fstp_rt::Shutdown`. Until
-//! the production store and witness transport land, `run` refuses after
-//! the configuration decodes, and the binary logs `NotImplemented`.
+//! It decodes the configuration file named by `FSTP_CELL_CONFIG` and runs
+//! one command on the one tokio runtime behind `fstp_rt`
+//! (`fstp_cell::run`):
+//!
+//! - no argument: serve the cell until SIGTERM or SIGINT drains it;
+//! - `first-admin <file>`: record the first admin's invitation and write
+//!   its token once to the new file (D4);
+//! - `init-keys <dir>`: create the sealed cell key file at genesis and
+//!   write the public keys the witness and the vault pin into `<dir>`.
+//!
+//! It writes typed events only (R-NF-02). A refused configuration or
+//! argument exits with status 2, any other failure with status 1.
 
 use std::process::ExitCode;
 
 use fstp_cell::CellError;
 
 fn main() -> ExitCode {
-    match fstp_cell::run() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let outcome = fstp_cell::run::parse_args(&args).and_then(|c| fstp_cell::run::run_command(&c));
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(CellError::NotImplemented(_)) => {
             // R-NF-02: a typed event, never the error text.

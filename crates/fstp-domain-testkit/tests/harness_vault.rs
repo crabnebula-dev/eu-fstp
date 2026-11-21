@@ -364,6 +364,15 @@ impl Facts {
             // The ops of this model write no bank details or hardship
             // evidence, so the vault holds none (I-33, R-PR-04).
             Query::BankReleasable { .. } | Query::HardshipEvidenceVerified { .. } => false,
+            // Q35 A, ADR-027: a class is defined once an identity is excluded
+            // in it, and a list is declared once an affiliation names it.
+            Query::ClassesDefined { classes, .. } => classes
+                .0
+                .iter()
+                .all(|c| self.excluded.iter().any(|(_, x)| *x == c.raw())),
+            Query::ProximityListsDeclared { lists, .. } => lists
+                .iter()
+                .all(|l| self.affiliations.iter().any(|(_, x)| *x == l.raw())),
             Query::ChangedSince { epoch } => {
                 let changed: BTreeSet<u128> = self
                     .changes
@@ -560,6 +569,21 @@ fn gen_query(g: &mut Gen, kind: QueryKind, max_epoch: u64) -> Query {
         QueryKind::HardshipEvidenceVerified => Query::HardshipEvidenceVerified {
             grant: ProposalId::from_raw(u128::from(g.u8_in(1..=3))),
             evidence: HardshipEvidenceId::from_raw(u128::from(g.u8_in(1..=3))),
+        },
+        QueryKind::ClassesDefined => Query::ClassesDefined {
+            programme: ProgrammeId::from_raw(small(g, PROGRAMMES)),
+            classes: ExclusionClasses(
+                g.vec(0..=3, |g| ClassId::from_raw(small(g, CLASSES)))
+                    .into_iter()
+                    .collect(),
+            ),
+        },
+        QueryKind::ProximityListsDeclared => Query::ProximityListsDeclared {
+            programme: ProgrammeId::from_raw(small(g, PROGRAMMES)),
+            lists: g
+                .vec(0..=3, |g| ProximityListId::from_raw(small(g, LISTS)))
+                .into_iter()
+                .collect(),
         },
     }
 }
@@ -862,6 +886,38 @@ fn harness_vault_fixed_truth_answers_each_query_kind() {
             Query::HardshipEvidenceVerified {
                 grant: ProposalId::from_raw(2),
                 evidence: HardshipEvidenceId::from_raw(1),
+            },
+            false,
+        ),
+        // Q35: class 1 has an excluded identity, class 2 none. List 1 is
+        // named by an affiliation, list 2 by none.
+        (
+            Query::ClassesDefined {
+                programme: ProgrammeId::from_raw(1),
+                classes: classes(&[1]),
+            },
+            true,
+        ),
+        (
+            Query::ClassesDefined {
+                programme: ProgrammeId::from_raw(1),
+                classes: classes(&[1, 2]),
+            },
+            false,
+        ),
+        (
+            Query::ProximityListsDeclared {
+                programme: ProgrammeId::from_raw(1),
+                lists: [ProximityListId::from_raw(1)].into_iter().collect(),
+            },
+            true,
+        ),
+        (
+            Query::ProximityListsDeclared {
+                programme: ProgrammeId::from_raw(1),
+                lists: [ProximityListId::from_raw(1), ProximityListId::from_raw(2)]
+                    .into_iter()
+                    .collect(),
             },
             false,
         ),

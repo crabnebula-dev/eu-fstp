@@ -129,6 +129,27 @@ pub enum Query {
         /// The opaque reference the hardship request carries.
         evidence: HardshipEvidenceId,
     },
+    /// Does the vault define every P-13 exclusion class of this programme? (I-04, Q35 A)
+    ///
+    /// Named `classes_defined` in `overview.md` NOTE 8. It answers one bit
+    /// and names no account. On a no, the creator's `ExclusionClassUnknown`
+    /// check fails.
+    ClassesDefined {
+        /// The programme.
+        programme: ProgrammeId,
+        /// The P-13 classes of the programme's draft.
+        classes: ExclusionClasses,
+    },
+    /// Has every partner organisation in P-38 of this programme declared its proximity list? (I-35, Q35 A)
+    ///
+    /// Named `proximity_lists_declared` in `overview.md` NOTE 8. It asks
+    /// about the list ids P-38 names, answers one bit and names no account.
+    ProximityListsDeclared {
+        /// The programme.
+        programme: ProgrammeId,
+        /// The proximity lists of the programme's draft P-38.
+        lists: BTreeSet<ProximityListId>,
+    },
 }
 
 /// The fieldless tag of a [`Query`].
@@ -160,11 +181,15 @@ pub enum QueryKind {
     BankReleasable,
     /// [`Query::HardshipEvidenceVerified`].
     HardshipEvidenceVerified,
+    /// [`Query::ClassesDefined`].
+    ClassesDefined,
+    /// [`Query::ProximityListsDeclared`].
+    ProximityListsDeclared,
 }
 
 impl QueryKind {
     /// Every kind, in the order of the query table in `SPEC/03-architecture/overview.md`.
-    pub const ALL: [QueryKind; 13] = [
+    pub const ALL: [QueryKind; 15] = [
         QueryKind::IsVerified,
         QueryKind::SameIdentityAsAny,
         QueryKind::HasConflict,
@@ -178,6 +203,8 @@ impl QueryKind {
         QueryKind::ChangedSince,
         QueryKind::BankReleasable,
         QueryKind::HardshipEvidenceVerified,
+        QueryKind::ClassesDefined,
+        QueryKind::ProximityListsDeclared,
     ];
 
     /// The question as the query table spells it.
@@ -218,6 +245,12 @@ impl QueryKind {
             QueryKind::HardshipEvidenceVerified => {
                 "Is this hardship evidence verified for this grant?"
             }
+            QueryKind::ClassesDefined => {
+                "Does the vault define every P-13 exclusion class of this programme?"
+            }
+            QueryKind::ProximityListsDeclared => {
+                "Has every partner organisation in P-38 of this programme declared its proximity list?"
+            }
         }
     }
 }
@@ -239,6 +272,8 @@ impl Query {
             Query::ChangedSince { .. } => QueryKind::ChangedSince,
             Query::BankReleasable { .. } => QueryKind::BankReleasable,
             Query::HardshipEvidenceVerified { .. } => QueryKind::HardshipEvidenceVerified,
+            Query::ClassesDefined { .. } => QueryKind::ClassesDefined,
+            Query::ProximityListsDeclared { .. } => QueryKind::ProximityListsDeclared,
         }
     }
 }

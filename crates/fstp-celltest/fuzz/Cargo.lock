@@ -241,6 +241,7 @@ dependencies = [
  "fstp-json",
  "fstp-keys",
  "fstp-ledger",
+ "fstp-mail",
  "fstp-money",
  "fstp-oauth",
  "fstp-obs",
@@ -251,12 +252,14 @@ dependencies = [
  "fstp-report",
  "fstp-rt",
  "fstp-smtp",
+ "fstp-tenant",
  "fstp-timeline",
  "fstp-tls",
  "fstp-vault-proto",
  "fstp-web",
  "fstp-webauthn",
  "fstp-witness",
+ "zeroize",
 ]
 
 [[package]]

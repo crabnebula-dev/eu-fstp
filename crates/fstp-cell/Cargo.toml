@@ -34,6 +34,8 @@ fstp-engine.workspace = true
 # The creator shell facts of a cell (lane F-CYCLE2).
 fstp-creator.workspace = true
 fstp-guide.workspace = true
+# ADR-027: the Guide notice of the tenant settings, for the creator shell.
+fstp-tenant.workspace = true
 fstp-money.workspace = true
 # M6 lane L6-TL: the timeline engine the timeline task runs.
 fstp-timeline.workspace = true
@@ -47,6 +49,8 @@ fstp-audit.workspace = true
 fstp-keys.workspace = true
 fstp-json.workspace = true
 fstp-crypto.workspace = true
+# ADR-001 record of 2026-11-20: wipes the plain body of the cell key file.
+zeroize.workspace = true
 # In-house edges of lane int5: the database client of the route backend
 # and of the pools, and the witness connection protocol and its async
 # lock (design sections 4.2 and 7.2).
@@ -54,6 +58,7 @@ fstp-pgwire.workspace = true
 fstp-witness.workspace = true
 # M6 lane L6-DISP: the dispatch worker of the dispatcher task.
 fstp-dispatch.workspace = true
+fstp-mail.workspace = true
 # Lane m4/cellpub: the public view, its pages, feed and tools (I-87), and
 # the funder profiles of the page footer (I-69).
 fstp-public.workspace = true

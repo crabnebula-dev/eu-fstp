@@ -123,16 +123,18 @@ where
     T: CellTokens,
 {
     /// The creator facts and Guide inputs a command reads, as the cell's
-    /// command route adds them.
-    fn with_facts(&self, s: &CellState, a: Admitted) -> Admitted {
+    /// command route adds them, from the shell facts seam
+    /// (`super::facts::ShellFacts`).
+    async fn with_facts(&self, s: &CellState, a: Admitted) -> Admitted {
+        let shell = &self.inner.facts;
         let facts = match a.action() {
             Action::Command(CellCommand::Engine(fstp_engine::Command::Creator(c))) => {
-                Some(self.inner.backend.creator_facts(s, c))
+                Some(shell.creator_facts(s, c).await)
             }
             Action::Command(CellCommand::Engine(fstp_engine::Command::Core(
                 fstp_domain::command::Command::PublishCall { call, .. },
             ))) => Some(fstp_cell_core::creator::CreatorFacts {
-                guide: self.inner.backend.guide_inputs(s, *call),
+                guide: shell.guide_inputs(s, *call).await,
                 ..Default::default()
             }),
             _ => None,
@@ -205,26 +207,9 @@ where
         s: &CellState,
         id: [u8; 16],
     ) -> Result<Option<StepUpView>, ExecError> {
-        let Some(grant) = s.auth().stepup_grant(id) else {
-            return Ok(None);
-        };
-        let asserted_at = self
-            .inner
-            .backend
-            .stepup_asserted_at(id)
+        stepup_view_of(&self.inner, s, id)
             .await
-            .map_err(|_| ExecError::Port(PortError::Unavailable))?
-            .ok_or(ExecError::Port(PortError::Unavailable))?;
-        Ok(Some(StepUpView {
-            id,
-            session: grant.session,
-            action_digest: grant.action_digest,
-            asserted_at,
-            // The ledger grants a step-up only after a passkey assertion
-            // with user verification (design section 8.4).
-            strong: true,
-            consumed: s.auth().consumed(id),
-        }))
+            .map_err(ExecError::Port)
     }
 
     async fn dry(
@@ -239,11 +224,20 @@ where
                 Vec::new(),
             );
         };
+        // NOTE 4 (wave 2 merge, ADR-026 "Vault epoch before a dry run"): a
+        // dry run never acknowledges a reaction, so the cell first reacts
+        // to a vault epoch it has not reacted to. A failure leaves the dry
+        // run to answer as before, which fails closed.
+        if let Ok(theirs) = self.inner.vault.epoch().await
+            && theirs > self.inner.engine.state().engine().epoch()
+        {
+            let _ = self.inner.engine.react_to_vault(ctx.now).await;
+        }
         let s = self.inner.engine.state();
         let action = Action::Command(CellCommand::Engine(cmd.clone()));
         let admitted = match gate::admit_dry_run(&s, account, action, ctx.command.bytes(), ctx.now)
         {
-            Ok(a) => self.with_facts(&s, a),
+            Ok(a) => self.with_facts(&s, a).await,
             Err(d) => {
                 let r = match denied(d) {
                     ExecError::Refused(r) => r,
@@ -308,6 +302,7 @@ where
         .ok_or(ExecError::Port(PortError::Refused))?;
         let admitted = self
             .with_facts(&s, admitted)
+            .await
             .with_sessions(session_rows(&rows))
             .with_api(ApiEffects {
                 pending: meta.pending.map(|p| p.raw().to_be_bytes()),
@@ -349,6 +344,20 @@ where
         e
     }
 
+    /// The shell facts seam's inputs, or the API core's default
+    /// (`super::facts`).
+    fn creator_inputs(
+        &self,
+        state: &EngineState,
+        cmd: &fstp_creator::CreatorCommand,
+        ctx: &Ctx,
+    ) -> fstp_creator::CreatorInputs {
+        self.inner
+            .facts
+            .creator_inputs(state, cmd, ctx)
+            .unwrap_or_else(|| super::facts::default_creator_inputs(state, cmd, ctx))
+    }
+
     fn ledger(&self) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
         Some(self.inner.engine.engine_entries_after(Seq::ZERO))
     }
@@ -356,4 +365,33 @@ where
     fn ledger_after(&self, after: Seq) -> Option<Vec<fstp_ledger::Entry<fstp_engine::Record>>> {
         Some(self.inner.engine.engine_entries_after(after))
     }
+}
+
+/// The step-up `id` as the gate sees it: the ledger's grant, with its
+/// logged assertion instant (as the cell's routes read it). `None` when
+/// the ledger holds no such grant.
+pub(super) async fn stepup_view_of<R: Runtime, V>(
+    inner: &Inner<R, V>,
+    s: &CellState,
+    id: [u8; 16],
+) -> Result<Option<StepUpView>, PortError> {
+    let Some(grant) = s.auth().stepup_grant(id) else {
+        return Ok(None);
+    };
+    let asserted_at = inner
+        .backend
+        .stepup_asserted_at(id)
+        .await
+        .map_err(|_| PortError::Unavailable)?
+        .ok_or(PortError::Unavailable)?;
+    Ok(Some(StepUpView {
+        id,
+        session: grant.session,
+        action_digest: grant.action_digest,
+        asserted_at,
+        // The ledger grants a step-up only after a passkey assertion with
+        // user verification (design section 8.4).
+        strong: true,
+        consumed: s.auth().consumed(id),
+    }))
 }

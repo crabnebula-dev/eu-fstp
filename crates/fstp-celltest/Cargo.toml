@@ -65,15 +65,19 @@ fstp-json.workspace = true
 aws-lc-rs.workspace = true
 
 [dev-dependencies]
+# Test only: the loopback SMTP sink for the moved dispatch and mail relay
+# tests, and the platform relay of `tests/prod_mcp_e2e.rs` (lane L4). Rule
+# A9 keeps it out of the library.
+fstp-api-testkit = { path = "../fstp-api-testkit" }
 # Test only: the local cell over the in-memory backend, for the cell's own
 # ticket routes (lane m3/cell-routes). Only test builds of this crate
 # enable it.
 fstp-cell = { workspace = true, features = ["dev-pages", "memory"] }
-# Test only: the loopback SMTP sink for the moved dispatch and mail relay tests.
-fstp-api-testkit = { path = "../fstp-api-testkit" }
 # M9 lane C2: the notice companion verifier row of the I-90 sweep.
 fstp-contract.workspace = true
 fstp-mail.workspace = true
+# Lane L5: the invitation event kind and template code (`tests/l5_invitation_pg.rs`).
+fstp-timeline.workspace = true
 fstp-smtp.workspace = true
 fstp-api-core.workspace = true
 # Lane L2: the OAuth form encoder and the grant facts of the production

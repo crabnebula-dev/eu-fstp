@@ -12,6 +12,10 @@
 //! - `PendingActions` keeps each action in `api.pending_actions`, its
 //!   request sealed. A confirmation is the `api.pending_confirmed` row the
 //!   engine writes in the executing append.
+//! - `BlobStore` keeps each blob in `doc.blob` under the SHA-256 of its
+//!   bytes, sealed under a data key of its own in a group of its own, so
+//!   erasing the group erases it (R-CR-01, ADR-007, ADR-026 record of lane
+//!   L5). Its owner is sealed in front of the bytes.
 
 use std::sync::Arc;
 
@@ -21,9 +25,9 @@ use fstp_api_core::pending::{
     OPEN_PER_ACCOUNT, PENDING_RETENTION_MICROS, PendingAction, PendingStatus,
 };
 use fstp_api_core::port::{
-    AgentClientId, PendingActions, PendingFuture, PendingId, PendingInsertError, PortError,
-    PublicTextRef, SealOwner, Sealed, Sealer, TextClass, TextOwner, TextRef, TextStore,
-    WorkspaceSlot, Workspaces,
+    AgentClientId, BlobOwner, BlobRef, BlobStore, PendingActions, PendingFuture, PendingId,
+    PendingInsertError, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass, TextOwner,
+    TextRef, TextStore, WorkspaceSlot, Workspaces,
 };
 use fstp_domain::id::{AccountId, ProgrammeId, ProposalId};
 use fstp_domain::time::Timestamp;
@@ -400,6 +404,130 @@ impl<R: Runtime, V: Send + Sync> PendingActions for CellPending<R, V> {
                 .map_err(|_| PortError::Unavailable)?;
             Ok(row.is_some_and(|r| r.confirmed.is_some()))
         })
+    }
+}
+
+/// The largest blob the store keeps: 16 MiB. The import limits of the API
+/// core are lower, so this bounds a caller that skips them.
+const MAX_BLOB: usize = 16 * 1024 * 1024;
+
+/// The `doc.blob.kind` of an import document (R-PG-02). Kinds 1 to 4 are
+/// the contract documents of `fstp_contract::BlobKind`.
+const KIND_IMPORT_DOCUMENT: i16 = 5;
+
+/// The form label sealed in front of a blob's owner and bytes.
+const BLOB_FORM: &[u8; 8] = b"fstpblb1";
+
+/// The sealed plaintext of a blob of `owner`: the form label, the owner
+/// kind and id, then the bytes.
+fn blob_plain(owner: BlobOwner, bytes: &[u8]) -> Vec<u8> {
+    let BlobOwner::Programme(p) = owner;
+    let mut out = Vec::with_capacity(bytes.len().saturating_add(25));
+    out.extend_from_slice(BLOB_FORM);
+    out.push(1);
+    out.extend_from_slice(&p.raw().to_be_bytes());
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// The bytes of `plain` when it is a blob of `owner`.
+fn blob_body(owner: BlobOwner, plain: &[u8]) -> Option<&[u8]> {
+    let BlobOwner::Programme(p) = owner;
+    let rest = plain.strip_prefix(BLOB_FORM.as_slice())?;
+    let rest = rest.strip_prefix(&[1u8][..])?;
+    let id: [u8; 16] = rest.get(..16)?.try_into().ok()?;
+    (u128::from_be_bytes(id) == p.raw()).then(|| rest.get(16..))?
+}
+
+/// The blob store over `doc.blob` (module documentation).
+pub(crate) struct CellBlobs<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
+
+impl<R: Runtime, V: Send + Sync> CellBlobs<R, V> {
+    /// The bytes of the blob `digest` of `owner`, or a refusal when it is
+    /// another owner's, does not open, or does not hash to its address.
+    async fn open(&self, owner: BlobOwner, digest: [u8; 32]) -> Result<Vec<u8>, PortError> {
+        let (dek, envelope) = self
+            .0
+            .store
+            .document(digest)
+            .await
+            .map_err(|_| PortError::Unavailable)?
+            .ok_or(PortError::Refused)?;
+        let plain = self
+            .0
+            .erasure
+            .open_document(dek, envelope)
+            .await
+            .map_err(|_| PortError::Refused)?;
+        let body = blob_body(owner, &plain).ok_or(PortError::Refused)?;
+        if fstp_crypto::sha256(body) != digest {
+            return Err(PortError::Refused);
+        }
+        Ok(body.to_vec())
+    }
+}
+
+impl<R: Runtime, V: Send + Sync> BlobStore for CellBlobs<R, V> {
+    /// Stores `bytes` of `owner` once under their SHA-256. The same bytes
+    /// of the same owner give the same address and store nothing new. The
+    /// same bytes of another owner are refused, since one digest holds one
+    /// row (I-30). Interim, pending Daniel.
+    async fn put(&self, owner: BlobOwner, bytes: &[u8]) -> Result<BlobRef, PortError> {
+        if bytes.len() > MAX_BLOB {
+            return Err(PortError::Refused);
+        }
+        let digest = fstp_crypto::sha256(bytes);
+        let stored = self
+            .0
+            .store
+            .document(digest)
+            .await
+            .map_err(|_| PortError::Unavailable)?;
+        if stored.is_some() {
+            return self.open(owner, digest).await.map(|_| BlobRef(digest));
+        }
+        let id: [u8; 16] = fstp_crypto::random_array().map_err(|_| PortError::Unavailable)?;
+        let group: [u8; 16] = fstp_crypto::random_array().map_err(|_| PortError::Unavailable)?;
+        self.0
+            .erasure
+            .add_group(group)
+            .await
+            .map_err(|_| PortError::Unavailable)?;
+        let envelope = self
+            .0
+            .erasure
+            .seal_document(group, id, blob_plain(owner, bytes))
+            .await
+            .map_err(|_| PortError::Unavailable)?;
+        let inserted = self
+            .0
+            .store
+            .put_document(
+                digest,
+                KIND_IMPORT_DOCUMENT,
+                id,
+                &envelope,
+                self.0.now().micros(),
+            )
+            .await
+            .map_err(|_| PortError::Unavailable)?;
+        if !inserted {
+            // Another call stored the same bytes first.
+            self.open(owner, digest).await?;
+        }
+        Ok(BlobRef(digest))
+    }
+
+    /// The bytes of blob `r` of `owner`. The API core checked the read's
+    /// clearance before it asked, as for the sealer.
+    async fn get(
+        &self,
+        owner: BlobOwner,
+        r: BlobRef,
+        clearance: &ReadClearance,
+    ) -> Result<Vec<u8>, PortError> {
+        let _ = clearance;
+        self.open(owner, r.0).await
     }
 }
 

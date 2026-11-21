@@ -607,7 +607,8 @@ fn other_destinations() -> Vec<Destination> {
         | Destination::ControlPlane
         | Destination::Witness
         | Destination::KeystoreSnapshots
-        | Destination::MailSubmission { .. } => true,
+        | Destination::MailSubmission { .. }
+        | Destination::DnsResolver { .. } => true,
         Destination::CrabNebula(_) => false,
     };
     [
@@ -620,6 +621,10 @@ fn other_destinations() -> Vec<Destination> {
         // ADR-018: the tenant's mail relay is never a CrabNebula host.
         Destination::MailSubmission {
             host: fstp_cell::egress::MailHost::parse("smtp.relay.example").unwrap(),
+        },
+        // ADR-027: the DNS resolver takes an address, never a CrabNebula host.
+        Destination::DnsResolver {
+            addr: std::net::SocketAddr::from(([127, 0, 0, 53], 53)),
         },
     ]
     .into_iter()

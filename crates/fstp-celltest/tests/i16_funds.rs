@@ -253,6 +253,9 @@ enum Reach {
     KeystorePrefix,
     /// The tenant's mail submission relay (ADR-018). It carries mail only.
     MailRelay,
+    /// The configured DNS resolver (ADR-027). It carries TXT questions
+    /// about the sending domain only.
+    DnsResolver,
 }
 
 /// The exhaustive map of `Destination`. A new variant fails to compile
@@ -268,6 +271,7 @@ fn cell_reach(d: &Destination) -> Reach {
         Destination::CrabNebula(CnCall::Licence(_)) => Reach::LicenceService,
         Destination::KeystoreSnapshots => Reach::KeystorePrefix,
         Destination::MailSubmission { .. } => Reach::MailRelay,
+        Destination::DnsResolver { .. } => Reach::DnsResolver,
     }
 }
 
@@ -297,6 +301,9 @@ fn i16_cell_egress_has_no_payment_destination() {
         Destination::MailSubmission {
             host: fstp_cell::egress::MailHost::parse("smtp.relay.example").unwrap(),
         },
+        Destination::DnsResolver {
+            addr: std::net::SocketAddr::from(([127, 0, 0, 53], 53)),
+        },
     ];
     let reached: Vec<Reach> = cell.iter().map(cell_reach).collect();
     assert_eq!(
@@ -309,6 +316,7 @@ fn i16_cell_egress_has_no_payment_destination() {
             Reach::Witness,
             Reach::KeystorePrefix,
             Reach::MailRelay,
+            Reach::DnsResolver,
         ]
     );
     let vault = [

@@ -37,12 +37,12 @@
 //! - [`vault::HttpVaultClient`] is the vault client over the vault's
 //!   internal mutual TLS listener.
 //!
-//! # What is not built here yet
+//! # The binary (lane L4, ADR-026)
 //!
-//! - [`run`], the binary's entry, does not start a cell yet: the
-//!   configuration names no database logins, custody backend, keys,
-//!   certificates or witness endpoint (design section 9.5 fixes no
-//!   grammar). [`process::start`] takes them as parts.
+//! - [`run`], the binary's entry, starts the cell that the configuration
+//!   file names ([`config::decode_file`]) through [`process::start_with`],
+//!   with its keys from the sealed cell key file ([`keyfile`]). The
+//!   subcommands `first-admin` and `init-keys` are in [`mod`].
 
 pub(crate) mod api;
 pub mod config;
@@ -50,11 +50,13 @@ pub mod control;
 pub mod egress;
 pub mod engine;
 pub mod http;
+pub mod keyfile;
 pub mod mail;
 pub mod oauth;
 pub mod process;
 pub mod public;
 pub mod routes;
+pub mod run;
 pub mod shell;
 pub mod tasks;
 pub mod vault;
@@ -116,7 +118,7 @@ impl std::fmt::Display for CellError {
 impl std::error::Error for CellError {}
 
 /// Reads the configuration file at `path`, at most
-/// [`config::MAX_CONFIG_LEN`] bytes. A longer file, or a path such as
+/// [`config::MAX_FILE_LEN`] bytes. A longer file, or a path such as
 /// `/dev/zero`, is refused after one byte past the limit, so it is never
 /// read into memory whole.
 ///
@@ -127,35 +129,26 @@ impl std::error::Error for CellError {}
 pub fn read_config(path: &std::path::Path) -> Result<Vec<u8>, CellError> {
     use std::io::Read as _;
     let file = std::fs::File::open(path).map_err(|e| CellError::Io(e.kind()))?;
-    let limit = u64::try_from(config::MAX_CONFIG_LEN)
+    let limit = u64::try_from(config::MAX_FILE_LEN)
         .unwrap_or(u64::MAX)
         .saturating_add(1);
     let mut bytes = Vec::new();
     file.take(limit)
         .read_to_end(&mut bytes)
         .map_err(|e| CellError::Io(e.kind()))?;
-    if bytes.len() > config::MAX_CONFIG_LEN {
+    if bytes.len() > config::MAX_FILE_LEN {
         return Err(CellError::Config(config::ConfigError::Invalid("length")));
     }
     Ok(bytes)
 }
 
 /// Runs the cell named by the configuration file in `FSTP_CELL_CONFIG`
-/// until a termination signal drains it.
+/// until a termination signal drains it ([`run::serve`]).
 ///
 /// # Errors
 ///
-/// [`CellError::Config`] for a missing or refused configuration. Then
-/// [`CellError::NotImplemented`]: the configuration names none of the
-/// parts of [`process::start`] yet. It never serves over an in-memory
-/// ledger.
+/// [`CellError::Config`] for a missing or refused configuration or
+/// credential, and the first start step that fails.
 pub fn run() -> Result<(), CellError> {
-    let path = std::env::var_os("FSTP_CELL_CONFIG")
-        .ok_or(CellError::Config(config::ConfigError::Missing))?;
-    let bytes = read_config(std::path::Path::new(&path))?;
-    let cfg = config::decode(&bytes).map_err(CellError::Config)?;
-    let _ = cfg;
-    Err(CellError::NotImplemented(
-        "fstp_cell::run: the configuration names no database logins, custody, keys, certificates or witness endpoint for fstp_cell::process::start (design section 9.5)",
-    ))
+    run::run_command(&run::Command::Serve)
 }

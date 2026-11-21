@@ -679,6 +679,12 @@ impl CellState {
         self.proposals.get(&p).copied()
     }
 
+    /// Every proposal with the call it was created in, by id (the
+    /// programme timeline read, ADR-026 record of lane L5).
+    pub fn proposals(&self) -> impl Iterator<Item = (ProposalId, CallId)> + '_ {
+        self.proposals.iter().map(|(p, (call, _))| (*p, *call))
+    }
+
     /// When each payment request was confirmed as paid, from the entry
     /// time of its `PaymentConfirmed` record. Retention of a grant starts
     /// at the last one (P-41, `fstp_domain::retention`).

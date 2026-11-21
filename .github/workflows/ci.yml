@@ -198,7 +198,8 @@ jobs:
               --test seeded_vault_chain --test slice_http --test slice_world
               --test teeth_m3_registry --test w1a_world
               --test i85_concurrent_confirmations_execute_once --test keystore_restart_pg
-              --test l2_oauth_pg --test prod_mcp_slice_pg
+              --test l2_oauth_pg --test prod_mcp_slice_pg --test g13_production_shell_facts
+              --test l5_invitation_pg --test l5_sessions_recovery_pg --test l5_blobs_pg
               ; -p fstp-celltest --doc
             skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross t_iso_public_rate_limit_keys_are_per_cell
             timeout: 60
@@ -215,7 +216,9 @@ jobs:
           # fstp-devstack, which serves the compiled auth pages. This part
           # compiles them with the pinned Node.js and tsc first (ADR-003),
           # and no celltest part names the binary.
-          - { part: devstack, packages: -p fstp-celltest --test slice_devstack, timeout: 60 }
+          # Lane L4: prod_mcp_e2e runs here too, after the step that builds
+          # the fstp-cell binary.
+          - { part: devstack, packages: -p fstp-celltest --test slice_devstack --test prod_mcp_e2e, timeout: 60 }
           - part: domain-testkit
             packages: -p fstp-domain-testkit
             timeout: 60
@@ -452,6 +455,13 @@ jobs:
           (cd web && npm ci --ignore-scripts --no-audit --no-fund)
           web/node_modules/.bin/tsc -p web/tsconfig.json
           test -d web/dist/auth
+      # Lane L4: prod_mcp_e2e runs the production fstp-cell binary from its
+      # configuration file (docs/handoff/production-mcp-design.md section
+      # 4.1). cargo test does not build the binary of another package, so
+      # the devstack part builds it first.
+      - name: Build the fstp-cell binary for prod_mcp_e2e
+        if: matrix.part == 'devstack'
+        run: cargo build --locked -p fstp-cell --bin fstp-cell
       # Some tests are red on purpose: each waits on a seam that a named
       # lane closes, and ci/known-red.txt lists it with that seam and lane.
       # The run itself may fail; test-gate decides. It fails on any red

@@ -6,22 +6,20 @@
 //!   client. Its intake (country, affiliations, birth date), the start of
 //!   a verification and the two Q35 queries are not built, so each fails
 //!   as `OracleDown`.
-//! - No pre-check provider, prober, recovery or break-glass approval, and
-//!   no session or passkey administration through the API core: the
-//!   cell's own `/auth` routes serve those.
-//! - Invitations are issued through the cell's command route. The API
-//!   core reads display handles and login emails only.
+//! - No pre-check provider and no prober.
+//! - No break-glass approval through the API core: the request's staff
+//!   member, scope and end reach the cell only in the full
+//!   `ApproveBreakGlass` of `POST /api/v1/commands`, and the port names
+//!   the request by its id alone (ADR-026 record of lane L5, pending
+//!   Daniel).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use fstp_access::ReadClearance;
 use fstp_api_core::port::{
-    Accounts, Affiliations, AsyncIdentityOracle, BirthDate, BlobOwner, BlobRef, BlobStore,
-    BreakGlass, BreakGlassId, CountryCode, DisplayHandle, ExclusionClasses, InvitationLink,
-    InviteKind, PasskeyRegistration, PortError, Precheck, ProbeKind, ProbeOutcome, Prober, Receipt,
-    Recovery, RecoveryId, SessionId, SessionInfo, SessionsAdmin, StepUpProof, Vault, VaultBound,
-    VerificationPurpose, VerificationRedirect,
+    Affiliations, AsyncIdentityOracle, BirthDate, BreakGlass, BreakGlassId, CountryCode,
+    ExclusionClasses, PortError, Precheck, ProbeKind, ProbeOutcome, Prober, Receipt, StepUpProof,
+    Vault, VaultBound, VerificationPurpose, VerificationRedirect,
 };
 use fstp_domain::id::{AccountId, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
@@ -105,32 +103,6 @@ impl<R: Runtime, V: VaultClient> Vault for CellVault<R, V> {
     }
 }
 
-/// The accounts port: display handles and login emails only.
-pub(crate) struct CellAccounts<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
-
-impl<R: Runtime, V: Send + Sync> Accounts for CellAccounts<R, V> {
-    async fn invite(&self, kind: InviteKind) -> Result<InvitationLink, PortError> {
-        let _ = kind;
-        Err(PortError::Unavailable)
-    }
-
-    /// A pseudonymous handle from the account id. Never an email.
-    async fn display_handle(&self, a: AccountId) -> Result<DisplayHandle, PortError> {
-        let h = fstp_crypto::sha256(&a.raw().to_be_bytes());
-        let tail: String = h.iter().take(3).map(|b| format!("{b:02x}")).collect();
-        Ok(DisplayHandle(format!("member-{tail}")))
-    }
-
-    /// The cell's login email index (SA-11, I-86).
-    async fn login_email(&self, a: AccountId) -> Result<Option<String>, PortError> {
-        self.0
-            .erasure
-            .login_email(a)
-            .await
-            .map_err(|_| PortError::Unavailable)
-    }
-}
-
 /// No pre-check provider (Q38).
 pub(crate) struct NoPrecheck;
 
@@ -146,21 +118,6 @@ impl Prober for ClosedProber {
     }
 }
 
-/// No recovery approval through the API core: `/auth/recovery/approve`.
-pub(crate) struct ClosedRecovery;
-
-impl Recovery for ClosedRecovery {
-    async fn approve(
-        &self,
-        approver: AccountId,
-        r: RecoveryId,
-        proof: StepUpProof,
-    ) -> Result<(), PortError> {
-        let _ = (approver, r, proof);
-        Err(PortError::Unavailable)
-    }
-}
-
 /// No break-glass approval through the API core.
 pub(crate) struct ClosedBreakGlass;
 
@@ -173,53 +130,6 @@ impl BreakGlass for ClosedBreakGlass {
         proof: StepUpProof,
     ) -> Result<(), PortError> {
         let _ = (approver, b, approve, proof);
-        Err(PortError::Unavailable)
-    }
-}
-
-/// No session or passkey administration through the API core: the
-/// cell's `/auth/sessions`, `/auth/devices` and `/auth/passkeys` routes.
-pub(crate) struct ClosedSessionsAdmin;
-
-impl SessionsAdmin for ClosedSessionsAdmin {
-    async fn list(&self, a: AccountId) -> Result<Vec<SessionInfo>, PortError> {
-        let _ = a;
-        Err(PortError::Unavailable)
-    }
-
-    async fn end(&self, a: AccountId, s: SessionId) -> Result<(), PortError> {
-        let _ = (a, s);
-        Err(PortError::Unavailable)
-    }
-
-    async fn add_passkey(
-        &self,
-        a: AccountId,
-        s: SessionId,
-        reg: PasskeyRegistration,
-        proof: StepUpProof,
-    ) -> Result<(), PortError> {
-        let _ = (a, s, reg, proof);
-        Err(PortError::Unavailable)
-    }
-}
-
-/// No blob store yet (R-PG-02 imports).
-pub(crate) struct ClosedBlobs;
-
-impl BlobStore for ClosedBlobs {
-    async fn put(&self, owner: BlobOwner, bytes: &[u8]) -> Result<BlobRef, PortError> {
-        let _ = (owner, bytes);
-        Err(PortError::Unavailable)
-    }
-
-    async fn get(
-        &self,
-        owner: BlobOwner,
-        r: BlobRef,
-        clearance: &ReadClearance,
-    ) -> Result<Vec<u8>, PortError> {
-        let _ = (owner, r, clearance);
         Err(PortError::Unavailable)
     }
 }

@@ -724,6 +724,14 @@ impl Facts {
             Query::HardshipEvidenceVerified { grant, evidence } => {
                 self.hardship.get(&(*grant, *evidence)).is_some_and(|h| h.1)
             }
+            // Q35 A, NOTE 8, ADR-027: as `fstp_vault_core::eval` reads them.
+            Query::ClassesDefined { classes, .. } => classes
+                .0
+                .iter()
+                .all(|c| self.affiliations.values().any(|a| *a == Some(*c))),
+            Query::ProximityListsDeclared { lists, .. } => {
+                lists.iter().all(|l| self.lists.contains_key(l))
+            }
         }
     }
 
@@ -785,7 +793,9 @@ pub fn named(q: &Query) -> (BTreeSet<AccountId>, Option<ProposalId>) {
         }
         Query::DeclaresAffiliationOnList { team, .. } => (team.clone(), None),
         Query::HasGuardianConsent { proposal } => (BTreeSet::new(), Some(*proposal)),
-        Query::ChangedSince { .. } => (BTreeSet::new(), None),
+        Query::ChangedSince { .. }
+        | Query::ClassesDefined { .. }
+        | Query::ProximityListsDeclared { .. } => (BTreeSet::new(), None),
         Query::BankReleasable { grant, .. } | Query::HardshipEvidenceVerified { grant, .. } => {
             (BTreeSet::new(), Some(*grant))
         }
@@ -2313,6 +2323,16 @@ pub mod wire {
                 "{{\"evidence\":\"{}\",\"grant\":\"{}\"}}",
                 evidence.raw(),
                 grant.raw()
+            ),
+            Query::ClassesDefined { programme, classes } => format!(
+                "{{\"classes\":{},\"programme\":\"{}\"}}",
+                ids(&classes.0, |c| c.raw().to_string()),
+                programme.raw()
+            ),
+            Query::ProximityListsDeclared { programme, lists } => format!(
+                "{{\"lists\":{},\"programme\":\"{}\"}}",
+                ids(lists, |l| l.raw().to_string()),
+                programme.raw()
             ),
         };
         WireQuery {

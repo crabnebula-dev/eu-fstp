@@ -121,7 +121,7 @@ Daniel answered on 2026-11-20:
 - D1: the single-host pilot, as recommended.
 - D2, D4 to D8, D10 and D11: accepted as recommended. Lanes write them into the ADRs as decided by Daniel on 2026-11-20.
 - D3: a platform relay named in the cell configuration, as recommended.
-- D12: no. Build everything now, but no real user uses a production cell until the release gate passes, including the M10 Mythos confirmation (I-74).
+- D12, changed later on 2026-11-20: moduletto is confirmed for release, so a clearly labelled pilot may have real users. A pilot is not a release. `der`, `spki`, `x509-cert` and `cms` stay unconfirmed (I-74). The first answer was no.
 
 D9 is not answered yet. The lead plans a claude.ai trace before L2 merges, which needs a tunnel and Daniel's claude.ai account.
 
@@ -138,7 +138,7 @@ D9 is not answered yet. The lead plans a claude.ai trace before L2 merges, which
 | D9 | How to close the three claude.ai unknowns? | Run one claude.ai connector against the demo cell through an HTTPS tunnel, with `--log-requests`, before L2 merges. Build the agent origin list or another auth method only if the trace needs it |
 | D10 | Which in-memory `ApiCore` state may be lost on a restart in the pilot? | Accept the loss of: rate counters, begun verifications, the tenant template catalogue and upload texts of `CreatorMemory`, contract memory, agent activity, read marks (ADR-020 is still proposed) and the R-NG-06 acknowledgement. Pending actions and workspaces must survive |
 | D11 | Where does `t_authz_matrix_pg_sample` live? | In `crates/fstp-celltest/tests/`. Rule A9 forbids `fstp-cell` to reach `fstp-api-testkit`, and only `fstp-celltest` depends on both |
-| D12 | Real users on a build that is not a release? | Needs Daniel. A release waits for the M10 Mythos confirmation (G16) |
+| D12 | Real users on a build that is not a release? | Answered on 2026-11-20: a clearly labelled pilot may have real users, since moduletto is confirmed. A release still waits for the Tier B formats crates (G16) |
 
 ### 2.3 Deployment and infrastructure, out of code scope
 

@@ -27,7 +27,9 @@ fn i_33_bank_and_hardship_queries_take_codes_11_and_12() {
         QueryKind::from_code(12),
         Some(QueryKind::HardshipEvidenceVerified)
     );
-    assert_eq!(QueryKind::from_code(13), None);
+    // Codes 13 and 14 are the Q35 creator queries (ADR-027), so the
+    // first unused code is 15.
+    assert_eq!(QueryKind::from_code(15), None);
 }
 
 /// I-33: the arguments are the reference spelling, and they round-trip.

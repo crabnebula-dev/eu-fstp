@@ -245,15 +245,33 @@ pub(crate) fn render_entries(entries: &[Entry]) -> String {
     let wa = width(&|e| adr_field(e).len());
     let mut out = String::new();
     for e in entries {
-        out.push_str(&format!(
-            "{:<wn$}  {:<wv$}  {}  {:<wa$}  {:<8}  {}\n",
+        let aligned = format!(
+            "{:<wn$}  {:<wv$}  {}  {:<wa$}  {:<8}  {}",
             e.name,
             e.version,
             e.checksum,
             adr_field(e),
             e.role.label(),
             e.note
-        ));
+        );
+        // TH-26: alignment must not push an accepted line past the
+        // parser's limit. The single-space form is never longer than the
+        // line the entry was parsed from.
+        let line = if aligned.len() > MAX_LINE {
+            format!(
+                "{} {} {} {} {} {}",
+                e.name,
+                e.version,
+                e.checksum,
+                adr_field(e),
+                e.role.label(),
+                e.note
+            )
+        } else {
+            aligned
+        };
+        out.push_str(&line);
+        out.push('\n');
     }
     out
 }
@@ -635,6 +653,21 @@ pub(crate) mod tests {
     /// A second fixture checksum, different from [`SUM_A`].
     pub(crate) const SUM_B: &str =
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    /// TH-26, H-05: rendering never makes an accepted line longer than
+    /// the parser allows. Fuzz target `allowlist` found a set where the
+    /// column padding of a long crate name pushed a 1024-byte line past
+    /// the limit, so the rendered allowlist did not parse again.
+    #[test]
+    fn th26_render_of_accepted_entries_parses_again_at_the_line_limit() {
+        let long = format!("a{}", "b".repeat(63));
+        let head = format!("c 1.0.0 {SUM_A} ADR-001 runtime ");
+        let note = "n".repeat(MAX_LINE - head.len());
+        let text = format!("{long} 1.0.0 {SUM_B} ADR-002 test x\n{head}{note}\n");
+        let entries = parse_allowlist(&text).expect("both lines are within the limit");
+        let rendered = render_entries(&entries);
+        assert_eq!(parse_allowlist(&rendered), Ok(entries));
+    }
 
     fn usage(role: Role, adrs: &[&str]) -> Usage {
         Usage {

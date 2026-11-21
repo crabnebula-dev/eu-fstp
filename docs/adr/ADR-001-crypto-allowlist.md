@@ -383,3 +383,9 @@ Context: production SMTP relays (M6, `m6-design.md` Q1) and inference endpoints 
 - Use: `fstp_tls::ClientConfig::public_roots` verifies a server certificate chain against these roots and checks the host name. Verification is never disabled. `ClientConfigBuilder::also_trust_pem` adds a pinned CA on top, and `ClientConfig::new` keeps a pinned CA alone. So a per-tenant pinned CA stays possible and is never required.
 - Only `fstp-tls` depends on the crate. `fstp-cell::egress::service_tls` builds the configuration for the CrabNebula service hosts. M6 and M7 lanes take the same constructor for relays and inference endpoints.
 - Freshness: the root set changes when Mozilla's program changes. A version move needs a new row here, as for any crate. Updating at least once per release is a release checklist item for M10.
+
+## Record of 2026-11-20: zeroize in fstp-cell (lane L4 `prod/cell-run`)
+
+- Decided by Daniel on 2026-11-20: `zeroize` may be used in `fstp-cell`, to wipe the plain body of the sealed cell key file (ADR-004 record of lane L4).
+- `fstp-cell` becomes a direct user of `zeroize 1.9.1`, as A1 asks of any further crate. The version, checksum and features (`alloc`, `default`) do not change. The crate is already in the resolved tree through moduletto and rustls. `derive` stays refused.
+- No package enters or leaves the tree. The `deps/adr-roots.txt` note for zeroize gains `fstp-cell`.
