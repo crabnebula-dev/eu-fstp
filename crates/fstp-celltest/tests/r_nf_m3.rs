@@ -739,6 +739,9 @@ const VAULT_SEALED: &[(&str, &str, &str)] = &[
     ("vault", "fact", "body"),
     ("vault", "negotiation", "sealed_accounts"),
     ("vault_audit", "chain", "body"),
+    // The Vault chain state (ADR-004 "Application sealed values", lane
+    // L11): nonce at 0 under the epoch seal key.
+    ("keystore", "erasure_intent", "plan"),
 ];
 
 /// The application columns whose values are `nonce 12 || ciphertext ||

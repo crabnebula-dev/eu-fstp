@@ -155,7 +155,27 @@ FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault
 
 Each start runs the database check, opens the keystore through its custody entry, and verifies the vault chain at the witness before it listens. A start never creates a keystore. SIGTERM drains the vault within 20 seconds. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
 
-The vault does not yet rotate its keys when an identity is erased (ADR-004, record of lane L8, row "Not built"). Do not erase identities on a pilot vault until that is built.
+### Erase an identity
+
+An identity erasure rotates the Vault chain once (design section 3.5, ADR-004 record of lane L11). It erases the identity's attribute tuple and makes its match key unlinkable, in the live store and in every backup (I-81, G24). It does not erase the facts the vault holds under its `Fact` data key, or anything in the cell.
+
+Stop the vault first. The running vault holds a lock on its keystore, and the command refuses while it does. Then run, with the account id from the cell as 32 hex digits or in the UUID form:
+
+```sh
+systemctl stop fstp-vault
+FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault erase-identity 01234567-89ab-cdef-0123-456789abcdef
+systemctl start fstp-vault
+```
+
+The service name is your own. What the operator sees:
+
+- The command runs the same database check as a start, and needs the vault's `fstp-keyd` entry and the witness. It writes no output.
+- Exit status 0 means the batch is complete. The old root epoch is destroyed in custody, its `keystore.root` row is marked destroyed with the receipt, and the Vault chain holds one entry with `KeyEpochDestroyed` and `IdentityErased`. Each erasure raises the epoch by one.
+- Exit status 2 means the argument was refused. Status 1 means another failure: the vault still runs, the account has no identity, the identity has no stored attribute tuple, or custody, the database or the witness failed.
+- A failure after the request is not lost. The request is stored, and the next start of the vault, or the next run of the command, completes the batch before anything else. Until then the tuple is refused for open.
+- The live identities keep their ids. Their match keys move to the new `Match` key, and the query digest key changes with it.
+
+An identity whose attribute tuple the vault never stored cannot be erased this way, and the command refuses it with status 1. No route of the vault registers identities with their tuples yet (ADR-004 record of lane L11, row "Not built"), so a pilot vault holds no erasable identity until the recorder route of ADR-008 exists.
 
 ## 4. Create the first admin
 
