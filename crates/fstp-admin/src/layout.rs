@@ -18,6 +18,8 @@ pub enum Entry {
     Vault,
     /// The witness's ControlPlane entry.
     Witness,
+    /// The route feed's ControlPlane entry (lane L15, [`crate::route::ROUTE_FEED`]).
+    Control,
 }
 
 impl Entry {
@@ -32,6 +34,7 @@ impl Entry {
             Entry::CellKeys => "cell-keys",
             Entry::Vault => "vault",
             Entry::Witness => "witness",
+            Entry::Control => "control",
         }
     }
 
@@ -43,6 +46,7 @@ impl Entry {
             Entry::CellKeys => &["cell"],
             Entry::Vault => &["vault", "console"],
             Entry::Witness => &["control"],
+            Entry::Control => &["control"],
         }
     }
 }
@@ -134,6 +138,11 @@ impl Layout {
     #[must_use]
     pub fn vault_origin(&self) -> SocketAddr {
         lo(self.port(4))
+    }
+    /// The route feed listener of `fstp-control` (lane L15).
+    #[must_use]
+    pub fn feed(&self) -> SocketAddr {
+        lo(self.port(8))
     }
     /// The witness listener.
     #[must_use]

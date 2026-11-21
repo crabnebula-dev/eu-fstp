@@ -400,8 +400,11 @@ pub fn renew(layout: &Layout) -> Result<(), Fail> {
             stack::witness(layout),
             stack::vault(layout),
             stack::cell(layout),
-            stack::edge(layout),
         ]);
+        if crate::route::ROUTE_FEED {
+            services.push(stack::control(layout));
+        }
+        services.push(stack::edge(layout));
         for s in services.iter().rev() {
             m.stop(s).map_err(|e| Fail::Step("renew", e.into()))?;
         }

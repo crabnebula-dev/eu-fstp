@@ -20,7 +20,14 @@ pub const EDGE_USER: &str = "fstp-edge";
 pub const KEYD_USER: &str = "fstp-keyd";
 
 /// Every OS user `setup` creates in systemd mode.
-pub const USERS: [&str; 5] = [CELL_USER, VAULT_USER, WITNESS_USER, EDGE_USER, KEYD_USER];
+pub const USERS: [&str; 6] = [
+    CELL_USER,
+    VAULT_USER,
+    WITNESS_USER,
+    EDGE_USER,
+    KEYD_USER,
+    CONTROL_USER,
+];
 
 /// The client user of a custody socket role, if it has one.
 #[must_use]
@@ -28,6 +35,8 @@ pub fn role_user(role: &str) -> Option<&'static str> {
     match role {
         "cell" => Some(CELL_USER),
         "vault" => Some(VAULT_USER),
+        // The witness entry's control socket; the feed entry's is
+        // handed to its user in `keyd`.
         "control" => Some(WITNESS_USER),
         _ => None,
     }
@@ -82,7 +91,11 @@ pub fn keyd(layout: &Layout, e: Entry) -> Vec<Service> {
             let mut env: Vec<(String, std::ffi::OsString)> = Vec::new();
             let mut groups = Vec::new();
             for role in e.roles() {
-                if let Some(user) = role_user(role) {
+                let user = match (e, *role) {
+                    (Entry::Control, "control") => Some(CONTROL_USER),
+                    _ => role_user(role),
+                };
+                if let Some(user) = user {
                     if let Some(gid) = gid_of(user) {
                         env.push((
                             format!("FSTP_KEYD_GROUP_{}", role.to_ascii_uppercase()),
@@ -207,6 +220,30 @@ pub fn cell(layout: &Layout) -> Service {
     }
 }
 
+/// The OS user of the pilot route feed.
+pub const CONTROL_USER: &str = "fstp-control";
+
+/// The pilot route feed, `fstp-control route-feed` (lane L15).
+#[must_use]
+pub fn control(layout: &Layout) -> Service {
+    Service {
+        name: "fstp-control".into(),
+        what: "route feed",
+        program: layout.bin("fstp-control"),
+        args: vec!["route-feed".into()],
+        env: vec![(
+            "FSTP_CONTROL_CONFIG".into(),
+            layout.config_file("control").into_os_string(),
+        )],
+        user: Some(CONTROL_USER.into()),
+        unit_lines: Vec::new(),
+        direct_credentials: None,
+        hold_stdin: false,
+        ready: Ready::Tcp(layout.feed()),
+        after: keyd_names(layout, &[Entry::Control]),
+    }
+}
+
 /// The edge service.
 #[must_use]
 pub fn edge(layout: &Layout) -> Service {
@@ -241,6 +278,10 @@ pub fn all(layout: &Layout) -> Vec<Service> {
     out.push(witness(layout));
     out.push(vault(layout));
     out.push(cell(layout));
+    if crate::route::ROUTE_FEED {
+        out.extend(keyd(layout, Entry::Control));
+        out.push(control(layout));
+    }
     out.push(edge(layout));
     out
 }

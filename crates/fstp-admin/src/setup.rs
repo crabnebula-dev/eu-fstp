@@ -156,6 +156,9 @@ pub fn preflight(layout: &Layout) -> Result<(), Fail> {
     if cfg.backup.is_some() {
         need_file(&layout.bin("fstp-backup"), "the fstp-backup binary")?;
     }
+    if crate::route::ROUTE_FEED {
+        need_file(&layout.bin("fstp-control"), "the fstp-control binary")?;
+    }
     for b in ["initdb", "postgres", "psql"] {
         need_file(&layout.pg_bin(b), "a PostgreSQL 16 program (paths.pg_bin)")?;
     }
@@ -492,16 +495,54 @@ pub fn credentials(
         step,
     )?;
     put(&w.join("cell-ca.pem"), &cas.cell.pem, step)?;
+    // The route feed of lane L15 names its edge by id, in the CN of the
+    // edge's certificate, and serves the feed under a certificate of its own.
+    let edge_cn = if crate::route::ROUTE_FEED {
+        let id = match state.get("edge-id") {
+            Some(id) => id.to_owned(),
+            None => {
+                let id = random_hex(16).map_err(|e| Fail::Step(step, Cause::Pki(e)))?;
+                state.set("edge-id", &id).map_err(io(step))?;
+                id
+            }
+        };
+        let k = layout.creds("control");
+        mkdir(&k)?;
+        put(&k.join("control-ca.pem"), &cas.tunnel.pem, step)?;
+        issue_to(
+            &cas.tunnel,
+            &k,
+            "control.pem",
+            "control-key.pem",
+            &Leaf {
+                cn: render::FEED_NAME,
+                ou: None,
+                kind: CertKind::Server,
+                dns: &[render::FEED_NAME],
+                ips: &LOOPBACK,
+            },
+            step,
+        )?;
+        own_path(layout, &k, stack::CONTROL_USER).map_err(step_err(step))?;
+        format!("edge_{id}")
+    } else {
+        "edge".to_owned()
+    };
     // Edge.
     let e = layout.creds("edge");
     mkdir(&e)?;
+    if crate::route::ROUTE_FEED && !state.done("edge-feed-cert") {
+        // The certificate of the route-file edge has no edge id in its CN.
+        let _ = std::fs::remove_file(e.join("tunnel.pem.expires"));
+        state.mark("edge-feed-cert").map_err(io(step))?;
+    }
     issue_to(
         &cas.tunnel,
         &e,
         "tunnel.pem",
         "tunnel.key",
         &Leaf {
-            cn: "edge",
+            cn: &edge_cn,
             ou: None,
             kind: CertKind::Client,
             dns: &[],
@@ -582,6 +623,7 @@ pub fn facts(layout: &Layout, state: &State, cell: [u8; 16]) -> Result<Facts, Fa
             .unwrap_or_default(),
         ticket_key: ticket.map(|t| t.trim().to_owned()),
         assets: layout.assets().is_dir(),
+        edge_id: state.get("edge-id").map(str::to_owned),
     })
 }
 
@@ -617,7 +659,16 @@ pub fn write_configs(layout: &Layout, f: &Facts) -> Result<(), Fail> {
         write("vault", &v)?;
     }
     write("witness", &render::witness(layout))?;
-    write("edge", &render::edge(layout))?;
+    if crate::route::ROUTE_FEED {
+        let pem = std::fs::read_to_string(layout.creds("control").join("control.pem"))
+            .unwrap_or_default();
+        if let (Some(id), Some(pin)) = (&f.edge_id, crate::route::pem_pin(&pem)) {
+            write("control", &render::control(layout, id))?;
+            write("edge", &render::edge_feed(layout, &pin))?;
+        }
+    } else {
+        write("edge", &render::edge(layout))?;
+    }
     Ok(())
 }
 
@@ -872,6 +923,46 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
             .map_err(|e| Fail::Step("cell", e.into()))?,
     );
 
+    // The route feed of lane L15, before the edge that polls it.
+    if crate::route::ROUTE_FEED {
+        say_done("route feed custody", keyd(layout, &m, &[Entry::Control])?);
+        for (dir, user) in [
+            (layout.state("control"), stack::CONTROL_USER),
+            (layout.state("edge"), stack::EDGE_USER),
+        ] {
+            std::fs::create_dir_all(&dir).map_err(io("route feed"))?;
+            own_path(layout, &dir, user).map_err(step_err("route feed"))?;
+        }
+        if layout.creds("control").join("route-feed.key").is_file() {
+            say_done("route feed key", false);
+        } else {
+            let tmp = layout.admin_dir().join("feed-public");
+            let _ = std::fs::remove_dir_all(&tmp);
+            std::fs::create_dir_all(&tmp).map_err(io("route feed"))?;
+            own_path(layout, &tmp, stack::CONTROL_USER).map_err(step_err("route feed"))?;
+            host_command(
+                layout,
+                stack::CONTROL_USER,
+                "fstp-control",
+                ("FSTP_CONTROL_CONFIG", layout.config_file("control")),
+                &["init-route-feed".as_ref(), tmp.as_os_str()],
+                "route feed",
+            )?;
+            copy(
+                &tmp.join("route-feed.pub"),
+                &layout.creds("edge").join("route-feed.pub"),
+                "route feed",
+            )?;
+            own_path(layout, &layout.creds("edge"), stack::EDGE_USER)
+                .map_err(step_err("route feed"))?;
+            say_done("route feed key", true);
+        }
+        say_done(
+            "route feed running",
+            m.ensure(&stack::control(layout))
+                .map_err(|e| Fail::Step("route feed", e.into()))?,
+        );
+    }
     // The edge and this cell's route.
     crate::route::ensure_own(layout, &m, cell)?;
     say_done(

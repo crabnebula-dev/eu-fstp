@@ -303,7 +303,9 @@ pub fn write_agent(
         })?;
         write_pair(&creds, "pgagent.pem", "pgagent-key.pem", &l)?;
     }
-    let listen_port = layout.pg_port(c).saturating_add(2);
+    // The agent never listens on a single host; its configuration still
+    // names a listener, so it names the cluster's own port.
+    let listen_port = layout.pg_port(c);
     let text = format!(
         "{{\"cell_subnet\":\"127.0.0.1/32\",\"cluster_kind\":\"{}\",\"credentials_dir\":{},\"hba_file\":{},\"listen\":\"127.0.0.1:{listen_port}\",\"postgres_port\":{}}}\n",
         c.kind(),

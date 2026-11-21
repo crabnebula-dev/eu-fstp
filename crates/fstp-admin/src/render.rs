@@ -35,6 +35,8 @@ pub struct Facts {
     pub ticket_key: Option<String>,
     /// Whether the web assets are installed.
     pub assets: bool,
+    /// The edge id of the route feed (lane L15), 32 hex digits.
+    pub edge_id: Option<String>,
 }
 
 fn p(path: &Path) -> String {
@@ -148,6 +150,35 @@ pub fn edge(l: &Layout) -> String {
         p(&l.creds("edge")),
         l.edge_public(),
         p(&l.edge_routes()),
+    )
+}
+
+/// The feed server name of the pilot `fstp-control` (lane L15).
+pub const FEED_NAME: &str = "control.tunnel.fstp.internal";
+
+/// `control.json`, the pilot route feed of lane L15 ([`crate::route::ROUTE_FEED`]).
+#[must_use]
+pub fn control(l: &Layout, edge_id: &str) -> String {
+    format!(
+        "{{\"credentials_dir\":{},\"edges\":[\"{edge_id}\"],\"feed_listen\":\"{}\",\"keyd_socket\":{},\"operator_socket\":{},\"state_dir\":{}}}\n",
+        p(&l.creds("control")),
+        l.feed(),
+        p(&l.keyd_socket(Entry::Control, "control")),
+        p(&l.state("control").join("routes.sock")),
+        p(&l.state("control")),
+    )
+}
+
+/// `edge.json` in the route feed form of lane L15: the feed address and
+/// the pin of the feed certificate.
+#[must_use]
+pub fn edge_feed(l: &Layout, feed_pin: &str) -> String {
+    format!(
+        "{{\"credentials_dir\":{},\"feed\":{{\"address\":\"{}\",\"cert_sha256\":[\"{feed_pin}\"],\"server_name\":\"{FEED_NAME}\"}},\"listen\":{{\"public\":\"{}\"}},\"state_dir\":{}}}\n",
+        p(&l.creds("edge")),
+        l.feed(),
+        l.edge_public(),
+        p(&l.state("edge")),
     )
 }
 
@@ -270,6 +301,7 @@ mod tests {
             receipt_keys: vec!["0a0b".into()],
             ticket_key: Some("cd".repeat(32)),
             assets: true,
+            edge_id: None,
         }
     }
 
