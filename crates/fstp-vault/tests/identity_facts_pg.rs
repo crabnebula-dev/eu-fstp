@@ -78,7 +78,6 @@ fn grant_of(account: u128) -> WireProposal {
     WireProposal(account + 1000)
 }
 
-
 // ---------------------------------------------------------------------
 // Custody: one AES key per root. A destroy drops the key, so the root
 // never unwraps again. A retried destroy answers the same receipt.
@@ -99,10 +98,6 @@ struct StubCustody {
 }
 
 impl StubCustody {
-    fn created(&self) -> u32 {
-        self.roots.lock().unwrap().created
-    }
-
     fn live(&self) -> usize {
         self.roots
             .lock()
@@ -203,7 +198,6 @@ impl Custody for StubCustody {
         Err(CustodyError::Refused(Refusal::Internal))
     }
 }
-
 
 // ---------------------------------------------------------------------
 // The vault journal without the chain writer.
@@ -393,7 +387,7 @@ fn fact_rows(w: &World) -> Vec<FactRow> {
         .collect()
 }
 
-fn count(w: &World, sql: &str) -> i64 {
+fn count(w: &World, sql: &'static str) -> i64 {
     let mut c = w.connect();
     let rows = block_on(c.query(sql, &[])).unwrap();
     block_on(c.close()).unwrap();
@@ -549,6 +543,7 @@ fn i81_erased_identity_facts_unreadable_from_live_store_snapshot_and_backup() {
         }
     };
     p.run_to_idle();
+    assert_eq!(w.custody.live(), 1, "I-81: the old root still lives");
     let live_keys = read_rows(&w);
     let live_facts = fact_rows(&w);
     let every_key = [&backup_keys, &snapshot_keys, &live_keys];
@@ -631,16 +626,30 @@ fn r_ky_02_live_identity_facts_open_after_erasure_and_restart() {
     drop(p);
     let mut p = start(&w);
     assert_eq!(p.vault.state(), &state, "the reload differs");
-    let rec = p.vault.state().latest().bank_of(grant_of(A_ACCOUNT)).unwrap();
+    let rec = p
+        .vault
+        .state()
+        .latest()
+        .bank_of(grant_of(A_ACCOUNT))
+        .unwrap();
     assert_eq!(rec.version, 2);
     assert_eq!(rec.holder, "Synthetic Holder Two");
     assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
     let again = p.register(B_ACCOUNT, BRUNO).unwrap();
-    assert!(again != a && again != b, "G24: the erased tuple still links");
+    assert!(
+        again != a && again != b,
+        "G24: the erased tuple still links"
+    );
     p.identity_facts(B_ACCOUNT);
     drop(p);
     let p = start(&w);
-    assert!(p.vault.state().latest().bank_of(grant_of(B_ACCOUNT)).is_some());
+    assert!(
+        p.vault
+            .state()
+            .latest()
+            .bank_of(grant_of(B_ACCOUNT))
+            .is_some()
+    );
 }
 
 /// ADR-004 record of lane L13 "Idempotence": registering the same

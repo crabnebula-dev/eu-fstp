@@ -15,9 +15,7 @@
 )]
 
 use fstp_prop::{Gen, prop_assert, prop_assert_eq};
-use fstp_vault_core::{
-    Fact, Facts, VaultEvent, VaultState, ack, ask, write_erased, write_fact,
-};
+use fstp_vault_core::{Fact, Facts, VaultEvent, VaultState, ack, ask, write_erased, write_fact};
 use fstp_vault_proto::{Query, WireAccount, WireEvidence, WireProgramme, WireProposal};
 
 const ERASED_LEAD: WireAccount = WireAccount(10);
@@ -154,8 +152,8 @@ fn i81_prop_erased_write_keeps_epochs_and_drops_its_fact() {
             }
             let q = Query::BankReleasable {
                 grant: G1,
-                at: i64::MAX / 2,
-                hold: 0,
+                at: 1_000_000_000_000_000,
+                hold: 1,
             };
             if erased.provisional().is_none() {
                 let answers = ask(&erased, &[q.to_wire().unwrap()]).unwrap();

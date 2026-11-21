@@ -2,7 +2,7 @@
 //! (design sections 6.1 and 6.2, NOTE 2, NOTE 4). Lane int5.
 //!
 //! [`HttpVaultClient`] posts the `fstp-vault-proto` requests to
-//! `/v1/epoch`, `/v1/ask` and `/v1/ack` with the cell's `cell-app`
+//! `/v1/epoch`, `/v1/ask`, `/v1/ack` and `/v1/identity` with the cell's `cell-app`
 //! certificate, and decodes the vault's canonical replies. Every fault
 //! fails the command closed (NOTE 2).
 //!
@@ -76,6 +76,33 @@ impl<R: Runtime> HttpVaultClient<R> {
             return Err(VaultFault::Unavailable);
         }
         decode_response(&resp.body).map_err(|_| VaultFault::Unavailable)
+    }
+
+    /// Registers `account` with the identity of its attribute tuple `tuple`
+    /// on `POST /v1/identity` (ADR-004 record of lane L13). The vault seals
+    /// the account's bank details and hardship evidence under that
+    /// identity's fact key from then on, and refuses them before. The reply
+    /// names no identity. Open for Daniel: no cell command calls this yet.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultFault::Refused`] for a tuple the vault refuses, such as one of
+    /// another identity than the account's, and [`VaultFault::Unavailable`]
+    /// for any other fault.
+    pub async fn register_identity(
+        &self,
+        account: AccountId,
+        tuple: &[u8],
+    ) -> Result<(), VaultFault> {
+        let req = VaultRequest::RegisterIdentity {
+            account: fstp_vault_proto::WireAccount(account.raw()),
+            tuple: tuple.to_vec(),
+        };
+        match self.call("/v1/identity", &req).await? {
+            VaultResponse::Acked => Ok(()),
+            VaultResponse::Refused(_) => Err(VaultFault::Refused),
+            VaultResponse::Epoch(_) | VaultResponse::Answers(_) => Err(VaultFault::Unavailable),
+        }
     }
 }
 

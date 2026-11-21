@@ -32,8 +32,8 @@ use fstp_rt::tokio::TokioRuntime;
 use crate::VaultError;
 use crate::chain::{VaultChain, VaultChainParts, VaultWitness};
 use crate::config::{self, VaultConfig};
-use crate::erasure::{ChainJournal, Runner};
-use crate::keystore::{self, VaultKeys};
+use crate::erasure::{ChainJournal, Registrar, Runner};
+use crate::keystore::{self, IdentityKeys, VaultKeys};
 use crate::origin::Vault;
 use crate::service::{self, VaultHandle, VaultParts};
 use fstp_keys::erasure::Phase;
@@ -298,9 +298,10 @@ async fn erasure_journal<R: Runtime>(
     cfg: &VaultConfig,
     creds: &Credentials,
     keys: VaultKeys,
+    identities: Arc<IdentityKeys>,
 ) -> Result<(Vault, ChainJournal<R>), VaultError> {
     let (anchor_key, sealer) = keys.into_service_keys()?;
-    let sealer: Arc<dyn crate::store::Sealer> = Arc::new(sealer);
+    let sealer: Arc<dyn crate::store::Sealer> = Arc::new(sealer.with_identities(identities));
     let db = login(cfg, creds, Login::Vault)?;
     let mut client: Client<R> = Client::connect(rt, &db)
         .await
@@ -325,8 +326,9 @@ async fn erasure_journal<R: Runtime>(
 
 /// The keystore lock and the keys of `cfg` (ADR-004 record of lane L11):
 /// takes the lock on a keys connection, loads the keystore and completes
-/// any stored erasure batch before the vault serves. Returns the keys
-/// connection, which holds the lock, and the service keys.
+/// any stored erasure batch before the vault serves. Returns the
+/// registrar, whose keys connection holds the lock, and the service keys
+/// (ADR-004 record of lane L13).
 ///
 /// # Errors
 ///
@@ -337,19 +339,25 @@ pub async fn resume_keystore<R: Runtime, C: Custody>(
     cfg: &VaultConfig,
     creds: &Credentials,
     custody: &C,
-) -> Result<(Client<R>, VaultKeys), VaultError> {
+) -> Result<(Registrar<R>, VaultKeys), VaultError> {
     let mut client = keys_client(rt, cfg, creds).await?;
     lock_keystore(&mut client).await?;
     let mut runner = Runner::load(client, cfg.cell, custody).await?;
     if runner.phase() != Phase::Idle {
-        let (mut vault, mut journal) =
-            erasure_journal(rt, cfg, creds, runner.service_keys()?).await?;
+        let (mut vault, mut journal) = erasure_journal(
+            rt,
+            cfg,
+            creds,
+            runner.service_keys()?,
+            runner.identity_keys(),
+        )
+        .await?;
         let done = runner.run_to_idle(&mut vault, &mut journal, now_us()).await;
         let _ = journal.client.close().await;
         done?;
     }
     let keys = runner.service_keys()?;
-    Ok((runner.into_client(), keys))
+    Ok((runner.into_registrar()?, keys))
 }
 
 /// `fstp-vault erase-identity <account>` over `custody` (ADR-004 record
@@ -374,21 +382,36 @@ pub async fn erase_identity_with<R: Runtime, C: Custody>(
     let mut client = keys_client(rt, cfg, &creds).await?;
     lock_keystore(&mut client).await?;
     let mut runner = Runner::load(client, cfg.cell, custody).await?;
-    let (mut vault, mut journal) = erasure_journal(rt, cfg, &creds, runner.service_keys()?).await?;
+    let (mut vault, mut journal) = erasure_journal(
+        rt,
+        cfg,
+        &creds,
+        runner.service_keys()?,
+        runner.identity_keys(),
+    )
+    .await?;
     let done = async {
-        let rows = journal
-            .client
-            .query(
-                "SELECT identity_id FROM vault.account WHERE account_id = $1",
-                &[&fstp_pgwire::Uuid::from_bytes(account.to_be_bytes())],
-            )
-            .await
-            .map_err(|_| VaultError::Unavailable("the vault database"))?;
-        let identity: fstp_pgwire::Uuid = rows
-            .first()
-            .and_then(|r| r.get::<Option<fstp_pgwire::Uuid>>(0).ok().flatten())
-            .ok_or(VaultError::Conflict("an account with no identity"))?;
-        let person = fstp_vault_core::Person(u128::from_be_bytes(*identity.as_bytes()));
+        // The registration of the account first, then its verification
+        // (ADR-004 record of lane L13, row "Entry point").
+        let registered = vault.registered(fstp_vault_proto::WireAccount(account));
+        let person = match registered {
+            Some(p) => p,
+            None => {
+                let rows = journal
+                    .client
+                    .query(
+                        "SELECT identity_id FROM vault.account WHERE account_id = $1",
+                        &[&fstp_pgwire::Uuid::from_bytes(account.to_be_bytes())],
+                    )
+                    .await
+                    .map_err(|_| VaultError::Unavailable("the vault database"))?;
+                let identity: fstp_pgwire::Uuid = rows
+                    .first()
+                    .and_then(|r| r.get::<Option<fstp_pgwire::Uuid>>(0).ok().flatten())
+                    .ok_or(VaultError::Conflict("an account with no identity"))?;
+                fstp_vault_core::Person(u128::from_be_bytes(*identity.as_bytes()))
+            }
+        };
         // A batch left by an earlier run completes first.
         runner
             .run_to_idle(&mut vault, &mut journal, now_us())
@@ -416,6 +439,7 @@ pub fn parts(
     cfg: &VaultConfig,
     creds: &Credentials,
     keys: VaultKeys,
+    identities: Arc<IdentityKeys>,
 ) -> Result<VaultParts, VaultError> {
     let tls = |name: &'static str| move |_| cfg_err(name);
     let (anchor_key, sealer) = keys.into_service_keys()?;
@@ -424,7 +448,7 @@ pub fn parts(
         cell: cfg.cell,
         db: login(cfg, creds, Login::Vault)?,
         registered_servers: cfg.registered_servers.clone(),
-        sealer: Arc::new(sealer),
+        sealer: Arc::new(sealer.with_identities(identities)),
         ticket_keys: cfg.ticket_keys.clone(),
         internal_tls: fstp_tls::ServerConfig::mutual(
             creds.get("internal.pem")?,
@@ -468,12 +492,19 @@ pub async fn start_with<R: Runtime, C: Custody>(
 ) -> Result<VaultHandle<R>, VaultError> {
     let creds = Credentials::read(&cfg.credentials_dir)?;
     check_start(&rt, cfg, &creds).await?;
-    let (lease, keys) = resume_keystore(&rt, cfg, &creds, custody).await?;
-    let parts = parts(cfg, &creds, keys)?;
-    let handle = service::serve(rt, parts).await?;
-    // The keys connection holds the keystore lock while the vault serves.
-    handle.hold(lease);
-    Ok(handle)
+    let (registrar, keys) = resume_keystore(&rt, cfg, &creds, custody).await?;
+    let parts = parts(cfg, &creds, keys, registrar.identity_keys())?;
+    // ADR-004 record of lane L13 "Existing facts": no identity fact may
+    // be held under the shared Fact key, which no erasure destroys.
+    let mut client: Client<R> = Client::connect(&rt, &parts.db)
+        .await
+        .map_err(|e| connect_error(&e))?;
+    let checked = crate::store::check_identity_facts(&mut client, parts.sealer.as_ref()).await;
+    let _ = client.close().await;
+    checked?;
+    // The registrar's keys connection holds the keystore lock while the
+    // vault serves.
+    service::serve_with_registrar(rt, parts, Some(registrar)).await
 }
 
 fn keyd(cfg: &VaultConfig) -> Result<fstp_custody::KeydCustody, VaultError> {

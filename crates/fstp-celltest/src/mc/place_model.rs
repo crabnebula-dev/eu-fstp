@@ -250,7 +250,7 @@ pub fn app_grants() -> Vec<(RoleName, &'static str, Vec<Privilege>)> {
 /// The tables of the vault database, from design section 4.3, with the
 /// keystore tables of section 4.2. `vault.country_condition` holds the
 /// P-17 country conditions, named by Daniel on 2026-10-30 (design 21.0).
-pub const VAULT_TABLES: [&str; 16] = [
+pub const VAULT_TABLES: [&str; 17] = [
     "vault.epoch",
     "vault.fact",
     "vault.identity",
@@ -269,6 +269,10 @@ pub const VAULT_TABLES: [&str; 16] = [
     // Vault migration 8 (ADR-004 record of lane L11): the sealed identity
     // attribute tuples, a keystore table like the others.
     "keystore.identity_tuple",
+    // Lane L13 (ADR-004 record of lane L13): the identity registration
+    // of each account, vault migration 9. The vault role holds SELECT,
+    // INSERT and UPDATE on it, as on every `vault` table.
+    "vault.identity_account",
 ];
 
 /// What the reference pins for `role` on the vault table `object`.

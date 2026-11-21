@@ -101,7 +101,10 @@ fn i81_unregistered_identity_facts_refused_at_intake() {
         v.take_journal().is_empty(),
         "a refused identity fact journaled something"
     );
-    assert!(v.used_tickets().is_empty(), "a refused write used its ticket");
+    assert!(
+        v.used_tickets().is_empty(),
+        "a refused write used its ticket"
+    );
 
     let p = v.resolve_identity(MK_A).unwrap();
     assert!(v.bind_account(WireAccount(LEAD), p, T0).unwrap());

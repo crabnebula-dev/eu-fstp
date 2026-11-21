@@ -29,6 +29,7 @@ use fstp_pgwire::{Client, ClientTls, Config, Password};
 use fstp_rt::tokio::TokioRuntime;
 use fstp_vault::store::{self, SealedValue, Sealer};
 use fstp_vault::{CATALOGUE, JournalEntry, Vault, VaultError};
+use fstp_vault_core::Person;
 use fstp_vault_proto::{VaultRequest, VaultResponse, WireAccount, WireProposal, encode_request};
 
 type Pg = Client<TokioRuntime>;
@@ -95,6 +96,38 @@ impl Sealer for TestSealer {
 
     fn digest(&self, data: &[u8]) -> [u8; 32] {
         fstp_crypto::hmac_sha256(&[0x24; 32], data)
+    }
+
+    // ADR-004 record of lane L13: every identity is live under this test
+    // sealer, with its own data key id and the identity in the AAD.
+    fn shared_dek(&self) -> Option<[u8; 16]> {
+        Some([7; 16])
+    }
+
+    fn seal_identity(
+        &self,
+        identity: Person,
+        aad: &[u8],
+        plain: &[u8],
+    ) -> Result<SealedValue, VaultError> {
+        let s = self.seal(aad, plain)?;
+        Ok(SealedValue {
+            dek: identity.0.to_be_bytes(),
+            bytes: s.bytes,
+        })
+    }
+
+    fn open_identity(
+        &self,
+        _identity: Person,
+        aad: &[u8],
+        sealed: &[u8],
+    ) -> Result<Option<Vec<u8>>, VaultError> {
+        self.open(aad, sealed).map(Some)
+    }
+
+    fn has_identity(&self, _identity: Person) -> bool {
+        true
     }
 }
 
@@ -533,6 +566,10 @@ fn i33_i86_bank_details_persist_sealed_and_reload() {
     let key = Signer::new(1);
     let mut v = Vault::new(CELL, &[key.public()]).unwrap();
     let iban = "DE89370400440532013000";
+    // ADR-004 record of lane L13: the applicant registers first.
+    let p = v.resolve_identity([0x5B; 32]).unwrap();
+    v.bind_account(WireAccount(APPLICANT), p, NOW).unwrap();
+    persist(&mut db, &mut v).unwrap();
     let t = |kind: &str, account: u128, nonce: u8| RTicket {
         kind: kind.to_owned(),
         cell: CELL,

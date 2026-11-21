@@ -47,6 +47,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
+use std::sync::Arc;
 
 use fstp_crypto::aead;
 use fstp_crypto::composite::CompositeSigningKey;
@@ -58,10 +59,11 @@ use fstp_keys::{DekId, Epoch, GroupId, Purpose};
 use fstp_pgwire::Client;
 use fstp_rt::Runtime;
 use fstp_vault_core::Person;
+use fstp_vault_proto::WireAccount;
 
 use crate::keystore::{
-    self, CHAIN, Change, DataKeyRow, GroupRow, IntentRow, KeystoreRows, MAX_TUPLE, RootRow,
-    STATE_DESTROYED, STATE_LIVE, STATE_PENDING, TupleRow, VaultKeys,
+    self, CHAIN, Change, DataKeyRow, GroupRow, IdentityKeys, IntentRow, KeystoreRows, MAX_TUPLE,
+    RootRow, STATE_DESTROYED, STATE_LIVE, STATE_PENDING, TupleRow, VaultKeys,
 };
 use crate::origin::{JournalEntry, Vault};
 use crate::{MATCH_KEY_LEN, VaultError};
@@ -301,6 +303,9 @@ pub struct Runner<'c, R: Runtime, C: Custody> {
     seal: SealKey,
     open: BTreeMap<[u8; 16], Open>,
     work: Work,
+    /// The fact keys `F(X)` of the live identities (ADR-004 record of lane
+    /// L13), shared with the sealer of the vault's rows.
+    identities: Arc<IdentityKeys>,
 }
 
 impl<R: Runtime, C: Custody> std::fmt::Debug for Runner<'_, R, C> {
@@ -394,7 +399,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
                 return Err(bad("the keystore groups"));
             }
         }
-        let runner = Runner {
+        let mut runner = Runner {
             cell,
             client,
             custody,
@@ -404,6 +409,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             seal,
             open,
             work: Work::default(),
+            identities: Arc::default(),
         };
         // Every group of the chain state has its row.
         for g in runner.chain_groups() {
@@ -411,6 +417,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
                 return Err(bad("the keystore groups"));
             }
         }
+        runner.fill_identity_keys()?;
         Ok(runner)
     }
 
@@ -672,6 +679,10 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         if let Some(o) = new_open {
             self.open.insert(group, o);
         }
+        self.identities.insert(
+            u128::from_be_bytes(id),
+            keystore::identity_fact_key(&self.cell, &id, &dk)?,
+        );
         self.reread().await
     }
 
@@ -709,6 +720,9 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             0,
         )
         .await?;
+        // Its facts are refused for sealing and opening from here on
+        // (ADR-004 record of lane L13).
+        self.identities.remove(identity.0);
         if self.chain.phase() == Phase::Idle {
             self.work = Work::default();
         }
@@ -996,6 +1010,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         for dek in &batch {
             changes.push(Change::DropDataKey(dek.0));
             changes.push(Change::DropTuple(dek.0));
+            self.identities.remove(u128::from_be_bytes(dek.0));
         }
         let mut chain = self.chain.clone();
         plan::apply(&mut chain, step).map_err(planner)?;
@@ -1232,6 +1247,170 @@ async fn write<R: Runtime>(
         phase: phase_code(chain.phase()),
     }));
     keystore::apply_changes(client, &changes, now).await
+}
+
+impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
+    /// Opens every live tuple key whose erasure was not requested, and
+    /// keeps its identity's fact key `F(X)` (ADR-004 record of lane L13,
+    /// row "Load"). A key row that does not open fails the load closed.
+    fn fill_identity_keys(&mut self) -> Result<(), VaultError> {
+        for d in &self.rows.data_keys {
+            let in_attribute = self
+                .open
+                .get(&d.group)
+                .is_some_and(|g| g.purpose == Purpose::Attribute);
+            if !in_attribute || self.chain.refused_for_open(DekId(d.id)) {
+                continue;
+            }
+            let dk = self.open_tuple_key(d)?;
+            self.identities.insert(
+                u128::from_be_bytes(d.id),
+                keystore::identity_fact_key(&self.cell, &d.id, &dk)?,
+            );
+        }
+        Ok(())
+    }
+
+    /// The fact keys `F(X)` of the live identities, which the sealer of
+    /// the vault's rows shares ([`crate::service::AeadSealer::with_identities`]).
+    #[must_use]
+    pub fn identity_keys(&self) -> Arc<IdentityKeys> {
+        Arc::clone(&self.identities)
+    }
+
+    /// Registers `account` with the attribute tuple `tuple` (ADR-004
+    /// record of lane L13, rows "Registration steps" and "Idempotence"):
+    /// the identity of the tuple, assigned if new, its tuple and data key
+    /// stored if not yet, then the binding of the account, journaled.
+    /// From then on the account's identity facts are sealed under the
+    /// identity's fact key. A repeat changes no row.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Malformed`] for an empty or too long tuple, and for
+    /// an account bound to another identity, before anything is written.
+    /// [`VaultError::Unavailable`] while a batch runs or when a write
+    /// fails; a retry completes what was written.
+    pub async fn register_account<J: Journal>(
+        &mut self,
+        vault: &mut Vault,
+        journal: &mut J,
+        account: WireAccount,
+        tuple: &[u8],
+        now: i64,
+    ) -> Result<Person, VaultError> {
+        if tuple.is_empty() || tuple.len() > MAX_TUPLE {
+            return Err(bad("an identity tuple"));
+        }
+        if let Some(bound) = vault.registered(account) {
+            let mk = self.match_key(tuple)?;
+            let resolved = vault
+                .identity_keys()
+                .find(|(k, _)| *k == mk)
+                .map(|(_, p)| p);
+            if resolved != Some(bound) {
+                return Err(bad("an account of another identity"));
+            }
+        }
+        let person = self.register_identity(vault, journal, tuple, now).await?;
+        let mut next = vault.clone();
+        if next.bind_account(account, person, now)? {
+            let entries = next.take_journal();
+            journal.commit(&entries, now).await?;
+            *vault = next;
+        }
+        Ok(person)
+    }
+}
+
+/// The custody of a [`Registrar`]: it refuses every call. A registrar
+/// only registers identities, which needs no custody call once the seal
+/// key of the current epoch is open.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoCustody;
+
+static NO_CUSTODY: NoCustody = NoCustody;
+
+fn no_custody() -> fstp_custody::CustodyError {
+    fstp_custody::CustodyError::Refused(fstp_custody::Refusal::Internal)
+}
+
+impl Custody for NoCustody {
+    async fn create_root(&self, _: RootLabel) -> Result<RootRef, fstp_custody::CustodyError> {
+        Err(no_custody())
+    }
+
+    async fn wrap(
+        &self,
+        _: &RootRef,
+        _: &SealKey,
+        _: &fstp_custody::Aad,
+    ) -> Result<WrappedSealKey, fstp_custody::CustodyError> {
+        Err(no_custody())
+    }
+
+    async fn unwrap(
+        &self,
+        _: &RootRef,
+        _: &WrappedSealKey,
+        _: &fstp_custody::Aad,
+    ) -> Result<SealKey, fstp_custody::CustodyError> {
+        Err(no_custody())
+    }
+
+    async fn destroy(
+        &self,
+        _: &RootRef,
+    ) -> Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError> {
+        Err(no_custody())
+    }
+
+    async fn sign(
+        &self,
+        _: &fstp_custody::SignKeyRef,
+        _: &[u8; 32],
+    ) -> Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError> {
+        Err(no_custody())
+    }
+
+    async fn usage_since(
+        &self,
+        _: &RootRef,
+        _: fstp_custody::UsageCursor,
+    ) -> Result<fstp_custody::UsagePage, fstp_custody::CustodyError> {
+        Err(no_custody())
+    }
+}
+
+/// The keystore of a serving vault: an idle [`Runner`] that keeps the
+/// keys connection, and with it the keystore lock, and registers
+/// identities (ADR-004 record of lane L13). It holds no custody, so it
+/// runs no erasure step.
+pub type Registrar<R> = Runner<'static, R, NoCustody>;
+
+impl<R: Runtime, C: Custody> Runner<'_, R, C> {
+    /// The registrar of a serving vault, once no batch runs.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Unavailable`] while a batch runs: it completes first.
+    pub fn into_registrar(self) -> Result<Registrar<R>, VaultError> {
+        if self.chain.phase() != Phase::Idle {
+            return Err(VaultError::Unavailable("an erasure batch runs"));
+        }
+        Ok(Runner {
+            cell: self.cell,
+            client: self.client,
+            custody: &NO_CUSTODY,
+            rows: self.rows,
+            chain: self.chain,
+            intent: self.intent,
+            seal: self.seal,
+            open: self.open,
+            work: Work::default(),
+            identities: self.identities,
+        })
+    }
 }
 
 impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
