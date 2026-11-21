@@ -205,8 +205,9 @@ dependencies = [
  "fstp-crypto",
  "fstp-custody",
  "fstp-http",
+ "fstp-json",
  "fstp-keys",
- "fstp-obs",
+ "fstp-rt",
  "fstp-tls",
 ]
 
