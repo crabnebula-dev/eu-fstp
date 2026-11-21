@@ -824,3 +824,27 @@ No workspace code applies NFC or case folding. `fstp_api_core::display_name::nor
 In compact Rust tables that is roughly 30 to 40 KB of static data, generated from the UCD files by an in-house Rust generator, since no Python may be used. The UCD files are under the Unicode licence, and adding them or tables derived from them needs Daniel's review. The canonical caseless form would be `NFC(casefold(NFD(x)))`, which needs decomposition, composition and folding together. Open for Daniel: approve that work as its own lane. Until then the tuple uses the trimmed, collapsed form above. When the normaliser lands, the tuple's label changes, the stored tuples are recomputed and the match keys rekeyed, and pilot vaults are recreated.
 
 Tests, written before the code: `adr008_verification_ticket_rules`, `adr008_verification_ticket_issued_in_negotiation` and `adr008_second_admin_issued_once_verified` (`crates/fstp-celltest/tests/adr008_verification_ticket.rs`); `adr008_vault_verification_body_spelling` and `adr008_vault_verification_field_bounds` (`web/test/vault_verification.test.ts`); `adr008_recorder_verification_registers_the_identity`, `adr008_recorder_route_refuses_without_writing` and `adr008_recorder_retry_completes_and_replay_is_refused` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `adr008_verification_write_body_decodes_and_refuses` (`crates/fstp-vault/tests/codecs.rs`).
+
+## Decided by Daniel, 2026-11-21: the first admins and the person in the ticket
+
+- The technical admin verifies the first admins on the host, with the operator as verifier of record (ADR-008, same date). Decided by Daniel on 2026-11-21.
+- The verification ticket names the person, and the recorder types only that person's identity details. Decided by Daniel on 2026-11-21.
+- The shipped vault serves the static write and release pages. Decided by Daniel on 2026-11-21.
+- The full NFC plus case folding normaliser is its own lane. The tuple keeps a seam for it. Decided by Daniel on 2026-11-21.
+
+### Lane L13b's readings
+
+Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading |
+| --- | --- |
+| Host command | `fstp-vault verify-first-admin <account> <identity file>`. It runs with the vault stopped, as `erase-identity` does: it takes the keystore lock, so it refuses while the vault serves, and it needs the configuration, the credentials directory and the vault's `fstp-keyd` entry, which only root and the vault's OS user can read. It asks nothing and prints nothing. Exit status 0 means the verification is recorded, or was recorded before for the same person. Status 2 means a refused argument or file. Status 1 means any other failure |
+| Identity file | One JSON object with the members `checks`, `document_type`, `identity` and `method` of the recorder's body (below). Any JSON spelling is taken, since a person writes it by hand. At most 4 KiB. No document number |
+| Verifier of record | The operator, as the reserved account id `340282366920938463463374607431768211455` (`u128::MAX`), which no cell assigns |
+| Limit | The command records operator verifications for at most two accounts per vault, the first admins. A repeat for an account it verified before is idempotent and does not count again. A third account is refused with status 1. The vault does not know the tenant admin roles, so it counts instead. Verified admins record everyone else on the web |
+| Cell side | The verification ends at the vault as a provisional epoch. The cell takes it at its next vault exchange after the vault starts again, as for every vault write (NOTE 4) |
+| Ticket | `IssueVerificationTicket { account, proposal }` names the person and, for an applicant, the proposal. The record is `VerificationTicketIssued { id, holder, subject, proposal }`. The cell issues it to a verified tenant admin with no Judging binding, who is not the person and shares no identity with the person, and, for a proposal, holds no binding on it and shares no identity with its accounts. With a proposal, the proposal is in NEGOTIATION or later and the person holds a binding on it. Without one, the person holds no Receiving binding at all, so an applicant is verified only in NEGOTIATION (R-NG-01). The claims carry the person as the scope `person:<id>` |
+| Vault checks | The person comes from the ticket's scope, never from the body. The body is `{checks, document_type, identity, method}`. With a proposal, the vault's negotiation fact must list the person. The person must not be the holder |
+| Staff app | The people list of the tenant admin shows "Record verification" next to each person. It asks the cell for the ticket and opens the vault form in a new tab |
+| Static pages | The vault configuration takes an optional `assets_dir`. It holds `vault/` (the compiled vault modules and `shell.html`) and `auth/` (`dom.js`, `encoding.js`, `i18n.js`, `tokens.css` and `auth.css`). The vault serves `GET /w`, `GET /r`, `/assets/vault/<name>` and `/assets/auth/<name>` under the loader policy of ADR-009. Without the member it serves no page, as before |
+| Normaliser seam | `fstp_vault::codec::tuple_name` is the one function the NFC plus case folding lane replaces. The tuple label changes with it |
