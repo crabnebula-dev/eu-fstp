@@ -660,10 +660,15 @@ fn adr009_l15_edge_feed_config_and_keys_refuse_bad_input() {
     assert_eq!(cfg.feed.address, SocketAddr::from(([10, 0, 0, 2], 7350)));
     assert_eq!(cfg.feed.server_name, "control.tunnel.test");
     assert_eq!(cfg.feed.cert_sha256, vec![[0x55; 32]]);
-    assert_eq!(cfg.state_dir, std::path::PathBuf::from("/var/lib/fstp-edge"));
+    assert_eq!(
+        cfg.state_dir,
+        std::path::PathBuf::from("/var/lib/fstp-edge")
+    );
     assert_eq!(cfg.feed.poll, DEFAULT_POLL);
     let with_feed = |feed: &str| {
-        format!(r#"{{"credentials_dir":"/e","feed":{feed},"listen":{{"public":"0.0.0.0:443"}},"state_dir":"/s"}}"#)
+        format!(
+            r#"{{"credentials_dir":"/e","feed":{feed},"listen":{{"public":"0.0.0.0:443"}},"state_dir":"/s"}}"#
+        )
     };
     let pin = pin(0xab);
     let ok = with_feed(&format!(
@@ -705,7 +710,9 @@ fn adr009_l15_edge_feed_config_and_keys_refuse_bad_input() {
             ConfigError::Invalid("feed.server_name"),
         ),
         (
-            format!(r#"{{"address":"control:7350","cert_sha256":["{pin}"],"server_name":"c.test"}}"#),
+            format!(
+                r#"{{"address":"control:7350","cert_sha256":["{pin}"],"server_name":"c.test"}}"#
+            ),
             ConfigError::Invalid("feed.address"),
         ),
         (
@@ -722,7 +729,9 @@ fn adr009_l15_edge_feed_config_and_keys_refuse_bad_input() {
         ),
         ("\"/r\"".to_owned(), ConfigError::Invalid("feed")),
         (
-            format!(r#"{{"address":"10.0.0.2:7350","cert_sha256":"{pin}","server_name":"c.test"}}"#),
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":"{pin}","server_name":"c.test"}}"#
+            ),
             ConfigError::Invalid("feed.cert_sha256"),
         ),
         (
@@ -730,7 +739,9 @@ fn adr009_l15_edge_feed_config_and_keys_refuse_bad_input() {
             ConfigError::Invalid("feed.cert_sha256"),
         ),
         (
-            format!(r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}","{pin}"],"server_name":"c.test"}}"#),
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}","{pin}"],"server_name":"c.test"}}"#
+            ),
             ConfigError::Invalid("feed.cert_sha256"),
         ),
         (
@@ -757,8 +768,14 @@ fn adr009_l15_edge_feed_config_and_keys_refuse_bad_input() {
     );
     // The cache directory is required and absolute.
     for (input, want) in [
-        (two.replace(r#","state_dir":"/s""#, ""), ConfigError::MissingMember("state_dir")),
-        (two.replace(r#""state_dir":"/s""#, r#""state_dir":"s""#), ConfigError::Invalid("state_dir")),
+        (
+            two.replace(r#","state_dir":"/s""#, ""),
+            ConfigError::MissingMember("state_dir"),
+        ),
+        (
+            two.replace(r#""state_dir":"/s""#, r#""state_dir":"s""#),
+            ConfigError::Invalid("state_dir"),
+        ),
     ] {
         assert_eq!(decode_config(input.as_bytes()), Err(want), "{input}");
     }

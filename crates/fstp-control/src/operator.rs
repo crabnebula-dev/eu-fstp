@@ -638,7 +638,7 @@ pub fn session_digest(session: OperatorSession) -> [u8; 32] {
 /// row "Step-up per change"): `SHA-256("fstp-route-change-v1" ||
 /// session_digest || digest || nonce)`.
 #[must_use]
-pub fn route_change_challenge(
+pub(crate) fn route_change_challenge(
     session_digest: &[u8; 32],
     digest: &[u8; 32],
     nonce: &[u8; 32],

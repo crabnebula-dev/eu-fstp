@@ -168,7 +168,10 @@ fn i90_tampered_cache_is_ignored_at_start() {
             signed(&stranger, 9, &[route(1, "a.example")]),
             FeedError::BadSignature,
         ),
-        (b"not a table".to_vec(), FeedError::Malformed("the wrong magic")),
+        (
+            b"not a table".to_vec(),
+            FeedError::Malformed("the wrong magic"),
+        ),
     ] {
         std::fs::write(&cache, &bytes).unwrap();
         let control = Shared::default();
@@ -289,7 +292,9 @@ fn adr009_l15_two_control_pins_stage_a_renewal() {
     let client = || fstp_tls::ClientConfig::mutual(CA, CLIENT, CLIENT_KEY).unwrap();
     let served_pin = rt.block_on(async {
         let tcp = rt.connect_tcp(addr).await.unwrap();
-        let tls = fstp_tls::connect(&client(), "localhost", tcp).await.unwrap();
+        let tls = fstp_tls::connect(&client(), "localhost", tcp)
+            .await
+            .unwrap();
         fstp_crypto::sha256(tls.peer_end_entity_der().unwrap())
     });
     let poll_with = |pins: Vec<[u8; 32]>| {
@@ -303,13 +308,25 @@ fn adr009_l15_two_control_pins_stage_a_renewal() {
     };
     let next = [0x42; 32];
     assert_eq!(poll_with(vec![served_pin]), Ok(5));
-    assert_eq!(poll_with(vec![next, served_pin]), Ok(5), "the old pin second");
-    assert_eq!(poll_with(vec![served_pin, next]), Ok(5), "the next pin second");
+    assert_eq!(
+        poll_with(vec![next, served_pin]),
+        Ok(5),
+        "the old pin second"
+    );
+    assert_eq!(
+        poll_with(vec![served_pin, next]),
+        Ok(5),
+        "the next pin second"
+    );
     assert_eq!(*polls.lock().unwrap(), 3);
     assert_eq!(
         poll_with(vec![next]),
         Err(FeedError::Io(io::ErrorKind::PermissionDenied))
     );
     std::thread::sleep(std::time::Duration::from_millis(200));
-    assert_eq!(*polls.lock().unwrap(), 3, "a poll reached an unpinned server");
+    assert_eq!(
+        *polls.lock().unwrap(),
+        3,
+        "a poll reached an unpinned server"
+    );
 }
