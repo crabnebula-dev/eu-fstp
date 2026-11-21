@@ -83,3 +83,25 @@ test("adr008_member_page_requests_the_person_ticket", async () => {
     assert(!isVaultWriteUrl(bad, here), `${bad} accepted`);
   }
 });
+
+/** R-NG-01, ADR-004 record of lane L13b, row "Staff app": an applicant's ticket request names the proposal, and the people list is read only in its exact shape. */
+test("adr008_applicant_verification_names_the_proposal", async () => {
+  const { verificationRequest, decodePeople } = await import("../src/admin/team/verify.js");
+  eq(
+    canonical(verificationRequest("301", "00112233445566778899aabbccddeeff", "1")),
+    '{"account":"301","command_id":"00112233445566778899aabbccddeeff","proposal":"1"}',
+    "the applicant's request body",
+  );
+  const people = decodePeople({ people: [{ account: "301", proposal: "1", role: "applicant" }] });
+  assert(people !== null && people.length === 1 && people[0]?.proposal === "1", "a valid list was refused");
+  eq(decodePeople({ people: [] })?.length, 0, "an empty list");
+  for (const bad of [
+    null,
+    { people: [{ account: "0301", proposal: "1", role: "applicant" }] },
+    { people: [{ account: "301", proposal: "1", role: "applicant", name: "x" }] },
+    { people: [], extra: 1 },
+    { people: "301" },
+  ]) {
+    eq(decodePeople(bad), null, `accepted ${JSON.stringify(bad)}`);
+  }
+});

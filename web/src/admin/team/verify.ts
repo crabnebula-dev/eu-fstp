@@ -17,9 +17,43 @@ import { buttonEl, guarded, whileBusy, type Frame } from "../../reviewer/kit.js"
 /** The cell route that issues a verification ticket. */
 export const VERIFICATIONS = "/api/v1/verifications";
 
-/** The body of a ticket request for `account`, with a fresh command id. */
-export function verificationRequest(account: string, commandId: string): { readonly account: string; readonly command_id: string } {
-  return { account, command_id: commandId };
+/** The body of a ticket request for `account`, with a fresh command id, and for an applicant the proposal. */
+export function verificationRequest(
+  account: string,
+  commandId: string,
+  proposal: string | null = null,
+): Readonly<Record<string, string>> {
+  return proposal === null ? { account, command_id: commandId } : { account, command_id: commandId, proposal };
+}
+
+/** The cell route that lists the applicants a tenant admin may verify. */
+export const VERIFICATION_PEOPLE = "/api/v1/verification-people";
+
+/** One applicant a tenant admin may verify: an account of a proposal in NEGOTIATION or later. */
+export interface PersonRow {
+  readonly account: string;
+  readonly proposal: string;
+  readonly role: string;
+}
+
+const ID = /^(?:0|[1-9][0-9]{0,38})$/;
+
+/** The `{people}` reply of the cell, or null for any other shape. */
+export function decodePeople(v: unknown): readonly PersonRow[] | null {
+  const o = record(v);
+  const people = o === null ? undefined : o["people"];
+  if (o === null || Object.keys(o).length !== 1 || !Array.isArray(people)) return null;
+  const out: PersonRow[] = [];
+  for (const x of people as readonly unknown[]) {
+    const r = record(x);
+    if (r === null || Object.keys(r).length !== 3) return null;
+    const { account, proposal, role } = r;
+    if (typeof account !== "string" || !ID.test(account) || typeof proposal !== "string" || !ID.test(proposal) || typeof role !== "string") {
+      return null;
+    }
+    out.push(Object.freeze({ account, proposal, role }));
+  }
+  return Object.freeze(out);
 }
 
 /** Whether `to` is this cell's vault origin write page: `id.<cell host>` on the page's scheme and port, `/w` with a ticket. */
@@ -42,14 +76,15 @@ export function isVaultWriteUrl(to: string, here: { readonly protocol: string; r
   );
 }
 
-/** The "Record verification" control of the person `account`. */
-export function verifyControl(t: I18n, f: Frame, account: string): HTMLElement {
-  const button = buttonEl(`verify-${account}`, "button", t.label("team.verify.open"));
+/** The "Record verification" control of the person `account`, for an applicant of `proposal`. */
+export function verifyControl(t: I18n, f: Frame, account: string, proposal: string | null = null): HTMLElement {
+  const id = proposal === null ? `verify-${account}` : `verify-${proposal}-${account}`;
+  const button = buttonEl(id, "button", t.label("team.verify.open"));
   button.addEventListener("click", () => {
     void guarded(f, () =>
       whileBusy(button, async () => {
         f.clearAlert();
-        const r = await post(VERIFICATIONS, verificationRequest(account, randomHex(16)));
+        const r = await post(VERIFICATIONS, verificationRequest(account, randomHex(16), proposal));
         const url = record(r.body)?.["url"];
         if (r.status !== 200 || typeof url !== "string") {
           f.alert(t.label("team.verify.refused"));

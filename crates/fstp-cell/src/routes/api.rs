@@ -593,3 +593,60 @@ pub(crate) async fn erasures<B: Backend>(ctx: &Ctx<B>, caller: &Caller) -> Reply
     o.insert("erasures", Value::Array(list));
     Reply::json(StatusCode::OK, &Value::Object(o))
 }
+
+/// `GET /api/v1/verification-people` (ADR-004 record of lane L13b, row
+/// "Staff app"): the people a tenant admin may record a verification for
+/// on the vault origin, as `{people: [{account, proposal, role}]}`. They
+/// are the accounts bound to a proposal in NEGOTIATION or later
+/// (R-NG-01), by id and role only, never a name or attribute (I-17). The
+/// reader is a tenant admin with no Judging binding, as for the ticket
+/// itself, and never sees their own account. The cell decides each
+/// ticket again (`IssueVerificationTicket`).
+pub(crate) async fn verification_people<B: Backend>(ctx: &Ctx<B>, caller: &Caller) -> Reply {
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let actor = caller.view.account;
+    let core = &s.engine().core;
+    let judging = core
+        .roster()
+        .bindings()
+        .any(|(_, b)| b.account == actor && b.group() == fstp_domain::roles::Group::Judging);
+    if !s.tenant().is_admin(actor) || judging {
+        return Reply::refuse(StatusCode::FORBIDDEN, None, "verification-people");
+    }
+    let mut rows = Vec::new();
+    for (_, b) in core.roster().bindings() {
+        let Some(p) = b.proposal() else {
+            continue;
+        };
+        if !b.held() || b.account == actor || b.group() != fstp_domain::roles::Group::Receiving {
+            continue;
+        }
+        let open = fstp_domain::view::proposal_state(core, p)
+            .is_some_and(|st| fstp_cell_core::RELEASE_STATES.contains(&st));
+        if open {
+            rows.push((
+                p.raw(),
+                b.account.raw(),
+                fstp_access::role_wire_name(b.role),
+            ));
+        }
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    let list: Array = rows
+        .into_iter()
+        .map(|(p, a, role)| {
+            let mut o = Object::with_capacity(3);
+            o.insert("account", Value::String(a.to_string()));
+            o.insert("proposal", Value::String(p.to_string()));
+            o.insert("role", Value::String(role.to_owned()));
+            Value::Object(o)
+        })
+        .collect();
+    let mut o = Object::with_capacity(1);
+    o.insert("people", Value::Array(list));
+    Reply::json(StatusCode::OK, &Value::Object(o))
+}

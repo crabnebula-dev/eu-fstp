@@ -27,7 +27,8 @@ import { act, anyObject, buttonEl, formEl, link, onSubmit, section } from "../..
 import { ROLES, plausibleEmail } from "../../people/model.js";
 import { frame, idRoute, inputEl, pageI18n, readOp, selectEl, type Frame, type JudgingPage, type PageEnv } from "../../reviewer/kit.js";
 import { TEAM_LABELS } from "./messages.en.js";
-import { verifyControl } from "./verify.js";
+import { get } from "../../auth/api.js";
+import { VERIFICATION_PEOPLE, decodePeople, verifyControl, type PersonRow } from "./verify.js";
 import {
   TEAM_PATHS,
   dayOf,
@@ -285,6 +286,30 @@ function membersTable(env: PageEnv, t: I18n, f: Frame, r: MembersReply, reload: 
   ]);
 }
 
+/** The applicants a tenant admin may verify, each with its control. Empty for anyone the cell refuses. */
+function applicantsSection(t: I18n, f: Frame, people: readonly PersonRow[]): Child[] {
+  if (people.length === 0) return [];
+  const roleOf = (r: string): Label => {
+    const known = ["applicant", "applicant_team_member", "guardian"].includes(r);
+    return t.label(known ? `team.verify.role.${r}` : "team.verify.role.other");
+  };
+  return [
+    h("h2", { id: "verify-applicants" }, [t.label("team.verify.applicants")]),
+    h("p", {}, [t.label("team.verify.applicants_intro")]),
+    h(
+      "ul",
+      { id: "verify-applicant-list", class: "fstp-list" },
+      people.map((p) =>
+        h("li", { "data-account": p.account, "data-proposal": p.proposal }, [
+          t.label("team.verify.person", { proposal: p.proposal, role: roleOf(p.role), account: p.account }),
+          " ",
+          verifyControl(t, f, p.account, p.proposal),
+        ]),
+      ),
+    ),
+  ];
+}
+
 async function mountMembers(env: PageEnv): Promise<void> {
   const t = labels(env);
   const f = frame(env, t, t.label("team.members_title"));
@@ -300,10 +325,13 @@ async function mountMembers(env: PageEnv): Promise<void> {
       f.problem({ kind: "failed", reason: "invalid_response" });
       return;
     }
+    const peopleReply = await get(VERIFICATION_PEOPLE);
+    const people = peopleReply.status === 200 ? (decodePeople(peopleReply.body) ?? []) : [];
     f.show([
       h("p", {}, [t.label("team.members_intro")]),
       h("p", { class: "fstp-hint" }, [t.label("team.action.step_up")]),
       membersTable(env, t, f, data, load),
+      ...applicantsSection(t, f, people),
       h("p", {}, [link(TEAM_PATHS.account, t.label("team.account_link"))]),
       h("p", {}, [link(TEAM_PATHS.home, t.label("team.back"))]),
     ]);

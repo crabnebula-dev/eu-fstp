@@ -190,7 +190,7 @@ shred -u /root/admin.json
 
 ### Record a verification on the web
 
-A verified tenant admin records everyone else. On "Members" (`/app/admin/members`), choose "Record verification" next to the person. The vault's form opens for that person. Type only the identity details from their document, and save. The vault registers the person's identity and records the verification in one step. The cell never sees these details. A failed save keeps the link valid, and saving again completes it.
+A verified tenant admin records everyone else. On "Members" (`/app/admin/members`), choose "Record verification" next to the person. People of proposals in negotiation or later are listed in a section of their own on the same page, each with the button. The vault's form opens for that person. Type only the identity details from their document, and save. The vault registers the person's identity and records the verification in one step. The cell never sees these details. A failed save keeps the link valid, and saving again completes it.
 
 The cell offers the form only to a verified tenant admin with no Judging role, never for themselves or a person who shares their identity. An applicant is verified only once their proposal is in NEGOTIATION, under a ticket for that proposal (ADR-004 record of lane L13b, row "Ticket").
 

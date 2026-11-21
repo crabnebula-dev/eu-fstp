@@ -69,4 +69,11 @@ export const TEAM_LABELS: Readonly<Record<string, string>> = {
   "team.verify.open": "Record verification",
   "team.verify.opening": "Opening the identity form of the vault.",
   "team.verify.refused": "You cannot record a verification for this person now. Only a verified tenant admin can, and never for themselves.",
+  "team.verify.applicants": "People of proposals in negotiation",
+  "team.verify.applicants_intro": "Record the identity check of each person of a proposal in negotiation or later. The form opens on the identity vault, and the application never sees what you type.",
+  "team.verify.person": "Proposal {proposal}: {role}, account {account}",
+  "team.verify.role.applicant": "lead applicant",
+  "team.verify.role.applicant_team_member": "team member",
+  "team.verify.role.guardian": "guardian",
+  "team.verify.role.other": "person",
 };
