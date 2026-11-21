@@ -290,7 +290,7 @@ Epoch seal keys and I-80 (decided by Daniel on 2026-10-28):
 - The `Ledger` group never takes part in an erasure, because the ledger holds no free text (ADR-007). Its data keys are replaced under the part 1 seal-count rule.
 - `Lookup`, `CredLookup` and `Match` hold no data keys. Each erasure that removes one of their subjects replaces them (below).
 - The delivery body digest key of `ops.delivery.body_digest` is derived from the App chain `Lookup` key through HKDF-SHA256 with the fixed label `fstp delivery body digest v1`, so a new `Lookup` key gives a new digest key (Daniel, 2026-11-07).
-- The display name fingerprint key (SA-11 amendment, lane m4/unique-names) is derived from the App chain `Lookup` key through HKDF-SHA256 with the fixed label `fstp display name fingerprint v1`. Each fingerprint is HMAC-SHA256 of the normalised name under it. A display name is a subject of `Lookup`, like a login email. An erasure that removes one replaces `Lookup`, and step 2 recomputes the fingerprint of every live display name from its sealed text. Interim, pending Daniel.
+- The display name fingerprint key (SA-11 amendment, lane m4/unique-names) is derived from the App chain `Lookup` key through HKDF-SHA256 with the fixed label `fstp display name fingerprint v1`. Each fingerprint is HMAC-SHA256 of the normalised name under it. A display name is a subject of `Lookup`, like a login email. An erasure that removes one replaces `Lookup`, and step 2 recomputes the fingerprint of every live display name from its sealed text. Decided by Daniel on 2026-11-21.
 
 ### Epochs
 
@@ -637,7 +637,7 @@ Daniel decided on 2026-11-20 the two points that lane L3 left open for the cell 
 | Topic | Decision |
 | --- | --- |
 | Sealing root | The sealed cell key file is sealed by a dedicated custody cell root. It is created at genesis, and no erasure ever destroys it. Decided by Daniel on 2026-11-20 |
-| Root entry | Interim, pending Daniel. The root lives in its own `fstp-keyd` entry, named by the configuration member `key_file_keyd_socket`, as the witness receipt key has its own entry. The start refuses a configuration whose two keyd sockets are the same path. The keystore and its erasures never reach that entry |
+| Root entry | Decided by Daniel on 2026-11-21. The root lives in its own `fstp-keyd` entry, named by the configuration member `key_file_keyd_socket`, as the witness receipt key has its own entry. The start refuses a configuration whose two keyd sockets are the same path. The keystore and its erasures never reach that entry |
 | Root label | Interim, pending Daniel. The root is labelled cell, chain CellBackup, epoch 1. The `fstp-keyd` cell role reaches that chain, and ADR-004 part 2 says erasure never rotates it. So a root shared by mistake with the cell's own entry is still never destroyed by an erasure. A yearly re-wrap of CellBackup must re-wrap the key file too |
 | Ledger key generations | A generation is never reused across starts. Each start, `first-admin` included, draws a new generation with the next index and a fresh data key id, keeps every older one for opening, and rewrites the key file before the first seal. Decided by Daniel on 2026-11-20 (L3's open question 3) |
 | Rewrite | The file is written to a temporary file in the same directory, synced, and renamed over the old one. A crash leaves the old file or the new one, never a mix. The new body is sealed again under the same `S(e)` with a fresh random nonce |
