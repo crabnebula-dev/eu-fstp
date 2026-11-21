@@ -84,6 +84,9 @@ fstp-api-core.workspace = true
 # authorisation server tests (`tests/l2_oauth_pg.rs`).
 fstp-oauth.workspace = true
 fstp-access.workspace = true
+# Lane L7: the brand tokens of the `tenant.branding.*` cells of
+# `tests/t_authz_matrix_pg_sample.rs`.
+fstp-brand.workspace = true
 
 [lints]
 workspace = true
