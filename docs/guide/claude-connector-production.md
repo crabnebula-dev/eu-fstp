@@ -4,7 +4,7 @@ This guide is for two readers. Sections 1 to 5 are for the operator who runs the
 
 **A pilot is not a release.** Daniel decided on 2026-11-20 that a clearly labelled pilot may have real users, since moduletto is confirmed for release. A release still needs the Mythos confirmation of the Tier B formats crates `der`, `spki`, `x509-cert` and `cms` (I-74), and the legal wording marked `TODO(legal)`. Label every pilot cell as a pilot to its users. `deps-check --release` fails on such a build.
 
-The design is in `docs/handoff/production-mcp-design.md`. The configuration is ADR-026 "Configuration". The key file is ADR-004, record of lane L4. The MCP and OAuth profile is ADR-013. The demo cell has its own guide, `docs/guide/claude-connector-demo.md`.
+The design is in `docs/handoff/production-mcp-design.md`. The configuration is ADR-026 "Configuration". The key file is ADR-004, record of lane L4. The vault's configuration and keystore are the records of lane L8 in ADR-026 and ADR-004. The MCP and OAuth profile is ADR-013. The demo cell has its own guide, `docs/guide/claude-connector-demo.md`.
 
 ## 1. What the operator supplies
 
@@ -14,9 +14,9 @@ The pilot is one host in SaaS mode, with `fstp-keyd` custody and no control plan
 - **DNS.** A tenant domain, for example `grants.example.eu`, pointing at the edge.
 - **Public TLS.** An origin certificate for that domain from a public CA. Browsers and claude.ai need it. WebAuthn needs `https` with no port.
 - **PostgreSQL.** An application cluster and a vault cluster, each with a server certificate whose OU names its kind. Each login role has its own client certificate and password (I-82, I-83). The SPKI digests of the clusters go into `registered_servers`.
-- **Custody.** Two `fstp-keyd` entries for the cell, each with its own socket and passphrase as a systemd credential. One serves the cell's App chain. The other holds only the dedicated root of the cell key file. The cell refuses to start when both name the same socket.
+- **Custody.** Two `fstp-keyd` entries for the cell, and one for the vault (section 3a). Each has its own socket and passphrase as a systemd credential. One serves the cell's App chain. The other holds only the dedicated root of the cell key file. The cell refuses to start when both name the same socket.
 - **Witness.** `fstp-witness` from its own configuration, with the cell CA and the cell's anchor public key registered.
-- **Vault.** The cell's vault, which pins the cell's ticket public key.
+- **Vault.** The `fstp-vault` binary, with its own configuration, keystore and custody entry. It pins the cell's ticket public key (section 3a).
 - **Edge.** The `fstp-edge` binary, which routes the tenant domain to the cell's tunnel listener by SNI. Section 5 sets it up.
 - **Mail.** An account on a submission relay for proof mail: sign-up proofs, magic links and recovery proofs (D3). A tenant's own relay replaces it once the tenant sets one (ADR-018).
 - **Backups.** Object storage under ADR-012. The S3 client of `fstp-backup` is still a stub.
@@ -93,6 +93,69 @@ FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell
 ```
 
 Each start opens the key file through its custody entry, draws a new ledger key generation, and rewrites the file before it seals anything. The first start on an empty database creates the keystore. The cell is ready when `GET /healthz` on the health listener answers 200. SIGTERM drains it. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
+
+## 3a. Configure and start the vault
+
+The vault runs as its own binary, `fstp-vault`, in its own process under its own OS user. It never shares a process or a database with the cell (R-NG-01, I-83). The configuration is ADR-026, record of lane L8. The keystore is ADR-004, record of lane L8.
+
+The vault needs, beside the cell's parts:
+
+- **Database.** The vault database `v_<cell id>` on the vault cluster. The vault logs in as `<dbname>_vault` to serve and as `<dbname>_keys` for its keystore. Both connections refuse a server whose certificate OU is not `vault` or whose SPKI is not registered for a vault cluster.
+- **Custody.** A third `fstp-keyd` entry, with a socket of the `vault` client role. That role reaches the Vault chain only. Never point the vault at a cell socket.
+- **Certificates.** An internal server certificate from the cell CA, which names the vault's internal address. A `vault-witness` client certificate from the cell CA, for the witness. A tunnel certificate for the edge, and the public origin certificate of `id.<host>`.
+
+The vault reads one file, named by `FSTP_VAULT_CONFIG`. It holds no secret. It must be the canonical JSON form: members in key order, no spaces, on one line. One trailing line break is allowed. Every member is checked, and an unknown member is refused. Shown here with line breaks for reading only:
+
+```json
+{"cell":"<32 lowercase hex digits>",
+ "credentials_dir":"/etc/fstp/vault",
+ "database":{"dbname":"v_<the same 32 hex digits>","host":"vdb.internal","port":5432},
+ "internal_listen":"10.0.0.6:7445",
+ "keyd_socket":"/run/fstp-keyd/vault.sock",
+ "origin_host":"id.grants.example.eu",
+ "origin_listen":"10.0.0.6:7446",
+ "registered_servers":[{"kind":"application","spki_sha256":"<64 hex digits>"},{"kind":"vault","spki_sha256":"<64 hex digits>"}],
+ "ticket_keys":["<the 64 hex digits of the cell's ticket.pub>"],
+ "witness":{"address":"10.0.0.5:7443","ca_spki_sha256":"<64 hex digits>","receipt_keys":["<hex>"],"server_name":"witness.internal"}}
+```
+
+Notes on the members:
+
+- `database.dbname` must be `v_` followed by the cell id. A cell database is refused before any connection.
+- `internal_listen` is the address the cell's `vault.address` names. Only the cell's `cell-app` certificate reaches it.
+- `origin_listen` is the tunnel listener the edge routes `id.<host>` to.
+- `ticket_keys` holds one to four keys. Put the cell's `ticket.pub` here. Add the next key before the cell rotates it.
+- `witness.receipt_keys` holds the witness receipt public keys, the same keys as the cell's `witness-receipt-keys` file.
+
+The credentials directory holds these files, readable by the vault's OS user only:
+
+| File | Holds |
+| --- | --- |
+| `db-ca.pem` | The CA of the vault cluster's server certificate |
+| `vault.pem`, `vault.key`, `vault.password` | The `<dbname>_vault` login |
+| `keys.pem`, `keys.key`, `keys.password` | The `<dbname>_keys` login |
+| `internal.pem`, `internal.key`, `cell-ca.pem` | The internal listener and the cell CA, the only client root |
+| `tunnel.pem`, `tunnel.key`, `tunnel-ca.pem` | The tunnel listener's certificate, and the CA of the edge's client certificate |
+| `origin.pem`, `origin.key` | The public origin certificate of `origin_host` |
+| `witness.pem`, `witness.key`, `witness-ca.pem` | The vault's `vault-witness` client certificate and the witness CA |
+
+Create the keystore once, at genesis, after `fstp-cell init-keys` wrote `ticket.pub`:
+
+```sh
+FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault init-keys /root/vault-public
+```
+
+The command checks the database first, as the start does. It creates the root in the vault's custody entry and writes the keystore rows in one transaction. It refuses a keystore that exists. It writes `anchor.pub`, the Vault chain anchor public key. Register it with the witness for the Vault chain, beside the cell's `anchor.pub` for the App chain.
+
+Then start the vault before the cell:
+
+```sh
+FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault
+```
+
+Each start runs the database check, opens the keystore through its custody entry, and verifies the vault chain at the witness before it listens. A start never creates a keystore. SIGTERM drains the vault within 20 seconds. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
+
+The vault does not yet rotate its keys when an identity is erased (ADR-004, record of lane L8, row "Not built"). Do not erase identities on a pilot vault until that is built.
 
 ## 4. Create the first admin
 
@@ -218,4 +281,4 @@ Access tokens live 10 minutes. Claude refreshes them while your grant lasts, als
 
 ## Checked by
 
-`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` runs section 5: the `fstp-edge` binary from its files in front of that binary. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
+`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` runs section 5: the `fstp-edge` binary from its files in front of that binary. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.

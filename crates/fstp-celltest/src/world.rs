@@ -4110,6 +4110,24 @@ fn start_cell(
         &[],
         &[],
     )?;
+    // BEGIN lane L8 (`prod/vault-run`, G12): a world vault run by the
+    // `fstp-vault` binary (`crate::external_vault`). With an external vault
+    // spec pending, the block keeps a copy of the Vault chain anchor key
+    // the witness pins, stops the in-process vault below before any peer
+    // reached it, and starts the binary on the same listener addresses.
+    let external_vault = crate::external_vault::pending();
+    let external_anchor = match &external_vault {
+        Some(_) => {
+            let bytes = vault_anchor
+                .to_bytes()
+                .map_err(|e| fail("the vault anchor key", &e))?;
+            Some(
+                fstp_crypto::composite::CompositeSigningKey::from_bytes(&bytes[..])
+                    .map_err(|e| fail("the vault anchor key", &e))?,
+            )
+        }
+        None => None,
+    };
     // The seeded vault writes `vault_audit.chain` as `fstp_vault::service`
     // does (Q-C, lane m3/login-m2http): the former seam SEEDED_VAULT_CHAIN
     // is closed.
@@ -4197,6 +4215,72 @@ fn start_cell(
             },
         ))
         .map_err(|e| fail("the vault", &e))?;
+    if let (Some(ext), Some(anchor)) = (external_vault.as_ref(), external_anchor) {
+        let launched = (|| {
+            s.rt.block_on(vault.shutdown(CELL_DRAIN))
+                .map_err(|e| fail("the in-process vault drain", &e))?;
+            let db =
+                |role: RoleName| -> Result<_, WorldError> {
+                    Ok(login(CellDatabase::Vault, role)?
+                        .conn_params(vault_cluster.server(), &vault_db))
+                };
+            let (vdb, kdb) = (db(RoleName::Vault)?, db(RoleName::Keys)?);
+            let login_of = |p: &fstp_pgtest::ConnParams| crate::external_vault::Login {
+                password: p.password.clone(),
+                cert_pem: p.client_cert_pem.to_vec(),
+                key_pem: p.client_key_pem.to_vec(),
+            };
+            let pair = |i: &pki::Issued| (i.cert_pem.clone(), i.key_pem.clone());
+            crate::external_vault::launch(
+                &s.rt,
+                ext,
+                crate::external_vault::VaultFiles {
+                    cell,
+                    db_host: vdb.host.clone(),
+                    db_port: vdb.port,
+                    dbname: vault_db.clone(),
+                    db_ca: vdb.server_ca_pem.to_vec(),
+                    vault: login_of(&vdb),
+                    keys: login_of(&kdb),
+                    registered: server_keys
+                        .iter()
+                        .map(|(digest, kind)| {
+                            (
+                                *digest,
+                                match kind {
+                                    ClusterKind::Application => "application",
+                                    ClusterKind::Vault => "vault",
+                                    ClusterKind::Control => "control",
+                                    ClusterKind::Witness => "witness",
+                                },
+                            )
+                        })
+                        .collect(),
+                    internal: pair(&vault_internal),
+                    cell_ca: cell_ca.pem.clone(),
+                    tunnel: pair(&vault_tunnel),
+                    tunnel_ca: s.control.pem.clone(),
+                    origin: pair(&vault_origin),
+                    origin_host: vault_host.clone(),
+                    witness_client: pair(&vault_witness),
+                    witness_ca: witness.ca_pem.clone(),
+                    witness_ca_digest: witness.ca_digest,
+                    witness_addr: witness.handle.local_addr(),
+                    witness_name: witness.name.clone(),
+                    receipt_keys: vec![witness.handle.receipt_public_key()],
+                    ticket_key: ticket.public_key(),
+                    internal_listen: vault.internal_addr(),
+                    origin_listen: vault.origin_addr(),
+                },
+                anchor,
+            )
+        })();
+        if let Err(e) = launched {
+            let _ = s.rt.block_on(vault.shutdown(CELL_DRAIN));
+            return Err(e);
+        }
+    }
+    // END lane L8.
     // Step 3: the cell.
     let cell_app = cell_ca.issue(
         CertKind::Client,

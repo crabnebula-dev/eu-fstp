@@ -85,6 +85,25 @@ Written by lane L4 `prod/cell-run` before its code, from `docs/handoff/productio
 - `r_nf_02_config_and_key_errors_never_quote_bytes` (R-NF-02).
 - `crates/fstp-celltest/tests/prod_mcp_e2e.rs`: section 4.1 of the design over the `fstp-cell` binary.
 
+## Record of lane L8 `prod/vault-run`: the vault process
+
+Written by lane L8 before its code (gap G12, Wave 3 of `docs/handoff/production-mcp-design.md`). Every row is interim, pending Daniel, unless it says otherwise. The vault keystore is ADR-004, record of lane L8.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Process | `fstp-vault` is its own binary and OS process. It links no `fstp-cell` code, and its configuration names its own vault database only. The vault never shares a process or a database with the cell | R-NG-01; ADR-009; I-83 |
+| File | The file that `FSTP_VAULT_CONFIG` names, at most 64 KiB. It is the canonical JSON form of RFC 8785 (members sorted, no whitespace), as the M3 vault grammar already required, with one trailing line break allowed. The member set is closed. An unknown, missing or repeated member is refused | G12; I-18 |
+| Members | `cell`; `credentials_dir` (an absolute path); `database` (`dbname`, which must be `v_<cell>`, so a cell database is refused under I-83, `host`, `port`); `internal_listen`; `keyd_socket`; `origin_host` (the vault origin host `id.<cell host>`); `origin_listen`; `registered_servers` (1 to 32 entries of `kind` and `spki_sha256`); `ticket_keys` (1 to 4 Ed25519 keys, from the cell's `ticket.pub`); `witness` (`address`, `ca_spki_sha256`, `receipt_keys` with 1 to 8 keys, `server_name`). The M3 member `database.role` is removed, since the vault now has two logins | G12 |
+| Receipt keys | The witness receipt public keys are public, so they sit in the configuration in lowercase hex, as the ticket keys do. No credential file and no second parser is needed | ADR-010 "Keys" |
+| Logins | `<dbname>_vault` serves, and `<dbname>_keys` reads and writes the keystore. Both connections run the I-83 server check before the startup message: the server certificate OU must be `vault` and its SPKI must be registered for a vault cluster only. The vault login also reads the placement marker | I-82; I-83 |
+| Secrets | No secret is in the configuration. The credentials directory holds, by fixed name: `db-ca.pem`; `vault.pem`, `vault.key`, `vault.password`; `keys.pem`, `keys.key`, `keys.password`; `internal.pem`, `internal.key`, `cell-ca.pem`; `tunnel.pem`, `tunnel.key`, `tunnel-ca.pem`; `origin.pem`, `origin.key`; `witness.pem`, `witness.key`, `witness-ca.pem` | R-NF-02 |
+| Listeners | The internal listener serves mutual TLS with `cell-ca.pem` as the only client root, and only the cell's `cell-app` certificate reaches its routes. The origin listener takes the edge tunnel under `tunnel-ca.pem`, then the browser TLS of `origin_host` | Design section 6.1; ADR-009 |
+| Commands | `fstp-vault` serves until SIGTERM or SIGINT drains it, within 20 seconds. `fstp-vault init-keys <dir>` creates the keystore and writes `anchor.pub` to `<dir>`. A refused configuration or argument exits with status 2, any other failure with status 1. Events are typed and never quote input | R-NF-02; ADR-002 |
+| Start | `fstp_vault::run` decodes the file, reads the credentials, opens the keystore through the keys login and `keyd_socket`, then runs `fstp_vault::service::serve` with the Vault chain writer on one tokio runtime through `fstp-rt` | G12; ADR-002; ADR-010 |
+| Decoder | `fstp_vault::config::decode_config`. The existing fuzz target `config_decode` covers the new grammar. A refusal names its rule and never quotes the input | CLAUDE.md fuzz rule; R-NF-02 |
+
+Tests: `i18_vault_configuration_refuses_a_seed_member`, `g12_vault_config_refuses_bad_input`, `r_nf_02_vault_config_errors_never_quote_bytes`, `i83_vault_config_refuses_a_cell_database`, `i83_vault_run_refuses_an_application_cluster` (over PostgreSQL) and `g12_vault_binary_answers_the_cell_binary` (both binaries from their files).
+
 ## Consequences
 
 - An MCP call can execute only what the API core's channel policy lets it execute directly, and only through the gate, as the account that consented. Every high-risk command of an agent becomes a pending action.
