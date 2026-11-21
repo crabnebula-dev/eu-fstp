@@ -1878,6 +1878,61 @@ impl World {
     }
 }
 
+// ---- BEGIN lane L9 prod/edgerun: the tunnel parts of a stand-alone edge ----
+
+/// What a stand-alone `fstp-edge` process needs to reach the cells of a
+/// world (lane L9, ADR-009 "Pilot edge configuration"): the CA of the
+/// tunnel server certificates, a tunnel client certificate from the same
+/// control-plane CA as the world's own edge, and the routes of this
+/// world's cells. Test only. Every value is synthetic.
+pub struct EdgeTunnelParts {
+    /// The CA of the cells' and vaults' tunnel server certificates, PEM.
+    pub ca_pem: Vec<u8>,
+    /// The edge's tunnel client certificate, PEM.
+    pub client_cert_pem: Vec<u8>,
+    /// The key of that certificate, PEM.
+    pub client_key_pem: Vec<u8>,
+    /// The routes of this world's cells, as the world's edge serves them.
+    pub routes: Vec<fstp_edge::RouteEntry>,
+}
+
+impl fmt::Debug for EdgeTunnelParts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EdgeTunnelParts")
+            .field("routes", &self.routes)
+            .finish_non_exhaustive()
+    }
+}
+
+impl World {
+    /// The tunnel parts of a stand-alone edge in front of this world's
+    /// cells ([`EdgeTunnelParts`]). Each call issues a new client
+    /// certificate.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the world runs no cell or the certificate is not issued.
+    pub fn edge_tunnel_parts(&self) -> Result<EdgeTunnelParts, WorldError> {
+        let s = self.services()?;
+        let client = s
+            .control
+            .issue(fstp_pki::cert::CertKind::Client, "edge", None, &[], &[])?;
+        let ids: Vec<[u8; 16]> = self.cells.iter().map(|c| c.id).collect();
+        let routes = fstp_edge::routes_of(&lock(&s.edge.table))
+            .into_iter()
+            .filter(|r| ids.contains(&r.app.cell))
+            .collect();
+        Ok(EdgeTunnelParts {
+            ca_pem: s.control.pem.clone(),
+            client_cert_pem: client.cert_pem,
+            client_key_pem: client.key_pem,
+            routes,
+        })
+    }
+}
+
+// ---- END lane L9 prod/edgerun ----
+
 /// A world ends with its handle: each cell stops (its listeners, its
 /// engine and its vault drain, [`CellHandle`]), and its databases, roles
 /// and `pg_hba` lines go at the next world start, as those of a failed
