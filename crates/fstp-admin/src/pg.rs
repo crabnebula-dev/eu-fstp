@@ -137,6 +137,7 @@ pub fn service(layout: &Layout, c: Cluster) -> Service {
         user: Some(PG_USER.to_owned()),
         unit_lines: vec!["KillMode=mixed".into(), "KillSignal=SIGINT".into()],
         direct_credentials: None,
+        hold_stdin: false,
         ready: Ready::Tcp(std::net::SocketAddr::new(
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             layout.pg_port(c),

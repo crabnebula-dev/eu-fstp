@@ -405,6 +405,7 @@ version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "fstp-access",
+ "fstp-admin",
  "fstp-api-core",
  "fstp-api-testkit",
  "fstp-audit",

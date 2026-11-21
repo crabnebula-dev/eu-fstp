@@ -73,6 +73,7 @@ pub fn keyd(layout: &Layout, e: Entry) -> Vec<Service> {
                 user: None,
                 unit_lines: Vec::new(),
                 direct_credentials: None,
+                hold_stdin: true,
                 ready: Ready::Socket(layout.keyd_socket(e, role)),
                 after: Vec::new(),
             })
@@ -121,6 +122,7 @@ pub fn keyd(layout: &Layout, e: Entry) -> Vec<Service> {
                 user: Some(KEYD_USER.into()),
                 unit_lines,
                 direct_credentials: None,
+                hold_stdin: false,
                 ready: Ready::Socket(layout.keyd_socket(e, first_role)),
                 after: Vec::new(),
             }]
@@ -151,6 +153,7 @@ pub fn witness(layout: &Layout) -> Service {
         user: Some(WITNESS_USER.into()),
         unit_lines: Vec::new(),
         direct_credentials: None,
+        hold_stdin: false,
         ready: Ready::Tcp(layout.witness()),
         after: keyd_names(layout, &[Entry::Witness]),
     }
@@ -174,6 +177,7 @@ pub fn vault(layout: &Layout) -> Service {
         user: Some(VAULT_USER.into()),
         unit_lines: Vec::new(),
         direct_credentials: None,
+        hold_stdin: false,
         ready: Ready::Tcp(layout.vault_internal()),
         after,
     }
@@ -197,6 +201,7 @@ pub fn cell(layout: &Layout) -> Service {
         user: Some(CELL_USER.into()),
         unit_lines: Vec::new(),
         direct_credentials: None,
+        hold_stdin: false,
         ready: Ready::Health(layout.cell_health()),
         after,
     }
@@ -217,6 +222,7 @@ pub fn edge(layout: &Layout) -> Service {
         user: Some(EDGE_USER.into()),
         unit_lines: vec!["AmbientCapabilities=CAP_NET_BIND_SERVICE".into()],
         direct_credentials: None,
+        hold_stdin: false,
         ready: Ready::Tcp(layout.edge_public()),
         after: vec!["fstp-cell".into()],
     }

@@ -50,6 +50,10 @@ pub struct Service {
     /// In direct mode: the directory that stands in for
     /// `$CREDENTIALS_DIRECTORY`.
     pub direct_credentials: Option<PathBuf>,
+    /// In direct mode: keep standard input open for the life of the
+    /// process, through a FIFO the process holds both ends of. The custody
+    /// simulator serves until its standard input closes.
+    pub hold_stdin: bool,
     /// The readiness check.
     pub ready: Ready,
     /// Units this one starts after.
@@ -286,8 +290,28 @@ impl Manager {
                     .open(&log)?;
                 let err = out.try_clone()?;
                 let mut c = Command::new(&s.program);
+                let stdin = if s.hold_stdin {
+                    let fifo = self.pid_file(&format!("{}.stdin", s.name));
+                    let _ = std::fs::remove_file(&fifo);
+                    if let Some(dir) = fifo.parent() {
+                        std::fs::create_dir_all(dir)?;
+                    }
+                    run_ok(
+                        Command::new("mkfifo").arg("-m").arg("600").arg(&fifo),
+                        &self.log(),
+                    )?;
+                    // Both ends in the child: its reads block and never end.
+                    Stdio::from(
+                        std::fs::OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .open(&fifo)?,
+                    )
+                } else {
+                    Stdio::null()
+                };
                 c.args(&s.args)
-                    .stdin(Stdio::null())
+                    .stdin(stdin)
                     .stdout(Stdio::from(out))
                     .stderr(Stdio::from(err));
                 for (k, v) in &s.env {
@@ -446,6 +470,7 @@ mod tests {
             user: Some("fstp-cell".into()),
             unit_lines: vec![],
             direct_credentials: None,
+            hold_stdin: false,
             ready: Ready::Started,
             after: vec!["fstp-vault".into()],
         };

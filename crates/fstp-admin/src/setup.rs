@@ -690,7 +690,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
     );
 
     let cas = cas(layout)?;
-    say_done("certificate authorities", true);
+    out(&[Part::T("  checked  certificate authorities")]);
 
     // PostgreSQL.
     let mut created = false;
@@ -729,7 +729,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         own_path(layout, &layout.creds("vault"), stack::VAULT_USER)
             .map_err(step_err("databases"))?;
     }
-    say_done("cell databases, roles and migrations", true);
+    out(&[Part::T("  checked  cell databases, roles and migrations")]);
 
     // The witness's custody and its receipt key.
     keyd(layout, &m, &[Entry::Witness]).map_err(|f| match f {
@@ -917,6 +917,11 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         Part::P(&layout.etc("keyd")),
         Part::T(" off this host once, for example into a password manager."),
     ]);
+    if !state.done("first-admin-verified") {
+        out(&[Part::T(
+            "Once the first admin has enrolled, check their ID in person and run fstp-admin verify <their account id>.",
+        )]);
+    }
     out(&[Part::T(
         "Run fstp-admin status at any time to see what to do next.",
     )]);
