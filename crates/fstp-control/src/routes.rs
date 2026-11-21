@@ -237,6 +237,30 @@ impl RoutePublisher {
         self.state().signed.clone()
     }
 
+    /// Whether publishing `entry` would give a table an edge accepts,
+    /// without changing anything (lane L15: a proposal is checked before
+    /// it waits for its step-up).
+    ///
+    /// # Errors
+    ///
+    /// [`ControlError::Request`] naming the rule an edge would refuse.
+    pub fn check_publish(&self, entry: &PinnedRoute) -> Result<(), ControlError> {
+        let s = self.state();
+        let cell = entry.route.app.cell;
+        if s.routes
+            .iter()
+            .any(|(c, r)| *c != cell && r.route.host == entry.route.host)
+        {
+            return Err(ControlError::Request("I-19"));
+        }
+        let mut routes = s.routes.clone();
+        routes.insert(cell, entry.clone());
+        let list: Vec<PinnedRoute> = routes.into_values().collect();
+        check_routes(&list).map_err(|e| ControlError::Request(e.rule()))?;
+        encode_route_table_body(s.version, &list).map_err(|_| ControlError::Request("I-19"))?;
+        Ok(())
+    }
+
     /// The current routes, in ascending cell order.
     pub fn routes(&self) -> Vec<PinnedRoute> {
         self.state().routes.values().cloned().collect()
@@ -252,6 +276,22 @@ impl RoutePublisher {
     /// [`ControlError::Io`] when the table does not sign or store.
     /// Nothing changes then.
     pub fn publish(&self, entry: PinnedRoute) -> Result<u64, ControlError> {
+        self.publish_with(entry, &mut |_| Ok(()))
+    }
+
+    /// As [`RoutePublisher::publish`], and calls `before_store` with the
+    /// new version after the table is signed and before it is stored or
+    /// served. An error of `before_store` changes nothing. The pilot
+    /// appends its audit record there (lane L15).
+    ///
+    /// # Errors
+    ///
+    /// As [`RoutePublisher::publish`], and the error of `before_store`.
+    pub fn publish_with(
+        &self,
+        entry: PinnedRoute,
+        before_store: &mut dyn FnMut(u64) -> Result<(), ControlError>,
+    ) -> Result<u64, ControlError> {
         let mut s = self.state();
         let mut routes = s.routes.clone();
         let cell = entry.route.app.cell;
@@ -262,7 +302,7 @@ impl RoutePublisher {
             return Err(ControlError::Request("I-19"));
         }
         routes.insert(cell, entry);
-        self.commit(&mut s, routes)
+        self.commit(&mut s, routes, before_store)
     }
 
     /// Removes the routes of `cell` as a new version, and returns the
@@ -275,12 +315,27 @@ impl RoutePublisher {
     /// [`ControlError::Job`] or [`ControlError::Io`] when the new table
     /// cannot be signed or stored.
     pub fn remove_cell(&self, cell: CellId) -> Result<(u16, u64), ControlError> {
+        self.remove_cell_with(cell, &mut |_| Ok(()))
+    }
+
+    /// As [`RoutePublisher::remove_cell`], with `before_store` as for
+    /// [`RoutePublisher::publish_with`]. A cell without routes calls
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`RoutePublisher::remove_cell`], and the error of `before_store`.
+    pub fn remove_cell_with(
+        &self,
+        cell: CellId,
+        before_store: &mut dyn FnMut(u64) -> Result<(), ControlError>,
+    ) -> Result<(u16, u64), ControlError> {
         let mut s = self.state();
         let mut routes = s.routes.clone();
         if routes.remove(&cell.0).is_none() {
             return Ok((0, s.version));
         }
-        let version = self.commit(&mut s, routes)?;
+        let version = self.commit(&mut s, routes, before_store)?;
         Ok((2, version))
     }
 
@@ -288,9 +343,11 @@ impl RoutePublisher {
         &self,
         s: &mut State,
         routes: BTreeMap<[u8; 16], PinnedRoute>,
+        before_store: &mut dyn FnMut(u64) -> Result<(), ControlError>,
     ) -> Result<u64, ControlError> {
         let version = next_version(s.version)?;
         let signed = sign(&self.signer, version, &routes)?;
+        before_store(version)?;
         // The state file holds the new table before any edge can fetch it.
         if let Some(path) = &self.store {
             write_atomic(path, &signed)?;

@@ -62,6 +62,7 @@ use fstp_rt::{Runtime as _, Shutdown};
 
 use crate::ControlError;
 use crate::config::{FeedConfig, decode_feed_config, read_credential};
+use crate::route_change::{AUDIT_FILE, AuditLog, CHANGE_LIFETIME_SECS, RouteChanges};
 use crate::routes::{RoutePublisher, serve_route_feed, sign_table, write_atomic};
 
 /// The magic that opens a feed key file and labels its AAD.
@@ -295,10 +296,12 @@ pub async fn open_feed_key<C: Custody>(
 /// One operator request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperatorRequest {
-    /// Publish this route for its cell, replacing an older one.
+    /// Propose this route for its cell, replacing an older one.
     Add(Box<PinnedRoute>),
-    /// Remove every route of this cell.
+    /// Propose to remove every route of this cell.
     Remove([u8; 16]),
+    /// Read the served table (lane L15, Daniel 2026-11-21).
+    List,
 }
 
 /// Encodes an operator request.
@@ -317,6 +320,7 @@ pub fn encode_operator_request(r: &OperatorRequest) -> Result<Vec<u8>, ControlEr
             out.push(2);
             out.extend_from_slice(cell);
         }
+        OperatorRequest::List => out.push(3),
     }
     Ok(out)
 }
@@ -343,6 +347,7 @@ pub fn decode_operator_request(bytes: &[u8]) -> Result<OperatorRequest, ControlE
         Some((2, body)) => <[u8; 16]>::try_from(body)
             .map(OperatorRequest::Remove)
             .map_err(|_| ControlError::Request("cell")),
+        Some((3, [])) => Ok(OperatorRequest::List),
         _ => Err(ControlError::Request("operation")),
     }
 }
@@ -350,12 +355,15 @@ pub fn decode_operator_request(bytes: &[u8]) -> Result<OperatorRequest, ControlE
 /// What the running process did with a request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperatorStatus {
-    /// The new table is stored and served.
+    /// The change was approved with a step-up and the new table is stored
+    /// and served, or the list follows.
     Stored,
     /// The route was refused: an edge would refuse the table (I-19).
     Refused,
     /// Anything else failed. Nothing changed.
     Failed,
+    /// No staff member approved the change in time. Nothing changed.
+    Expired,
 }
 
 /// The reply to one operator request.
@@ -378,6 +386,7 @@ pub fn encode_operator_reply(r: &OperatorReply) -> [u8; REPLY_LEN] {
         OperatorStatus::Stored => 0,
         OperatorStatus::Refused => 1,
         OperatorStatus::Failed => 2,
+        OperatorStatus::Expired => 3,
     }]);
     version.copy_from_slice(&r.version.to_be_bytes());
     out
@@ -402,6 +411,7 @@ pub fn decode_operator_reply(bytes: &[u8]) -> Result<OperatorReply, ControlError
         [0] => OperatorStatus::Stored,
         [1] => OperatorStatus::Refused,
         [2] => OperatorStatus::Failed,
+        [3] => OperatorStatus::Expired,
         _ => return Err(ControlError::Request("reply status")),
     };
     let version: [u8; 8] = version
@@ -413,45 +423,84 @@ pub fn decode_operator_reply(bytes: &[u8]) -> Result<OperatorReply, ControlError
     })
 }
 
-/// Answers one operator request on `publisher`, and logs it as a typed
-/// event with no host and no cell (R-NF-02).
-pub fn answer_operator(publisher: &RoutePublisher, request: &[u8]) -> OperatorReply {
-    let started = Instant::now();
-    let outcome = decode_operator_request(request).and_then(|r| match r {
-        OperatorRequest::Add(route) => publisher.publish(*route),
-        OperatorRequest::Remove(cell) => publisher
-            .remove_cell(fstp_cp_proto::CellId(cell))
-            .map(|(_, v)| v),
-    });
-    let (status, rule) = match outcome {
-        Ok(_) => (OperatorStatus::Stored, None),
-        Err(ControlError::Request(rule)) => (OperatorStatus::Refused, Some(rule)),
-        Err(_) => (OperatorStatus::Failed, Some("R-SW-02")),
-    };
-    let event = match rule {
-        None => LogEvent::Request {
+/// Unix time in seconds.
+#[must_use]
+pub fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+fn log_outcome(status: OperatorStatus, rule: &'static str, started: Instant) {
+    let event = match status {
+        OperatorStatus::Stored => LogEvent::Request {
             method: Method::Other,
             route: OPERATOR_ROUTE,
             status: 200,
             elapsed: started.elapsed(),
         },
-        Some(rule) => LogEvent::Refused {
+        OperatorStatus::Refused => LogEvent::Refused {
             method: Method::Other,
             route: OPERATOR_ROUTE,
-            // A decoder rule such as "magic" is no SPEC rule: log it as
-            // I-19, which every route refusal serves.
-            rule: if rule.contains('-') { rule } else { "I-19" },
-            status: if status == OperatorStatus::Refused {
-                422
-            } else {
-                500
-            },
+            rule,
+            status: 422,
+        },
+        OperatorStatus::Expired => LogEvent::Refused {
+            method: Method::Other,
+            route: OPERATOR_ROUTE,
+            rule: "I-78",
+            status: 408,
+        },
+        OperatorStatus::Failed => LogEvent::Refused {
+            method: Method::Other,
+            route: OPERATOR_ROUTE,
+            rule: "R-SW-02",
+            status: 500,
         },
     };
     let _ = fstp_obs::log_to_stderr(&event);
-    OperatorReply {
-        status,
-        version: publisher.version(),
+}
+
+/// Answers one operator request on `changes` at `now`: the reply and, for
+/// a list, the signed table after it. A change waits for its step-up on
+/// the operator page, at most [`CHANGE_LIFETIME_SECS`]. Each outcome is
+/// logged as a typed event with no host and no cell (R-NF-02).
+pub fn answer_operator(changes: &RouteChanges, request: &[u8], now: i64) -> Vec<u8> {
+    let started = Instant::now();
+    let version = || changes.publisher().version();
+    let reply = |status: OperatorStatus, rule: &'static str| {
+        log_outcome(status, rule, started);
+        encode_operator_reply(&OperatorReply {
+            status,
+            version: version(),
+        })
+        .to_vec()
+    };
+    let request = match decode_operator_request(request) {
+        Ok(r) => r,
+        Err(_) => return reply(OperatorStatus::Refused, "I-19"),
+    };
+    if request == OperatorRequest::List {
+        let mut out = reply(OperatorStatus::Stored, "I-19");
+        out.extend_from_slice(&changes.publisher().signed_table());
+        return out;
+    }
+    let (_, rx) = match changes.propose(request, now) {
+        Ok(p) => p,
+        Err(ControlError::Request(rule)) => {
+            let rule = if rule.contains('-') { rule } else { "I-19" };
+            return reply(OperatorStatus::Refused, rule);
+        }
+        Err(_) => return reply(OperatorStatus::Failed, "R-SW-02"),
+    };
+    let wait = Duration::from_secs(u64::try_from(CHANGE_LIFETIME_SECS).unwrap_or(300))
+        .saturating_add(Duration::from_secs(5));
+    match rx.recv_timeout(wait) {
+        Ok(r) => {
+            log_outcome(r.status, "I-78", started);
+            encode_operator_reply(&r).to_vec()
+        }
+        Err(_) => reply(OperatorStatus::Expired, "I-78"),
     }
 }
 
@@ -486,7 +535,7 @@ pub fn bind_operator_socket(path: &Path) -> Result<UnixListener, ControlError> {
     bound.map_err(io)
 }
 
-fn exchange(stream: &mut UnixStream, publisher: &RoutePublisher) -> std::io::Result<()> {
+fn exchange(mut stream: UnixStream, changes: &RouteChanges) -> std::io::Result<()> {
     let started = Instant::now();
     stream.set_read_timeout(Some(OPERATOR_TIMEOUT))?;
     stream.set_write_timeout(Some(OPERATOR_TIMEOUT))?;
@@ -505,26 +554,31 @@ fn exchange(stream: &mut UnixStream, publisher: &RoutePublisher) -> std::io::Res
             break;
         }
     }
-    let reply = answer_operator(publisher, &request);
-    stream.write_all(&encode_operator_reply(&reply))?;
+    let reply = answer_operator(changes, &request, now_secs());
+    stream.write_all(&reply)?;
     stream.flush()
 }
 
-/// Serves operator requests on `listener`, one per connection, one at a
-/// time, until the listener fails. A connection that breaks the
-/// protocol gets a refusal, and a slow one is dropped.
-pub fn serve_operator(listener: &UnixListener, publisher: &RoutePublisher) {
+/// Serves operator requests on `listener`, one per connection, each in a
+/// thread of its own, since a change waits for its step-up. It runs until
+/// the listener fails. A connection that breaks the protocol gets a
+/// refusal, and a slow one is dropped.
+pub fn serve_operator(listener: &UnixListener, changes: &Arc<RouteChanges>) {
     for stream in listener.incoming() {
-        let Ok(mut stream) = stream else {
+        let Ok(stream) = stream else {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         };
-        let _ = exchange(&mut stream, publisher);
+        let changes = Arc::clone(changes);
+        drop(std::thread::spawn(move || {
+            let _ = exchange(stream, &changes);
+        }));
     }
 }
 
 /// Sends `request` to the operator socket at `socket` and returns the
-/// reply.
+/// reply and the bytes after it: the signed table for a list. A change
+/// waits up to [`CHANGE_LIFETIME_SECS`] for its step-up.
 ///
 /// # Errors
 ///
@@ -533,28 +587,28 @@ pub fn serve_operator(listener: &UnixListener, publisher: &RoutePublisher) {
 pub fn operator_request(
     socket: &Path,
     request: &OperatorRequest,
-) -> Result<OperatorReply, ControlError> {
+) -> Result<(OperatorReply, Vec<u8>), ControlError> {
     let io = |e: std::io::Error| ControlError::Io(e.kind());
     let bytes = encode_operator_request(request)?;
     let mut stream = UnixStream::connect(socket).map_err(io)?;
-    stream
-        .set_read_timeout(Some(OPERATOR_TIMEOUT))
-        .map_err(io)?;
+    let wait = Duration::from_secs(u64::try_from(CHANGE_LIFETIME_SECS).unwrap_or(300))
+        .saturating_add(Duration::from_secs(30));
+    stream.set_read_timeout(Some(wait)).map_err(io)?;
     stream
         .set_write_timeout(Some(OPERATOR_TIMEOUT))
         .map_err(io)?;
     stream.write_all(&bytes).map_err(io)?;
     stream.shutdown(std::net::Shutdown::Write).map_err(io)?;
     let mut reply = Vec::new();
+    let cap = REPLY_LEN.saturating_add(fstp_edge::MAX_SIGNED_TABLE_LEN);
     stream
-        .take(
-            u64::try_from(REPLY_LEN)
-                .unwrap_or(u64::MAX)
-                .saturating_add(1),
-        )
+        .take(u64::try_from(cap).unwrap_or(u64::MAX).saturating_add(1))
         .read_to_end(&mut reply)
         .map_err(io)?;
-    decode_operator_reply(&reply)
+    let (head, rest) = reply
+        .split_at_checked(REPLY_LEN)
+        .ok_or(ControlError::Request("reply length"))?;
+    Ok((decode_operator_reply(head)?, rest.to_vec()))
 }
 
 // ---------------------------------------------------------------- commands
@@ -628,8 +682,9 @@ pub fn init(out: &Path) -> Result<(), ControlError> {
 
 /// What [`run`] loads at start.
 struct Started {
-    publisher: Arc<RoutePublisher>,
+    changes: Arc<RouteChanges>,
     tls: fstp_tls::ServerConfig,
+    operator_tls: fstp_tls::ServerConfig,
     feed_listen: SocketAddr,
     operator: PathBuf,
 }
@@ -641,16 +696,24 @@ fn start(cfg: &FeedConfig, rt: &TokioRuntime) -> Result<Started, ControlError> {
     let key_pem = read_credential(dir, "control-key.pem")?;
     let tls = fstp_tls::ServerConfig::mutual(&cert, &key_pem, &ca)
         .map_err(|_| ControlError::Tls("route feed listener"))?;
+    let operator_tls = fstp_tls::ServerConfig::new(
+        &read_credential(dir, "operator.pem")?,
+        &read_credential(dir, "operator-key.pem")?,
+    )
+    .map_err(|_| ControlError::Tls("operator listener"))?;
     let key_file = read_credential(dir, KEY_FILE)?;
     let state_path = Path::new(&cfg.state_dir).join(STATE_FILE);
     let state = std::fs::read(&state_path).map_err(|_| bad("route table state"))?;
+    let audit = AuditLog::open(&Path::new(&cfg.state_dir).join(AUDIT_FILE))?;
+    let login = crate::operator::OperatorLogin::new(&cfg.operator_host, &cfg.staff)?;
     let custody = fstp_custody::KeydCustody::new(Path::new(&cfg.keyd_socket))
         .map_err(|_| bad("keyd_socket"))?;
     let signer = rt.block_on(open_feed_key(&custody, &key_file))?;
     let publisher = RoutePublisher::resume(signer, &cfg.edges, &state, state_path)?;
     Ok(Started {
-        publisher: Arc::new(publisher),
+        changes: Arc::new(RouteChanges::new(Arc::new(publisher), login, audit)),
         tls,
+        operator_tls,
         feed_listen: cfg.feed_listen,
         operator: PathBuf::from(&cfg.operator_socket),
     })
@@ -659,14 +722,15 @@ fn start(cfg: &FeedConfig, rt: &TokioRuntime) -> Result<Started, ControlError> {
 /// `fstp-control route-feed`: runs the pilot route feed named by
 /// [`CONFIG_ENV`] until SIGTERM or SIGINT (ADR-009 "Pilot route feed").
 /// It opens its signing key through `fstp-keyd`, resumes its table from
-/// the state file, serves the feed to the configured edges over mutual
-/// TLS, and takes operator requests on its socket. Nothing else of
-/// `fstp-control` runs.
+/// the state file and checks its audit log. It serves the feed to the
+/// configured edges over mutual TLS, takes proposals and reads on its
+/// operator socket, and serves the operator page, where each change is
+/// approved with a passkey step-up. Nothing else of `fstp-control` runs.
 ///
 /// # Errors
 ///
-/// [`ControlError::Config`] for a refused configuration, key file or
-/// state, [`ControlError::Custody`] when custody does not unwrap,
+/// [`ControlError::Config`] for a refused configuration, key file, state
+/// or audit log, [`ControlError::Custody`] when custody does not unwrap,
 /// [`ControlError::Tls`] for TLS files that do not build, and
 /// [`ControlError::Io`] or [`ControlError::Signal`] when a listener or
 /// the signal handler does not start.
@@ -676,41 +740,58 @@ pub fn run() -> Result<(), ControlError> {
     let mut term = rt.listen_termination().map_err(|_| ControlError::Signal)?;
     let started = start(&cfg, &rt)?;
     let operator = bind_operator_socket(&started.operator)?;
-    let op_publisher = Arc::clone(&started.publisher);
+    let op_changes = Arc::clone(&started.changes);
     drop(std::thread::spawn(move || {
-        serve_operator(&operator, &op_publisher);
+        serve_operator(&operator, &op_changes);
     }));
     let task_rt = rt.clone();
+    let page = crate::route_page::OperatorPage::new(
+        Arc::clone(&started.changes),
+        &cfg.operator_host,
+        PathBuf::from(&cfg.assets_dir),
+    );
     let result = rt.block_on(async move {
         let listener = task_rt
             .bind_tcp(started.feed_listen)
             .await
             .map_err(|e| ControlError::Io(e.kind()))?;
+        let http = fstp_http::ServerConfig {
+            tls: Some(started.operator_tls),
+            ..fstp_http::ServerConfig::default()
+        };
+        let page_handle = fstp_http::Server::new(task_rt.clone(), http, page)
+            .bind(cfg.operator_listen)
+            .await
+            .map_err(|e| ControlError::Io(e.kind()))?;
         let shutdown = Shutdown::new();
+        let publisher = started.changes.publisher_arc();
         drop(task_rt.spawn(serve_route_feed(
             task_rt.clone(),
             listener,
             started.tls,
             shutdown.signal(),
-            Arc::clone(&started.publisher),
+            publisher,
         )));
         let _ = fstp_obs::log_to_stderr(&LogEvent::Started);
         crate::service::await_termination_and_drain(&task_rt, &shutdown, &mut term, DRAIN).await;
+        let _ = page_handle.shutdown(DRAIN).await;
         Ok(())
     });
     let _ = std::fs::remove_file(&started.operator);
     result
 }
 
-/// `fstp-control route add <route file>`: publishes the one route of the
-/// route file (the grammar of `fstp_edge::config::decode_routes`) through
-/// the running process. Returns the version that serves it.
+/// `fstp-control route add <route file>`: proposes the one route of the
+/// route file (the grammar of `fstp_edge::config::decode_routes`) to the
+/// running process, and waits until a staff member approves it with a
+/// step-up on the operator page. Returns the version that serves it.
 ///
 /// # Errors
 ///
 /// [`ControlError::Config`] for a refused configuration or route file,
-/// [`ControlError::Request`] when the running process refuses the route,
-/// and [`ControlError::Io`] when it cannot be reached or fails.
+/// [`ControlError::Request`] when the route is refused,
+/// [`ControlError::Operator`] when no step-up approved it in time, and
+/// [`ControlError::Io`] when the process cannot be reached or fails.
 pub fn route_add(file: &Path) -> Result<u64, ControlError> {
     let cfg = load_config()?;
     let bytes = read_route_file(file)?;
@@ -720,9 +801,9 @@ pub fn route_add(file: &Path) -> Result<u64, ControlError> {
     send(&cfg, &OperatorRequest::Add(Box::new(route)))
 }
 
-/// `fstp-control route remove <cell id>`: removes every route of the cell
-/// (32 lowercase hex digits) through the running process. Returns the
-/// version without it.
+/// `fstp-control route remove <cell id>`: proposes to remove every route
+/// of the cell (32 lowercase hex digits), and waits as [`route_add`]
+/// does. Returns the version without it.
 ///
 /// # Errors
 ///
@@ -735,11 +816,45 @@ pub fn route_remove(cell: &str) -> Result<u64, ControlError> {
     send(&cfg, &OperatorRequest::Remove(id))
 }
 
+/// `fstp-control route list <out file>`: writes the served routes to
+/// `out` as `{"routes": [...], "version": n}`, each route in the route
+/// file grammar (ADR-009 "Pilot route feed", row "Route list"). A read
+/// needs no step-up: the socket admits only the OS user of
+/// `fstp-control`, which can read the state file itself.
+///
+/// # Errors
+///
+/// As [`route_add`], and [`ControlError::Io`] when `out` cannot be
+/// written.
+pub fn route_list(out: &Path) -> Result<u64, ControlError> {
+    let cfg = load_config()?;
+    let (reply, table) = operator_request(Path::new(&cfg.operator_socket), &OperatorRequest::List)?;
+    if reply.status != OperatorStatus::Stored {
+        return Err(ControlError::Io(std::io::ErrorKind::Other));
+    }
+    let signed = fstp_edge::decode_signed_route_table(&table).map_err(|_| bad("route table"))?;
+    let routes: Vec<fstp_json::Value> = signed
+        .routes
+        .iter()
+        .map(crate::route_page::route_json)
+        .collect();
+    let mut o = fstp_json::Object::with_capacity(2);
+    o.insert("routes", fstp_json::Value::from(routes));
+    o.insert("version", fstp_json::Value::from(signed.version));
+    let mut text = fstp_json::Value::Object(o).to_compact();
+    text.push('\n');
+    write_atomic(out, text.as_bytes())?;
+    Ok(signed.version)
+}
+
 fn send(cfg: &FeedConfig, request: &OperatorRequest) -> Result<u64, ControlError> {
-    let reply = operator_request(Path::new(&cfg.operator_socket), request)?;
+    let (reply, _) = operator_request(Path::new(&cfg.operator_socket), request)?;
     match reply.status {
         OperatorStatus::Stored => Ok(reply.version),
         OperatorStatus::Refused => Err(ControlError::Request("I-19")),
+        OperatorStatus::Expired => Err(ControlError::Operator(
+            crate::operator::OperatorRefusal::StepUpRequired,
+        )),
         OperatorStatus::Failed => Err(ControlError::Io(std::io::ErrorKind::Other)),
     }
 }

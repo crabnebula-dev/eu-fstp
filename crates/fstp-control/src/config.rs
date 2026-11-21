@@ -393,17 +393,21 @@ pub fn decode_control_config(bytes: &[u8]) -> Result<ControlConfig, ControlError
 
 /// The members of a route feed configuration, in key order (ADR-009
 /// "Pilot route feed", row "Feed configuration", lane L15).
-pub const FEED_MEMBERS: [&str; 6] = [
+pub const FEED_MEMBERS: [&str; 10] = [
+    "assets_dir",
     "credentials_dir",
     "edges",
     "feed_listen",
     "keyd_socket",
+    "operator_host",
+    "operator_listen",
     "operator_socket",
+    "staff",
     "state_dir",
 ];
 
 /// The longest route feed configuration, in bytes.
-pub const MAX_FEED_CONFIG_LEN: usize = 4096;
+pub const MAX_FEED_CONFIG_LEN: usize = 16 * 1024;
 
 /// The most edges a route feed configuration lists.
 pub const MAX_FEED_EDGES: usize = 16;
@@ -411,10 +415,12 @@ pub const MAX_FEED_EDGES: usize = 16;
 /// The files `fstp-control route-feed` reads from its `credentials_dir`:
 /// the CA of the edges' client certificates, its feed listener
 /// certificate and key, and the sealed feed signing key.
-pub const FEED_FILES: [&str; 4] = [
+pub const FEED_FILES: [&str; 6] = [
     "control-ca.pem",
     "control.pem",
     "control-key.pem",
+    "operator.pem",
+    "operator-key.pem",
     "route-feed.key",
 ];
 
@@ -422,6 +428,8 @@ pub const FEED_FILES: [&str; 4] = [
 /// serves the signed route feed and nothing else (lane L15).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeedConfig {
+    /// The compiled operator page: `web/dist`, with `auth/` and `routefeed/`.
+    pub assets_dir: String,
     /// The directory of [`FEED_FILES`].
     pub credentials_dir: String,
     /// The edges that may poll, by the id in their certificate's CN.
@@ -430,8 +438,15 @@ pub struct FeedConfig {
     pub feed_listen: SocketAddr,
     /// The `fstp-keyd` socket of the `control` role.
     pub keyd_socket: String,
+    /// The relying party host of staff passkeys, served at
+    /// `https://<operator_host>` (ADR-008 "Control plane").
+    pub operator_host: String,
+    /// The address the operator page binds.
+    pub operator_listen: SocketAddr,
     /// The Unix socket of the operator command.
     pub operator_socket: String,
+    /// The pinned staff passkeys (ADR-011 "pinned at installation").
+    pub staff: Vec<StaffCredential>,
     /// The directory of the table state.
     pub state_dir: String,
 }
@@ -463,12 +478,18 @@ pub fn decode_feed_config(bytes: &[u8]) -> Result<FeedConfig, ControlError> {
         }
         edges.push(id);
     }
+    let operator_host = string(obj, "operator_host", "operator_host")?;
+    RelyingParty::new(operator_host).map_err(|_| bad("operator_host"))?;
     Ok(FeedConfig {
+        assets_dir: path(obj, "assets_dir", "assets_dir")?,
         credentials_dir: path(obj, "credentials_dir", "credentials_dir")?,
         edges,
         feed_listen: socket_addr(obj, "feed_listen", "feed_listen")?,
         keyd_socket: path(obj, "keyd_socket", "keyd_socket")?,
+        operator_host: operator_host.to_owned(),
+        operator_listen: socket_addr(obj, "operator_listen", "operator_listen")?,
         operator_socket: path(obj, "operator_socket", "operator_socket")?,
+        staff: staff_list(obj)?,
         state_dir: path(obj, "state_dir", "state_dir")?,
     })
 }

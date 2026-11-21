@@ -14,7 +14,12 @@
 //! - `init-route-feed <out dir>`: create the feed signing key through
 //!   `fstp-keyd` and the first table, and write `route-feed.pub` to `out`;
 //! - `route add <route file>`: publish the one route of the file;
-//! - `route remove <cell id>`: remove every route of the cell.
+//! - `route remove <cell id>`: remove every route of the cell;
+//! - `route list <out file>`: write the served routes to the file.
+//!
+//! `route add` and `route remove` only propose a change. A staff member
+//! approves it with a passkey step-up on the operator page, and the
+//! command waits for that, at most 5 minutes.
 //!
 //! A refused configuration, route or usage exits with status 2, any other
 //! failure with status 1. The binary writes typed events only (R-NF-02).
@@ -33,6 +38,7 @@ fn main() -> ExitCode {
         ["init-route-feed", out] => route_feed::init(Path::new(out)),
         ["route", "add", file] => route_feed::route_add(Path::new(file)).map(|_| ()),
         ["route", "remove", cell] => route_feed::route_remove(cell).map(|_| ()),
+        ["route", "list", out] => route_feed::route_list(Path::new(out)).map(|_| ()),
         _ => Err(ControlError::Config("usage")),
     };
     match outcome {
