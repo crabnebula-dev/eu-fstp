@@ -60,7 +60,6 @@ pub mod placement;
 pub mod provision;
 pub mod route_change;
 pub mod route_feed;
-pub mod route_page;
 pub mod routes;
 pub mod service;
 

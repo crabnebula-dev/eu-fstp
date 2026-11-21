@@ -1,67 +1,47 @@
-//! Route changes of the pilot `fstp-control` under an operator passkey
-//! step-up, and their audit log (ADR-009 "Pilot route feed", rows
-//! "Operator identity", "Proposal and approval", "Step-up per change"
-//! and "Audit"; decided by Daniel on 2026-11-21, lane L15).
+//! Route changes of the pilot `fstp-control` and their audit log (ADR-009
+//! "Pilot route feed", rows "Route changes on the host" and "Audit", lane
+//! L15).
 //!
-//! `fstp-control route add` and `route remove` only propose a change
-//! ([`RouteChanges::propose`]). The process checks it against the edge's
-//! rules and keeps it for [`CHANGE_LIFETIME_SECS`]. A staff member logs in
-//! with a pinned passkey ([`crate::operator::OperatorLogin`], I-77), draws
-//! a step-up challenge bound to the change ([`RouteChanges::begin_approval`])
-//! and answers it with a fresh assertion ([`RouteChanges::approve`]). One
-//! step-up authorises exactly one change, once (I-78). Only then does the
-//! publisher sign the new table. The audit record of the change is
-//! appended before the table is stored.
+//! Decided by Daniel on 2026-11-21: route changes are plain commands on
+//! the host, and each one is logged. Root access to the host is the
+//! guard. `fstp-control route add` and `route remove` apply at once
+//! ([`RouteChanges::apply`]): the publisher checks the change against
+//! the edge's rules, appends the audit record, and stores and serves the
+//! new signed table.
 //!
 //! Interim, pending Daniel, the audit log `route-audit.log`:
 //!
 //! ```text
 //! log    = record*
-//! record = "FRL1" | body len u32 | body | chain 32
-//! body   = at i64 | staff 16 | op u8 | cell 16 | version u64 | digest 32
-//!          | session digest 32 | nonce 32
-//!          | credential id | client data json | authenticator data | signature
-//!          (each u16 length, then the bytes)
+//! record = "FRL2" | body len u32 | body | chain 32
+//! body   = at i64 (Unix seconds) | op u8 (1 add, 2 remove) | cell 16
+//!          | version u64 | digest 32 | user len u8 | user
 //! chain  = SHA-256(previous chain | body), the first over 32 zero bytes
 //! ```
 //!
-//! The decoder checks the chain and is fuzzed (`route_feed_decode`). The
-//! assertion in a record verifies again under the pinned staff key over
-//! the challenge its digest, session digest and nonce give
-//! ([`verify_evidence`]).
+//! `digest` is the SHA-256 of the operator request bytes. `user` is the OS
+//! user who ran the command when it is known (`SUDO_USER`, else `USER`),
+//! in the grammar of [`is_user_name`], and empty otherwise. The decoder
+//! checks the chain and is fuzzed (`route_feed_decode`).
 
-use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use fstp_cp_proto::{CellId, StaffRef};
-use fstp_webauthn::{AssertionExpect, AssertionResponse, RelyingParty, StoredCredential};
+use fstp_cp_proto::CellId;
 
 use crate::ControlError;
-use crate::operator::{
-    OperatorLogin, OperatorRefusal, OperatorSession, StaffCredential, route_change_challenge,
-    session_digest,
-};
-use crate::route_feed::{OperatorReply, OperatorRequest, OperatorStatus, encode_operator_request};
+use crate::route_feed::{OperatorRequest, encode_operator_request};
 use crate::routes::RoutePublisher;
-
-/// How long a proposed change waits for its step-up, in seconds.
-/// Interim, pending Daniel.
-pub const CHANGE_LIFETIME_SECS: i64 = 300;
-
-/// The most changes that may wait at once.
-pub const MAX_CHANGES: usize = 16;
 
 /// The audit log in the state directory.
 pub const AUDIT_FILE: &str = "route-audit.log";
 
 /// The magic of one audit record.
-pub const AUDIT_MAGIC: [u8; 4] = *b"FRL1";
+pub const AUDIT_MAGIC: [u8; 4] = *b"FRL2";
 
-/// The longest field of an assertion an audit record holds.
-pub const MAX_EVIDENCE_FIELD: usize = 4096;
+/// The longest user name a record holds.
+pub const MAX_USER_LEN: usize = 32;
 
 /// The longest audit log read at start.
 pub const MAX_AUDIT_LOG: usize = 64 * 1024 * 1024;
@@ -70,9 +50,20 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The digest a change is approved under: the SHA-256 of its operator
-/// request bytes, which name the operation, the cell, the host, both
-/// endpoints and both pins.
+/// Whether `name` is a POSIX-style user name: 1 to 32 bytes, a lowercase
+/// letter or `_` first, then lowercase letters, digits, `_` and `-`.
+#[must_use]
+pub fn is_user_name(name: &str) -> bool {
+    let b = name.as_bytes();
+    !b.is_empty()
+        && b.len() <= MAX_USER_LEN
+        && b.first()
+            .is_some_and(|c| c.is_ascii_lowercase() || *c == b'_')
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
+}
+
+/// The digest of a change: the SHA-256 of its operator request bytes.
 ///
 /// # Errors
 ///
@@ -81,83 +72,40 @@ pub fn change_digest(request: &OperatorRequest) -> Result<[u8; 32], ControlError
     Ok(fstp_crypto::sha256(&encode_operator_request(request)?))
 }
 
-/// A proposed change, as the operator page shows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingChange {
-    /// The change id.
-    pub id: [u8; 16],
-    /// The request.
-    pub request: OperatorRequest,
-    /// Its digest.
-    pub digest: [u8; 32],
-}
-
-struct Change {
-    request: OperatorRequest,
-    digest: [u8; 32],
-    created: i64,
-    waiter: Option<Sender<OperatorReply>>,
-}
-
-struct Bound {
-    change: [u8; 16],
-    session: [u8; 32],
-    nonce: [u8; 32],
-}
-
 /// One audit record (module documentation).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuditRecord {
-    /// When the change was approved, in Unix seconds.
+    /// When the change was applied, in Unix seconds.
     pub at: i64,
-    /// The approving staff member.
-    pub staff: StaffRef,
     /// The operation: 1 add, 2 remove.
     pub op: u8,
-    /// The cell.
+    /// The cell of the route.
     pub cell: [u8; 16],
     /// The version that serves the change.
     pub version: u64,
     /// The change digest.
     pub digest: [u8; 32],
-    /// The SHA-256 of the session token.
-    pub session_digest: [u8; 32],
-    /// The nonce of the challenge.
-    pub nonce: [u8; 32],
-    /// The step-up assertion.
-    pub assertion: AssertionResponse,
-}
-
-fn put_field(out: &mut Vec<u8>, b: &[u8]) -> Result<(), ControlError> {
-    if b.len() > MAX_EVIDENCE_FIELD {
-        return Err(ControlError::Request("evidence"));
-    }
-    let n = u16::try_from(b.len()).map_err(|_| ControlError::Request("evidence"))?;
-    out.extend_from_slice(&n.to_be_bytes());
-    out.extend_from_slice(b);
-    Ok(())
+    /// The OS user who ran the command, empty when not known.
+    pub user: String,
 }
 
 /// The body of `r`.
 ///
 /// # Errors
 ///
-/// [`ControlError::Request`] for an assertion field above
-/// [`MAX_EVIDENCE_FIELD`].
+/// [`ControlError::Request`] for a user name outside [`is_user_name`].
 pub fn encode_audit_body(r: &AuditRecord) -> Result<Vec<u8>, ControlError> {
+    if !r.user.is_empty() && !is_user_name(&r.user) {
+        return Err(ControlError::Request("user"));
+    }
     let mut out = Vec::new();
     out.extend_from_slice(&r.at.to_be_bytes());
-    out.extend_from_slice(&r.staff.0);
     out.push(r.op);
     out.extend_from_slice(&r.cell);
     out.extend_from_slice(&r.version.to_be_bytes());
     out.extend_from_slice(&r.digest);
-    out.extend_from_slice(&r.session_digest);
-    out.extend_from_slice(&r.nonce);
-    put_field(&mut out, &r.assertion.credential_id)?;
-    put_field(&mut out, &r.assertion.client_data_json)?;
-    put_field(&mut out, &r.assertion.authenticator_data)?;
-    put_field(&mut out, &r.assertion.signature)?;
+    out.push(u8::try_from(r.user.len()).map_err(|_| ControlError::Request("user"))?);
+    out.extend_from_slice(r.user.as_bytes());
     Ok(out)
 }
 
@@ -180,7 +128,7 @@ pub fn encode_audit_record(
     let body = encode_audit_body(r)?;
     let head = chain(previous, &body);
     let mut out = AUDIT_MAGIC.to_vec();
-    let n = u32::try_from(body.len()).map_err(|_| ControlError::Request("evidence"))?;
+    let n = u32::try_from(body.len()).map_err(|_| ControlError::Request("user"))?;
     out.extend_from_slice(&n.to_be_bytes());
     out.extend_from_slice(&body);
     out.extend_from_slice(&head);
@@ -191,40 +139,28 @@ fn decode_body(body: &[u8]) -> Result<AuditRecord, ControlError> {
     let mut r = fstp_audit::codec::Reader::new(body);
     let e = |_| ControlError::Config("audit log");
     let at = i64::from_be_bytes(r.array::<8>().map_err(e)?);
-    let staff = StaffRef(r.array::<16>().map_err(e)?);
-    let op = r.array::<1>().map_err(e)?[0];
+    let [op] = r.array::<1>().map_err(e)?;
     if op != 1 && op != 2 {
         return Err(ControlError::Config("audit log"));
     }
     let cell = r.array::<16>().map_err(e)?;
     let version = r.be64().map_err(e)?;
     let digest = r.array::<32>().map_err(e)?;
-    let session_digest = r.array::<32>().map_err(e)?;
-    let nonce = r.array::<32>().map_err(e)?;
-    let mut field = || -> Result<Vec<u8>, ControlError> {
-        let n = usize::from(r.be16().map_err(e)?);
-        if n > MAX_EVIDENCE_FIELD {
-            return Err(ControlError::Config("audit log"));
-        }
-        Ok(r.take(n).map_err(e)?.to_vec())
-    };
-    let assertion = AssertionResponse {
-        credential_id: field()?,
-        client_data_json: field()?,
-        authenticator_data: field()?,
-        signature: field()?,
-    };
+    let [n] = r.array::<1>().map_err(e)?;
+    let user = std::str::from_utf8(r.take(usize::from(n)).map_err(e)?)
+        .map_err(|_| ControlError::Config("audit log"))?
+        .to_owned();
+    if !user.is_empty() && !is_user_name(&user) {
+        return Err(ControlError::Config("audit log"));
+    }
     r.finish().map_err(e)?;
     Ok(AuditRecord {
         at,
-        staff,
         op,
         cell,
         version,
         digest,
-        session_digest,
-        nonce,
-        assertion,
+        user,
     })
 }
 
@@ -263,30 +199,6 @@ pub fn decode_audit_log(bytes: &[u8]) -> Result<(Vec<AuditRecord>, [u8; 32]), Co
         head = next;
     }
     Ok((out, head))
-}
-
-/// Whether the assertion of `r` verifies under the pinned credential of
-/// its staff member, over the challenge its digest, session digest and
-/// nonce give, with user verification.
-#[must_use]
-pub fn verify_evidence(r: &AuditRecord, staff: &[StaffCredential], rp: &RelyingParty) -> bool {
-    let Some(cred) = staff
-        .iter()
-        .find(|c| c.staff == r.staff && c.credential_id == r.assertion.credential_id)
-    else {
-        return false;
-    };
-    let stored = StoredCredential {
-        id: cred.credential_id.clone(),
-        key: cred.key.clone(),
-        sign_count: 0,
-    };
-    let expect = AssertionExpect {
-        rp: rp.clone(),
-        challenge: route_change_challenge(&r.session_digest, &r.digest, &r.nonce),
-        user_verification: true,
-    };
-    fstp_webauthn::verify_assertion(&r.assertion, &stored, &expect).is_ok()
 }
 
 /// The append-only audit log of one process.
@@ -351,16 +263,9 @@ impl AuditLog {
     }
 }
 
-struct Inner {
-    changes: BTreeMap<[u8; 16], Change>,
-    bound: BTreeMap<[u8; 32], Bound>,
-}
-
 /// The route changes of the pilot `fstp-control` (module documentation).
 pub struct RouteChanges {
     publisher: Arc<RoutePublisher>,
-    login: Mutex<OperatorLogin>,
-    inner: Mutex<Inner>,
     audit: Mutex<AuditLog>,
 }
 
@@ -370,29 +275,11 @@ impl std::fmt::Debug for RouteChanges {
     }
 }
 
-fn fresh(at: i64, now: i64) -> bool {
-    now >= at && now.saturating_sub(at) <= CHANGE_LIFETIME_SECS
-}
-
-fn refuse(r: OperatorRefusal) -> ControlError {
-    ControlError::Operator(r)
-}
-
 impl RouteChanges {
-    /// Changes of `publisher`, approved through `login`, audited in
-    /// `audit`.
-    pub fn new(
-        publisher: Arc<RoutePublisher>,
-        login: OperatorLogin,
-        audit: AuditLog,
-    ) -> RouteChanges {
+    /// Changes of `publisher`, logged in `audit`.
+    pub fn new(publisher: Arc<RoutePublisher>, audit: AuditLog) -> RouteChanges {
         RouteChanges {
             publisher,
-            login: Mutex::new(login),
-            inner: Mutex::new(Inner {
-                changes: BTreeMap::new(),
-                bound: BTreeMap::new(),
-            }),
             audit: Mutex::new(audit),
         }
     }
@@ -407,193 +294,51 @@ impl RouteChanges {
         Arc::clone(&self.publisher)
     }
 
-    /// The operator login, for the login ceremony of the operator page.
-    pub fn login(&self) -> MutexGuard<'_, OperatorLogin> {
-        lock(&self.login)
-    }
-
-    fn prune(inner: &mut Inner, now: i64, version: u64) {
-        let expired: Vec<[u8; 16]> = inner
-            .changes
-            .iter()
-            .filter(|(_, c)| !fresh(c.created, now))
-            .map(|(id, _)| *id)
-            .collect();
-        for id in expired {
-            if let Some(c) = inner.changes.remove(&id)
-                && let Some(w) = c.waiter
-            {
-                let _ = w.send(OperatorReply {
-                    status: OperatorStatus::Expired,
-                    version,
-                });
-            }
-        }
-        inner
-            .bound
-            .retain(|_, b| inner.changes.contains_key(&b.change));
-    }
-
-    /// Proposes `request` at `now`. A change an edge would refuse is
-    /// refused here, and nothing waits. The receiver gets the outcome:
-    /// stored with its version once approved, or expired.
+    /// Applies `request` at `now`, as `user` asked (empty when not
+    /// known): checks it against the edge's rules, appends its audit
+    /// record, and stores and serves the new table. Returns the version
+    /// that serves it. A removal of a cell without routes changes nothing,
+    /// logs nothing, and returns the current version.
     ///
     /// # Errors
     ///
-    /// [`ControlError::Request`] for a change an edge would refuse,
-    /// [`ControlError::Operator`] with [`OperatorRefusal::Capacity`] when
-    /// [`MAX_CHANGES`] wait, and [`OperatorRefusal::Random`].
-    pub fn propose(
+    /// [`ControlError::Request`] for a change an edge would refuse, and
+    /// the errors of the publisher and the audit log. Nothing changes then.
+    pub fn apply(
         &self,
-        request: OperatorRequest,
-        now: i64,
-    ) -> Result<([u8; 16], Receiver<OperatorReply>), ControlError> {
-        if let OperatorRequest::Add(route) = &request {
-            self.publisher.check_publish(route)?;
-        }
-        let digest = change_digest(&request)?;
-        let mut inner = lock(&self.inner);
-        Self::prune(&mut inner, now, self.publisher.version());
-        if inner.changes.len() >= MAX_CHANGES {
-            return Err(refuse(OperatorRefusal::Capacity));
-        }
-        let id: [u8; 16] =
-            fstp_crypto::random_array().map_err(|_| refuse(OperatorRefusal::Random))?;
-        let (tx, rx) = channel();
-        inner.changes.insert(
-            id,
-            Change {
-                request,
-                digest,
-                created: now,
-                waiter: Some(tx),
-            },
-        );
-        Ok((id, rx))
-    }
-
-    /// The changes waiting at `now`, oldest id order.
-    pub fn pending(&self, now: i64) -> Vec<PendingChange> {
-        let mut inner = lock(&self.inner);
-        Self::prune(&mut inner, now, self.publisher.version());
-        inner
-            .changes
-            .iter()
-            .map(|(id, c)| PendingChange {
-                id: *id,
-                request: c.request.clone(),
-                digest: c.digest,
-            })
-            .collect()
-    }
-
-    /// Draws the step-up challenge of change `id` in `session`, bound to
-    /// its digest.
-    ///
-    /// # Errors
-    ///
-    /// [`OperatorRefusal::Challenge`] for a change that does not wait,
-    /// and the refusals of [`OperatorLogin::begin_route_step_up`].
-    pub fn begin_approval(
-        &self,
-        session: OperatorSession,
-        id: [u8; 16],
-        now: i64,
-    ) -> Result<[u8; 32], ControlError> {
-        let mut inner = lock(&self.inner);
-        Self::prune(&mut inner, now, self.publisher.version());
-        let digest = inner
-            .changes
-            .get(&id)
-            .map(|c| c.digest)
-            .ok_or(refuse(OperatorRefusal::Challenge))?;
-        let (challenge, nonce) = self.login().begin_route_step_up(session, &digest, now)?;
-        inner.bound.insert(
-            challenge,
-            Bound {
-                change: id,
-                session: session.0,
-                nonce,
-            },
-        );
-        Ok(challenge)
-    }
-
-    /// Approves change `id` in `session` with `assertion` over
-    /// `challenge`: verifies the step-up, consumes it, appends the audit
-    /// record and stores and serves the new table. Returns its version.
-    ///
-    /// # Errors
-    ///
-    /// [`OperatorRefusal::Challenge`] for a challenge that was not drawn
-    /// for this change and session or was used, the refusals of the
-    /// step-up and of [`OperatorLogin::authorise_route_change`], and the
-    /// errors of the publisher and the audit log. A refused approval
-    /// leaves the change waiting.
-    pub fn approve(
-        &self,
-        session: OperatorSession,
-        id: [u8; 16],
-        challenge: [u8; 32],
-        assertion: &AssertionResponse,
+        request: &OperatorRequest,
+        user: &str,
         now: i64,
     ) -> Result<u64, ControlError> {
-        let mut inner = lock(&self.inner);
-        Self::prune(&mut inner, now, self.publisher.version());
-        let bound = inner
-            .bound
-            .remove(&challenge)
-            .filter(|b| b.change == id && b.session == session.0)
-            .ok_or(refuse(OperatorRefusal::Challenge))?;
-        let (request, digest) = inner
-            .changes
-            .get(&id)
-            .map(|c| (c.request.clone(), c.digest))
-            .ok_or(refuse(OperatorRefusal::Challenge))?;
-        let staff = {
-            let mut login = self.login();
-            login.finish_step_up(session, challenge, assertion, now)?;
-            login.authorise_route_change(session, now)?
-        };
-        let (op, cell) = match &request {
+        let user = if is_user_name(user) { user } else { "" };
+        let digest = change_digest(request)?;
+        let (op, cell) = match request {
             OperatorRequest::Add(route) => (1, route.route.app.cell),
             OperatorRequest::Remove(cell) => (2, *cell),
             OperatorRequest::List => return Err(ControlError::Request("operation")),
         };
         let mut record = AuditRecord {
             at: now,
-            staff,
             op,
             cell,
             version: 0,
             digest,
-            session_digest: session_digest(session),
-            nonce: bound.nonce,
-            assertion: assertion.clone(),
+            user: user.to_owned(),
         };
         let mut audit = lock(&self.audit);
         let mut hook = |version: u64| {
             record.version = version;
             audit.append(&record)
         };
-        let version = match &request {
+        match request {
             OperatorRequest::Add(route) => {
-                self.publisher.publish_with((**route).clone(), &mut hook)?
+                self.publisher.publish_with((**route).clone(), &mut hook)
             }
-            OperatorRequest::Remove(cell) => {
-                self.publisher.remove_cell_with(CellId(*cell), &mut hook)?.1
-            }
-            OperatorRequest::List => return Err(ControlError::Request("operation")),
-        };
-        drop(audit);
-        if let Some(c) = inner.changes.remove(&id)
-            && let Some(w) = c.waiter
-        {
-            let _ = w.send(OperatorReply {
-                status: OperatorStatus::Stored,
-                version,
-            });
+            OperatorRequest::Remove(cell) => self
+                .publisher
+                .remove_cell_with(CellId(*cell), &mut hook)
+                .map(|(_, v)| v),
+            OperatorRequest::List => Err(ControlError::Request("operation")),
         }
-        Ok(version)
     }
 }

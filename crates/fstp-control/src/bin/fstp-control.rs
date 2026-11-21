@@ -17,9 +17,9 @@
 //! - `route remove <cell id>`: remove every route of the cell;
 //! - `route list <out file>`: write the served routes to the file.
 //!
-//! `route add` and `route remove` only propose a change. A staff member
-//! approves it with a passkey step-up on the operator page, and the
-//! command waits for that, at most 5 minutes.
+//! `route add` and `route remove` apply at once and are logged (Daniel,
+//! 2026-11-21). The commands never prompt: exit 0 is done, 2 a refused
+//! input or route, 1 any other failure.
 //!
 //! A refused configuration, route or usage exits with status 2, any other
 //! failure with status 1. The binary writes typed events only (R-NF-02).

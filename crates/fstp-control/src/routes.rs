@@ -237,30 +237,6 @@ impl RoutePublisher {
         self.state().signed.clone()
     }
 
-    /// Whether publishing `entry` would give a table an edge accepts,
-    /// without changing anything (lane L15: a proposal is checked before
-    /// it waits for its step-up).
-    ///
-    /// # Errors
-    ///
-    /// [`ControlError::Request`] naming the rule an edge would refuse.
-    pub fn check_publish(&self, entry: &PinnedRoute) -> Result<(), ControlError> {
-        let s = self.state();
-        let cell = entry.route.app.cell;
-        if s.routes
-            .iter()
-            .any(|(c, r)| *c != cell && r.route.host == entry.route.host)
-        {
-            return Err(ControlError::Request("I-19"));
-        }
-        let mut routes = s.routes.clone();
-        routes.insert(cell, entry.clone());
-        let list: Vec<PinnedRoute> = routes.into_values().collect();
-        check_routes(&list).map_err(|e| ControlError::Request(e.rule()))?;
-        encode_route_table_body(s.version, &list).map_err(|_| ControlError::Request("I-19"))?;
-        Ok(())
-    }
-
     /// The current routes, in ascending cell order.
     pub fn routes(&self) -> Vec<PinnedRoute> {
         self.state().routes.values().cloned().collect()
