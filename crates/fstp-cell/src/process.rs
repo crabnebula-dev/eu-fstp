@@ -1096,6 +1096,83 @@ impl<R: Runtime> RunningCell<R> {
     /// example while a first-admin invitation is open or a first admin
     /// enrolled.
     pub async fn issue_first_admin_invitation(&self) -> Result<FirstAdminToken, CellError> {
+        self.first_admin_invitation(None).await
+    }
+
+    /// The cell's deployment mode, as the auth rules name it.
+    fn deployment(&self) -> fstp_auth::recovery::Deployment {
+        match self.mode {
+            Mode::Saas => fstp_auth::recovery::Deployment::Saas,
+            Mode::SelfHosted => fstp_auth::recovery::Deployment::SelfHosted,
+        }
+    }
+
+    /// `fstp-cell provision-tenant` (ADR-026 "Tenant provisioning",
+    /// decided by Daniel on 2026-11-21): records `TenantProvisioned` as
+    /// the system task `Provisioning`, with the agreement versions
+    /// `agreements`. The first admin is the cell's own first admin,
+    /// enrolled or invited, or else a new random account, which the
+    /// first-admin invitation then invites (ADR-026 record of lane L12).
+    /// The first admin's account is returned.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Keys`] when no random value is available, and
+    /// [`CellError::Store`] when the gate or the engine refuses, for
+    /// example on a ledger that holds a tenant part.
+    pub async fn provision_tenant(
+        &self,
+        agreements: Option<fstp_engine::AgreementVersions>,
+    ) -> Result<fstp_domain::id::AccountId, CellError> {
+        let now = fstp_domain::time::Timestamp::from_micros((self.clock)());
+        let state = self.engine.state();
+        if state.engine().tenant.provisioning().is_some() {
+            return Err(store_err(()));
+        }
+        let first_admin = match state.auth().first_admin_account(now) {
+            Some(a) => a,
+            None => {
+                let ids = fstp_crypto::random_array::<16>().map_err(|_| CellError::Keys("ids"))?;
+                fstp_domain::id::AccountId::from_raw(u128::from_be_bytes(ids))
+            }
+        };
+        let suffix = fstp_crypto::random_array::<8>().map_err(|_| CellError::Keys("ids"))?;
+        let admitted = gate::admit_tenant_provisioning(
+            &state,
+            first_admin,
+            agreements,
+            self.deployment(),
+            fstp_cell_core::system_command_id(suffix),
+            now,
+        )
+        .map_err(store_err)?;
+        self.engine.execute(admitted).await.map_err(store_err)?;
+        Ok(first_admin)
+    }
+
+    /// [`RunningCell::issue_first_admin_invitation`], with the first
+    /// admin's login email `email`, if any (`fstp-cell first-admin
+    /// --email`, ADR-026 "First admin email", decided by Daniel on
+    /// 2026-11-21).
+    ///
+    /// The invited account is the tenant part's first admin when the
+    /// ledger holds one, else a new random account. The address is bound
+    /// to that account in the login email index before the invitation is
+    /// recorded: sealed and fingerprinted under the `Lookup` key, as every
+    /// login email is. The routes give an address of an account that never
+    /// enrolled no magic link and no recovery (ADR-026 record of lane
+    /// L12), so the address alone opens nothing before the enrolment.
+    ///
+    /// # Errors
+    ///
+    /// As [`RunningCell::issue_first_admin_invitation`]. A cell with an
+    /// open first-admin invitation or an enrolled first admin, and an
+    /// address that is another account's login email, are refused before
+    /// anything is recorded.
+    pub async fn first_admin_invitation(
+        &self,
+        email: Option<&str>,
+    ) -> Result<FirstAdminToken, CellError> {
         use fstp_auth::ceremony::{split_token_digest, token_digest};
         use fstp_auth::codec::Token;
         let rnd = || fstp_crypto::random_array::<32>().map_err(|_| CellError::Keys("token"));
@@ -1104,7 +1181,11 @@ impl<R: Runtime> RunningCell<R> {
         let ids = fstp_crypto::random_array::<16>().map_err(|_| CellError::Keys("ids"))?;
         let invitation = fstp_crypto::random_array::<16>().map_err(|_| CellError::Keys("ids"))?;
         let suffix = fstp_crypto::random_array::<8>().map_err(|_| CellError::Keys("ids"))?;
-        let account = fstp_domain::id::AccountId::from_raw(u128::from_be_bytes(ids));
+        let state = self.engine.state();
+        let account = match state.engine().tenant.provisioning() {
+            Some(p) => p.first_admin,
+            None => fstp_domain::id::AccountId::from_raw(u128::from_be_bytes(ids)),
+        };
         let (digest, second, deployment) = match self.mode {
             Mode::Saas => (
                 split_token_digest(&Token(first), &Token(second)),
@@ -1118,8 +1199,27 @@ impl<R: Runtime> RunningCell<R> {
             ),
         };
         let now = fstp_domain::time::Timestamp::from_micros((self.clock)());
+        if let Some(email) = email {
+            // The provisioning rule of the decider, checked before the
+            // address is bound, so a refused invitation binds nothing.
+            if state.auth().any_first_admin() || state.auth().first_admin_invitation_open(now) {
+                return Err(store_err(()));
+            }
+            match self
+                .erasure
+                .set_login_email(account, email.to_owned())
+                .await?
+            {
+                crate::tasks::erasure::LoginEmailSet::Set => {}
+                crate::tasks::erasure::LoginEmailSet::Taken => {
+                    return Err(CellError::Config(crate::config::ConfigError::Invalid(
+                        "email",
+                    )));
+                }
+            }
+        }
         let admitted = gate::admit_first_admin_invitation(
-            &self.engine.state(),
+            &state,
             invitation,
             account,
             digest,

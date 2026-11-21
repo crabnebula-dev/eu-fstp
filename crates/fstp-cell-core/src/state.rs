@@ -343,6 +343,14 @@ impl AuthState {
         if matches == 1 { found } else { None }
     }
 
+    /// Whether a first-admin invitation, open, expired or used, names
+    /// `account`.
+    pub fn first_admin_invited(&self, account: AccountId) -> bool {
+        self.invitations
+            .values()
+            .any(|i| i.first_admin && i.account == account)
+    }
+
     /// The cell's own first tenant admin at `now`: the account that
     /// enrolled through the first-admin invitation, else the account an
     /// open first-admin invitation names (ADR-026 record of lane L12).
@@ -612,6 +620,23 @@ impl CellState {
     /// The auth part.
     pub fn auth(&self) -> &AuthState {
         &self.auth
+    }
+
+    /// Whether `account` is the cell's first tenant admin before its
+    /// enrolment: a first-admin invitation or the tenant part names it as
+    /// the first admin, and no first-admin enrolment used it yet (ADR-026
+    /// record of lane L12). Its login email, recorded by `fstp-cell
+    /// first-admin --email`, then opens no magic link and no recovery:
+    /// only both token halves enrol it (Q35).
+    pub fn first_admin_unenrolled(&self, account: AccountId) -> bool {
+        if self.auth.first_admin_enrolled(account) {
+            return false;
+        }
+        self.engine
+            .tenant
+            .provisioning()
+            .is_some_and(|p| p.first_admin == account)
+            || self.auth.first_admin_invited(account)
     }
 
     /// The tenant part.
