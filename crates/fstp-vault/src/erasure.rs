@@ -1469,15 +1469,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         };
         let tuple = crate::codec::identity_tuple(&c.write.identity);
         let done = self
-            .record_verification(
-                vault,
-                journal,
-                c.verifier,
-                c.write.account,
-                record,
-                &tuple,
-                now,
-            )
+            .record_verification(vault, journal, c.verifier, c.account, record, &tuple, now)
             .await;
         zero(tuple);
         let person = done.map_err(|e| match e {

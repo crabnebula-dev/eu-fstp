@@ -870,12 +870,22 @@ fn r_id_02_recorder_never_registers_their_own_identity() {
 const GRANT_77: u128 = 77;
 
 fn ticket(kind: &str, holder: u128, proposal: Option<u128>, nonce: u8) -> Vec<u8> {
+    scoped_ticket(kind, holder, proposal, String::new(), nonce)
+}
+
+fn scoped_ticket(
+    kind: &str,
+    holder: u128,
+    proposal: Option<u128>,
+    scope: String,
+    nonce: u8,
+) -> Vec<u8> {
     let t = common::vc::wire::RTicket {
         kind: kind.to_owned(),
         cell: CELL,
         account: holder,
         proposal,
-        scope: String::new(),
+        scope,
         issued_at: NOW - 1_000_000,
         expires_at: NOW + 200_000_000,
         nonce: [nonce; 16],
@@ -883,18 +893,24 @@ fn ticket(kind: &str, holder: u128, proposal: Option<u128>, nonce: u8) -> Vec<u8
     common::vc::Signer::new(SIGNER).sign(&t)
 }
 
-fn verification_body(account: u128, family: &str) -> String {
+fn verification_body(family: &str) -> String {
     format!(
-        "{{\"account\":\"{account}\",\"checks\":[\"document_authentic\",\"photo_match\"],\"document_type\":\"passport\",\"identity\":{{\"birth_date\":\"1990-02-28\",\"family_names\":\"{family}\",\"given_names\":\"Synthetic\",\"issuing_state\":\"DEU\"}},\"method\":\"manual\"}}"
+        "{{\"checks\":[\"document_authentic\",\"photo_match\"],\"document_type\":\"passport\",\"identity\":{{\"birth_date\":\"1990-02-28\",\"family_names\":\"{family}\",\"given_names\":\"Synthetic\",\"issuing_state\":\"DEU\"}},\"method\":\"manual\"}}"
     )
 }
 
-/// A recorder's write of `account` with the family name `family`, under a
-/// verification ticket of `holder` for grant 77.
+/// A recorder's write with the family name `family`, under a verification
+/// ticket of `holder` naming the person `account` of grant 77.
 fn verification_write(holder: u128, account: u128, family: &str, nonce: u8) -> Vec<u8> {
     common::origin_write(
-        &ticket("write:verification_recorded", holder, Some(GRANT_77), nonce),
-        &verification_body(account, family),
+        &scoped_ticket(
+            "write:verification_recorded",
+            holder,
+            Some(GRANT_77),
+            fstp_vault_proto::person_scope(WireAccount(account)),
+            nonce,
+        ),
+        &verification_body(family),
     )
 }
 
@@ -947,10 +963,8 @@ fn adr008_recorder_verification_registers_the_identity() {
         1
     );
     assert_eq!(count(&w, "SELECT count(*) FROM vault.ticket_used"), 1);
-    let body = fstp_vault::codec::decode_verification_write(
-        verification_body(A_ACCOUNT, "Alpha").as_bytes(),
-    )
-    .unwrap();
+    let body = fstp_vault::codec::decode_verification_write(verification_body("Alpha").as_bytes())
+        .unwrap();
     assert_eq!(
         p.runner.tuple(a).unwrap(),
         fstp_vault::codec::identity_tuple(&body.identity),
@@ -986,18 +1000,15 @@ fn adr008_recorder_verification_registers_the_identity() {
 /// R-ID-02, I-17, ADR-008 rules 1 and 2, ADR-004 record of lane L13b
 /// "Origin checks": the route refuses a person that the negotiation fact
 /// does not list, the recorder's own account, a recorder of the person's
-/// identity, a ticket of another kind, and a ticket that names no
-/// proposal. Each refusal writes nothing and leaves the ticket unused.
+/// identity, a ticket of another kind, and a ticket that names no person. Each refusal writes nothing and leaves the ticket unused.
 #[test]
 fn adr008_recorder_route_refuses_without_writing() {
     let w = genesis();
     let mut p = start(&w);
     p.negotiation(&[A_ACCOUNT, RECORDER]);
     // The recorder's own identity is the one a body with "Bravo" gives.
-    let bravo = fstp_vault::codec::decode_verification_write(
-        verification_body(RECORDER, "Bravo").as_bytes(),
-    )
-    .unwrap();
+    let bravo = fstp_vault::codec::decode_verification_write(verification_body("Bravo").as_bytes())
+        .unwrap();
     p.register(
         RECORDER,
         &fstp_vault::codec::identity_tuple(&bravo.identity),
@@ -1014,23 +1025,20 @@ fn adr008_recorder_route_refuses_without_writing() {
             fstp_vault::OriginRefusal::WrongKind,
         ),
         (
-            common::origin_write(
-                &ticket("write:verification_recorded", RECORDER, Some(GRANT_77), 3),
-                &verification_body(A_ACCOUNT, "Bravo"),
-            ),
+            verification_write(RECORDER, A_ACCOUNT, "Bravo", 3),
             fstp_vault::OriginRefusal::WrongKind,
         ),
         (
             common::origin_write(
                 &ticket("write:bank_details", RECORDER, Some(GRANT_77), 4),
-                &verification_body(A_ACCOUNT, "Alpha"),
+                &verification_body("Alpha"),
             ),
             fstp_vault::OriginRefusal::WrongKind,
         ),
         (
             common::origin_write(
-                &ticket("write:verification_recorded", RECORDER, None, 5),
-                &verification_body(A_ACCOUNT, "Alpha"),
+                &ticket("write:verification_recorded", RECORDER, Some(GRANT_77), 5),
+                &verification_body("Alpha"),
             ),
             fstp_vault::OriginRefusal::WrongKind,
         ),

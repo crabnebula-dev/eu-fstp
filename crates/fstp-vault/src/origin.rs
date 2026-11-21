@@ -881,9 +881,9 @@ impl Vault {
     /// The checks of a recorder's verification write on `POST /w` that
     /// need no keystore (ADR-004 record of lane L13b, row "Origin
     /// checks"): the frame, the ticket checks with the signature first,
-    /// then the kind, the body limit, the body, the proposal the ticket
-    /// names, rule 1, and the vault's own negotiation fact of that
-    /// proposal, which must list the person. `None` for a verified ticket
+    /// then the kind, the body limit, the body, the person the ticket's
+    /// scope names, rule 1, and, when the ticket names a proposal, the
+    /// vault's own negotiation fact of it, which must list the person. `None` for a verified ticket
     /// of another kind, which the ordinary write path takes.
     ///
     /// # Errors
@@ -907,17 +907,24 @@ impl Vault {
             return Err(OriginRefusal::TooLarge);
         }
         let write = decode_verification_write(&w.body).map_err(|_| OriginRefusal::Malformed)?;
-        let proposal = c.proposal.ok_or(OriginRefusal::WrongKind)?;
+        // The person comes from the ticket, never from the body (Daniel,
+        // 2026-11-21).
+        let account = fstp_vault_proto::scope_person(&c.scope).ok_or(OriginRefusal::WrongKind)?;
         // ADR-008 rule 1: never the recorder's own account.
-        if write.account == c.account {
+        if account == c.account {
             return Err(OriginRefusal::WrongKind);
         }
-        if !self.state.negotiation_lists(proposal, write.account) {
+        // An applicant is verified in NEGOTIATION only: the vault's own
+        // negotiation fact of the ticket's proposal must list the person.
+        if let Some(proposal) = c.proposal
+            && !self.state.negotiation_lists(proposal, account)
+        {
             return Err(OriginRefusal::NoNegotiationFact);
         }
         Ok(Some(CheckedVerification {
             nonce: c.nonce,
             verifier: c.account,
+            account,
             write,
         }))
     }
@@ -1405,6 +1412,8 @@ pub struct CheckedVerification {
     pub nonce: [u8; 16],
     /// The ticket's holder: the recorder, who becomes the verifier.
     pub verifier: WireAccount,
+    /// The person the ticket names, whose identity was checked.
+    pub account: WireAccount,
     /// The write.
     pub write: VerificationWrite,
 }

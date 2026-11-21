@@ -178,8 +178,6 @@ impl std::fmt::Debug for IdentityAttributes {
 /// record of lane L13b, row "Origin body").
 #[derive(Clone, PartialEq, Eq)]
 pub struct VerificationWrite {
-    /// The account whose identity was checked.
-    pub account: fstp_vault_proto::WireAccount,
     /// The method.
     pub method: fstp_vault_core::fact::VerificationMethod,
     /// The type of the checked document.
@@ -193,7 +191,6 @@ pub struct VerificationWrite {
 impl std::fmt::Debug for VerificationWrite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VerificationWrite")
-            .field("account", &self.account)
             .field("method", &self.method)
             .finish_non_exhaustive()
     }
@@ -289,7 +286,7 @@ pub fn decode_verification_write(bytes: &[u8]) -> Result<VerificationWrite, Vaul
     let v = parse_canonical(bytes, &fstp_vault_proto::json::limits()).map_err(bad)?;
     let o = json::object(
         &v,
-        &["account", "checks", "document_type", "identity", "method"],
+        &["checks", "document_type", "identity", "method"],
         VERIFICATION,
     )
     .map_err(bad)?;
@@ -316,7 +313,6 @@ pub fn decode_verification_write(bytes: &[u8]) -> Result<VerificationWrite, Vaul
         return Err(VaultError::Malformed(VERIFICATION));
     }
     Ok(VerificationWrite {
-        account: fstp_vault_proto::WireAccount(json::id(o, "account", VERIFICATION).map_err(bad)?),
         method: one(
             json::string(o, "method", VERIFICATION).map_err(bad)?,
             &VerificationMethod::ALL,
@@ -353,7 +349,6 @@ pub fn encode_verification_write(w: &VerificationWrite) -> Result<Vec<u8>, Vault
     .map_err(bad)?;
     let checks = Value::Array(w.checks.iter().map(|c| s(c.label())).collect());
     let v = json::obj(vec![
-        ("account", json::id_json(w.account.0)),
         ("checks", checks),
         ("document_type", s(w.document_type.label())),
         ("identity", identity),
@@ -366,9 +361,13 @@ pub fn encode_verification_write(w: &VerificationWrite) -> Result<Vec<u8>, Vault
 }
 
 /// A name as the tuple holds it: trimmed, each inner run of white space
-/// one U+0020. NFC and case folding are decided but not built (ADR-004
-/// record of lane L13b, "NFC and case folding").
-fn tuple_name(s: &str) -> String {
+/// one U+0020.
+///
+/// Seam: the NFC plus case folding lane replaces this one function, and
+/// changes [`TUPLE_LABEL`] with it (Daniel, 2026-11-21; ADR-004 record of
+/// lane L13b, "NFC and case folding" and "Normaliser seam").
+#[must_use]
+pub fn tuple_name(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
