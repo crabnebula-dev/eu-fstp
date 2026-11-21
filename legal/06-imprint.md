@@ -15,11 +15,11 @@ TODO(legal): which provider information the law requires on this page, for the S
 This platform is operated by:
 
 - **CrabNebula Ltd**
-- Registered address: TODO(legal): registered address.
+- Registered address: 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 - Company registration number: TODO(legal): number and register.
 - VAT number: TODO(legal): VAT number, if one applies.
 - Email: TODO(legal): general contact email.
-- Data Protection Officer (DPO): Daniel Thompson-Yvetot. DPO contact: TODO(legal): the dedicated DPO email and postal address.
+- Data Protection Officer (DPO): Daniel Thompson-Yvetot, privacy@crabnebula.dev, 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 - Point of contact for authorities: TODO(legal): DSA point of contact (G-14).
 - Point of contact for users: TODO(legal): DSA point of contact (G-14).
 - Security and vulnerability reports: TODO(legal): the published vulnerability handling contact (CRA, L-03).

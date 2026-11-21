@@ -10,15 +10,15 @@ Basis: Daniel's answer to Q1 (2026-11-21), as in `SPEC/05-compliance/gdpr.md`. O
 
 TODO(legal): check this outline against the content the GDPR requires of a processor contract. Nothing here quotes or cites the Regulation.
 
-CrabNebula Ltd also coordinates two grant programmes of its own (TODO(legal): the names of both programmes). For those it is the controller, and no processor agreement exists for that tenant (`SPEC/05-compliance/other.md`).
+CrabNebula Ltd also coordinates two grant programmes of its own (SuperSAFE, grant agreement 101342989, and ELFA, grant agreement 101298715). For those it is the controller, and no processor agreement exists for that tenant (`SPEC/05-compliance/other.md`).
 
 ---
 
 ## 1. Parties and roles
 
 - The Customer, as controller of the personal data of its programmes.
-- CrabNebula Ltd, TODO(legal): registered address and company number, as processor.
-- The Data Protection Officer of CrabNebula Ltd is Daniel Thompson-Yvetot. Contact: TODO(legal): the dedicated DPO email and postal address.
+- CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta, company number TODO(legal): company registration number and register, as processor.
+- The Data Protection Officer of CrabNebula Ltd is Daniel Thompson-Yvetot, privacy@crabnebula.dev, 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 
 ## 2. Subject and duration
 

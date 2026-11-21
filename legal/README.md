@@ -46,14 +46,14 @@ Daniel's instruction of 2026-11-21: "I want you to draft all the legal texts, bu
 **Q1. Who is controller, and who is processor? Answered by Daniel, 2026-11-21.**
 
 - On a funder tenant, the funder is the controller of its programme data, and CrabNebula Ltd is its processor, as in `SPEC/05-compliance/gdpr.md`.
-- CrabNebula Ltd also coordinates two grant programmes of its own. For those it is the controller, as tenant and coordinator. Names: TODO(legal): the names of both programmes.
+- CrabNebula Ltd also coordinates two grant programmes of its own. For those it is the controller, as tenant and coordinator. They are SuperSAFE, grant agreement 101342989, and ELFA, grant agreement 101298715 (supplied by Daniel, 2026-11-21).
 - CrabNebula Ltd is controller of control plane data (tenant sign-up, billing) and licence registration data.
 - The earlier alternative, CrabNebula Ltd as controller of platform accounts, is dropped.
 - The controller identity is a per-tenant value, `{{controller.legal_name}}`, `{{controller.address}}`, `{{controller.privacy_contact}}` and `{{controller.dpo_contact}}`. A funder tenant names itself. The tenant of the two CrabNebula programmes names CrabNebula Ltd. No setting holds this value yet (see Q4).
 - Where the value cannot be a placeholder, the drafts give one text per case. The Guide summary has a platform default for funders (02, A1) and a tenant override for CrabNebula's programmes (02, A2), through the existing `GuideNoticeOverride`.
 - Updated drafts: `01-privacy-notice.md` sections 1, 2 and 13; `02-...` sections A, C and D; `04-terms-of-use.md` section 1; `tenant-agreements/dpa.md`; `tenant-agreements/saas-terms.md` section 4.
 
-**Q2. Daniel's title. Answered by Daniel, 2026-11-21.** Daniel Thompson-Yvetot is the formally designated Data Protection Officer (DPO) of CrabNebula Ltd. The drafts name him as DPO with a dedicated DPO contact. The address stays TODO(legal).
+**Q2. Daniel's title. Answered by Daniel, 2026-11-21.** Daniel Thompson-Yvetot is the formally designated Data Protection Officer (DPO) of CrabNebula Ltd. The drafts name him as DPO with a dedicated DPO contact. DPO contact, supplied by Daniel on 2026-11-21: privacy@crabnebula.dev, 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 
 **Q3. The Guide's privacy statement address. Answered by Daniel, 2026-11-21.** `PLATFORM_PRIVACY_STATEMENT_URL` stays the address of the platform privacy notice. The Guide sentence is reworded to name the platform notice. The Funding & Tenders Portal Privacy Statement gets a separate sentence where Horizon Europe requires it: section 12 of the Horizon Europe Guide and the two R-NG-06 notices. Its address stays TODO(legal) (L-09).
 
@@ -166,13 +166,13 @@ The drafts do not claim these. Each is marked `[NOT BUILT]` where it appears.
 
 ## Everything Daniel must supply or verify
 
-Facts about CrabNebula Ltd:
+Facts about CrabNebula Ltd (items 1 and 5 supplied by Daniel on 2026-11-21; the others stay open):
 
-1. Registered address.
+1. Registered address. Supplied 2026-11-21: 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 2. Company number and register.
 3. VAT number, if one applies.
 4. General contact email.
-5. Dedicated DPO email and postal address (Daniel Thompson-Yvetot, DPO).
+5. Dedicated DPO email and postal address. Supplied 2026-11-21: privacy@crabnebula.dev, 27 Triq it-Tramuntana, Birgu BRG1160, Malta. The same email is the general privacy contact.
 6. Support email or URL.
 7. Accessibility contact email.
 8. Switching contact.
@@ -183,7 +183,7 @@ Facts about CrabNebula Ltd:
 
 Decisions:
 
-13. Q4 to Q8 above, and the names of the two programmes CrabNebula Ltd coordinates (Q1).
+13. Q4 to Q8 above. The names of the two programmes CrabNebula Ltd coordinates (Q1) were supplied on 2026-11-21.
 14. Versions and dates of each approved text.
 15. Fees, service levels, liability, term and termination of the SaaS terms.
 16. Sub-processor change notice and objection periods; breach notification time; audit terms in the DPA.

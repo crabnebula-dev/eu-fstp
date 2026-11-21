@@ -12,7 +12,7 @@ Wiring note: the agreement form renders each text as one approved catalogue mess
 
 ## 1. Parties
 
-- CrabNebula Ltd, TODO(legal): registered address and company number ("CrabNebula").
+- CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta, company number TODO(legal): company registration number and register ("CrabNebula").
 - The organisation named at sign-up, with the legal name, billing address and contracting signatory it gave ("the Customer").
 
 ## 2. The service

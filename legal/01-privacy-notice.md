@@ -33,12 +33,12 @@ Rendered example: "The controller of this programme is {{tenant.legal_name}}, {{
 
 CrabNebula Ltd coordinates two grant programmes of its own on this service:
 
-- TODO(legal): name of the first programme coordinated by CrabNebula Ltd.
-- TODO(legal): name of the second programme coordinated by CrabNebula Ltd.
+- SuperSAFE, grant agreement 101342989.
+- ELFA, grant agreement 101298715.
 
 For these programmes, CrabNebula Ltd is the controller. No other organisation processes your data as its processor on the platform side.
 
-Rendered example: "The controller of this programme is CrabNebula Ltd, TODO(legal): registered address."
+Rendered example: "The controller of this programme is CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta."
 
 ### Data CrabNebula Ltd controls for every tenant
 
@@ -47,16 +47,16 @@ CrabNebula Ltd is also the controller of the data an organisation gives when it 
 ### CrabNebula Ltd
 
 - Name: CrabNebula Ltd.
-- Registered address: TODO(legal): registered address of CrabNebula Ltd.
+- Registered address: 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 - Company number: TODO(legal): company registration number and register.
-- Email: TODO(legal): general contact email address.
+- Privacy contact: privacy@crabnebula.dev.
 
 ## 2. Data Protection Officer
 
 CrabNebula Ltd has designated Daniel Thompson-Yvetot as its Data Protection Officer (DPO).
 
-- DPO contact: TODO(legal): the dedicated DPO email address.
-- DPO postal address: TODO(legal): the DPO postal address.
+- DPO email: privacy@crabnebula.dev.
+- DPO postal address: 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 
 For a programme a funder runs, contact the funder first: {{controller.privacy_contact}}. The funder's own DPO, if it has one: {{controller.dpo_contact}}. You can also write to the DPO of CrabNebula Ltd, who passes your request to the funder.
 

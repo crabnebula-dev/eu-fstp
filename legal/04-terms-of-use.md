@@ -17,7 +17,7 @@ Drafting notes for Daniel (not part of the terms):
 
 ## 1. Who we are
 
-The platform is operated by CrabNebula Ltd, TODO(legal): registered address and company number. Each funding programme on the platform is run by an organisation, called the "programme operator" here. The programme operator decides on proposals, grants and payments. For most programmes, the programme operator is a funder, and CrabNebula Ltd only operates the platform. For two programmes, CrabNebula Ltd is itself the programme operator (TODO(legal): the names of both programmes).
+The platform is operated by CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta. Company number: TODO(legal): company registration number and register. Each funding programme on the platform is run by an organisation, called the "programme operator" here. The programme operator decides on proposals, grants and payments. For most programmes, the programme operator is a funder, and CrabNebula Ltd only operates the platform. For two programmes, CrabNebula Ltd is itself the programme operator (SuperSAFE, grant agreement 101342989, and ELFA, grant agreement 101298715).
 
 ## 2. Your account
 
