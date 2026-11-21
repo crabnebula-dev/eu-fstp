@@ -12,7 +12,7 @@ Wiring note: the agreement form renders each text as one approved catalogue mess
 
 ## 1. Parties
 
-- CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta, company number TODO(legal): company registration number and register ("CrabNebula").
+- CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta, Company Registration Number C 103590 ("CrabNebula").
 - The organisation named at sign-up, with the legal name, billing address and contracting signatory it gave ("the Customer").
 
 ## 2. The service
@@ -73,6 +73,8 @@ CrabNebula gives the Customer notice of a change before it applies. A changed te
 
 ## 13. Governing law and courts
 
-TODO(legal): the governing law and the competent courts.
+These terms are governed by Maltese law.
+
+TODO(legal): the competent courts.
 
 Version: TODO(legal): version and date.

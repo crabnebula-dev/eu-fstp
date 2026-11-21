@@ -17,7 +17,7 @@ Drafting notes for Daniel (not part of the terms):
 
 ## 1. Who we are
 
-The platform is operated by CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta. Company number: TODO(legal): company registration number and register. Each funding programme on the platform is run by an organisation, called the "programme operator" here. The programme operator decides on proposals, grants and payments. For most programmes, the programme operator is a funder, and CrabNebula Ltd only operates the platform. For two programmes, CrabNebula Ltd is itself the programme operator (SuperSAFE, grant agreement 101342989, and ELFA, grant agreement 101298715).
+The platform is operated by CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta. Company Registration Number: C 103590. Each funding programme on the platform is run by an organisation, called the "programme operator" here. The programme operator decides on proposals, grants and payments. For most programmes, the programme operator is a funder, and CrabNebula Ltd only operates the platform. For two programmes, CrabNebula Ltd is itself the programme operator (SuperSAFE, grant agreement 101342989, and ELFA, grant agreement 101298715).
 
 ## 2. Your account
 
@@ -77,6 +77,8 @@ We may change these terms. We show the new version on the platform before it app
 
 ## 12. Law and courts
 
-TODO(legal): the governing law and the competent courts for these terms.
+These terms are governed by Maltese law.
+
+TODO(legal): the competent courts, and whether applicants who are natural persons keep any right to rely on the law or courts of their own country.
 
 Version: TODO(legal): version and date.

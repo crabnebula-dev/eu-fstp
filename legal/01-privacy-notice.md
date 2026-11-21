@@ -48,7 +48,7 @@ CrabNebula Ltd is also the controller of the data an organisation gives when it 
 
 - Name: CrabNebula Ltd.
 - Registered address: 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
-- Company number: TODO(legal): company registration number and register.
+- Company Registration Number: C 103590.
 - Privacy contact: privacy@crabnebula.dev.
 
 ## 2. Data Protection Officer
@@ -205,7 +205,12 @@ TODO(legal): confirm the list of rights, which rights apply to each legal basis,
 
 ## 14. Complaints to a supervisory authority
 
-You can complain to a data protection supervisory authority. TODO(legal): name the lead supervisory authority for CrabNebula Ltd and its contact details, and state the right to complain where you live or work.
+You can complain to a data protection supervisory authority.
+
+- For the programmes CrabNebula Ltd runs itself (SuperSAFE and ELFA), and for data CrabNebula Ltd controls, the lead supervisory authority is the Information and Data Protection Commissioner (IDPC) of Malta. Contact: TODO(legal): the IDPC postal address and web address.
+- For a programme a funder runs, the funder's own lead supervisory authority applies: {{controller.supervisory_authority}}.
+
+TODO(legal): state the right to complain to the authority where you live or work, in wording Daniel approves.
 
 ## 15. Applicants under 18
 

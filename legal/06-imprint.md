@@ -16,8 +16,9 @@ This platform is operated by:
 
 - **CrabNebula Ltd**
 - Registered address: 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
-- Company registration number: TODO(legal): number and register.
-- VAT number: TODO(legal): VAT number, if one applies.
+- Company Registration Number: C 103590.
+- VAT number: MT29710913.
+- EU Transparency Register number: 3419964101239-38.
 - Email: TODO(legal): general contact email.
 - Data Protection Officer (DPO): Daniel Thompson-Yvetot, privacy@crabnebula.dev, 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 - Point of contact for authorities: TODO(legal): DSA point of contact (G-14).

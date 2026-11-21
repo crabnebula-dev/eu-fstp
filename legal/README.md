@@ -49,7 +49,7 @@ Daniel's instruction of 2026-11-21: "I want you to draft all the legal texts, bu
 - CrabNebula Ltd also coordinates two grant programmes of its own. For those it is the controller, as tenant and coordinator. They are SuperSAFE, grant agreement 101342989, and ELFA, grant agreement 101298715 (supplied by Daniel, 2026-11-21).
 - CrabNebula Ltd is controller of control plane data (tenant sign-up, billing) and licence registration data.
 - The earlier alternative, CrabNebula Ltd as controller of platform accounts, is dropped.
-- The controller identity is a per-tenant value, `{{controller.legal_name}}`, `{{controller.address}}`, `{{controller.privacy_contact}}` and `{{controller.dpo_contact}}`. A funder tenant names itself. The tenant of the two CrabNebula programmes names CrabNebula Ltd. No setting holds this value yet (see Q4).
+- The controller identity is a per-tenant value, `{{controller.legal_name}}`, `{{controller.address}}`, `{{controller.privacy_contact}}`, `{{controller.dpo_contact}}` and `{{controller.supervisory_authority}}`. A funder tenant names itself. The tenant of the two CrabNebula programmes names CrabNebula Ltd. No setting holds this value yet (see Q4).
 - Where the value cannot be a placeholder, the drafts give one text per case. The Guide summary has a platform default for funders (02, A1) and a tenant override for CrabNebula's programmes (02, A2), through the existing `GuideNoticeOverride`.
 - Updated drafts: `01-privacy-notice.md` sections 1, 2 and 13; `02-...` sections A, C and D; `04-terms-of-use.md` section 1; `tenant-agreements/dpa.md`; `tenant-agreements/saas-terms.md` section 4.
 
@@ -166,11 +166,11 @@ The drafts do not claim these. Each is marked `[NOT BUILT]` where it appears.
 
 ## Everything Daniel must supply or verify
 
-Facts about CrabNebula Ltd (items 1 and 5 supplied by Daniel on 2026-11-21; the others stay open):
+Facts about CrabNebula Ltd (items 1, 2, 3 and 5 supplied by Daniel on 2026-11-21; the others stay open):
 
 1. Registered address. Supplied 2026-11-21: 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
-2. Company number and register.
-3. VAT number, if one applies.
+2. Company number. Supplied 2026-11-21: Company Registration Number C 103590. The registry name is not stated and is not used.
+3. VAT number. Supplied 2026-11-21: MT29710913. Also supplied: EU Transparency Register number 3419964101239-38, now in the imprint.
 4. General contact email.
 5. Dedicated DPO email and postal address. Supplied 2026-11-21: privacy@crabnebula.dev, 27 Triq it-Tramuntana, Birgu BRG1160, Malta. The same email is the general privacy contact.
 6. Support email or URL.
@@ -193,7 +193,7 @@ Legal readings and citations:
 
 18. Legal basis for each purpose in section 5 of the privacy notice.
 19. The list of data subject rights to state, per basis, and the response time.
-20. The lead supervisory authority and its contact details.
+20. The lead supervisory authority. Supplied 2026-11-21: the Information and Data Protection Commissioner (IDPC) of Malta. Its postal and web contact details stay open.
 21. The information duty on automated decisions, and whether section 7 of the privacy notice meets it.
 22. L-01: the DPIA for AI assessment.
 23. L-02: date of birth, country and guardian data before negotiation; children's consent.
@@ -204,7 +204,7 @@ Legal readings and citations:
 28. L-09: the Portal Privacy Statement address; the address of the published platform privacy notice; the data passed to the granting authority; reporting fields.
 29. L-11: hardship contributions as eligible costs.
 30. L-12: the flow-down obligations and contract clauses against the signed grant agreement.
-31. L-14: governing law and external redress for applicants and recipients; complaint windows P-61 to P-64.
+31. L-14: governing law and external redress for applicants and grant recipients under the subgrant contract and the programme rules; complaint windows P-61 to P-64. Maltese law covers only the terms of use, the SaaS terms and the DPA.
 32. L-15: OVHcloud entity, terms, locations, backup retention and second provider.
 33. L-16 and L-17: DSA status of CrabNebula Ltd and of tenant portals.
 34. Calibration consent (D5): basis, content, and results kept after withdrawal.
@@ -224,4 +224,4 @@ Legal readings and citations:
 48. Whether an invitation email must name the sender organisation (I-27 forbids it today).
 49. Whether a contract decline can be undone.
 50. The scope of the content licence in the terms of use, against the open licence duty.
-51. The liability clause and consumer limits in the terms of use; governing law and courts.
+51. The liability clause and consumer limits in the terms of use. Governing law supplied 2026-11-21: Maltese law, for the terms of use, the SaaS terms and the DPA. The competent courts stay open.

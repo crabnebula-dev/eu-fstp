@@ -17,7 +17,7 @@ CrabNebula Ltd also coordinates two grant programmes of its own (SuperSAFE, gran
 ## 1. Parties and roles
 
 - The Customer, as controller of the personal data of its programmes.
-- CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta, company number TODO(legal): company registration number and register, as processor.
+- CrabNebula Ltd, 27 Triq it-Tramuntana, Birgu BRG1160, Malta, Company Registration Number C 103590, as processor.
 - The Data Protection Officer of CrabNebula Ltd is Daniel Thompson-Yvetot, privacy@crabnebula.dev, 27 Triq it-Tramuntana, Birgu BRG1160, Malta.
 
 ## 2. Subject and duration
@@ -74,6 +74,12 @@ CrabNebula staff hold no roles in the Customer's cell. Access to content needs t
 ## 10. Backups
 
 Backups are encrypted before they leave the cell, and stored with OVHcloud Object Storage in the European Union. Erasure destroys keys, so erased data cannot be read from backups. TODO(legal): L-15, whether this agreement must state the backup retention period and provider (ADR-005). The retention period is not decided yet (ADR-012).
+
+## 11. Governing law
+
+This agreement is governed by Maltese law.
+
+TODO(legal): the competent courts.
 
 ## Annex 1: Details of processing
 
