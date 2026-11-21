@@ -967,3 +967,205 @@ fn i78_agent_consent_records_only_its_step_up_use() {
     let back = crate::decode_cell_command(&crate::encode_cell_command(&c)).unwrap();
     assert_eq!(back, c);
 }
+
+/// The second admin of the admin invitation tests (ADR-026 record of lane
+/// L18). Synthetic.
+const ADMIN_2: AccountId = AccountId::from_raw(0xA2A2);
+/// The tenant admin invitation of those tests.
+const ADMIN_INVITATION: u128 = 0x1A2B;
+/// Its link token.
+const ADMIN_TOKEN: [u8; 32] = [0x2A; 32];
+
+/// The batches of a provisioned SaaS tenant whose first admin `ADMIN`
+/// invited `ADMIN_2` with the digest of `ADMIN_TOKEN`, as
+/// `tenant.invite_admin` appends it.
+fn admin_invited() -> Vec<(Timestamp, [u8; 16], Vec<CellRecord>)> {
+    vec![
+        (
+            NOW,
+            crate::system_command_id(*b"tenant-1"),
+            vec![provisioned(
+                ADMIN,
+                fstp_engine::CellKind::Saas,
+                Some(AGREED),
+            )],
+        ),
+        (
+            NOW,
+            [0x41; 16],
+            vec![CellRecord::Engine(fstp_engine::Record::Tenant(
+                fstp_engine::TenantEntry::Record(fstp_tenant::TenantRecord::AdminInvited {
+                    invitation: fstp_tenant::InvitationId::from_raw(ADMIN_INVITATION),
+                    invitee: ADMIN_2,
+                    token_digest: fstp_tenant::TokenDigest::from_bytes(token_digest(&Token(
+                        ADMIN_TOKEN,
+                    ))),
+                    by: ADMIN,
+                }),
+            ))],
+        ),
+    ]
+}
+
+/// Admits `IssueAdminInvitation` for the system task `Provisioning` on
+/// `s` and decides it.
+fn issue_admin(
+    s: &CellState,
+    admin_invitation: u128,
+    account: AccountId,
+    digest: [u8; 32],
+) -> Result<Vec<CellRecord>, String> {
+    let c = CellCommand::Tenant(TenantCommand::IssueAdminInvitation {
+        admin_invitation,
+        account,
+        token_digest: digest,
+    });
+    let id = crate::system_command_id(*b"adm-inv1");
+    let admitted = gate::admit_system(
+        s,
+        Action::Command(c.clone()),
+        SystemTask::Provisioning,
+        id,
+        NOW,
+    )
+    .map_err(|e| format!("{e:?}"))?;
+    crate::decide_system_with_inputs(
+        s,
+        &c,
+        &crate::SystemCtx {
+            task: SystemTask::Provisioning,
+            at: NOW.micros(),
+        },
+        id,
+        admitted.inputs(),
+        &Answers::new(),
+    )
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// SoD-07, J0, I-78 (ADR-026 record of lane L18): the accounts port issues
+/// the enrolment invitation of an open tenant admin invitation, and the
+/// invitee's enrolment with the mailed token takes it. The batch adds the
+/// account to the tenant part's admin set (`AdminAdded`) and to the cell's
+/// (`TenantAdminGranted`). A registration without UV is refused, as for
+/// the first admin.
+#[test]
+fn sod07_admin_invitation_enrolment_adds_the_second_admin() {
+    let digest = token_digest(&Token(ADMIN_TOKEN));
+    let mut batches = admin_invited();
+    let s = state_of(&batches);
+    let issued = issue_admin(&s, ADMIN_INVITATION, ADMIN_2, digest).unwrap();
+    assert!(matches!(
+        issued.as_slice(),
+        [CellRecord::Auth(AuthRecord::InvitationIssued { account, first_admin: false, split: false, .. })]
+            if *account == ADMIN_2
+    ));
+    batches.push((NOW, crate::system_command_id(*b"adm-inv1"), issued));
+    let s = state_of(&batches);
+    let proof = InvitationProof::Token(Token(ADMIN_TOKEN));
+    assert!(
+        enrol(&s, &proof, &Passkey::new(), false, NOW).is_err(),
+        "I-78: a second admin's passkey without UV"
+    );
+    let key = Passkey::new();
+    let batch = enrol(&s, &proof, &key, true, NOW).unwrap();
+    assert!(
+        batch.contains(&CellRecord::Engine(fstp_engine::Record::Tenant(
+            fstp_engine::TenantEntry::Record(fstp_tenant::TenantRecord::AdminAdded {
+                account: ADMIN_2,
+                invitation: fstp_tenant::InvitationId::from_raw(ADMIN_INVITATION),
+            })
+        )))
+    );
+    assert!(
+        batch.contains(&CellRecord::Tenant(TenantRecord::TenantAdminGranted {
+            account: ADMIN_2
+        }))
+    );
+    batches.push((NOW, [0x77; 16], batch));
+    let after = state_of(&batches);
+    assert!(after.tenant().is_admin(ADMIN_2), "the cell's admin set");
+    assert!(
+        after
+            .engine()
+            .tenant
+            .state()
+            .is_some_and(|t| t.is_admin(ADMIN_2) && t.is_admin(ADMIN)),
+        "SoD-07: the tenant part holds two admins"
+    );
+    assert!(after.auth().has_credential(ADMIN_2, &key.id));
+    // The invitation is taken: a second issue is refused.
+    assert!(issue_admin(&after, ADMIN_INVITATION, ADMIN_2, digest).is_err());
+}
+
+/// SoD-07 (ADR-026 record of lane L18): only the system task
+/// `Provisioning` issues `IssueAdminInvitation`, and only for an open
+/// tenant admin invitation of the same account and token digest. Every
+/// other form is refused, so no path enrols a tenant admin that
+/// `tenant.invite_admin` did not invite.
+#[test]
+fn sod07_admin_invitation_needs_an_open_tenant_invitation() {
+    let digest = token_digest(&Token(ADMIN_TOKEN));
+    let s = state_of(&admin_invited());
+    assert!(
+        issue_admin(&s, ADMIN_INVITATION + 1, ADMIN_2, digest).is_err(),
+        "unknown invitation"
+    );
+    assert!(
+        issue_admin(&s, ADMIN_INVITATION, AccountId::from_raw(0xB0B0), digest).is_err(),
+        "another account"
+    );
+    assert!(
+        issue_admin(
+            &s,
+            ADMIN_INVITATION,
+            ADMIN_2,
+            token_digest(&Token([0x2B; 32]))
+        )
+        .is_err(),
+        "another token"
+    );
+    let bare = state_of(&[issued_split()]);
+    assert!(
+        issue_admin(&bare, ADMIN_INVITATION, ADMIN_2, digest).is_err(),
+        "no tenant part"
+    );
+    let c = CellCommand::Tenant(TenantCommand::IssueAdminInvitation {
+        admin_invitation: ADMIN_INVITATION,
+        account: ADMIN_2,
+        token_digest: digest,
+    });
+    for task in [SystemTask::Timeline, SystemTask::ErasureRunner] {
+        assert_eq!(
+            gate::admit_system(&s, Action::Command(c.clone()), task, [3; 16], NOW).err(),
+            Some(Deny::NotPermitted),
+            "{task:?} issues it"
+        );
+    }
+    let session = SessionView {
+        id: [0x5E; 16],
+        account: ADMIN,
+        method: Method::Passkey,
+        started: NOW,
+        last_used: NOW,
+    };
+    let policy = gate::LoginPolicy {
+        stepup_freshness_us: crate::tenant::P71_DEFAULT_US,
+    };
+    assert_eq!(
+        gate::admit_command(
+            &s,
+            &session,
+            Action::Command(c.clone()),
+            [1; 16],
+            None,
+            NOW,
+            &policy
+        )
+        .err(),
+        Some(Deny::NotPermitted),
+        "a session issues it"
+    );
+    let back = crate::decode_cell_command(&crate::encode_cell_command(&c)).unwrap();
+    assert_eq!(back, c);
+}
