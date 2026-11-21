@@ -41,9 +41,14 @@ pub enum EdgeError {
     TunnelOpen(io::Error),
     /// Reading from or writing to either end failed.
     Io(io::Error),
-    /// The edge binary has no route feed or listener configuration yet.
-    /// It names the missing part.
+    /// A part of the edge is not built yet. It names the missing part.
     NotImplemented(&'static str),
+    /// The configuration, the route file or a credential was refused
+    /// (ADR-009 "Pilot edge configuration"). It names the rule, never a
+    /// byte of the input (R-NF-02).
+    Config(crate::config::ConfigError),
+    /// The runtime, the listener or the signal handler did not start.
+    Start(io::ErrorKind),
 }
 
 impl From<io::Error> for EdgeError {
@@ -195,6 +200,28 @@ where
     O: TunnelOpener,
 {
     let routed = read_hello(&mut client, table).await?;
+    forward(client, peer, routed, opener).await
+}
+
+/// The part of [`serve`] after the routing decision: opens the tunnel to
+/// `routed`'s endpoint, writes the tunnel header and every buffered byte
+/// unchanged, then copies both directions until both ends close. The
+/// pilot edge calls it under its connection lifetime (`crate::run`).
+///
+/// # Errors
+///
+/// Returns an [`EdgeError`] when the tunnel does not open or either end
+/// fails during the splice.
+pub async fn forward<C, O>(
+    mut client: C,
+    peer: SocketAddr,
+    routed: Routed,
+    opener: &O,
+) -> Result<Spliced, EdgeError>
+where
+    C: AsyncRead + AsyncWrite + Unpin,
+    O: TunnelOpener,
+{
     let mut tunnel = opener
         .open(&routed.endpoint)
         .await

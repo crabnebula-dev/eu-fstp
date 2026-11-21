@@ -218,8 +218,9 @@ jobs:
           # compiles them with the pinned Node.js and tsc first (ADR-003),
           # and no celltest part names the binary.
           # Lane L4: prod_mcp_e2e runs here too, after the step that builds
-          # the fstp-cell binary.
-          - { part: devstack, packages: -p fstp-celltest --test slice_devstack --test prod_mcp_e2e, timeout: 60 }
+          # the fstp-cell binary. Lane L9: i19_edge_binary_e2e too, which
+          # also needs the fstp-edge binary.
+          - { part: devstack, packages: -p fstp-celltest --test slice_devstack --test prod_mcp_e2e --test i19_edge_binary_e2e, timeout: 60 }
           - part: domain-testkit
             packages: -p fstp-domain-testkit
             timeout: 60
@@ -459,10 +460,11 @@ jobs:
       # Lane L4: prod_mcp_e2e runs the production fstp-cell binary from its
       # configuration file (docs/handoff/production-mcp-design.md section
       # 4.1). cargo test does not build the binary of another package, so
-      # the devstack part builds it first.
-      - name: Build the fstp-cell binary for prod_mcp_e2e
+      # the devstack part builds it first. Lane L9: i19_edge_binary_e2e runs
+      # the fstp-edge binary in front of it, so the step builds that too.
+      - name: Build the fstp-cell and fstp-edge binaries for prod_mcp_e2e and i19_edge_binary_e2e
         if: matrix.part == 'devstack'
-        run: cargo build --locked -p fstp-cell --bin fstp-cell
+        run: cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-edge --bin fstp-edge
       # Some tests are red on purpose: each waits on a seam that a named
       # lane closes, and ci/known-red.txt lists it with that seam and lane.
       # The run itself may fail; test-gate decides. It fails on any red

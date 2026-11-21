@@ -20,16 +20,22 @@
 //!   removal once every edge serves a table without the cell (design
 //!   section 3.7 step 3, ADR-004 "Decided by Daniel, 2026-11-15 (late)").
 //!   The table decoder is fuzzed (`route_table_decode`).
+//! - [`config`] and [`run`] start a pilot edge from a configuration file
+//!   and a static route file, with no control plane (ADR-009 "Pilot edge
+//!   configuration", D1). Both decoders are fuzzed (`edge_config_decode`,
+//!   `edge_routes_decode`).
 //!
 //! The edge holds no tenant TLS server and no tenant TLS key (boundary
 //! rule B5). It reaches `fstp-tls` for its tunnel client only, and a
 //! source scan refuses any server configuration in this crate (layering
 //! rule 5).
 
+pub mod config;
 mod feed;
 mod header;
 mod host;
 mod route;
+pub mod run;
 mod sni;
 mod splice;
 
@@ -52,19 +58,17 @@ pub use crate::sni::{
     HelloPart, HelloScan, MAX_HELLO_BUF, SniError, SniOutcome, parse_client_hello_sni,
 };
 pub use crate::splice::{
-    EdgeError, Routed, Spliced, TlsTunnelOpener, TunnelOpener, read_hello, serve,
+    EdgeError, Routed, Spliced, TlsTunnelOpener, TunnelOpener, forward, read_hello, serve,
 };
 
-/// Runs the edge until shutdown.
+/// Runs the pilot edge from the configuration file that
+/// [`run::CONFIG_ENV`] names until SIGTERM or SIGINT ([`run::run`], ADR-009
+/// "Pilot edge configuration"). It serves a static route table and never
+/// polls the route feed, so it is a pilot, not a release (D1).
 ///
 /// # Errors
 ///
-/// Returns [`EdgeError::NotImplemented`]: the listener configuration and
-/// the edge credentials are not designed yet, so the binary refuses to
-/// start rather than route on a made-up table. The route feed itself is
-/// [`RouteFeed`] (lane m3/erase-prod).
+/// As [`run::run`].
 pub fn run() -> Result<(), EdgeError> {
-    Err(EdgeError::NotImplemented(
-        "fstp_edge::run: listener configuration",
-    ))
+    run::run()
 }
