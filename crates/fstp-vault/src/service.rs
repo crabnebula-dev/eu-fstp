@@ -350,6 +350,14 @@ impl<R: Runtime> Journal for Persist<R> {
     }
 }
 
+fn origin_answer(r: crate::origin::Reply) -> Answer {
+    Answer {
+        status: r.status,
+        headers: r.headers,
+        body: r.body,
+    }
+}
+
 fn stopped_answer() -> fstp_http::Response {
     fstp_http::Response::new(fstp_http::StatusCode::SERVICE_UNAVAILABLE)
 }
@@ -396,6 +404,39 @@ impl<R: Runtime> Shared<R> {
             Err(VaultError::Conflict(_) | VaultError::Malformed(_)) => self.stop_serving(),
             Err(_) => {}
         }
+    }
+
+    /// A recorder's verification write of `POST /w` (ADR-004 record of
+    /// lane L13b), taken through the registrar under the vault's lock.
+    /// `None` for any other write, and for a vault with no registrar,
+    /// whose sans-IO path answers 503.
+    async fn verification(&self, bytes: &[u8], now: i64) -> Option<Answer> {
+        let mut held = self.held.lock().await;
+        let mut registrar = self.registrar.lock().await;
+        let registrar = registrar.as_mut()?;
+        match held.vault.check_verification_write(bytes, now) {
+            Ok(None) => return None,
+            Err(r) => return Some(origin_answer(crate::origin::refusal_reply(r))),
+            Ok(Some(_)) => {}
+        }
+        let Held { vault, store } = &mut *held;
+        let Some(store) = store.as_mut() else {
+            return Some(origin_answer(crate::origin::refusal_reply(
+                crate::OriginRefusal::Unavailable,
+            )));
+        };
+        let reply = match registrar
+            .take_verification_write(vault, store, bytes, now)
+            .await
+        {
+            Ok(_) => crate::origin::Reply {
+                status: 204,
+                headers: crate::origin::origin_headers("text/plain; charset=utf-8"),
+                body: Vec::new(),
+            },
+            Err(r) => crate::origin::refusal_reply(r),
+        };
+        Some(origin_answer(reply))
     }
 
     /// One probe of the watch, under the registrar's lock.
@@ -540,6 +581,12 @@ impl<R: Runtime> fstp_http::Handler for Origin<R> {
         let method = req.method.as_str().to_owned();
         let path = req.target.path().to_owned();
         let body = req.body;
+        if method == "POST"
+            && path == "/w"
+            && let Some(a) = self.0.verification(&body, now).await
+        {
+            return response(a);
+        }
         let a = self
             .0
             .run(now, |v| {

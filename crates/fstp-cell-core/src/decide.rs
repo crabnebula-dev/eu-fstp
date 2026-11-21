@@ -113,6 +113,10 @@ pub const WRITE_KIND_GUARDIAN_CONSENT: u16 = 4;
 /// overview NOTE 6).
 pub const WRITE_KIND_COUNTRY_STATED: u16 = 1;
 
+/// The write kind of a recorded verification (ADR-009 "Write kinds",
+/// ADR-008 "Manual identity checks").
+pub(crate) const WRITE_KIND_VERIFICATION_RECORDED: u16 = 6;
+
 /// The erasure causes of design section 5.6, as closed codes: retention
 /// expiry (P-41), an erasure request, a cell erasure, and a completed
 /// identity verification of a document (R-ID-03).
@@ -586,6 +590,9 @@ pub(crate) fn queries_with_inputs(
         CellCommand::Release(ReleaseCommand::IssueWriteTicket {
             kind: WRITE_KIND_GUARDIAN_CONSENT,
         }) => guardian_plan(s, actor, now).map(|p| p.queries()),
+        CellCommand::Release(ReleaseCommand::IssueVerificationTicket { proposal }) => {
+            verification_plan(s, *proposal, actor).map(|p| p.queries())
+        }
         CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { case }) => {
             approval_plan(s, *case, actor).map(|p| p.queries())
         }
@@ -2026,6 +2033,113 @@ fn country_ticket(
     })])
 }
 
+/// The vault questions of a verification ticket (ADR-004 record of lane
+/// L13b, row "Cell ticket"): whether the recorder is verified, and whether
+/// the recorder shares an identity with an account bound to the proposal.
+struct VerificationPlan {
+    actor: AccountId,
+    team: BTreeSet<AccountId>,
+    proposal: ProposalId,
+}
+
+impl VerificationPlan {
+    fn verified(&self) -> Query {
+        Query::IsVerified {
+            account: self.actor,
+        }
+    }
+
+    fn same_identity(&self) -> Query {
+        Query::SameIdentityAsAny {
+            subject: self.actor,
+            others: self.team.clone(),
+        }
+    }
+
+    fn queries(&self) -> Vec<Query> {
+        vec![self.verified(), self.same_identity()]
+    }
+}
+
+/// The checks of a verification ticket that need no vault answer (ADR-008
+/// "Manual identity checks", ADR-004 record of lane L13b, row "Cell
+/// ticket"): the recorder is a tenant admin with no Judging binding in
+/// any state and no binding on the proposal, and the proposal is in
+/// NEGOTIATION or later.
+fn verification_plan(
+    s: &CellState,
+    proposal: u128,
+    actor: AccountId,
+) -> Result<VerificationPlan, CellRefusal> {
+    let p = ProposalId::from_raw(proposal);
+    let core = &s.engine().core;
+    s.proposal(p).ok_or_else(unknown)?;
+    if !s.tenant().is_admin(actor) {
+        return Err(wrong_actor());
+    }
+    // The I-17 guard of ADR-008: a recorder with a Judging binding, active,
+    // scheduled or suspended, would read identity attributes early.
+    let judging = core
+        .roster()
+        .bindings()
+        .any(|(_, b)| b.account == actor && b.group() == Group::Judging);
+    let team: BTreeSet<AccountId> = core
+        .roster()
+        .bindings()
+        .filter(|(_, b)| b.proposal() == Some(p))
+        .map(|(_, b)| b.account)
+        .collect();
+    // ADR-008 rule 1: never a person of the recorder's own proposal.
+    if judging || team.contains(&actor) {
+        return Err(wrong_actor());
+    }
+    let state = fstp_domain::view::proposal_state(core, p).ok_or_else(unknown)?;
+    if !RELEASE_STATES.contains(&state) {
+        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+    }
+    Ok(VerificationPlan {
+        actor,
+        team,
+        proposal: p,
+    })
+}
+
+/// A `verification_recorded` write ticket (ADR-004 record of lane L13b,
+/// row "Cell ticket"), once the vault answered that the recorder is
+/// verified (ADR-008 interim) and shares no identity with the proposal's
+/// accounts (rule 2).
+fn verification_ticket(
+    s: &CellState,
+    proposal: u128,
+    actor: AccountId,
+    now: Timestamp,
+    command: Option<[u8; 16]>,
+    answers: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let plan = verification_plan(s, proposal, actor)?;
+    let verified = answers.get(&plan.verified()).ok_or_else(answer_missing)?;
+    let same = answers
+        .get(&plan.same_identity())
+        .ok_or_else(answer_missing)?;
+    if !verified.holds || same.holds {
+        return Err(wrong_actor());
+    }
+    let kind = WRITE_KIND_VERIFICATION_RECORDED;
+    let mut payload = Vec::with_capacity(18);
+    payload.extend_from_slice(&kind.to_be_bytes());
+    payload.extend_from_slice(&plan.proposal.raw().to_be_bytes());
+    let id = derive_id(b"write", command, actor, now.micros(), &payload);
+    if s.ticket_issued(id) {
+        return Err(reused());
+    }
+    Ok(vec![CellRecord::Release(ReleaseRecord::TicketIssued {
+        id,
+        kind,
+        proposal,
+        holder: actor,
+    })])
+}
+
 fn decide_release(
     s: &CellState,
     cmd: &ReleaseCommand,
@@ -2114,6 +2228,9 @@ fn decide_release(
         },
         ReleaseCommand::IssueCountryTicket { proposal } => {
             country_ticket(s, *proposal, actor, now, command)
+        }
+        ReleaseCommand::IssueVerificationTicket { proposal } => {
+            verification_ticket(s, *proposal, actor, now, command, answers)
         }
         // No relationship form is defined yet, so every relationship is
         // refused (fail closed).

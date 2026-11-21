@@ -38,7 +38,7 @@ use fstp_vault_proto::{
     encode_response, scope_programme,
 };
 
-use crate::codec::decode_origin_write;
+use crate::codec::{VerificationWrite, decode_origin_write, decode_verification_write};
 use crate::{MATCH_KEY_LEN, VaultError};
 
 /// Why the vault origin refused a request.
@@ -126,13 +126,15 @@ pub fn is_identity_fact(f: &Fact) -> bool {
 pub const fn body_limit(kind: WriteKind) -> usize {
     match kind {
         WriteKind::ProximityListDeclared | WriteKind::ReviewerDeclaration => 64 << 10,
+        // ADR-004 record of lane L13b: a name may take four bytes per
+        // character.
+        WriteKind::VerificationRecorded => 4 << 10,
         WriteKind::HardshipEvidence => 32 << 10,
         WriteKind::DocumentUpload
         | WriteKind::CountryStated
         | WriteKind::AffiliationDeclared
         | WriteKind::AdultAttestation
         | WriteKind::GuardianConsent
-        | WriteKind::VerificationRecorded
         | WriteKind::PartnerStaffDeclared
         | WriteKind::BankDetails
         | WriteKind::BankVerification
@@ -258,7 +260,7 @@ pub fn origin_headers(content_type: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-fn refusal_reply(r: OriginRefusal) -> Reply {
+pub(crate) fn refusal_reply(r: OriginRefusal) -> Reply {
     Reply {
         status: r.status(),
         headers: origin_headers("text/plain; charset=utf-8"),
@@ -876,6 +878,56 @@ impl Vault {
         Ok(c)
     }
 
+    /// The checks of a recorder's verification write on `POST /w` that
+    /// need no keystore (ADR-004 record of lane L13b, row "Origin
+    /// checks"): the frame, the ticket checks with the signature first,
+    /// then the kind, the body limit, the body, the proposal the ticket
+    /// names, rule 1, and the vault's own negotiation fact of that
+    /// proposal, which must list the person. `None` for a verified ticket
+    /// of another kind, which the ordinary write path takes.
+    ///
+    /// # Errors
+    ///
+    /// The first [`OriginRefusal`]. Nothing is journaled and the ticket
+    /// stays unused.
+    pub fn check_verification_write(
+        &self,
+        bytes: &[u8],
+        now: i64,
+    ) -> Result<Option<CheckedVerification>, OriginRefusal> {
+        if bytes.len() > crate::codec::MAX_ORIGIN_WRITE_LEN {
+            return Err(OriginRefusal::TooLarge);
+        }
+        let w = decode_origin_write(bytes).map_err(|_| OriginRefusal::Malformed)?;
+        let c = self.checked(&w.ticket, Route::Write, now)?;
+        if c.kind != TicketKind::Write(WriteKind::VerificationRecorded) {
+            return Ok(None);
+        }
+        if w.body.len() > body_limit(WriteKind::VerificationRecorded) {
+            return Err(OriginRefusal::TooLarge);
+        }
+        let write = decode_verification_write(&w.body).map_err(|_| OriginRefusal::Malformed)?;
+        let proposal = c.proposal.ok_or(OriginRefusal::WrongKind)?;
+        // ADR-008 rule 1: never the recorder's own account.
+        if write.account == c.account {
+            return Err(OriginRefusal::WrongKind);
+        }
+        if !self.state.negotiation_lists(proposal, write.account) {
+            return Err(OriginRefusal::NoNegotiationFact);
+        }
+        Ok(Some(CheckedVerification {
+            nonce: c.nonce,
+            verifier: c.account,
+            write,
+        }))
+    }
+
+    /// Marks the ticket `nonce` used at `now`, once the verification it
+    /// carried is recorded (ADR-004 record of lane L13b, row "Ticket
+    /// use").
+    pub fn use_verification_ticket(&mut self, nonce: [u8; 16], now: i64) {
+        self.use_ticket(nonce, now);
+    }
     /// `POST /w` with the request `bytes` at `now`.
     ///
     /// # Errors
@@ -894,6 +946,14 @@ impl Vault {
         };
         if w.body.len() > body_limit(kind) {
             return Err(OriginRefusal::TooLarge);
+        }
+        // ADR-004 record of lane L13b, row "Sans-IO path": a recorder's
+        // verification needs the keystore, which only the serving vault's
+        // registrar holds. A body of any other form is still malformed
+        // (R-ID-02).
+        if kind == WriteKind::VerificationRecorded {
+            decode_verification_write(&w.body).map_err(|_| OriginRefusal::Malformed)?;
+            return Err(OriginRefusal::Unavailable);
         }
         let fact = fact_for(kind, &w.body, now, c.nonce, self.state.latest())
             .ok_or(OriginRefusal::Malformed)?;
@@ -1335,4 +1395,16 @@ fn escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// A recorder's verification write that passed the checks of
+/// [`Vault::check_verification_write`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckedVerification {
+    /// The ticket id, used once the verification is recorded.
+    pub nonce: [u8; 16],
+    /// The ticket's holder: the recorder, who becomes the verifier.
+    pub verifier: WireAccount,
+    /// The write.
+    pub write: VerificationWrite,
 }

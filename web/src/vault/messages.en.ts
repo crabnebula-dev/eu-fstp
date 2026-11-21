@@ -64,6 +64,30 @@ const MESSAGES = {
   'hardship.verify.evidence.missing': 'Enter the evidence reference from the request.',
   'hardship.verify.confirm': 'I checked this evidence and it supports the hardship request.',
   'hardship.verify.confirm.missing': 'Select the box to confirm.',
+
+  'verify.legend': 'Record an identity check',
+  'verify.intro':
+    'Enter what you checked on the identity document. Do not enter the document number. The application does not see these details.',
+  'verify.account': 'Account id of the person checked',
+  'verify.account.missing': 'Enter the account id shown with the request.',
+  'verify.method': 'How the identity was checked',
+  'verify.method.manual': 'Manual check of an identity document',
+  'verify.document': 'Document checked',
+  'verify.document.identity_card': 'National identity card',
+  'verify.document.passport': 'Passport',
+  'verify.document.residence_permit': 'Residence permit',
+  'verify.check.data_match': 'The details on the document match the account.',
+  'verify.check.document_authentic': 'The document shows no sign of tampering.',
+  'verify.check.document_valid': 'The document is within its validity dates.',
+  'verify.check.photo_match': 'The person matches the photo on the document.',
+  'verify.check.missing': 'Select at least one check you made.',
+  'verify.family': 'Family names, as printed',
+  'verify.given': 'Given names, as printed',
+  'verify.name.missing': 'Enter the names as printed, up to 200 characters.',
+  'verify.birth': 'Date of birth',
+  'verify.birth.missing': 'Enter the date of birth, on or after 1 January 1900.',
+  'verify.state': 'Issuing state, three-letter code',
+  'verify.state.missing': 'Enter the three-letter code of the issuing state, such as DEU.',
 } as const;
 
 /** The English catalogue. */

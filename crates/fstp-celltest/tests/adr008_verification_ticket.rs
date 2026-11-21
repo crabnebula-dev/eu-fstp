@@ -30,19 +30,17 @@ const KIND_6: u16 = 6;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Recorder {
     Verified,
-    Unverified,
     SameIdentityAsLead,
 }
 
-const RECORDERS: [Recorder; 3] = [
-    Recorder::Verified,
-    Recorder::Unverified,
-    Recorder::SameIdentityAsLead,
-];
+const RECORDERS: [Recorder; 2] = [Recorder::Verified, Recorder::SameIdentityAsLead];
 
-/// The other actors: the lead, a reviewer, an IRC member and a staff
-/// programme manager. None is a tenant admin.
-const OTHERS: [AccountId; 4] = [L1, R1, IRC, STAFF_PM];
+/// A second tenant admin whom the vault never verified.
+const UNVERIFIED_ADMIN: AccountId = AccountId::from_raw(777);
+
+/// The other actors: the lead, a reviewer, an IRC member, a staff
+/// programme manager, and a tenant admin the vault never verified.
+const OTHERS: [AccountId; 5] = [L1, R1, IRC, STAFF_PM, UNVERIFIED_ADMIN];
 
 fn truth(r: Recorder) -> fstp_domain_testkit::vault::GroundTruth {
     let mut t = paths::truth(true);
@@ -51,7 +49,6 @@ fn truth(r: Recorder) -> fstp_domain_testkit::vault::GroundTruth {
             t.set_identity(ADMIN, tag(ADMIN));
             t.verify(ADMIN);
         }
-        Recorder::Unverified => {}
         Recorder::SameIdentityAsLead => {
             t.set_identity(ADMIN, tag(L1));
             t.verify(ADMIN);
@@ -63,9 +60,19 @@ fn truth(r: Recorder) -> fstp_domain_testkit::vault::GroundTruth {
 /// Whether production issues the verification ticket of PR1 to `actor`,
 /// with PR1 in `state` and the tenant admin standing as `r`.
 fn issues(state: StateTag, r: Recorder, actor: AccountId) -> Result<bool, String> {
+    issues_with(state, truth(r), actor)
+}
+
+fn issues_with(
+    state: StateTag,
+    t: fstp_domain_testkit::vault::GroundTruth,
+    actor: AccountId,
+) -> Result<bool, String> {
     let path = paths::to(state)?;
-    let mut cell = ProdCell::genesis(truth(r)).map_err(|e| e.to_string())?;
+    let mut cell = ProdCell::genesis(t).map_err(|e| e.to_string())?;
     cell.exec_tenant_admin_grant(ADMIN, ADMIN, T0)
+        .map_err(|e| e.to_string())?;
+    cell.exec_tenant_admin_grant(ADMIN, UNVERIFIED_ADMIN, T0)
         .map_err(|e| e.to_string())?;
     for p in &path {
         cell.exec_step(&p.step, p.at).map_err(|e| e.to_string())?;
@@ -123,5 +130,23 @@ fn adr008_verification_ticket_issued_in_negotiation() {
     assert_eq!(
         issues(StateTag::Negotiation, Recorder::SameIdentityAsLead, ADMIN),
         Ok(false)
+    );
+}
+
+/// ADR-008 interim, ADR-004 record of lane L13b: the second tenant admin
+/// is refused only for want of a verification. Once the vault verified
+/// them, the same request is issued.
+#[test]
+fn adr008_second_admin_issued_once_verified() {
+    assert_eq!(
+        issues(StateTag::Negotiation, Recorder::Verified, UNVERIFIED_ADMIN),
+        Ok(false)
+    );
+    let mut t = truth(Recorder::Verified);
+    t.set_identity(UNVERIFIED_ADMIN, tag(UNVERIFIED_ADMIN));
+    t.verify(UNVERIFIED_ADMIN);
+    assert_eq!(
+        issues_with(StateTag::Negotiation, t, UNVERIFIED_ADMIN),
+        Ok(true)
     );
 }

@@ -1381,7 +1381,9 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         let own = verifier == account
             || recorder.is_some_and(|r| Some(r) == resolved || Some(r) == subject);
         if own {
-            return Err(bad("a verification by the recorder's own identity"));
+            return Err(VaultError::Conflict(
+                "a verification by the recorder's own identity",
+            ));
         }
         let person = self
             .register_account(vault, journal, account, tuple, now)
@@ -1429,6 +1431,68 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         let old = std::mem::replace(&mut self.client, client);
         let _ = old.close().await;
         Ok(())
+    }
+}
+
+impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
+    /// Takes a recorder's verification write of `POST /w` on the vault
+    /// origin (ADR-004 record of lane L13b, rows "Origin checks" and
+    /// "Ticket use"): the checks of [`Vault::check_verification_write`],
+    /// then [`Runner::record_verification`] with the vault's time and the
+    /// ticket's holder as verifier, then the ticket's use. The attributes
+    /// reach no row but the sealed tuple of the identity.
+    ///
+    /// # Errors
+    ///
+    /// The checks' [`crate::OriginRefusal`]. A ticket of another kind, a
+    /// recorder of the person's identity, or a person bound to another
+    /// identity is [`crate::OriginRefusal::WrongKind`]. A failed write is
+    /// [`crate::OriginRefusal::Unavailable`], and the ticket stays unused,
+    /// so the same link completes it.
+    pub async fn take_verification_write<J: Journal>(
+        &mut self,
+        vault: &mut Vault,
+        journal: &mut J,
+        bytes: &[u8],
+        now: i64,
+    ) -> Result<Person, crate::OriginRefusal> {
+        use crate::OriginRefusal;
+        let c = vault
+            .check_verification_write(bytes, now)?
+            .ok_or(OriginRefusal::WrongKind)?;
+        let record = fstp_vault_core::VerificationRecord {
+            method: c.write.method,
+            document_type: c.write.document_type,
+            checks: c.write.checks.clone(),
+            at: now,
+            verifier: c.verifier,
+        };
+        let tuple = crate::codec::identity_tuple(&c.write.identity);
+        let done = self
+            .record_verification(
+                vault,
+                journal,
+                c.verifier,
+                c.write.account,
+                record,
+                &tuple,
+                now,
+            )
+            .await;
+        zero(tuple);
+        let person = done.map_err(|e| match e {
+            VaultError::Unavailable(_) => OriginRefusal::Unavailable,
+            _ => OriginRefusal::WrongKind,
+        })?;
+        let mut next = vault.clone();
+        next.use_verification_ticket(c.nonce, now);
+        let entries = next.take_journal();
+        journal
+            .commit(&entries, now)
+            .await
+            .map_err(|_| OriginRefusal::Unavailable)?;
+        *vault = next;
+        Ok(person)
     }
 }
 

@@ -1481,6 +1481,10 @@ fn release_command_json(c: &ReleaseCommand) -> Value {
             "IssueCountryTicket",
             vec![("proposal", dec_u128(*proposal))],
         ),
+        ReleaseCommand::IssueVerificationTicket { proposal } => tagged(
+            "IssueVerificationTicket",
+            vec![("proposal", dec_u128(*proposal))],
+        ),
         ReleaseCommand::RecordRelationship { relationship } => tagged(
             "RecordRelationship",
             vec![("relationship", opaque_json(relationship))],
@@ -1512,6 +1516,12 @@ fn release_command(v: &Value) -> Result<ReleaseCommand, FromJsonError> {
         "IssueCountryTicket" => {
             fields(o, &["proposal"])?;
             Ok(ReleaseCommand::IssueCountryTicket {
+                proposal: u128_from(o, "proposal")?,
+            })
+        }
+        "IssueVerificationTicket" => {
+            fields(o, &["proposal"])?;
+            Ok(ReleaseCommand::IssueVerificationTicket {
                 proposal: u128_from(o, "proposal")?,
             })
         }

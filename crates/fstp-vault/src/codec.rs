@@ -150,3 +150,243 @@ pub fn stored_fact(bytes: &[u8]) -> Result<Fact, VaultError> {
     let b = decode_fact_body(bytes)?;
     decode_fact(b.kind, &b.fields).map_err(|_| VaultError::Malformed(STORED))
 }
+
+/// The four identity fields a recorder enters with a verification (ADR-004
+/// record of lane L13b, Q17). They reach the vault only, and leave it only
+/// as the sealed tuple of the identity. No document number is among them
+/// (R-ID-02).
+#[derive(Clone, PartialEq, Eq)]
+pub struct IdentityAttributes {
+    /// The family names, as printed.
+    pub family_names: String,
+    /// The given names, as printed.
+    pub given_names: String,
+    /// The date of birth, `YYYY-MM-DD`.
+    pub birth_date: String,
+    /// The ISO 3166-1 alpha-3 code of the state that issued the evidence.
+    pub issuing_state: String,
+}
+
+impl std::fmt::Debug for IdentityAttributes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // R-NF-02: identity attributes never reach a debug line.
+        f.debug_struct("IdentityAttributes").finish_non_exhaustive()
+    }
+}
+
+/// A recorder's verification write on the vault origin (kind 6, ADR-004
+/// record of lane L13b, row "Origin body").
+#[derive(Clone, PartialEq, Eq)]
+pub struct VerificationWrite {
+    /// The account whose identity was checked.
+    pub account: fstp_vault_proto::WireAccount,
+    /// The method.
+    pub method: fstp_vault_core::fact::VerificationMethod,
+    /// The type of the checked document.
+    pub document_type: fstp_vault_core::fact::DocumentType,
+    /// The checks performed, at least one.
+    pub checks: std::collections::BTreeSet<fstp_vault_core::fact::Check>,
+    /// The identity fields.
+    pub identity: IdentityAttributes,
+}
+
+impl std::fmt::Debug for VerificationWrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerificationWrite")
+            .field("account", &self.account)
+            .field("method", &self.method)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The longest identity name field, in characters. Interim, no P- id.
+pub const MAX_NAME_CHARS: usize = 200;
+
+/// The label that starts every identity tuple (ADR-004 record of lane
+/// L13b, row "Tuple").
+pub const TUPLE_LABEL: &[u8] = b"fstp-identity-tuple-v1";
+
+const VERIFICATION: &str = "verification write";
+
+fn name_ok(s: &str) -> bool {
+    let n = s.chars().count();
+    (1..=MAX_NAME_CHARS).contains(&n) && !s.trim().is_empty() && !s.chars().any(char::is_control)
+}
+
+/// Whether `s` is a calendar date `YYYY-MM-DD` from 1900-01-01 on.
+fn date_ok(s: &str) -> bool {
+    let b = s.as_bytes();
+    let digits = |r: std::ops::Range<usize>| -> Option<u32> {
+        let part = b.get(r)?;
+        if !part.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        std::str::from_utf8(part).ok()?.parse().ok()
+    };
+    if b.len() != 10 || b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
+        return false;
+    }
+    let (Some(y), Some(m), Some(d)) = (digits(0..4), digits(5..7), digits(8..10)) else {
+        return false;
+    };
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    y >= 1900 && (1..=days).contains(&d)
+}
+
+fn state_ok(s: &str) -> bool {
+    s.len() == 3 && s.bytes().all(|c| c.is_ascii_uppercase())
+}
+
+fn labels<T: Copy + Ord>(
+    v: &Value,
+    all: &[T],
+    label: fn(T) -> &'static str,
+) -> Result<std::collections::BTreeSet<T>, VaultError> {
+    let bad = VaultError::Malformed(VERIFICATION);
+    let a = v.as_array().ok_or(bad)?;
+    let mut out = std::collections::BTreeSet::new();
+    for item in a.iter() {
+        let s = item.as_str().ok_or(bad)?;
+        let x = all.iter().copied().find(|x| label(*x) == s).ok_or(bad)?;
+        if out.last().is_some_and(|l| *l >= x) {
+            return Err(bad);
+        }
+        out.insert(x);
+    }
+    if out.is_empty() {
+        return Err(bad);
+    }
+    Ok(out)
+}
+
+fn one<T: Copy>(s: &str, all: &[T], label: fn(T) -> &'static str) -> Result<T, VaultError> {
+    all.iter()
+        .copied()
+        .find(|x| label(*x) == s)
+        .ok_or(VaultError::Malformed(VERIFICATION))
+}
+
+/// Decodes the body of a recorder's verification write. Fuzzed
+/// (`verification_write_decode`). It takes exactly the canonical members
+/// of ADR-004 record of lane L13b, row "Origin body".
+///
+/// # Errors
+///
+/// [`VaultError::Malformed`] for any other spelling, member or label, a
+/// name outside 1 to [`MAX_NAME_CHARS`] characters or with a control
+/// character, a date that is not a calendar date from 1900, or a state
+/// that is not three capital letters. The error never quotes the body.
+pub fn decode_verification_write(bytes: &[u8]) -> Result<VerificationWrite, VaultError> {
+    use fstp_vault_core::fact::{Check, DocumentType, VerificationMethod};
+    let bad = |_: ProtoError| VaultError::Malformed(VERIFICATION);
+    let v = parse_canonical(bytes, &fstp_vault_proto::json::limits()).map_err(bad)?;
+    let o = json::object(
+        &v,
+        &["account", "checks", "document_type", "identity", "method"],
+        VERIFICATION,
+    )
+    .map_err(bad)?;
+    let i = json::object(
+        json::member(o, "identity", VERIFICATION).map_err(bad)?,
+        &["birth_date", "family_names", "given_names", "issuing_state"],
+        VERIFICATION,
+    )
+    .map_err(bad)?;
+    let text = |name: &str| -> Result<String, VaultError> {
+        Ok(json::string(i, name, VERIFICATION).map_err(bad)?.to_owned())
+    };
+    let identity = IdentityAttributes {
+        family_names: text("family_names")?,
+        given_names: text("given_names")?,
+        birth_date: text("birth_date")?,
+        issuing_state: text("issuing_state")?,
+    };
+    let fields_ok = name_ok(&identity.family_names)
+        && name_ok(&identity.given_names)
+        && date_ok(&identity.birth_date)
+        && state_ok(&identity.issuing_state);
+    if !fields_ok {
+        return Err(VaultError::Malformed(VERIFICATION));
+    }
+    Ok(VerificationWrite {
+        account: fstp_vault_proto::WireAccount(json::id(o, "account", VERIFICATION).map_err(bad)?),
+        method: one(
+            json::string(o, "method", VERIFICATION).map_err(bad)?,
+            &VerificationMethod::ALL,
+            VerificationMethod::label,
+        )?,
+        document_type: one(
+            json::string(o, "document_type", VERIFICATION).map_err(bad)?,
+            &DocumentType::ALL,
+            DocumentType::label,
+        )?,
+        checks: labels(
+            json::member(o, "checks", VERIFICATION).map_err(bad)?,
+            &Check::ALL,
+            Check::label,
+        )?,
+        identity,
+    })
+}
+
+/// The canonical body of `w`, as the write page sends it.
+///
+/// # Errors
+///
+/// [`VaultError::Malformed`] when a field is outside its form.
+pub fn encode_verification_write(w: &VerificationWrite) -> Result<Vec<u8>, VaultError> {
+    let bad = |_: ProtoError| VaultError::Malformed(VERIFICATION);
+    let s = |x: &str| Value::String(x.to_owned());
+    let identity = json::obj(vec![
+        ("birth_date", s(&w.identity.birth_date)),
+        ("family_names", s(&w.identity.family_names)),
+        ("given_names", s(&w.identity.given_names)),
+        ("issuing_state", s(&w.identity.issuing_state)),
+    ])
+    .map_err(bad)?;
+    let checks = Value::Array(w.checks.iter().map(|c| s(c.label())).collect());
+    let v = json::obj(vec![
+        ("account", json::id_json(w.account.0)),
+        ("checks", checks),
+        ("document_type", s(w.document_type.label())),
+        ("identity", identity),
+        ("method", s(w.method.label())),
+    ])
+    .map_err(bad)?;
+    let bytes = json::to_canonical(&v).map_err(bad)?;
+    decode_verification_write(&bytes)?;
+    Ok(bytes)
+}
+
+/// A name as the tuple holds it: trimmed, each inner run of white space
+/// one U+0020. NFC and case folding are decided but not built (ADR-004
+/// record of lane L13b, "NFC and case folding").
+fn tuple_name(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The identity tuple of `a` (ADR-004 record of lane L13b, row "Tuple"):
+/// [`TUPLE_LABEL`], then each field as `be16(len) || UTF-8`, in the order
+/// family names, given names, date of birth, issuing state.
+#[must_use]
+pub fn identity_tuple(a: &IdentityAttributes) -> Vec<u8> {
+    let mut out = TUPLE_LABEL.to_vec();
+    for field in [
+        tuple_name(&a.family_names),
+        tuple_name(&a.given_names),
+        a.birth_date.clone(),
+        a.issuing_state.clone(),
+    ] {
+        let len = u16::try_from(field.len()).unwrap_or(u16::MAX);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(field.as_bytes());
+    }
+    out
+}

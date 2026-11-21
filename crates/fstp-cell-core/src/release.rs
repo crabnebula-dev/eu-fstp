@@ -34,6 +34,15 @@ pub enum ReleaseCommand {
         /// The proposal the lead states the country for.
         proposal: u128,
     },
+    /// Issue a `verification_recorded` write ticket for a proposal to a
+    /// recorder (ADR-008 "Manual identity checks", ADR-004 record of lane
+    /// L13b, row "Cell ticket"). The recorder enters the outcome and the
+    /// identity attributes on the vault origin under it, so the cell never
+    /// receives them (I-17).
+    IssueVerificationTicket {
+        /// The proposal whose person the recorder checks.
+        proposal: u128,
+    },
     /// Record a relationship (system).
     RecordRelationship {
         /// The relationship, canonical.

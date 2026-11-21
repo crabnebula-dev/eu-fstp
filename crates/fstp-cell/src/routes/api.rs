@@ -464,31 +464,34 @@ pub(crate) async fn vault_tickets<B: Backend>(
     }
 }
 
-/// `POST /api/v1/verifications` (ADR-008 "Manual identity checks"):
-/// `{command_id}`. It asks for a `VerificationRecorded` write ticket. The
-/// engine decides who may have one: a tenant admin with a verified
-/// identity, inside the release window, and never for their own account.
-/// Until the ticket can be signed, the route stops after the gate
-/// ([`issue`]), so the engine refuses or commits nothing yet.
+/// `POST /api/v1/verifications` (ADR-008 "Manual identity checks", ADR-004
+/// record of lane L13b): `{command_id, proposal}`. It asks for a
+/// `VerificationRecorded` write ticket for the proposal's person. The cell
+/// decides who may have one (`IssueVerificationTicket`): a verified tenant
+/// admin with no Judging binding and no binding on the proposal, sharing
+/// no identity with its accounts, for a proposal in NEGOTIATION or later.
+/// The recorder enters the outcome and the identity attributes on the
+/// vault origin, so the cell never receives them (I-17).
 pub(crate) async fn verifications<B: Backend>(
     ctx: &Ctx<B>,
     req: &Request,
     caller: &Caller,
 ) -> Reply {
-    let id = match decode_verification(&req.body) {
-        Ok(id) => id,
+    let (id, proposal) = match decode_verification(&req.body) {
+        Ok(x) => x,
         Err(e) => return bad_body(e),
     };
-    let command = CellCommand::Release(ReleaseCommand::IssueWriteTicket {
-        kind: WriteKind::VerificationRecorded.code(),
-    });
+    let command = CellCommand::Release(ReleaseCommand::IssueVerificationTicket { proposal });
     issue(ctx, caller, command, id, None).await
 }
 
-fn decode_verification(bytes: &[u8]) -> Result<[u8; 16], BodyRefusal> {
+fn decode_verification(bytes: &[u8]) -> Result<([u8; 16], u128), BodyRefusal> {
     let o = body::object(bytes, AUTH_BODY_LIMIT)?;
-    body::members(&o, &["command_id"], &[])?;
-    body::hex_member::<16>(&o, "command_id")
+    body::members(&o, &["command_id", "proposal"], &[])?;
+    let id = body::hex_member::<16>(&o, "command_id")?;
+    let proposal =
+        canonical_u128(body::string(&o, "proposal")?).ok_or(BodyRefusal::Member("proposal"))?;
+    Ok((id, proposal))
 }
 
 /// `GET /api/v1/audit/anchors` (Auditor or tenant admin, ADR-007, G30).

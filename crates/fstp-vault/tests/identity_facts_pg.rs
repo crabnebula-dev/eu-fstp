@@ -942,7 +942,10 @@ fn adr008_recorder_verification_registers_the_identity() {
         Some(a)
     );
     assert!(p.vault.used_tickets().contains(&[1; 16]));
-    assert_eq!(count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"), 1);
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        1
+    );
     assert_eq!(count(&w, "SELECT count(*) FROM vault.ticket_used"), 1);
     let body = fstp_vault::codec::decode_verification_write(
         verification_body(A_ACCOUNT, "Alpha").as_bytes(),
@@ -974,7 +977,10 @@ fn adr008_recorder_verification_registers_the_identity() {
     p.vault.post_write(&bank, NOW).unwrap();
     p.commit();
     let rows = fact_rows(&w);
-    assert!(rows.iter().any(|r| r.kind == 14 && r.dek == a.0.to_be_bytes()));
+    assert!(
+        rows.iter()
+            .any(|r| r.kind == 14 && r.dek == a.0.to_be_bytes())
+    );
 }
 
 /// R-ID-02, I-17, ADR-008 rules 1 and 2, ADR-004 record of lane L13b
@@ -992,8 +998,11 @@ fn adr008_recorder_route_refuses_without_writing() {
         verification_body(RECORDER, "Bravo").as_bytes(),
     )
     .unwrap();
-    p.register(RECORDER, &fstp_vault::codec::identity_tuple(&bravo.identity))
-        .unwrap();
+    p.register(
+        RECORDER,
+        &fstp_vault::codec::identity_tuple(&bravo.identity),
+    )
+    .unwrap();
     let keys = read_rows(&w);
     let refused = [
         (
@@ -1031,14 +1040,18 @@ fn adr008_recorder_route_refuses_without_writing() {
     }
     assert_eq!(read_rows(&w), keys, "a refusal wrote a keystore row");
     assert_eq!(count(&w, "SELECT count(*) FROM vault.identity_account"), 1);
-    assert_eq!(count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"), 0);
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        0
+    );
     assert_eq!(count(&w, "SELECT count(*) FROM vault.ticket_used"), 0);
     assert!(p.vault.used_tickets().is_empty());
     assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), None);
     // Its valid twin is taken.
-    assert!(p
-        .recorder_write(&verification_write(RECORDER, A_ACCOUNT, "Alpha", 6))
-        .is_ok());
+    assert!(
+        p.recorder_write(&verification_write(RECORDER, A_ACCOUNT, "Alpha", 6))
+            .is_ok()
+    );
 }
 
 /// ADR-004 record of lane L13b "Ticket use" and "Retry": a write whose
@@ -1064,7 +1077,10 @@ fn adr008_recorder_retry_completes_and_replay_is_refused() {
         p.recorder_write(&bytes).unwrap_err(),
         fstp_vault::OriginRefusal::Replayed
     );
-    assert_eq!(count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"), 1);
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        1
+    );
     // The same person, entered with extra spaces for another account.
     let spaced = verification_write(RECORDER, B_ACCOUNT, "  Alpha  ", 2);
     assert_eq!(p.recorder_write(&spaced).unwrap(), a);

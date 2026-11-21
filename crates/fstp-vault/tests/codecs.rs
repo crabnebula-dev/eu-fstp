@@ -294,9 +294,18 @@ fn adr008_verification_write_body_decodes_and_refuses() {
         good.replace("\"manual\"", "\"eudi\""),
         good.replace("\"passport\"", "\"library_card\""),
         good.replace("[\"document_authentic\",\"photo_match\"]", "[]"),
-        good.replace("[\"document_authentic\",\"photo_match\"]", "[\"photo_match\",\"document_authentic\"]"),
-        good.replace("\"method\":\"manual\"", "\"method\":\"manual\",\"verifier\":\"9\""),
-        good.replace("\"issuing_state\":\"DEU\"", "\"issuing_state\":\"DEU\",\"number\":\"X1\""),
+        good.replace(
+            "[\"document_authentic\",\"photo_match\"]",
+            "[\"photo_match\",\"document_authentic\"]",
+        ),
+        good.replace(
+            "\"method\":\"manual\"",
+            "\"method\":\"manual\",\"verifier\":\"9\"",
+        ),
+        good.replace(
+            "\"issuing_state\":\"DEU\"",
+            "\"issuing_state\":\"DEU\",\"number\":\"X1\"",
+        ),
         good.replace(',', ", "),
     ] {
         assert!(
@@ -304,12 +313,16 @@ fn adr008_verification_write_body_decodes_and_refuses() {
             "accepted {bad}"
         );
     }
-    assert!(decode_verification_write(
-        verification_body("501", "Alpha", "2000-02-29", "DEU").as_bytes()
-    )
-    .is_ok());
-    assert!(decode_verification_write(
-        verification_body("501", "Alpha", "1900-02-29", "DEU").as_bytes()
-    )
-    .is_err());
+    assert!(
+        decode_verification_write(
+            verification_body("501", "Alpha", "2000-02-29", "DEU").as_bytes()
+        )
+        .is_ok()
+    );
+    assert!(
+        decode_verification_write(
+            verification_body("501", "Alpha", "1900-02-29", "DEU").as_bytes()
+        )
+        .is_err()
+    );
 }
