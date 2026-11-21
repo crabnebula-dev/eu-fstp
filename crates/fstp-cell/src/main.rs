@@ -8,7 +8,11 @@
 //! - `first-admin <file>`: record the first admin's invitation and write
 //!   its token once to the new file (D4);
 //! - `init-keys <dir>`: create the sealed cell key file at genesis and
-//!   write the public keys the witness and the vault pin into `<dir>`.
+//!   write the public keys the witness and the vault pin into `<dir>`;
+//! - `copy-key-file <out>`: copy the sealed cell key file off the host and
+//!   record the copy (ADR-004 record of lane L16);
+//! - `retire-key-file-copy <id>`: record that every copy of `id` is
+//!   destroyed.
 //!
 //! It writes typed events only (R-NF-02). A refused configuration or
 //! argument exits with status 2, any other failure with status 1.

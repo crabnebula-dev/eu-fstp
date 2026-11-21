@@ -433,7 +433,7 @@ The second custodian holds only a ClusterBackup root. ClusterBackup is never rot
 
 Written by lane L16 (ADR-004 record of lane L16). Every item waits for Daniel unless it says otherwise.
 
-Each `fstp-keyd` entry of the pilot gets an off-host sealed copy: the cell's entry, the cell key file's entry and the vault's entry. A copy holds the key table and the key files of live keys, as sealed as on the volume, inside one more seal under the entry's passphrase. It never holds a root in the clear (I-80). Only `fstp-keyd` makes or opens it.
+Each `fstp-keyd` entry of the pilot gets an off-host sealed copy: the cell's entry, the cell key file's entry and the vault's entry. A copy holds the key table and the key files of live keys, as sealed as on the volume, inside one more seal under the entry's passphrase. It also carries the entry's usage log, so reconciliation after a restore covers the time before the loss. It never holds a root in the clear (I-80). Only `fstp-keyd` makes or opens it.
 
 Make a copy while the entry is stopped, as root:
 
@@ -446,7 +446,7 @@ systemctl start fstp-keyd
 - The command reads the passphrase as the service does: the systemd credential, or else `systemd-ask-password`. It refuses while the entry serves.
 - It writes the copy with mode 0600 and refuses an existing file. Move it off the host at once, for example to the second custodian.
 - The copy's id stands in clear in bytes 26 to 41 of the file: `od -An -tx1 -j26 -N16 /root/keyd-cell-2026-11-21.fkx | tr -d ' \n'`. Note it beside the copy.
-- Make a new copy after each erasure. A copy made before an erasure still holds the erased key. Whoever holds that copy and the passphrase can open it outside our tools.
+- After each erasure, make a new copy, destroy every older copy, and retire each older id (below). Decided by Daniel on 2026-11-21. A copy made before an erasure still holds the erased key, and whoever holds it with the passphrase can open that key outside our tools.
 
 The entry records each copy in `exports.log` on its volume. While a copy that is not retired holds a key that has since been destroyed, the entry starts at reduced I-81 assurance with the reason "an off-host copy holds a destroyed key". Once every copy of an old id is destroyed, record it:
 
@@ -467,14 +467,27 @@ On a fresh host, as root, in this order:
 5. If release refuses, the copy is older than the last erasure. It has destroyed the erased epochs and keeps the hold. The data under the current epoch does not open from this copy. Import a newer copy onto a fresh volume and release again.
 6. Start the entries, the cell and the vault. Then follow the restore rule of ADR-012: each verifies its chain against the witness, and lost receipted entries are reported, never hidden.
 
-Interim, pending Daniel: the cell key file `cell-keys.sealed` and the witness receipt key file live in credentials directories, outside the key volumes. A restore needs copies of them too (ADR-004 record of lane L16, Q-L16-3).
+### Copies of the cell key file and the witness receipt key file
+
+Decided by Daniel on 2026-11-21 (ADR-004 record of lane L16, Q-L16-3). The cell key file `cell-keys.sealed` and the witness receipt key file `receipt.key` live in credentials directories, outside the key volumes. A restore needs copies of them too. Make each copy with its owner's command, as root:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell copy-key-file /root/cell-keys-2026-11-21.sealed
+FSTP_WITNESS_CONFIG=/etc/fstp/witness.json fstp-witness copy-key-file /root/receipt-2026-11-21.key
+```
+
+- Each command opens the file through its owner's `fstp-keyd` entry, writes the sealed bytes with mode 0600, and records the copy in `cell-keys.copies` or `receipt.copies` beside the file. Copy that register off the host with the copy.
+- Each command also writes the copy's id as 32 hex digits to `<out>.id`, for example `/root/cell-keys-2026-11-21.sealed.id`. Keep it beside the copy.
+- At each start the owner compares the register with its live keys. While a copy that is not retired holds a key it has since replaced, it logs `key_file_assurance` at reduced assurance, with the reason "an off-host copy of a key file holds a replaced key".
+- Once every copy of an id is destroyed, record it with `fstp-cell retire-key-file-copy <id>` or `fstp-witness retire-key-file-copy <id>`.
+- On the fresh host, put each copy back under its file name in the owner's credentials directory before step 6.
 
 ### What is not built yet
 
 - A second provider (Q25). One `object_store` only.
 - Keystore snapshots written by `fstp-cell` and `fstp-vault` (ADR-012 "Keystore snapshots").
 - Rotation of the ClusterBackup root and group. A new group generation needs a new escrow for each custodian.
-- A copy bound to a guard key that the second custodian destroys at each erasure (ADR-004 record of lane L16, Q-L16-1).
+- A copy bound to a guard key that the second custodian destroys at each erasure. Decided by Daniel on 2026-11-21: a release item, built before a release (ADR-004 record of lane L16, Q-L16-1).
 - Declared restores at the witness and the monthly restore drill.
 
 ### Checked by
@@ -482,3 +495,5 @@ Interim, pending Daniel: the cell key file `cell-keys.sealed` and the witness re
 `crates/fstp-backup/tests/s3_agent.rs` runs the S3 client and the agent against a fake S3 that verifies every SigV4 signature on its own. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` takes a base backup of a PostgreSQL world from a configuration file, archives its WAL, restores two copies and starts PostgreSQL on each. It checks the ledger head, that no stored object holds plaintext (R-CR-01), and that erased texts stay unreadable from the restored keystores (I-81).
 
 `crates/fstp-backup/tests/second_custodian.rs` runs the key ceremony between two custodies and a restore through the second custodian after the first is dropped (I-80, I-81). `crates/fstp-keyd/tests/offhost_copy.rs` runs `fstp-keyd` on a volume, copies it, loses the volume and imports the copy onto a fresh one. It checks the hold and the release, that an older copy is re-erased before anything serves, the register's reduced assurance, and that a wrong passphrase or a changed byte is refused.
+
+The copy test also checks that a restored entry answers the usage records made before the copy (Q-L16-2). `crates/fstp-custody/tests/copy_register.rs`, and the `key_copy` tests of `fstp-cell` and `fstp-witness`, check that a copy of a key file lowers the owner's assurance once the owner replaces a key the copy holds, until the copy is retired (Q-L16-3).

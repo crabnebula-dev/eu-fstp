@@ -23,6 +23,7 @@ use std::future::Future;
 
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
+pub mod copies;
 pub mod keyd;
 pub mod okms;
 pub mod usage;

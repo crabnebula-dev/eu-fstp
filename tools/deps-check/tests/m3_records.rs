@@ -72,7 +72,11 @@ const FUZZ_TARGETS: [(&str, &[&str]); 22] = [
     ("fstp-pki", &["cert_build_roundtrip"]),
     (
         "fstp-custody",
-        &["okms_response_decode", "keyd_frame_decode"],
+        &[
+            "okms_response_decode",
+            "keyd_frame_decode",
+            "copy_register_decode",
+        ],
     ),
     (
         "fstp-keyd",
