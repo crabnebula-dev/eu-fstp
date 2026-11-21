@@ -35,6 +35,7 @@
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 
 use fstp_rt::{IoExt as _, Runtime};
 use fstp_tls::ClientConfig;
@@ -79,6 +80,9 @@ pub enum FeedError {
     Rollback,
     /// The poll exchange failed.
     Io(io::ErrorKind),
+    /// The signed cache could not be read or written (lane L15). A table
+    /// that could not be cached is not applied.
+    Cache(io::ErrorKind),
 }
 
 impl FeedError {
@@ -90,6 +94,7 @@ impl FeedError {
             FeedError::Malformed(_) | FeedError::Route(_) | FeedError::PinTaken => "I-19",
             FeedError::Rollback => "R-SW-02",
             FeedError::Io(_) => "R-NF-09",
+            FeedError::Cache(_) => "TH-48",
         }
     }
 }
@@ -103,6 +108,7 @@ impl std::fmt::Display for FeedError {
             FeedError::PinTaken => f.write_str("route feed: two endpoints carry one pin"),
             FeedError::Rollback => f.write_str("route feed: an older table"),
             FeedError::Io(k) => write!(f, "route feed: {k:?}"),
+            FeedError::Cache(k) => write!(f, "route feed cache: {k:?}"),
         }
     }
 }
@@ -510,13 +516,14 @@ pub trait FeedTransport {
 /// its request, closes its sending side, and reads the reply up to the
 /// peer's close). The edge presents its edge certificate and pins the
 /// control-plane CA. A pilot edge also pins the control plane's
-/// end-entity certificate ([`TlsFeed::with_pin`], lane L15).
+/// end-entity certificate with one or two pins ([`TlsFeed::with_pins`],
+/// lane L15).
 pub struct TlsFeed<R: Runtime> {
     rt: R,
     addr: SocketAddr,
     server_name: String,
     config: ClientConfig,
-    pin: Option<[u8; PIN_LEN]>,
+    pins: Vec<[u8; PIN_LEN]>,
 }
 
 impl<R: Runtime> TlsFeed<R> {
@@ -528,7 +535,7 @@ impl<R: Runtime> TlsFeed<R> {
             addr,
             server_name: server_name.to_owned(),
             config,
-            pin: None,
+            pins: Vec::new(),
         }
     }
 
@@ -537,8 +544,17 @@ impl<R: Runtime> TlsFeed<R> {
     /// the poll (ADR-009 "Pilot route feed", row "How the edge pins the
     /// control plane").
     #[must_use]
-    pub fn with_pin(mut self, pin: [u8; PIN_LEN]) -> TlsFeed<R> {
-        self.pin = Some(pin);
+    pub fn with_pin(self, pin: [u8; PIN_LEN]) -> TlsFeed<R> {
+        self.with_pins(vec![pin])
+    }
+
+    /// The same transport, which requires the SHA-256 of the server's
+    /// end-entity certificate to equal one of `pins`: the current and the
+    /// next pin, so a certificate renewal is staged without a restart
+    /// (Daniel, 2026-11-21). An empty list pins nothing.
+    #[must_use]
+    pub fn with_pins(mut self, pins: Vec<[u8; PIN_LEN]>) -> TlsFeed<R> {
+        self.pins = pins;
         self
     }
 }
@@ -547,11 +563,11 @@ impl<R: Runtime> FeedTransport for TlsFeed<R> {
     async fn fetch(&self, poll: &[u8]) -> io::Result<Vec<u8>> {
         let tcp = self.rt.connect_tcp(self.addr).await?;
         let mut stream = fstp_tls::connect(&self.config, &self.server_name, tcp).await?;
-        if let Some(pin) = self.pin {
+        if !self.pins.is_empty() {
             let leaf = stream
                 .peer_end_entity_der()
                 .ok_or(io::ErrorKind::PermissionDenied)?;
-            if fstp_crypto::sha256(leaf) != pin {
+            if !self.pins.contains(&fstp_crypto::sha256(leaf)) {
                 return Err(io::ErrorKind::PermissionDenied.into());
             }
         }
@@ -570,6 +586,7 @@ pub struct RouteFeed<T: FeedTransport> {
     transport: T,
     keys: Vec<Vec<u8>>,
     routes: LiveRoutes,
+    cache: Option<PathBuf>,
 }
 
 impl<T: FeedTransport> RouteFeed<T> {
@@ -580,7 +597,41 @@ impl<T: FeedTransport> RouteFeed<T> {
             transport,
             keys,
             routes,
+            cache: None,
         }
+    }
+
+    /// The same feed, which keeps the signed bytes of each newer verified
+    /// table at `path` before it applies it (ADR-009 "Pilot route feed",
+    /// row "Signed cache", Daniel, 2026-11-21).
+    #[must_use]
+    pub fn with_cache(mut self, path: PathBuf) -> RouteFeed<T> {
+        self.cache = Some(path);
+        self
+    }
+
+    /// Serves the signed cache, verified again under the feed keys with
+    /// the decoder and checks of the feed. Returns the version served, or
+    /// `None` when there is no cache. A cache no newer than the table
+    /// served changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`FeedError::Cache`] for a cache that cannot be read, and the
+    /// errors of [`verify_route_table`]. A refused cache changes nothing.
+    pub fn load_cache(&self) -> Result<Option<u64>, FeedError> {
+        let Some(path) = &self.cache else {
+            return Ok(None);
+        };
+        let bytes = match read_cache(path) {
+            Ok(Some(b)) => b,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(FeedError::Cache(e.kind())),
+        };
+        let verified = verify_route_table(&self.keys, &bytes)?;
+        self.routes
+            .apply_pinned(verified.version, verified.table, verified.pins);
+        Ok(Some(self.routes.version()))
     }
 
     /// The transport.
@@ -615,8 +666,61 @@ impl<T: FeedTransport> RouteFeed<T> {
         if verified.version < serving {
             return Err(FeedError::Rollback);
         }
+        if verified.version > serving
+            && let Some(path) = &self.cache
+        {
+            // The cache holds the table before any poll reports its
+            // version, so a restart never serves an older one (TH-48).
+            write_cache(path, &reply).map_err(|e| FeedError::Cache(e.kind()))?;
+        }
         self.routes
             .apply_pinned(verified.version, verified.table, verified.pins);
         Ok(self.routes.version())
     }
+}
+
+/// The cache at `path`, at most [`MAX_SIGNED_TABLE_LEN`] bytes, or `None`
+/// when there is none.
+fn read_cache(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let cap = u64::try_from(MAX_SIGNED_TABLE_LEN)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(cap).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_SIGNED_TABLE_LEN {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    Ok(Some(bytes))
+}
+
+/// Writes the cache so a crash leaves the old one or the new one: a new
+/// file of mode 0600 beside it, synced, renamed over it, and the
+/// directory synced.
+fn write_cache(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let mut tmp_name = path
+        .file_name()
+        .ok_or(io::ErrorKind::InvalidInput)?
+        .to_os_string();
+    tmp_name.push(".new");
+    let tmp = dir.join(tmp_name);
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)?;
+    std::fs::File::open(dir)?.sync_all()
 }

@@ -6,8 +6,9 @@
 //!
 //! `decode_config` runs on every input. A decoded configuration names an
 //! absolute credentials path, holds limits within their ranges, with
-//! `per_client` at most `connections`, and a feed poll interval of 1 to
-//! 60 seconds. `decode_feed_keys` runs on every input too: it gives one
+//! `per_client` at most `connections`, a feed poll interval of 1 to 60
+//! seconds, one or two distinct control pins and an absolute cache
+//! directory. `decode_feed_keys` runs on every input too: it gives one
 //! or two distinct composite public keys, and the file re-encodes byte
 //! for byte.
 
@@ -16,7 +17,7 @@
 use std::time::Duration;
 
 use fstp_edge::config::{
-    FEED_KEY_LEN, MAX_CONFIG_LEN, MAX_FEED_KEYS, decode_config, decode_feed_keys,
+    FEED_KEY_LEN, MAX_CONFIG_LEN, MAX_CONTROL_PINS, MAX_FEED_KEYS, decode_config, decode_feed_keys,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -26,6 +27,10 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(c) = first {
         assert!(data.len() <= MAX_CONFIG_LEN);
         assert!(c.credentials_dir.is_absolute());
+        assert!(c.state_dir.is_absolute());
+        let pins = &c.feed.cert_sha256;
+        assert!((1..=MAX_CONTROL_PINS).contains(&pins.len()));
+        assert!(pins.len() < 2 || pins[0] != pins[1], "a pin twice");
         let l = c.limits;
         assert!((1..=65_536).contains(&l.connections));
         assert!((1..=l.connections).contains(&l.per_client));

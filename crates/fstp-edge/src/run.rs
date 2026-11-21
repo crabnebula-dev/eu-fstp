@@ -5,7 +5,8 @@
 //! [`run`] reads the configuration file that [`CONFIG_ENV`] names, the
 //! tunnel credentials and the feed public keys by fixed name. It binds
 //! the public listener on one tokio runtime through `fstp-rt` (ADR-002)
-//! and serves until SIGTERM or SIGINT. It starts with no route.
+//! and serves until SIGTERM or SIGINT. It starts with its signed cache of
+//! the last verified table, verified again, or with no route.
 //! [`poll_routes`] polls the signed route feed of `fstp-control` and swaps
 //! in each newer verified table with its pins, so routes change without a
 //! restart. A refused or failed poll keeps the last verified table.
@@ -37,8 +38,8 @@ use fstp_rt::{AsyncRead, AsyncWrite, Listener as _, Runtime, Shutdown, ShutdownS
 use fstp_tls::{ClientConfig, TlsStream};
 
 use crate::config::{
-    ConfigError, FEED_KEYS_FILE, Limits, MAX_CONFIG_LEN, MAX_FEED_KEYS_LEN, Pins, decode_config,
-    decode_feed_keys,
+    CACHE_FILE, ConfigError, FEED_KEYS_FILE, Limits, MAX_CONFIG_LEN, MAX_FEED_KEYS_LEN, Pins,
+    decode_config, decode_feed_keys,
 };
 use crate::feed::{FeedError, FeedTransport, RouteFeed, TlsFeed};
 use crate::route::{CellEndpoint, LiveRoutes, PinSource, RouteTable};
@@ -422,10 +423,21 @@ pub fn run() -> Result<(), EdgeError> {
                 &cfg.feed.server_name,
                 tls.clone(),
             )
-            .with_pin(cfg.feed.cert_sha256),
+            .with_pins(cfg.feed.cert_sha256.clone()),
             feed_keys,
             live.clone(),
-        );
+        )
+        .with_cache(cfg.state_dir.join(CACHE_FILE));
+        // The signed cache, verified again, serves until the feed answers
+        // (ADR-009 "Pilot route feed", row "Signed cache").
+        if let Err(e) = feed.load_cache() {
+            let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::Refused {
+                method: fstp_obs::Method::Other,
+                route: FEED_ROUTE,
+                rule: e.rule(),
+                status: 502,
+            });
+        }
         let opener = Arc::new(PinnedTunnelOpener::new(
             task_rt.clone(),
             tls,

@@ -16,15 +16,18 @@
 //!  "limits": {"connections": 1024, "hello_seconds": 10,          optional
 //!             "lifetime_seconds": 7200, "open_seconds": 10,
 //!             "per_client": 64},
-//!  "feed": {"address": "10.0.0.2:7350", "cert_sha256": "<64 lowercase hex>",
+//!  "feed": {"address": "10.0.0.2:7350", "cert_sha256": ["<64 lowercase hex>"],
 //!           "poll_seconds": 5,                                     optional
 //!           "server_name": "control.tunnel.internal"},
-//!  "listen": {"public": "0.0.0.0:443"}}
+//!  "listen": {"public": "0.0.0.0:443"},
+//!  "state_dir": "/var/lib/fstp-edge"}
 //! ```
 //!
 //! Each member of `limits` is optional and has the default of
 //! [`Limits::default`]. `feed.cert_sha256` pins the end-entity certificate
-//! of `fstp-control`. The feed public keys sit in [`FEED_KEYS_FILE`] of the
+//! of `fstp-control`, with one or two pins (the current and the next).
+//! `state_dir` holds the signed cache of the last verified table
+//! ([`CACHE_FILE`]). The feed public keys sit in [`FEED_KEYS_FILE`] of the
 //! credentials directory, one or two lowercase hex lines
 //! ([`decode_feed_keys`]).
 //!
@@ -124,6 +127,9 @@ pub struct EdgeConfig {
     pub listen: SocketAddr,
     /// The route feed source (lane L15).
     pub feed: FeedSource,
+    /// The writable directory of the signed route table cache
+    /// ([`CACHE_FILE`], Daniel, 2026-11-21).
+    pub state_dir: PathBuf,
     /// The limits.
     pub limits: Limits,
 }
@@ -136,11 +142,19 @@ pub struct FeedSource {
     pub address: SocketAddr,
     /// The name its certificate must carry.
     pub server_name: String,
-    /// The SHA-256 of the DER of its end-entity certificate.
-    pub cert_sha256: [u8; 32],
+    /// The SHA-256 of the DER of its end-entity certificate: one or two
+    /// distinct pins, the current and the next, so a renewal is staged
+    /// without a restart (Daniel, 2026-11-21).
+    pub cert_sha256: Vec<[u8; 32]>,
     /// The time between two polls.
     pub poll: Duration,
 }
+
+/// The most control certificate pins: the current and the next.
+pub const MAX_CONTROL_PINS: usize = 2;
+
+/// The signed route table cache in the edge's `state_dir`.
+pub const CACHE_FILE: &str = "route-table.signed";
 
 /// The default time between two polls.
 pub const DEFAULT_POLL: Duration = Duration::from_secs(5);
@@ -185,7 +199,7 @@ impl PilotRoutes {
     }
 }
 
-const CONFIG_MEMBERS: [&str; 4] = ["credentials_dir", "feed", "limits", "listen"];
+const CONFIG_MEMBERS: [&str; 5] = ["credentials_dir", "feed", "limits", "listen", "state_dir"];
 const FEED_MEMBERS: [&str; 4] = ["address", "cert_sha256", "poll_seconds", "server_name"];
 const LIMIT_MEMBERS: [&str; 5] = [
     "connections",
@@ -333,10 +347,23 @@ fn feed_of(o: &Object) -> Result<FeedSource, ConfigError> {
     let server_name = text(o, "server_name", "feed.server_name")?;
     HostName::parse_lowercase(server_name.as_bytes())
         .map_err(|_| ConfigError::Invalid("feed.server_name"))?;
-    let cert_sha256 = hex::<32>(
-        text(o, "cert_sha256", "feed.cert_sha256")?,
-        "feed.cert_sha256",
-    )?;
+    let pins = get(o, "cert_sha256", "feed.cert_sha256")?
+        .as_array()
+        .ok_or(ConfigError::Invalid("feed.cert_sha256"))?;
+    if pins.is_empty() || pins.len() > MAX_CONTROL_PINS {
+        return Err(ConfigError::Invalid("feed.cert_sha256"));
+    }
+    let mut cert_sha256: Vec<[u8; 32]> = Vec::new();
+    for p in pins.iter() {
+        let pin = hex::<32>(
+            p.as_str().ok_or(ConfigError::Invalid("feed.cert_sha256"))?,
+            "feed.cert_sha256",
+        )?;
+        if cert_sha256.contains(&pin) {
+            return Err(ConfigError::Invalid("feed.cert_sha256"));
+        }
+        cert_sha256.push(pin);
+    }
     let poll = bounded(
         o,
         "poll_seconds",
@@ -418,6 +445,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<EdgeConfig, ConfigError> {
     members(listen, &["public"], "listen")?;
     let listen = addr_of(text(listen, "public", "listen.public")?, "listen.public")?;
     let feed = feed_of(object(o, "feed", "feed")?)?;
+    let state_dir = path_of(text(o, "state_dir", "state_dir")?, "state_dir")?;
     let limits = match o.get("limits") {
         None => Limits::default(),
         Some(v) => limits_of(v.as_object().ok_or(ConfigError::Invalid("limits"))?)?,
@@ -426,6 +454,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<EdgeConfig, ConfigError> {
         credentials_dir,
         listen,
         feed,
+        state_dir,
         limits,
     })
 }
