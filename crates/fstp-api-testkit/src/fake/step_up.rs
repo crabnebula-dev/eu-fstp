@@ -55,6 +55,7 @@ struct State {
     begun: Vec<(SessionId, ActionDigest)>,
     taken: Vec<Taken>,
     refused_takes: Vec<(SessionId, ActionDigest, Timestamp)>,
+    spent: Vec<HeldProof>,
     next: u128,
 }
 
@@ -151,6 +152,12 @@ impl FakeStepUp {
         lock(&self.state).taken.clone()
     }
 
+    /// Every proof spent, in order (I-78, `StepUp::spend`), stamped with
+    /// the instant of the spend.
+    pub fn spent(&self) -> Vec<HeldProof> {
+        lock(&self.state).spent.clone()
+    }
+
     /// Every `take` refused, in order: session, digest and instant.
     pub fn refused_takes(&self) -> Vec<(SessionId, ActionDigest, Timestamp)> {
         lock(&self.state).refused_takes.clone()
@@ -206,6 +213,32 @@ impl StepUp for FakeStepUp {
         now: Timestamp,
     ) -> Result<StepUpProof, StepUpRequired> {
         self.take_now(s, action, now)
+    }
+
+    /// I-78: a proof a `take` gave for this session and digest, spent
+    /// once. Any other proof, or one spent already, is refused.
+    async fn spend(
+        &self,
+        s: SessionId,
+        proof: StepUpRef,
+        action: ActionDigest,
+        now: Timestamp,
+    ) -> Result<(), PortError> {
+        let mut st = lock(&self.state);
+        let taken = st
+            .taken
+            .iter()
+            .any(|t| t.proof.step_up == proof && t.proof.session == s && t.proof.action == action);
+        if !taken || st.spent.iter().any(|p| p.step_up == proof) {
+            return Err(PortError::Refused);
+        }
+        st.spent.push(HeldProof {
+            step_up: proof,
+            session: s,
+            action,
+            at: now,
+        });
+        Ok(())
     }
 }
 

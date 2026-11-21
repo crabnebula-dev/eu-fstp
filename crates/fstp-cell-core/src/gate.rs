@@ -246,6 +246,9 @@ fn cell_entry(c: &CellCommand) -> Option<&'static str> {
         CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { .. }) => {
             Some("ApproveRecovery")
         }
+        // ADR-013 "Consent page", I-78: approving an agent's consent links
+        // a device (ADR-026 record of lane L12).
+        CellCommand::Ops(crate::ops::OpsCommand::ApproveAgentConsent { .. }) => Some("LinkDevice"),
         _ => None,
     }
 }
@@ -1036,6 +1039,7 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Tenant(
                 TenantCommand::IssueFirstAdminInvitation { .. }
                     | TenantCommand::IssueRoleInvitation { .. }
+                    | TenantCommand::ProvisionTenant { .. }
             )
             | CellCommand::Auth(fstp_auth::AuthCommand::MarkCredentialSuspect { .. })
     )
@@ -1394,6 +1398,34 @@ pub fn admit_first_admin_invitation(
             token_digest,
         },
     ));
+    let mut admitted = admit_system(s, action, SystemTask::Provisioning, command_id, now)?;
+    admitted.inputs = std::mem::take(&mut admitted.inputs).with_mode(mode);
+    Ok(admitted)
+}
+
+/// Tenant provisioning on a cell with no control plane (ADR-026 "Tenant
+/// provisioning", decided by Daniel on 2026-11-21): admits
+/// `ProvisionTenant` of `first_admin` with the agreement versions
+/// `agreements`, as the system task `SystemTask::Provisioning` under
+/// `command_id`. The cell's deployment mode `mode` is the task's input,
+/// and gives the kind of cell. `decide` refuses a ledger that holds a
+/// tenant part.
+///
+/// # Errors
+///
+/// [`admit_system`]'s refusal.
+pub fn admit_tenant_provisioning(
+    s: &CellState,
+    first_admin: AccountId,
+    agreements: Option<fstp_engine::AgreementVersions>,
+    mode: fstp_auth::recovery::Deployment,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, Deny> {
+    let action = Action::Command(CellCommand::Tenant(TenantCommand::ProvisionTenant {
+        first_admin,
+        agreements,
+    }));
     let mut admitted = admit_system(s, action, SystemTask::Provisioning, command_id, now)?;
     admitted.inputs = std::mem::take(&mut admitted.inputs).with_mode(mode);
     Ok(admitted)
@@ -1814,6 +1846,11 @@ pub fn admit_system(
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueFirstAdminInvitation { .. }),
         ) => true,
+        // ADR-026 "Tenant provisioning" (decided by Daniel on 2026-11-21):
+        // the genesis of the tenant part on a cell with no control plane.
+        (SystemTask::Provisioning, CellCommand::Tenant(TenantCommand::ProvisionTenant { .. })) => {
+            true
+        }
         // J2 (ADR-026 record of lane L5): the accounts port's enrolment
         // invitation of a programme role invitation by address.
         (

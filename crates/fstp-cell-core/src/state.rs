@@ -343,6 +343,26 @@ impl AuthState {
         if matches == 1 { found } else { None }
     }
 
+    /// The cell's own first tenant admin at `now`: the account that
+    /// enrolled through the first-admin invitation, else the account an
+    /// open first-admin invitation names (ADR-026 record of lane L12).
+    pub fn first_admin_account(&self, now: Timestamp) -> Option<AccountId> {
+        if let Some(a) = self.first_admins.iter().next() {
+            return Some(*a);
+        }
+        self.invitations
+            .values()
+            .find(|i| {
+                i.first_admin
+                    && !i.consumed
+                    && now
+                        .micros()
+                        .checked_sub(i.issued_at.micros())
+                        .is_some_and(|age| (0..=fstp_auth::ceremony::INVITATION_US).contains(&age))
+            })
+            .map(|i| i.account)
+    }
+
     /// Whether a first-admin invitation is unused and within its 72 hours
     /// at `now`. An expired one does not block a new one
     /// (`fstp_auth::ceremony::Issuer::Provisioning`).
