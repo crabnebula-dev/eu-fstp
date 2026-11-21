@@ -133,7 +133,13 @@ Written by lane L18 before its code. Daniel decided on 2026-11-21: "Build onboar
 
 Step 3 is new: before lane L18 no host or web step added the second admin. Steps 5 and 7 need the operator's host work.
 
-Tests: `sod07_admin_invitation_enrolment_adds_the_second_admin`, `sod07_admin_invitation_needs_an_open_tenant_invitation`, `i_27_admin_invitation_link_holds_the_token_in_the_fragment_only`, `j0_admin_invitation_event_is_fired_by_the_port_only`, `sod07_invite_admin_hands_token_and_address_to_the_accounts_port`, `q5_tenant_prober_checks_the_saved_domain`, `adr021_config_refuses_organisation_active`, `sod07_second_admin_joins_by_mailed_invitation_on_pg` and `prod_mcp_e2e_binary_from_config_file`.
+Tests: `sod07_admin_invitation_enrolment_adds_the_second_admin`, `sod07_admin_invitation_needs_an_open_tenant_invitation`, `i_27_admin_invitation_link_holds_the_token_in_the_fragment_only`, `j0_admin_invitation_event_is_fired_by_the_port_only`, `sod07_invite_admin_hands_token_and_address_to_the_accounts_port`, `q5_tenant_prober_checks_the_saved_domain`, `adr021_config_refuses_organisation_active`, `adr027_loopback_resolver_takes_any_port`, `prod_mcp_e2e_binary_from_config_file` (the whole order above over the binary), and the web tests `adr026_sod07_checklist_starts_with_the_second_admin`, `adr026_sod07_checklist_names_the_host_for_verification`, `adr026_sod18_checklist_ends_with_the_other_admins_approval` and `adr026_l18_account_number_is_the_verify_first_admin_form`.
+
+Open points of lane L18, each interim, pending Daniel:
+
+1. **Acceptance is the enrolment.** The second admin becomes a tenant admin when they create their passkey from the mailed link. No separate "accept" click exists. Is that enough consent for a tenant admin role?
+2. **Loopback resolver.** A resolver on a loopback address may use any port, beside port 53 everywhere else. This amends the accepted ADR-027 row "DNS" for tests and the devstack.
+3. **Devstack.** The external devstack runs no relay and no resolver (rule A9), so its onboarding stops at the second admin's invitation. A devstack that should onboard needs a relay of its own.
 
 ## Record of lane L8 `prod/vault-run`: the vault process
 

@@ -16,7 +16,8 @@
 //!    library;
 //! 3. writes `cell.json`, with the tunnel, internal and health ports drawn
 //!    here, so the edge can route to the tunnel before the cell starts;
-//! 4. runs `fstp-cell first-admin --email`, then `fstp-cell` itself, and waits
+//! 4. runs `fstp-cell provision-tenant` (ADR-026 record of lane L18), then
+//!    `fstp-cell first-admin --email`, then `fstp-cell` itself, and waits
 //!    until `GET /healthz` answers 200.
 //!
 //! The binary's own process holds every key: this process never sees the
