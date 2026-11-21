@@ -154,6 +154,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             // Rule A9 keeps the test SMTP sink out of this binary, so the
             // stack names no relay: proofs answer 503 (`NoProofMail`).
             relay: None,
+            shell: None,
         };
         let world = World::start_external(SPEC, custody.socket().to_path_buf(), &spec)?;
         Ok((world, custody, key_file_custody, dir))

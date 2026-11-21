@@ -62,6 +62,19 @@ pub struct ExternalSpec {
     /// The compiled web assets (`assets_dir` of ADR-026), or `None` for the
     /// stub journey shell and no auth pages.
     pub assets_dir: Option<PathBuf>,
+    /// The creator shell settings (`shell` of ADR-027), or `None` for a
+    /// cell whose probes are all absent.
+    pub shell: Option<ExternalShell>,
+}
+
+/// The `shell` member of an external cell (ADR-027, ADR-026 record of
+/// lane L18). Every value is synthetic.
+#[derive(Clone, Debug)]
+pub struct ExternalShell {
+    /// The resolver of the sending domain probe, on loopback.
+    pub resolver: SocketAddr,
+    /// The DKIM selector.
+    pub dkim_selector: String,
 }
 
 /// Every message a relay accepted so far, in order: its first recipient
@@ -269,7 +282,7 @@ impl ExternalCell {
             .map(|(digest, kind)| format!(r#"{{"kind":"{kind}","spki_sha256":"{}"}}"#, hex(digest)))
             .collect();
         let config = format!(
-            r#"{{{assets}"cell":"{cell}","credentials_dir":"{creds}","database":{{"dbname":"{dbname}","host":"{db_host}","port":{db_port}}},"host":"{host}","key_file_keyd_socket":"{kf}","keyd_socket":"{keyd}","listen":{{"health":"{health}","internal":"{internal}","tunnel":"{tunnel}"}},{mail}"mode":"{mode}","organisation_active":true,"registered_servers":[{registered}],"vault":{{"address":"{vault}"}},"version":"0.3.0","witness":{{"address":"{waddr}","ca_spki_sha256":"{wdigest}","server_name":"{wname}"}}}}"#,
+            r#"{{{assets}"cell":"{cell}","credentials_dir":"{creds}","database":{{"dbname":"{dbname}","host":"{db_host}","port":{db_port}}},"host":"{host}","key_file_keyd_socket":"{kf}","keyd_socket":"{keyd}","listen":{{"health":"{health}","internal":"{internal}","tunnel":"{tunnel}"}},{mail}"mode":"{mode}","registered_servers":[{registered}],{shell}"vault":{{"address":"{vault}"}},"version":"0.3.0","witness":{{"address":"{waddr}","ca_spki_sha256":"{wdigest}","server_name":"{wname}"}}}}"#,
             assets = spec
                 .assets_dir
                 .as_ref()
@@ -290,6 +303,16 @@ impl ExternalCell {
                     format!(
                         r#""mail":{{"address":"{}","relay":"{}","sender":"noreply@{}","username":"{}"}},"#,
                         r.address, r.relay, parts.host, r.username
+                    )
+                })
+                .unwrap_or_default(),
+            shell = spec
+                .shell
+                .as_ref()
+                .map(|s| {
+                    format!(
+                        r#""shell":{{"dkim_selector":"{}","resolver":"{}"}},"#,
+                        s.dkim_selector, s.resolver
                     )
                 })
                 .unwrap_or_default(),
@@ -351,6 +374,29 @@ impl ExternalCell {
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
         c
+    }
+
+    /// Runs `fstp-cell provision-tenant` (ADR-026 "Tenant provisioning"),
+    /// with the synthetic agreement versions 1,1,1 on a SaaS cell, so the
+    /// ledger holds a tenant part before the first admin is invited
+    /// (ADR-026 record of lane L18).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the command fails.
+    pub fn provision_tenant(&self, saas: bool) -> Result<(), WorldError> {
+        let mut c = self.command();
+        c.arg("provision-tenant");
+        if saas {
+            c.arg("--agreements").arg("1,1,1");
+        }
+        let status = c
+            .status()
+            .map_err(|e| fail("fstp-cell provision-tenant", &e))?;
+        if !status.success() {
+            return Err(fail("fstp-cell provision-tenant", &status));
+        }
+        Ok(())
     }
 
     /// Runs `fstp-cell first-admin --email <email> <file>` (D4, ADR-026

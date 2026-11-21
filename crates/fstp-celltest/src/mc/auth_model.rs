@@ -3603,6 +3603,32 @@ pub mod http {
             Ok(true)
         }
 
+        /// Enrols the model account `account` through a mailed invitation
+        /// link token `token` whose cell account the client does not know,
+        /// such as a second tenant admin's (SoD-07, ADR-026 record of lane
+        /// L18). The cell account is read from the devices of the first
+        /// session. `None` when the model account is enrolled already or
+        /// the cell refused the registration.
+        pub fn enrol_by_link(
+            &self,
+            account: AccountId,
+            token: &[u8],
+        ) -> Result<Option<AccountId>, NotImplemented> {
+            if !self.enrol_invited(account, AccountId::from_raw(0), token)? {
+                return Ok(None);
+            }
+            let session = self.passkey_login(account)?.ok_or_else(failed)?;
+            let listed = self.devices(&session)?.ok_or_else(failed)?;
+            let cell = json_str(&listed, "account")
+                .and_then(|s| s.parse::<u128>().ok())
+                .map(AccountId::from_raw)
+                .ok_or_else(failed)?;
+            if let Some(p) = self.known().people.get_mut(&account) {
+                p.cell = cell;
+            }
+            Ok(Some(cell))
+        }
+
         /// Self-registers `account` with the synthetic address `email` and a
         /// software passkey (design section 8.3 ceremony 2, lane F-CYCLE3):
         /// `POST /auth/signup/options {email}`, the proof from the world's

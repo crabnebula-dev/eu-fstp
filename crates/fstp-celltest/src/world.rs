@@ -4576,6 +4576,9 @@ fn start_cell(
         // ADR-026 record of lane L5: the relay of the API core's ports
         // keeps each message in the world's mail capture.
         api_relay: Some(std::sync::Arc::new(mail.relay().clone())),
+        // ADR-026 record of lane L18: a world cell runs no probes, so every
+        // onboarding probe fails, as before (Q5).
+        tenant_prober: None,
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,
@@ -4603,10 +4606,14 @@ fn start_cell(
         Some(ext) => {
             drop((parts, options));
             // ADR-026 "First admin email": the binary records the first
-            // admin's synthetic login email itself.
+            // admin's synthetic login email itself. ADR-026 record of lane
+            // L18: the cell is provisioned first, as a pilot is, so its
+            // ledger holds the tenant part and no organisation is active
+            // before onboarding.
             let email = login_email_of(&host, fstp_domain_testkit::r#gen::roster::ADMIN);
             let token = ext
-                .first_admin(&email)
+                .provision_tenant(!spec.self_hosted)
+                .and_then(|()| ext.first_admin(&email))
                 .and_then(|t| ext.start().map(|()| t));
             match token {
                 Ok(t) => (
