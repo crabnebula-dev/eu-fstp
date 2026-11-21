@@ -12,6 +12,7 @@
 //! - [`config`]: the process configuration, with a closed member set.
 //! - [`keystore`]: the vault keystore in the `keystore` tables, under the
 //!   vault's own `fstp-keyd` entry (ADR-004 record of lane L8).
+//! - [`run`]: the binary's commands over a configuration file (G12).
 //! - [`match_key`]: the identity match key of design section 6.4 (Q17).
 //! - [`egress`]: the closed set of outbound destinations (B4a).
 //!
@@ -28,6 +29,7 @@ pub mod egress;
 pub mod keystore;
 mod messages;
 pub mod origin;
+pub mod run;
 pub mod service;
 pub mod start;
 pub mod store;
@@ -129,13 +131,16 @@ pub fn match_key(key: &[u8; 32], tuple: &[u8]) -> [u8; MATCH_KEY_LEN] {
     fstp_crypto::hmac_sha256(key, tuple)
 }
 
-/// The binary's entry. It refuses until lane L8's run module lands.
+/// The binary's entry: serves the vault named by the configuration file in
+/// `FSTP_VAULT_CONFIG` until a termination signal drains it
+/// ([`run::serve`], ADR-026 record of lane L8).
 ///
 /// # Errors
 ///
-/// [`VaultError::NotImplemented`].
+/// [`VaultError::Config`] for a missing or refused configuration or
+/// credential, and the first start step that fails.
 pub fn run() -> Result<(), VaultError> {
-    Err(VaultError::NotImplemented("fstp_vault::run"))
+    run::run_command(&run::Command::Serve)
 }
 
 #[cfg(test)]
