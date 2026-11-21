@@ -309,10 +309,14 @@ fn route_table_body(v: u8) -> Vec<u8> {
         address: std::net::SocketAddr::from(([10, 0, 9, v], port)),
         tls_name: "tunnel.cell.internal".to_owned(),
     };
-    let route = fstp_edge::RouteEntry {
-        host: fstp_edge::HostName::parse(format!("cell{v}.example").as_bytes()).unwrap(),
-        app: ep(8443),
-        vault: ep(9443),
+    let route = fstp_edge::PinnedRoute {
+        route: fstp_edge::RouteEntry {
+            host: fstp_edge::HostName::parse(format!("cell{v}.example").as_bytes()).unwrap(),
+            app: ep(8443),
+            vault: ep(9443),
+        },
+        app_pin: [v; 32],
+        vault_pin: [v ^ 0xff; 32],
     };
     fstp_edge::encode_route_table_body(u64::from(v), &[route]).unwrap()
 }
