@@ -609,6 +609,9 @@ pub struct VaultHandle<R: Runtime> {
     origin: fstp_http::ServerHandle<R>,
     /// Stops the tunnel listener's accept task.
     tunnel: Shutdown,
+    /// What the vault holds for its lifetime, such as the keys
+    /// connection that holds the keystore lock (`crate::run`).
+    leases: Mutex<Vec<Box<dyn std::any::Any + Send>>>,
 }
 
 impl<R: Runtime> std::fmt::Debug for VaultHandle<R> {
@@ -621,6 +624,16 @@ impl<R: Runtime> std::fmt::Debug for VaultHandle<R> {
 }
 
 impl<R: Runtime> VaultHandle<R> {
+    /// Keeps `lease` until the handle is dropped, such as the keys
+    /// connection that holds the keystore lock while the vault serves
+    /// (ADR-004 record of lane L11, row "Entry point").
+    pub fn hold<T: Send + 'static>(&self, lease: T) {
+        self.leases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Box::new(lease));
+    }
+
     /// Where the internal listener is bound.
     pub fn internal_addr(&self) -> SocketAddr {
         self.internal.local_addr()
@@ -744,6 +757,7 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
         internal,
         origin,
         tunnel: tunnel_shutdown,
+        leases: Mutex::new(Vec::new()),
     })
 }
 

@@ -12,6 +12,8 @@
 //! - [`config`]: the process configuration, with a closed member set.
 //! - [`keystore`]: the vault keystore in the `keystore` tables, under the
 //!   vault's own `fstp-keyd` entry (ADR-004 record of lane L8).
+//! - [`erasure`]: erasure and root-epoch rotation on the Vault chain
+//!   (design section 3.5, ADR-004 record of lane L11).
 //! - [`run`]: the binary's commands over a configuration file (G12).
 //! - [`match_key`]: the identity match key of design section 6.4 (Q17).
 //! - [`egress`]: the closed set of outbound destinations (B4a).
@@ -26,6 +28,7 @@ pub mod chain;
 pub mod codec;
 pub mod config;
 pub mod egress;
+pub mod erasure;
 pub mod keystore;
 mod messages;
 pub mod origin;
@@ -58,6 +61,8 @@ pub use origin::{JournalEntry, OriginRefusal, Reply, Vault, Written};
 ///    (2026-11-07, design section 4.5, R-NF-08).
 /// 7. `vault_chain`: the entry columns of a kind 1 row of the vault chain
 ///    (ADR-010 open point 5, Daniel, 2026-11-13).
+/// 8. `identity_tuple`: the sealed identity attribute tuples of the Vault
+///    chain (ADR-004 record of lane L11).
 pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
     fstp_migrate::Migration::new(1, "meta", include_str!("../migrations/vault/0001_meta.sql")),
     fstp_migrate::Migration::new(
@@ -85,6 +90,11 @@ pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
         7,
         "vault_chain",
         include_str!("../migrations/vault/0007_vault_chain.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        8,
+        "identity_tuple",
+        include_str!("../migrations/vault/0008_identity_tuple.sql"),
     ),
 ];
 

@@ -277,7 +277,7 @@ pub const APP_TABLES: [&str; 38] = [
 
 /// The tables of the vault database (design section 4.3, with the
 /// keystore of section 4.2).
-pub const VAULT_TABLES: [&str; 15] = [
+pub const VAULT_TABLES: [&str; 16] = [
     "vault.epoch",
     "vault.fact",
     "vault.identity",
@@ -293,6 +293,10 @@ pub const VAULT_TABLES: [&str; 15] = [
     "keystore.erasure_intent",
     "vault_audit.chain",
     "vault_audit.anchor",
+    // Lane L11 (ADR-004 record of lane L11): the sealed identity
+    // attribute tuples of vault migration 8. Only the keys role holds a
+    // right on them, as on every `keystore` table.
+    "keystore.identity_tuple",
 ];
 
 /// The placement marker of both databases (design section 4.1,

@@ -240,4 +240,14 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("phase", Enum),
         ],
     },
+    TableSpec {
+        schema: "keystore",
+        name: "identity_tuple",
+        class: TableClass::KeyMaterial,
+        columns: &[
+            col("identity_id", RandomId),
+            col("group_id", RandomId),
+            col("envelope", Sealed),
+        ],
+    },
 ];

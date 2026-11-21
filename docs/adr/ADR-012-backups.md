@@ -208,6 +208,14 @@ Written by lane L10 on 2026-11-21, before its code, for the single-host pilot of
 
 Tests: `r_cr_01_*`, `i81_*`, `r_nf_02_*` and `adr012_*` in `crates/fstp-backup` and `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs`.
 
+## Record of lane L11 `prod/vault-erase`
+
+Written by lane L11 on 2026-11-21. Interim, pending Daniel. It departs from the interim line under "Keystore snapshots" that no Vault chain rotation passes step 5 before option A or B is accepted.
+
+- On the single-host pilot, the vault keystore rows live in `v_<cell>` on the vault cluster. That cluster's base backups and WAL archive (record of lane L10) are the copies a restore reads.
+- Step 5 of a Vault chain rotation therefore reads the committed rows back from the database and opens them under `R(e+1)` through custody: every group secret, data key and identity tuple. No separate snapshot container is written, and no `VaultDestination::KeystoreSnapshots` connection is opened.
+- Option A or B still decides how a vault snapshot container is sealed, once one is written. ADR-004 records the rotation itself (record of lane L11).
+
 ## Consequences
 
 - No third-party crate is added.

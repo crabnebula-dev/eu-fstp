@@ -337,6 +337,23 @@ pub enum JournalEntry {
         /// The new identity match key.
         match_key: [u8; MATCH_KEY_LEN],
     },
+    /// Step 7 of an erasure batch on the Vault chain: the root of `epoch`
+    /// was destroyed in custody (design section 3.5, ADR-004 record of
+    /// lane L11). It writes no vault table. The chain entry binds its
+    /// digest.
+    KeyEpochDestroyed {
+        /// The destroyed epoch.
+        epoch: u64,
+        /// The SHA-256 of the custody destroy receipt.
+        receipt_digest: [u8; 32],
+    },
+    /// Step 7 of an erasure batch on the Vault chain: the attribute tuple
+    /// of `identity` was erased, and its match key made unlinkable. It
+    /// writes no vault table. The chain entry binds its digest.
+    IdentityErased {
+        /// The identity id.
+        identity: Person,
+    },
     /// A verification of `account` became effective at `epoch`
     /// (`vault.account`).
     AccountVerified {
@@ -632,6 +649,12 @@ impl Vault {
         Ok(identity)
     }
 
+    /// Every stored identity with its match key (`vault.identity`), in
+    /// match key order.
+    pub fn identity_keys(&self) -> impl Iterator<Item = ([u8; MATCH_KEY_LEN], Person)> + '_ {
+        self.identities.iter().map(|(k, p)| (*k, *p))
+    }
+
     /// Moves every identity to its match key under a new Match key, in one
     /// journal (design section 3.5, G24, decision 27): `rekey` maps each
     /// current match key to its new one. The keystore that rotates the
@@ -639,11 +662,15 @@ impl Vault {
     /// and gives an erased identity an unlinkable key that no tuple
     /// recomputes. Each identity keeps its id, so no account changes.
     ///
+    /// A key mapped to itself keeps its identity and journals nothing
+    /// (ADR-004 record of lane L11), so a rekey repeated after a restart
+    /// changes only what is still owed.
+    ///
     /// # Errors
     ///
     /// [`VaultError::Malformed`] unless `rekey` names every stored match
-    /// key exactly once and its new keys are distinct and new. Nothing
-    /// changes then.
+    /// key exactly once and its new keys are distinct, each either new or
+    /// its own old key. Nothing changes then.
     pub fn rekey_identities(
         &mut self,
         rekey: &BTreeMap<[u8; MATCH_KEY_LEN], [u8; MATCH_KEY_LEN]>,
@@ -655,20 +682,41 @@ impl Vault {
             return Err(refused);
         }
         let mut next = BTreeMap::new();
+        let mut moved = Vec::new();
         for (old, new) in rekey {
             let identity = *self.identities.get(old).ok_or(refused)?;
-            if self.identities.contains_key(new) || next.insert(*new, identity).is_some() {
+            let taken = old != new && self.identities.contains_key(new);
+            if taken || next.insert(*new, identity).is_some() {
                 return Err(refused);
             }
+            if old != new {
+                moved.push((*new, identity));
+            }
         }
-        for (match_key, identity) in &next {
+        moved.sort();
+        for (match_key, identity) in moved {
             self.journal.push(JournalEntry::IdentityRekeyed {
-                identity: *identity,
-                match_key: *match_key,
+                identity,
+                match_key,
             });
         }
         self.identities = next;
         Ok(())
+    }
+
+    /// Journals step 7 of an erasure batch on the Vault chain (ADR-004
+    /// record of lane L11): the destroyed root `epoch` with the digest of
+    /// its receipt, and each erased identity.
+    pub fn record_erasure(&mut self, epoch: u64, receipt_digest: [u8; 32], erased: &[Person]) {
+        self.journal.push(JournalEntry::KeyEpochDestroyed {
+            epoch,
+            receipt_digest,
+        });
+        for identity in erased {
+            self.journal.push(JournalEntry::IdentityErased {
+                identity: *identity,
+            });
+        }
     }
 
     /// The verification fact of `account` with the R-ID-02 record
