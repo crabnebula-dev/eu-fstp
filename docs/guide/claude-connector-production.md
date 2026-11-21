@@ -193,184 +193,106 @@ The first admin has no login email after this step, so recovery by email does no
 
 ## 5. Run the edge
 
-The edge is the only public listener. It reads the SNI of each browser's ClientHello and passes the whole TLS connection through to the cell's tunnel listener. It never terminates the browser's TLS and holds no origin key: the cell does, with `origin.pem` and `origin.key`. The grammar is ADR-009 "Pilot edge configuration" and "Pilot route feed".
+The edge is the only public listener. It passes each browser's TLS connection through to the cell by SNI, and holds no origin key. It takes its routes from a signed route feed that a small `fstp-control` serves. You change routes with one command on the host, and the edge follows within seconds, with no restart. The reference is ADR-009 "Pilot edge configuration" and "Pilot route feed".
 
-The edge reads no route file. A minimal `fstp-control` serves a signed route feed, and the edge polls it. You propose a route change with an `fstp-control` command, and a staff member approves it with a passkey step-up on the operator page of `fstp-control`. The edge then follows without a restart. Daniel decided this design on 2026-11-21. The pilot `fstp-control` runs the feed, the operator page and nothing else: no cell link, no `cp` database, no provisioning and no erasure.
+### 5.1 Before you start
 
-**Public origin.** The cell's origin is `https://<host>`, with no port. WebAuthn and claude.ai need exactly that. So:
-
-- the DNS name `host` of the cell configuration resolves to the edge's host;
-- that address accepts TCP port 443. Either the edge listens on port 443 itself, or a TCP forwarder in front passes the ClientHello byte for byte;
-- the route you add names the same `host`, in lowercase, as the cell configuration. The cell refuses a tunnel for any other host.
-
-**Tunnel CA.** A pilot has no control-plane CA, so you run your own tunnel CA. Keep it apart from the cell CA and from the public origin CA. It issues four certificates:
-
-- the edge's client certificate (client authentication), with the subject CN `edge_<32 lowercase hex digits>`. Choose the 32 digits at random. They are the edge id;
-- the cell's tunnel server certificate, `tunnel.pem` of the cell, for a server name such as `cell.tunnel.internal`;
-- the vault's tunnel server certificate, for its own server name;
-- the feed certificate of `fstp-control` (server authentication), for a server name such as `control.tunnel.internal`.
-
-Put the tunnel CA's certificate into the cell's credentials directory as `tunnel-ca.pem`, into the edge's as well, and into the control plane's as `control-ca.pem`.
-
-**Operator page certificate.** The operator page is served at `https://<operator host>`, for example `https://control.example.eu`, with no port. Give it a certificate for that host from a CA your staff's browsers trust: a public CA, or your own CA installed in those browsers. The tunnel CA does not issue it.
-
-**Pins.** The edge pins each tunnel server's certificate and the feed certificate. A pin is the SHA-256 of the certificate in DER, as 64 lowercase hex digits:
+- **DNS and port 443.** The cell's `host` resolves to the edge, and that address accepts TCP port 443.
+- **Tunnel CA.** Your own CA, kept apart from the cell CA and the public origin CA. It issues four certificates: the edge's client certificate with the CN `edge_<32 random lowercase hex digits>` (the edge id), the cell's and the vault's tunnel server certificates, and the feed certificate of `fstp-control`, for example for `control.tunnel.internal`.
+- **Custody.** An `fstp-keyd` socket of the `control` role, `control.sock`. Set `FSTP_KEYD_GROUP_CONTROL` to the group id of the `fstp-control` OS user.
+- **Pins.** A pin is the SHA-256 of a certificate in DER:
 
 ```sh
 openssl x509 -in tunnel.pem -outform der | sha256sum
 ```
 
-### 5.1 Custody for the feed key
+### 5.2 Start `fstp-control`
 
-The feed signing key is a composite key (ML-DSA-65 with Ed25519). It is sealed in `route-feed.key`, and `fstp-keyd` wraps the seal key under a ControlPlane root. Give `fstp-control` an `fstp-keyd` socket of the `control` client role, `control.sock`: set `FSTP_KEYD_GROUP_CONTROL` to the group id of the OS user of `fstp-control`. That role reaches the ControlPlane chain only. Keep the key volume of that `fstp-keyd` entry recoverable as for the other custody volumes. Without it the feed key does not open, and every edge needs a new key and a restart.
-
-### 5.2 Configure and start `fstp-control`
-
-**Credentials directory**, readable by the OS user of `fstp-control` only:
-
-| File | Holds |
-| --- | --- |
-| `control-ca.pem` | The tunnel CA, which issued the edge's client certificate |
-| `control.pem`, `control-key.pem` | The feed certificate chain and key |
-| `operator.pem`, `operator-key.pem` | The operator page certificate chain and key, for the operator host |
-| `route-feed.key` | The sealed feed signing key, made by `fstp-control init-route-feed` |
-
-**Configuration**, named by `FSTP_CONTROL_CONFIG`. It holds no secret. `edges` lists the edge ids that may poll, 1 to 16. `assets_dir` is the compiled `web/dist` of the release, which holds the operator page (`routefeed/`) and the ceremony code it uses (`auth/`). `staff` starts empty; section 5.4 fills it.
+Put these files in `/etc/fstp/control`, readable by the `fstp-control` user only: `control-ca.pem` (the tunnel CA), `control.pem` and `control-key.pem` (the feed certificate and key). Write `/etc/fstp/control.json`:
 
 ```json
 {
-  "assets_dir": "/usr/share/fstp/web",
   "credentials_dir": "/etc/fstp/control",
-  "edges": ["<the edge id, 32 lowercase hex digits>"],
+  "edges": ["<the edge id>"],
   "feed_listen": "10.0.0.2:7350",
   "keyd_socket": "/run/fstp-keyd/control.sock",
-  "operator_host": "control.example.eu",
-  "operator_listen": "127.0.0.1:7351",
   "operator_socket": "/run/fstp-control/routes.sock",
-  "staff": [],
   "state_dir": "/var/lib/fstp-control"
 }
 ```
 
-**Create the key and the first table** once, as the OS user of `fstp-control`:
+Once, as the `fstp-control` user, create the feed key and the first table. It writes the public key to `/tmp/feed/route-feed.pub`:
 
 ```sh
 FSTP_CONTROL_CONFIG=/etc/fstp/control.json fstp-control init-route-feed /tmp/feed
 ```
 
-It writes `route-feed.key` and the first, empty table `route-table.signed` in `state_dir`. It writes the public key to `/tmp/feed/route-feed.pub`, one hex line, which the edge pins. After a lost `route-table.signed`, run it again. It writes a new empty table with a higher version and keeps the key. Then add your routes again.
-
-**Start** it, for example as a systemd service:
+Then run it, for example as a systemd service:
 
 ```sh
 FSTP_CONTROL_CONFIG=/etc/fstp/control.json fstp-control route-feed
 ```
 
-It logs `Started` once it serves. SIGTERM stops it, gives open polls 30 seconds, and exits with status 0. A refused configuration, a `route-table.signed` that does not verify under the key, or an audit log whose chain is broken exits with status 2, any other failure with status 1. The table survives a restart.
+If `route-table.signed` is ever lost, run `init-route-feed` again and add your routes again.
 
-**Reach the operator page.** `operator_listen` should be an admin address, not a public one. A browser must open it as `https://<operator host>` on port 443, since the WebAuthn origin carries no port. For example, from an admin machine, map the operator host to `127.0.0.1` in `/etc/hosts`, and forward port 443 there:
+### 5.3 Start the edge
 
-```sh
-sudo ssh -L 443:127.0.0.1:7351 admin@pilot-host
-```
-
-### 5.3 Configure and start the edge
-
-**Credentials directory**, readable by the edge's OS user only:
-
-| File | Holds |
-| --- | --- |
-| `tunnel.pem`, `tunnel.key` | The edge's client certificate chain and key, CN `edge_<id>`. It serves the tunnels and the feed |
-| `tunnel-ca.pem` | The tunnel CA, which issued the cell's, the vault's and the feed certificates |
-| `route-feed.pub` | The feed public key from `init-route-feed`. A second line may hold the next key |
-
-**State directory**, writable by the edge's OS user only, for example `/var/lib/fstp-edge`. The edge keeps its signed cache there: the last table it verified, as `fstp-control` signed it.
-
-**Configuration**, named by `FSTP_EDGE_CONFIG`. It holds no secret. `limits`, each of its members and `feed.poll_seconds` are optional; the values below are the defaults.
+Put these files in `/etc/fstp/edge`, readable by the edge user only: `tunnel.pem` and `tunnel.key` (the edge's client certificate and key), `tunnel-ca.pem` (the tunnel CA), and `route-feed.pub` from 5.2. Create `/var/lib/fstp-edge`, writable by the edge user. Write `/etc/fstp/edge.json`:
 
 ```json
 {
   "credentials_dir": "/etc/fstp/edge",
   "feed": {"address": "10.0.0.2:7350", "cert_sha256": ["<pin of control.pem>"],
-           "poll_seconds": 5, "server_name": "control.tunnel.internal"},
-  "limits": {"connections": 1024, "per_client": 64, "hello_seconds": 10,
-             "open_seconds": 10, "lifetime_seconds": 7200},
+           "server_name": "control.tunnel.internal"},
   "listen": {"public": "0.0.0.0:443"},
   "state_dir": "/var/lib/fstp-edge"
 }
 ```
 
-- `feed.cert_sha256` holds one or two pins of the feed certificate: the current one and the next.
-- `feed.poll_seconds` is the time between two polls, 1 to 60.
-- `connections` caps open connections, and `per_client` caps them per client IP address. The address stays in memory and is never logged.
-- `hello_seconds` bounds the wait for the ClientHello, `open_seconds` the tunnel handshake and pin check, and `lifetime_seconds` one connection.
-
-**Start** it, for example as a systemd service with the capability to bind port 443:
+Run it with the capability to bind port 443:
 
 ```sh
 FSTP_EDGE_CONFIG=/etc/fstp/edge.json fstp-edge
 ```
 
-The edge logs `Started` once it listens. It serves its signed cache at once, verified again under `route-feed.pub`, or no route without a cache. A newer table from the feed replaces the cache at the first poll. SIGTERM stops it from accepting, gives open connections 20 seconds, and exits with status 0. A refused configuration, feed key file or credential exits with status 2, any other failure with status 1.
+Optional members: `feed.poll_seconds` (default 5), and `limits` as ADR-009 "Pilot edge configuration" lists them. The edge keeps a signed copy of its last routes in `state_dir`. So it keeps serving them after a restart while `fstp-control` is down, and it never serves an unsigned or older table.
 
-**When the feed fails.** The edge keeps serving the last table it verified. It never serves an unsigned table, a table that fails verification, or a table older than the one it serves. It logs a `Refused` event on `/edge/route-feed` with the rule: `I-90` for a signature, `I-19` for a route or the encoding, `R-SW-02` for an older table, `R-NF-09` for an unreachable control plane, `TH-48` for a cache it cannot write. A table it cannot cache, it does not apply.
+### 5.4 Add, remove and list routes
 
-**Renewing the feed certificate.** Add the pin of the new certificate as the second entry of `feed.cert_sha256` on every edge, and restart each edge once, ahead of time. Then switch `fstp-control` to the new certificate. Remove the old pin at the next convenient restart.
-
-### 5.4 Staff passkeys, route changes and the audit log
-
-**Enrol a staff passkey** once per staff member. Open `https://<operator host>` and choose "Enrol a new passkey". The page shows one staff entry, `{"cose_key": ..., "credential_id": ..., "staff": ...}`. It grants nothing yet. Add it to `staff` in the configuration of `fstp-control`, and restart `fstp-control`. A pinned passkey must verify the user, for example with a PIN or a fingerprint.
-
-**Route file**, for example `/etc/fstp/routes/grants.json`. One route per file. `host` routes to `app`, the cell's tunnel listener (`listen.tunnel` of the cell). `id.<host>` routes to `vault`, the vault's tunnel listener for the vault origin.
+Write one route per file, for example `/etc/fstp/routes/grants.json`. `app` is the cell's tunnel listener and `vault` the vault's:
 
 ```json
 {"routes": [
-  {"cell": "<the cell id, 32 lowercase hex digits>",
-   "host": "grants.example.eu",
+  {"cell": "<the cell id>", "host": "grants.example.eu",
    "app":   {"address": "10.0.0.4:7443", "server_name": "cell.tunnel.internal",
-             "cert_sha256": "<64 hex digits>"},
+             "cert_sha256": "<pin of the cell's tunnel.pem>"},
    "vault": {"address": "10.0.0.6:7446", "server_name": "vault.tunnel.internal",
-             "cert_sha256": "<64 hex digits>"}}
+             "cert_sha256": "<pin of the vault's tunnel certificate>"}}
 ]}
 ```
 
-**Propose** the route while `fstp-control` runs, as its OS user:
+Run these as root or as the `fstp-control` user. Each one applies at once:
 
 ```sh
-FSTP_CONTROL_CONFIG=/etc/fstp/control.json fstp-control route add /etc/fstp/routes/grants.json
+export FSTP_CONTROL_CONFIG=/etc/fstp/control.json
+fstp-control route add /etc/fstp/routes/grants.json   # add, or replace the cell's route
+fstp-control route remove <the cell id>              # remove every route of the cell
+fstp-control route list /tmp/routes.json             # write the served routes
 ```
 
-**Approve** it. Open the operator page, log in with your passkey, and check the waiting change: its host, cell, addresses and pins. Choose "Approve with a passkey step-up" and confirm with your passkey again. One step-up approves exactly that one change. Only then does `fstp-control` sign and serve the new table, and the edges take it at their next poll.
+Exit status 0 means done, 2 means the input or the route was refused, and 1 means anything else failed. The commands never prompt. A route is refused when it would clash with another: the same host, tunnel address or pin, or a cell whose two endpoints share an address.
 
-The command waits for the approval and exits with status 0 once the change is served. It exits with status 2 at once for a route that every edge would refuse: a host held by another cell, a cell whose two endpoints share an address, a tunnel address or a pin of another route, and two endpoints with one pin. It exits with status 1 when no one approved the change within 5 minutes. Nothing changes then.
+When you renew a tunnel certificate, put its new pin in the route file and run `route add` again. When you renew the feed certificate, first add its pin as a second entry of `feed.cert_sha256` on each edge and restart the edge once.
 
-An add for a cell that has a route replaces it. So when you renew a tunnel certificate, update its pin in the route file, propose the file again and approve it. No restart is needed.
+Every change is logged in `/var/lib/fstp-control/route-audit.log`: the time, the operation, the cell, the version and the user who ran it. Copy the log off the host from time to time.
 
-**Remove** every route of a cell, with the same approval:
-
-```sh
-FSTP_CONTROL_CONFIG=/etc/fstp/control.json fstp-control route remove <the cell id>
-```
-
-After the next poll, a new connection for the host or its vault origin closes at the edge. A connection already open runs on until it ends.
-
-**List** the served routes:
-
-```sh
-FSTP_CONTROL_CONFIG=/etc/fstp/control.json fstp-control route list /tmp/routes.json
-```
-
-It writes `{"routes": [...], "version": n}` with each route in the route file form. A list needs no step-up: only the OS user of `fstp-control` can use the operator socket, and that user can read the table itself. The operator page shows the same list after a login.
-
-**Audit log.** Each approved change appends one record to `route-audit.log` in `state_dir` before the new table is stored. It names the time, the staff member, the operation, the cell, the version and the change digest, and it keeps the step-up assertion, which verifies again under the pinned passkey. The records form a hash chain, and `fstp-control` checks the whole chain at start. Keep a copy of the log off the host.
-
-**Check** it from outside, with the public CA your browsers trust:
+**Check** from outside:
 
 ```sh
 curl https://grants.example.eu/.well-known/oauth-protected-resource/mcp
 ```
 
-The answer names `"resource": "https://grants.example.eu/mcp"`, with no port. A host with no route gets no answer at all: the edge closes the connection.
+The answer names `"resource": "https://grants.example.eu/mcp"`. A host with no route gets no answer.
 
 ## 6. Install the plugin (programme manager)
 
@@ -403,7 +325,7 @@ Access tokens live 10 minutes. Claude refreshes them while your grant lasts, als
 
 ## Checked by
 
-`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` and `i19_route_feed_e2e.rs` run section 5: the `fstp-control route-feed` and `fstp-edge` binaries from their files in front of that binary. Routes are proposed with `fstp-control route` and approved with a passkey step-up on the operator page while the edge runs. `fstp-control` restarts with its table, and the edge restarts from its signed cache. `tools/devstack/run.sh external-cell --route-feed` starts the route feed for a manual check. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` runs the backup section: a base backup and WAL from a configuration file, and two restores to the same ledger head. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
+`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` and `i19_route_feed_e2e.rs` run section 5: the `fstp-control route-feed` and `fstp-edge` binaries from their files in front of that binary. Routes change with `fstp-control route` while the edge runs. `fstp-control` restarts with its table, and the edge restarts from its signed cache. `tools/devstack/run.sh external-cell --route-feed` starts the route feed for a manual check. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` runs the backup section: a base backup and WAL from a configuration file, and two restores to the same ledger head. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
 
 ## Backups and restore (operator)
 
