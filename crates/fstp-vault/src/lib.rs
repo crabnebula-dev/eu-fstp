@@ -10,6 +10,8 @@
 //! - [`service`]: the run loop of the internal listener and the vault
 //!   origin, over the database and the sans-IO core (lane int5).
 //! - [`config`]: the process configuration, with a closed member set.
+//! - [`keystore`]: the vault keystore in the `keystore` tables, under the
+//!   vault's own `fstp-keyd` entry (ADR-004 record of lane L8).
 //! - [`match_key`]: the identity match key of design section 6.4 (Q17).
 //! - [`egress`]: the closed set of outbound destinations (B4a).
 //!
@@ -23,6 +25,7 @@ pub mod chain;
 pub mod codec;
 pub mod config;
 pub mod egress;
+pub mod keystore;
 mod messages;
 pub mod origin;
 pub mod service;
@@ -126,18 +129,13 @@ pub fn match_key(key: &[u8; 32], tuple: &[u8]) -> [u8; MATCH_KEY_LEN] {
     fstp_crypto::hmac_sha256(key, tuple)
 }
 
-/// The binary's entry. It refuses: the process configuration and the
-/// vault keystore that gives the sealing and anchor keys are not built.
-/// [`service::serve`] is the run loop, which a world starts with the
-/// parts it holds.
+/// The binary's entry. It refuses until lane L8's run module lands.
 ///
 /// # Errors
 ///
 /// [`VaultError::NotImplemented`].
 pub fn run() -> Result<(), VaultError> {
-    Err(VaultError::NotImplemented(
-        "fstp_vault::run: the process configuration and the vault keystore; fstp_vault::service::serve is the run loop",
-    ))
+    Err(VaultError::NotImplemented("fstp_vault::run"))
 }
 
 #[cfg(test)]

@@ -755,7 +755,7 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
 pub struct AeadSealer {
     dek: [u8; 16],
     key: fstp_crypto::aead::Key,
-    digest_key: [u8; 32],
+    digest_key: fstp_custody::SealKey,
 }
 
 impl std::fmt::Debug for AeadSealer {
@@ -768,6 +768,17 @@ impl AeadSealer {
     /// A sealer with the data key `key` of id `dek` and the digest key
     /// `digest_key`.
     pub fn new(dek: [u8; 16], key: fstp_crypto::aead::Key, digest_key: [u8; 32]) -> AeadSealer {
+        AeadSealer::with_digest_key(dek, key, fstp_custody::SealKey::from_bytes(digest_key))
+    }
+
+    /// A sealer with the data key `key` of id `dek` and the digest key
+    /// `digest_key`, which stays in its wiped heap box (`crate::keystore`).
+    #[must_use]
+    pub fn with_digest_key(
+        dek: [u8; 16],
+        key: fstp_crypto::aead::Key,
+        digest_key: fstp_custody::SealKey,
+    ) -> AeadSealer {
         AeadSealer {
             dek,
             key,
@@ -800,7 +811,7 @@ impl Sealer for AeadSealer {
     }
 
     fn digest(&self, data: &[u8]) -> [u8; 32] {
-        fstp_crypto::hmac_sha256(&self.digest_key, data)
+        fstp_crypto::hmac_sha256(self.digest_key.expose(), data)
     }
 }
 
