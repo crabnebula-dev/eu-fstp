@@ -5,10 +5,11 @@
 //! client OS user, under `/run/fstp-keyd`:
 //!
 //! - `console.sock`, always, for root at the host console (mode 0600).
-//! - `cell.sock`, `vault.sock` and `pgagent.sock`, each only when its
-//!   variable `FSTP_KEYD_GROUP_CELL`, `FSTP_KEYD_GROUP_VAULT` or
-//!   `FSTP_KEYD_GROUP_PGAGENT` names the group id of that client's OS
-//!   user. The socket is handed to that group (mode 0660). The install
+//! - `cell.sock`, `vault.sock`, `pgagent.sock` and `control.sock`, each only
+//!   when its variable `FSTP_KEYD_GROUP_CELL`, `FSTP_KEYD_GROUP_VAULT`,
+//!   `FSTP_KEYD_GROUP_PGAGENT` or `FSTP_KEYD_GROUP_CONTROL` names the group
+//!   id of that client's OS user. `control.sock` serves the pilot
+//!   `fstp-control` (ADR-009 "Pilot route feed"). The socket is handed to that group (mode 0660). The install
 //!   sets the variables in the systemd unit and makes `fstp-keyd` a
 //!   member of each group.
 //!
@@ -47,6 +48,7 @@ fn group_var(role: ClientRole) -> Option<&'static str> {
         ClientRole::Vault => Some("FSTP_KEYD_GROUP_VAULT"),
         ClientRole::PgAgent => Some("FSTP_KEYD_GROUP_PGAGENT"),
         ClientRole::Console => None,
+        ClientRole::Control => Some("FSTP_KEYD_GROUP_CONTROL"),
     }
 }
 
