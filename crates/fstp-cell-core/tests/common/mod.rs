@@ -539,6 +539,13 @@ pub(crate) fn table_commands() -> Result<Vec<(&'static str, CellCommand)>, Strin
             "ApproveRecovery",
             CellCommand::Auth(AuthCommand::ApproveRecovery { case: [0x43; 16] }),
         ),
+        // ADR-013 "Consent page", I-78 (ADR-026 record of lane L12).
+        (
+            "LinkDevice",
+            CellCommand::Ops(OpsCommand::ApproveAgentConsent {
+                request_digest: [0x44; 32],
+            }),
+        ),
     ])
 }
 

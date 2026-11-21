@@ -44,14 +44,13 @@ const ADMIN_2: AccountId = AccountId::from_raw(2);
 /// Table entries with no command or action in the stubs yet. Each names
 /// where it arrives. The coverage test fails if an entry is neither built
 /// nor listed here, so the list cannot hide a new entry.
-const NO_STUB_ACTION: [(&str, &str); 8] = [
+const NO_STUB_ACTION: [(&str, &str); 7] = [
     ("TenantExport", "M9 export"),
     ("VaultExport", "M9 export"),
     (
         "IdentityDownload",
         "vault ticket with download scope, no scope field yet",
     ),
-    ("LinkDevice", "no M3 route"),
     ("DesktopSignIn", "no M3 route"),
     ("ChangeEmail", "no M3 route"),
     ("ChangeBankDetails", "M5 payments"),
