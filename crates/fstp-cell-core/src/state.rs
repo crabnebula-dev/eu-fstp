@@ -1295,6 +1295,7 @@ fn fold_key(s: &mut CellState, at: Timestamp, r: &KeyRecord) -> Result<(), FoldE
 fn fold_release(tickets: &mut BTreeSet<[u8; 16]>, r: &ReleaseRecord) -> Result<(), FoldError> {
     match r {
         ReleaseRecord::TicketIssued { id, .. }
+        | ReleaseRecord::VerificationTicketIssued { id, .. }
         | ReleaseRecord::IdentityReleaseIssued { id, .. }
         | ReleaseRecord::IdentityDownloadIssued { id, .. } => {
             if !tickets.insert(*id) {

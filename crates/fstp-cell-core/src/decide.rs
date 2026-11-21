@@ -590,8 +590,8 @@ pub(crate) fn queries_with_inputs(
         CellCommand::Release(ReleaseCommand::IssueWriteTicket {
             kind: WRITE_KIND_GUARDIAN_CONSENT,
         }) => guardian_plan(s, actor, now).map(|p| p.queries()),
-        CellCommand::Release(ReleaseCommand::IssueVerificationTicket { proposal }) => {
-            verification_plan(s, *proposal, actor).map(|p| p.queries())
+        CellCommand::Release(ReleaseCommand::IssueVerificationTicket { account, proposal }) => {
+            verification_plan(s, *account, *proposal, actor).map(|p| p.queries())
         }
         CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { case }) => {
             approval_plan(s, *case, actor).map(|p| p.queries())
@@ -2034,12 +2034,14 @@ fn country_ticket(
 }
 
 /// The vault questions of a verification ticket (ADR-004 record of lane
-/// L13b, row "Cell ticket"): whether the recorder is verified, and whether
-/// the recorder shares an identity with an account bound to the proposal.
+/// L13b, rows "Cell ticket" and "Ticket"): whether the recorder is
+/// verified, and whether the recorder shares an identity with the person
+/// or, for an applicant, with an account bound to the proposal.
 struct VerificationPlan {
     actor: AccountId,
-    team: BTreeSet<AccountId>,
-    proposal: ProposalId,
+    subject: AccountId,
+    others: BTreeSet<AccountId>,
+    proposal: Option<ProposalId>,
 }
 
 impl VerificationPlan {
@@ -2052,7 +2054,7 @@ impl VerificationPlan {
     fn same_identity(&self) -> Query {
         Query::SameIdentityAsAny {
             subject: self.actor,
-            others: self.team.clone(),
+            others: self.others.clone(),
         }
     }
 
@@ -2062,18 +2064,20 @@ impl VerificationPlan {
 }
 
 /// The checks of a verification ticket that need no vault answer (ADR-008
-/// "Manual identity checks", ADR-004 record of lane L13b, row "Cell
-/// ticket"): the recorder is a tenant admin with no Judging binding in
-/// any state and no binding on the proposal, and the proposal is in
-/// NEGOTIATION or later.
+/// "Manual identity checks", ADR-004 record of lane L13b, rows "Cell
+/// ticket" and "Ticket"). The recorder is a tenant admin with no Judging
+/// binding in any state, and is not the person. With a proposal, the
+/// proposal is in NEGOTIATION or later, the person holds a binding on it
+/// and the recorder holds none. Without one, the person holds no
+/// Receiving binding at all, so an applicant is verified only in
+/// NEGOTIATION (R-NG-01).
 fn verification_plan(
     s: &CellState,
-    proposal: u128,
+    subject: AccountId,
+    proposal: Option<u128>,
     actor: AccountId,
 ) -> Result<VerificationPlan, CellRefusal> {
-    let p = ProposalId::from_raw(proposal);
     let core = &s.engine().core;
-    s.proposal(p).ok_or_else(unknown)?;
     if !s.tenant().is_admin(actor) {
         return Err(wrong_actor());
     }
@@ -2083,40 +2087,69 @@ fn verification_plan(
         .roster()
         .bindings()
         .any(|(_, b)| b.account == actor && b.group() == Group::Judging);
-    let team: BTreeSet<AccountId> = core
-        .roster()
-        .bindings()
-        .filter(|(_, b)| b.proposal() == Some(p))
-        .map(|(_, b)| b.account)
-        .collect();
-    // ADR-008 rule 1: never a person of the recorder's own proposal.
-    if judging || team.contains(&actor) {
+    // ADR-008 rule 1: never the recorder's own account.
+    if judging || subject == actor {
         return Err(wrong_actor());
     }
-    let state = fstp_domain::view::proposal_state(core, p).ok_or_else(unknown)?;
-    if !RELEASE_STATES.contains(&state) {
-        return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
-    }
+    let mut others = BTreeSet::from([subject]);
+    let p = match proposal {
+        Some(raw) => {
+            let p = ProposalId::from_raw(raw);
+            s.proposal(p).ok_or_else(unknown)?;
+            let team: BTreeSet<AccountId> = core
+                .roster()
+                .bindings()
+                .filter(|(_, b)| b.proposal() == Some(p))
+                .map(|(_, b)| b.account)
+                .collect();
+            if team.contains(&actor) {
+                return Err(wrong_actor());
+            }
+            if !team.contains(&subject) {
+                return Err(unknown());
+            }
+            let state = fstp_domain::view::proposal_state(core, p).ok_or_else(unknown)?;
+            if !RELEASE_STATES.contains(&state) {
+                return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+            }
+            others.extend(team);
+            Some(p)
+        }
+        None => {
+            // R-NG-01: an applicant's identity is collected in NEGOTIATION
+            // only, under a ticket that names the proposal.
+            let receiving = core
+                .roster()
+                .bindings()
+                .any(|(_, b)| b.account == subject && b.group() == Group::Receiving);
+            if receiving {
+                return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+            }
+            None
+        }
+    };
     Ok(VerificationPlan {
         actor,
-        team,
+        subject,
+        others,
         proposal: p,
     })
 }
 
-/// A `verification_recorded` write ticket (ADR-004 record of lane L13b,
-/// row "Cell ticket"), once the vault answered that the recorder is
-/// verified (ADR-008 interim) and shares no identity with the proposal's
-/// accounts (rule 2).
+/// A `verification_recorded` write ticket for one person (ADR-004 record
+/// of lane L13b, row "Ticket"), once the vault answered that the recorder
+/// is verified (ADR-008 interim) and shares no identity with the person or
+/// the proposal's accounts (rule 2).
 fn verification_ticket(
     s: &CellState,
-    proposal: u128,
+    subject: AccountId,
+    proposal: Option<u128>,
     actor: AccountId,
     now: Timestamp,
     command: Option<[u8; 16]>,
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
-    let plan = verification_plan(s, proposal, actor)?;
+    let plan = verification_plan(s, subject, proposal, actor)?;
     let verified = answers.get(&plan.verified()).ok_or_else(answer_missing)?;
     let same = answers
         .get(&plan.same_identity())
@@ -2125,19 +2158,22 @@ fn verification_ticket(
         return Err(wrong_actor());
     }
     let kind = WRITE_KIND_VERIFICATION_RECORDED;
-    let mut payload = Vec::with_capacity(18);
+    let mut payload = Vec::with_capacity(34);
     payload.extend_from_slice(&kind.to_be_bytes());
-    payload.extend_from_slice(&plan.proposal.raw().to_be_bytes());
+    payload.extend_from_slice(&plan.subject.raw().to_be_bytes());
+    payload.extend_from_slice(&plan.proposal.map_or(0, ProposalId::raw).to_be_bytes());
     let id = derive_id(b"write", command, actor, now.micros(), &payload);
     if s.ticket_issued(id) {
         return Err(reused());
     }
-    Ok(vec![CellRecord::Release(ReleaseRecord::TicketIssued {
-        id,
-        kind,
-        proposal,
-        holder: actor,
-    })])
+    Ok(vec![CellRecord::Release(
+        ReleaseRecord::VerificationTicketIssued {
+            id,
+            holder: actor,
+            subject: plan.subject,
+            proposal: plan.proposal.map(ProposalId::raw),
+        },
+    )])
 }
 
 fn decide_release(
@@ -2229,8 +2265,8 @@ fn decide_release(
         ReleaseCommand::IssueCountryTicket { proposal } => {
             country_ticket(s, *proposal, actor, now, command)
         }
-        ReleaseCommand::IssueVerificationTicket { proposal } => {
-            verification_ticket(s, *proposal, actor, now, command, answers)
+        ReleaseCommand::IssueVerificationTicket { account, proposal } => {
+            verification_ticket(s, *account, *proposal, actor, now, command, answers)
         }
         // No relationship form is defined yet, so every relationship is
         // refused (fail closed).

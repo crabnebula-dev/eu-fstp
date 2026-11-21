@@ -34,14 +34,16 @@ pub enum ReleaseCommand {
         /// The proposal the lead states the country for.
         proposal: u128,
     },
-    /// Issue a `verification_recorded` write ticket for a proposal to a
+    /// Issue a `verification_recorded` write ticket for one person to a
     /// recorder (ADR-008 "Manual identity checks", ADR-004 record of lane
-    /// L13b, row "Cell ticket"). The recorder enters the outcome and the
-    /// identity attributes on the vault origin under it, so the cell never
-    /// receives them (I-17).
+    /// L13b, rows "Cell ticket" and "Ticket"). The recorder enters the
+    /// outcome and the identity details on the vault origin under it, so
+    /// the cell never receives them (I-17).
     IssueVerificationTicket {
-        /// The proposal whose person the recorder checks.
-        proposal: u128,
+        /// The person the recorder checks.
+        account: AccountId,
+        /// For an applicant, the proposal in NEGOTIATION or later.
+        proposal: Option<u128>,
     },
     /// Record a relationship (system).
     RecordRelationship {
@@ -53,6 +55,20 @@ pub enum ReleaseCommand {
 /// A release record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReleaseRecord {
+    /// A `verification_recorded` write ticket was issued for one person
+    /// (ADR-004 record of lane L13b, row "Ticket"). It names the recorder,
+    /// the person and, for an applicant, the proposal, so the issue is
+    /// logged (R-AU-01).
+    VerificationTicketIssued {
+        /// The ticket id.
+        id: [u8; 16],
+        /// The recorder the ticket was issued to.
+        holder: AccountId,
+        /// The person the recorder checks.
+        subject: AccountId,
+        /// For an applicant, the proposal.
+        proposal: Option<u128>,
+    },
     /// A write ticket was issued. It names its kind, the proposal it
     /// writes for and the account it was issued to, so the issue is
     /// logged as the release ticket is (design section 6.5).
@@ -103,6 +119,9 @@ pub enum IssuedKind {
     Download,
     /// One write of the write kind code (`TicketIssued`).
     Write(u16),
+    /// One verification of the person it names
+    /// (`VerificationTicketIssued`).
+    Verification(AccountId),
 }
 
 /// A ticket the ledger issued, keyed by the command id that issued it.
@@ -113,8 +132,9 @@ pub struct IssuedTicket {
     pub id: [u8; 16],
     /// What it admits.
     pub kind: IssuedKind,
-    /// The proposal it names.
-    pub proposal: u128,
+    /// The proposal it names, if any. Only a verification of a person who
+    /// is not an applicant names none.
+    pub proposal: Option<u128>,
     /// The account it was issued to.
     pub holder: AccountId,
 }
@@ -131,20 +151,31 @@ impl IssuedTicket {
             } => IssuedTicket {
                 id: *id,
                 kind: IssuedKind::Write(*kind),
-                proposal: *proposal,
+                proposal: Some(*proposal),
                 holder: *holder,
             },
             ReleaseRecord::IdentityReleaseIssued { id, proposal, by } => IssuedTicket {
                 id: *id,
                 kind: IssuedKind::Release,
-                proposal: *proposal,
+                proposal: Some(*proposal),
                 holder: *by,
             },
             ReleaseRecord::IdentityDownloadIssued { id, proposal, by } => IssuedTicket {
                 id: *id,
                 kind: IssuedKind::Download,
-                proposal: *proposal,
+                proposal: Some(*proposal),
                 holder: *by,
+            },
+            ReleaseRecord::VerificationTicketIssued {
+                id,
+                holder,
+                subject,
+                proposal,
+            } => IssuedTicket {
+                id: *id,
+                kind: IssuedKind::Verification(*subject),
+                proposal: *proposal,
+                holder: *holder,
             },
         }
     }

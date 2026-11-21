@@ -7,7 +7,8 @@
 //! no binding on the proposal, for a proposal in NEGOTIATION or later,
 //! when the vault answers that the recorder is verified and shares no
 //! identity with the proposal's accounts. Production
-//! `fstp_cell_core::decide` against that rule, over states and actors,
+//! `fstp_cell_core::decide` against that rule for the lead L1 of PR1, over
+//! states and actors,
 //! each built from genesis with the vault's ground truth.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -22,9 +23,6 @@ use fstp_domain::rules::StateTag;
 use fstp_domain_testkit::r#gen::review::{IRC, L1, PR1, R1, tag};
 use fstp_domain_testkit::r#gen::roster::{ADMIN, STAFF_PM, T0};
 use fstp_prop::{Gen, prop_assert_eq};
-
-/// The write kind code of `VerificationRecorded` (ADR-009).
-const KIND_6: u16 = 6;
 
 /// How the tenant admin stands at the vault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,14 +77,15 @@ fn issues_with(
     }
     let at = path.last().map_or(T0, |p| p.at);
     let cmd = CellCommand::Release(ReleaseCommand::IssueVerificationTicket {
-        proposal: PR1.raw(),
+        account: L1,
+        proposal: Some(PR1.raw()),
     });
     match cell.exec(cmd, actor, at) {
         Ok(batch) => Ok(batch.iter().any(|rec| {
             matches!(
                 rec,
-                CellRecord::Release(ReleaseRecord::TicketIssued { kind, proposal, holder, .. })
-                    if *kind == KIND_6 && *proposal == PR1.raw() && *holder == actor
+                CellRecord::Release(ReleaseRecord::VerificationTicketIssued { holder, subject, proposal, .. })
+                    if *subject == L1 && *proposal == Some(PR1.raw()) && *holder == actor
             )
         })),
         Err(ProdError::Refused(_)) => Ok(false),
@@ -149,4 +148,43 @@ fn adr008_second_admin_issued_once_verified() {
         issues_with(StateTag::Negotiation, t, UNVERIFIED_ADMIN),
         Ok(true)
     );
+}
+
+/// Whether production issues a verification ticket for `subject` with no
+/// proposal to the verified tenant admin, with PR1 in NEGOTIATION.
+fn issues_for_staff(subject: AccountId) -> Result<bool, String> {
+    let path = paths::to(StateTag::Negotiation)?;
+    let mut cell = ProdCell::genesis(truth(Recorder::Verified)).map_err(|e| e.to_string())?;
+    cell.exec_tenant_admin_grant(ADMIN, ADMIN, T0)
+        .map_err(|e| e.to_string())?;
+    for p in &path {
+        cell.exec_step(&p.step, p.at).map_err(|e| e.to_string())?;
+    }
+    let at = path.last().map_or(T0, |p| p.at);
+    let cmd = CellCommand::Release(ReleaseCommand::IssueVerificationTicket {
+        account: subject,
+        proposal: None,
+    });
+    match cell.exec(cmd, ADMIN, at) {
+        Ok(batch) => Ok(batch.iter().any(|rec| {
+            matches!(
+                rec,
+                CellRecord::Release(ReleaseRecord::VerificationTicketIssued { subject: s, proposal: None, .. })
+                    if *s == subject
+            )
+        })),
+        Err(ProdError::Refused(_)) => Ok(false),
+        Err(e @ ProdError::NotImplemented(_)) => Err(e.to_string()),
+    }
+}
+
+/// R-NG-01, ADR-004 record of lane L13b, row "Ticket": a ticket with no
+/// proposal is issued for staff, such as a programme manager, and never
+/// for an account that holds a Receiving binding, whose identity is
+/// collected in NEGOTIATION only, under a ticket naming the proposal.
+#[test]
+fn adr008_staff_ticket_names_no_proposal_and_never_an_applicant() {
+    assert_eq!(issues_for_staff(STAFF_PM), Ok(true));
+    assert_eq!(issues_for_staff(L1), Ok(false));
+    assert_eq!(issues_for_staff(ADMIN), Ok(false), "rule 1");
 }
