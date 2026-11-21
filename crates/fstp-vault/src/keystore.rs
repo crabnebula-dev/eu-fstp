@@ -16,7 +16,8 @@
 //!                 || be32(generation) || be64(epoch)
 //! data key  the Fact data key, and one data key per identity tuple in an
 //!           Attribute group, each sealed to its group key (FSK1)
-//! tuple     an identity's attribute tuple, FSB1 under its data key
+//! tuple     an identity's attribute tuple, FSB1 under its data key, which
+//!           also derives the identity's fact key F(X) (lane L13)
 //! intent    the planner's chain state, sealed under S(e) (lane L11)
 //! ```
 //!

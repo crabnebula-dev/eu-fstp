@@ -36,6 +36,15 @@
 //! 7. [`ErasureEvent::CompletionRecorded`]: `KeyEpochDestroyed` and one
 //!    `IdentityErased` per identity, in one vault journal.
 //!
+//! # Identity facts
+//!
+//! The tuple data key `T(X)` of each live identity derives its fact key
+//! `F(X)` ([`keystore::identity_fact_key`]), which seals the bank details
+//! and hardship evidence of its registered accounts (ADR-004 record of
+//! lane L13). [`Runner::register_account`] registers an account, and an
+//! idle runner serves as the vault's [`Registrar`]. The batch that erases
+//! `T(X)` destroys `F(X)` with it.
+//!
 //! # Durability
 //!
 //! The chain state is written with the request and with every step from
