@@ -11,9 +11,31 @@ cargo-fuzz = true
 libfuzzer-sys = "=0.4.13"
 fstp-backup = { path = ".." }
 
+
+[[bin]]
+name = "backup_config_decode"
+path = "fuzz_targets/backup_config_decode.rs"
+test = false
+doc = false
+bench = false
+
 [[bin]]
 name = "backup_container_decode"
 path = "fuzz_targets/backup_container_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "backup_index_decode"
+path = "fuzz_targets/backup_index_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "backup_key_file_decode"
+path = "fuzz_targets/backup_key_file_decode.rs"
 test = false
 doc = false
 bench = false
