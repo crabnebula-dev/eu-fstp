@@ -96,7 +96,11 @@ fn wait_for(what: &str, f: impl Fn() -> bool) {
 /// connections for the host, while a connection opened before it still
 /// gets its answer. A restarted `fstp-control` resumes its signed table
 /// and version, so its next change still reaches the edge, which would
-/// refuse an older version. Both processes drain to status 0.
+/// refuse an older version. Each route change is proposed by the command
+/// and approved on the operator page with a passkey step-up (I-78), and
+/// leaves one audit record. `route list` reads the served routes. An edge
+/// restarted while `fstp-control` is down serves its signed cache. Both
+/// processes drain to status 0.
 #[test]
 fn i19_r_sw_02_route_feed_changes_routes_of_a_running_edge() {
     let cell_bin = bin_path("fstp-cell").unwrap_or_else(|e| {
@@ -220,11 +224,39 @@ fn i19_r_sw_02_route_feed_changes_routes_of_a_running_edge() {
     );
     assert_eq!(feed.edge_pid(), pid, "the edge restarted");
 
-    assert!(feed.stop_edge(), "fstp-edge did not drain to status 0");
+    // `route list` reads the served table with no step-up.
+    let listed = dir.join("listed.json");
+    assert!(feed.list(&listed).unwrap().success());
+    let listed = fstp_json::parse(&std::fs::read(&listed).unwrap()).unwrap();
+    let hosts: Vec<&str> = listed
+        .get("routes")
+        .and_then(|r| r.as_array())
+        .unwrap()
+        .iter()
+        .filter_map(|r| r.get("host").and_then(|h| h.as_str()))
+        .collect();
+    assert_eq!(hosts, vec![host.as_str()]);
+
+    // Each approved change left one audit record with its evidence.
+    let (records, _) =
+        fstp_control::route_change::decode_audit_log(&std::fs::read(feed.audit_log()).unwrap())
+            .unwrap();
+    let ops: Vec<u8> = records.iter().map(|r| r.op).collect();
+    assert_eq!(ops, vec![1, 2, 1], "one record per approved change");
+
+    // The edge restarts while fstp-control is down: its signed cache
+    // serves the last verified table.
     assert!(
         feed.stop_control(),
         "fstp-control did not drain to status 0"
     );
+    assert!(feed.stop_edge(), "fstp-edge did not drain to status 0");
+    feed.start_edge().unwrap();
+    wait_for("the restarted edge did not serve its cache", || {
+        routed(&rt, edge, &origin, &host)
+    });
+
+    assert!(feed.stop_edge(), "fstp-edge did not drain to status 0");
     drop(feed);
     drop(world);
     drop((custody, key_file_custody, control_custody));
