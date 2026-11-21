@@ -19,7 +19,7 @@ The pilot is one host in SaaS mode, with `fstp-keyd` custody and no control plan
 - **Vault.** The `fstp-vault` binary, with its own configuration, keystore and custody entry. It pins the cell's ticket public key (section 3a).
 - **Edge.** The `fstp-edge` binary, which routes the tenant domain to the cell's tunnel listener by SNI. Section 5 sets it up.
 - **Mail.** An account on a submission relay for proof mail: sign-up proofs, magic links and recovery proofs (D3). A tenant's own relay replaces it once the tenant sets one (ADR-018).
-- **Backups.** Object storage under ADR-012. The S3 client of `fstp-backup` is still a stub.
+- **Backups.** Object storage under ADR-012, and `fstp-backup` per self-operated cluster. The section "Backups and restore (operator)" sets it up.
 - **claude.ai.** A claude.ai plan that allows custom connectors, if staff use claude.ai. The claude.ai trace of D9 is still open, so claude.ai is not yet verified against a production cell.
 
 ## 2. Configure the cell
@@ -281,4 +281,115 @@ Access tokens live 10 minutes. Claude refreshes them while your grant lasts, als
 
 ## Checked by
 
-`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` runs section 5: the `fstp-edge` binary from its files in front of that binary. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
+`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` runs section 5: the `fstp-edge` binary from its files in front of that binary. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` runs the backup section: a base backup and WAL from a configuration file, and two restores to the same ledger head. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
+
+## Backups and restore (operator)
+
+Written by lane L10 `prod/backup`. The design is ADR-012, and its record of lane L10 holds the readings this section follows. Every item marked interim waits for Daniel.
+
+`fstp-backup` seals each base backup part and each WAL segment to the cluster's ClusterBackup group key before it leaves the host. Each container has a fresh data key, sealed through the hybrid KEM (X25519 plus ML-KEM-768, R-CR-01). The agent that writes backups holds the public key only. Opening a backup needs the custody root, so an erasure that destroys a key also holds in every backup (I-81). The primary copy goes to OVHcloud Object Storage. The recovery point objective is about one minute, from `archive_timeout`.
+
+Run one agent per self-operated cluster, so one for the application cluster and one for the vault cluster. Each has its own configuration, key file, cluster id and state directory.
+
+### What the operator supplies
+
+- **Bucket.** An OVHcloud Object Storage bucket in an EU region, with object lock and versioning (ADR-005 V14). Set a lifecycle rule for old versions. The agent never deletes an object. Retention is open (Q25).
+- **Object store credentials.** An access key id and secret, scoped to the bucket where the service allows it (V15).
+- **Replication login.** The role `fstp_repl` on the cluster, with its client certificate, key and password, and the single `pg_hba` line `hostssl replication fstp_repl 127.0.0.1/32 scram-sha-256 clientcert=verify-full` (ADR-005).
+- **Custody.** The `fstp-keyd` console socket, which serves the ClusterBackup chain. Only `init-keys`, `restore` and `wal-restore` use it, and they run as root.
+
+### Configure
+
+Write one JSON file per cluster, for example `/etc/fstp/backup-app.json`. It holds no secret, and an unknown member is refused.
+
+```json
+{
+  "cluster": "<32 lowercase hex digits, a random id of this cluster>",
+  "credentials_dir": "/etc/fstp/backup-app",
+  "state_dir": "/var/lib/fstp-backup/app",
+  "pg_bindir": "/usr/lib/postgresql/16/bin",
+  "database": {"host": "127.0.0.1", "port": 5432},
+  "object_store": {"endpoint": "s3.<region>.io.cloud.ovh.net", "region": "<region>", "bucket": "<bucket>"},
+  "keyd_socket": "/run/fstp-keyd/console.sock"
+}
+```
+
+- `database.host` must be a loopback address.
+- `object_store.port` is optional and defaults to 443.
+- `keyd_socket` is needed only for `init-keys` and the restore commands.
+
+The credentials directory holds these files:
+
+| File | Holds | Read by |
+| --- | --- | --- |
+| `s3-access-key-id`, `s3-secret-access-key` | The object store credentials, one line each | Every command |
+| `s3-ca.pem` | Optional: a CA to trust beside the public roots | Every command |
+| `repl.pem`, `repl.key`, `repl.password`, `db-ca.pem` | The `fstp_repl` login and the cluster CA | `base-backup` |
+| `cluster-backup.key` | The ClusterBackup key file, made by `init-keys` | Every command |
+
+`archive_command` runs as the `postgres` OS user, and `base-backup` as the `fstp-backup` OS user. Give each user read access to the files of its commands only. The `fstp_repl` files stay readable by the `fstp-backup` user alone (ADR-005).
+
+### Create the key
+
+Once, as root:
+
+```sh
+FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup init-keys
+```
+
+It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` with mode 0600. It refuses to overwrite an existing key file.
+
+The root of that key lives in this host's `fstp-keyd`. If the host and its key volume are lost, no backup of this cluster opens again. Keep the key volume of that `fstp-keyd` entry, and `cluster-backup.key`, recoverable off the host by the procedure for custody volumes. Interim, pending Daniel: the pilot has no second custody for this root.
+
+### Archive WAL continuously
+
+In `postgresql.conf` of the cluster:
+
+```text
+wal_level = replica
+archive_mode = on
+archive_timeout = 60
+archive_command = 'FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json /usr/local/bin/fstp-backup wal-archive %p %f'
+```
+
+Restart PostgreSQL. A segment already in the bucket is not uploaded again. Timeline history files are archived too. Backup history files and `.partial` files are skipped. A failed upload exits with status 1, and PostgreSQL retries it.
+
+### Take base backups
+
+Run `fstp-backup base-backup` from a timer as the `fstp-backup` user, for example daily. Interim, pending Daniel: the frequency is decided with retention (Q25).
+
+```sh
+FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup base-backup
+```
+
+It runs `pg_basebackup` over loopback, cuts the tar stream into parts of 64 MiB, seals and uploads each part, and only then appends a line to `<state_dir>/base-backups.index`. Each line holds the cluster id, the backup id, the time and the size in bytes. Copy that file off the host after each run. A restore on a new host needs a backup id and its size.
+
+### Restore
+
+Stop the server that will use the restored directory. Then, as root:
+
+```sh
+FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored
+FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored <backup id> <size>
+```
+
+- The first form takes the newest backup in the local index. The second names one from an index line.
+- The directory must be new or empty.
+- The command checks every part, extracts the tar with the host's `tar`, and fetches each archived segment from the backup's start into `pg_wal`, until the next one is absent.
+- Give the directory to the `postgres` user and start PostgreSQL on it. It replays the fetched WAL, so the copy reaches the newest archived position.
+- Then follow the restore rule of ADR-012: the cell verifies its chain against the witness, and lost receipted entries are reported, never hidden.
+
+For archive recovery driven by PostgreSQL itself, `restore_command = 'FSTP_BACKUP_CONFIG=... fstp-backup wal-restore %f %p'` fetches one file and exits with status 1 when the bucket lacks it. It opens the key through the console socket, so it must run as root. Interim, pending Daniel: the pilot has no continuous standby, and a restore across a timeline switch is not built.
+
+Exit status: 0 on success, 2 for a refused configuration or argument, 1 for any other failure. No line names a secret.
+
+### What is not built yet
+
+- A second provider (Q25). One `object_store` only.
+- Keystore snapshots written by `fstp-cell` and `fstp-vault` (ADR-012 "Keystore snapshots").
+- Rotation of the ClusterBackup root, and a key held outside this host.
+- Declared restores at the witness and the monthly restore drill.
+
+### Checked by
+
+`crates/fstp-backup/tests/s3_agent.rs` runs the S3 client and the agent against a fake S3 that verifies every SigV4 signature on its own. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` takes a base backup of a PostgreSQL world from a configuration file, archives its WAL, restores two copies and starts PostgreSQL on each. It checks the ledger head, that no stored object holds plaintext (R-CR-01), and that erased texts stay unreadable from the restored keystores (I-81).

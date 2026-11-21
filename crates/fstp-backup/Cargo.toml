@@ -13,7 +13,10 @@ fstp-custody.workspace = true
 fstp-crypto.workspace = true
 fstp-http.workspace = true
 fstp-tls.workspace = true
-fstp-obs.workspace = true
+# Lane L10 (ADR-012 record): the one tokio runtime of the binary, behind
+# fstp-rt (ADR-002), and the configuration file's JSON decoder.
+fstp-rt.workspace = true
+fstp-json.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
