@@ -585,6 +585,16 @@ impl<R: Runtime> fstp_http::Handler for Origin<R> {
         let now = now_us();
         let method = req.method.as_str().to_owned();
         let path = req.target.path().to_owned();
+        // ADR-009 third route group (Daniel, 2026-11-21): the static pages.
+        if let Some((status, headers, body)) =
+            self.0.pages.as_ref().and_then(|p| p.serve(&method, &path))
+        {
+            return response(Answer {
+                status,
+                headers,
+                body,
+            });
+        }
         let body = req.body;
         if method == "POST"
             && path == "/w"
