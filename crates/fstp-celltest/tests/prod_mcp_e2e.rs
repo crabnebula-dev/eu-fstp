@@ -124,10 +124,8 @@ fn dns_server() -> std::net::SocketAddr {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
     std::thread::spawn(move || {
-        for s in l.incoming() {
-            if let Ok(mut s) = s {
-                let _ = answer_one(&mut s);
-            }
+        for mut s in l.incoming().flatten() {
+            let _ = answer_one(&mut s);
         }
     });
     addr
