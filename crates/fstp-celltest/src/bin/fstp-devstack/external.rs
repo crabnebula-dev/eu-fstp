@@ -23,12 +23,14 @@
 //! With `--route-feed` (lane L15, ADR-009 "Pilot route feed") it also starts
 //! the `fstp-control route-feed` and `fstp-edge` binaries in front of the
 //! cell, from a third custody process, and adds the cell's route through
-//! `fstp-control route add`. It then prints `route-feed-edge <address>`,
-//! where the edge binary listens, `control-config <path>`, the file that
-//! `FSTP_CONTROL_CONFIG` names for `fstp-control route add` and `route
-//! remove`, and `route-file <path>`, the cell's route file. A developer can
-//! then remove and add the route by hand and watch the edge follow without
-//! a restart. The URLs of the other lines still name the world's own edge.
+//! `fstp-control route add`, approved with a step-up of an enrolled
+//! software passkey. It then prints `route-feed-edge <address>`, where the
+//! edge binary listens, `operator-page <address>`, where the operator page
+//! for `https://control.pilot.test` listens, `control-config <path>`, the
+//! file that `FSTP_CONTROL_CONFIG` names for `fstp-control route`, and
+//! `route-file <path>`, the cell's route file. A developer can propose a
+//! change by hand, approve it on the operator page with a passkey of their
+//! own after enrolling and pinning it, and watch the edge follow. The URLs of the other lines still name the world's own edge.
 //!
 //! The binaries must be built first: `tools/devstack/run.sh external-cell`
 //! builds them.
@@ -105,6 +107,11 @@ fn assemble_assets(dir: &Path) -> Result<PathBuf, WorldError> {
         }
     }
     copy_dir(&dist_app, &assets.join("app"))?;
+    // The operator page of the pilot route feed (lane L15), when compiled.
+    let dist_feed = web.join("dist").join("routefeed");
+    if dist_feed.is_dir() {
+        copy_dir(&dist_feed, &assets.join("routefeed"))?;
+    }
     Ok(assets)
 }
 
@@ -161,14 +168,14 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             binary,
             dir: dir.clone(),
             key_file_custody: key_file_custody.socket().to_path_buf(),
-            assets_dir: Some(assets),
+            assets_dir: Some(assets.clone()),
             // Rule A9 keeps the test SMTP sink out of this binary, so the
             // stack names no relay: proofs answer 503 (`NoProofMail`).
             relay: None,
         };
         let world = World::start_external(SPEC, custody.socket().to_path_buf(), &spec)?;
         let feed = if route_feed {
-            Some(start_route_feed(&world, &dir)?)
+            Some(start_route_feed(&world, &dir, &assets)?)
         } else {
             None
         };
@@ -198,8 +205,9 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         .as_ref()
         .map(|(f, _, file)| {
             format!(
-                "route-feed-edge {}\ncontrol-config {}\nroute-file {}\n",
+                "route-feed-edge {}\noperator-page {}\ncontrol-config {}\nroute-file {}\n",
                 f.edge_addr(),
+                f.operator_addr(),
                 f.control_config().display(),
                 file.display()
             )
@@ -238,9 +246,10 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 fn start_route_feed(
     world: &World,
     dir: &Path,
+    assets: &Path,
 ) -> Result<(PilotFeed, SimProcess, PathBuf), WorldError> {
     let custody = SimProcess::spawn(2, dir)?;
-    let feed = PilotFeed::start(world, dir, custody.socket(), 1)?;
+    let mut feed = PilotFeed::start_with_assets(world, dir, custody.socket(), 1, Some(assets))?;
     let routes = feed.pinned_routes()?;
     let route = routes
         .first()
