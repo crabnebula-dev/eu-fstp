@@ -784,3 +784,42 @@ No path accepts a verification in production today either. The cell issues the `
 | Window | Between the drop and the next probe, another process may take the lock. An erasure that runs in that window ends the serving vault at its next probe. A fact the vault sealed meanwhile for the erased identity is sealed under a key that the erasure destroyed, so it stays unreadable (I-81) |
 
 Tests, written before the code: `r_id_02_verification_registers_before_it_records_and_retries` and `r_id_02_recorder_never_registers_their_own_identity` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `i81_vault_retakes_the_keystore_lock_after_its_connection_drops` and `i81_vault_stops_serving_when_another_process_takes_the_lock` (`crates/fstp-vault/tests/vault_chain.rs`); `r_nf_02_serving_stopped_is_one_json_line` (`crates/fstp-obs`).
+
+## Decided by Daniel, 2026-11-21: lane L13b's open points
+
+- **Where the tuple travels.** Option B. The recorder enters the identity attributes with the outcome on the vault origin, under the `VerificationRecorded` ticket the cell issues (`POST /api/v1/verifications`). The vault registers the identity as it accepts the verification, through `Runner::record_verification`. The cell never sees the attributes (I-17). Decided by Daniel on 2026-11-21. Option A is withdrawn, and the overview and ADR-008 stand.
+- **Name normalisation of the tuple.** Unicode NFC plus case folding, with no new crate. The four fields stay, and the `TODO(legal)` on data minimisation stays. Decided by Daniel on 2026-11-21. Lane L13b's finding on the tables it needs is below.
+- **Watch interval.** The registrar's keys connection is probed every 5 seconds. Decided by Daniel on 2026-11-21.
+
+## Written by lane L13b, 2026-11-21: the recorder route on the vault origin
+
+Written before the code. Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading |
+| --- | --- |
+| Cell ticket | `POST /api/v1/verifications` takes `{command_id, proposal}` and runs the new command `IssueVerificationTicket { proposal }`. The cell issues a `write:verification_recorded` ticket naming the proposal, held by the recorder, only when: the recorder is a tenant admin (ADR-008 "Recorder in M3"); the proposal is in NEGOTIATION or later (the strict release window of ADR-008); the recorder holds no Judging binding in any state (the I-17 guard of ADR-008); the recorder holds no binding on the proposal (rule 1); the vault answers that the recorder is verified, and that the recorder shares no identity with any account bound to the proposal (rule 2, and ADR-008's interim refusal of an unverified recorder). The ticket record is `TicketIssued` with kind 6, as for every write ticket |
+| Origin body | `POST /w` with a kind 6 ticket takes the body `{"account":"<id>","checks":[...],"document_type":"...","identity":{"birth_date":"YYYY-MM-DD","family_names":"...","given_names":"...","issuing_state":"AAA"},"method":"manual"}` in canonical JSON. The labels are those of R-ID-02 in `fstp_vault_core::fact`. Each name is 1 to 200 characters with no control character. The date is a calendar date from 1900-01-01. The state is three capital letters. The body limit of the kind rises from 1 KiB to 4 KiB, since a name may take four bytes per character. The decoder `fstp_vault::codec::decode_verification_write` has the fuzz target `verification_write_decode` from its first commit |
+| Origin checks | The ticket checks of every `/w` write come first: signature, cell, route, window, lifetime and single use. The ticket must be of kind `verification_recorded` and name a proposal. The vault's own negotiation fact of that proposal must list the body's account, as a release needs (ADR-009, design section 6.5 "Second guard"). The account must not be the ticket's holder (rule 1). `Runner::record_verification` then refuses a recorder of the subject's identity (rule 2), registers the account, and records the fact with the vault's time and the ticket's holder as verifier |
+| Ticket use | The ticket is marked used only after the verification is recorded. A failure before leaves it unused, so the recorder retries with the same link, and the retry completes without writing twice. A ticket used once is refused after |
+| Reply | 204, as every write with no reference. The reply names no identity |
+| Sans-IO path | `Vault::origin` has no keystore, so it answers a kind 6 write 503. The serving vault routes it to its registrar |
+| Page | The write page of the vault origin shows a form for `write:verification_recorded`: the account id of the person checked, method, document type, checks, and the four identity fields. It posts to `/w` as the other forms do. The cell never sees the entries. The ticket names the proposal but not the person, so the recorder enters the account id. Open for Daniel: whether the ticket should name the person |
+| Tuple | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8`, in this order: family names, given names, date of birth, issuing state. Names are trimmed and inner runs of white space become one space. NFC and case folding are decided, but not built: see the next table |
+| Not on real binaries | No end-to-end test runs on the real binaries. The cell issues the ticket only to a verified recorder, and no account is verified in production before the operator path of ADR-008, which waits on the ML-DSA-65 pull request. The g12 harness cannot seed a verification. The flow is tested through the cell's command decision with the vault's ground truth, and through the vault over PostgreSQL |
+
+### NFC and case folding: what an in-house normaliser needs
+
+No workspace code applies NFC or case folding. `fstp_api_core::display_name::normalised` trims, collapses and calls `to_lowercase`, and says so. `fstp_import::text` applies no normalisation form either. So the decided normalisation is not built, and lane L13b stopped before writing one. What it needs, from the Unicode Character Database of one pinned Unicode version, as approximate sizes for Unicode 15.1:
+
+| Part | Data |
+| --- | --- |
+| Canonical decomposition | About 2,060 code points with a canonical mapping of one or two code points (`UnicodeData.txt` field 5 without a `<tag>`). Hangul syllables are computed and need no table |
+| Canonical combining class | About 920 code points with a non-zero class, in about 380 ranges |
+| Composition | About 940 primary composite pairs, and about 1,120 code points with `Full_Composition_Exclusion` (`DerivedNormalizationProps.txt`) |
+| Quick check | `NFC_QC` No and Maybe, about 1,250 code points, optional, for speed only |
+| Case folding | About 1,450 simple (`C`) and about 105 full (`F`) mappings of `CaseFolding.txt`. Full folding can lengthen a string, as `ß` to `ss` |
+| Conformance | `NormalizationTest.txt`, about 19,000 cases and 2.5 MB, as a test fixture only |
+
+In compact Rust tables that is roughly 30 to 40 KB of static data, generated from the UCD files by an in-house Rust generator, since no Python may be used. The UCD files are under the Unicode licence, and adding them or tables derived from them needs Daniel's review. The canonical caseless form would be `NFC(casefold(NFD(x)))`, which needs decomposition, composition and folding together. Open for Daniel: approve that work as its own lane. Until then the tuple uses the trimmed, collapsed form above. When the normaliser lands, the tuple's label changes, the stored tuples are recomputed and the match keys rekeyed, and pilot vaults are recreated.
+
+Tests, written before the code: `adr008_verification_ticket_rules` (`crates/fstp-celltest/tests/adr008_verification_ticket.rs`); `adr008_recorder_verification_registers_the_identity`, `adr008_recorder_route_refuses_without_writing` and `adr008_recorder_retry_completes_and_replay_is_refused` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `adr008_verification_write_body_decodes_and_refuses` (`crates/fstp-vault/tests/codecs.rs`).
