@@ -194,10 +194,11 @@ fn i18_vault_route_tables_are_closed_and_name_no_seed_route() {
 }
 
 fn config_text(extra: &str) -> String {
+    let cell = hex(&CELL);
     format!(
-        "{{\"cell\":\"{}\",\"credentials_dir\":\"/etc/fstp/vault\",\"database\":{{\"dbname\":\"v_c1\",\"host\":\"db.internal\",\"port\":5432,\"role\":\"v_c1_app\"}},\"internal_listen\":\"127.0.0.1:7001\",\"origin_listen\":\"127.0.0.1:7002\"{extra},\"ticket_keys\":[\"{}\"]}}",
-        hex(&CELL),
-        hex(&[3; 32])
+        "{{\"cell\":\"{cell}\",\"credentials_dir\":\"/etc/fstp/vault\",\"database\":{{\"dbname\":\"v_{cell}\",\"host\":\"db.internal\",\"port\":5432}},\"internal_listen\":\"127.0.0.1:7001\",\"keyd_socket\":\"/run/fstp-keyd/vault.sock\",\"origin_host\":\"id.c1.example\",\"origin_listen\":\"127.0.0.1:7002\",\"registered_servers\":[{{\"kind\":\"vault\",\"spki_sha256\":\"{d}\"}}]{extra},\"ticket_keys\":[\"{t}\"],\"witness\":{{\"address\":\"127.0.0.1:7003\",\"ca_spki_sha256\":\"{d}\",\"receipt_keys\":[\"{d}\"],\"server_name\":\"witness.internal\"}}}}",
+        d = hex(&[4; 32]),
+        t = hex(&[3; 32])
     )
 }
 

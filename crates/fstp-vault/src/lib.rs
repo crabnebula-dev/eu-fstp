@@ -96,6 +96,9 @@ pub enum VaultError {
     /// The database refused a second use of something single-use. It
     /// names what.
     Conflict(&'static str),
+    /// A configuration or credential was refused. It names the rule or
+    /// the file, never the bytes (R-NF-02).
+    Config(&'static str),
 }
 
 impl std::fmt::Display for VaultError {
@@ -105,6 +108,7 @@ impl std::fmt::Display for VaultError {
             VaultError::Malformed(what) => write!(f, "malformed {what}"),
             VaultError::Unavailable(what) => write!(f, "{what} is unavailable"),
             VaultError::Conflict(what) => write!(f, "{what} was refused as a repeat"),
+            VaultError::Config(rule) => write!(f, "configuration refused: {rule}"),
         }
     }
 }
