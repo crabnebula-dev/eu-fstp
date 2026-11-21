@@ -16,6 +16,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fstp_control::ControlError;
 use fstp_control::config::decode_feed_config;
+use fstp_control::operator::Purpose;
+use fstp_control::route_change::RouteChanges;
 use fstp_control::route_feed::{
     OperatorReply, OperatorRequest, OperatorStatus, bind_operator_socket, create_feed_key,
     decode_feed_key_file, decode_operator_reply, decode_operator_request, encode_feed_key_file,
@@ -64,11 +66,12 @@ fn route(cell: u8, host: &str) -> PinnedRoute {
 
 const EDGE: &str = "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1";
 
-const CONFIG: &str = r#"{"credentials_dir":"/etc/fstp/control","edges":["e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"],"feed_listen":"10.0.0.2:7350","keyd_socket":"/run/fstp-keyd/control.sock","operator_socket":"/run/fstp-control/routes.sock","state_dir":"/var/lib/fstp-control"}"#;
+const CONFIG: &str = r#"{"assets_dir":"/usr/share/fstp/web","credentials_dir":"/etc/fstp/control","edges":["e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"],"feed_listen":"10.0.0.2:7350","keyd_socket":"/run/fstp-keyd/control.sock","operator_host":"control.example.eu","operator_listen":"127.0.0.1:7351","operator_socket":"/run/fstp-control/routes.sock","staff":[],"state_dir":"/var/lib/fstp-control"}"#;
 
 /// ADR-009 "Pilot route feed", row "Feed configuration": the route feed
 /// configuration decodes its documented form, and refuses an unknown or
-/// missing member, no edge, an edge twice, more than 16 edges, an edge id
+/// missing member, an operator host that is no relying party host, a
+/// staff entry out of grammar, no edge, an edge twice, more than 16 edges, an edge id
 /// out of grammar, a relative path and an address in a second spelling.
 #[test]
 fn adr009_l15_feed_config_refuses_bad_input() {
@@ -76,6 +79,9 @@ fn adr009_l15_feed_config_refuses_bad_input() {
     assert_eq!(c.edges, vec![EdgeId([0xe1; 16])]);
     assert_eq!(c.feed_listen, SocketAddr::from(([10, 0, 0, 2], 7350)));
     assert_eq!(c.operator_socket, "/run/fstp-control/routes.sock");
+    assert_eq!(c.operator_host, "control.example.eu");
+    assert_eq!(c.operator_listen, SocketAddr::from(([127, 0, 0, 1], 7351)));
+    assert!(c.staff.is_empty());
     let swap = |from: &str, to: &str| CONFIG.replacen(from, to, 1);
     let many: Vec<String> = (0..17u8)
         .map(|i| format!("\"{}\"", format!("{i:02x}").repeat(16)))
@@ -101,6 +107,12 @@ fn adr009_l15_feed_config_refuses_bad_input() {
         ),
         swap("10.0.0.2:7350", "010.0.0.2:7350"),
         swap("10.0.0.2:7350", "10.0.0.2:0"),
+        swap("control.example.eu", "not a host"),
+        swap("control.example.eu", "localhost"),
+        swap("127.0.0.1:7351", "localhost:7351"),
+        swap(r#""staff":[]"#, r#""staff":[{"credential_id":"aa"}]"#),
+        swap(r#""staff":[],"#, ""),
+        swap("\"/usr/share/fstp/web\"", "\"web\""),
         "[]".to_owned(),
     ] {
         assert!(decode_feed_config(bad.as_bytes()).is_err(), "{bad}");
@@ -301,42 +313,73 @@ fn i19_publisher_never_signs_a_table_the_edge_refuses() {
     assert_eq!(p.routes(), vec![renewed]);
 }
 
-/// ADR-009 "Pilot route feed", rows "Operator command" and "Operator
-/// bytes": the operator socket is bound with mode 0600. An add publishes
-/// the route and a remove takes it away, each answered with the version
-/// that serves the change. A route the edge would refuse is answered as
-/// refused, and bytes that are no request change nothing. Request and
-/// reply have one spelling.
+/// ADR-009 "Pilot route feed", rows "Proposal and approval", "Route
+/// list" and "Operator bytes": the operator socket is bound with mode
+/// 0600. An add only proposes: the command waits until a staff member
+/// approves it with a step-up, and then gets the version that serves it.
+/// A route the edge would refuse is answered as refused at once, bytes
+/// that are no request change nothing, and a list answers the served
+/// table with no step-up. Request and reply have one spelling.
 #[test]
-fn adr009_l15_operator_socket_adds_and_removes_routes() {
+fn adr009_l15_operator_socket_proposes_waits_and_lists() {
     use std::os::unix::fs::PermissionsExt as _;
     let dir = scratch("operator");
     let socket = dir.0.join("routes.sock");
     let key = fstp_crypto::composite::generate().unwrap();
+    let mut passkey = Ed25519Passkey::new();
+    let login = fstp_control::operator::OperatorLogin::new(HOST, &[passkey.pinned()]).unwrap();
+    let audit = fstp_control::route_change::AuditLog::open(&dir.0.join("route-audit.log")).unwrap();
     let publisher = Arc::new(RoutePublisher::new(key, &[EdgeId([1; 16])]).unwrap());
+    let changes = Arc::new(RouteChanges::new(Arc::clone(&publisher), login, audit));
     let listener = bind_operator_socket(&socket).unwrap();
     let mode = std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
-    let served = Arc::clone(&publisher);
+    let served = Arc::clone(&changes);
     std::thread::spawn(move || serve_operator(&listener, &served));
     let start = publisher.version();
-    let added = operator_request(
-        &socket,
-        &OperatorRequest::Add(Box::new(route(1, "a.example"))),
-    )
-    .unwrap();
+    // The proposer waits on its socket.
+    let proposer_socket = socket.clone();
+    let proposer = std::thread::spawn(move || {
+        operator_request(
+            &proposer_socket,
+            &OperatorRequest::Add(Box::new(route(1, "a.example"))),
+        )
+        .unwrap()
+        .0
+    });
+    let now = fstp_control::route_feed::now_secs();
+    let begun = Instant::now();
+    let id = loop {
+        if let Some(c) = changes.pending(now).first() {
+            break c.id;
+        }
+        assert!(
+            begun.elapsed() < Duration::from_secs(20),
+            "no proposal arrived"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(publisher.version(), start, "a proposal was signed");
+    let c = changes.login().begin(Purpose::Login, now).unwrap();
+    let a = passkey.assert(&c);
+    let (session, _) = changes.login().finish_login(c, &a, now).unwrap();
+    let c = changes.begin_approval(session, id, now).unwrap();
+    let a = passkey.assert(&c);
+    let v = changes.approve(session, id, c, &a, now).unwrap();
+    let added = proposer.join().unwrap();
     assert_eq!(added.status, OperatorStatus::Stored);
-    assert!(added.version > start);
+    assert_eq!(added.version, v);
     assert_eq!(publisher.routes(), vec![route(1, "a.example")]);
+    // A route the edge would refuse is answered at once.
     let mut clash = route(2, "b.example");
     clash.route.vault.address = route(1, "a.example").route.app.address;
-    let refused = operator_request(&socket, &OperatorRequest::Add(Box::new(clash))).unwrap();
+    let (refused, _) = operator_request(&socket, &OperatorRequest::Add(Box::new(clash))).unwrap();
     assert_eq!(refused.status, OperatorStatus::Refused);
-    assert_eq!(refused.version, added.version);
-    let removed = operator_request(&socket, &OperatorRequest::Remove([1; 16])).unwrap();
-    assert_eq!(removed.status, OperatorStatus::Stored);
-    assert!(removed.version > added.version);
-    assert!(publisher.routes().is_empty());
+    assert_eq!(refused.version, v);
+    // A list needs no step-up and answers the served table.
+    let (listed, table) = operator_request(&socket, &OperatorRequest::List).unwrap();
+    assert_eq!(listed.status, OperatorStatus::Stored);
+    assert_eq!(table, publisher.signed_table());
     // Bytes that are no request.
     {
         use std::io::{Read as _, Write as _};
@@ -347,12 +390,13 @@ fn adr009_l15_operator_socket_adds_and_removes_routes() {
         s.read_to_end(&mut reply).unwrap();
         let reply = decode_operator_reply(&reply).unwrap();
         assert_eq!(reply.status, OperatorStatus::Refused);
-        assert_eq!(reply.version, removed.version);
+        assert_eq!(reply.version, v);
     }
     // One spelling.
     for r in [
         OperatorRequest::Add(Box::new(route(3, "c.example"))),
         OperatorRequest::Remove([3; 16]),
+        OperatorRequest::List,
     ] {
         let bytes = encode_operator_request(&r).unwrap();
         assert_eq!(decode_operator_request(&bytes).unwrap(), r);
@@ -363,12 +407,66 @@ fn adr009_l15_operator_socket_adds_and_removes_routes() {
         longer.push(0);
         assert!(decode_operator_request(&longer).is_err());
     }
-    let reply = OperatorReply {
-        status: OperatorStatus::Failed,
-        version: 7,
-    };
-    assert_eq!(
-        decode_operator_reply(&encode_operator_reply(&reply)),
-        Ok(reply)
-    );
+    for status in [
+        OperatorStatus::Stored,
+        OperatorStatus::Refused,
+        OperatorStatus::Failed,
+        OperatorStatus::Expired,
+    ] {
+        let reply = OperatorReply { status, version: 7 };
+        assert_eq!(
+            decode_operator_reply(&encode_operator_reply(&reply)),
+            Ok(reply)
+        );
+    }
+}
+
+const HOST: &str = "control.example.test";
+
+/// A software passkey with an Ed25519 key from `fstp-crypto`.
+struct Ed25519Passkey {
+    key: fstp_crypto::sig::Ed25519SigningKey,
+    count: u32,
+}
+
+impl Ed25519Passkey {
+    fn new() -> Ed25519Passkey {
+        Ed25519Passkey {
+            key: fstp_crypto::sig::Ed25519SigningKey::generate().unwrap(),
+            count: 0,
+        }
+    }
+
+    fn pinned(&self) -> fstp_control::operator::StaffCredential {
+        fstp_control::operator::StaffCredential {
+            staff: fstp_cp_proto::StaffRef([5; 16]),
+            credential_id: vec![5; 16],
+            key: fstp_webauthn::CoseKey::Ed25519 {
+                x: self.key.public_key(),
+            },
+        }
+    }
+
+    fn assert(&mut self, challenge: &[u8; 32]) -> fstp_webauthn::AssertionResponse {
+        self.count += 1;
+        let mut auth = fstp_crypto::sha256(HOST.as_bytes()).to_vec();
+        auth.push(0x05);
+        auth.extend_from_slice(&self.count.to_be_bytes());
+        let b64 = fstp_pgwire::base64::encode(challenge)
+            .replace('+', "-")
+            .replace('/', "_")
+            .replace('=', "");
+        let client = format!(
+            "{{\"type\":\"webauthn.get\",\"challenge\":\"{b64}\",\"origin\":\"https://{HOST}\"}}"
+        )
+        .into_bytes();
+        let mut message = auth.clone();
+        message.extend_from_slice(&fstp_crypto::sha256(&client));
+        fstp_webauthn::AssertionResponse {
+            credential_id: vec![5; 16],
+            client_data_json: client,
+            authenticator_data: auth,
+            signature: self.key.sign(&message).unwrap().to_vec(),
+        }
+    }
 }
