@@ -65,10 +65,14 @@ use fstp_witness::lock::AsyncMutex;
 
 use crate::VaultError;
 use crate::chain::{VaultChain, VaultChainParts};
+use crate::erasure::{Journal, Registrar};
 use crate::origin::JournalEntry;
 use crate::origin::{INTERNAL_ROUTES, Vault};
 use crate::start::{ClusterRole, DatabaseView, accepts_database, placement_marker};
 use crate::store::{Sealer, load};
+use fstp_vault_proto::{
+    VaultRefusal, VaultRequest, VaultResponse, WireAccount, decode_request, encode_response,
+};
 
 /// How long the two handshakes and the tunnel header may take.
 pub const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -320,6 +324,9 @@ struct Answer {
 
 struct Shared<R: Runtime> {
     held: AsyncMutex<Held<R>>,
+    /// The keystore that registers identities (ADR-004 record of lane
+    /// L13). `None` refuses every registration as unavailable.
+    registrar: AsyncMutex<Option<Registrar<R>>>,
 }
 
 fn now_us() -> i64 {
@@ -330,7 +337,51 @@ fn now_us() -> i64 {
         .unwrap_or(0)
 }
 
+impl<R: Runtime> Journal for Persist<R> {
+    async fn commit(&mut self, entries: &[JournalEntry], now: i64) -> Result<(), VaultError> {
+        Persist::commit(self, entries, now).await
+    }
+}
+
+fn internal_answer(r: &VaultResponse) -> Answer {
+    Answer {
+        status: 200,
+        headers: vec![("content-type", "application/json".to_owned())],
+        body: encode_response(r).unwrap_or_default(),
+    }
+}
+
 impl<R: Runtime> Shared<R> {
+    /// Registers `account` with the identity of `tuple` through the
+    /// registrar, under the vault's lock (ADR-004 record of lane L13).
+    /// The vault and its journal change only once the registration
+    /// committed. A vault without a chain writer or a registrar answers
+    /// 503, as for any call that would write.
+    async fn register(&self, account: WireAccount, tuple: &[u8], now: i64) -> Answer {
+        let unavailable = Answer {
+            status: 503,
+            headers: vec![("content-type", "text/plain; charset=utf-8".to_owned())],
+            body: Vec::new(),
+        };
+        let mut held = self.held.lock().await;
+        let mut registrar = self.registrar.lock().await;
+        let Some(registrar) = registrar.as_mut() else {
+            return unavailable;
+        };
+        let Held { vault, store } = &mut *held;
+        let Some(store) = store.as_mut() else {
+            return unavailable;
+        };
+        let done = registrar
+            .register_account(vault, store, account, tuple, now)
+            .await;
+        internal_answer(&match done {
+            Ok(_) => VaultResponse::Acked,
+            Err(VaultError::Malformed(_)) => VaultResponse::Refused(VaultRefusal::Malformed),
+            Err(_) => VaultResponse::Refused(VaultRefusal::Unavailable),
+        })
+    }
+
     /// Runs `call` on a copy of the vault at `now`. A call with an empty
     /// journal keeps the copy and is answered. A call with a journal is
     /// answered only once its rows, its kind 1 chain row and its anchor
@@ -400,6 +451,9 @@ impl<R: Runtime> fstp_http::Handler for Internal<R> {
         }
         let now = now_us();
         let body = req.body;
+        if let Ok(VaultRequest::RegisterIdentity { account, tuple }) = decode_request(&body) {
+            return response(self.0.register(account, &tuple, now).await);
+        }
         let a = self
             .0
             .run(now, |v| Answer {
@@ -683,6 +737,23 @@ fn http_config(tls: Option<fstp_tls::ServerConfig>) -> fstp_http::ServerConfig {
 /// listener cannot be bound, and [`VaultError::Malformed`] for a database
 /// that is not this vault's, or rows that do not load.
 pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R>, VaultError> {
+    serve_with_registrar(rt, parts, None).await
+}
+
+/// [`serve`], with the registrar that takes identity registrations on
+/// `POST /v1/identity` (ADR-004 record of lane L13). The sealer of
+/// `parts` holds the registrar's identity fact keys
+/// ([`AeadSealer::with_identities`]). The registrar keeps the keys
+/// connection, and with it the keystore lock, while the vault serves.
+///
+/// # Errors
+///
+/// As [`serve`].
+pub async fn serve_with_registrar<R: Runtime>(
+    rt: R,
+    parts: VaultParts,
+    registrar: Option<Registrar<R>>,
+) -> Result<VaultHandle<R>, VaultError> {
     let VaultParts {
         cell,
         db,
@@ -723,6 +794,7 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
     };
     let shared = Arc::new(Shared {
         held: AsyncMutex::new(Held { vault, store }),
+        registrar: AsyncMutex::new(registrar),
     });
     let internal_tcp = rt
         .bind_tcp(internal_listen)
@@ -770,6 +842,9 @@ pub struct AeadSealer {
     dek: [u8; 16],
     key: fstp_crypto::aead::Key,
     digest_key: fstp_custody::SealKey,
+    /// The fact keys `F(X)` of the live identities (ADR-004 record of
+    /// lane L13), shared with the keystore that registers identities.
+    identities: Arc<crate::keystore::IdentityKeys>,
 }
 
 impl std::fmt::Debug for AeadSealer {
@@ -797,8 +872,25 @@ impl AeadSealer {
             dek,
             key,
             digest_key,
+            identities: Arc::default(),
         }
     }
+
+    /// The sealer with the identity fact keys `identities`, which the
+    /// keystore fills at start and at each registration (ADR-004 record of
+    /// lane L13).
+    #[must_use]
+    pub fn with_identities(self, identities: Arc<crate::keystore::IdentityKeys>) -> AeadSealer {
+        AeadSealer { identities, ..self }
+    }
+}
+
+fn split_sealed(sealed: &[u8]) -> Result<([u8; fstp_crypto::aead::NONCE_LEN], &[u8]), VaultError> {
+    let bad = VaultError::Malformed("a sealed value");
+    let (nonce, body) = sealed
+        .split_at_checked(fstp_crypto::aead::NONCE_LEN)
+        .ok_or(bad)?;
+    Ok((nonce.try_into().map_err(|_| bad)?, body))
 }
 
 impl Sealer for AeadSealer {
@@ -826,6 +918,49 @@ impl Sealer for AeadSealer {
 
     fn digest(&self, data: &[u8]) -> [u8; 32] {
         fstp_crypto::hmac_sha256(self.digest_key.expose(), data)
+    }
+
+    fn shared_dek(&self) -> Option<[u8; 16]> {
+        Some(self.dek)
+    }
+
+    fn seal_identity(
+        &self,
+        identity: fstp_vault_core::Person,
+        aad: &[u8],
+        plain: &[u8],
+    ) -> Result<crate::store::SealedValue, VaultError> {
+        let sealed = self
+            .identities
+            .with_key(identity.0, |k| fstp_crypto::aead::seal(k, aad, plain))?
+            .ok_or(VaultError::Unavailable("the identity fact keys"))?
+            .map_err(|_| VaultError::Unavailable("sealing"))?;
+        let mut bytes = sealed.nonce.to_vec();
+        bytes.extend_from_slice(&sealed.body);
+        Ok(crate::store::SealedValue {
+            dek: identity.0.to_be_bytes(),
+            bytes,
+        })
+    }
+
+    fn open_identity(
+        &self,
+        identity: fstp_vault_core::Person,
+        aad: &[u8],
+        sealed: &[u8],
+    ) -> Result<Option<Vec<u8>>, VaultError> {
+        let (nonce, body) = split_sealed(sealed)?;
+        match self.identities.with_key(identity.0, |k| {
+            fstp_crypto::aead::open(k, &nonce, aad, body).map(|p| p.to_vec())
+        })? {
+            None => Ok(None),
+            Some(Ok(p)) => Ok(Some(p)),
+            Some(Err(_)) => Err(VaultError::Malformed("a sealed value")),
+        }
+    }
+
+    fn has_identity(&self, identity: fstp_vault_core::Person) -> bool {
+        self.identities.contains(identity.0)
     }
 }
 

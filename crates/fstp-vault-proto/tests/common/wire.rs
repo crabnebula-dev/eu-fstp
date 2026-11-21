@@ -375,6 +375,11 @@ pub fn request(r: &VaultRequest) -> Vec<u8> {
             relationship_label(*k),
             id(programme.0)
         ),
+        VaultRequest::RegisterIdentity { account, tuple } => format!(
+            "{{\"account\":{},\"tuple\":\"{}\",\"type\":\"register_identity\"}}",
+            id(account.0),
+            hex(tuple)
+        ),
     };
     s.into_bytes()
 }

@@ -66,6 +66,9 @@ pub enum OriginRefusal {
     Replayed,
     /// No negotiation fact lists the release subject.
     NoNegotiationFact,
+    /// An identity fact names an account that no identity registration
+    /// binds (ADR-004 record of lane L13, row "Intake").
+    Unregistered,
     /// The vault cannot take the write now.
     Unavailable,
 }
@@ -85,7 +88,8 @@ impl OriginRefusal {
             | OriginRefusal::NotYetValid
             | OriginRefusal::Expired
             | OriginRefusal::TooLong
-            | OriginRefusal::NoNegotiationFact => 403,
+            | OriginRefusal::NoNegotiationFact
+            | OriginRefusal::Unregistered => 403,
         }
     }
 }
@@ -105,6 +109,16 @@ impl From<TicketRefusal> for OriginRefusal {
             TicketRefusal::NoNegotiationFact => OriginRefusal::NoNegotiationFact,
         }
     }
+}
+
+/// Whether `f` is an identity fact: a fact the registered identity of its
+/// account seals under its fact key `F(X)`, which the erasure of that
+/// identity destroys (ADR-004 record of lane L13, row "Identity fact
+/// kinds"). These are the bank details (kind 14) and the hardship evidence
+/// (kind 17), which hold holder names, IBANs and free text.
+#[must_use]
+pub fn is_identity_fact(f: &Fact) -> bool {
+    matches!(f, Fact::BankDetails { .. } | Fact::HardshipEvidence { .. })
 }
 
 /// The body limit of a write ticket kind, in bytes (ADR-009 "Each route
@@ -182,7 +196,7 @@ pub const ORIGIN_ROUTES: [RouteSpec; 2] = [
 ];
 
 /// The routes of the internal mTLS listener (design section 6.1).
-pub const INTERNAL_ROUTES: [RouteSpec; 4] = [
+pub const INTERNAL_ROUTES: [RouteSpec; 5] = [
     RouteSpec {
         method: "POST",
         path: "/v1/epoch",
@@ -198,6 +212,11 @@ pub const INTERNAL_ROUTES: [RouteSpec; 4] = [
     RouteSpec {
         method: "POST",
         path: "/v1/negotiation",
+    },
+    // ADR-004 record of lane L13: the identity registration of an account.
+    RouteSpec {
+        method: "POST",
+        path: "/v1/identity",
     },
 ];
 
@@ -266,6 +285,11 @@ pub enum JournalEntry {
         affected: BTreeSet<WireAccount>,
         /// When it was written, in UTC microseconds.
         at: i64,
+        /// The identity whose fact key `F(X)` seals the body: the
+        /// registered identity of the account of an identity fact (kinds
+        /// 14 and 17), and `None` for every other fact, which the shared
+        /// `Fact` key seals (ADR-004 record of lane L13).
+        sealed_for: Option<Person>,
     },
     /// The cell acknowledged epoch `epoch` (NOTE 4 step 5).
     Acked {
@@ -354,6 +378,16 @@ pub enum JournalEntry {
         /// The identity id.
         identity: Person,
     },
+    /// A registration bound `account` to `identity`
+    /// (`vault.identity_account`, ADR-004 record of lane L13).
+    IdentityRegistered {
+        /// The account.
+        account: WireAccount,
+        /// Its identity.
+        identity: Person,
+        /// When, in UTC microseconds.
+        at: i64,
+    },
     /// A verification of `account` became effective at `epoch`
     /// (`vault.account`).
     AccountVerified {
@@ -373,6 +407,9 @@ pub struct Vault {
     state: VaultState,
     used: BTreeSet<[u8; 16]>,
     identities: BTreeMap<[u8; MATCH_KEY_LEN], Person>,
+    /// The registered identity of each account (ADR-004 record of lane
+    /// L13). An erased identity leaves it.
+    accounts: BTreeMap<WireAccount, Person>,
     journal: Vec<JournalEntry>,
 }
 
@@ -422,6 +459,7 @@ impl Vault {
             .checked_add(queued)
             .and_then(|e| e.checked_add(1))
             .ok_or(unavailable)?;
+        let sealed_for = self.sealed_for(&fact);
         let events = fstp_vault_core::write_fact(&mut self.state, fact.clone(), now)?;
         let affected = match self.state.provisional() {
             Some(p) if p.epoch() == epoch => p.affected().clone(),
@@ -432,6 +470,7 @@ impl Vault {
             fact,
             affected,
             at: now,
+            sealed_for,
         });
         Ok(events)
     }
@@ -477,9 +516,9 @@ impl Vault {
             let last = self.state.log().last();
             let affected = last.map(|e| e.affected.clone()).unwrap_or_default();
             let verified = last.and_then(|e| match &e.fact {
-                Fact::VerificationRecorded {
+                Some(Fact::VerificationRecorded {
                     account, person, ..
-                } => Some((*account, *person)),
+                }) => Some((*account, *person)),
                 _ => None,
             });
             self.journal.push(JournalEntry::Acked {
@@ -507,6 +546,12 @@ impl Vault {
         at: i64,
     ) -> Result<Vec<VaultEvent>, CoreError> {
         fstp_vault_core::write_fact(&mut self.state, fact, at)
+    }
+
+    /// Replays one stored write whose identity was erased, at `at`, with
+    /// no journal entry (ADR-004 record of lane L13, row "Load").
+    pub(crate) fn replay_erased(&mut self, at: i64) -> Result<Vec<VaultEvent>, CoreError> {
+        fstp_vault_core::write_erased(&mut self.state, at)
     }
 
     /// Replays one stored acknowledgement, with no journal entry.
@@ -655,6 +700,67 @@ impl Vault {
         self.identities.iter().map(|(k, p)| (*k, *p))
     }
 
+    /// The registered identity of `account`, if a registration binds it
+    /// to a live identity (ADR-004 record of lane L13).
+    pub fn registered(&self, account: WireAccount) -> Option<Person> {
+        self.accounts.get(&account).copied()
+    }
+
+    /// The identity whose fact key seals `fact`: the registered identity of
+    /// its account when it is an identity fact ([`is_identity_fact`]).
+    fn sealed_for(&self, fact: &Fact) -> Option<Person> {
+        if !is_identity_fact(fact) {
+            return None;
+        }
+        fact.subject().and_then(|a| self.registered(a))
+    }
+
+    /// Binds `account` to `identity` and journals the binding
+    /// (`IdentityRegistered`, ADR-004 record of lane L13, row
+    /// "Idempotence"). Returns whether the binding is new: a repeat of the
+    /// same binding changes nothing and journals nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Malformed`] for an identity the vault does not hold,
+    /// and for an account bound to another identity, so no account changes
+    /// person by registration. Nothing changes then.
+    pub fn bind_account(
+        &mut self,
+        account: WireAccount,
+        identity: Person,
+        now: i64,
+    ) -> Result<bool, VaultError> {
+        if !self.identities.values().any(|p| *p == identity) {
+            return Err(VaultError::Malformed("an unknown identity"));
+        }
+        match self.accounts.get(&account) {
+            Some(p) if *p == identity => return Ok(false),
+            Some(_) => return Err(VaultError::Malformed("an account of another identity")),
+            None => {}
+        }
+        self.accounts.insert(account, identity);
+        self.journal.push(JournalEntry::IdentityRegistered {
+            account,
+            identity,
+            at: now,
+        });
+        Ok(true)
+    }
+
+    /// Replays one stored binding, with no journal entry.
+    pub(crate) fn replay_binding(
+        &mut self,
+        account: WireAccount,
+        identity: Person,
+    ) -> Result<(), VaultError> {
+        let known = self.identities.values().any(|p| *p == identity);
+        if !known || self.accounts.insert(account, identity).is_some() {
+            return Err(VaultError::Malformed("a stored identity binding"));
+        }
+        Ok(())
+    }
+
     /// Moves every identity to its match key under a new Match key, in one
     /// journal (design section 3.5, G24, decision 27): `rekey` maps each
     /// current match key to its new one. The keystore that rotates the
@@ -713,6 +819,7 @@ impl Vault {
             receipt_digest,
         });
         for identity in erased {
+            self.accounts.retain(|_, p| p != identity);
             self.journal.push(JournalEntry::IdentityErased {
                 identity: *identity,
             });
@@ -741,6 +848,14 @@ impl Vault {
         record: VerificationRecord,
         match_key: [u8; MATCH_KEY_LEN],
     ) -> Result<Fact, VaultError> {
+        // ADR-004 record of lane L13 "Verification": a registered account
+        // never changes person through a verification.
+        if let Some(registered) = self.registered(account) {
+            let resolved = self.identities.get(&match_key).copied();
+            if resolved != Some(registered) {
+                return Err(VaultError::Malformed("a verification of another identity"));
+            }
+        }
         Ok(Fact::VerificationRecorded {
             account,
             person: self.resolve_identity(match_key)?,
@@ -785,6 +900,12 @@ impl Vault {
         let binding = origin_binding(self.state.latest(), &fact).ok_or(OriginRefusal::WrongKind)?;
         if !binding.admits(&c) {
             return Err(OriginRefusal::WrongKind);
+        }
+        // ADR-004 record of lane L13 "Intake": an identity fact of an
+        // account no registration binds is refused, and the ticket stays
+        // unused, so no fact outlives the erasure of its identity.
+        if is_identity_fact(&fact) && fact.subject().and_then(|a| self.registered(a)).is_none() {
+            return Err(OriginRefusal::Unregistered);
         }
         // I-33: a verification counts for a bank detail version written
         // before its ticket was issued, so a change made while the
@@ -976,6 +1097,12 @@ impl Vault {
             // relationship already in the newest facts, effective,
             // provisional or queued, is a retry or a repeat. It is
             // acknowledged and writes nothing, so it opens no epoch.
+            // ADR-004 record of lane L13: a registration needs the vault
+            // keystore, which the serving vault's registrar holds
+            // (`crate::service`). This sans-IO path has none.
+            VaultRequest::RegisterIdentity { .. } => {
+                VaultResponse::Refused(VaultRefusal::Unavailable)
+            }
             VaultRequest::RecordRelationship { a, b, .. } => {
                 if self.state.latest().has_relationship(*a, *b) {
                     return VaultResponse::Acked;

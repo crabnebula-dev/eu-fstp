@@ -76,7 +76,7 @@ pub struct FactWrite {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Provisional {
     epoch: u64,
-    fact: Fact,
+    fact: Option<Fact>,
     affected: BTreeSet<WireAccount>,
     proposal: Option<WireProposal>,
     opened_at: i64,
@@ -88,9 +88,9 @@ impl Provisional {
         self.epoch
     }
 
-    /// The fact.
-    pub fn fact(&self) -> &Fact {
-        &self.fact
+    /// The fact, or `None` for an erased write ([`write_erased`]).
+    pub fn fact(&self) -> Option<&Fact> {
+        self.fact.as_ref()
     }
 
     /// The accounts it touches.
@@ -109,8 +109,8 @@ impl Provisional {
 pub struct EffectiveEpoch {
     /// The epoch.
     pub epoch: u64,
-    /// The fact.
-    pub fact: Fact,
+    /// The fact, or `None` for an erased write ([`write_erased`]).
+    pub fact: Option<Fact>,
     /// The accounts it touched.
     pub affected: BTreeSet<WireAccount>,
     /// The ledger sequence of the reaction the acknowledgement named.
@@ -126,7 +126,7 @@ pub struct EffectiveEpoch {
 /// it queues: it opens over the facts after every write ahead of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Queued {
-    fact: Fact,
+    fact: Option<Fact>,
     at: i64,
     affected: BTreeSet<WireAccount>,
 }
@@ -197,7 +197,8 @@ impl VaultState {
     /// The facts a reaction to the provisional epoch sees.
     pub fn reaction_facts(&self) -> Facts {
         match &self.provisional {
-            Some(p) => self.facts.after(&p.fact),
+            Some(Provisional { fact: Some(f), .. }) => self.facts.after(f),
+            Some(_) => self.facts.clone(),
             None => self.facts.clone(),
         }
     }
@@ -306,9 +307,14 @@ impl VaultState {
         }
     }
 
-    fn open(&mut self, fact: Fact, at: i64, affected: BTreeSet<WireAccount>) -> Option<u64> {
+    fn open(
+        &mut self,
+        fact: Option<Fact>,
+        at: i64,
+        affected: BTreeSet<WireAccount>,
+    ) -> Option<u64> {
         let epoch = self.effective().checked_add(1)?;
-        let proposal = eval::consent_proposal(&fact);
+        let proposal = fact.as_ref().and_then(eval::consent_proposal);
         self.provisional = Some(Provisional {
             epoch,
             fact,
@@ -525,18 +531,47 @@ pub fn write_fact(s: &mut VaultState, fact: Fact, now: i64) -> Result<Vec<VaultE
     if s.provisional.is_some() {
         s.tail.apply(&fact);
         s.queue.push_back(Queued {
-            fact,
+            fact: Some(fact),
             at: now,
             affected,
         });
         return Ok(Vec::new());
     }
     let tail = s.tail.after(&fact);
-    match s.open(fact, now, affected) {
+    match s.open(Some(fact), now, affected) {
         Some(epoch) => {
             s.tail = tail;
             Ok(vec![VaultEvent::Provisional { epoch }])
         }
+        None => Err(refused(VaultRefusal::Unavailable)),
+    }
+}
+
+/// Replays at `now` a write whose body no longer opens because its
+/// identity was erased (I-81, ADR-004 record of lane L13, row "Load").
+/// It takes its epoch, or queues, exactly as the write did, so every later
+/// write and acknowledgement replays to its own epoch. It touches no
+/// account and adds no fact. Only the identity facts of kinds 14 and 17
+/// are erased this way, and both touch no account when written.
+///
+/// # Errors
+///
+/// [`VaultRefusal::Unavailable`] as [`write_fact`] refuses for a full
+/// queue or an exhausted epoch counter.
+pub fn write_erased(s: &mut VaultState, now: i64) -> Result<Vec<VaultEvent>, CoreError> {
+    if s.provisional.is_some() && s.queue.len() >= MAX_QUEUED_WRITES {
+        return Err(refused(VaultRefusal::Unavailable));
+    }
+    if s.provisional.is_some() {
+        s.queue.push_back(Queued {
+            fact: None,
+            at: now,
+            affected: BTreeSet::new(),
+        });
+        return Ok(Vec::new());
+    }
+    match s.open(None, now, BTreeSet::new()) {
+        Some(epoch) => Ok(vec![VaultEvent::Provisional { epoch }]),
         None => Err(refused(VaultRefusal::Unavailable)),
     }
 }
@@ -681,7 +716,9 @@ fn ack_with(
     let current = s.current();
     match s.provisional.take() {
         Some(p) if p.epoch == epoch => {
-            s.facts.apply(&p.fact);
+            if let Some(f) = &p.fact {
+                s.facts.apply(f);
+            }
             s.log.push(EffectiveEpoch {
                 epoch,
                 fact: p.fact,

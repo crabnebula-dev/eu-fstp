@@ -154,13 +154,23 @@ Then start the vault before the cell:
 FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault
 ```
 
-Each start runs the database check, opens the keystore through its custody entry, and verifies the vault chain at the witness before it listens. A start never creates a keystore. SIGTERM drains the vault within 20 seconds. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
+Each start runs the database check, opens the keystore through its custody entry, and verifies the vault chain at the witness before it listens. A start never creates a keystore. A start also refuses a vault database that holds bank details or hardship evidence sealed under the shared `Fact` data key, since no erasure could make them unreadable (ADR-004 record of lane L13, row "Existing facts"). Only a pilot vault from before lane L13 can hold them, and only synthetic ones. Recreate such a vault: a fresh vault database, then `init-keys`. SIGTERM drains the vault within 20 seconds. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
 
 ### Erase an identity
 
-An identity erasure rotates the Vault chain once (design section 3.5, ADR-004 record of lane L11). It erases the identity's attribute tuple and makes its match key unlinkable, in the live store and in every backup (I-81, G24). It does not erase the facts the vault holds under its `Fact` data key, or anything in the cell.
+### Register an identity
 
-Stop the vault first. The running vault holds a lock on its keystore, and the command refuses while it does. Then run, with the account id from the cell as 32 hex digits or in the UUID form:
+The vault seals an account's bank details and hardship evidence under its identity's own fact key, so an erasure of that identity reaches them (ADR-004 record of lane L13). The vault therefore refuses those writes, with 403 on the vault origin, until the account is registered.
+
+The cell registers an account on the vault's internal listener, `POST /v1/identity`, with its `cell-app` certificate. The request names the account and its attribute tuple. The vault resolves the identity from the tuple, stores the sealed tuple in its keystore, and binds the account. The reply is `acked` and names no identity. A repeat changes nothing. Two accounts with the same tuple share one identity. An account bound to one identity is never moved to another: such a request is refused as malformed.
+
+No cell command sends this request yet (ADR-004 record of lane L13, row "Cell side"). The vault intake of ADR-026 is still refused, so a pilot vault takes no bank details from a browser until a cell flow registers the account.
+
+### Erase an identity
+
+An identity erasure rotates the Vault chain once (design section 3.5, ADR-004 records of lanes L11 and L13). It erases the identity's attribute tuple and makes its match key unlinkable, in the live store and in every backup (I-81, G24). It erases the bank details and hardship evidence of the identity's accounts with it: their fact key derives from the tuple's data key, which the rotation destroys. It does not erase the other facts the vault holds under its shared `Fact` data key, such as countries, affiliations and verifications, or anything in the cell.
+
+Stop the vault first. The running vault holds a lock on its keystore, and the command refuses while it does. Then run, with the account id from the cell as 32 hex digits or in the UUID form. The command finds the identity through the account's registration, or else through its verification:
 
 ```sh
 systemctl stop fstp-vault
@@ -175,8 +185,10 @@ The service name is your own. What the operator sees:
 - Exit status 2 means the argument was refused. Status 1 means another failure: the vault still runs, the account has no identity, the identity has no stored attribute tuple, or custody, the database or the witness failed.
 - A failure after the request is not lost. The request is stored, and the next start of the vault, or the next run of the command, completes the batch before anything else. Until then the tuple is refused for open.
 - The live identities keep their ids. Their match keys move to the new `Match` key, and the query digest key changes with it.
+- From the next start, the erased identity's bank details and hardship evidence are gone from the vault's state. A grant whose bank details were erased is never releasable until its lead registers again and enters new details (I-33). No copy opens them: not the live rows, not a keystore snapshot, not a restored backup.
+- The erased identity's accounts lose their registration. A new registration with the same tuple gives a new identity.
 
-An identity whose attribute tuple the vault never stored cannot be erased this way, and the command refuses it with status 1. No route of the vault registers identities with their tuples yet (ADR-004 record of lane L11, row "Not built"), so a pilot vault holds no erasable identity until the recorder route of ADR-008 exists.
+An identity whose attribute tuple the vault never stored cannot be erased this way, and the command refuses it with status 1. Registration through `POST /v1/identity` stores the tuple, so every registered identity is erasable.
 
 ## 4. Create the first admin
 
