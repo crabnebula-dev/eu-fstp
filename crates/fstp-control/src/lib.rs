@@ -33,6 +33,9 @@
 //! - [`approval`], the two-operator check of destructive jobs (ADR-011);
 //! - [`erase`], the `erase-cell` job and its confirmation (R-SW-02);
 //! - [`service`], the `CellToCp` listener and the `fstp-control` run loop.
+//! - [`routes`], the signed route table that edges poll, and
+//!   [`route_feed`], the pilot `fstp-control` that serves only that feed
+//!   (ADR-009 "Pilot route feed", lane L15);
 //!
 //! [`service::run`] and [`agent::run`] serve until SIGTERM. A destructive
 //! request runs only through the two-operator check of [`approval`].
@@ -55,6 +58,7 @@ pub mod pg;
 pub mod pgagent;
 pub mod placement;
 pub mod provision;
+pub mod route_feed;
 pub mod routes;
 pub mod service;
 
