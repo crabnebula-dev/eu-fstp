@@ -38,7 +38,11 @@ use fstp_pki::cert::{
 use fstp_pki::pem::{PemLabel, encode};
 use fstp_rt::tokio::TokioRuntime;
 use fstp_vault::chain::{VaultChainParts, VaultWitness};
-use fstp_vault::service::{AeadSealer, RegisteredSpki, VaultHandle, VaultParts, serve};
+use fstp_vault::erasure::{Registrar, Runner};
+use fstp_vault::keystore::{self, VaultKeys};
+use fstp_vault::service::{
+    AeadSealer, RegisteredSpki, VaultHandle, VaultParts, serve_with_registrar,
+};
 use fstp_vault::start::ClusterRole;
 use fstp_vault_proto::{
     RelationshipKind, VaultRequest, VaultResponse, WireAccount, WireProgramme, decode_response,
@@ -363,6 +367,22 @@ impl Setup {
 
     /// The vault over the database, with the chain writer when `chain`.
     fn vault(&self, chain: bool) -> Result<Vault, fstp_vault::VaultError> {
+        let sealer = AeadSealer::new(
+            self.sealer.1,
+            fstp_crypto::aead::Key::from_bytes(&self.sealer.0).unwrap(),
+            self.sealer.2,
+        );
+        self.vault_with(chain, sealer, None)
+    }
+
+    /// [`Setup::vault`] with `sealer` and the identity registrar
+    /// `registrar` (ADR-004 record of lane L13).
+    fn vault_with(
+        &self,
+        chain: bool,
+        sealer: AeadSealer,
+        registrar: Option<Registrar<TokioRuntime>>,
+    ) -> Result<Vault, fstp_vault::VaultError> {
         let (server_cert, server_key) = self.cell_ca.issue(CertKind::Server, "vault", None, &[]);
         let tls = |roots: Option<&[u8]>| {
             let b = fstp_tls::ServerConfig::builder(&server_cert, &server_key);
@@ -404,11 +424,7 @@ impl Setup {
             cell: self.cell,
             db: self.db.clone(),
             registered_servers: registered(),
-            sealer: Arc::new(AeadSealer::new(
-                self.sealer.1,
-                fstp_crypto::aead::Key::from_bytes(&self.sealer.0).unwrap(),
-                self.sealer.2,
-            )),
+            sealer: Arc::new(sealer),
             ticket_keys: vec![
                 fstp_crypto::sig::Ed25519SigningKey::generate()
                     .unwrap()
@@ -422,7 +438,7 @@ impl Setup {
             origin_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             chain,
         };
-        let handle = block_on(serve(rt().clone(), parts))?;
+        let handle = block_on(serve_with_registrar(rt().clone(), parts, registrar))?;
         let (cert, key) = self
             .cell_ca
             .issue(CertKind::Client, "cell-app", Some("cell-app"), &[]);
@@ -595,4 +611,145 @@ fn i24_vault_without_a_witness_refuses_writes_and_serves_reads() {
     v.stop();
     assert_eq!(s.psql("SELECT count(*) FROM vault_audit.chain"), "0");
     assert_eq!(s.psql("SELECT count(*) FROM vault.epoch"), "0");
+}
+
+/// Custody of one AES key for every root, enough for a keystore genesis
+/// and its load. It never destroys.
+struct OneKeyCustody(fstp_crypto::aead::Key);
+
+impl fstp_custody::Custody for OneKeyCustody {
+    async fn create_root(
+        &self,
+        label: fstp_custody::RootLabel,
+    ) -> Result<fstp_custody::RootRef, fstp_custody::CustodyError> {
+        Ok(fstp_custody::RootRef {
+            backend: fstp_custody::BackendId::Keyd,
+            cell: label.cell,
+            chain: label.chain,
+            epoch: label.epoch,
+            handle: fstp_custody::CustodyHandle(b"one-key-root".to_vec()),
+        })
+    }
+
+    async fn wrap(
+        &self,
+        _: &fstp_custody::RootRef,
+        key: &fstp_custody::SealKey,
+        aad: &fstp_custody::Aad,
+    ) -> Result<fstp_custody::WrappedSealKey, fstp_custody::CustodyError> {
+        let s = fstp_crypto::aead::seal(&self.0, &aad.0, key.expose()).unwrap();
+        Ok(fstp_custody::WrappedSealKey(
+            [s.nonce.to_vec(), s.body].concat(),
+        ))
+    }
+
+    async fn unwrap(
+        &self,
+        _: &fstp_custody::RootRef,
+        w: &fstp_custody::WrappedSealKey,
+        aad: &fstp_custody::Aad,
+    ) -> Result<fstp_custody::SealKey, fstp_custody::CustodyError> {
+        let (nonce, body) = w.0.split_at(12);
+        let plain =
+            fstp_crypto::aead::open(&self.0, nonce.try_into().unwrap(), &aad.0, body).unwrap();
+        Ok(fstp_custody::SealKey::from_slice(&plain).unwrap())
+    }
+
+    async fn destroy(
+        &self,
+        _: &fstp_custody::RootRef,
+    ) -> Result<fstp_custody::DestroyReceipt, fstp_custody::CustodyError> {
+        Err(fstp_custody::CustodyError::Refused(
+            fstp_custody::Refusal::Internal,
+        ))
+    }
+
+    async fn sign(
+        &self,
+        _: &fstp_custody::SignKeyRef,
+        _: &[u8; 32],
+    ) -> Result<fstp_custody::EcdsaSignature, fstp_custody::CustodyError> {
+        Err(fstp_custody::CustodyError::Refused(
+            fstp_custody::Refusal::NoSignKey,
+        ))
+    }
+
+    async fn usage_since(
+        &self,
+        _: &fstp_custody::RootRef,
+        _: fstp_custody::UsageCursor,
+    ) -> Result<fstp_custody::UsagePage, fstp_custody::CustodyError> {
+        Err(fstp_custody::CustodyError::Refused(
+            fstp_custody::Refusal::Internal,
+        ))
+    }
+}
+
+fn register(account: u128, tuple: &[u8]) -> VaultRequest {
+    VaultRequest::RegisterIdentity {
+        account: WireAccount(account),
+        tuple: tuple.to_vec(),
+    }
+}
+
+/// ADR-004 record of lane L13, rows "Registration route" and
+/// "Idempotence": `POST /v1/identity` from the cell's `cell-app`
+/// certificate registers an account with its identity, records it as a
+/// kind 1 row of the Vault chain, and answers `acked` with no identity.
+/// A repeat writes nothing more. An account never moves to another
+/// identity. A vault with no registrar answers 503.
+#[test]
+fn adr004_vault_registers_an_identity_on_the_internal_route() {
+    const ALICE: &[u8] = b"synthetic|manual|passport|name=Synthetic Alpha|0001";
+    const BRUNO: &[u8] = b"synthetic|manual|passport|name=Synthetic Bravo|0002";
+    let s = Setup::new();
+    let none = s.vault(true).unwrap();
+    assert_eq!(none.call("/v1/identity", &register(101, ALICE)).0, 503);
+    none.stop();
+    assert_eq!(s.psql("SELECT count(*) FROM vault.identity_account"), "0");
+
+    let custody = OneKeyCustody(fstp_crypto::aead::Key::generate().unwrap());
+    let keys = VaultKeys::generate().unwrap();
+    let rows = block_on(keystore::genesis(&custody, s.cell, &keys, 1)).unwrap();
+    let mut c = block_on(Client::connect(rt(), &s.db)).unwrap();
+    block_on(keystore::write_rows(&mut c, &rows)).unwrap();
+    let runner = block_on(Runner::load(c, s.cell, &custody)).unwrap();
+    let (_, sealer) = runner.service_keys().unwrap().into_service_keys().unwrap();
+    let sealer = sealer.with_identities(runner.identity_keys());
+    let identities = runner.identity_keys();
+    let registrar = runner.into_registrar().unwrap();
+    let v = s.vault_with(true, sealer, Some(registrar)).unwrap();
+    let chain_rows = || s.psql("SELECT count(*) FROM vault_audit.chain");
+    assert_eq!(
+        v.call("/v1/identity", &register(101, ALICE)),
+        (200, Some(VaultResponse::Acked))
+    );
+    let after_first = chain_rows();
+    assert_ne!(after_first, "0", "the registration has no chain row");
+    assert_eq!(s.psql("SELECT count(*) FROM vault.identity_account"), "1");
+    assert_eq!(s.psql("SELECT count(*) FROM keystore.identity_tuple"), "1");
+    assert!(identities.contains(1), "the sealer lacks the new fact key");
+    assert_eq!(
+        v.call("/v1/identity", &register(101, ALICE)),
+        (200, Some(VaultResponse::Acked))
+    );
+    assert_eq!(chain_rows(), after_first, "a repeat wrote a chain row");
+    assert_eq!(
+        v.call("/v1/identity", &register(101, BRUNO)),
+        (
+            200,
+            Some(VaultResponse::Refused(
+                fstp_vault_proto::VaultRefusal::Malformed
+            ))
+        )
+    );
+    assert_eq!(
+        v.call("/v1/identity", &register(102, ALICE)),
+        (200, Some(VaultResponse::Acked))
+    );
+    v.stop();
+    assert_eq!(
+        s.psql("SELECT count(DISTINCT identity_id) || ':' || count(*) FROM vault.identity_account"),
+        "1:2"
+    );
 }

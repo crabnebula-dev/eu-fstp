@@ -16,7 +16,8 @@
 //!                 || be32(generation) || be64(epoch)
 //! data key  the Fact data key, and one data key per identity tuple in an
 //!           Attribute group, each sealed to its group key (FSK1)
-//! tuple     an identity's attribute tuple, FSB1 under its data key
+//! tuple     an identity's attribute tuple, FSB1 under its data key, which
+//!           also derives the identity's fact key F(X) (lane L13)
 //! intent    the planner's chain state, sealed under S(e) (lane L11)
 //! ```
 //!
@@ -1217,5 +1218,95 @@ mod tests {
         let e = open_rows(&CELL, &rows, &seal).unwrap_err();
         let shown = format!("{e:?} {e}");
         assert!(!shown.contains("s3cr3t"), "R-NF-02: {shown}");
+    }
+}
+
+/// The HKDF label of an identity's fact key `F(X)` (ADR-004 record of
+/// lane L13).
+pub const IDENTITY_FACT_LABEL: &[u8] = b"fstp-vault-identity-fact-v1";
+
+/// The fact key `F(X)` of `identity` in `cell`, derived from its tuple
+/// data key `dk` (ADR-004 record of lane L13, row "Key hierarchy"):
+/// `HKDF-SHA-256(ikm T(X), empty salt, info label || cell || X)`. The
+/// batch that erases `T(X)` destroys `F(X)` with it.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] when the derivation fails.
+pub fn identity_fact_key(
+    cell: &[u8; 16],
+    identity: &[u8; 16],
+    dk: &DataKey,
+) -> Result<SealKey, VaultError> {
+    let mut info = IDENTITY_FACT_LABEL.to_vec();
+    info.extend_from_slice(cell);
+    info.extend_from_slice(identity);
+    let mut out = fstp_custody::zeroed_key_box();
+    kdf::hkdf_sha256(&[], dk.expose(), &info, &mut out[..])
+        .map_err(|_| VaultError::Unavailable("the identity fact key"))?;
+    Ok(SealKey::from_box(out))
+}
+
+/// The fact keys `F(X)` of the live identities, shared by the keystore
+/// that registers identities and the sealer of the vault's rows (ADR-004
+/// record of lane L13). An identity with no key here is erased or was
+/// never registered. Each key wipes itself when it is dropped. The debug
+/// form shows the count only.
+#[derive(Default)]
+pub struct IdentityKeys {
+    keys: std::sync::RwLock<std::collections::BTreeMap<u128, SealKey>>,
+}
+
+impl std::fmt::Debug for IdentityKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityKeys")
+            .field("count", &self.read().len())
+            .finish()
+    }
+}
+
+impl IdentityKeys {
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, std::collections::BTreeMap<u128, SealKey>> {
+        self.keys
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, std::collections::BTreeMap<u128, SealKey>> {
+        self.keys
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Sets the fact key of `identity`.
+    pub fn insert(&self, identity: u128, key: SealKey) {
+        self.write().insert(identity, key);
+    }
+
+    /// Drops the fact key of `identity`, which wipes it.
+    pub fn remove(&self, identity: u128) {
+        self.write().remove(&identity);
+    }
+
+    /// Whether `identity` has a fact key.
+    #[must_use]
+    pub fn contains(&self, identity: u128) -> bool {
+        self.read().contains_key(&identity)
+    }
+
+    /// Runs `f` with the AES-256-GCM key of `identity`, or returns `None`
+    /// when it has none.
+    pub(crate) fn with_key<T>(
+        &self,
+        identity: u128,
+        f: impl FnOnce(&aead::Key) -> T,
+    ) -> Result<Option<T>, VaultError> {
+        let map = self.read();
+        let Some(k) = map.get(&identity) else {
+            return Ok(None);
+        };
+        let key = aead::Key::from_bytes(k.expose())
+            .map_err(|_| VaultError::Unavailable("the identity fact key"))?;
+        Ok(Some(f(&key)))
     }
 }

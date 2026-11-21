@@ -277,7 +277,7 @@ pub const APP_TABLES: [&str; 38] = [
 
 /// The tables of the vault database (design section 4.3, with the
 /// keystore of section 4.2).
-pub const VAULT_TABLES: [&str; 16] = [
+pub const VAULT_TABLES: [&str; 17] = [
     "vault.epoch",
     "vault.fact",
     "vault.identity",
@@ -297,6 +297,10 @@ pub const VAULT_TABLES: [&str; 16] = [
     // attribute tuples of vault migration 8. Only the keys role holds a
     // right on them, as on every `keystore` table.
     "keystore.identity_tuple",
+    // Lane L13 (ADR-004 record of lane L13): the identity registration
+    // of each account, vault migration 9. The vault role holds SELECT,
+    // INSERT and UPDATE on it, as on every `vault` table.
+    "vault.identity_account",
 ];
 
 /// The placement marker of both databases (design section 4.1,
