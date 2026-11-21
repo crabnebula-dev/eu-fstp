@@ -357,8 +357,8 @@ fn r_ky_02_vault_keystore_lock_refuses_a_second_process() {
         block_on(run::erase_identity_with(rt(), &cfg, &custody, 7)).unwrap_err(),
         refused
     );
-    block_on(lease.close()).unwrap();
+    block_on(lease.into_client().close()).unwrap();
     let (again, _) = block_on(run::resume_keystore(rt(), &cfg, &creds, &custody)).unwrap();
-    block_on(again.close()).unwrap();
+    block_on(again.into_client().close()).unwrap();
     cleanup(&dir);
 }

@@ -135,8 +135,12 @@ fn link(g: &mut Gen) -> [u8; 32] {
 
 /// Any canonical request.
 pub fn gen_request(g: &mut Gen) -> VaultRequest {
-    match g.u8_in(0..=5) {
+    match g.u8_in(0..=6) {
         0 => VaultRequest::Epoch,
+        6 => VaultRequest::RegisterIdentity {
+            account: WireAccount(gen_id(g)),
+            tuple: g.bytes(1..=64),
+        },
         1 => VaultRequest::Ask {
             at: gen_u64(g),
             reaction_for: g.option(gen_u64),

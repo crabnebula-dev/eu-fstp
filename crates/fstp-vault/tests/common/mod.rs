@@ -149,7 +149,7 @@ fn origin_refusal(r: fstp_vault::OriginRefusal) -> Fail {
         O::NotYetValid | O::Expired | O::TooLong => Refusal::Expired,
         O::Replayed => Refusal::Replayed,
         O::NoNegotiationFact => Refusal::NoNegotiationFact,
-        O::Unprovisioned | O::Unavailable => {
+        O::Unprovisioned | O::Unavailable | O::Unregistered => {
             return Fail::Unexpected(format!("the origin refused with {r:?}"));
         }
     })

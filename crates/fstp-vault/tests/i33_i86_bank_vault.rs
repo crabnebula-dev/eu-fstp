@@ -78,8 +78,15 @@ struct World {
 impl World {
     fn new() -> World {
         let key = Signer::new(3);
+        let mut v = Vault::new(CELL, &[key.public()]).unwrap();
+        // ADR-004 record of lane L13: the lead's bank details and
+        // hardship evidence are taken only once a registration binds the
+        // lead to an identity.
+        let lead = v.resolve_identity([0x1E; 32]).unwrap();
+        v.bind_account(WireAccount(LEAD), lead, 0).unwrap();
+        v.take_journal();
         World {
-            v: Vault::new(CELL, &[key.public()]).unwrap(),
+            v,
             key,
             sent: Vec::new(),
             seq: 0,

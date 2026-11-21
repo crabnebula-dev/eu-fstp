@@ -154,9 +154,30 @@ pub enum VaultRequest {
         /// The ledger sequence.
         ledger_seq: u64,
     },
+    /// Register `account` with the identity of its attribute tuple
+    /// (`POST /v1/identity`, ADR-004 record of lane L13). The vault
+    /// acknowledges it and names no identity.
+    RegisterIdentity {
+        /// The account.
+        account: WireAccount,
+        /// The canonical attribute tuple of the verification method, 1 to
+        /// [`MAX_IDENTITY_TUPLE`] bytes, in lowercase hex on the wire.
+        tuple: Vec<u8>,
+    },
 }
 
-/// One answer.
+/// The longest identity attribute tuple a registration carries, in bytes.
+pub const MAX_IDENTITY_TUPLE: usize = 4096;
+
+fn tuple_of(s: &str) -> Result<Vec<u8>, ProtoError> {
+    let t = json::unhex(s, REQUEST)?;
+    if t.is_empty() || t.len() > MAX_IDENTITY_TUPLE {
+        return Err(ProtoError::Shape(REQUEST));
+    }
+    Ok(t)
+}
+
+/// One answer.)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WireAnswer {
     /// Whether the queried fact holds.
@@ -342,6 +363,13 @@ pub fn decode_request(bytes: &[u8]) -> Result<VaultRequest, ProtoError> {
                 ledger_seq: json::uint(m, "ledger_seq", REQUEST)?,
             }
         }
+        "register_identity" => {
+            let m = o(&["account", "tuple", "type"])?;
+            VaultRequest::RegisterIdentity {
+                account: WireAccount(json::id(m, "account", REQUEST)?),
+                tuple: tuple_of(json::string(m, "tuple", REQUEST)?)?,
+            }
+        }
         _ => return Err(ProtoError::Shape(REQUEST)),
     })
 }
@@ -449,6 +477,18 @@ pub fn encode_request(r: &VaultRequest) -> Result<Vec<u8>, ProtoError> {
                 ("programme", json::id_json(programme.0)),
             ],
         )?,
+        VaultRequest::RegisterIdentity { account, tuple } => {
+            if tuple.is_empty() || tuple.len() > MAX_IDENTITY_TUPLE {
+                return Err(ProtoError::Shape(REQUEST));
+            }
+            typed(
+                "register_identity",
+                vec![
+                    ("account", json::id_json(account.0)),
+                    ("tuple", Value::String(json::hex(tuple))),
+                ],
+            )?
+        }
     };
     json::to_canonical(&v)
 }
