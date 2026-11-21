@@ -70,6 +70,7 @@ Every `tenant.*` operation, and `admin.approvals`, `admin.approve_self_grant` an
 - Interim reading: a cell whose ledger holds no tenant part asks the `TenantConfig` port, as the admin set and P-74 already do. The port's default answer is "not active", so a port that does not know fails closed.
 - The fake port of the test kit answers "active" by default. It stands for the attested tenant of the worlds from before the tenant part, as its attested admin set does. A test can set it to "not active".
 - The e2e cell sets its port to "not active". So every demo scene must be built through real onboarding and activation, or it shows the notice.
+- Lane L18 (Daniel, 2026-11-21: "Build onboarding, then drop flag"): the production cell has no port answer of its own. It reads the ledger's tenant part only, and a cell without one is not active. The configuration member `organisation_active` is removed (ADR-026 record of lane L18).
 
 ### The authorisation reference
 
