@@ -283,7 +283,7 @@ fn main() -> ExitCode {
     let resolver = args.as_slice() == ["--resolver-rules"];
     if !args.is_empty() && !e2e && !resolver {
         eprintln!(
-            "usage: fstp-devstack [--resolver-rules], fstp-devstack external-cell [--resolver-rules], fstp-devstack e2e --manifest-out <file>, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
+            "usage: fstp-devstack [--resolver-rules], fstp-devstack external-cell [--resolver-rules] [--route-feed], fstp-devstack e2e --manifest-out <file>, or fstp-devstack forward <listen port> <edge port> ({EDGE_PORT_ENV} names the edge port)"
         );
         return ExitCode::from(2);
     }

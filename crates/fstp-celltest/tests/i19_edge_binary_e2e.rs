@@ -176,7 +176,10 @@ fn i19_r_mc_01_edge_binary_routes_tenant_sni_to_the_cell_binary() {
     assert!(other.is_err(), "an unknown host was routed");
 
     assert!(feed.stop_edge(), "the edge did not drain to status 0");
-    assert!(feed.stop_control(), "fstp-control did not drain to status 0");
+    assert!(
+        feed.stop_control(),
+        "fstp-control did not drain to status 0"
+    );
     drop(feed);
     drop(world);
     drop((custody, key_file_custody, control_custody));
