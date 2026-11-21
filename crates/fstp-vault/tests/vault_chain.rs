@@ -437,6 +437,7 @@ impl Setup {
             internal_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             origin_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             chain,
+            pages: None,
         };
         let handle = block_on(serve_with_registrar(rt().clone(), parts, registrar))?;
         let (cert, key) = self

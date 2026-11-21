@@ -254,6 +254,9 @@ pub struct VaultParts {
     /// call that would write is refused with 503 and reads are served
     /// (ADR-010 "Witness unavailable").
     pub chain: Option<VaultChainParts>,
+    /// The static pages of the vault origin, if any (ADR-009 third route
+    /// group, ADR-004 record of lane L13b, row "Static pages").
+    pub pages: Option<Arc<crate::pages::VaultPages>>,
 }
 
 impl std::fmt::Debug for VaultParts {
@@ -324,6 +327,8 @@ struct Answer {
 
 struct Shared<R: Runtime> {
     held: AsyncMutex<Held<R>>,
+    /// The static pages of the vault origin, if any.
+    pages: Option<Arc<crate::pages::VaultPages>>,
     /// Set once the vault lost its keystore lock to another process, or
     /// its rows changed while the lock was free (ADR-004 record of lane
     /// L13b, row "Fail closed"). Every request then answers 503.
@@ -913,6 +918,7 @@ pub async fn serve_with_registrar<R: Runtime>(
         internal_listen,
         origin_listen,
         chain,
+        pages,
     } = parts;
     // The server check runs on this connection and on any cancel
     // connection before anything passes the TLS handshake (I-83).
@@ -943,6 +949,7 @@ pub async fn serve_with_registrar<R: Runtime>(
         keys_db: registrar.as_ref().map(|r| r.keys_db.clone()),
         stopped: Arc::default(),
         rt: rt.clone(),
+        pages,
         registrar: AsyncMutex::new(None),
     });
     if let Some(parts) = registrar {

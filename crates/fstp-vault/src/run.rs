@@ -476,6 +476,10 @@ pub fn parts(
             witness,
             witness_keys: cfg.witness.receipt_keys.clone(),
         }),
+        pages: match &cfg.assets_dir {
+            Some(dir) => Some(Arc::new(crate::pages::VaultPages::load_installed(dir)?)),
+            None => None,
+        },
     })
 }
 
