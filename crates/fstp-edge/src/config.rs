@@ -1,10 +1,13 @@
-//! The configuration of a pilot edge and its static route file (ADR-009
-//! "Pilot edge configuration", gap G12, D1). Lane L9 `prod/edgerun`.
+//! The configuration of a pilot edge, the feed keys it pins, and the route
+//! file grammar (ADR-009 "Pilot edge configuration" and "Pilot route
+//! feed", gap G12, D1). Lane L9 `prod/edgerun`, lane L15 `prod/route-feed`.
 //!
-//! A pilot has no control plane, so the edge reads its routes from a file
-//! at start and never polls [`crate::RouteFeed`]. Both decoders are
-//! fuzzed (`edge_config_decode`, `edge_routes_decode`). A refusal names
-//! its rule and never quotes the input (R-NF-02).
+//! Daniel decided on 2026-11-21 that the pilot edge changes routes
+//! without a restart: it polls the signed route feed of `fstp-control`
+//! ([`crate::RouteFeed`]) and reads no route file. The route file grammar
+//! stays as the input of `fstp-control route add`. The decoders are fuzzed
+//! (`edge_config_decode`, `edge_routes_decode`). A refusal names its rule
+//! and never quotes the input (R-NF-02).
 //!
 //! # The configuration file
 //!
@@ -13,12 +16,17 @@
 //!  "limits": {"connections": 1024, "hello_seconds": 10,          optional
 //!             "lifetime_seconds": 7200, "open_seconds": 10,
 //!             "per_client": 64},
-//!  "listen": {"public": "0.0.0.0:443"},
-//!  "routes": "/etc/fstp/edge-routes.json"}
+//!  "feed": {"address": "10.0.0.2:7350", "cert_sha256": "<64 lowercase hex>",
+//!           "poll_seconds": 5,                                     optional
+//!           "server_name": "control.tunnel.internal"},
+//!  "listen": {"public": "0.0.0.0:443"}}
 //! ```
 //!
 //! Each member of `limits` is optional and has the default of
-//! [`Limits::default`].
+//! [`Limits::default`]. `feed.cert_sha256` pins the end-entity certificate
+//! of `fstp-control`. The feed public keys sit in [`FEED_KEYS_FILE`] of the
+//! credentials directory, one or two lowercase hex lines
+//! ([`decode_feed_keys`]).
 //!
 //! # The route file
 //!
@@ -41,8 +49,10 @@ use std::time::Duration;
 
 use fstp_json::{Object, ParseLimits, Value};
 
+use crate::feed::{PinnedRoute, routes_of};
 use crate::host::HostName;
-use crate::route::{CELL_ID_LEN, CellEndpoint, RouteError, RouteTable, same_endpoint};
+pub use crate::route::Pins;
+use crate::route::{CELL_ID_LEN, CellEndpoint, RouteError, RouteTable};
 
 /// The largest configuration file accepted, in bytes.
 pub const MAX_CONFIG_LEN: usize = 4096;
@@ -112,51 +122,40 @@ pub struct EdgeConfig {
     pub credentials_dir: PathBuf,
     /// The public listener.
     pub listen: SocketAddr,
-    /// The route file.
-    pub routes: PathBuf,
+    /// The route feed source (lane L15).
+    pub feed: FeedSource,
     /// The limits.
     pub limits: Limits,
 }
 
-/// The tunnel server pins of a route file: one SHA-256 digest of an
-/// end-entity certificate DER per endpoint.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Pins {
-    by_endpoint: Vec<(CellEndpoint, [u8; 32])>,
+/// Where the edge polls its routes (ADR-009 "Pilot route feed", row "Edge
+/// configuration"). Lane L15.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeedSource {
+    /// The feed listener of `fstp-control`.
+    pub address: SocketAddr,
+    /// The name its certificate must carry.
+    pub server_name: String,
+    /// The SHA-256 of the DER of its end-entity certificate.
+    pub cert_sha256: [u8; 32],
+    /// The time between two polls.
+    pub poll: Duration,
 }
 
-impl Pins {
-    /// The pin of `endpoint`: the one entry with its cell, its address and
-    /// its server name, or `None`.
-    pub fn pin_of(&self, endpoint: &CellEndpoint) -> Option<[u8; 32]> {
-        self.by_endpoint
-            .iter()
-            .find(|(ep, _)| {
-                ep.cell == endpoint.cell
-                    && ep.tls_name == endpoint.tls_name
-                    && same_endpoint(&ep.address, &endpoint.address)
-            })
-            .map(|(_, pin)| *pin)
-    }
+/// The default time between two polls.
+pub const DEFAULT_POLL: Duration = Duration::from_secs(5);
 
-    /// The number of pins, two per cell.
-    pub fn len(&self) -> usize {
-        self.by_endpoint.len()
-    }
+/// The file of the feed public keys in the credentials directory.
+pub const FEED_KEYS_FILE: &str = "route-feed.pub";
 
-    /// Whether there is no pin.
-    pub fn is_empty(&self) -> bool {
-        self.by_endpoint.is_empty()
-    }
+/// The most feed public keys the edge pins: the current and the next.
+pub const MAX_FEED_KEYS: usize = 2;
 
-    fn add(&mut self, endpoint: CellEndpoint, pin: [u8; 32]) -> Result<(), ConfigError> {
-        if self.by_endpoint.iter().any(|(_, p)| *p == pin) {
-            return Err(ConfigError::PinTaken);
-        }
-        self.by_endpoint.push((endpoint, pin));
-        Ok(())
-    }
-}
+/// The length of one feed public key: a composite public key.
+pub const FEED_KEY_LEN: usize = fstp_crypto::composite::PUBLIC_KEY_LEN;
+
+/// The longest feed keys file accepted, in bytes.
+pub const MAX_FEED_KEYS_LEN: usize = 16 * 1024;
 
 /// A decoded route file: the table and the pins of its endpoints.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -167,7 +166,27 @@ pub struct PilotRoutes {
     pub pins: Pins,
 }
 
-const CONFIG_MEMBERS: [&str; 4] = ["credentials_dir", "limits", "listen", "routes"];
+impl PilotRoutes {
+    /// The routes of the file with their pins, in ascending host order, as
+    /// `fstp-control route add` publishes them (lane L15).
+    pub fn entries(&self) -> Vec<PinnedRoute> {
+        routes_of(&self.table)
+            .into_iter()
+            .filter_map(|route| {
+                let app_pin = self.pins.pin_of(&route.app)?;
+                let vault_pin = self.pins.pin_of(&route.vault)?;
+                Some(PinnedRoute {
+                    route,
+                    app_pin,
+                    vault_pin,
+                })
+            })
+            .collect()
+    }
+}
+
+const CONFIG_MEMBERS: [&str; 4] = ["credentials_dir", "feed", "limits", "listen"];
+const FEED_MEMBERS: [&str; 4] = ["address", "cert_sha256", "poll_seconds", "server_name"];
 const LIMIT_MEMBERS: [&str; 5] = [
     "connections",
     "hello_seconds",
@@ -308,6 +327,66 @@ fn limits_of(o: &Object) -> Result<Limits, ConfigError> {
     })
 }
 
+fn feed_of(o: &Object) -> Result<FeedSource, ConfigError> {
+    members(o, &FEED_MEMBERS, "feed")?;
+    let address = addr_of(text(o, "address", "feed.address")?, "feed.address")?;
+    let server_name = text(o, "server_name", "feed.server_name")?;
+    HostName::parse_lowercase(server_name.as_bytes())
+        .map_err(|_| ConfigError::Invalid("feed.server_name"))?;
+    let cert_sha256 = hex::<32>(
+        text(o, "cert_sha256", "feed.cert_sha256")?,
+        "feed.cert_sha256",
+    )?;
+    let poll = bounded(
+        o,
+        "poll_seconds",
+        "feed.poll_seconds",
+        1..=60,
+        DEFAULT_POLL.as_secs(),
+    )
+    .map(Duration::from_secs)?;
+    Ok(FeedSource {
+        address,
+        server_name: server_name.to_owned(),
+        cert_sha256,
+        poll,
+    })
+}
+
+/// Decodes the feed keys file [`FEED_KEYS_FILE`]: one or two composite
+/// public keys of `fstp_crypto::composite::PUBLIC_KEY_LEN` bytes, each as
+/// one line of lowercase hex ending in a newline, and no key twice
+/// (ADR-009 "Pilot route feed", row "How the edge pins the control
+/// plane"). Fuzzed (`edge_config_decode`).
+///
+/// # Errors
+///
+/// [`ConfigError::Invalid`] naming the file. It never quotes the input
+/// (R-NF-02).
+pub fn decode_feed_keys(bytes: &[u8]) -> Result<Vec<Vec<u8>>, ConfigError> {
+    const RULE: &str = "route-feed.pub";
+    const KEY_LEN: usize = FEED_KEY_LEN;
+    if bytes.len() > MAX_FEED_KEYS_LEN {
+        return Err(ConfigError::Invalid(RULE));
+    }
+    let body = bytes
+        .strip_suffix(b"\n")
+        .ok_or(ConfigError::Invalid(RULE))?;
+    let mut keys: Vec<Vec<u8>> = Vec::new();
+    for line in body.split(|b| *b == b'\n') {
+        if keys.len() >= MAX_FEED_KEYS {
+            return Err(ConfigError::Invalid(RULE));
+        }
+        let text = std::str::from_utf8(line).map_err(|_| ConfigError::Invalid(RULE))?;
+        let key = hex::<KEY_LEN>(text, RULE)?.to_vec();
+        if keys.contains(&key) {
+            return Err(ConfigError::Invalid(RULE));
+        }
+        keys.push(key);
+    }
+    Ok(keys)
+}
+
 fn config_limits() -> ParseLimits {
     ParseLimits::default()
         .with_max_input_bytes(MAX_CONFIG_LEN)
@@ -338,7 +417,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<EdgeConfig, ConfigError> {
     let listen = object(o, "listen", "listen")?;
     members(listen, &["public"], "listen")?;
     let listen = addr_of(text(listen, "public", "listen.public")?, "listen.public")?;
-    let routes = path_of(text(o, "routes", "routes")?, "routes")?;
+    let feed = feed_of(object(o, "feed", "feed")?)?;
     let limits = match o.get("limits") {
         None => Limits::default(),
         Some(v) => limits_of(v.as_object().ok_or(ConfigError::Invalid("limits"))?)?,
@@ -346,7 +425,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<EdgeConfig, ConfigError> {
     Ok(EdgeConfig {
         credentials_dir,
         listen,
-        routes,
+        feed,
         limits,
     })
 }
@@ -419,8 +498,9 @@ pub fn decode_routes(bytes: &[u8]) -> Result<PilotRoutes, ConfigError> {
         out.table
             .add_cell(host, app.clone(), vault.clone())
             .map_err(ConfigError::Route)?;
-        out.pins.add(app, app_pin)?;
-        out.pins.add(vault, vault_pin)?;
+        if !out.pins.add(app, app_pin) || !out.pins.add(vault, vault_pin) {
+            return Err(ConfigError::PinTaken);
+        }
     }
     Ok(out)
 }

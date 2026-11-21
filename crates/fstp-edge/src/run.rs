@@ -1,11 +1,16 @@
-//! The pilot edge process (ADR-009 "Pilot edge configuration", gap G12,
-//! D1). Lane L9 `prod/edgerun`.
+//! The pilot edge process (ADR-009 "Pilot edge configuration" and "Pilot
+//! route feed", gap G12, D1). Lane L9 `prod/edgerun`, lane L15
+//! `prod/route-feed`.
 //!
 //! [`run`] reads the configuration file that [`CONFIG_ENV`] names, the
-//! route file it names and the tunnel credentials by fixed name. It binds
+//! tunnel credentials and the feed public keys by fixed name. It binds
 //! the public listener on one tokio runtime through `fstp-rt` (ADR-002)
-//! and serves until SIGTERM or SIGINT. Each client connection then runs,
-//! in order:
+//! and serves until SIGTERM or SIGINT. It starts with no route.
+//! [`poll_routes`] polls the signed route feed of `fstp-control` and swaps
+//! in each newer verified table with its pins, so routes change without a
+//! restart. A refused or failed poll keeps the last verified table.
+//!
+//! Each client connection runs, in order:
 //!
 //! 1. the [`Gate`]: a connection over a limit closes before any read;
 //! 2. [`read_hello`] under the hello deadline, which routes by SNI or
@@ -13,8 +18,8 @@
 //!    tunnel (I-19);
 //! 3. [`forward`] under the connection lifetime. Its tunnel comes from
 //!    [`PinnedTunnelOpener`]: mutual TLS to the routed endpoint, then the
-//!    pin of the server's end-entity certificate, before any byte of the
-//!    client leaves the edge.
+//!    pin of the server's end-entity certificate in the table current at
+//!    that moment, before any byte of the client leaves the edge.
 //!
 //! The edge passes the client's TLS through unchanged and holds no origin
 //! key (B5). Logs are typed events only (R-NF-02).
@@ -32,10 +37,11 @@ use fstp_rt::{AsyncRead, AsyncWrite, Listener as _, Runtime, Shutdown, ShutdownS
 use fstp_tls::{ClientConfig, TlsStream};
 
 use crate::config::{
-    ConfigError, Limits, MAX_CONFIG_LEN, MAX_ROUTE_FILE_LEN, PilotRoutes, Pins, decode_config,
-    decode_routes,
+    ConfigError, FEED_KEYS_FILE, Limits, MAX_CONFIG_LEN, MAX_FEED_KEYS_LEN, Pins, decode_config,
+    decode_feed_keys,
 };
-use crate::route::{CellEndpoint, RouteTable};
+use crate::feed::{FeedError, FeedTransport, RouteFeed, TlsFeed};
+use crate::route::{CellEndpoint, LiveRoutes, PinSource, RouteTable};
 use crate::splice::{EdgeError, Spliced, TlsTunnelOpener, TunnelOpener, forward, read_hello};
 
 /// The environment variable that names the configuration file.
@@ -57,17 +63,19 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 /// the edge's tunnel certificate, under the open deadline, then the pin
 /// of the server's end-entity certificate (ADR-009 "Pilot edge
 /// configuration", row "Tunnel server pin").
-pub struct PinnedTunnelOpener<R: Runtime> {
+pub struct PinnedTunnelOpener<R: Runtime, P: PinSource = Pins> {
     inner: TlsTunnelOpener<R>,
     rt: R,
-    pins: Pins,
+    pins: P,
     open: Duration,
 }
 
-impl<R: Runtime> PinnedTunnelOpener<R> {
+impl<R: Runtime, P: PinSource> PinnedTunnelOpener<R, P> {
     /// An opener over `rt` that authenticates with `config`, checks each
-    /// endpoint's pin in `pins`, and gives up after `open`.
-    pub fn new(rt: R, config: ClientConfig, pins: Pins, open: Duration) -> Self {
+    /// endpoint's pin in `pins`, and gives up after `open`. With
+    /// [`LiveRoutes`] as `pins`, the pin comes from the table that is
+    /// current when the tunnel opens (lane L15).
+    pub fn new(rt: R, config: ClientConfig, pins: P, open: Duration) -> Self {
         PinnedTunnelOpener {
             inner: TlsTunnelOpener::new(rt.clone(), config),
             rt,
@@ -77,7 +85,7 @@ impl<R: Runtime> PinnedTunnelOpener<R> {
     }
 }
 
-impl<R: Runtime> TunnelOpener for PinnedTunnelOpener<R> {
+impl<R: Runtime, P: PinSource> TunnelOpener for PinnedTunnelOpener<R, P> {
     type Tunnel = TlsStream<R::Tcp>;
 
     /// Opens the tunnel, or refuses with `PermissionDenied` when the
@@ -86,7 +94,7 @@ impl<R: Runtime> TunnelOpener for PinnedTunnelOpener<R> {
     /// tunnel is dropped before the tunnel header is written.
     async fn open(&self, endpoint: &CellEndpoint) -> io::Result<Self::Tunnel> {
         let denied = || io::Error::from(io::ErrorKind::PermissionDenied);
-        let pin = self.pins.pin_of(endpoint).ok_or_else(denied)?;
+        let pin = self.pins.pin_now(endpoint).ok_or_else(denied)?;
         let tunnel = fstp_rt::timeout(&self.rt, self.open, self.inner.open(endpoint))
             .await
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
@@ -282,39 +290,118 @@ pub fn tunnel_client(dir: &Path) -> Result<ClientConfig, EdgeError> {
     config
 }
 
-/// The configuration file, the route file and the tunnel credentials,
-/// decoded and checked.
+/// What a pilot edge loads at start: its configuration, its tunnel client
+/// configuration (also its client side of the route feed), and the feed
+/// public keys it pins.
+pub struct Loaded {
+    /// The configuration.
+    pub config: crate::config::EdgeConfig,
+    /// The tunnel client configuration from the credentials directory.
+    pub tls: ClientConfig,
+    /// The pinned feed public keys ([`FEED_KEYS_FILE`]).
+    pub feed_keys: Vec<Vec<u8>>,
+}
+
+/// The configuration file, the tunnel credentials and the feed keys,
+/// decoded and checked (ADR-009 "Pilot route feed").
 ///
 /// # Errors
 ///
 /// [`EdgeError::Config`] for a missing or refused file.
-pub fn load(
-    config: &Path,
-) -> Result<(crate::config::EdgeConfig, PilotRoutes, ClientConfig), EdgeError> {
+pub fn load(config: &Path) -> Result<Loaded, EdgeError> {
     let cfg = decode_config(&read_bounded(config, MAX_CONFIG_LEN, "config file")?)
         .map_err(EdgeError::Config)?;
-    let routes = decode_routes(&read_bounded(
-        &cfg.routes,
-        MAX_ROUTE_FILE_LEN,
-        "route file",
+    let tls = tunnel_client(&cfg.credentials_dir)?;
+    let feed_keys = decode_feed_keys(&read_bounded(
+        &cfg.credentials_dir.join(FEED_KEYS_FILE),
+        MAX_FEED_KEYS_LEN,
+        FEED_KEYS_FILE,
     )?)
     .map_err(EdgeError::Config)?;
-    let tls = tunnel_client(&cfg.credentials_dir)?;
-    Ok((cfg, routes, tls))
+    Ok(Loaded {
+        config: cfg,
+        tls,
+        feed_keys,
+    })
+}
+
+/// The route template the edge logs its route feed under.
+pub const FEED_ROUTE: &str = "/edge/route-feed";
+
+/// How long one poll may take.
+pub const POLL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Polls `feed` at once and then every `every` until `stop` is triggered
+/// (ADR-009 "Pilot route feed", rows "Poll interval" and "Unreachable or
+/// refused feed"). A refused or failed poll keeps the table the edge
+/// serves. It logs `Request` when a newer table is applied, and `Refused`
+/// with the rule when a poll's outcome turns into a refusal of another
+/// rule. No event names a host or an address (R-NF-02).
+pub async fn poll_routes<R, T>(rt: R, feed: RouteFeed<T>, every: Duration, stop: ShutdownSignal)
+where
+    R: Runtime,
+    T: FeedTransport,
+{
+    let mut last_rule: Option<&'static str> = None;
+    loop {
+        let before = feed.routes().version();
+        let begun = Instant::now();
+        let Some(outcome) = stop
+            .run_until(fstp_rt::timeout(&rt, POLL_TIMEOUT, feed.poll_once()))
+            .await
+        else {
+            break;
+        };
+        let outcome = outcome.unwrap_or(Err(FeedError::Io(io::ErrorKind::TimedOut)));
+        match outcome {
+            Ok(version) => {
+                last_rule = None;
+                if version != before {
+                    let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::Request {
+                        method: fstp_obs::Method::Other,
+                        route: FEED_ROUTE,
+                        status: 200,
+                        elapsed: begun.elapsed(),
+                    });
+                }
+            }
+            Err(e) => {
+                let rule = e.rule();
+                if last_rule != Some(rule) {
+                    let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::Refused {
+                        method: fstp_obs::Method::Other,
+                        route: FEED_ROUTE,
+                        rule,
+                        status: 502,
+                    });
+                }
+                last_rule = Some(rule);
+            }
+        }
+        if stop.run_until(rt.sleep(every)).await.is_none() {
+            break;
+        }
+    }
 }
 
 /// Runs the pilot edge named by the configuration file in [`CONFIG_ENV`]
-/// until SIGTERM or SIGINT (module documentation).
+/// until SIGTERM or SIGINT (module documentation). It starts with no
+/// route and serves the routes of the signed route feed of `fstp-control`
+/// as they change, without a restart (ADR-009 "Pilot route feed").
 ///
 /// # Errors
 ///
-/// [`EdgeError::Config`] for a missing or refused configuration, route
+/// [`EdgeError::Config`] for a missing or refused configuration, feed key
 /// file or credential, and [`EdgeError::Start`] when the runtime, the
 /// signal handler or the listener does not start.
 pub fn run() -> Result<(), EdgeError> {
     use fstp_rt::signal::{SignalError, Signals as _, TerminationListener as _};
     let path = std::env::var_os(CONFIG_ENV).ok_or(EdgeError::Config(ConfigError::Missing))?;
-    let (cfg, routes, tls) = load(Path::new(&path))?;
+    let Loaded {
+        config: cfg,
+        tls,
+        feed_keys,
+    } = load(Path::new(&path))?;
     let rt = TokioRuntime::new_multi_thread(WORKERS).map_err(|e| EdgeError::Start(e.kind()))?;
     // Registered before the bind, so a SIGTERM during the start is queued.
     let mut term = rt
@@ -327,17 +414,29 @@ pub fn run() -> Result<(), EdgeError> {
             .await
             .map_err(|e| EdgeError::Start(e.kind()))?;
         let limits = cfg.limits;
-        let table = Arc::new(routes.table);
+        let live = LiveRoutes::default();
+        let feed = RouteFeed::new(
+            TlsFeed::new(
+                task_rt.clone(),
+                cfg.feed.address,
+                &cfg.feed.server_name,
+                tls.clone(),
+            )
+            .with_pin(cfg.feed.cert_sha256),
+            feed_keys,
+            live.clone(),
+        );
         let opener = Arc::new(PinnedTunnelOpener::new(
             task_rt.clone(),
             tls,
-            routes.pins,
+            live.clone(),
             limits.open,
         ));
         let conn_rt = task_rt.clone();
         let handle = move |client, peer| {
             let rt = conn_rt.clone();
-            let table = Arc::clone(&table);
+            // The table current when the connection arrives (TH-48).
+            let table = live.current();
             let opener = Arc::clone(&opener);
             async move {
                 // A closed connection is the whole answer: the edge logs
@@ -346,6 +445,12 @@ pub fn run() -> Result<(), EdgeError> {
             }
         };
         let shutdown = Shutdown::new();
+        drop(task_rt.spawn(poll_routes(
+            task_rt.clone(),
+            feed,
+            cfg.feed.poll,
+            shutdown.signal(),
+        )));
         drop(task_rt.spawn(accept_loop(
             task_rt.clone(),
             listener,
