@@ -250,4 +250,14 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("envelope", Sealed),
         ],
     },
+    TableSpec {
+        schema: "vault",
+        name: "identity_account",
+        class: TableClass::Operational,
+        columns: &[
+            col("account_id", RandomId),
+            col("identity_id", RandomId),
+            col("registered_at", Time),
+        ],
+    },
 ];

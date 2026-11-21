@@ -1,0 +1,710 @@
+//! Identity facts and their registration over a real PostgreSQL server
+//! (ADR-004 record of lane L13, I-81, R-KY-02, R-NF-08).
+//!
+//! Each test makes a fresh vault database, runs the keystore genesis as
+//! `fstp-vault init-keys` does, registers synthetic identities with their
+//! accounts, writes their bank details and hardship evidence, and erases
+//! one identity through `fstp_vault::erasure`. Custody is a stub in this
+//! process with one AES key per root, so a destroyed root really stops
+//! unwrapping (the stub of `erasure_pg.rs`).
+//!
+//! A "reader of copies" holds every keystore row it ever read, as a
+//! backup, a WAL segment or a keystore snapshot holds them, and every
+//! `vault.fact` row. It tries every root under custody, every group row
+//! under every seal key it opened, every tuple data key under every group
+//! secret it opened, and every fact body under every fact key it derived.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "test code asserts on known-good values"
+)]
+
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+
+use fstp_crypto::hybrid_kem::HybridSecretKey;
+use fstp_custody::{
+    Aad, BackendId, Custody, CustodyError, CustodyHandle, DestroyReceipt, EcdsaSignature, Refusal,
+    RootLabel, RootRef, SealKey, SignKeyRef, UsageCursor, UsagePage, WrappedSealKey,
+};
+use fstp_keys::Purpose;
+use fstp_keys::envelope;
+use fstp_pgtest::{PgServer, Role, tls as certs};
+use fstp_pgwire::{Client, ClientTls, Config, Password, Uuid};
+use fstp_rt::tokio::TokioRuntime;
+use fstp_vault::erasure::{ErasureEvent, Journal, Runner};
+use fstp_vault::keystore::{self, KeystoreRows, VaultKeys};
+use fstp_vault::service::AeadSealer;
+use fstp_vault::store::{self, Sealer};
+use fstp_vault::{JournalEntry, Vault, VaultError};
+use fstp_vault_core::{Fact, Person};
+use fstp_vault_proto::{
+    VaultRequest, VaultResponse, WireAccount, WireEvidence, WireProgramme, WireProposal,
+};
+
+type Pg = Client<TokioRuntime>;
+
+fn rt() -> &'static TokioRuntime {
+    static RT: OnceLock<TokioRuntime> = OnceLock::new();
+    RT.get_or_init(|| TokioRuntime::new_multi_thread(2).unwrap())
+}
+
+fn block_on<F: Future>(f: F) -> F::Output {
+    rt().block_on(f)
+}
+
+const CELL: [u8; 16] = [0x7e; 16];
+const PINNED: [[u8; 32]; 1] = [[3; 32]];
+const NOW: i64 = 1_800_000_000_000_000;
+
+/// Synthetic attribute tuples (corpus only).
+const ALICE: &[u8] = b"synthetic|manual|passport|name=Synthetic Alpha|0001";
+const BRUNO: &[u8] = b"synthetic|manual|passport|name=Synthetic Bravo|0002";
+const CARLA: &[u8] = b"synthetic|manual|passport|name=Synthetic Charlie|0003";
+
+/// Synthetic accounts, one per tuple, and their grants.
+const A_ACCOUNT: u128 = 101;
+const B_ACCOUNT: u128 = 102;
+const C_ACCOUNT: u128 = 103;
+const IBAN: &str = "DE89370400440532013000";
+
+fn grant_of(account: u128) -> WireProposal {
+    WireProposal(account + 1000)
+}
+
+// ---------------------------------------------------------------------
+// Custody: one AES key per root. A destroy drops the key, so the root
+// never unwraps again. A retried destroy answers the same receipt.
+// ---------------------------------------------------------------------
+
+#[derive(Default)]
+struct Roots {
+    keys: BTreeMap<Vec<u8>, Option<Arc<fstp_crypto::aead::Key>>>,
+    created: u32,
+}
+
+#[derive(Clone, Default)]
+struct StubCustody {
+    roots: Arc<Mutex<Roots>>,
+    /// The next destroy destroys, then answers an error, as a crash after
+    /// the custody call would look.
+    fail_after_destroy: Arc<AtomicBool>,
+}
+
+impl StubCustody {
+    fn live(&self) -> usize {
+        self.roots
+            .lock()
+            .unwrap()
+            .keys
+            .values()
+            .filter(|k| k.is_some())
+            .count()
+    }
+}
+
+fn bound(root: &RootRef, aad: &Aad) -> Vec<u8> {
+    [&root.handle.0[..], &aad.0[..]].concat()
+}
+
+impl Custody for StubCustody {
+    async fn create_root(&self, label: RootLabel) -> Result<RootRef, CustodyError> {
+        let mut r = self.roots.lock().unwrap();
+        r.created += 1;
+        let handle = format!("stub-root-{}", r.created).into_bytes();
+        r.keys.insert(
+            handle.clone(),
+            Some(Arc::new(fstp_crypto::aead::Key::generate().unwrap())),
+        );
+        Ok(RootRef {
+            backend: BackendId::Keyd,
+            cell: label.cell,
+            chain: label.chain,
+            epoch: label.epoch,
+            handle: CustodyHandle(handle),
+        })
+    }
+
+    async fn wrap(
+        &self,
+        root: &RootRef,
+        key: &SealKey,
+        aad: &Aad,
+    ) -> Result<WrappedSealKey, CustodyError> {
+        let k = self
+            .roots
+            .lock()
+            .unwrap()
+            .keys
+            .get(&root.handle.0)
+            .cloned()
+            .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?
+            .ok_or(CustodyError::Refused(Refusal::Destroyed))?;
+        let s = fstp_crypto::aead::seal(&k, &bound(root, aad), key.expose())
+            .map_err(|_| CustodyError::Refused(Refusal::Internal))?;
+        Ok(WrappedSealKey([s.nonce.to_vec(), s.body].concat()))
+    }
+
+    async fn unwrap(
+        &self,
+        root: &RootRef,
+        w: &WrappedSealKey,
+        aad: &Aad,
+    ) -> Result<SealKey, CustodyError> {
+        let k = self
+            .roots
+            .lock()
+            .unwrap()
+            .keys
+            .get(&root.handle.0)
+            .cloned()
+            .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?
+            .ok_or(CustodyError::Refused(Refusal::Destroyed))?;
+        let refused = CustodyError::Refused(Refusal::UnwrapFailed);
+        let (nonce, body) = w.0.split_at_checked(12).ok_or(refused)?;
+        let plain = fstp_crypto::aead::open(&k, nonce.try_into().unwrap(), &bound(root, aad), body)
+            .map_err(|_| refused)?;
+        SealKey::from_slice(&plain).map_err(|_| refused)
+    }
+
+    async fn destroy(&self, root: &RootRef) -> Result<DestroyReceipt, CustodyError> {
+        {
+            let mut r = self.roots.lock().unwrap();
+            let slot = r
+                .keys
+                .get_mut(&root.handle.0)
+                .ok_or(CustodyError::Refused(Refusal::UnknownRoot))?;
+            *slot = None;
+        }
+        if self.fail_after_destroy.swap(false, Ordering::SeqCst) {
+            return Err(CustodyError::Refused(Refusal::Internal));
+        }
+        Ok(DestroyReceipt(
+            [b"stub-receipt|", &root.handle.0[..]].concat(),
+        ))
+    }
+
+    async fn sign(&self, _: &SignKeyRef, _: &[u8; 32]) -> Result<EcdsaSignature, CustodyError> {
+        Err(CustodyError::Refused(Refusal::NoSignKey))
+    }
+
+    async fn usage_since(&self, _: &RootRef, _: UsageCursor) -> Result<UsagePage, CustodyError> {
+        Err(CustodyError::Refused(Refusal::Internal))
+    }
+}
+
+// ---------------------------------------------------------------------
+// The vault journal without the chain writer.
+// ---------------------------------------------------------------------
+
+struct StoreJournal {
+    client: Pg,
+    sealer: AeadSealer,
+}
+
+impl Journal for StoreJournal {
+    async fn commit(&mut self, entries: &[JournalEntry], _now: i64) -> Result<(), VaultError> {
+        store::persist(&mut self.client, &self.sealer, entries).await
+    }
+}
+
+// ---------------------------------------------------------------------
+// A vault database with a keystore from genesis.
+// ---------------------------------------------------------------------
+
+struct World {
+    cfg: Config,
+    custody: StubCustody,
+}
+
+impl World {
+    fn connect(&self) -> Pg {
+        block_on(Client::connect(rt(), &self.cfg)).unwrap_or_else(|e| panic!("connect: {e}"))
+    }
+}
+
+fn genesis() -> World {
+    let server = PgServer::shared().unwrap_or_else(|e| panic!("{e}"));
+    let role = Role::Superuser;
+    let db = server
+        .fresh_database_as(role)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let tls = ClientTls::new(certs::CA_PEM, role.client_cert_pem(), role.client_key_pem()).unwrap();
+    let cfg = Config::new(
+        db.host.clone(),
+        db.port,
+        role.name(),
+        Password::new(server.password(role)).unwrap(),
+        db.dbname.clone(),
+        tls,
+    )
+    .unwrap()
+    .connect_timeout(Some(Duration::from_secs(20)));
+    let w = World {
+        cfg,
+        custody: StubCustody::default(),
+    };
+    let mut c = w.connect();
+    block_on(store::migrate(&mut c)).unwrap();
+    let keys = VaultKeys::generate().unwrap();
+    let rows = block_on(keystore::genesis(&w.custody, CELL, &keys, NOW)).unwrap();
+    block_on(keystore::write_rows(&mut c, &rows)).unwrap();
+    block_on(c.close()).unwrap();
+    w
+}
+
+/// A running vault process: the runner over the keys login, the vault
+/// and its journal over the vault login, with the sealer that holds the
+/// identity fact keys.
+struct Process<'w> {
+    runner: Runner<'w, TokioRuntime, StubCustody>,
+    vault: Vault,
+    journal: StoreJournal,
+    seq: u64,
+}
+
+fn start(w: &World) -> Process<'_> {
+    let runner = block_on(Runner::load(w.connect(), CELL, &w.custody))
+        .unwrap_or_else(|e| panic!("the runner did not load: {e}"));
+    let (_, sealer) = runner.service_keys().unwrap().into_service_keys().unwrap();
+    let sealer = sealer.with_identities(runner.identity_keys());
+    let mut vc = w.connect();
+    let vault = block_on(store::load(&mut vc, &sealer, CELL, &PINNED)).unwrap();
+    Process {
+        runner,
+        vault,
+        journal: StoreJournal { client: vc, sealer },
+        seq: 1000,
+    }
+}
+
+impl Process<'_> {
+    fn register(&mut self, account: u128, tuple: &[u8]) -> Result<Person, VaultError> {
+        block_on(self.runner.register_account(
+            &mut self.vault,
+            &mut self.journal,
+            WireAccount(account),
+            tuple,
+            NOW,
+        ))
+    }
+
+    fn commit(&mut self) {
+        let entries = self.vault.take_journal();
+        block_on(self.journal.commit(&entries, NOW)).unwrap();
+    }
+
+    /// Takes `fact`, persists it and acknowledges its epoch.
+    fn write(&mut self, fact: Fact) {
+        self.vault.take_fact(fact, NOW).unwrap();
+        self.commit();
+        let epoch = self.vault.state().provisional().unwrap().epoch();
+        self.seq += 1;
+        let r = self.vault.internal(
+            &VaultRequest::Ack {
+                epoch,
+                ledger_seq: self.seq,
+                link: [7; 32],
+            },
+            NOW,
+        );
+        assert_eq!(r, VaultResponse::Acked);
+        self.commit();
+    }
+
+    /// The bank details and hardship evidence of `account`'s grant.
+    fn identity_facts(&mut self, account: u128) {
+        self.write(bank(account));
+        self.write(Fact::HardshipEvidence {
+            grant: grant_of(account),
+            evidence: WireEvidence(account),
+            account: WireAccount(account),
+            statement: "Synthetic hardship statement".to_owned(),
+        });
+    }
+
+    fn step(&mut self) -> Option<ErasureEvent> {
+        block_on(self.runner.step(&mut self.vault, &mut self.journal, NOW))
+            .unwrap_or_else(|e| panic!("a unit failed: {e}"))
+    }
+
+    fn run_to_idle(&mut self) {
+        block_on(
+            self.runner
+                .run_to_idle(&mut self.vault, &mut self.journal, NOW),
+        )
+        .unwrap_or_else(|e| panic!("the batch did not complete: {e}"));
+    }
+}
+
+fn bank(account: u128) -> Fact {
+    Fact::BankDetails {
+        grant: grant_of(account),
+        account: WireAccount(account),
+        at: NOW,
+        holder: "Synthetic Holder".to_owned(),
+        iban: IBAN.to_owned(),
+    }
+}
+
+fn read_rows(w: &World) -> KeystoreRows {
+    let mut c = w.connect();
+    let rows = block_on(keystore::read_rows(&mut c)).unwrap().unwrap();
+    block_on(c.close()).unwrap();
+    rows
+}
+
+/// One stored `vault.fact` row: epoch, kind, data key id and body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FactRow {
+    epoch: u64,
+    kind: i16,
+    dek: [u8; 16],
+    body: Vec<u8>,
+}
+
+fn fact_rows(w: &World) -> Vec<FactRow> {
+    let mut c = w.connect();
+    let rows = block_on(c.query(
+        "SELECT epoch, kind, dek, body FROM vault.fact ORDER BY epoch",
+        &[],
+    ))
+    .unwrap();
+    block_on(c.close()).unwrap();
+    rows.iter()
+        .map(|r| FactRow {
+            epoch: u64::try_from(r.get::<i64>(0).unwrap()).unwrap(),
+            kind: r.get(1).unwrap(),
+            dek: *r.get::<Uuid>(2).unwrap().as_bytes(),
+            body: r.get(3).unwrap(),
+        })
+        .collect()
+}
+
+fn count(w: &World, sql: &'static str) -> i64 {
+    let mut c = w.connect();
+    let rows = block_on(c.query(sql, &[])).unwrap();
+    block_on(c.close()).unwrap();
+    rows[0].get(0).unwrap()
+}
+
+// ---------------------------------------------------------------------
+// The reader of copies.
+// ---------------------------------------------------------------------
+
+/// Every `Attribute` group secret the reader of `sets` opens through
+/// custody as it stands now.
+fn attribute_secrets(w: &World, sets: &[&KeystoreRows]) -> Vec<([u8; 16], HybridSecretKey)> {
+    let mut seals: Vec<SealKey> = Vec::new();
+    for rows in sets {
+        for r in rows.all_roots() {
+            if r.wrapped.is_empty() {
+                continue;
+            }
+            let root = RootRef {
+                backend: BackendId::Keyd,
+                cell: Some(fstp_custody::CellId(CELL)),
+                chain: fstp_custody::Chain::Vault,
+                epoch: fstp_custody::Epoch(r.epoch),
+                handle: CustodyHandle(r.handle.clone()),
+            };
+            if let Ok(s) = block_on(w.custody.unwrap(
+                &root,
+                &WrappedSealKey(r.wrapped.clone()),
+                &keystore::seal_aad(&CELL, r.epoch),
+            )) {
+                seals.push(s);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for rows in sets {
+        for g in rows
+            .groups
+            .iter()
+            .filter(|g| g.purpose == Purpose::Attribute.code())
+        {
+            for s in &seals {
+                if let Ok(bytes) = keystore::open_group_secret(s, &CELL, g)
+                    && let Ok(sk) = HybridSecretKey::from_bytes(&bytes)
+                {
+                    out.push((g.group, sk));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Every fact key of `p` that the reader of `sets` derives.
+fn fact_keys(w: &World, sets: &[&KeystoreRows], p: Person) -> Vec<SealKey> {
+    let secrets = attribute_secrets(w, sets);
+    let id = p.0.to_be_bytes();
+    let mut out = Vec::new();
+    for rows in sets {
+        for d in rows.data_keys.iter().filter(|d| d.id == id) {
+            let Ok(sealed) = envelope::decode_sealed_key(&d.sealed) else {
+                continue;
+            };
+            for (group, sk) in secrets.iter().filter(|(g, _)| *g == d.group) {
+                let ctx = keystore::attribute_ctx(&CELL, group, d.generation, &id);
+                if let Ok(dk) = envelope::open_key(sk, &sealed, &ctx) {
+                    out.push(keystore::identity_fact_key(&CELL, &id, &dk).unwrap());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The bodies of `p`'s fact rows among `rows` that the reader of `sets`
+/// opens.
+fn opened_facts(w: &World, sets: &[&KeystoreRows], rows: &[FactRow], p: Person) -> Vec<Vec<u8>> {
+    let keys = fact_keys(w, sets, p);
+    let mut out = Vec::new();
+    for r in rows.iter().filter(|r| r.dek == p.0.to_be_bytes()) {
+        for k in &keys {
+            let aead = fstp_crypto::aead::Key::from_bytes(k.expose()).unwrap();
+            let (nonce, body) = r.body.split_at(fstp_crypto::aead::NONCE_LEN);
+            if let Ok(plain) = fstp_crypto::aead::open(
+                &aead,
+                &nonce.try_into().unwrap(),
+                &store::identity_fact_aad(r.epoch, p),
+                body,
+            ) {
+                out.push(plain.to_vec());
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------
+// Tests.
+// ---------------------------------------------------------------------
+
+/// I-81, R-KY-02, ADR-004 record of lane L13 "Snapshots and backups":
+/// after identity B is erased, no fact of B opens from the `vault.fact`
+/// rows of a backup taken before the batch or from the live rows, under
+/// any key the keystore rows before the batch, the step 5 snapshot or the
+/// live store give. Before the batch the same reader opens them, so the
+/// check has teeth. The facts of A and C still open, and the shared
+/// facts of B's account stay. A restarted vault holds no bank detail and
+/// no hardship evidence of B's grant, and B's account is unbound.
+#[test]
+fn i81_erased_identity_facts_unreadable_from_live_store_snapshot_and_backup() {
+    let w = genesis();
+    let mut p = start(&w);
+    let a = p.register(A_ACCOUNT, ALICE).unwrap();
+    let b = p.register(B_ACCOUNT, BRUNO).unwrap();
+    let c = p.register(C_ACCOUNT, CARLA).unwrap();
+    for account in [A_ACCOUNT, B_ACCOUNT, C_ACCOUNT] {
+        p.identity_facts(account);
+    }
+    p.write(Fact::CountryStated {
+        account: WireAccount(B_ACCOUNT),
+        programme: WireProgramme(5),
+        country: 276,
+    });
+    let backup_keys = read_rows(&w);
+    let backup_facts = fact_rows(&w);
+    assert_eq!(
+        backup_facts
+            .iter()
+            .filter(|r| r.dek == b.0.to_be_bytes())
+            .count(),
+        2,
+        "B's bank and hardship rows do not name B's key"
+    );
+    for r in &backup_facts {
+        assert!(
+            !r.body.windows(IBAN.len()).any(|x| x == IBAN.as_bytes()),
+            "R-NF-08: a fact body holds the IBAN in plain text"
+        );
+    }
+    assert_eq!(
+        opened_facts(&w, &[&backup_keys], &backup_facts, b).len(),
+        2,
+        "the reader opens B's facts before the batch"
+    );
+
+    block_on(p.runner.request_erasure(b)).unwrap();
+    let snapshot_keys = loop {
+        match p.step() {
+            Some(ErasureEvent::SnapshotTaken { .. }) => break read_rows(&w),
+            Some(_) => {}
+            None => panic!("the batch ended before its snapshot"),
+        }
+    };
+    p.run_to_idle();
+    assert_eq!(w.custody.live(), 1, "I-81: the old root still lives");
+    let live_keys = read_rows(&w);
+    let live_facts = fact_rows(&w);
+    let every_key = [&backup_keys, &snapshot_keys, &live_keys];
+    for rows in [&backup_facts, &live_facts] {
+        assert!(
+            opened_facts(&w, &every_key, rows, b).is_empty(),
+            "I-81: an erased identity's fact opens from a copy"
+        );
+    }
+    assert!(fact_keys(&w, &every_key, b).is_empty());
+    for (person, account) in [(a, A_ACCOUNT), (c, C_ACCOUNT)] {
+        assert_eq!(
+            opened_facts(&w, &[&live_keys], &live_facts, person).len(),
+            2,
+            "R-KY-02: a live identity's facts do not open"
+        );
+        assert_eq!(p.vault.registered(WireAccount(account)), Some(person));
+    }
+    assert_eq!(p.vault.registered(WireAccount(B_ACCOUNT)), None);
+    drop(p);
+
+    // A restart over the live rows.
+    let p = start(&w);
+    let latest = p.vault.state().latest();
+    assert!(
+        latest.bank_of(grant_of(B_ACCOUNT)).is_none(),
+        "I-81: the erased bank details replay"
+    );
+    assert!(
+        latest
+            .hardship_of(grant_of(B_ACCOUNT), WireEvidence(B_ACCOUNT))
+            .is_none(),
+        "I-81: the erased hardship evidence replays"
+    );
+    assert_eq!(
+        latest.country_of(WireAccount(B_ACCOUNT), WireProgramme(5)),
+        Some(276),
+        "a shared fact of the account was dropped"
+    );
+    for account in [A_ACCOUNT, C_ACCOUNT] {
+        let rec = latest.bank_of(grant_of(account)).unwrap();
+        assert_eq!(rec.iban, IBAN);
+    }
+    assert_eq!(p.vault.registered(WireAccount(B_ACCOUNT)), None);
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    assert_eq!(
+        p.journal
+            .sealer
+            .open_identity(b, &store::identity_fact_aad(1, b), &[0; 40])
+            .unwrap(),
+        None,
+        "the live sealer still holds the erased identity's key"
+    );
+}
+
+/// R-KY-02, ADR-004 record of lane L13: after an erasure and a restart,
+/// a live identity's account keeps its binding and takes new identity
+/// facts, which reload. The erased identity's account is refused until it
+/// registers again, and its tuple then gives a new identity (G24).
+#[test]
+fn r_ky_02_live_identity_facts_open_after_erasure_and_restart() {
+    let w = genesis();
+    let mut p = start(&w);
+    let a = p.register(A_ACCOUNT, ALICE).unwrap();
+    let b = p.register(B_ACCOUNT, BRUNO).unwrap();
+    p.identity_facts(A_ACCOUNT);
+    p.identity_facts(B_ACCOUNT);
+    block_on(p.runner.request_erasure(b)).unwrap();
+    p.run_to_idle();
+    drop(p);
+    let mut p = start(&w);
+    p.write(Fact::BankDetails {
+        grant: grant_of(A_ACCOUNT),
+        account: WireAccount(A_ACCOUNT),
+        at: NOW + 1,
+        holder: "Synthetic Holder Two".to_owned(),
+        iban: IBAN.to_owned(),
+    });
+    let state = p.vault.state().clone();
+    drop(p);
+    let mut p = start(&w);
+    assert_eq!(p.vault.state(), &state, "the reload differs");
+    let rec = p
+        .vault
+        .state()
+        .latest()
+        .bank_of(grant_of(A_ACCOUNT))
+        .unwrap();
+    assert_eq!(rec.version, 2);
+    assert_eq!(rec.holder, "Synthetic Holder Two");
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    let again = p.register(B_ACCOUNT, BRUNO).unwrap();
+    assert!(
+        again != a && again != b,
+        "G24: the erased tuple still links"
+    );
+    p.identity_facts(B_ACCOUNT);
+    drop(p);
+    let p = start(&w);
+    assert!(
+        p.vault
+            .state()
+            .latest()
+            .bank_of(grant_of(B_ACCOUNT))
+            .is_some()
+    );
+}
+
+/// ADR-004 record of lane L13 "Idempotence": registering the same
+/// account and tuple again changes no row, a second account with the
+/// same tuple joins the identity, and an account never moves to another
+/// identity. The bindings survive a restart.
+#[test]
+fn adr004_identity_registration_is_idempotent() {
+    let w = genesis();
+    let mut p = start(&w);
+    let a = p.register(A_ACCOUNT, ALICE).unwrap();
+    let keys = read_rows(&w);
+    let bindings = "SELECT count(*) FROM vault.identity_account";
+    let identities = "SELECT count(*) FROM vault.identity";
+    assert_eq!(count(&w, bindings), 1);
+    assert_eq!(p.register(A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(read_rows(&w), keys, "a repeat changed a keystore row");
+    assert_eq!(count(&w, bindings), 1);
+    assert_eq!(count(&w, identities), 1);
+    assert_eq!(p.register(B_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, bindings), 2);
+    assert_eq!(read_rows(&w).tuples.len(), 1);
+    assert!(
+        p.register(A_ACCOUNT, BRUNO).is_err(),
+        "an account moved to another identity"
+    );
+    assert!(p.register(A_ACCOUNT, b"").is_err(), "an empty tuple");
+    assert_eq!(count(&w, bindings), 2);
+    drop(p);
+    let mut p = start(&w);
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    assert_eq!(p.vault.registered(WireAccount(B_ACCOUNT)), Some(a));
+    assert_eq!(p.register(A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, bindings), 2);
+}
+
+/// I-81, ADR-004 record of lane L13 "Existing facts": the start check
+/// refuses a vault that holds a bank detail or hardship evidence sealed
+/// under the shared `Fact` key, which no erasure could make unreadable.
+/// A vault whose identity facts are all sealed for their identities
+/// passes.
+#[test]
+fn i81_start_refuses_shared_key_identity_facts() {
+    let w = genesis();
+    let mut p = start(&w);
+    p.register(A_ACCOUNT, ALICE).unwrap();
+    p.identity_facts(A_ACCOUNT);
+    let mut c = w.connect();
+    block_on(store::check_identity_facts(&mut c, &p.journal.sealer)).unwrap();
+    // An unregistered account's bank details, through the library seam
+    // the test world seeds with: sealed under the shared key.
+    p.write(bank(B_ACCOUNT));
+    assert!(
+        block_on(store::check_identity_facts(&mut c, &p.journal.sealer)).is_err(),
+        "I-81: a shared-key bank detail passed the start check"
+    );
+    block_on(c.close()).unwrap();
+}

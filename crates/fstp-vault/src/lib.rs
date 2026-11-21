@@ -40,7 +40,7 @@ pub mod store;
 pub use catalogue::CATALOGUE;
 pub use codec::{FactBody, OriginWrite, decode_fact_body, decode_origin_write};
 pub use egress::VaultDestination;
-pub use origin::{JournalEntry, OriginRefusal, Reply, Vault, Written};
+pub use origin::{JournalEntry, OriginRefusal, Reply, Vault, Written, is_identity_fact};
 
 /// The vault migrations, in order (design sections 4.1 and 4.6). They
 /// mirror the application set `fstp_pgstore::MIGRATIONS`:
@@ -63,6 +63,8 @@ pub use origin::{JournalEntry, OriginRefusal, Reply, Vault, Written};
 ///    (ADR-010 open point 5, Daniel, 2026-11-13).
 /// 8. `identity_tuple`: the sealed identity attribute tuples of the Vault
 ///    chain (ADR-004 record of lane L11).
+/// 9. `identity_account`: the identity registration of each account
+///    (ADR-004 record of lane L13).
 pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
     fstp_migrate::Migration::new(1, "meta", include_str!("../migrations/vault/0001_meta.sql")),
     fstp_migrate::Migration::new(
@@ -95,6 +97,11 @@ pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
         8,
         "identity_tuple",
         include_str!("../migrations/vault/0008_identity_tuple.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        9,
+        "identity_account",
+        include_str!("../migrations/vault/0009_identity_account.sql"),
     ),
 ];
 

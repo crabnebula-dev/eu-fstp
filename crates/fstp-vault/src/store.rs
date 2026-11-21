@@ -62,6 +62,103 @@ pub trait Sealer: Send + Sync {
 
     /// The keyed digest of `data`.
     fn digest(&self, data: &[u8]) -> [u8; 32];
+
+    /// The id of the shared `Fact` data key, which a stored row names in
+    /// its `dek` column. `None`, the default, reads every stored row as
+    /// sealed by [`Sealer::open`]: a sealer with no identity fact keys.
+    fn shared_dek(&self) -> Option<[u8; 16]> {
+        None
+    }
+
+    /// Seals `plain` under the fact key `F(X)` of `identity`, bound to
+    /// `aad` (ADR-004 record of lane L13). The value names `identity` as
+    /// its data key.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Unavailable`] when the sealer holds no key of
+    /// `identity`, which the default never does.
+    fn seal_identity(
+        &self,
+        identity: Person,
+        aad: &[u8],
+        plain: &[u8],
+    ) -> Result<SealedValue, VaultError> {
+        let _ = (identity, aad, plain);
+        Err(VaultError::Unavailable("the identity fact keys"))
+    }
+
+    /// Opens `sealed` under the fact key of `identity`, bound to `aad`.
+    /// `None` when the sealer holds no key of `identity`: it is erased, or
+    /// was never registered, and its facts read as erased.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Malformed`] when the key is held and the value does
+    /// not open.
+    fn open_identity(
+        &self,
+        identity: Person,
+        aad: &[u8],
+        sealed: &[u8],
+    ) -> Result<Option<Vec<u8>>, VaultError> {
+        let _ = (identity, aad, sealed);
+        Ok(None)
+    }
+
+    /// Whether the sealer holds the fact key of `identity`.
+    fn has_identity(&self, identity: Person) -> bool {
+        let _ = identity;
+        false
+    }
+}
+
+/// The kind codes of the identity facts ([`crate::origin::is_identity_fact`]).
+pub const IDENTITY_FACT_KINDS: [i16; 2] = [14, 17];
+
+/// The start check of ADR-004 record of lane L13, row "Existing facts":
+/// refuses a vault that holds an identity fact sealed under the shared
+/// `Fact` data key of `sealer`, since no erasure could make it unreadable.
+///
+/// # Errors
+///
+/// [`VaultError::Malformed`] when such a fact is stored or the sealer
+/// names no shared key, and [`VaultError::Unavailable`] for a database
+/// failure.
+pub async fn check_identity_facts<R: Runtime>(
+    client: &mut Client<R>,
+    sealer: &dyn Sealer,
+) -> Result<(), VaultError> {
+    let refused = VaultError::Malformed(
+        "an identity fact sealed under the shared Fact key: recreate this pilot vault",
+    );
+    let dek = sealer.shared_dek().ok_or(refused)?;
+    let rows = client
+        .query(
+            "SELECT count(*) FROM vault.fact WHERE kind IN ($1, $2) AND dek = $3",
+            &[
+                &IDENTITY_FACT_KINDS[0],
+                &IDENTITY_FACT_KINDS[1],
+                &Uuid::from_bytes(dek),
+            ],
+        )
+        .await
+        .map_err(db)?;
+    let n: i64 = rows
+        .first()
+        .and_then(|r| r.get(0).ok())
+        .ok_or(VaultError::Unavailable(DB))?;
+    if n == 0 { Ok(()) } else { Err(refused) }
+}
+
+/// The AAD of an identity fact body at `epoch`, sealed for `identity`
+/// (ADR-004 record of lane L13, row "Fact seal").
+#[must_use]
+pub fn identity_fact_aad(epoch: u64, identity: Person) -> Vec<u8> {
+    let mut out = b"vault.identity_fact.body|".to_vec();
+    out.extend_from_slice(&epoch.to_be_bytes());
+    out.extend_from_slice(&identity.0.to_be_bytes());
+    out
 }
 
 const DB: &str = "vault database";
@@ -212,16 +309,18 @@ pub async fn persist_in<R: Runtime>(
                 fact,
                 affected,
                 at,
+                sealed_for,
             } => {
                 let key = epoch.to_be_bytes();
                 let sealed_affected = sealer.seal(
                     &aad(b"vault.epoch.affected", &key),
                     &accounts_bytes(affected)?,
                 )?;
-                let body = sealer.seal(
-                    &aad(b"vault.fact.body", &key),
-                    &codec::encode_fact_body(fact)?,
-                )?;
+                let plain = codec::encode_fact_body(fact)?;
+                let body = match sealed_for {
+                    Some(p) => sealer.seal_identity(*p, &identity_fact_aad(*epoch, *p), &plain)?,
+                    None => sealer.seal(&aad(b"vault.fact.body", &key), &plain)?,
+                };
                 let fact_id = Uuid::new_v4().map_err(|_| VaultError::Unavailable("randomness"))?;
                 let e = int(*epoch)?;
                 tx.execute(
@@ -432,9 +531,45 @@ pub async fn persist_in<R: Runtime>(
                 ));
             }
             JournalEntry::IdentityErased { identity } => {
+                // ADR-004 record of lane L13 "Erasure": the identity's
+                // accounts are unbound, so they register again as a new
+                // identity before any identity fact of theirs is taken.
+                tx.execute(
+                    "UPDATE vault.identity_account SET identity_id = NULL WHERE identity_id = $1",
+                    &[&uuid(identity.0)],
+                )
+                .await
+                .map_err(db)?;
                 digests.push(row_digest(
                     b"vault.identity_erased",
                     &[&identity.0.to_be_bytes()],
+                ));
+            }
+            JournalEntry::IdentityRegistered {
+                account,
+                identity,
+                at,
+            } => {
+                // A new binding, or one an erasure ended (ADR-004 record of
+                // lane L13). A live binding never moves: the vault refuses
+                // that in memory, and the row refuses it here.
+                let n = tx
+                    .execute(
+                        "INSERT INTO vault.identity_account (account_id, identity_id, registered_at) VALUES ($1, $2, $3) ON CONFLICT (account_id) DO UPDATE SET identity_id = EXCLUDED.identity_id, registered_at = EXCLUDED.registered_at WHERE vault.identity_account.identity_id IS NULL",
+                        &[&uuid(account.0), &uuid(identity.0), at],
+                    )
+                    .await
+                    .map_err(db)?;
+                if n != 1 {
+                    return Err(VaultError::Conflict("an account of another identity"));
+                }
+                digests.push(row_digest(
+                    b"vault.identity_account",
+                    &[
+                        &account.0.to_be_bytes(),
+                        &identity.0.to_be_bytes(),
+                        &at.to_be_bytes(),
+                    ],
                 ));
             }
             JournalEntry::AccountVerified {
@@ -506,11 +641,28 @@ pub async fn load<R: Runtime>(
         let key = <[u8; MATCH_KEY_LEN]>::try_from(key.as_slice()).map_err(|_| corrupt)?;
         v.replay_identity(Person(from_uuid(&id)), key)?;
     }
+    // The bindings of live identities (ADR-004 record of lane L13, row
+    // "Load"): a binding to an identity whose fact key the sealer does not
+    // hold names an erased identity, and is dropped.
+    let bindings = client
+        .query(
+            "SELECT account_id, identity_id FROM vault.identity_account WHERE identity_id IS NOT NULL ORDER BY account_id",
+            &[],
+        )
+        .await
+        .map_err(db)?;
+    for row in &bindings {
+        let account: Uuid = row.get(0).map_err(|_| corrupt)?;
+        let identity = Person(from_uuid(&row.get::<Uuid>(1).map_err(|_| corrupt)?));
+        if sealer.has_identity(identity) {
+            v.replay_binding(WireAccount(from_uuid(&account)), identity)?;
+        }
+    }
     // Every epoch row with its fact, if any: an epoch without a fact is a
     // corrupt row, so the join keeps it to refuse it.
     let rows = client
         .query(
-            "SELECT e.epoch, e.state, e.created_at, e.ack_seq, e.ack_link, f.body, f.kind FROM vault.epoch e LEFT JOIN vault.fact f ON f.epoch = e.epoch ORDER BY e.epoch",
+            "SELECT e.epoch, e.state, e.created_at, e.ack_seq, e.ack_link, f.body, f.kind, f.dek FROM vault.epoch e LEFT JOIN vault.fact f ON f.epoch = e.epoch ORDER BY e.epoch",
             &[],
         )
         .await
@@ -529,15 +681,35 @@ pub async fn load<R: Runtime>(
         let ack_link: Option<Vec<u8>> = row.get(4).map_err(|_| corrupt)?;
         let body: Option<Vec<u8>> = row.get(5).map_err(|_| corrupt)?;
         let kind: Option<i16> = row.get(6).map_err(|_| corrupt)?;
-        let (Some(body), Some(kind)) = (body, kind) else {
+        let dek: Option<Uuid> = row.get(7).map_err(|_| corrupt)?;
+        let (Some(body), Some(kind), Some(dek)) = (body, kind, dek) else {
             return Err(corrupt);
         };
-        let plain = sealer.open(&aad(b"vault.fact.body", &epoch.to_be_bytes()), &body)?;
-        let fact = codec::stored_fact(&plain)?;
-        if i16::try_from(fact.kind()).ok() != Some(kind) {
-            return Err(corrupt);
-        }
-        let events = v.replay_write(fact, at).map_err(|_| corrupt)?;
+        let shared = sealer.shared_dek().is_none_or(|d| d == *dek.as_bytes());
+        let plain = if shared {
+            Some(sealer.open(&aad(b"vault.fact.body", &epoch.to_be_bytes()), &body)?)
+        } else {
+            let identity = Person(from_uuid(&dek));
+            sealer.open_identity(identity, &identity_fact_aad(epoch, identity), &body)?
+        };
+        let events = match plain {
+            Some(plain) => {
+                let fact = codec::stored_fact(&plain)?;
+                if i16::try_from(fact.kind()).ok() != Some(kind)
+                    || (!shared && !crate::origin::is_identity_fact(&fact))
+                {
+                    return Err(corrupt);
+                }
+                v.replay_write(fact, at).map_err(|_| corrupt)?
+            }
+            // ADR-004 record of lane L13 "Load": the fact key of its identity
+            // is gone, so the write is erased. Only identity fact kinds are
+            // sealed for an identity.
+            None if IDENTITY_FACT_KINDS.contains(&kind) => {
+                v.replay_erased(at).map_err(|_| corrupt)?
+            }
+            None => return Err(corrupt),
+        };
         let opened = events.contains(&VaultEvent::Provisional { epoch });
         // A queued write takes the epoch after the provisional one and the
         // writes queued before it.
