@@ -386,6 +386,7 @@ dependencies = [
  "fstp-programme",
  "fstp-prop",
  "fstp-report",
+ "fstp-tenant",
  "fstp-webauthn",
 ]
 
