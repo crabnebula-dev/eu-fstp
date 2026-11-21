@@ -220,6 +220,9 @@ pub fn encode_log(event: &LogEvent) -> Result<String, ObsError> {
         LogEvent::HostCheckWarned { check } => {
             Line::new("host_check_warned").text("check", check.as_str())
         }
+        LogEvent::ServingStopped { rule } => {
+            Line::new("serving_stopped").text("rule", check_rule(rule)?)
+        }
     };
     Ok(line.finish())
 }
@@ -352,6 +355,7 @@ mod tests {
             LogEvent::HostCheckWarned {
                 check: crate::assurance::HostCheck::PassphraseEphemeral,
             },
+            LogEvent::ServingStopped { rule: "I-81" },
         ]
     }
 

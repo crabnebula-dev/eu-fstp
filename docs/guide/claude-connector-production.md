@@ -155,6 +155,8 @@ FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault
 
 Each start runs the database check, opens the keystore through its custody entry, and verifies the vault chain at the witness before it listens. A start never creates a keystore. A start also refuses a vault database that holds bank details or hardship evidence sealed under the shared `Fact` data key, since no erasure could make them unreadable (ADR-004 record of lane L13, row "Existing facts"). Only a pilot vault from before lane L13 can hold them, and only synthetic ones. Recreate such a vault: a fresh vault database, then `init-keys`. SIGTERM drains the vault within 20 seconds. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
 
+The running vault holds a lock on its keystore through its `<dbname>_keys` connection. It checks that connection every 5 seconds. If the connection drops, the vault takes the lock again on a new one and keeps serving. If another process took the lock meanwhile, such as an `erase-identity` run, the vault stops serving at once. Every request then answers 503, the log shows `{"event":"serving_stopped","rule":"I-81"}`, and the process drains and exits with status 1. Start it again once the other process is done (ADR-004 record of lane L13b).
+
 ### Erase an identity
 
 ### Register an identity
@@ -163,7 +165,7 @@ The vault seals an account's bank details and hardship evidence under its identi
 
 The cell registers an account on the vault's internal listener, `POST /v1/identity`, with its `cell-app` certificate. The request names the account and its attribute tuple. The vault resolves the identity from the tuple, stores the sealed tuple in its keystore, and binds the account. The reply is `acked` and names no identity. A repeat changes nothing. Two accounts with the same tuple share one identity. An account bound to one identity is never moved to another: such a request is refused as malformed.
 
-No cell command sends this request yet (ADR-004 record of lane L13, row "Cell side"). The vault intake of ADR-026 is still refused, so a pilot vault takes no bank details from a browser until a cell flow registers the account.
+No cell command sends this request yet. Daniel decided that registration happens at identity verification, and no verification is accepted in production yet: the vault origin takes no verification write, and the vault intake of ADR-026 is still refused. Where the attribute tuple travels is open for Daniel (ADR-004 record of lane L13b). Until then a pilot vault takes no bank details from a browser.
 
 ### Erase an identity
 

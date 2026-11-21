@@ -804,7 +804,10 @@ fn i81_vault_retakes_the_keystore_lock_after_its_connection_drops() {
         (200, Some(VaultResponse::Acked))
     );
     let first = s.lock_holder();
-    assert!(!first.is_empty(), "the serving vault holds no keystore lock");
+    assert!(
+        !first.is_empty(),
+        "the serving vault holds no keystore lock"
+    );
     s.psql(&format!("SELECT pg_terminate_backend({first})"));
     assert!(
         eventually(Duration::from_secs(10), || {

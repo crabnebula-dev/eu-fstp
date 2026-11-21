@@ -504,6 +504,11 @@ pub async fn start_with<R: Runtime, C: Custody>(
     checked?;
     // The registrar's keys connection holds the keystore lock while the
     // vault serves.
+    let registrar = service::RegistrarParts {
+        registrar,
+        keys_db: login(cfg, &creds, Login::Keys)?,
+        check_every: service::KEYSTORE_CHECK,
+    };
     service::serve_with_registrar(rt, parts, Some(registrar)).await
 }
 
@@ -572,11 +577,25 @@ pub fn serve(cfg: &VaultConfig) -> Result<(), VaultError> {
         .map_err(|_| VaultError::Unavailable("the signal listener"))?;
     let task_rt = rt.clone();
     rt.block_on(async move {
-        let running = start(task_rt, cfg).await?;
+        let running = start(task_rt.clone(), cfg).await?;
         let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::Started);
-        let _ = term.recv().await;
+        // ADR-004 record of lane L13b "Fail closed": a vault that lost its
+        // keystore lock drains and exits with status 1.
+        let lost = async {
+            while !running.stopped() {
+                task_rt.sleep(Duration::from_millis(500)).await;
+            }
+        };
+        let stopped = matches!(
+            fstp_rt::future::race(term.recv(), lost).await,
+            fstp_rt::future::Either::Right(())
+        );
         let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::ShuttingDown);
-        running.shutdown(DRAIN).await
+        running.shutdown(DRAIN).await?;
+        if stopped {
+            return Err(VaultError::Unavailable("the vault keystore lock was lost"));
+        }
+        Ok(())
     })
 }
 

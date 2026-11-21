@@ -213,7 +213,13 @@ struct StoreJournal {
 impl Journal for StoreJournal {
     async fn commit(&mut self, entries: &[JournalEntry], _now: i64) -> Result<(), VaultError> {
         let verification = entries.iter().any(|e| {
-            matches!(e, JournalEntry::Written { fact: Fact::VerificationRecorded { .. }, .. })
+            matches!(
+                e,
+                JournalEntry::Written {
+                    fact: Fact::VerificationRecorded { .. },
+                    ..
+                }
+            )
         });
         if verification && std::mem::take(&mut self.fail_verification) {
             return Err(VaultError::Unavailable("a test journal failure"));
@@ -738,7 +744,12 @@ fn record(at: i64) -> fstp_vault_core::fact::VerificationRecord {
 const RECORDER: u128 = 900;
 
 impl Process<'_> {
-    fn verify(&mut self, verifier: u128, account: u128, tuple: &[u8]) -> Result<Person, VaultError> {
+    fn verify(
+        &mut self,
+        verifier: u128,
+        account: u128,
+        tuple: &[u8],
+    ) -> Result<Person, VaultError> {
         block_on(self.runner.record_verification(
             &mut self.vault,
             &mut self.journal,
@@ -765,7 +776,11 @@ fn r_id_02_verification_registers_before_it_records_and_retries() {
     let bindings = "SELECT count(*) FROM vault.identity_account";
     p.journal.fail_verification = true;
     assert!(p.verify(RECORDER, A_ACCOUNT, ALICE).is_err());
-    assert_eq!(count(&w, bindings), 1, "the registration did not come first");
+    assert_eq!(
+        count(&w, bindings),
+        1,
+        "the registration did not come first"
+    );
     assert_eq!(count(&w, kind_6), 0);
     let a = p.vault.registered(WireAccount(A_ACCOUNT)).unwrap();
     assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
@@ -802,7 +817,13 @@ fn r_id_02_verification_registers_before_it_records_and_retries() {
     assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
     assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
     assert_eq!(count(&w, kind_6), 1);
-    assert!(p.vault.state().latest().bank_of(grant_of(A_ACCOUNT)).is_some());
+    assert!(
+        p.vault
+            .state()
+            .latest()
+            .bank_of(grant_of(A_ACCOUNT))
+            .is_some()
+    );
 }
 
 /// R-ID-02, ADR-008 rules 1 and 2: a recorder never verifies their own
@@ -825,7 +846,10 @@ fn r_id_02_recorder_never_registers_their_own_identity() {
     assert_eq!(count(&w, bindings), 1);
     assert_eq!(p.vault.registered(WireAccount(B_ACCOUNT)), None);
     assert_eq!(p.vault.registered(WireAccount(RECORDER)), Some(a));
-    assert_eq!(count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"), 0);
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        0
+    );
     // Another person is verified by the same recorder.
     assert!(p.verify(RECORDER, B_ACCOUNT, BRUNO).is_ok());
 }

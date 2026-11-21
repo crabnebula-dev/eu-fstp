@@ -169,6 +169,12 @@ pub enum LogEvent {
         /// Which check.
         check: HostCheck,
     },
+    /// A process stopped serving under a rule, such as a vault that lost
+    /// its keystore lock (I-81, ADR-004 record of lane L13b).
+    ServingStopped {
+        /// The rule.
+        rule: &'static str,
+    },
 }
 
 impl fmt::Debug for LogEvent {
@@ -221,6 +227,10 @@ impl fmt::Debug for LogEvent {
             Self::HostCheckWarned { check } => f
                 .debug_struct("HostCheckWarned")
                 .field("check", &check)
+                .finish(),
+            Self::ServingStopped { rule } => f
+                .debug_struct("ServingStopped")
+                .field("rule", &encode::shown_rule(rule))
                 .finish(),
         }
     }
