@@ -50,6 +50,7 @@ use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 pub mod access;
 pub mod epoch;
+pub mod export;
 pub mod receipt;
 pub mod request;
 pub mod sign_key;
@@ -322,6 +323,9 @@ pub enum KeydError {
     Crypto(fstp_crypto::CryptoError),
     /// The deployment mode is unset in a release build, or misspelt.
     Mode(fstp_obs::assurance::ModeError),
+    /// Release of an imported volume found no live current epoch: the
+    /// copy is older than the last erasure (ADR-004 record of lane L16).
+    StaleCopy,
 }
 
 impl std::fmt::Display for KeydError {
@@ -338,6 +342,9 @@ impl std::fmt::Display for KeydError {
             KeydError::NotRunning => f.write_str("no fstp-keyd of this process serves this socket"),
             KeydError::Crypto(e) => write!(f, "keyd crypto: {e}"),
             KeydError::Mode(e) => write!(f, "keyd deployment mode: {e}"),
+            KeydError::StaleCopy => {
+                f.write_str("the copy is older than the last erasure; the hold stays")
+            }
         }
     }
 }

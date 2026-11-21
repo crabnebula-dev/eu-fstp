@@ -172,11 +172,14 @@ pub enum ReducedReason {
     /// The key volume is a fresh directory under the system temporary
     /// directory, made in development mode.
     TemporaryVolume,
+    /// An off-host copy of the key volume that is not retired holds a key
+    /// that has since been destroyed (ADR-004 record of lane L16).
+    ExportHoldsErasedEpoch,
 }
 
 impl ReducedReason {
     /// Every reason, in code order.
-    pub const ALL: [ReducedReason; 22] = [
+    pub const ALL: [ReducedReason; 23] = [
         Self::Apfs,
         Self::HfsPlus,
         Self::Ntfs,
@@ -199,6 +202,7 @@ impl ReducedReason {
         Self::NoMount,
         Self::PathUnresolved,
         Self::TemporaryVolume,
+        Self::ExportHoldsErasedEpoch,
     ];
 
     /// The reason as a sentence for an operator or a tenant admin, such
@@ -228,6 +232,7 @@ impl ReducedReason {
             Self::NoMount => "no mount holds the key volume",
             Self::PathUnresolved => "the key volume path does not resolve",
             Self::TemporaryVolume => "the key volume is a fresh temporary directory",
+            Self::ExportHoldsErasedEpoch => "an off-host copy holds a destroyed key",
         }
     }
 
@@ -257,6 +262,7 @@ impl ReducedReason {
             Self::NoMount => 20,
             Self::PathUnresolved => 21,
             Self::TemporaryVolume => 22,
+            Self::ExportHoldsErasedEpoch => 23,
         }
     }
 
