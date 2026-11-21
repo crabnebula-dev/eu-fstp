@@ -90,3 +90,5 @@ fstp-brand
 fstp-assess
 # M7, docs/handoff/m7-design.md section 8 (lane L-PROC): the job queue decoder.
 fstp-assessor
+# ADR-028, lane L19: the host configuration decoder.
+fstp-admin

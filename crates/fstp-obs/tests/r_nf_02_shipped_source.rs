@@ -272,11 +272,24 @@ fn opt_outs(code: &str) -> Vec<OptOut> {
     found
 }
 
-/// Whether an opt-out is one of the two allowed writers in `fstp-obs`.
+/// The human output of the interactive operator tool `fstp-admin`: one
+/// file, and in it only these functions may opt out of
+/// `clippy::disallowed_methods`. Their lines are built from typed parts
+/// that hold no email address, passphrase, token or identity attribute.
+/// ADR-028 "Human output", a proposed exception, interim, pending Daniel.
+const OPERATOR_WRITER_FILE: &str = "crates/fstp-admin/src/say.rs";
+const OPERATOR_WRITERS: &[&str] = &["pub fn out(", "pub fn err(", "pub fn ask("];
+
+/// Whether an opt-out is one of the two allowed writers in `fstp-obs`, or
+/// one of the operator writers of ADR-028.
 fn is_allowed_writer(rel: &str, o: &OptOut) -> bool {
-    rel == WRITER_FILE
+    let operator = rel == OPERATOR_WRITER_FILE
         && o.lint == "clippy::disallowed_methods"
-        && WRITERS.iter().any(|w| o.after.starts_with(w))
+        && OPERATOR_WRITERS.iter().any(|w| o.after.starts_with(w));
+    operator
+        || (rel == WRITER_FILE
+            && o.lint == "clippy::disallowed_methods"
+            && WRITERS.iter().any(|w| o.after.starts_with(w)))
 }
 
 /// The refused opt-outs in one Rust source file.
