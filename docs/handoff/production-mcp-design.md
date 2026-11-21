@@ -123,7 +123,7 @@ Daniel answered on 2026-11-20:
 - D3: a platform relay named in the cell configuration, as recommended.
 - D12, changed later on 2026-11-20: moduletto is confirmed for release, so a clearly labelled pilot may have real users. A pilot is not a release. `der`, `spki`, `x509-cert` and `cms` stay unconfirmed (I-74). The first answer was no.
 
-D9 is not answered yet. The lead plans a claude.ai trace before L2 merges, which needs a tunnel and Daniel's claude.ai account.
+D9 was answered on 2026-11-21 (section 2.4, decision 11): the claude.ai check runs on the pilot host, not through a tunnel.
 
 | Id | Question | Recommendation |
 | --- | --- | --- |
@@ -155,6 +155,22 @@ The definition of done in section 4 runs on one machine. Real users need the fol
 - **Backups.** Object storage under ADR-012. The S3 client of `fstp-backup` is still a stub.
 - **Release gate.** The Mythos confirmation of moduletto (I-74) and the legal wording marked `TODO(legal)`.
 - **claude.ai.** A claude.ai plan that allows custom connectors, for D9.
+
+### 2.4 Decisions of 2026-11-21
+
+Daniel decided the following on 2026-11-21. Each lane writes its rows into the ADRs as "Decided by Daniel on 2026-11-21".
+
+1. **Pilot tenant provisioning.** `fstp-cell provision-tenant` records `TenantProvisioned` in the pilot cell's ledger, so the ADR-021 gate reads a real tenant part, as on a SaaS cell. It replaces the configuration member `organisation_active` (ADR-026, lane L12). Lane L12 found that a provisioned pilot cannot be activated yet, so the member stays until three gaps close. ADR-026 row "Organisation port until onboarding runs" names them.
+2. **Backup key custody.** Both an off-host sealed copy of the `fstp-keyd` volume and a second custodian `fstp-keyd` (ADR-012, wave 5).
+3. **Identity facts.** Per-identity fact keys, their erasure and an identity registration route on the vault are built now (ADR-004, lane L13).
+4. **Legal texts.** Claude drafts every legal text as markdown under `/legal`. CrabNebula Ltd. is the legal party, and Daniel Thompson-Yvetot is the responsible data officer (lane L14). Every draft keeps its `TODO(legal)` markers until Daniel approves it.
+5. **Consent step-up.** The passkey step-up of `agents.consent` is single use and recorded as used, as every other step-up action is (I-78; ADR-013 "Consent page"; lane L12).
+6. **Vault erasure step 5.** ADR-012 option A (wave 5).
+7. **Edge.** A signed route feed from a minimal `fstp-control` now, with no restart path. The certificate pins stay (ADR-009, wave 5).
+8. **zeroize.** Allowlisted for `fstp-backup` too (ADR-001, wave 5).
+9. **Accepted as drafted.** The ADR-026 cell start-up rows (key file genesis, the first admin token file, the key file root in its own `fstp-keyd` entry, the vault epoch before a dry run). The vault configuration rows (one line of canonical JSON, inline receipt keys, the vault intake route for identity facts). Every row of ADR-027 and its ADR-009 amendment for DNS lookups. The auth readings: suspended Drafting, Judging and Operations bindings count as held for I-77 (ADR-008), the display name fingerprint derivation (ADR-004), and the ADR-013 "Records" row.
+10. **First admin email.** `fstp-cell first-admin --email <address>` records a login email for the first admin, sealed and fingerprinted as every login email is, so recovery by email works from day one (ADR-026, lane L12).
+11. **D9.** The claude.ai check runs on the pilot host, not through a tunnel.
 
 ## 3. Lane plan
 

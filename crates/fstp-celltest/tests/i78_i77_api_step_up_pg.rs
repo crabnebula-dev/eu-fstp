@@ -277,6 +277,63 @@ fn i78_api_step_up_is_digest_bound_and_single_use_on_pg() {
     );
 }
 
+/// I-78, ADR-013 "Consent page", ADR-026 record of lane L12: the passkey
+/// step-up of `agents.consent` is single use, as every other step-up
+/// action is (decided by Daniel on 2026-11-21, production design section
+/// 2.4, decision 5).
+///
+/// The first admin approves an agent's consent on the production cell
+/// over PostgreSQL. The approval asks a step-up, which the software
+/// authenticator proves at the cell's `POST /auth/stepup`. Before the
+/// approval is served, the ledger holds the grant and no use of it. The
+/// served approval records the step-up as used in the ledger, and the
+/// redirect carries a code. The same request again is not served by the
+/// spent step-up: the API core asks for a new one.
+#[test]
+fn i78_consent_step_up_is_single_use_on_pg() {
+    let world = world();
+    let cell = world.cell(0).unwrap();
+    let client = AuthClient::new(cell);
+    assert!(client.enrol(FIRST_ADMIN).unwrap());
+    let admin = client.admin_session().expect("the admin session");
+    let agent = register(cell);
+    let handle = authorize(cell, &agent);
+    let body = consent_body(&handle);
+    let asked = web(cell, "POST", "/api/v1/oauth/consent", &admin, &body);
+    let (id, ch) =
+        challenge_of(&asked).unwrap_or_else(|| panic!("I-78: no step-up asked: {}", text(&asked)));
+    assert!(
+        client.prove_api_step_up(&admin, &id, ch).unwrap(),
+        "I-78: the passkey step-up was refused"
+    );
+    let stepup = unhex16(&id);
+    let state = || cell.cell_engine().unwrap().state();
+    assert!(state().auth().stepup_grant(stepup).is_some());
+    assert!(
+        !state().auth().consumed(stepup),
+        "I-78: the step-up was used before the approval"
+    );
+    let done = web(cell, "POST", "/api/v1/oauth/consent", &admin, &body);
+    assert_eq!(done.status, 200, "I-78: the consent: {}", text(&done));
+    assert!(
+        text(&done).contains("code="),
+        "the consent redirect carries no code: {}",
+        text(&done)
+    );
+    assert!(
+        state().auth().consumed(stepup),
+        "I-78: the served consent did not record its step-up as used"
+    );
+    let again = web(cell, "POST", "/api/v1/oauth/consent", &admin, &body);
+    assert_eq!(
+        code(&again).as_deref(),
+        Some("step_up_required"),
+        "I-78: a spent consent step-up served a request again: {} {}",
+        again.status,
+        text(&again)
+    );
+}
+
 /// The step-up view the gate reads of the ledger's grant `id`, as the
 /// production cell's engine port builds it (`fstp_cell::api::engine`).
 fn view_of(cell: &CellHandle, id: [u8; 16]) -> StepUpView {

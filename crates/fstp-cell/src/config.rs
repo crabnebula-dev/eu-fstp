@@ -424,7 +424,10 @@ pub struct FileConfig {
     /// The platform relay, if any.
     pub mail: Option<MailConfig>,
     /// The organisation port's answer for a ledger with no tenant part
-    /// (ADR-021, interim, pending Daniel).
+    /// (ADR-021). Daniel decided on 2026-11-21 that `fstp-cell
+    /// provision-tenant` replaces it. It stays until a provisioned pilot can
+    /// be activated (ADR-026 row "Organisation port until onboarding runs",
+    /// interim, pending Daniel). A ledger with a tenant part ignores it.
     pub organisation_active: bool,
     /// The creator shell's settings (ADR-027), if any.
     pub shell: Option<ShellConfig>,

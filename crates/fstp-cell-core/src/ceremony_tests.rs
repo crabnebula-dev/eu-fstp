@@ -757,3 +757,213 @@ fn j2_role_invitation_needs_provisioning_and_a_live_creator_invitation() {
         "SoD-09: an enrolment invitation without a live creator invitation: {decided:?}"
     );
 }
+
+/// The SaaS agreement versions of the provisioning tests (Q22). Synthetic.
+const AGREED: fstp_engine::AgreementVersions = fstp_engine::AgreementVersions {
+    saas_terms: 1,
+    dpa: 1,
+    sub_processors: 1,
+};
+
+/// Admits and decides `ProvisionTenant` of `first_admin` on `s` in `mode`.
+fn provision_tenant(
+    s: &CellState,
+    first_admin: AccountId,
+    agreements: Option<fstp_engine::AgreementVersions>,
+    mode: Deployment,
+    at: Timestamp,
+) -> Result<Vec<CellRecord>, String> {
+    let id = crate::system_command_id(*b"tenant-1");
+    let admitted = gate::admit_tenant_provisioning(s, first_admin, agreements, mode, id, at)
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(
+        admitted.principal(),
+        Principal::System(SystemTask::Provisioning)
+    );
+    let Action::Command(c) = admitted.action() else {
+        return Err("not a command".to_owned());
+    };
+    crate::decide_system_with_inputs(
+        s,
+        c,
+        &crate::SystemCtx {
+            task: SystemTask::Provisioning,
+            at: at.micros(),
+        },
+        id,
+        admitted.inputs(),
+        &Answers::new(),
+    )
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// The tenant part's genesis record of `first_admin`.
+fn provisioned(
+    first_admin: AccountId,
+    cell: fstp_engine::CellKind,
+    agreements: Option<fstp_engine::AgreementVersions>,
+) -> CellRecord {
+    CellRecord::Engine(fstp_engine::Record::Tenant(
+        fstp_engine::TenantEntry::Provisioned(fstp_engine::Provisioning {
+            first_admin,
+            cell,
+            agreements,
+        }),
+    ))
+}
+
+/// ADR-021, ADR-026 "Tenant provisioning" (decided by Daniel on
+/// 2026-11-21): `ProvisionTenant` records the domain record
+/// `TenantProvisioned` once. The kind of cell is the deployment mode. A
+/// self-hosted cell names no agreement versions. A ledger that holds a
+/// tenant part refuses it, and no session admits it.
+#[test]
+fn adr021_provision_tenant_records_the_tenant_part_once() {
+    let fresh = CellState::genesis();
+    let saas = provision_tenant(&fresh, ADMIN, Some(AGREED), Deployment::Saas, NOW).unwrap();
+    assert_eq!(
+        saas,
+        vec![provisioned(
+            ADMIN,
+            fstp_engine::CellKind::Saas,
+            Some(AGREED)
+        )]
+    );
+    let own = provision_tenant(&fresh, ADMIN, None, Deployment::SelfHosted, NOW).unwrap();
+    assert_eq!(
+        own,
+        vec![provisioned(ADMIN, fstp_engine::CellKind::SelfHosted, None)]
+    );
+    assert!(
+        provision_tenant(&fresh, ADMIN, Some(AGREED), Deployment::SelfHosted, NOW).is_err(),
+        "a self-hosted cell recorded agreement versions"
+    );
+    // Folded, the tenant part exists, and a second provisioning is refused.
+    let done = state_of(&[(NOW, crate::system_command_id(*b"tenant-1"), saas)]);
+    let p = done
+        .engine()
+        .tenant
+        .provisioning()
+        .expect("the tenant part");
+    assert_eq!(p.first_admin, ADMIN);
+    assert!(done.engine().tenant.state().is_some_and(|t| !t.is_active()));
+    let other = AccountId::from_raw(0xB0B0);
+    assert!(
+        provision_tenant(&done, other, Some(AGREED), Deployment::Saas, NOW).is_err(),
+        "a second provisioning"
+    );
+    // No session admits it: it is the system task's alone.
+    let session = SessionView {
+        id: [0x5E; 16],
+        account: ADMIN,
+        method: Method::Passkey,
+        started: NOW,
+        last_used: NOW,
+    };
+    let policy = gate::LoginPolicy {
+        stepup_freshness_us: crate::tenant::P71_DEFAULT_US,
+    };
+    let c = CellCommand::Tenant(TenantCommand::ProvisionTenant {
+        first_admin: ADMIN,
+        agreements: Some(AGREED),
+    });
+    assert_eq!(
+        gate::admit_command(
+            &fresh,
+            &session,
+            Action::Command(c),
+            [1; 16],
+            None,
+            NOW,
+            &policy
+        )
+        .err(),
+        Some(Deny::NotPermitted)
+    );
+    // The command codec round-trips both forms.
+    for agreements in [None, Some(AGREED)] {
+        let c = CellCommand::Tenant(TenantCommand::ProvisionTenant {
+            first_admin: ADMIN,
+            agreements,
+        });
+        let back = crate::decode_cell_command(&crate::encode_cell_command(&c)).unwrap();
+        assert_eq!(back, c);
+    }
+}
+
+/// ADR-026 record of lane L12: the tenant part's first admin and the
+/// first-admin invitation name one account, in either order. Provisioned
+/// first, the first-admin invitation invites only the provisioned
+/// account. Invited first, provisioning names only the invited account,
+/// and after the enrolment only the enrolled one. With neither, the first
+/// admin must be an account no record names.
+#[test]
+fn adr021_provisioned_first_admin_is_the_invited_account() {
+    let other = AccountId::from_raw(0xB0B0);
+    let digest = split_token_digest(&Token(FIRST), &Token(SECOND));
+    // Provisioned first.
+    let batch = provision_tenant(
+        &CellState::genesis(),
+        ADMIN,
+        Some(AGREED),
+        Deployment::Saas,
+        NOW,
+    )
+    .unwrap();
+    let s = state_of(&[(NOW, crate::system_command_id(*b"tenant-1"), batch)]);
+    assert!(
+        provision(&s, INVITATION, other, digest, Deployment::Saas, NOW).is_err(),
+        "the invitation named another account than the tenant part"
+    );
+    let invited = provision(&s, INVITATION, ADMIN, digest, Deployment::Saas, NOW).unwrap();
+    assert_eq!(invited, issued_split().2);
+    // Invited first.
+    let open = state_of(&[issued_split()]);
+    assert!(provision_tenant(&open, other, Some(AGREED), Deployment::Saas, NOW).is_err());
+    assert!(provision_tenant(&open, ADMIN, Some(AGREED), Deployment::Saas, NOW).is_ok());
+    // Enrolled first.
+    let enrolment = enrol(&open, &halves(), &Passkey::new(), true, NOW).unwrap();
+    let enrolled = state_of(&[issued_split(), (NOW, [0x77; 16], enrolment)]);
+    let late = Timestamp::from_micros(NOW.micros() + fstp_auth::ceremony::INVITATION_US + 1);
+    assert!(provision_tenant(&enrolled, other, Some(AGREED), Deployment::Saas, late).is_err());
+    assert!(provision_tenant(&enrolled, ADMIN, Some(AGREED), Deployment::Saas, late).is_ok());
+}
+
+/// I-78, ADR-013 "Consent page", ADR-026 record of lane L12: the approval
+/// of an agent's consent is a high-risk `LinkDevice` action. It decides
+/// no record of its own, and without a step-up it is refused, so its batch
+/// is exactly the use of its step-up. No agent admission admits it.
+#[test]
+fn i78_agent_consent_records_only_its_step_up_use() {
+    let c = CellCommand::Ops(crate::ops::OpsCommand::ApproveAgentConsent {
+        request_digest: [0xD1; 32],
+    });
+    assert_eq!(
+        gate::HighRiskAction::of(&Action::Command(c.clone())),
+        Ok(Some(gate::HighRiskAction::LinkDevice))
+    );
+    let s = state_of(&[issued_split()]);
+    let x = crate::CellCtx {
+        actor: ADMIN,
+        at: NOW.micros(),
+    };
+    assert!(
+        crate::decide_with_id(&s, &c, &x, [0x33; 16], &Answers::new()).is_err(),
+        "I-78: a consent approval without a step-up was decided"
+    );
+    let decided = crate::decide::decide_with(
+        &s,
+        &c,
+        crate::decide::Who::Account(ADMIN),
+        NOW.micros(),
+        Some([0x33; 16]),
+        Some(NOW),
+        &crate::RouteInputs::none(),
+        &Answers::new(),
+    )
+    .unwrap();
+    assert!(decided.is_empty(), "I-78: {decided:?}");
+    // The command codec round-trips it.
+    let back = crate::decode_cell_command(&crate::encode_cell_command(&c)).unwrap();
+    assert_eq!(back, c);
+}
