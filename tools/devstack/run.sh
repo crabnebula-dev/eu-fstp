@@ -15,13 +15,12 @@
 # before the other lines.
 # With --route-feed (lane L15) it also runs the pilot route feed: the
 # fstp-control route-feed and fstp-edge binaries in front of the cell. It
-# prints "route-feed-edge <address>", "operator-page <address>",
-# "control-config <path>" and "route-file <path>". Then, for example:
+# prints "route-feed-edge <address>", "control-config <path>" and
+# "route-file <path>". Then, for example:
 #   FSTP_CONTROL_CONFIG=<control-config> "$target/debug/fstp-control" \
 #     route remove <cell id>
-# proposes a removal. Approved with a passkey step-up on the operator
-# page (https://control.pilot.test, forwarded to operator-page), it closes
-# new connections for the host at the edge binary, with no restart.
+# closes new connections for the host at the edge binary, and "route add
+# <route-file>" restores the route, with no restart of the edge.
 #
 # `e2e` runs the M3 browser specs (Playwright project `devstack`, the
 # root specs of e2e/) against `fstp-devstack e2e`: two cells on

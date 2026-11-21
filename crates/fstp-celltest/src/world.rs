@@ -1939,9 +1939,6 @@ impl World {
 /// (lane L15, ADR-009 "Pilot route feed").
 pub const FEED_SERVER_NAME: &str = "control.tunnel.test";
 
-/// The relying party host of the pilot operator page (lane L15).
-pub const OPERATOR_HOST: &str = "control.pilot.test";
-
 /// What a pilot `fstp-control route-feed` and a stand-alone `fstp-edge`
 /// need in front of this world's cells (lane L15): the tunnel parts, with
 /// an edge client certificate whose CN `edge_<32 hex>` names `edge_id`,
@@ -1957,11 +1954,6 @@ pub struct EdgeFeedParts {
     pub feed_cert_pem: Vec<u8>,
     /// The key of that certificate, PEM.
     pub feed_key_pem: Vec<u8>,
-    /// The operator page's certificate for [`OPERATOR_HOST`], PEM, from the
-    /// same CA, which the test client trusts as a browser would its own.
-    pub operator_cert_pem: Vec<u8>,
-    /// The key of that certificate, PEM.
-    pub operator_key_pem: Vec<u8>,
 }
 
 impl fmt::Debug for EdgeFeedParts {
@@ -2000,13 +1992,6 @@ impl World {
             &[FEED_SERVER_NAME],
             &[],
         )?;
-        let operator = s.control.issue(
-            fstp_pki::cert::CertKind::Server,
-            OPERATOR_HOST,
-            None,
-            &[OPERATOR_HOST],
-            &[],
-        )?;
         let mut tunnel = self.edge_tunnel_parts()?;
         tunnel.client_cert_pem = client.cert_pem;
         tunnel.client_key_pem = client.key_pem;
@@ -2015,8 +2000,6 @@ impl World {
             edge_id,
             feed_cert_pem: feed.cert_pem,
             feed_key_pem: feed.key_pem,
-            operator_cert_pem: operator.cert_pem,
-            operator_key_pem: operator.key_pem,
         })
     }
 }

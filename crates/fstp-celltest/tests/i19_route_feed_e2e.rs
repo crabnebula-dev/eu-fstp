@@ -96,9 +96,8 @@ fn wait_for(what: &str, f: impl Fn() -> bool) {
 /// connections for the host, while a connection opened before it still
 /// gets its answer. A restarted `fstp-control` resumes its signed table
 /// and version, so its next change still reaches the edge, which would
-/// refuse an older version. Each route change is proposed by the command
-/// and approved on the operator page with a passkey step-up (I-78), and
-/// leaves one audit record. `route list` reads the served routes. An edge
+/// refuse an older version. Each route change applies at once and leaves
+/// one audit record (Daniel, 2026-11-21). `route list` reads the served routes. An edge
 /// restarted while `fstp-control` is down serves its signed cache. Both
 /// processes drain to status 0.
 #[test]
@@ -224,7 +223,7 @@ fn i19_r_sw_02_route_feed_changes_routes_of_a_running_edge() {
     );
     assert_eq!(feed.edge_pid(), pid, "the edge restarted");
 
-    // `route list` reads the served table with no step-up.
+    // `route list` writes the served table to a file.
     let listed = dir.join("listed.json");
     assert!(feed.list(&listed).unwrap().success());
     let listed = fstp_json::parse(&std::fs::read(&listed).unwrap()).unwrap();
@@ -237,12 +236,12 @@ fn i19_r_sw_02_route_feed_changes_routes_of_a_running_edge() {
         .collect();
     assert_eq!(hosts, vec![host.as_str()]);
 
-    // Each approved change left one audit record with its evidence.
+    // Each applied change left one audit record.
     let (records, _) =
         fstp_control::route_change::decode_audit_log(&std::fs::read(feed.audit_log()).unwrap())
             .unwrap();
     let ops: Vec<u8> = records.iter().map(|r| r.op).collect();
-    assert_eq!(ops, vec![1, 2, 1], "one record per approved change");
+    assert_eq!(ops, vec![1, 2, 1], "one record per applied change");
 
     // The edge restarts while fstp-control is down: its signed cache
     // serves the last verified table.
