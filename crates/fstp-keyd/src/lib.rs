@@ -27,6 +27,9 @@
 //! - `sign-<class>-<name>.key`: one CA sign key, its PKCS#8 document
 //!   sealed under a key `K` of its own, which a sign-key slot of the key
 //!   table holds ([`sign_key`], lane m3/erase-prod).
+//! - `keyd.lock`, `exports.log` and `import.hold`: the lock of the
+//!   volume, the register of off-host copies and the hold of an imported
+//!   volume ([`export`], ADR-004 record of lane L16). None holds key bytes.
 //!
 //! Destroy overwrites `K(e)` in its slot of the key table in place,
 //! fsyncs, unlinks the epoch file, fsyncs the directory and reads back.
