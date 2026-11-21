@@ -6,7 +6,7 @@
 //!   client. Its intake (country, affiliations, birth date), the start of
 //!   a verification and the two Q35 queries are not built, so each fails
 //!   as `OracleDown`.
-//! - No pre-check provider and no prober.
+//! - No pre-check provider. The prober is `super::tenant`'s.
 //! - No break-glass approval through the API core: the request's staff
 //!   member, scope and end reach the cell only in the full
 //!   `ApproveBreakGlass` of `POST /api/v1/commands`, and the port names
@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use fstp_api_core::port::{
     Affiliations, AsyncIdentityOracle, BirthDate, BreakGlass, BreakGlassId, CountryCode,
-    ExclusionClasses, PortError, Precheck, ProbeKind, ProbeOutcome, Prober, Receipt, StepUpProof,
-    Vault, VaultBound, VerificationPurpose, VerificationRedirect,
+    ExclusionClasses, PortError, Precheck, Receipt, StepUpProof, Vault, VaultBound,
+    VerificationPurpose, VerificationRedirect,
 };
 use fstp_domain::id::{AccountId, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
@@ -107,16 +107,6 @@ impl<R: Runtime, V: VaultClient> Vault for CellVault<R, V> {
 pub(crate) struct NoPrecheck;
 
 impl Precheck for NoPrecheck {}
-
-/// No prober: every probe fails (Q5).
-pub(crate) struct ClosedProber;
-
-impl Prober for ClosedProber {
-    async fn probe(&self, p: ProbeKind) -> ProbeOutcome {
-        let _ = p;
-        ProbeOutcome::Fail
-    }
-}
 
 /// No break-glass approval through the API core.
 pub(crate) struct ClosedBreakGlass;

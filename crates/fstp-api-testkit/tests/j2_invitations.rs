@@ -345,7 +345,10 @@ fn i86_j2_invite_hands_the_token_and_email_to_m3_only() {
         email: sent,
         token,
         ..
-    } = &kinds[0];
+    } = &kinds[0]
+    else {
+        panic!("not a programme role invitation: {:?}", kinds[0]);
+    };
     assert_eq!((*programme, *role), (j.p, Role::ProgrammeManager));
     assert_eq!(sent, &to);
     let hex = token.hex();

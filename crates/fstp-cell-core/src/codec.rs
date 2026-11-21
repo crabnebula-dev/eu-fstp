@@ -1301,6 +1301,18 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
                 ("token_digest", hex(token_digest)),
             ],
         ),
+        TenantCommand::IssueAdminInvitation {
+            admin_invitation,
+            account,
+            token_digest,
+        } => tagged(
+            "IssueAdminInvitation",
+            vec![
+                ("account", account_json(*account)),
+                ("admin_invitation", dec_u128(*admin_invitation)),
+                ("token_digest", hex(token_digest)),
+            ],
+        ),
         TenantCommand::EnrolByInvitation {
             invitation,
             credential,
@@ -1403,6 +1415,14 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
             Ok(TenantCommand::IssueRoleInvitation {
                 programme: fstp_domain::id::ProgrammeId::from_raw(u128_from(o, "programme")?),
                 role_invitation: u128_from(o, "role_invitation")?,
+                account: account_from(o, "account")?,
+                token_digest: array_from(o, "token_digest")?,
+            })
+        }
+        "IssueAdminInvitation" => {
+            fields(o, &["account", "admin_invitation", "token_digest"])?;
+            Ok(TenantCommand::IssueAdminInvitation {
+                admin_invitation: u128_from(o, "admin_invitation")?,
                 account: account_from(o, "account")?,
                 token_digest: array_from(o, "token_digest")?,
             })
