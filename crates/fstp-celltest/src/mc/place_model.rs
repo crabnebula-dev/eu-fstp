@@ -250,7 +250,7 @@ pub fn app_grants() -> Vec<(RoleName, &'static str, Vec<Privilege>)> {
 /// The tables of the vault database, from design section 4.3, with the
 /// keystore tables of section 4.2. `vault.country_condition` holds the
 /// P-17 country conditions, named by Daniel on 2026-10-30 (design 21.0).
-pub const VAULT_TABLES: [&str; 15] = [
+pub const VAULT_TABLES: [&str; 16] = [
     "vault.epoch",
     "vault.fact",
     "vault.identity",
@@ -266,6 +266,9 @@ pub const VAULT_TABLES: [&str; 15] = [
     "keystore.erasure_intent",
     "vault_audit.chain",
     "vault_audit.anchor",
+    // Vault migration 8 (ADR-004 record of lane L11): the sealed identity
+    // attribute tuples, a keystore table like the others.
+    "keystore.identity_tuple",
 ];
 
 /// What the reference pins for `role` on the vault table `object`.

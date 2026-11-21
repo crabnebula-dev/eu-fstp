@@ -415,6 +415,28 @@ pub async fn persist_in<R: Runtime>(
                     &[&identity.0.to_be_bytes(), match_key],
                 ));
             }
+            // Step 7 of an erasure batch (ADR-004 record of lane L11): the
+            // records write no vault table, since the keystore rows belong
+            // to the keys role. The chain entry binds their digests.
+            JournalEntry::KeyEpochDestroyed {
+                epoch,
+                receipt_digest,
+            } => {
+                digests.push(row_digest(
+                    b"vault.key_epoch_destroyed",
+                    &[
+                        &[fstp_keys::Chain::Vault.code()],
+                        &epoch.to_be_bytes(),
+                        receipt_digest,
+                    ],
+                ));
+            }
+            JournalEntry::IdentityErased { identity } => {
+                digests.push(row_digest(
+                    b"vault.identity_erased",
+                    &[&identity.0.to_be_bytes()],
+                ));
+            }
             JournalEntry::AccountVerified {
                 account,
                 identity,

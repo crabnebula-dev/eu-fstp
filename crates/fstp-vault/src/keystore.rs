@@ -1,31 +1,39 @@
-//! The vault keystore (ADR-004, record of lane L8, gap G12).
+//! The vault keystore (ADR-004, records of lanes L8 and L11, gap G12).
 //!
 //! It gives the vault process its keys: the Vault chain's composite anchor
-//! key, the data key that seals every stored vault value, and the key of
-//! the `vault.query_log` digests. Its rows live in the `keystore` tables of
-//! the vault database `v_<cell>`, written and read through
-//! `v_<cell>_keys` only (I-82):
+//! key, the data key that seals every stored vault value, the key of the
+//! `vault.query_log` digests and the identity `Match` key. Its rows live
+//! in the `keystore` tables of the vault database `v_<cell>`, written and
+//! read through `v_<cell>_keys` only (I-82):
 //!
 //! ```text
-//! root      chain Vault, epoch 1, backend, custody handle, wrapped S(1)
+//! root      chain Vault, epoch e, backend, custody handle, wrapped S(e),
+//!           state 1 live, 2 destroyed, 3 pending
 //!           wrap AAD = "fstp-vault-seal-key-v1" || cell || chain || be64(epoch)
-//! group     purpose Anchor, Fact or Match, generation 1, public key,
-//!           secret sealed under S(1) as nonce || AES-256-GCM ciphertext
+//! group     purpose Anchor, Fact, Match or Attribute, generation g, public
+//!           key, secret sealed under S(e) as nonce || AES-256-GCM ciphertext
 //!           AAD = "fstp-vault-group-v1" || cell || purpose || group
 //!                 || be32(generation) || be64(epoch)
-//! data key  one Fact data key, sealed to the Fact group key (FSK1)
+//! data key  the Fact data key, and one data key per identity tuple in an
+//!           Attribute group, each sealed to its group key (FSK1)
+//! tuple     an identity's attribute tuple, FSB1 under its data key
+//! intent    the planner's chain state, sealed under S(e) (lane L11)
 //! ```
 //!
 //! The query digest key is `HKDF-SHA-256(Match secret,
-//! "fstp-vault-query-digest-v1")`. The root lives in the vault's own
-//! `fstp-keyd` entry, whose `vault` socket role reaches the Vault chain
-//! only. No row holds an open key (I-80). An error names a rule and never
-//! quotes row bytes (R-NF-02).
+//! "fstp-vault-query-digest-v1")`. The identity match key is
+//! `HMAC-SHA-256(M, tuple)` with `M = HKDF-SHA-256(Match secret,
+//! "fstp-keyed-digest-v1" || Match code)` ([`match_hmac_key`]). The root
+//! lives in the vault's own `fstp-keyd` entry, whose `vault` socket role
+//! reaches the Vault chain only. No row holds an open key (I-80). An error
+//! names a rule and never quotes row bytes (R-NF-02).
 //!
 //! [`genesis`] and [`open`] run the custody calls over pure row codecs
 //! ([`seal_rows`], [`open_rows`]). [`read_rows`] and [`write_rows`] move
-//! the rows. Rotation and erasure on the Vault chain are not built here
-//! (ADR-004 record of lane L8, row "Not built").
+//! the rows. Rotation and erasure on the Vault chain are
+//! `crate::erasure` (ADR-004 record of lane L11). The current epoch is the
+//! highest live root. [`open_rows`] opens the groups of that epoch, at
+//! whatever generation the last rotation left them.
 
 use fstp_crypto::composite::CompositeSigningKey;
 use fstp_crypto::hybrid_kem::{self, HybridPublicKey, HybridSecretKey};
@@ -49,14 +57,26 @@ pub const GROUP_AAD: &[u8] = b"fstp-vault-group-v1";
 /// The HKDF label of the query digest key.
 pub const QUERY_DIGEST_LABEL: &[u8] = b"fstp-vault-query-digest-v1";
 
+/// The HKDF label of the identity `Match` HMAC key, followed by the
+/// `Match` purpose code: the keyed digest derivation of the App chain's
+/// `Lookup` key (ADR-004 record of lane L11).
+pub const KEYED_DIGEST_LABEL: &[u8] = b"fstp-keyed-digest-v1";
+
 /// The chain of every row.
 pub const CHAIN: Chain = Chain::Vault;
-/// The epoch of the one root.
+/// The epoch of the root genesis creates.
 pub const ROOT_EPOCH: u64 = 1;
-/// The generation of every group.
+/// The generation of every group at genesis.
 pub const GENERATION: u32 = 1;
 /// The `state` of a live row.
 pub const STATE_LIVE: i16 = 1;
+/// The `keystore.root.state` of a destroyed root.
+pub const STATE_DESTROYED: i16 = 2;
+/// The `keystore.root.state` of a root created for a batch not yet
+/// committed. Its wrapped key is empty.
+pub const STATE_PENDING: i16 = 3;
+/// The longest identity attribute tuple the keystore seals.
+pub const MAX_TUPLE: usize = 4096;
 
 /// The backend code of `keystore.root.backend`, as the App chain stores
 /// it (`fstp_cell::tasks::erasure::snapshot`).
@@ -91,10 +111,14 @@ pub struct RootRow {
     pub backend: i16,
     /// The custody handle.
     pub handle: Vec<u8>,
-    /// `S(e)` wrapped under the root.
+    /// `S(e)` wrapped under the root. Empty while the root is pending.
     pub wrapped: Vec<u8>,
     /// When the root was created, in microseconds.
     pub created_at: i64,
+    /// [`STATE_LIVE`], [`STATE_DESTROYED`] or [`STATE_PENDING`].
+    pub state: i16,
+    /// The custody destroy receipt of a destroyed root.
+    pub receipt: Option<Vec<u8>>,
 }
 
 /// One `keystore.group_key` row.
@@ -127,15 +151,51 @@ pub struct DataKeyRow {
     pub sealed: Vec<u8>,
 }
 
+/// One `keystore.identity_tuple` row (ADR-004 record of lane L11).
+#[derive(Clone, PartialEq, Eq)]
+pub struct TupleRow {
+    /// The identity id, which is also its data key id.
+    pub identity: [u8; 16],
+    /// The `Attribute` group of its data key.
+    pub group: [u8; 16],
+    /// The tuple sealed under its data key (FSB1).
+    pub envelope: Vec<u8>,
+}
+
+/// The `keystore.erasure_intent` row of the Vault chain.
+#[derive(Clone, PartialEq, Eq)]
+pub struct IntentRow {
+    /// The row id.
+    pub id: [u8; 16],
+    /// The chain state sealed under `S(e)` of the current epoch.
+    pub plan: Vec<u8>,
+    /// The planner phase code.
+    pub phase: i16,
+}
+
 /// Every row of a vault keystore.
 #[derive(Clone, PartialEq, Eq)]
 pub struct KeystoreRows {
-    /// The root.
+    /// The root of the current epoch: the highest live one.
     pub root: RootRow,
-    /// The groups.
+    /// Every other root row: an older live root while an erasure runs, a
+    /// pending one, and the destroyed ones.
+    pub others: Vec<RootRow>,
+    /// The live groups.
     pub groups: Vec<GroupRow>,
-    /// The data keys.
+    /// The live data keys.
     pub data_keys: Vec<DataKeyRow>,
+    /// The identity tuples.
+    pub tuples: Vec<TupleRow>,
+    /// The intent row, once the chain state was written.
+    pub intent: Option<IntentRow>,
+}
+
+impl KeystoreRows {
+    /// Every root row, the current one first.
+    pub fn all_roots(&self) -> impl Iterator<Item = &RootRow> {
+        std::iter::once(&self.root).chain(self.others.iter())
+    }
 }
 
 impl std::fmt::Debug for KeystoreRows {
@@ -151,14 +211,14 @@ impl std::fmt::Debug for KeystoreRows {
 /// The open keys of a vault. Every secret is wiped on drop by its own
 /// type. It implements no `Clone`, and its debug form shows no key.
 pub struct VaultKeys {
-    anchor_group: [u8; 16],
-    anchor: CompositeSigningKey,
-    fact_group: [u8; 16],
-    fact: HybridSecretKey,
-    match_group: [u8; 16],
-    match_secret: HybridSecretKey,
-    dek: [u8; 16],
-    data_key: DataKey,
+    pub(crate) anchor_group: [u8; 16],
+    pub(crate) anchor: CompositeSigningKey,
+    pub(crate) fact_group: [u8; 16],
+    pub(crate) fact: HybridSecretKey,
+    pub(crate) match_group: [u8; 16],
+    pub(crate) match_secret: HybridSecretKey,
+    pub(crate) dek: [u8; 16],
+    pub(crate) data_key: DataKey,
 }
 
 impl std::fmt::Debug for VaultKeys {
@@ -287,6 +347,78 @@ fn fact_ctx(cell: &[u8; 16], group: &[u8; 16], generation: u32, dek: &[u8; 16]) 
     }
 }
 
+/// The seal context of the data key `dek` of an identity tuple, sealed to
+/// generation `generation` of the `Attribute` group `group` (FSK1).
+#[must_use]
+pub fn attribute_ctx(
+    cell: &[u8; 16],
+    group: &[u8; 16],
+    generation: u32,
+    dek: &[u8; 16],
+) -> SealContext {
+    SealContext {
+        cell: CellId(*cell),
+        chain: CHAIN,
+        purpose: Purpose::Attribute,
+        group: GroupId(*group),
+        generation,
+        object: ObjectId(*dek),
+    }
+}
+
+/// The seal context of the tuple of `identity` under its data key (FSB1).
+/// It names generation 0, so a re-seal of the data key to a later group
+/// generation still opens the tuple.
+#[must_use]
+pub fn tuple_ctx(cell: &[u8; 16], group: &[u8; 16], identity: &[u8; 16]) -> SealContext {
+    attribute_ctx(cell, group, 0, identity)
+}
+
+/// The identity `Match` HMAC key of the `Match` group secret `sk` (module
+/// documentation).
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] when the derivation fails.
+pub fn match_hmac_key(sk: &HybridSecretKey) -> Result<SealKey, VaultError> {
+    let mut info = KEYED_DIGEST_LABEL.to_vec();
+    info.push(Purpose::Match.code());
+    let mut out = fstp_custody::zeroed_key_box();
+    kdf::hkdf_sha256(&[], &sk.to_bytes()[..], &info, &mut out[..])
+        .map_err(|_| VaultError::Unavailable("the Match key"))?;
+    Ok(SealKey::from_box(out))
+}
+
+/// The group row of `purpose` and `group` at `generation`, its secret
+/// sealed under `seal` of `epoch`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each part of the group row and its AAD, as ADR-004 lists them"
+)]
+pub(crate) fn seal_group_at(
+    seal: &aead::Key,
+    cell: &[u8; 16],
+    purpose: Purpose,
+    group: [u8; 16],
+    generation: u32,
+    epoch: u64,
+    public_key: Vec<u8>,
+    secret: &[u8],
+) -> Result<GroupRow, VaultError> {
+    let aad = group_aad(cell, purpose, &group, generation, epoch);
+    let s = aead::seal(seal, &aad, secret).map_err(|_| VaultError::Unavailable("sealing"))?;
+    let mut sealed_secret = s.nonce.to_vec();
+    sealed_secret.extend_from_slice(&s.body);
+    Ok(GroupRow {
+        purpose: purpose.code(),
+        group,
+        generation,
+        public_key,
+        sealed_secret,
+        epoch,
+    })
+}
+
 fn seal_group(
     seal: &aead::Key,
     cell: &[u8; 16],
@@ -295,18 +427,9 @@ fn seal_group(
     public_key: Vec<u8>,
     secret: &[u8],
 ) -> Result<GroupRow, VaultError> {
-    let aad = group_aad(cell, purpose, &group, GENERATION, ROOT_EPOCH);
-    let s = aead::seal(seal, &aad, secret).map_err(|_| VaultError::Unavailable("sealing"))?;
-    let mut sealed_secret = s.nonce.to_vec();
-    sealed_secret.extend_from_slice(&s.body);
-    Ok(GroupRow {
-        purpose: purpose.code(),
-        group,
-        generation: GENERATION,
-        public_key,
-        sealed_secret,
-        epoch: ROOT_EPOCH,
-    })
+    seal_group_at(
+        seal, cell, purpose, group, GENERATION, ROOT_EPOCH, public_key, secret,
+    )
 }
 
 /// The rows of `keys` for `cell`, with every group secret sealed under
@@ -362,18 +485,37 @@ pub fn seal_rows(
     };
     Ok(KeystoreRows {
         root,
+        others: Vec::new(),
         groups,
         data_keys: vec![data_key],
+        tuples: Vec::new(),
+        intent: None,
     })
 }
 
-/// The one group of `purpose`.
+/// The one group of `purpose`, sealed under the current epoch.
 fn group_of(rows: &KeystoreRows, purpose: Purpose) -> Result<&GroupRow, VaultError> {
     let mut found = rows.groups.iter().filter(|g| g.purpose == purpose.code());
     match (found.next(), found.next()) {
-        (Some(g), None) if g.generation == GENERATION && g.epoch == rows.root.epoch => Ok(g),
+        (Some(g), None) if g.epoch == rows.root.epoch => Ok(g),
         _ => Err(bad("the keystore groups")),
     }
+}
+
+/// Opens the secret of the group row `g` of `cell` under the seal key
+/// `seal`. The bytes are wiped on drop.
+///
+/// # Errors
+///
+/// [`VaultError::Malformed`] when the row does not open under `seal`.
+pub fn open_group_secret(
+    seal: &SealKey,
+    cell: &[u8; 16],
+    g: &GroupRow,
+) -> Result<impl std::ops::Deref<Target = Vec<u8>> + use<>, VaultError> {
+    let s = aead::Key::from_bytes(seal.expose()).map_err(|_| bad("the seal key"))?;
+    let purpose = Purpose::from_code(g.purpose).ok_or(bad("a group purpose"))?;
+    open_group(&s, cell, purpose, g)
 }
 
 fn open_group(
@@ -381,7 +523,7 @@ fn open_group(
     cell: &[u8; 16],
     purpose: Purpose,
     g: &GroupRow,
-) -> Result<impl std::ops::Deref<Target = Vec<u8>>, VaultError> {
+) -> Result<impl std::ops::Deref<Target = Vec<u8>> + use<>, VaultError> {
     let (nonce, body) = g
         .sealed_secret
         .split_at_checked(aead::NONCE_LEN)
@@ -392,7 +534,9 @@ fn open_group(
     aead::open(seal, &nonce, &aad, body).map_err(|_| bad("a sealed group secret"))
 }
 
-fn open_kem(
+/// Opens the hybrid KEM secret of the group row `g` under `seal`, and
+/// checks it against the row's public key.
+pub(crate) fn open_kem(
     seal: &aead::Key,
     cell: &[u8; 16],
     purpose: Purpose,
@@ -408,7 +552,38 @@ fn open_kem(
     Ok(sk)
 }
 
-/// Opens `rows` of `cell` under the unwrapped seal key `seal`.
+/// Opens the anchor key of the group row `g` under `seal`, and checks it
+/// against the row's public key.
+pub(crate) fn open_anchor(
+    seal: &aead::Key,
+    cell: &[u8; 16],
+    g: &GroupRow,
+) -> Result<CompositeSigningKey, VaultError> {
+    let anchor = {
+        let secret = open_group(seal, cell, Purpose::Anchor, g)?;
+        CompositeSigningKey::from_bytes(&secret).map_err(|_| bad("the anchor key"))?
+    };
+    if anchor.public_key().to_bytes()[..] != g.public_key[..] {
+        return Err(bad("the anchor public key"));
+    }
+    Ok(anchor)
+}
+
+/// Opens the `Fact` data key row `d` under the `Fact` group secret.
+pub(crate) fn open_fact_key(
+    cell: &[u8; 16],
+    fact: &HybridSecretKey,
+    d: &DataKeyRow,
+) -> Result<DataKey, VaultError> {
+    let sealed = envelope::decode_sealed_key(&d.sealed).map_err(|_| bad("a sealed data key"))?;
+    let ctx = fact_ctx(cell, &d.group, d.generation, &d.id);
+    envelope::open_key(fact, &sealed, &ctx).map_err(|_| bad("a sealed data key"))
+}
+
+/// Opens `rows` of `cell` under the unwrapped seal key `seal` of the
+/// current epoch: the `Anchor`, `Fact` and `Match` groups and the `Fact`
+/// data key. `Attribute` groups and tuple data keys are the erasure
+/// runner's (`crate::erasure`).
 ///
 /// # Errors
 ///
@@ -421,27 +596,19 @@ pub fn open_rows(
 ) -> Result<VaultKeys, VaultError> {
     let s = aead::Key::from_bytes(seal.expose()).map_err(|_| bad("the seal key"))?;
     let anchor_row = group_of(rows, Purpose::Anchor)?;
-    let anchor = {
-        let secret = open_group(&s, cell, Purpose::Anchor, anchor_row)?;
-        CompositeSigningKey::from_bytes(&secret).map_err(|_| bad("the anchor key"))?
-    };
-    if anchor.public_key().to_bytes()[..] != anchor_row.public_key[..] {
-        return Err(bad("the anchor public key"));
-    }
+    let anchor = open_anchor(&s, cell, anchor_row)?;
     let fact_row = group_of(rows, Purpose::Fact)?;
     let fact = open_kem(&s, cell, Purpose::Fact, fact_row)?;
     let match_row = group_of(rows, Purpose::Match)?;
     let match_secret = open_kem(&s, cell, Purpose::Match, match_row)?;
-    let [d] = rows.data_keys.as_slice() else {
+    let mut in_fact = rows.data_keys.iter().filter(|d| d.group == fact_row.group);
+    let (Some(d), None) = (in_fact.next(), in_fact.next()) else {
         return Err(bad("the keystore data keys"));
     };
-    if d.group != fact_row.group || d.generation != fact_row.generation {
+    if d.generation != fact_row.generation {
         return Err(bad("the keystore data keys"));
     }
-    let sealed = envelope::decode_sealed_key(&d.sealed).map_err(|_| bad("a sealed data key"))?;
-    let ctx = fact_ctx(cell, &d.group, d.generation, &d.id);
-    let data_key =
-        envelope::open_key(&fact, &sealed, &ctx).map_err(|_| bad("a sealed data key"))?;
+    let data_key = open_fact_key(cell, &fact, d)?;
     Ok(VaultKeys {
         anchor_group: anchor_row.group,
         anchor,
@@ -486,6 +653,8 @@ pub async fn genesis<C: Custody>(
         handle: root.handle.0,
         wrapped: wrapped.0,
         created_at: now,
+        state: STATE_LIVE,
+        receipt: None,
     };
     seal_rows(&cell, keys, &seal, row)
 }
@@ -636,43 +805,58 @@ pub async fn write_rows<R: Runtime>(
     tx.commit().await.map_err(db)
 }
 
-/// Reads the live rows of the keystore, or `None` when it holds no root
-/// row.
+/// Reads the rows of the keystore, or `None` when it holds no root row:
+/// every root row, the live groups and data keys, the identity tuples and
+/// the intent row of the Vault chain.
 ///
 /// # Errors
 ///
 /// [`VaultError::Unavailable`] when the read fails, and
-/// [`VaultError::Malformed`] for more than one live root or a row outside
-/// its column ranges.
+/// [`VaultError::Malformed`] for root rows with no live one, more than one
+/// intent row, or a row outside its column ranges.
 pub async fn read_rows<R: Runtime>(
     client: &mut Client<R>,
 ) -> Result<Option<KeystoreRows>, VaultError> {
     let chain = i16::from(CHAIN.code());
     let corrupt = bad("a keystore row");
-    let roots = client
+    let mut roots = Vec::new();
+    for r in client
         .query(
-            "SELECT epoch, backend, handle, wrapped_seal_key, created_at FROM keystore.root \
-             WHERE chain = $1 AND state = $2",
-            &[&chain, &STATE_LIVE],
+            "SELECT epoch, backend, handle, wrapped_seal_key, created_at, state, receipt \
+             FROM keystore.root WHERE chain = $1 ORDER BY epoch",
+            &[&chain],
         )
         .await
-        .map_err(db)?;
-    let root = match roots.as_slice() {
-        [] => return Ok(None),
-        [r] => RootRow {
+        .map_err(db)?
+    {
+        let state: i16 = r.get(5).map_err(|_| corrupt)?;
+        if ![STATE_LIVE, STATE_DESTROYED, STATE_PENDING].contains(&state) {
+            return Err(corrupt);
+        }
+        roots.push(RootRow {
             epoch: uint(r.get(0).map_err(|_| corrupt)?)?,
             backend: r.get(1).map_err(|_| corrupt)?,
             handle: r.get(2).map_err(|_| corrupt)?,
             wrapped: r.get(3).map_err(|_| corrupt)?,
             created_at: r.get(4).map_err(|_| corrupt)?,
-        },
-        _ => return Err(bad("more than one live keystore root")),
-    };
+            state,
+            receipt: r.get(6).map_err(|_| corrupt)?,
+        });
+    }
+    if roots.is_empty() {
+        return Ok(None);
+    }
+    let current = roots
+        .iter()
+        .rposition(|r| r.state == STATE_LIVE)
+        .ok_or(bad("a keystore with no live root"))?;
+    let root = roots.remove(current);
     let mut groups = Vec::new();
     for r in client
         .query(
             "SELECT purpose, group_id, generation, public_key, sealed_secret, epoch \
-             FROM keystore.group_key WHERE chain = $1 AND state = $2 ORDER BY group_id",
+             FROM keystore.group_key WHERE chain = $1 AND state = $2 \
+             ORDER BY group_id, generation",
             &[&chain, &STATE_LIVE],
         )
         .await
@@ -708,11 +892,207 @@ pub async fn read_rows<R: Runtime>(
             sealed: r.get(3).map_err(|_| corrupt)?,
         });
     }
+    let mut tuples = Vec::new();
+    for r in client
+        .query(
+            "SELECT identity_id, group_id, envelope FROM keystore.identity_tuple \
+             ORDER BY identity_id",
+            &[],
+        )
+        .await
+        .map_err(db)?
+    {
+        let id: Uuid = r.get(0).map_err(|_| corrupt)?;
+        let group: Uuid = r.get(1).map_err(|_| corrupt)?;
+        tuples.push(TupleRow {
+            identity: *id.as_bytes(),
+            group: *group.as_bytes(),
+            envelope: r.get(2).map_err(|_| corrupt)?,
+        });
+    }
+    let intents = client
+        .query(
+            "SELECT id, plan, phase FROM keystore.erasure_intent WHERE chain = $1",
+            &[&chain],
+        )
+        .await
+        .map_err(db)?;
+    let intent = match intents.as_slice() {
+        [] => None,
+        [r] => {
+            let id: Uuid = r.get(0).map_err(|_| corrupt)?;
+            Some(IntentRow {
+                id: *id.as_bytes(),
+                plan: r.get(1).map_err(|_| corrupt)?,
+                phase: r.get(2).map_err(|_| corrupt)?,
+            })
+        }
+        _ => return Err(bad("more than one erasure intent row")),
+    };
     Ok(Some(KeystoreRows {
         root,
+        others: roots,
         groups,
         data_keys,
+        tuples,
+        intent,
     }))
+}
+
+/// One row change of the erasure runner (`crate::erasure`). A batch of
+/// them is written in one transaction by [`apply_changes`].
+#[derive(Clone)]
+pub(crate) enum Change {
+    /// Inserts or replaces the root row of its epoch.
+    PutRoot(RootRow),
+    /// Inserts or replaces the group row of its group and generation.
+    PutGroup(GroupRow),
+    /// Deletes the group row of a group and generation.
+    DropGroup([u8; 16], u32),
+    /// Inserts or replaces a data key row.
+    PutDataKey(DataKeyRow),
+    /// Deletes a data key row.
+    DropDataKey([u8; 16]),
+    /// Inserts or replaces a tuple row.
+    PutTuple(TupleRow),
+    /// Deletes a tuple row.
+    DropTuple([u8; 16]),
+    /// Inserts or replaces the intent row.
+    PutIntent(IntentRow),
+}
+
+/// Writes `changes` in one transaction: all of them, or none.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] when the write fails. Nothing is written
+/// then.
+pub(crate) async fn apply_changes<R: Runtime>(
+    client: &mut Client<R>,
+    changes: &[Change],
+    now: i64,
+) -> Result<(), VaultError> {
+    let chain = i16::from(CHAIN.code());
+    let mut tx = client.transaction().await.map_err(db)?;
+    for c in changes {
+        match c {
+            Change::PutRoot(r) => {
+                let destroyed_at = (r.state == STATE_DESTROYED).then_some(now);
+                tx.execute(
+                    "INSERT INTO keystore.root (chain, epoch, backend, handle, wrapped_seal_key, \
+                     state, created_at, destroyed_at, receipt) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+                     ON CONFLICT (chain, epoch) DO UPDATE SET backend = EXCLUDED.backend, \
+                     handle = EXCLUDED.handle, wrapped_seal_key = EXCLUDED.wrapped_seal_key, \
+                     state = EXCLUDED.state, \
+                     destroyed_at = COALESCE(keystore.root.destroyed_at, EXCLUDED.destroyed_at), \
+                     receipt = EXCLUDED.receipt",
+                    &[
+                        &chain,
+                        &int(r.epoch)?,
+                        &r.backend,
+                        &r.handle,
+                        &r.wrapped,
+                        &r.state,
+                        &r.created_at,
+                        &destroyed_at,
+                        &r.receipt,
+                    ],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::PutGroup(g) => {
+                tx.execute(
+                    "INSERT INTO keystore.group_key \
+                     (chain, purpose, group_id, generation, public_key, sealed_secret, epoch, state) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                     ON CONFLICT (group_id, generation) DO UPDATE SET \
+                     purpose = EXCLUDED.purpose, public_key = EXCLUDED.public_key, \
+                     sealed_secret = EXCLUDED.sealed_secret, epoch = EXCLUDED.epoch, \
+                     state = EXCLUDED.state",
+                    &[
+                        &chain,
+                        &i16::from(g.purpose),
+                        &Uuid::from_bytes(g.group),
+                        &int32(g.generation)?,
+                        &g.public_key,
+                        &g.sealed_secret,
+                        &int(g.epoch)?,
+                        &STATE_LIVE,
+                    ],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::DropGroup(group, generation) => {
+                tx.execute(
+                    "DELETE FROM keystore.group_key WHERE group_id = $1 AND generation = $2",
+                    &[&Uuid::from_bytes(*group), &int32(*generation)?],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::PutDataKey(d) => {
+                tx.execute(
+                    "INSERT INTO keystore.data_key (id, group_id, generation, sealed, state) \
+                     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET \
+                     group_id = EXCLUDED.group_id, generation = EXCLUDED.generation, \
+                     sealed = EXCLUDED.sealed, state = EXCLUDED.state",
+                    &[
+                        &Uuid::from_bytes(d.id),
+                        &Uuid::from_bytes(d.group),
+                        &int32(d.generation)?,
+                        &d.sealed,
+                        &STATE_LIVE,
+                    ],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::DropDataKey(id) => {
+                tx.execute(
+                    "DELETE FROM keystore.data_key WHERE id = $1",
+                    &[&Uuid::from_bytes(*id)],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::PutTuple(t) => {
+                tx.execute(
+                    "INSERT INTO keystore.identity_tuple (identity_id, group_id, envelope) \
+                     VALUES ($1, $2, $3) ON CONFLICT (identity_id) DO UPDATE SET \
+                     group_id = EXCLUDED.group_id, envelope = EXCLUDED.envelope",
+                    &[
+                        &Uuid::from_bytes(t.identity),
+                        &Uuid::from_bytes(t.group),
+                        &t.envelope,
+                    ],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::DropTuple(id) => {
+                tx.execute(
+                    "DELETE FROM keystore.identity_tuple WHERE identity_id = $1",
+                    &[&Uuid::from_bytes(*id)],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::PutIntent(i) => {
+                tx.execute(
+                    "INSERT INTO keystore.erasure_intent (id, chain, plan, phase) \
+                     VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET \
+                     plan = EXCLUDED.plan, phase = EXCLUDED.phase",
+                    &[&Uuid::from_bytes(i.id), &chain, &i.plan, &i.phase],
+                )
+                .await
+                .map_err(db)?;
+            }
+        }
+    }
+    tx.commit().await.map_err(db)
 }
 
 #[cfg(test)]
@@ -730,6 +1110,8 @@ mod tests {
             handle: b"vault-handle".to_vec(),
             wrapped: vec![0x77; 60],
             created_at: 1,
+            state: STATE_LIVE,
+            receipt: None,
         }
     }
 
