@@ -29,7 +29,8 @@ pub const RECEIPT_PUBLIC_FILE: &str = "receipt.pub";
 const FIRST_EPOCH: u64 = 1;
 
 fn load() -> Result<WitnessConfig, WitnessError> {
-    let path = std::env::var_os(crate::CONFIG_ENV).ok_or(WitnessError::Config(crate::CONFIG_ENV))?;
+    let path =
+        std::env::var_os(crate::CONFIG_ENV).ok_or(WitnessError::Config(crate::CONFIG_ENV))?;
     let bytes = std::fs::read(&path).map_err(|_| WitnessError::Config(crate::CONFIG_ENV))?;
     config::decode_config(&bytes)
 }

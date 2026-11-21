@@ -18,12 +18,9 @@ fn command(args: &[String]) -> Result<(), WitnessError> {
     match args {
         [] => fstp_witness::run(),
         [c, dir] if c == "init-keys" => fstp_witness::install::init_keys(Path::new(dir)),
-        [c, cell, ca, app, vault] if c == "register" => fstp_witness::install::register(
-            cell,
-            Path::new(ca),
-            Path::new(app),
-            Path::new(vault),
-        ),
+        [c, cell, ca, app, vault] if c == "register" => {
+            fstp_witness::install::register(cell, Path::new(ca), Path::new(app), Path::new(vault))
+        }
         _ => Err(WitnessError::Config("arguments")),
     }
 }
