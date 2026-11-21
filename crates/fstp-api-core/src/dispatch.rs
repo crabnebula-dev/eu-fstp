@@ -1072,6 +1072,25 @@ fn build<P: Seams>(
     texts: &BTreeMap<&'static str, TextRef>,
     ids: &mut Vec<u128>,
 ) -> Result<Command, ApiError> {
+    build_in(call, form, op, texts, ids, false)
+}
+
+/// The model of the placeholder inference record of an actor check
+/// ([`build_in`]). It names no model a programme pins.
+const NO_INFERENCE_MODEL: &str = "";
+
+/// [`build`]. With `placeholder`, a tenant with no inference record
+/// gives the derived publication pin a placeholder record, so the dry run
+/// can judge the actor before the missing record refuses the call
+/// (T-AUTHZ-MATRIX, lane L7). Such a command is never executed.
+fn build_in<P: Seams>(
+    call: &Call<'_, P>,
+    form: &CmdForm,
+    op: &Op,
+    texts: &BTreeMap<&'static str, TextRef>,
+    ids: &mut Vec<u128>,
+    placeholder: bool,
+) -> Result<Command, ApiError> {
     let mut refs = texts.clone();
     for (path, s) in forms::texts(form, &op.request) {
         refs.entry(path).or_insert_with(|| forms::text_ref(0, s));
@@ -1090,6 +1109,12 @@ fn build<P: Seams>(
         Ok(id)
     };
     let mut cx = build_ctx(call, None);
+    if placeholder && cx.inference.is_none() {
+        cx.inference = Some((
+            LlmConfigId::from_raw(0),
+            ModelRef(NO_INFERENCE_MODEL.to_owned()),
+        ));
+    }
     // Nothing is derived from the journal here: `run` named the plan
     // members before the digest. The build only learns whether a missing
     // member is missing because the journal does not hold the history.
@@ -1314,7 +1339,41 @@ async fn command<P: Seams>(
             .map_err(|e| call.refuse(e))?,
     };
     let mut ids = Vec::new();
-    let mut cmd = build(call, &form, op, &preset, &mut ids).map_err(|e| call.refuse(e))?;
+    let mut cmd = match build(call, &form, op, &preset, &mut ids) {
+        Ok(c) => c,
+        // T-AUTHZ-MATRIX (lane L7): a tenant with no inference record
+        // refuses every publication (R-LA-05), but an actor refusal comes
+        // first. The dry run judges the command with a placeholder pin,
+        // and nothing more of it runs.
+        Err(
+            e @ ApiError::Refused {
+                rule: "R-LA-05", ..
+            },
+        ) => {
+            let mut trial_ids = ids.clone();
+            if let Ok(trial) = build_in(call, &form, op, &preset, &mut trial_ids, true) {
+                let command_id =
+                    CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
+                let ctx = Ctx {
+                    second_tenant_admin: second,
+                    ..call.ctx(account, &trial, call.caller.via(), command_id)
+                };
+                if let Err(d) = dry_run(call, account, &trial, ctx).await
+                    && !matches!(
+                        d,
+                        ApiError::Refused {
+                            rule: "R-LA-05",
+                            ..
+                        }
+                    )
+                {
+                    return Err(call.refuse(former_lead_guard(d, lead)));
+                }
+            }
+            return Err(call.refuse(e));
+        }
+        Err(e) => return Err(call.refuse(e)),
+    };
     // J2: a Drafting or Judging grant is composed only from accepted terms,
     // and binds exactly them. A grant by account learns its terms only
     // here, so it is built again with them: the dry run judges the grant

@@ -149,6 +149,20 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
             _ => Err(PortError::Refused),
         }
     }
+
+    /// SA-11 (lane L7): this store keeps no display name yet, since
+    /// `set_display_name` fails closed (the trait default). So no account
+    /// has one, and the team and member pages show none. Interim, pending
+    /// Daniel: the sealed, unique display names of the SA-11 amendment on
+    /// the production cell.
+    async fn display_names(
+        &self,
+        accounts: Vec<AccountId>,
+        clearance: &ReadClearance,
+    ) -> Result<std::collections::BTreeMap<AccountId, String>, PortError> {
+        let _ = (accounts, clearance);
+        Ok(std::collections::BTreeMap::new())
+    }
 }
 
 /// The sealer of workspace values.

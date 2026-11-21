@@ -15,7 +15,7 @@
 mod j2;
 
 use fstp_domain_testkit::reference::projection;
-use fstp_journey::projector::{ProjectError, Projector};
+use fstp_journey::projector::{ProjectError, Projector, project_engine_entries};
 use fstp_prop::{Gen, prop_assert, prop_assert_eq};
 use j2::{ledger, ledger_config, rows_of};
 
@@ -189,6 +189,84 @@ fn i92_teeth_bytes_tell_a_ledger_from_its_prefix() {
                 prefix.encode() != full.encode(),
                 "I-92: the bytes before and after transition {last} are equal"
             );
+            Ok(())
+        },
+    );
+}
+
+/// I-92, lane L7: the engine records of a cell ledger keep the cell's own
+/// sequence numbers, so the cell's other records leave gaps. Their
+/// projection folds the same legs as the dense ledger, in the same order,
+/// each at its own entry. A contiguous ledger projects byte for byte as a
+/// full replay. An entry that precedes or repeats the last one folded is
+/// refused, so no entry is missed or doubled silently.
+#[test]
+fn i92_engine_entries_with_gaps_project_as_the_dense_ledger() {
+    fstp_prop::check_with(
+        "i92_engine_entries_with_gaps_project_as_the_dense_ledger",
+        ledger_config(),
+        |g: &mut Gen| {
+            let l = ledger(g)?;
+            let dense = rows_of(&l)?;
+            let same = project_engine_entries(&l).map_err(|e| format!("dense: {e}"))?;
+            prop_assert_eq!(
+                same.encode(),
+                dense.encode(),
+                "I-92: a contiguous ledger projects differently"
+            );
+            // Gaps: entry n moves to sequence 3n.
+            let gapped: Vec<_> = l
+                .iter()
+                .cloned()
+                .map(|mut e| {
+                    e.seq = fstp_ledger::Seq::from_raw(e.seq.raw().saturating_mul(3));
+                    e
+                })
+                .collect();
+            let rows = project_engine_entries(&gapped).map_err(|e| format!("gapped: {e}"))?;
+            let legs = |r: &fstp_journey::projector::Rows| -> Vec<(u128, String, String)> {
+                r.legs
+                    .iter()
+                    .map(|x| {
+                        (
+                            x.proposal.raw(),
+                            format!("{:?}", x.from),
+                            format!("{:?}", x.to),
+                        )
+                    })
+                    .collect()
+            };
+            prop_assert_eq!(legs(&rows), legs(&dense), "I-92: the gapped legs differ");
+            prop_assert_eq!(
+                rows.last_seq(),
+                gapped.last().map_or(0, |e| e.seq.raw()),
+                "I-92: the cursor does not name the last folded entry"
+            );
+            prop_assert!(
+                Projector::resume(rows).is_err() || gapped.len() < 2,
+                "I-92: rows with gaps resumed as a checkpoint"
+            );
+            if l.len() >= 2 {
+                let mut out_of_order = gapped.clone();
+                out_of_order.swap(0, 1);
+                prop_assert!(
+                    matches!(
+                        project_engine_entries(&out_of_order),
+                        Err(ProjectError::OutOfOrder { .. })
+                    ),
+                    "I-92: an entry before the last one folded was accepted"
+                );
+                let mut repeated = gapped.clone();
+                let first = repeated.first().cloned().ok_or("no entry")?;
+                repeated.insert(1, first);
+                prop_assert!(
+                    matches!(
+                        project_engine_entries(&repeated),
+                        Err(ProjectError::OutOfOrder { .. })
+                    ),
+                    "I-92: a repeated entry was accepted"
+                );
+            }
             Ok(())
         },
     );

@@ -399,6 +399,7 @@ dependencies = [
  "fstp-audit",
  "fstp-auth",
  "fstp-backup",
+ "fstp-brand",
  "fstp-cell",
  "fstp-cell-core",
  "fstp-contract",

@@ -452,10 +452,15 @@ impl McpServer {
                 Ok(result::refused_result(code_only("strong_method_required")))
             }
             Err(e) => {
+                // Only a token with no grant is unauthenticated (H-23). A
+                // domain actor refusal of a valid token's account carries
+                // the same code, but it is an answer to the call: the
+                // agent keeps its token (T-AUTHZ-MATRIX, I-84, lane L7).
                 let unauthenticated = matches!(
                     e,
                     ApiError::Refused {
                         code: ErrorCode::Unauthenticated,
+                        rule: "token",
                         ..
                     }
                 );

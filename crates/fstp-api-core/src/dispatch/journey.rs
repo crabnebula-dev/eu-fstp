@@ -419,7 +419,10 @@ fn scene<P: Seams>(
         .engine()
         .ledger()
         .ok_or_else(|| call.refuse(ApiError::refused(ErrorCode::Unavailable, "journey")))?;
-    let rows = projector::project(&ledger)
+    // The engine port serves the engine records of the cell ledger under
+    // its own sequence numbers, so a cell's other records leave gaps
+    // (lane L7).
+    let rows = projector::project_engine_entries(&ledger)
         .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "journey")))?;
     // I-21 on the route, not only the current state: a draft withdrawn
     // before submission never left the team, so its route stays theirs.

@@ -262,6 +262,13 @@ fn admin<'a, P: Seams>(call: &'a Call<'_, P>) -> Result<(AccountId, &'a TenantSt
         return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
     };
     let Some(ts) = call.state.tenant.state() else {
+        // T-AUTHZ-MATRIX (lane L7): an actor refusal precedes a state
+        // refusal. Before the ledger holds the tenant part, the attested
+        // admin set of the M3 port judges the actor ([`is_admin`]), and
+        // only an admin meets the missing tenant part.
+        if !is_admin(call.ports, &call.state, account) {
+            return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
+        }
         return Err(call.refuse(unprovisioned()));
     };
     if !ts.is_admin(account) {

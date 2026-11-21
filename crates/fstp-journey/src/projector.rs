@@ -579,9 +579,15 @@ impl Projector {
     /// one folded is refused with `OutOfOrder`, so a checkpoint never
     /// misses or doubles a record.
     pub fn fold(&mut self, entry: &Entry<Record>) -> Result<(), ProjectError> {
+        self.fold_in(entry, false)
+    }
+
+    /// [`Projector::fold`]. With `gaps`, the entry may follow the last one
+    /// folded with a gap, but never precede or repeat it.
+    fn fold_in(&mut self, entry: &Entry<Record>, gaps: bool) -> Result<(), ProjectError> {
         let expected = self.ix.last.checked_add(1).ok_or(ProjectError::Corrupt)?;
         let seq = entry.seq.raw();
-        if seq != expected {
+        if seq < expected || (!gaps && seq != expected) {
             return Err(ProjectError::OutOfOrder { expected, got: seq });
         }
         if let Record::Core(r) = &entry.record {
@@ -854,6 +860,21 @@ pub fn project(ledger: &[Entry<Record>]) -> Result<Rows, ProjectError> {
     let mut p = Projector::new();
     for e in ledger {
         p.fold(e)?;
+    }
+    Ok(p.into_rows())
+}
+
+/// The rows of a replay of the engine records of a cell ledger from
+/// genesis, in sequence order. The cell's engine port serves only its
+/// engine records, under the cell ledger's own sequence numbers, so the
+/// cell's other records leave gaps (lane L7, T-AUTHZ-MATRIX on
+/// PostgreSQL). An entry that precedes or repeats the last one folded is
+/// refused with `OutOfOrder`. The rows keep the gaps in their cursor, so
+/// [`Projector::resume`] refuses them: they are a read model only.
+pub fn project_engine_entries(ledger: &[Entry<Record>]) -> Result<Rows, ProjectError> {
+    let mut p = Projector::new();
+    for e in ledger {
+        p.fold_in(e, true)?;
     }
     Ok(p.into_rows())
 }
