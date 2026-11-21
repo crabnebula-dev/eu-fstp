@@ -16,12 +16,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fstp_control::ControlError;
 use fstp_control::config::decode_feed_config;
-use fstp_control::operator::Purpose;
-use fstp_control::route_change::RouteChanges;
+use fstp_control::route_change::{
+    AUDIT_FILE, AuditLog, RouteChanges, change_digest, decode_audit_log,
+};
 use fstp_control::route_feed::{
     OperatorReply, OperatorRequest, OperatorStatus, bind_operator_socket, create_feed_key,
     decode_feed_key_file, decode_operator_reply, decode_operator_request, encode_feed_key_file,
-    encode_operator_reply, encode_operator_request, open_feed_key, operator_request,
+    encode_operator_message, encode_operator_reply, open_feed_key, operator_request,
     serve_operator,
 };
 use fstp_control::routes::{EdgeId, RoutePublisher, next_version, sign_table};
@@ -66,12 +67,11 @@ fn route(cell: u8, host: &str) -> PinnedRoute {
 
 const EDGE: &str = "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1";
 
-const CONFIG: &str = r#"{"assets_dir":"/usr/share/fstp/web","credentials_dir":"/etc/fstp/control","edges":["e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"],"feed_listen":"10.0.0.2:7350","keyd_socket":"/run/fstp-keyd/control.sock","operator_host":"control.example.eu","operator_listen":"127.0.0.1:7351","operator_socket":"/run/fstp-control/routes.sock","staff":[],"state_dir":"/var/lib/fstp-control"}"#;
+const CONFIG: &str = r#"{"credentials_dir":"/etc/fstp/control","edges":["e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"],"feed_listen":"10.0.0.2:7350","keyd_socket":"/run/fstp-keyd/control.sock","operator_socket":"/run/fstp-control/routes.sock","state_dir":"/var/lib/fstp-control"}"#;
 
 /// ADR-009 "Pilot route feed", row "Feed configuration": the route feed
 /// configuration decodes its documented form, and refuses an unknown or
-/// missing member, an operator host that is no relying party host, a
-/// staff entry out of grammar, no edge, an edge twice, more than 16 edges, an edge id
+/// missing member, no edge, an edge twice, more than 16 edges, an edge id
 /// out of grammar, a relative path and an address in a second spelling.
 #[test]
 fn adr009_l15_feed_config_refuses_bad_input() {
@@ -79,9 +79,6 @@ fn adr009_l15_feed_config_refuses_bad_input() {
     assert_eq!(c.edges, vec![EdgeId([0xe1; 16])]);
     assert_eq!(c.feed_listen, SocketAddr::from(([10, 0, 0, 2], 7350)));
     assert_eq!(c.operator_socket, "/run/fstp-control/routes.sock");
-    assert_eq!(c.operator_host, "control.example.eu");
-    assert_eq!(c.operator_listen, SocketAddr::from(([127, 0, 0, 1], 7351)));
-    assert!(c.staff.is_empty());
     let swap = |from: &str, to: &str| CONFIG.replacen(from, to, 1);
     let many: Vec<String> = (0..17u8)
         .map(|i| format!("\"{}\"", format!("{i:02x}").repeat(16)))
@@ -107,12 +104,6 @@ fn adr009_l15_feed_config_refuses_bad_input() {
         ),
         swap("10.0.0.2:7350", "010.0.0.2:7350"),
         swap("10.0.0.2:7350", "10.0.0.2:0"),
-        swap("control.example.eu", "not a host"),
-        swap("control.example.eu", "localhost"),
-        swap("127.0.0.1:7351", "localhost:7351"),
-        swap(r#""staff":[]"#, r#""staff":[{"credential_id":"aa"}]"#),
-        swap(r#""staff":[],"#, ""),
-        swap("\"/usr/share/fstp/web\"", "\"web\""),
         "[]".to_owned(),
     ] {
         assert!(decode_feed_config(bad.as_bytes()).is_err(), "{bad}");
@@ -313,93 +304,102 @@ fn i19_publisher_never_signs_a_table_the_edge_refuses() {
     assert_eq!(p.routes(), vec![renewed]);
 }
 
-/// ADR-009 "Pilot route feed", rows "Proposal and approval", "Route
-/// list" and "Operator bytes": the operator socket is bound with mode
-/// 0600. An add only proposes: the command waits until a staff member
-/// approves it with a step-up, and then gets the version that serves it.
-/// A route the edge would refuse is answered as refused at once, bytes
-/// that are no request change nothing, and a list answers the served
-/// table with no step-up. Request and reply have one spelling.
-#[test]
-fn adr009_l15_operator_socket_proposes_waits_and_lists() {
-    use std::os::unix::fs::PermissionsExt as _;
-    let dir = scratch("operator");
+/// A pilot behind its operator socket: a persisted table and audit log.
+struct Socketed {
+    dir: Scratch,
+    socket: PathBuf,
+    changes: Arc<RouteChanges>,
+}
+
+fn socketed(name: &str) -> Socketed {
+    let dir = scratch(name);
     let socket = dir.0.join("routes.sock");
+    let state = dir.0.join("route-table.signed");
     let key = fstp_crypto::composite::generate().unwrap();
-    let mut passkey = Ed25519Passkey::new();
-    let login = fstp_control::operator::OperatorLogin::new(HOST, &[passkey.pinned()]).unwrap();
-    let audit = fstp_control::route_change::AuditLog::open(&dir.0.join("route-audit.log")).unwrap();
-    let publisher = Arc::new(RoutePublisher::new(key, &[EdgeId([1; 16])]).unwrap());
-    let changes = Arc::new(RouteChanges::new(Arc::clone(&publisher), login, audit));
+    std::fs::write(
+        &state,
+        sign_table(&key, next_version(0).unwrap(), &[]).unwrap(),
+    )
+    .unwrap();
+    let publisher = RoutePublisher::resume(
+        key,
+        &[EdgeId([1; 16])],
+        &std::fs::read(&state).unwrap(),
+        state,
+    )
+    .unwrap();
+    let audit = AuditLog::open(&dir.0.join(AUDIT_FILE)).unwrap();
+    let changes = Arc::new(RouteChanges::new(Arc::new(publisher), audit));
     let listener = bind_operator_socket(&socket).unwrap();
-    let mode = std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600);
     let served = Arc::clone(&changes);
     std::thread::spawn(move || serve_operator(&listener, &served));
-    let start = publisher.version();
-    // The proposer waits on its socket.
-    let proposer_socket = socket.clone();
-    let proposer = std::thread::spawn(move || {
-        operator_request(
-            &proposer_socket,
-            &OperatorRequest::Add(Box::new(route(1, "a.example"))),
-        )
-        .unwrap()
-        .0
-    });
-    let now = fstp_control::route_feed::now_secs();
-    let begun = Instant::now();
-    let id = loop {
-        if let Some(c) = changes.pending(now).first() {
-            break c.id;
-        }
-        assert!(
-            begun.elapsed() < Duration::from_secs(20),
-            "no proposal arrived"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert_eq!(publisher.version(), start, "a proposal was signed");
-    let c = changes.login().begin(Purpose::Login, now).unwrap();
-    let a = passkey.assert(&c);
-    let (session, _) = changes.login().finish_login(c, &a, now).unwrap();
-    let c = changes.begin_approval(session, id, now).unwrap();
-    let a = passkey.assert(&c);
-    let v = changes.approve(session, id, c, &a, now).unwrap();
-    let added = proposer.join().unwrap();
+    Socketed {
+        dir,
+        socket,
+        changes,
+    }
+}
+
+/// ADR-009 "Pilot route feed", rows "Route changes on the host" and
+/// "Operator bytes" (Daniel, 2026-11-21: plain route changes on the host,
+/// logged): the operator socket is bound with mode 0600. An add and a
+/// removal apply at once, each answered with the version that serves it.
+/// A route the edge would refuse is answered as refused, bytes that are
+/// no request change nothing, and a list answers the served table.
+/// Request and reply have one spelling.
+#[test]
+fn adr009_l15_operator_socket_applies_changes_at_once() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let p = socketed("operator");
+    let mode = std::fs::metadata(&p.socket).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let start = p.changes.publisher().version();
+    let add = OperatorRequest::Add(Box::new(route(1, "a.example")));
+    let (added, _) = operator_request(&p.socket, "alice", &add).unwrap();
     assert_eq!(added.status, OperatorStatus::Stored);
-    assert_eq!(added.version, v);
-    assert_eq!(publisher.routes(), vec![route(1, "a.example")]);
-    // A route the edge would refuse is answered at once.
+    assert!(added.version > start);
+    assert_eq!(p.changes.publisher().routes(), vec![route(1, "a.example")]);
     let mut clash = route(2, "b.example");
     clash.route.vault.address = route(1, "a.example").route.app.address;
-    let (refused, _) = operator_request(&socket, &OperatorRequest::Add(Box::new(clash))).unwrap();
+    let (refused, _) =
+        operator_request(&p.socket, "", &OperatorRequest::Add(Box::new(clash))).unwrap();
     assert_eq!(refused.status, OperatorStatus::Refused);
-    assert_eq!(refused.version, v);
-    // A list needs no step-up and answers the served table.
-    let (listed, table) = operator_request(&socket, &OperatorRequest::List).unwrap();
+    assert_eq!(refused.version, added.version);
+    let (listed, table) = operator_request(&p.socket, "", &OperatorRequest::List).unwrap();
     assert_eq!(listed.status, OperatorStatus::Stored);
-    assert_eq!(table, publisher.signed_table());
+    assert_eq!(table, p.changes.publisher().signed_table());
+    let (removed, _) =
+        operator_request(&p.socket, "bob", &OperatorRequest::Remove([1; 16])).unwrap();
+    assert_eq!(removed.status, OperatorStatus::Stored);
+    assert!(removed.version > added.version);
+    assert!(p.changes.publisher().routes().is_empty());
     // Bytes that are no request.
     {
         use std::io::{Read as _, Write as _};
-        let mut s = std::os::unix::net::UnixStream::connect(&socket).unwrap();
-        s.write_all(b"FRO1\x09").unwrap();
+        let mut s = std::os::unix::net::UnixStream::connect(&p.socket).unwrap();
+        s.write_all(b"FRO1\x00\x09").unwrap();
         s.shutdown(std::net::Shutdown::Write).unwrap();
         let mut reply = Vec::new();
         s.read_to_end(&mut reply).unwrap();
         let reply = decode_operator_reply(&reply).unwrap();
         assert_eq!(reply.status, OperatorStatus::Refused);
-        assert_eq!(reply.version, v);
+        assert_eq!(reply.version, removed.version);
     }
-    // One spelling.
-    for r in [
-        OperatorRequest::Add(Box::new(route(3, "c.example"))),
-        OperatorRequest::Remove([3; 16]),
-        OperatorRequest::List,
+    // One spelling, with and without a user. A user outside the grammar
+    // is refused.
+    for (user, r) in [
+        (
+            "carol",
+            OperatorRequest::Add(Box::new(route(3, "c.example"))),
+        ),
+        ("", OperatorRequest::Remove([3; 16])),
+        ("_svc-1", OperatorRequest::List),
     ] {
-        let bytes = encode_operator_request(&r).unwrap();
-        assert_eq!(decode_operator_request(&bytes).unwrap(), r);
+        let bytes = encode_operator_message(user, &r).unwrap();
+        assert_eq!(
+            decode_operator_request(&bytes).unwrap(),
+            (user.to_owned(), r)
+        );
         for cut in 0..bytes.len() {
             assert!(decode_operator_request(&bytes[..cut]).is_err(), "cut {cut}");
         }
@@ -407,66 +407,67 @@ fn adr009_l15_operator_socket_proposes_waits_and_lists() {
         longer.push(0);
         assert!(decode_operator_request(&longer).is_err());
     }
-    for status in [
-        OperatorStatus::Stored,
-        OperatorStatus::Refused,
-        OperatorStatus::Failed,
-        OperatorStatus::Expired,
-    ] {
-        let reply = OperatorReply { status, version: 7 };
-        assert_eq!(
-            decode_operator_reply(&encode_operator_reply(&reply)),
-            Ok(reply)
-        );
+    for user in ["Root", "a b", "9x", &"a".repeat(33)] {
+        assert!(encode_operator_message(user, &OperatorRequest::List).is_err());
     }
+    let reply = OperatorReply {
+        status: OperatorStatus::Failed,
+        version: 7,
+    };
+    assert_eq!(
+        decode_operator_reply(&encode_operator_reply(&reply)),
+        Ok(reply)
+    );
 }
 
-const HOST: &str = "control.example.test";
-
-/// A software passkey with an Ed25519 key from `fstp-crypto`.
-struct Ed25519Passkey {
-    key: fstp_crypto::sig::Ed25519SigningKey,
-    count: u32,
-}
-
-impl Ed25519Passkey {
-    fn new() -> Ed25519Passkey {
-        Ed25519Passkey {
-            key: fstp_crypto::sig::Ed25519SigningKey::generate().unwrap(),
-            count: 0,
-        }
+/// ADR-009 "Pilot route feed", row "Audit" (Daniel, 2026-11-21: plain
+/// route changes, logged): each applied change appends one record before
+/// its table is stored: the time, the operation, the cell, the version,
+/// the change digest and the OS user when known. A refused change and a
+/// list log nothing. The records form a hash chain: a changed byte or a
+/// cut breaks it, and a log with a broken chain does not open, so
+/// `fstp-control` refuses to start on it.
+#[test]
+fn adr009_l15_route_changes_are_logged_in_a_hash_chain() {
+    let p = socketed("audit");
+    let add = OperatorRequest::Add(Box::new(route(1, "a.example")));
+    let (a, _) = operator_request(&p.socket, "alice", &add).unwrap();
+    let mut clash = route(2, "b.example");
+    clash.route.app.address = route(1, "a.example").route.app.address;
+    let (r, _) =
+        operator_request(&p.socket, "alice", &OperatorRequest::Add(Box::new(clash))).unwrap();
+    assert_eq!(r.status, OperatorStatus::Refused);
+    let _ = operator_request(&p.socket, "", &OperatorRequest::List).unwrap();
+    let (b, _) = operator_request(&p.socket, "", &OperatorRequest::Remove([1; 16])).unwrap();
+    let path = p.dir.0.join(AUDIT_FILE);
+    let bytes = std::fs::read(&path).unwrap();
+    let (records, _) = decode_audit_log(&bytes).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        (
+            records[0].op,
+            records[0].cell,
+            records[0].version,
+            records[0].user.as_str()
+        ),
+        (1, [1; 16], a.version, "alice")
+    );
+    assert_eq!(records[0].digest, change_digest(&add).unwrap());
+    assert_eq!(
+        (
+            records[1].op,
+            records[1].cell,
+            records[1].version,
+            records[1].user.as_str()
+        ),
+        (2, [1; 16], b.version, "")
+    );
+    let mut changed = bytes.clone();
+    changed[12] ^= 1;
+    assert!(decode_audit_log(&changed).is_err());
+    for cut in [1, 10, bytes.len() - 1] {
+        assert!(decode_audit_log(&bytes[..cut]).is_err(), "cut {cut}");
     }
-
-    fn pinned(&self) -> fstp_control::operator::StaffCredential {
-        fstp_control::operator::StaffCredential {
-            staff: fstp_cp_proto::StaffRef([5; 16]),
-            credential_id: vec![5; 16],
-            key: fstp_webauthn::CoseKey::Ed25519 {
-                x: self.key.public_key(),
-            },
-        }
-    }
-
-    fn assert(&mut self, challenge: &[u8; 32]) -> fstp_webauthn::AssertionResponse {
-        self.count += 1;
-        let mut auth = fstp_crypto::sha256(HOST.as_bytes()).to_vec();
-        auth.push(0x05);
-        auth.extend_from_slice(&self.count.to_be_bytes());
-        let b64 = fstp_pgwire::base64::encode(challenge)
-            .replace('+', "-")
-            .replace('/', "_")
-            .replace('=', "");
-        let client = format!(
-            "{{\"type\":\"webauthn.get\",\"challenge\":\"{b64}\",\"origin\":\"https://{HOST}\"}}"
-        )
-        .into_bytes();
-        let mut message = auth.clone();
-        message.extend_from_slice(&fstp_crypto::sha256(&client));
-        fstp_webauthn::AssertionResponse {
-            credential_id: vec![5; 16],
-            client_data_json: client,
-            authenticator_data: auth,
-            signature: self.key.sign(&message).unwrap().to_vec(),
-        }
-    }
+    std::fs::write(&path, &changed).unwrap();
+    assert!(AuditLog::open(&path).is_err());
 }

@@ -388,78 +388,6 @@ impl OperatorLogin {
         }
     }
 
-    /// Draws a step-up challenge in `session` bound to the route change
-    /// `digest` (ADR-009 "Pilot route feed", row "Step-up per change",
-    /// lane L15): `challenge = SHA-256("fstp-route-change-v1" ||
-    /// SHA-256(session) || digest || nonce)`, after ADR-008 "Step-up". It
-    /// is single use and lives [`CHALLENGE_LIFETIME_SECS`]. Returns the
-    /// challenge and its nonce.
-    ///
-    /// # Errors
-    ///
-    /// The session refusals, [`OperatorRefusal::Capacity`] and
-    /// [`OperatorRefusal::Random`].
-    pub fn begin_route_step_up(
-        &mut self,
-        session: OperatorSession,
-        digest: &[u8; 32],
-        now: i64,
-    ) -> Result<([u8; 32], [u8; 32]), ControlError> {
-        self.session(session, now)?;
-        self.prune(now);
-        if self.pending.len() >= MAX_PENDING {
-            return Err(refuse(OperatorRefusal::Capacity));
-        }
-        let nonce: [u8; 32] =
-            fstp_crypto::random_array().map_err(|_| refuse(OperatorRefusal::Random))?;
-        let challenge = route_change_challenge(&session_digest(session), digest, &nonce);
-        self.pending.insert(
-            challenge,
-            Pending {
-                purpose: Purpose::StepUp,
-                issued_at: now,
-            },
-        );
-        Ok((challenge, nonce))
-    }
-
-    /// Admits one route change in `session` and returns the staff member
-    /// (lane L15). It needs a step-up within [`STEP_UP_WINDOW_SECS`], and
-    /// consumes it, so one step-up authorises one change (I-78).
-    ///
-    /// # Errors
-    ///
-    /// [`OperatorRefusal::StepUpRequired`] without a fresh step-up, and
-    /// the session refusals.
-    pub fn authorise_route_change(
-        &mut self,
-        session: OperatorSession,
-        now: i64,
-    ) -> Result<StaffRef, ControlError> {
-        let s = self.session(session, now)?;
-        let ok = s
-            .step_up_at
-            .is_some_and(|at| fresh(at, now, STEP_UP_WINDOW_SECS));
-        if !ok {
-            return Err(refuse(OperatorRefusal::StepUpRequired));
-        }
-        s.step_up_at = None;
-        Ok(s.staff)
-    }
-
-    /// Whether `session` is open and within its lifetime at `now`.
-    pub fn session_open(&mut self, session: OperatorSession, now: i64) -> bool {
-        self.session(session, now).is_ok()
-    }
-
-    /// The pinned credentials, for the allow list of request options.
-    pub fn credential_ids(&self) -> Vec<Vec<u8>> {
-        self.credentials
-            .iter()
-            .map(|(c, _)| c.credential_id.clone())
-            .collect()
-    }
-
     /// Draws the challenge of an approval of `job` inside `session`
     /// (ADR-011 "Two-operator approval"). The challenge binds the job
     /// digest. It is single use and lives [`CHALLENGE_LIFETIME_SECS`].
@@ -625,27 +553,4 @@ impl OperatorLogin {
     pub fn approval_log(&self) -> &[crate::approval::ApprovalEvent] {
         self.book.log()
     }
-}
-
-/// The SHA-256 of a session token, which a route change challenge and its
-/// audit record name instead of the secret token (lane L15).
-#[must_use]
-pub fn session_digest(session: OperatorSession) -> [u8; 32] {
-    fstp_crypto::sha256(&session.0)
-}
-
-/// The step-up challenge of a route change (ADR-009 "Pilot route feed",
-/// row "Step-up per change"): `SHA-256("fstp-route-change-v1" ||
-/// session_digest || digest || nonce)`.
-#[must_use]
-pub(crate) fn route_change_challenge(
-    session_digest: &[u8; 32],
-    digest: &[u8; 32],
-    nonce: &[u8; 32],
-) -> [u8; 32] {
-    let mut m = b"fstp-route-change-v1".to_vec();
-    m.extend_from_slice(session_digest);
-    m.extend_from_slice(digest);
-    m.extend_from_slice(nonce);
-    fstp_crypto::sha256(&m)
 }
