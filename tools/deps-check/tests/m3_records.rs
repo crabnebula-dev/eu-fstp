@@ -76,7 +76,11 @@ const FUZZ_TARGETS: [(&str, &[&str]); 22] = [
     ),
     (
         "fstp-keyd",
-        &["keyd_request_decode", "custody_file_decode", "keyd_export_decode"],
+        &[
+            "keyd_request_decode",
+            "custody_file_decode",
+            "keyd_export_decode",
+        ],
     ),
     (
         "fstp-audit",

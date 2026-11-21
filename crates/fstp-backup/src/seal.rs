@@ -33,6 +33,9 @@ pub enum ContainerKind {
     WalSegment,
     /// A keystore snapshot of a cell.
     KeystoreSnapshot,
+    /// A ClusterBackup group secret sealed to a second custodian's key
+    /// (ADR-012 record of lane L16).
+    CustodianEscrow,
 }
 
 impl ContainerKind {
@@ -43,17 +46,21 @@ impl ContainerKind {
             ContainerKind::BaseBackup => 1,
             ContainerKind::WalSegment => 2,
             ContainerKind::KeystoreSnapshot => 3,
+            ContainerKind::CustodianEscrow => 4,
         }
     }
 
     /// The chain whose group key seals a container of this kind: the
     /// ClusterBackup chain for base backups and WAL segments, the
     /// CellBackup chain for keystore snapshots (ADR-012 "What is backed
-    /// up").
+    /// up"). A custodian escrow carries a ClusterBackup group secret, so
+    /// it sits on that chain too (record of lane L16).
     #[must_use]
     pub const fn chain(self) -> Chain {
         match self {
-            ContainerKind::BaseBackup | ContainerKind::WalSegment => Chain::ClusterBackup,
+            ContainerKind::BaseBackup
+            | ContainerKind::WalSegment
+            | ContainerKind::CustodianEscrow => Chain::ClusterBackup,
             ContainerKind::KeystoreSnapshot => Chain::CellBackup,
         }
     }
@@ -63,6 +70,7 @@ impl ContainerKind {
             1 => Some(ContainerKind::BaseBackup),
             2 => Some(ContainerKind::WalSegment),
             3 => Some(ContainerKind::KeystoreSnapshot),
+            4 => Some(ContainerKind::CustodianEscrow),
             _ => None,
         }
     }
