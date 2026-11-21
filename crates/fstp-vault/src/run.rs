@@ -6,11 +6,16 @@
 //! - [`init_keys`] creates the vault keystore at genesis and writes
 //!   `anchor.pub`, the Vault chain anchor public key the witness registers
 //!   (ADR-004 record of lane L8).
+//! - [`erase_identity`] erases the identity of one account on the Vault
+//!   chain, one batch of design section 3.5, while the vault is stopped
+//!   (ADR-004 record of lane L11).
 //!
 //! Every start reads the credentials directory by fixed name
 //! ([`crate::config::CREDENTIAL_FILES`]), runs the I-83 start check over
 //! the `<dbname>_vault` login, opens the keystore through the
-//! `<dbname>_keys` login and the vault's `fstp-keyd` entry, then runs
+//! `<dbname>_keys` login and the vault's `fstp-keyd` entry, takes the
+//! keystore lock and completes any stored erasure batch
+//! ([`resume_keystore`]), then runs
 //! [`crate::service::serve`] with the Vault chain writer. One tokio runtime
 //! runs the vault, through `fstp-rt` (ADR-002). The vault never shares a
 //! process or a database with the cell (R-NG-01, ADR-009, I-83).
@@ -25,10 +30,13 @@ use fstp_rt::Runtime;
 use fstp_rt::tokio::TokioRuntime;
 
 use crate::VaultError;
-use crate::chain::{VaultChainParts, VaultWitness};
+use crate::chain::{VaultChain, VaultChainParts, VaultWitness};
 use crate::config::{self, VaultConfig};
+use crate::erasure::{ChainJournal, Runner};
 use crate::keystore::{self, VaultKeys};
+use crate::origin::Vault;
 use crate::service::{self, VaultHandle, VaultParts};
+use fstp_keys::erasure::Phase;
 
 /// The environment variable that names the configuration file.
 pub const CONFIG_ENV: &str = "FSTP_VAULT_CONFIG";
@@ -238,6 +246,166 @@ pub async fn genesis_with<R: Runtime, C: Custody>(
     written.map(|()| keys.anchor_public())
 }
 
+/// The PostgreSQL advisory lock key of the vault keystore (ADR-004 record
+/// of lane L11, row "Entry point"): the bytes `"fstpvkey"`. The serving
+/// vault holds it on its keys connection for its lifetime, and
+/// `erase-identity` holds it while it runs, so the two never meet.
+pub const KEYSTORE_LOCK: i64 = 0x6673_7470_766b_6579;
+
+/// Takes the keystore lock on the keys connection `client`.
+///
+/// # Errors
+///
+/// [`VaultError::Conflict`] when another connection holds it, such as a
+/// running vault, and [`VaultError::Unavailable`] when the query fails.
+pub async fn lock_keystore<R: Runtime>(client: &mut Client<R>) -> Result<(), VaultError> {
+    let rows = client
+        .query("SELECT pg_try_advisory_lock($1)", &[&KEYSTORE_LOCK])
+        .await
+        .map_err(|_| VaultError::Unavailable("the keystore lock"))?;
+    let held: bool = rows
+        .first()
+        .and_then(|r| r.get(0).ok())
+        .ok_or(VaultError::Unavailable("the keystore lock"))?;
+    if held {
+        Ok(())
+    } else {
+        Err(VaultError::Conflict(
+            "the vault keystore lock: another vault process holds it",
+        ))
+    }
+}
+
+fn witness_of(cfg: &VaultConfig, creds: &Credentials) -> Result<VaultWitness, VaultError> {
+    Ok(VaultWitness {
+        addr: cfg.witness.address,
+        server_name: cfg.witness.server_name.clone(),
+        tls: fstp_tls::ClientConfig::mutual(
+            creds.get("witness-ca.pem")?,
+            creds.get("witness.pem")?,
+            creds.get("witness.key")?,
+        )
+        .map_err(|_| cfg_err("witness.pem"))?,
+        ca_digest: cfg.witness.ca_spki_sha256,
+    })
+}
+
+/// The vault and its chain journal, for the erasure runner: the vault
+/// login, the Vault chain opened and verified at the witness, and the
+/// vault loaded from its rows.
+async fn erasure_journal<R: Runtime>(
+    rt: &R,
+    cfg: &VaultConfig,
+    creds: &Credentials,
+    keys: VaultKeys,
+) -> Result<(Vault, ChainJournal<R>), VaultError> {
+    let (anchor_key, sealer) = keys.into_service_keys()?;
+    let sealer: Arc<dyn crate::store::Sealer> = Arc::new(sealer);
+    let db = login(cfg, creds, Login::Vault)?;
+    let mut client: Client<R> = Client::connect(rt, &db)
+        .await
+        .map_err(|e| connect_error(&e))?;
+    let parts = VaultChainParts {
+        anchor_key,
+        witness: witness_of(cfg, creds)?,
+        witness_keys: cfg.witness.receipt_keys.clone(),
+    };
+    let chain = VaultChain::open(rt.clone(), cfg.cell, parts, &mut client).await?;
+    let vault =
+        crate::store::load(&mut client, sealer.as_ref(), cfg.cell, &cfg.ticket_keys).await?;
+    Ok((
+        vault,
+        ChainJournal {
+            client,
+            chain,
+            sealer,
+        },
+    ))
+}
+
+/// The keystore lock and the keys of `cfg` (ADR-004 record of lane L11):
+/// takes the lock on a keys connection, loads the keystore and completes
+/// any stored erasure batch before the vault serves. Returns the keys
+/// connection, which holds the lock, and the service keys.
+///
+/// # Errors
+///
+/// [`VaultError::Conflict`] when another process holds the lock, and the
+/// errors of [`Runner::load`] and of the resumed batch.
+pub async fn resume_keystore<R: Runtime, C: Custody>(
+    rt: &R,
+    cfg: &VaultConfig,
+    creds: &Credentials,
+    custody: &C,
+) -> Result<(Client<R>, VaultKeys), VaultError> {
+    let mut client = keys_client(rt, cfg, creds).await?;
+    lock_keystore(&mut client).await?;
+    let mut runner = Runner::load(client, cfg.cell, custody).await?;
+    if runner.phase() != Phase::Idle {
+        let (mut vault, mut journal) =
+            erasure_journal(rt, cfg, creds, runner.service_keys()?).await?;
+        let done = runner.run_to_idle(&mut vault, &mut journal, now_us()).await;
+        let _ = journal.client.close().await;
+        done?;
+    }
+    let keys = runner.service_keys()?;
+    Ok((runner.into_client(), keys))
+}
+
+/// `fstp-vault erase-identity <account>` over `custody` (ADR-004 record
+/// of lane L11): erases the identity of `account` on the Vault chain and
+/// returns the destroyed epoch. The vault must be stopped: the keystore
+/// lock refuses the command while it serves.
+///
+/// # Errors
+///
+/// [`VaultError::Conflict`] while the vault runs, for an account with no
+/// identity, and for an identity with no stored tuple. The first step
+/// that fails otherwise. A batch that fails after its request completes
+/// at the next start of the vault, or at the next run of the command.
+pub async fn erase_identity_with<R: Runtime, C: Custody>(
+    rt: &R,
+    cfg: &VaultConfig,
+    custody: &C,
+    account: u128,
+) -> Result<u64, VaultError> {
+    let creds = Credentials::read(&cfg.credentials_dir)?;
+    check_start(rt, cfg, &creds).await?;
+    let mut client = keys_client(rt, cfg, &creds).await?;
+    lock_keystore(&mut client).await?;
+    let mut runner = Runner::load(client, cfg.cell, custody).await?;
+    let (mut vault, mut journal) = erasure_journal(rt, cfg, &creds, runner.service_keys()?).await?;
+    let done = async {
+        let rows = journal
+            .client
+            .query(
+                "SELECT identity_id FROM vault.account WHERE account_id = $1",
+                &[&fstp_pgwire::Uuid::from_bytes(account.to_be_bytes())],
+            )
+            .await
+            .map_err(|_| VaultError::Unavailable("the vault database"))?;
+        let identity: fstp_pgwire::Uuid = rows
+            .first()
+            .and_then(|r| r.get::<Option<fstp_pgwire::Uuid>>(0).ok().flatten())
+            .ok_or(VaultError::Conflict("an account with no identity"))?;
+        let person = fstp_vault_core::Person(u128::from_be_bytes(*identity.as_bytes()));
+        // A batch left by an earlier run completes first.
+        runner
+            .run_to_idle(&mut vault, &mut journal, now_us())
+            .await?;
+        let before = runner.epoch();
+        runner.request_erasure(person).await?;
+        runner
+            .run_to_idle(&mut vault, &mut journal, now_us())
+            .await?;
+        Ok(before)
+    }
+    .await;
+    let _ = journal.client.close().await;
+    let _ = runner.into_client().close().await;
+    done
+}
+
 /// The service parts of `cfg` from its credentials and opened keys.
 ///
 /// # Errors
@@ -251,17 +419,7 @@ pub fn parts(
 ) -> Result<VaultParts, VaultError> {
     let tls = |name: &'static str| move |_| cfg_err(name);
     let (anchor_key, sealer) = keys.into_service_keys()?;
-    let witness = VaultWitness {
-        addr: cfg.witness.address,
-        server_name: cfg.witness.server_name.clone(),
-        tls: fstp_tls::ClientConfig::mutual(
-            creds.get("witness-ca.pem")?,
-            creds.get("witness.pem")?,
-            creds.get("witness.key")?,
-        )
-        .map_err(tls("witness.pem"))?,
-        ca_digest: cfg.witness.ca_spki_sha256,
-    };
+    let witness = witness_of(cfg, creds)?;
     Ok(VaultParts {
         cell: cfg.cell,
         db: login(cfg, creds, Login::Vault)?,
@@ -310,9 +468,12 @@ pub async fn start_with<R: Runtime, C: Custody>(
 ) -> Result<VaultHandle<R>, VaultError> {
     let creds = Credentials::read(&cfg.credentials_dir)?;
     check_start(&rt, cfg, &creds).await?;
-    let keys = open_keystore(&rt, cfg, &creds, custody).await?;
+    let (lease, keys) = resume_keystore(&rt, cfg, &creds, custody).await?;
     let parts = parts(cfg, &creds, keys)?;
-    service::serve(rt, parts).await
+    let handle = service::serve(rt, parts).await?;
+    // The keys connection holds the keystore lock while the vault serves.
+    handle.hold(lease);
+    Ok(handle)
 }
 
 fn keyd(cfg: &VaultConfig) -> Result<fstp_custody::KeydCustody, VaultError> {
@@ -429,6 +590,21 @@ pub fn init_keys(cfg: &VaultConfig, out: &Path) -> Result<(), VaultError> {
     write_new(&target, line.as_bytes())
 }
 
+/// `fstp-vault erase-identity <account>` ([`erase_identity_with`] over the
+/// vault's `fstp-keyd` entry). It exits with status 0 once step 7 of the
+/// batch is recorded.
+///
+/// # Errors
+///
+/// As [`erase_identity_with`].
+pub fn erase_identity(cfg: &VaultConfig, account: u128) -> Result<(), VaultError> {
+    let custody = keyd(cfg)?;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    rt.block_on(async move { erase_identity_with(&task_rt, cfg, &custody, account).await })
+        .map(|_| ())
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -436,6 +612,31 @@ pub enum Command {
     Serve,
     /// `init-keys <out dir>`.
     InitKeys(PathBuf),
+    /// `erase-identity <account>`: the account id as 32 hex digits, with
+    /// or without the dashes of the UUID form (ADR-004 record of lane
+    /// L11).
+    EraseIdentity(u128),
+}
+
+/// The account id of `text`: 32 hex digits, with or without the four
+/// dashes of the UUID form.
+fn account_of(text: &str) -> Option<u128> {
+    let dashes = [8, 13, 18, 23];
+    let hex: String = if text.len() == 36 {
+        let ok = text
+            .char_indices()
+            .all(|(i, c)| dashes.contains(&i) == (c == '-'));
+        if !ok {
+            return None;
+        }
+        text.chars().filter(|c| *c != '-').collect()
+    } else {
+        text.to_owned()
+    };
+    if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u128::from_str_radix(&hex, 16).ok()
 }
 
 /// Parses the binary's arguments, without the program name.
@@ -447,6 +648,9 @@ pub fn parse_args(args: &[String]) -> Result<Command, VaultError> {
     match args {
         [] => Ok(Command::Serve),
         [cmd, out] if cmd == "init-keys" => Ok(Command::InitKeys(PathBuf::from(out))),
+        [cmd, account] if cmd == "erase-identity" => account_of(account)
+            .map(Command::EraseIdentity)
+            .ok_or(cfg_err("arguments")),
         _ => Err(cfg_err("arguments")),
     }
 }
@@ -461,6 +665,7 @@ pub fn run_command(command: &Command) -> Result<(), VaultError> {
     match command {
         Command::Serve => serve(&cfg),
         Command::InitKeys(out) => init_keys(&cfg, out),
+        Command::EraseIdentity(account) => erase_identity(&cfg, *account),
     }
 }
 
@@ -485,6 +690,35 @@ mod tests {
             &["serve", "x"],
             &["init-keys", "a", "b"],
             &["seed", "facts.json"],
+        ] {
+            assert_eq!(parse_args(&s(bad)), Err(VaultError::Config("arguments")));
+        }
+    }
+
+    /// R-KY-02, ADR-004 record of lane L11: `erase-identity` takes one
+    /// account id, as 32 hex digits or in the UUID form, and refuses any
+    /// other form.
+    #[test]
+    fn r_ky_02_vault_erase_identity_takes_one_account_id() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        let id = 0x0123_4567_89ab_cdef_0123_4567_89ab_cdef_u128;
+        for form in [
+            "0123456789abcdef0123456789abcdef",
+            "01234567-89ab-cdef-0123-456789abcdef",
+            "0123456789ABCDEF0123456789ABCDEF",
+        ] {
+            assert_eq!(
+                parse_args(&s(&["erase-identity", form])).unwrap(),
+                Command::EraseIdentity(id)
+            );
+        }
+        for bad in [
+            &["erase-identity"][..],
+            &["erase-identity", "0123"],
+            &["erase-identity", "0123456789abcdef0123456789abcdeg"],
+            &["erase-identity", "0123456789-abcdef-0123-456789abcdef"],
+            &["erase-identity", "+123456789abcdef0123456789abcdef"],
+            &["erase-identity", "0123456789abcdef0123456789abcdef", "x"],
         ] {
             assert_eq!(parse_args(&s(bad)), Err(VaultError::Config("arguments")));
         }

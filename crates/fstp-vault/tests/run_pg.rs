@@ -333,3 +333,32 @@ fn adr004_vault_keystore_survives_a_restart() {
     drop(first);
     cleanup(&dir);
 }
+
+/// R-KY-02, ADR-004 record of lane L11 (row "Entry point"): the keystore
+/// lock keeps `erase-identity` and a serving vault apart. While one keys
+/// connection holds it, as the serving vault does, a second start and the
+/// erase command are refused before custody runs. Once it is released,
+/// the start takes it again. An idle keystore needs no witness.
+#[test]
+fn r_ky_02_vault_keystore_lock_refuses_a_second_process() {
+    let (cfg, dir) = vault_on(cluster(ClusterRole::Vault));
+    let creds = Credentials::read(&cfg.credentials_dir).unwrap();
+    let custody = StubCustody::new();
+    let keys = VaultKeys::generate().unwrap();
+    block_on(run::genesis_with(rt(), &cfg, &creds, &custody, &keys)).unwrap();
+    let (lease, opened) = block_on(run::resume_keystore(rt(), &cfg, &creds, &custody)).unwrap();
+    assert_eq!(opened.anchor_public(), keys.anchor_public());
+    let refused = VaultError::Conflict("the vault keystore lock: another vault process holds it");
+    assert_eq!(
+        block_on(run::resume_keystore(rt(), &cfg, &creds, &custody)).unwrap_err(),
+        refused
+    );
+    assert_eq!(
+        block_on(run::erase_identity_with(rt(), &cfg, &custody, 7)).unwrap_err(),
+        refused
+    );
+    block_on(lease.close()).unwrap();
+    let (again, _) = block_on(run::resume_keystore(rt(), &cfg, &creds, &custody)).unwrap();
+    block_on(again.close()).unwrap();
+    cleanup(&dir);
+}

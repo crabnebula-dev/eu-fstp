@@ -291,10 +291,10 @@ struct Work {
 }
 
 /// The erasure runner of one vault (module documentation).
-pub struct Runner<R: Runtime, C: Custody> {
+pub struct Runner<'c, R: Runtime, C: Custody> {
     cell: [u8; 16],
     client: Client<R>,
-    custody: C,
+    custody: &'c C,
     rows: KeystoreRows,
     chain: ChainState,
     intent: [u8; 16],
@@ -303,7 +303,7 @@ pub struct Runner<R: Runtime, C: Custody> {
     work: Work,
 }
 
-impl<R: Runtime, C: Custody> std::fmt::Debug for Runner<R, C> {
+impl<R: Runtime, C: Custody> std::fmt::Debug for Runner<'_, R, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Runner")
             .field("epoch", &self.chain.epoch().0)
@@ -352,7 +352,7 @@ fn person_of(dek: DekId) -> Person {
     Person(u128::from_be_bytes(dek.0))
 }
 
-impl<R: Runtime, C: Custody> Runner<R, C> {
+impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
     /// Loads the keystore of `cell` over the keys login `client`, opens it
     /// through `custody`, and resumes the stored phase. A batch stored
     /// before its commit starts again from step 2.
@@ -365,14 +365,14 @@ impl<R: Runtime, C: Custody> Runner<R, C> {
     pub async fn load(
         mut client: Client<R>,
         cell: [u8; 16],
-        custody: C,
-    ) -> Result<Runner<R, C>, VaultError> {
+        custody: &'c C,
+    ) -> Result<Runner<'c, R, C>, VaultError> {
         let rows = keystore::read_rows(&mut client)
             .await?
             .ok_or(VaultError::Unavailable(
                 "the vault keystore: run fstp-vault init-keys",
             ))?;
-        let seal = unwrap_root(&custody, &cell, &rows.root).await?;
+        let seal = unwrap_root(custody, &cell, &rows.root).await?;
         let (chain, intent) = match &rows.intent {
             Some(i) => (
                 open_state(&seal, &cell, rows.root.epoch, &i.plan)?.restart(),
@@ -1086,7 +1086,7 @@ impl<R: Runtime, C: Custody> Runner<R, C> {
         if snap.root.epoch != e.0 {
             return Err(bad("the snapshot root"));
         }
-        let seal = unwrap_root(&self.custody, &self.cell, &snap.root).await?;
+        let seal = unwrap_root(self.custody, &self.cell, &snap.root).await?;
         let s = aead_key(&seal)?;
         let mut open = BTreeMap::new();
         for g in &snap.groups {
@@ -1232,4 +1232,39 @@ async fn write<R: Runtime>(
         phase: phase_code(chain.phase()),
     }));
     keystore::apply_changes(client, &changes, now).await
+}
+
+impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
+    /// The keys connection, once the runner is done with it. The vault
+    /// keeps it while it serves, since it holds the keystore lock
+    /// (`crate::run`).
+    #[must_use]
+    pub fn into_client(self) -> Client<R> {
+        self.client
+    }
+}
+
+/// The vault chain writer as a [`Journal`]: each commit is one kind 1 row
+/// of the Vault chain, anchored at the witness (`crate::chain`).
+pub struct ChainJournal<R: Runtime> {
+    /// The vault login.
+    pub client: Client<R>,
+    /// The chain writer, opened and verified.
+    pub chain: crate::chain::VaultChain<R>,
+    /// The sealer of the entry bodies.
+    pub sealer: std::sync::Arc<dyn crate::store::Sealer>,
+}
+
+impl<R: Runtime> std::fmt::Debug for ChainJournal<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChainJournal").finish_non_exhaustive()
+    }
+}
+
+impl<R: Runtime> Journal for ChainJournal<R> {
+    async fn commit(&mut self, entries: &[JournalEntry], now: i64) -> Result<(), VaultError> {
+        self.chain
+            .commit(&mut self.client, self.sealer.as_ref(), entries, now)
+            .await
+    }
 }

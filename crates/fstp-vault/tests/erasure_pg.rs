@@ -281,17 +281,16 @@ fn genesis() -> World {
 
 /// A running vault process: the runner over the keys login, the vault
 /// and its journal over the vault login.
-struct Process {
-    runner: Runner<TokioRuntime, StubCustody>,
+struct Process<'w> {
+    runner: Runner<'w, TokioRuntime, StubCustody>,
     vault: Vault,
     journal: StoreJournal,
 }
 
-fn start(w: &World) -> Process {
-    let runner =
-        block_on(Runner::load(w.db.connect(), CELL, w.custody.clone())).unwrap_or_else(|e| {
-            panic!("the runner did not load: {e}");
-        });
+fn start(w: &World) -> Process<'_> {
+    let runner = block_on(Runner::load(w.db.connect(), CELL, &w.custody)).unwrap_or_else(|e| {
+        panic!("the runner did not load: {e}");
+    });
     let (_, sealer) = runner.service_keys().unwrap().into_service_keys().unwrap();
     let mut vc = w.db.connect();
     let vault = block_on(store::load(&mut vc, &sealer, CELL, &PINNED)).unwrap();
@@ -308,7 +307,7 @@ fn start(w: &World) -> Process {
     }
 }
 
-impl Process {
+impl Process<'_> {
     fn register(&mut self, tuple: &[u8]) -> Person {
         block_on(
             self.runner
@@ -444,7 +443,7 @@ fn match_keys(w: &World, sets: &[&KeystoreRows]) -> Vec<[u8; 32]> {
 /// the live identities open and match.
 fn check_after(
     w: &World,
-    p: &Process,
+    p: &Process<'_>,
     before: &KeystoreRows,
     erased: (Person, &[u8], [u8; 32]),
     live: &[(Person, &[u8])],
