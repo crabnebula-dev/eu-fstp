@@ -732,3 +732,55 @@ Written by lane L13 before its code, on Daniel's decision of 2026-11-21 to build
 | Not built | A seal count for `F(X)` (ADR-004 part 1 "Seal-count limit"). Erasure of the facts under the shared `Fact` key. An erasure route from the cell |
 
 Tests, written before the code: `i81_erased_identity_facts_unreadable_from_live_store_snapshot_and_backup`, `r_ky_02_live_identity_facts_open_after_erasure_and_restart`, `adr004_identity_registration_is_idempotent` and `i81_start_refuses_shared_key_identity_facts` (over PostgreSQL, in `crates/fstp-vault/tests/identity_facts_pg.rs`). `i81_unregistered_identity_facts_refused_at_intake`, `i81_identity_facts_sealed_for_the_bound_identity`, `adr004_identity_binding_is_idempotent_and_never_moves_an_account` and `i81_erased_identity_unbinds_its_accounts` (`crates/fstp-vault/tests/identity_facts.rs`) and the property `i81_prop_erased_write_keeps_epochs_and_drops_its_fact` (`crates/fstp-vault-core/tests/i81_erased_write.rs`) run without a database. The route itself runs over mutual TLS with a witness in `adr004_vault_registers_an_identity_on_the_internal_route` (`crates/fstp-vault/tests/vault_chain.rs`). Built by lane L13 on 2026-11-21 as written above.
+
+## Decided by Daniel, 2026-11-21: lane L13's open points
+
+- **Identity fact kinds.** Only kinds 14 and 17 are sealed under `F(X)` and refused for an unregistered account. Kinds 1 to 13, 15, 16 and 18 stay under the shared `Fact` key. Decided by Daniel on 2026-11-21.
+- **Old facts.** `fstp-vault serve` refuses to start while an identity fact is sealed under the shared `Fact` key, and such a pilot vault is recreated. Decided by Daniel on 2026-11-21.
+- **Left open, recorded.** `Vault::take_fact` stays the library seam of the test world. A seal count for `F(X)`, erasure of the facts under the shared `Fact` key and an erasure route from the cell stay not built.
+- **Registration at verification.** The cell registers the identity at identity verification: when the vault accepts an applicant's identity verification, the cell calls `register_identity` with the account and the attribute tuple. Retries are idempotent, and a failed registration never leaves a verification half done without a retry path. Lane L13b's reading is below.
+- **Registrar reconnect.** When the registrar's keys connection drops, the vault takes the keystore lock again on a new connection. If another process holds it, the vault stops serving and says so. Lane L13b's reading is below.
+
+## Written by lane L13b `prod/identity-registration`, 2026-11-21: registration at verification and the registrar's lock
+
+Written by lane L13b before its code. Every row is interim, pending Daniel, unless it says otherwise.
+
+### The attribute tuple per method (Q17)
+
+| Method | Tuple |
+| --- | --- |
+| Every method | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8 bytes`, in this order: family names, given names, date of birth as `YYYY-MM-DD`, and the ISO 3166-1 alpha-3 code of the state that issued the identity evidence. The method is not part of the tuple, so one person verified by two methods has one identity |
+| `manual` (R-ID-02) | The four fields as printed on the checked document, entered by the recorder. No document number and no image enter the tuple, as R-ID-02 forbids storing them |
+| EUDI (M4, not built) | The same four fields from the person identification data. Which attribute of the presentation fills each field is open |
+| Normalisation | Leading and trailing spaces are removed and inner runs of spaces become one. No case folding and no Unicode normalisation are applied yet: two spellings of one name give two identities, which over-separates and never merges two persons. Open for Daniel, with `TODO(legal)` for the data minimisation basis of the four fields |
+
+### Where the tuple travels: a conflict, stopped for Daniel
+
+Daniel's decision has the cell call `register_identity` with the attribute tuple. Two higher sources say the application never receives identity attributes:
+
+- `SPEC/03-architecture/overview.md`, "Operations other than queries" (decided 2026-10-28): "The application writes only facts that carry no identity attributes", and the browser sends attributes to the vault origin directly, "So the application never receives them (I-17, NOTE 6)".
+- ADR-008, "Where the outcome travels": the recorder enters the verification outcome on the vault origin under a `VerificationRecorded` write ticket, and "No identity attribute enters the application".
+
+No path accepts a verification in production today either. The cell issues the `VerificationRecorded` ticket (`POST /api/v1/verifications`), but the vault origin decodes no kind 6 write, and the cell's vault intake (ADR-026) is refused as `OracleDown`. Lane L13b therefore builds no transport of the tuple. The options for Daniel:
+
+- (A) The cell carries the tuple as a `VaultBound` value, never read, stored or logged, from a recorder route of the cell to `POST /v1/identity`. The overview and ADR-008 change to say so.
+- (B) The recorder enters the tuple with the outcome on the vault origin under the ticket the cell already issues. The vault registers the identity as it accepts the verification, and the cell never holds the tuple. Nothing in the SPEC changes. Proposed by lane L13b.
+
+### What lane L13b builds for either option
+
+| Topic | Reading |
+| --- | --- |
+| Verification with registration | `fstp_vault::erasure::Runner::record_verification(verifier, account, record, tuple)`. It refuses a recorder who verifies their own account or an account of their own identity (ADR-008 rules 1 and 2) before anything is written. It then registers the account (`register_account`), and only then writes the `VerificationRecorded` fact, whose identity is the registered one. A verification is never recorded for an unregistered account |
+| Retry | Each step is idempotent. A failure after the registration leaves a registered account with no verification, and the same call again writes the verification. A call for an account whose newest facts already show it verified as that identity writes nothing. So a retry always completes, and never writes twice |
+| Bank details after verification | A verified account is registered, so its bank details and hardship evidence are taken and sealed under `F(X)` |
+
+### The registrar's keystore lock
+
+| Topic | Reading |
+| --- | --- |
+| Watch | The serving vault probes the registrar's keys connection every 5 seconds with `SELECT 1`, under the registrar's lock. The PostgreSQL advisory lock lives exactly as long as that session |
+| Reconnect | On a failed probe, or a registration whose keys connection failed, the vault opens a new keys connection and calls `pg_try_advisory_lock` on it. If it gets the lock, it reads the keystore rows again. Rows equal to the ones it holds keep it serving on the new connection. A database that cannot be reached is tried again at the next probe, and registrations answer 503 meanwhile |
+| Fail closed | If another process holds the lock, or the rows changed while the lock was free, the vault stops serving. Every request on both listeners answers 503, the log line `{"event":"serving_stopped","rule":"I-81"}` is written, and `fstp-vault` drains and exits with status 1. Its in-memory keys may then be stale against an erasure that ran meanwhile, which only a restart resolves |
+| Window | Between the drop and the next probe, another process may take the lock. An erasure that runs in that window ends the serving vault at its next probe. A fact the vault sealed meanwhile for the erased identity is sealed under a key that the erasure destroyed, so it stays unreadable (I-81) |
+
+Tests, written before the code: `r_id_02_verification_registers_before_it_records_and_retries` and `r_id_02_recorder_never_registers_their_own_identity` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `i81_vault_retakes_the_keystore_lock_after_its_connection_drops` and `i81_vault_stops_serving_when_another_process_takes_the_lock` (`crates/fstp-vault/tests/vault_chain.rs`); `r_nf_02_serving_stopped_is_one_json_line` (`crates/fstp-obs`).
