@@ -206,10 +206,18 @@ impl Custody for StubCustody {
 struct StoreJournal {
     client: Pg,
     sealer: AeadSealer,
+    /// Fails the next commit that writes a verification, once.
+    fail_verification: bool,
 }
 
 impl Journal for StoreJournal {
     async fn commit(&mut self, entries: &[JournalEntry], _now: i64) -> Result<(), VaultError> {
+        let verification = entries.iter().any(|e| {
+            matches!(e, JournalEntry::Written { fact: Fact::VerificationRecorded { .. }, .. })
+        });
+        if verification && std::mem::take(&mut self.fail_verification) {
+            return Err(VaultError::Unavailable("a test journal failure"));
+        }
         store::persist(&mut self.client, &self.sealer, entries).await
     }
 }
@@ -279,7 +287,11 @@ fn start(w: &World) -> Process<'_> {
     Process {
         runner,
         vault,
-        journal: StoreJournal { client: vc, sealer },
+        journal: StoreJournal {
+            client: vc,
+            sealer,
+            fail_verification: false,
+        },
         seq: 1000,
     }
 }
@@ -707,4 +719,113 @@ fn i81_start_refuses_shared_key_identity_facts() {
         "I-81: a shared-key bank detail passed the start check"
     );
     block_on(c.close()).unwrap();
+}
+
+fn record(at: i64) -> fstp_vault_core::fact::VerificationRecord {
+    use fstp_vault_core::fact::{Check, DocumentType, VerificationMethod, VerificationRecord};
+    VerificationRecord {
+        method: VerificationMethod::Manual,
+        document_type: DocumentType::Passport,
+        checks: [Check::DocumentAuthentic, Check::PhotoMatch]
+            .into_iter()
+            .collect(),
+        at,
+        verifier: WireAccount(0),
+    }
+}
+
+/// A synthetic recorder account.
+const RECORDER: u128 = 900;
+
+impl Process<'_> {
+    fn verify(&mut self, verifier: u128, account: u128, tuple: &[u8]) -> Result<Person, VaultError> {
+        block_on(self.runner.record_verification(
+            &mut self.vault,
+            &mut self.journal,
+            WireAccount(verifier),
+            WireAccount(account),
+            record(NOW),
+            tuple,
+            NOW,
+        ))
+    }
+}
+
+/// R-ID-02, ADR-004 record of lane L13b "Verification with
+/// registration" and "Retry": a verification registers the account
+/// before it records the fact. When the fact's write fails, the account
+/// is registered and unverified, and the same call again completes the
+/// verification. A third call writes nothing. The account's bank details
+/// are then taken and sealed for its identity, also after a restart.
+#[test]
+fn r_id_02_verification_registers_before_it_records_and_retries() {
+    let w = genesis();
+    let mut p = start(&w);
+    let kind_6 = "SELECT count(*) FROM vault.fact WHERE kind = 6";
+    let bindings = "SELECT count(*) FROM vault.identity_account";
+    p.journal.fail_verification = true;
+    assert!(p.verify(RECORDER, A_ACCOUNT, ALICE).is_err());
+    assert_eq!(count(&w, bindings), 1, "the registration did not come first");
+    assert_eq!(count(&w, kind_6), 0);
+    let a = p.vault.registered(WireAccount(A_ACCOUNT)).unwrap();
+    assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1);
+    assert_eq!(
+        p.vault.state().latest().person_of(WireAccount(A_ACCOUNT)),
+        Some(a)
+    );
+    assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1, "a repeat wrote a second verification");
+    assert_eq!(count(&w, bindings), 1);
+    // The verification is provisional until the cell acknowledges it.
+    let epoch = p.vault.state().provisional().unwrap().epoch();
+    let r = p.vault.internal(
+        &VaultRequest::Ack {
+            epoch,
+            ledger_seq: 1,
+            link: [7; 32],
+        },
+        NOW,
+    );
+    assert_eq!(r, VaultResponse::Acked);
+    p.commit();
+    p.identity_facts(A_ACCOUNT);
+    let rows = fact_rows(&w);
+    assert!(
+        rows.iter()
+            .filter(|r| r.kind == 14 || r.kind == 17)
+            .all(|r| r.dek == a.0.to_be_bytes()),
+        "I-81: a verified account's identity fact is not sealed for its identity"
+    );
+    drop(p);
+    let mut p = start(&w);
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1);
+    assert!(p.vault.state().latest().bank_of(grant_of(A_ACCOUNT)).is_some());
+}
+
+/// R-ID-02, ADR-008 rules 1 and 2: a recorder never verifies their own
+/// account, nor an account of their own identity, and such a request
+/// writes nothing: no identity, no tuple, no binding and no fact.
+#[test]
+fn r_id_02_recorder_never_registers_their_own_identity() {
+    let w = genesis();
+    let mut p = start(&w);
+    let tuples = "SELECT count(*) FROM keystore.identity_tuple";
+    let bindings = "SELECT count(*) FROM vault.identity_account";
+    assert!(p.verify(A_ACCOUNT, A_ACCOUNT, ALICE).is_err(), "rule 1");
+    assert_eq!(count(&w, tuples), 0);
+    assert_eq!(count(&w, bindings), 0);
+    // The recorder's own identity is Alice's.
+    let a = p.register(RECORDER, ALICE).unwrap();
+    let keys = read_rows(&w);
+    assert!(p.verify(RECORDER, B_ACCOUNT, ALICE).is_err(), "rule 2");
+    assert_eq!(read_rows(&w), keys);
+    assert_eq!(count(&w, bindings), 1);
+    assert_eq!(p.vault.registered(WireAccount(B_ACCOUNT)), None);
+    assert_eq!(p.vault.registered(WireAccount(RECORDER)), Some(a));
+    assert_eq!(count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"), 0);
+    // Another person is verified by the same recorder.
+    assert!(p.verify(RECORDER, B_ACCOUNT, BRUNO).is_ok());
 }
