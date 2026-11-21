@@ -655,6 +655,86 @@ pub fn erase_identity(cfg: &VaultConfig, account: u128) -> Result<(), VaultError
         .map(|_| ())
 }
 
+/// `fstp-vault verify-first-admin <account> <identity file>` over
+/// `custody` (ADR-008 and ADR-004 record of lane L13b, decided by Daniel
+/// on 2026-11-21): records the verification of a first admin with the
+/// operator as verifier of record, and registers the identity. The vault
+/// must be stopped: the keystore lock refuses the command while it
+/// serves. A stored erasure batch completes first. The vault takes the
+/// verification to the cell when it serves again.
+///
+/// # Errors
+///
+/// [`VaultError::Config`] for a refused identity file, and
+/// [`VaultError::Conflict`] while the vault runs or once the first admins
+/// are verified. The first step that fails otherwise.
+pub async fn verify_first_admin_with<R: Runtime, C: Custody>(
+    rt: &R,
+    cfg: &VaultConfig,
+    custody: &C,
+    account: u128,
+    file: &[u8],
+) -> Result<(), VaultError> {
+    let entry = crate::codec::decode_identity_file(file)?;
+    let creds = Credentials::read(&cfg.credentials_dir)?;
+    check_start(rt, cfg, &creds).await?;
+    let mut client = keys_client(rt, cfg, &creds).await?;
+    lock_keystore(&mut client).await?;
+    let mut runner = Runner::load(client, cfg.cell, custody).await?;
+    let (mut vault, mut journal) = erasure_journal(
+        rt,
+        cfg,
+        &creds,
+        runner.service_keys()?,
+        runner.identity_keys(),
+    )
+    .await?;
+    let done = async {
+        runner
+            .run_to_idle(&mut vault, &mut journal, now_us())
+            .await?;
+        runner
+            .verify_first_admin(
+                &mut vault,
+                &mut journal,
+                fstp_vault_proto::WireAccount(account),
+                &entry,
+                now_us(),
+            )
+            .await
+            .map(|_| ())
+    }
+    .await;
+    let _ = journal.client.close().await;
+    let _ = runner.into_client().close().await;
+    done
+}
+
+/// `fstp-vault verify-first-admin` with the vault's `fstp-keyd` entry. The
+/// file is read whole, at most [`crate::codec::MAX_IDENTITY_FILE`] bytes.
+///
+/// # Errors
+///
+/// As [`verify_first_admin_with`], and [`VaultError::Config`] for a file
+/// that cannot be read.
+pub fn verify_first_admin(cfg: &VaultConfig, account: u128, file: &Path) -> Result<(), VaultError> {
+    use std::io::Read as _;
+    let f = std::fs::File::open(file).map_err(|_| cfg_err("identity file"))?;
+    let limit = u64::try_from(crate::codec::MAX_IDENTITY_FILE)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    f.take(limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| cfg_err("identity file"))?;
+    let custody = keyd(cfg)?;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    rt.block_on(
+        async move { verify_first_admin_with(&task_rt, cfg, &custody, account, &bytes).await },
+    )
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -666,6 +746,9 @@ pub enum Command {
     /// or without the dashes of the UUID form (ADR-004 record of lane
     /// L11).
     EraseIdentity(u128),
+    /// `verify-first-admin <account> <identity file>`: the technical admin
+    /// verifies a first admin on the host (ADR-008, Daniel, 2026-11-21).
+    VerifyFirstAdmin(u128, PathBuf),
 }
 
 /// The account id of `text`: 32 hex digits, with or without the four
@@ -701,6 +784,9 @@ pub fn parse_args(args: &[String]) -> Result<Command, VaultError> {
         [cmd, account] if cmd == "erase-identity" => account_of(account)
             .map(Command::EraseIdentity)
             .ok_or(cfg_err("arguments")),
+        [cmd, account, file] if cmd == "verify-first-admin" => account_of(account)
+            .map(|a| Command::VerifyFirstAdmin(a, PathBuf::from(file)))
+            .ok_or(cfg_err("arguments")),
         _ => Err(cfg_err("arguments")),
     }
 }
@@ -716,6 +802,7 @@ pub fn run_command(command: &Command) -> Result<(), VaultError> {
         Command::Serve => serve(&cfg),
         Command::InitKeys(out) => init_keys(&cfg, out),
         Command::EraseIdentity(account) => erase_identity(&cfg, *account),
+        Command::VerifyFirstAdmin(account, file) => verify_first_admin(&cfg, *account, file),
     }
 }
 
@@ -740,6 +827,31 @@ mod tests {
             &["serve", "x"],
             &["init-keys", "a", "b"],
             &["seed", "facts.json"],
+        ] {
+            assert_eq!(parse_args(&s(bad)), Err(VaultError::Config("arguments")));
+        }
+    }
+
+    /// ADR-008, decided by Daniel on 2026-11-21: `verify-first-admin` takes
+    /// one account id and one file path, and refuses any other form.
+    #[test]
+    fn adr008_verify_first_admin_takes_an_account_and_a_file() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        let id = 0x0123_4567_89ab_cdef_0123_4567_89ab_cdef_u128;
+        assert_eq!(
+            parse_args(&s(&[
+                "verify-first-admin",
+                "01234567-89ab-cdef-0123-456789abcdef",
+                "/root/admin.json"
+            ]))
+            .unwrap(),
+            Command::VerifyFirstAdmin(id, PathBuf::from("/root/admin.json"))
+        );
+        for bad in [
+            &["verify-first-admin"][..],
+            &["verify-first-admin", "0123"],
+            &["verify-first-admin", "0123", "/root/admin.json"],
+            &["verify-first-admin", "0123456789abcdef0123456789abcdef"],
         ] {
             assert_eq!(parse_args(&s(bad)), Err(VaultError::Config("arguments")));
         }

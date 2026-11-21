@@ -111,6 +111,15 @@ impl From<TicketRefusal> for OriginRefusal {
     }
 }
 
+/// The verifier of record of a verification the technical admin records on
+/// the host (`fstp-vault verify-first-admin`, ADR-008, Daniel, 2026-11-21):
+/// the operator, as an account id no cell assigns. Interim, pending Daniel.
+pub const OPERATOR_VERIFIER: WireAccount = WireAccount(u128::MAX);
+
+/// How many accounts the operator verifies on the host: the first admins
+/// (ADR-004 record of lane L13b, row "Limit"). Interim, pending Daniel.
+pub const MAX_OPERATOR_VERIFIED: usize = 2;
+
 /// Whether `f` is an identity fact: a fact the registered identity of its
 /// account seals under its fact key `F(X)`, which the erasure of that
 /// identity destroys (ADR-004 record of lane L13, row "Identity fact
@@ -412,6 +421,9 @@ pub struct Vault {
     /// The registered identity of each account (ADR-004 record of lane
     /// L13). An erased identity leaves it.
     accounts: BTreeMap<WireAccount, Person>,
+    /// The accounts the operator verified on the host (ADR-008, Daniel,
+    /// 2026-11-21): every write of a verification by [`OPERATOR_VERIFIER`].
+    operator_verified: BTreeSet<WireAccount>,
     journal: Vec<JournalEntry>,
 }
 
@@ -462,6 +474,7 @@ impl Vault {
             .and_then(|e| e.checked_add(1))
             .ok_or(unavailable)?;
         let sealed_for = self.sealed_for(&fact);
+        self.note_operator(&fact);
         let events = fstp_vault_core::write_fact(&mut self.state, fact.clone(), now)?;
         let affected = match self.state.provisional() {
             Some(p) if p.epoch() == epoch => p.affected().clone(),
@@ -547,6 +560,7 @@ impl Vault {
         fact: Fact,
         at: i64,
     ) -> Result<Vec<VaultEvent>, CoreError> {
+        self.note_operator(&fact);
         fstp_vault_core::write_fact(&mut self.state, fact, at)
     }
 
@@ -700,6 +714,22 @@ impl Vault {
     /// match key order.
     pub fn identity_keys(&self) -> impl Iterator<Item = ([u8; MATCH_KEY_LEN], Person)> + '_ {
         self.identities.iter().map(|(k, p)| (*k, *p))
+    }
+
+    /// Keeps the account of an operator verification.
+    fn note_operator(&mut self, fact: &Fact) {
+        if let Fact::VerificationRecorded {
+            account, record, ..
+        } = fact
+            && record.verifier == OPERATOR_VERIFIER
+        {
+            self.operator_verified.insert(*account);
+        }
+    }
+
+    /// The accounts the operator verified on the host, in id order.
+    pub fn operator_verified(&self) -> &BTreeSet<WireAccount> {
+        &self.operator_verified
     }
 
     /// The registered identity of `account`, if a registration binds it

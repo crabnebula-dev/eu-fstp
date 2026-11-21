@@ -10,11 +10,15 @@
 //!   spelling;
 //! - the identity tuple of an accepted body starts with its label and is
 //!   the same for the decoded and the re-decoded body.
+//! - the host's identity file decoder (`decode_identity_file`), which
+//!   takes any JSON spelling, never panics, and an accepted file
+//!   re-encodes to a body the strict decoder takes.
 
 #![no_main]
 
 use fstp_vault::codec::{
-    TUPLE_LABEL, decode_verification_write, encode_verification_write, identity_tuple,
+    TUPLE_LABEL, decode_identity_file, decode_verification_write, encode_verification_write,
+    identity_tuple,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -32,5 +36,9 @@ fuzz_target!(|data: &[u8]| {
         assert!(tuple.starts_with(TUPLE_LABEL), "the tuple lost its label");
         let again = decode_verification_write(&bytes).expect("the re-encoding decodes");
         assert_eq!(identity_tuple(&again.identity), tuple);
+    }
+    if let Ok(e) = decode_identity_file(data) {
+        let bytes = encode_verification_write(&e).expect("an accepted file re-encodes");
+        assert_eq!(decode_verification_write(&bytes).as_ref(), Ok(&e));
     }
 });

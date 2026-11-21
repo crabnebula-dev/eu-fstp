@@ -1488,6 +1488,56 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
     }
 }
 
+impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
+    /// Verifies a first admin on the host (`fstp-vault verify-first-admin`,
+    /// ADR-008 and ADR-004 record of lane L13b, decided by Daniel on
+    /// 2026-11-21): [`Runner::record_verification`] of `account` with the
+    /// entry `entry`, with the operator as verifier of record. At most
+    /// [`crate::origin::MAX_OPERATOR_VERIFIED`] accounts are verified this
+    /// way. A repeat for an account verified this way before completes or
+    /// changes nothing, and does not count again.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Conflict`] once the first admins are verified, and the
+    /// errors of [`Runner::record_verification`]. Nothing is written then.
+    pub async fn verify_first_admin<J: Journal>(
+        &mut self,
+        vault: &mut Vault,
+        journal: &mut J,
+        account: WireAccount,
+        entry: &crate::codec::VerificationWrite,
+        now: i64,
+    ) -> Result<Person, VaultError> {
+        use crate::origin::{MAX_OPERATOR_VERIFIED, OPERATOR_VERIFIER};
+        let known = vault.operator_verified().contains(&account);
+        if !known && vault.operator_verified().len() >= MAX_OPERATOR_VERIFIED {
+            return Err(VaultError::Conflict("the first admins are verified"));
+        }
+        let record = fstp_vault_core::VerificationRecord {
+            method: entry.method,
+            document_type: entry.document_type,
+            checks: entry.checks.clone(),
+            at: now,
+            verifier: OPERATOR_VERIFIER,
+        };
+        let tuple = crate::codec::identity_tuple(&entry.identity);
+        let done = self
+            .record_verification(
+                vault,
+                journal,
+                OPERATOR_VERIFIER,
+                account,
+                record,
+                &tuple,
+                now,
+            )
+            .await;
+        zero(tuple);
+        done
+    }
+}
+
 /// The custody of a [`Registrar`]: it refuses every call. A registrar
 /// only registers identities, which needs no custody call once the seal
 /// key of the current epoch is open.

@@ -1093,3 +1093,109 @@ fn adr008_recorder_retry_completes_and_replay_is_refused() {
     let spaced = verification_write(RECORDER, B_ACCOUNT, "  Alpha  ", 2);
     assert_eq!(p.recorder_write(&spaced).unwrap(), a);
 }
+
+// ---------------------------------------------------------------------
+// The host command for the first admins (ADR-008 and ADR-004, decided by
+// Daniel on 2026-11-21).
+// ---------------------------------------------------------------------
+
+/// A hand-written identity file: spaces, line breaks and any member order.
+const ADMIN_FILE: &str = "{\n  \"method\": \"manual\",\n  \"document_type\": \"passport\",\n  \"checks\": [\"photo_match\", \"document_authentic\"],\n  \"identity\": {\n    \"family_names\": \"Alpha\",\n    \"given_names\": \"Synthetic\",\n    \"birth_date\": \"1990-02-28\",\n    \"issuing_state\": \"deu\"\n  }\n}\n";
+
+impl Process<'_> {
+    fn verify_first_admin(&mut self, account: u128, file: &str) -> Result<Person, VaultError> {
+        let entry = fstp_vault::codec::decode_identity_file(file.as_bytes())?;
+        block_on(self.runner.verify_first_admin(
+            &mut self.vault,
+            &mut self.journal,
+            WireAccount(account),
+            &entry,
+            NOW,
+        ))
+    }
+}
+
+/// ADR-008, decided by Daniel on 2026-11-21: the technical admin verifies
+/// a first admin on the host. The command registers the identity and
+/// records the verification with the operator as verifier of record. A
+/// repeat is idempotent. A second first admin is taken, a third account
+/// is refused, and the refusal writes nothing. The verified admin's
+/// identity then blocks a recorder verification of the same person by
+/// that admin (rule 2).
+#[test]
+fn adr008_host_verifies_the_first_admins() {
+    let w = genesis();
+    let mut p = start(&w);
+    let kind_6 = "SELECT count(*) FROM vault.fact WHERE kind = 6";
+    let a = p.verify_first_admin(A_ACCOUNT, ADMIN_FILE).unwrap();
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    assert_eq!(
+        p.vault.state().latest().person_of(WireAccount(A_ACCOUNT)),
+        Some(a)
+    );
+    assert_eq!(count(&w, kind_6), 1);
+    assert_eq!(p.verify_first_admin(A_ACCOUNT, ADMIN_FILE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1, "a repeat wrote a second verification");
+    let b = p
+        .verify_first_admin(B_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Bravo"))
+        .unwrap();
+    assert_ne!(a, b);
+    let keys = read_rows(&w);
+    assert!(
+        p.verify_first_admin(C_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Charlie"))
+            .is_err(),
+        "a third first admin was verified"
+    );
+    assert_eq!(read_rows(&w), keys);
+    assert_eq!(count(&w, kind_6), 2);
+    assert_eq!(p.vault.registered(WireAccount(C_ACCOUNT)), None);
+    // The limit survives a restart.
+    drop(p);
+    let mut p = start(&w);
+    assert!(
+        p.verify_first_admin(C_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Charlie"))
+            .is_err()
+    );
+    assert_eq!(
+        p.verify_first_admin(B_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Bravo"))
+            .unwrap(),
+        b
+    );
+}
+
+/// ADR-004 record of lane L13b, row "Identity file": the host file takes
+/// any JSON spelling of the recorder's members, and refuses a document
+/// number, a missing field and an oversized file.
+#[test]
+fn adr008_identity_file_takes_any_spelling_and_refuses_extras() {
+    use fstp_vault::codec::decode_identity_file;
+    let e = decode_identity_file(ADMIN_FILE.as_bytes()).unwrap();
+    assert_eq!(e.identity.issuing_state, "DEU", "the state is upper-cased");
+    assert!(
+        decode_identity_file(
+            ADMIN_FILE
+                .replace("\"method\"", "\"number\": \"X1\", \"method\"")
+                .as_bytes()
+        )
+        .is_err()
+    );
+    assert!(
+        decode_identity_file(
+            ADMIN_FILE
+                .replace("\"birth_date\": \"1990-02-28\",", "")
+                .as_bytes()
+        )
+        .is_err()
+    );
+    assert!(
+        decode_identity_file(
+            ADMIN_FILE
+                .replace("\"account\"", "")
+                .replace("{\n  \"method\"", "{\n  \"account\": \"5\", \"method\"")
+                .as_bytes()
+        )
+        .is_err()
+    );
+    let big = format!("{}{}", ADMIN_FILE, " ".repeat(5000));
+    assert!(decode_identity_file(big.as_bytes()).is_err());
+}

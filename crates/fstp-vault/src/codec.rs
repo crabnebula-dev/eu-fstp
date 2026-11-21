@@ -389,3 +389,39 @@ pub fn identity_tuple(a: &IdentityAttributes) -> Vec<u8> {
     }
     out
 }
+
+/// The largest identity file of `fstp-vault verify-first-admin`, in bytes.
+pub const MAX_IDENTITY_FILE: usize = 4 << 10;
+
+/// Decodes the identity file of `fstp-vault verify-first-admin` (ADR-004
+/// record of lane L13b, row "Identity file"): one JSON object with the
+/// members of the recorder's body, in any spelling, since a person writes
+/// it by hand. The issuing state is upper-cased. Fuzzed through
+/// `verification_write_decode`.
+///
+/// # Errors
+///
+/// [`VaultError::Config`] for a file over [`MAX_IDENTITY_FILE`] bytes, a
+/// file that is not JSON, or members outside the recorder's body. The
+/// error never quotes the file.
+pub fn decode_identity_file(bytes: &[u8]) -> Result<VerificationWrite, VaultError> {
+    let refused = VaultError::Config("identity file");
+    if bytes.len() > MAX_IDENTITY_FILE {
+        return Err(refused);
+    }
+    let mut v =
+        fstp_json::parse_with(bytes, &fstp_vault_proto::json::limits()).map_err(|_| refused)?;
+    // A hand-written list of checks may come in any order.
+    if let Some(Value::Array(a)) = v.as_object_mut().and_then(|o| o.get_mut("checks")) {
+        let mut items: Vec<Value> = a.iter().cloned().collect();
+        items.sort_by(|x, y| x.as_str().cmp(&y.as_str()));
+        *a = items.into_iter().collect();
+    }
+    if let Some(Value::Object(i)) = v.as_object_mut().and_then(|o| o.get_mut("identity"))
+        && let Some(Value::String(s)) = i.get_mut("issuing_state")
+    {
+        *s = s.trim().to_ascii_uppercase();
+    }
+    let canonical = json::to_canonical(&v).map_err(|_| refused)?;
+    decode_verification_write(&canonical).map_err(|_| refused)
+}
