@@ -17,18 +17,23 @@
 //! Readings of lane L4, pending Daniel (ADR-026 "Configuration"):
 //!
 //! - Step 1: onboarding and activation through `/app` cannot run on a
-//!   pilot cell. Its ledger holds no tenant part, since no control plane
-//!   records `TenantProvisioned` (D1). The file sets
-//!   `organisation_active`, so the ADR-021 port answers "active".
+//!   pilot cell yet. `fstp-cell provision-tenant` records its tenant part
+//!   (ADR-026 "Tenant provisioning", decided by Daniel on 2026-11-21), but
+//!   a provisioned pilot cannot be activated: no second admin joins the
+//!   tenant part, the tenant prober fails every probe, and no pilot vault
+//!   route verifies an admin (ADR-026 row "Organisation port until
+//!   onboarding runs", lane L12). So this test does not provision. The
+//!   file sets `organisation_active`, and the ADR-021 port answers
+//!   "active" for a ledger with no tenant part.
 //! - Step 3: magic links are off on a production cell unless a tenant
 //!   admin turns them on, so no magic-link session exists here. I-77 is
 //!   covered on the PostgreSQL cell by lanes L1 and L2.
 //! - Step 5: the binary's ledger keys stay in its own process, so this
 //!   test does not read the App chain. I-24 per call is covered by
 //!   `i24_every_api_call_leaves_one_chain_event` of lane L1.
-//! - Step 7: `fstp-cell first-admin` names no login email, so the first
-//!   admin cannot recover by email. A second tenant admin connects the
-//!   agent, and the first admin approves its recovery.
+//! - Step 7: `fstp-cell first-admin --email` records the first admin's
+//!   login email (ADR-026 "First admin email"). A second tenant admin
+//!   connects the agent, and the first admin approves its recovery.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -390,7 +395,8 @@ fn relayed(stack: &Stack, to: &str) -> usize {
 /// binary started from its configuration file (G1, G8, G10, G11).
 ///
 /// 1. Start (ADR-026, D4): the binary reaches `ready` from the file, after
-///    `fstp-cell first-admin` wrote the token halves. The first admin
+///    `fstp-cell first-admin --email` wrote the token halves and recorded
+///    the first admin's login email. The first admin
 ///    enrols a passkey through the invitation, and invites a second tenant
 ///    admin.
 /// 2. Connect (R-MC-01): `/mcp` without a token is 401 naming the
@@ -438,6 +444,13 @@ fn prod_mcp_e2e_binary_from_config_file() {
         .login(ADMIN_2, RefMethod::Passkey)
         .unwrap()
         .expect("the second admin's session");
+    // ADR-026 "First admin email" (decided by Daniel on 2026-11-21): the
+    // address `first-admin --email` recorded serves recovery from day one.
+    // The proof reaches the platform relay. The case stays open.
+    assert!(
+        client.recovery(FIRST_ADMIN).unwrap().is_some(),
+        "I-79: recovery by email did not reach the first admin's address"
+    );
 
     // Step 2.
     let r = mcp(cell, "", "tools/list", None, "");

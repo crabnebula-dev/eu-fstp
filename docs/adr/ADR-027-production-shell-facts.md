@@ -1,6 +1,6 @@
 # ADR-027: Facts of the production creator shell
 
-Status: Proposed. Drafted 2026-11-20 by lane L6 `prod/shell-facts` for gap G13 of `docs/handoff/production-mcp-design.md`. Every row is interim, pending Daniel. The rows were written before the code, as CLAUDE.md asks. It proposes one amendment of ADR-009 "Outbound destinations".
+Status: Accepted. Drafted 2026-11-20 by lane L6 `prod/shell-facts` for gap G13 of `docs/handoff/production-mcp-design.md`. The rows were written before the code, as CLAUDE.md asks. Decided by Daniel on 2026-11-21: every row below, as drafted, and its amendment of ADR-009 "Outbound destinations" (design section 2.4, decision 9). The open points at the end stay open.
 
 ## Context
 
@@ -15,7 +15,7 @@ Status: Proposed. Drafted 2026-11-20 by lane L6 `prod/shell-facts` for gap G13 o
 
 ## Decision
 
-| Topic | Interim choice | Basis |
+| Topic | Decision (decided by Daniel on 2026-11-21) | Basis |
 | --- | --- | --- |
 | Q35 query set | Two domain queries join `fstp_domain::oracle::Query` and the vault protocol, codes 13 and 14: `ClassesDefined { programme, classes }` and `ProximityListsDeclared { programme, lists }`. Each answers one bit and names no account | Q35 A; NOTE 8 |
 | `ClassesDefined` | Yes when every class of the set appears on at least one effective affiliation of the vault's view. The vault holds no class register, so a class with no declared member counts as unknown. The empty set answers yes | NOTE 8; interim reading |
@@ -36,7 +36,7 @@ Status: Proposed. Drafted 2026-11-20 by lane L6 `prod/shell-facts` for gap G13 o
 | Data protection texts | The tenant's own notice when its settings name one. The platform default is `TODO(legal)` in `fstp-tenant`, so the shell supplies no Guide while it is used, and the publication is refused with I-52 | I-52; `TODO(legal)` |
 | Inference record | A publication through the API core reads the latest `InferenceConfigRecorded` of the ledger's tenant part. The shell adds nothing | R-LA-05 |
 
-## Amendment of ADR-009, proposed
+## Amendment of ADR-009, accepted by Daniel on 2026-11-21
 
 `Destination` of `fstp-cell` gains one member:
 

@@ -4602,7 +4602,12 @@ fn start_cell(
         },
         Some(ext) => {
             drop((parts, options));
-            let token = ext.first_admin().and_then(|t| ext.start().map(|()| t));
+            // ADR-026 "First admin email": the binary records the first
+            // admin's synthetic login email itself.
+            let email = login_email_of(&host, fstp_domain_testkit::r#gen::roster::ADMIN);
+            let token = ext
+                .first_admin(&email)
+                .and_then(|t| ext.start().map(|()| t));
             match token {
                 Ok(t) => (
                     None,
@@ -4702,8 +4707,8 @@ fn start_cell(
     };
     // The first admin's login email, as the tenant contact's address that
     // provisioning names (lane m3/login-m2http). Synthetic. An external
-    // cell keeps none: `fstp-cell first-admin` names no address (ADR-026
-    // "First admin"), so its first admin has no login email.
+    // cell recorded it already, through `fstp-cell first-admin --email`
+    // (ADR-026 "First admin email").
     let first_admin = {
         use fstp_auth::ceremony::{split_token_digest, token_digest};
         use fstp_auth::codec::Token;

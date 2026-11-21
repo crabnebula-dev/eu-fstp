@@ -121,6 +121,9 @@ pub use driver::{
     CatchUpError, CreatorDecider, Decider, DomainDecider, Engine, ExecError, MAX_ATTEMPTS,
     OpenError, RESERVED_COMMAND_PREFIX, hold_appended, is_reserved_command_id,
 };
+/// The value types of a [`Provisioning`] record, so a cell that records one
+/// names them through this crate (ADR-026 "Tenant provisioning").
+pub use fstp_tenant::{AgreementVersions, CellKind};
 pub use tenant::{Provisioning, TenantEntry, TenantFacts, TenantPart, TenantRequest};
 
 // ---------------------------------------------------------------------------

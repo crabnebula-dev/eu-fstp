@@ -41,6 +41,21 @@ pub enum TenantCommand {
         /// on a self-hosted cell.
         token_digest: [u8; 32],
     },
+    /// Provisioning records the genesis of the tenant part of the ledger,
+    /// `fstp_engine::TenantEntry::Provisioned`, on a cell that runs no
+    /// control plane (`fstp-cell provision-tenant`, ADR-026 "Tenant
+    /// provisioning", decided by Daniel on 2026-11-21). Only the system
+    /// task `SystemTask::Provisioning` issues it, with the cell's
+    /// deployment mode as its input, which gives the kind of cell. A
+    /// ledger that holds a tenant part refuses it.
+    ProvisionTenant {
+        /// The first tenant admin: an account no record names, or the
+        /// cell's own first admin, enrolled or invited.
+        first_admin: AccountId,
+        /// The agreement versions the tenant accepted (Q22). Always `None`
+        /// on a self-hosted cell.
+        agreements: Option<fstp_engine::AgreementVersions>,
+    },
     /// A tenant admin issues an invitation for a new account, with a
     /// step-up (design section 8.3 ceremony 1, `authentication.md` "First
     /// passkey"). The gate classes it as `ManagementRoleChange`, since an
