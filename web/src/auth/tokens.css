@@ -311,6 +311,27 @@ svg a:focus-visible .node-shape { stroke: var(--color-focus); stroke-width: 4; }
 .topbar { max-width: var(--content-max); margin: 0 auto; padding: var(--space-2) var(--space-4); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
 .brand { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: var(--weight-bold); color: var(--color-text-1); text-decoration: none; min-height: var(--target-min); }
 .brand-mark { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: var(--radius-sm); background: var(--color-brand); color: var(--color-on-brand); font-size: var(--text-sm); }
+/* ADR-030: tenant and programme logos. Each image is drawn for one mode,
+   or for any mode when the tenant set one logo only. The dark one shows
+   under the same selectors as the dark tokens. */
+.brand-logo { display: block; height: 2rem; width: auto; max-width: 12rem; object-fit: contain; }
+.brand-logo--dark { display: none; }
+:root[data-theme="dark"] .brand-logo--light { display: none; }
+:root[data-theme="dark"] .brand-logo--dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .brand-logo--light { display: none; }
+  :root:not([data-theme="light"]) .brand-logo--dark { display: block; }
+}
+/* ADR-030: the EU emblem and funding acknowledgement slot of the footer. */
+.eu-funding { display: flex; align-items: center; gap: var(--space-2); flex-basis: 100%; }
+.eu-emblem { height: 2.5rem; width: auto; }
+/* ADR-030: a chosen theme also sets the native controls and scrollbars. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+/* ADR-030: the theme switch of the sidebar foot. */
+.theme-switch { border: 0; margin: 0; padding: var(--space-2) var(--space-3) 0; display: flex; flex-wrap: wrap; gap: 0 var(--space-3); font-size: var(--text-sm); color: var(--color-text-2); }
+.theme-switch legend { padding: 0; font-weight: var(--weight-bold); }
+.theme-option { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--target-min); }
 .main-nav ul { display: flex; flex-wrap: wrap; gap: var(--space-1); list-style: none; padding: 0; margin: 0; }
 .main-nav a { display: inline-flex; align-items: center; min-height: var(--target-min); padding: 0 var(--space-3); color: var(--color-text-1); text-decoration: none; border-bottom: 3px solid transparent; }
 .main-nav a:hover { color: var(--color-brand-text); }

@@ -365,6 +365,7 @@ fn r_pb_03_proposal_text_never_reaches_a_public_output() {
     let chrome = Chrome {
         stylesheet: None,
         funder: None,
+        logos: Default::default(),
     };
     let mut pages = vec![
         PublicPage::Programme,

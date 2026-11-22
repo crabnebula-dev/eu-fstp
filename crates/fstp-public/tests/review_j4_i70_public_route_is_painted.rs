@@ -28,6 +28,7 @@ fn review_j4_i70_served_public_route_is_painted() {
     let served = Chrome {
         stylesheet: None,
         funder: None,
+        logos: Default::default(),
     };
     let html = render_html(
         &sample_view(true),

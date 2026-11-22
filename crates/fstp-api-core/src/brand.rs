@@ -182,3 +182,22 @@ impl ToJson for LogosView {
         Value::Object(o)
     }
 }
+
+/// The logos a public page of `programme` shows (ADR-030 section 2): the
+/// tenant's and the programme's, each dark one only when it differs from
+/// the light one, and the platform's EU emblem once it holds the file.
+pub fn public_logos(ts: Option<&TenantState>, programme: ProgrammeId) -> fstp_public::PublicLogos {
+    let distinct = |p: LogoPaths| {
+        let dark = p.dark.filter(|d| p.light.as_ref() != Some(d));
+        (p.light, dark)
+    };
+    let (tenant_light, tenant_dark) = distinct(paths_of(ts, LogoOwner::Tenant));
+    let (programme_light, programme_dark) = distinct(paths_of(ts, LogoOwner::Programme(programme)));
+    fstp_public::PublicLogos {
+        tenant_light,
+        tenant_dark,
+        programme_light,
+        programme_dark,
+        emblem: EU_EMBLEM_PNG.map(|_| "/brand/eu-emblem.png".to_owned()),
+    }
+}
