@@ -53,7 +53,7 @@ Notes on the members:
 - `listen.health` must be a loopback address.
 - `assets_dir` holds `auth/` (the compiled auth pages, with `shell.html` and the stylesheets beside them) and `app/` (the packed journey UI with its `asset-manifest.json`). Without it, the cell serves the API, `/mcp` and the OAuth endpoints with an empty `/app` page and no sign-in pages.
 - `mail.address` may pin the relay's socket address in place of a DNS lookup. Interim, pending Daniel: the public address and port 465 rules of ADR-018 then do not apply. Leave it out for a public relay.
-- `shell` names the DNS resolver, the DKIM selector and the platform address the onboarding checks and the Guide use (ADR-027). The Domains and email step checks the SPF, DKIM and DMARC records of the domain the admin types, with this DKIM selector. The Channels step checks that the `mail` relay greets the cell. The resolver listens on TCP port 53, or on any port on a loopback address (interim, pending Daniel).
+- `shell` names the DNS resolver, the DKIM selector and the platform address the onboarding checks and the Guide use (ADR-027). The Domains and email step checks the SPF, DKIM and DMARC records of the domain the admin types, with this DKIM selector. The Channels step checks that the `mail` relay greets the cell. The resolver listens on TCP port 53. Only tests and the devstack use a loopback resolver on another port (lead reading, 2026-11-22).
 - The member `organisation_active` is gone. A file that names it is refused. The organisation opens only through onboarding (ADR-026 record of lane L18).
 
 The credentials directory holds these files, readable by the cell's OS user only:
