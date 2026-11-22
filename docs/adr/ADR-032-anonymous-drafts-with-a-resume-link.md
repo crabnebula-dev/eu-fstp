@@ -96,7 +96,7 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 ## Open points for Daniel
 
 1. **An emailed code instead of a link.** The signup proof is a link today. A short typed code needs its own attempt limit. Interim: the link only.
-2. **Offering a passkey later.** The signup page offers a passkey beside "Finish registration". Afterwards, an email-only account gets its first passkey through recovery (`authentication.md` "First passkey"), since adding a passkey is high risk and a magic-link session never adds one. Interim: no separate prompt after registration.
+2. **Offering a passkey later (stopped, conflict with I-78).** The lead asked on 2026-11-22 for a dismissible "Add a passkey" prompt after sign-in, through the normal `me.add_passkey` flow and not recovery. That flow cannot complete for an email-only account. I-78 reads: "No high-risk action completes without a phishing-resistant step-up within P-71." `authentication.md` lists "Adding a passkey" as high-risk, says "A magic-link session never adds one", and "An account without a phishing-resistant method cannot perform a high-risk action. It gets a passkey only through a ceremony under First passkey". An email-only account has no phishing-resistant method for the step-up, so the prompt was not built. Options for Daniel: (a) the prompt opens the recovery ceremony `EmailThenPasskey`, which `authentication.md` names for this case; (b) a fourth first-passkey ceremony for email-only accounts, which needs an amendment of `authentication.md` and a decision on I-78; (c) the passkey offer at signup only, as built. Interim: (c).
 
 ## Record
 

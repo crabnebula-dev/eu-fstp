@@ -28,7 +28,7 @@ Passkeys and the EUDI Wallet count as phishing-resistant. OPAQUE and magic links
 An account's first passkey is added only inside one of three logged ceremonies (decided 2026-10-28):
 
 1. An invitation, issued by a tenant admin with a step-up, or by provisioning for a cell's first tenant admin.
-2. Self-registration of a new Receiving account, after email proof in the same ceremony. A passkey enrolled at self-registration is enrolled within it. Whether self-registration may end without a passkey, where P-70 enables magic links, is open (ADR-008).
+2. Self-registration of a new Receiving account, after email proof in the same ceremony. A passkey enrolled at self-registration is enrolled within it. Self-registration may end without a passkey where P-70 enables magic links: the account then signs in by magic link (decided by Daniel on 2026-11-22, "Email only, passkey optional", ADR-032, ADR-008).
 3. Completion of an account recovery (Account recovery).
 
 Outside these ceremonies, an account can add only a further passkey, which is a high-risk action (table below). A magic-link session never adds one. An account without a passkey gets its first one through recovery.
