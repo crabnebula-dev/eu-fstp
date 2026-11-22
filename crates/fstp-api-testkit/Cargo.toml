@@ -55,7 +55,7 @@ fstp-mail.workspace = true
 fstp-assess.workspace = true
 fstp-assessor.workspace = true
 fstp-findings.workspace = true
-fstp-infer.workspace = true
+fstp-infer = { workspace = true, features = ["http"] }
 fstp-injscan.workspace = true
 
 
