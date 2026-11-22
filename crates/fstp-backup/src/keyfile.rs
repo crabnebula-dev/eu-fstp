@@ -11,6 +11,10 @@
 //! sealed = AES-256-GCM under S of the hybrid secret key, AAD = aad
 //! ```
 //!
+//! A second custodian's key file `custodian.key` has the same layout
+//! under [`CUSTODIAN_MAGIC`] (ADR-012 record of lane L16): its group
+//! field is the custodian id, and its secret is the custodian key.
+//!
 //! The writer reads the public key only, so it cannot open what it wrote
 //! (ADR-012 "Writer"). Opening the secret needs the custody root, which
 //! the `fstp-keyd` console socket serves. The file never holds an open
@@ -30,6 +34,9 @@ use crate::{BackupError, GroupRef};
 
 /// The magic that opens the file and labels its AAD.
 pub const MAGIC: &[u8; 22] = b"fstp-cluster-backup-v1";
+/// The magic of a second custodian's key file (ADR-012 record of lane
+/// L16). Its own magic keeps it from being read as a group key file.
+pub const CUSTODIAN_MAGIC: &[u8; 22] = b"fstp-backup-custodian1";
 /// The file's name in the credentials directory.
 pub const KEY_FILE: &str = "cluster-backup.key";
 /// The epoch of the root at genesis.
@@ -66,6 +73,9 @@ pub struct KeyFile {
     pub nonce: [u8; aead::NONCE_LEN],
     /// The sealed group secret.
     pub sealed: Vec<u8>,
+    /// Whether this is a second custodian's key file
+    /// ([`CUSTODIAN_MAGIC`]) rather than a group key file ([`MAGIC`]).
+    pub custodian: bool,
 }
 
 impl std::fmt::Debug for KeyFile {
@@ -78,11 +88,21 @@ impl std::fmt::Debug for KeyFile {
 }
 
 impl KeyFile {
+    /// The magic of this file's kind.
+    #[must_use]
+    pub fn magic(&self) -> &'static [u8; 22] {
+        if self.custodian {
+            CUSTODIAN_MAGIC
+        } else {
+            MAGIC
+        }
+    }
+
     /// The AAD of the wrap and the seal.
     #[must_use]
     pub fn aad(&self) -> Vec<u8> {
         [
-            &MAGIC[..],
+            &self.magic()[..],
             &self.cluster[..],
             &self.group[..],
             &self.generation.to_be_bytes(),
@@ -185,8 +205,24 @@ impl<'a> Reader<'a> {
 /// [`BackupError::KeyFile`] for a wrong magic, a cut or overlong field,
 /// a generation or epoch of 0, or trailing bytes.
 pub fn decode(bytes: &[u8]) -> Result<KeyFile, BackupError> {
+    decode_as(bytes, false)
+}
+
+/// Decodes a second custodian's key file: the layout of [`decode`] under
+/// [`CUSTODIAN_MAGIC`] (ADR-012 record of lane L16). Fuzzed
+/// (`backup_key_file_decode`).
+///
+/// # Errors
+///
+/// As [`decode`].
+pub fn decode_custodian(bytes: &[u8]) -> Result<KeyFile, BackupError> {
+    decode_as(bytes, true)
+}
+
+fn decode_as(bytes: &[u8], custodian: bool) -> Result<KeyFile, BackupError> {
+    let magic = if custodian { CUSTODIAN_MAGIC } else { MAGIC };
     let mut r = Reader { rest: bytes };
-    if r.take(MAGIC.len())? != MAGIC {
+    if r.take(magic.len())? != magic {
         return Err(bad("magic"));
     }
     let cluster = r.array::<16>()?;
@@ -214,6 +250,7 @@ pub fn decode(bytes: &[u8]) -> Result<KeyFile, BackupError> {
         wrapped,
         nonce,
         sealed,
+        custodian,
     })
 }
 
@@ -226,6 +263,22 @@ pub fn decode(bytes: &[u8]) -> Result<KeyFile, BackupError> {
 /// [`BackupError::Custody`] when custody refuses, and
 /// [`BackupError::Seal`] when a draw or the seal fails.
 pub async fn create<C: Custody>(custody: &C, cluster: [u8; 16]) -> Result<Vec<u8>, BackupError> {
+    create_as(custody, cluster, false).await
+}
+
+/// As [`create`], for a group key file or, with `custodian`, a second
+/// custodian's key file (ADR-012 record of lane L16). Both create the
+/// root `{cell: none, chain: ClusterBackup, epoch: 1}` in `custody`, and
+/// no other.
+///
+/// # Errors
+///
+/// As [`create`].
+pub async fn create_as<C: Custody>(
+    custody: &C,
+    cluster: [u8; 16],
+    custodian: bool,
+) -> Result<Vec<u8>, BackupError> {
     let secret = hybrid_kem::generate().map_err(|_| BackupError::Seal("group key"))?;
     let group = fstp_crypto::random_array::<16>().map_err(|_| BackupError::Seal("group id"))?;
     let root = custody
@@ -246,6 +299,7 @@ pub async fn create<C: Custody>(custody: &C, cluster: [u8; 16]) -> Result<Vec<u8
         wrapped: Vec::new(),
         nonce: [0; aead::NONCE_LEN],
         sealed: Vec::new(),
+        custodian,
     };
     let seal = SealKey::generate().map_err(|_| BackupError::Seal("seal key"))?;
     let aad = file.aad();

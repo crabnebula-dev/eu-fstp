@@ -46,6 +46,7 @@
 pub mod chain_witness;
 pub mod config;
 pub mod file_store;
+pub mod key_copy;
 pub mod lock;
 pub mod message;
 pub mod peer;
@@ -334,6 +335,7 @@ pub fn run() -> Result<(), WitnessError> {
         config::WitnessStore::Files { .. } => None,
     };
     let task_rt = rt.clone();
+    let copy_register = cfg.credentials_dir.join(key_copy::COPY_REGISTER);
     rt.block_on(async move {
         let seal = custody
             .unwrap(
@@ -344,6 +346,9 @@ pub fn run() -> Result<(), WitnessError> {
             .await
             .map_err(|_| WitnessError::Custody)?;
         let receipt_key = config::open_receipt_key(&key_file, &seal)?;
+        // ADR-004 record of lane L16 (Q-L16-3): a copy of the key file that
+        // holds a replaced key lowers the reported assurance.
+        key_copy::report(&copy_register, &receipt_key);
         drop(seal);
         let handle = match (db, &cfg.store) {
             (Some(db), _) => {

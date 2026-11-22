@@ -302,6 +302,7 @@ dependencies = [
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",
+ "zeroize",
 ]
 
 [[package]]

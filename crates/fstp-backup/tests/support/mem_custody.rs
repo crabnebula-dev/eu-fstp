@@ -19,12 +19,23 @@ use fstp_custody::{
 #[derive(Default)]
 pub struct MemCustody {
     roots: Mutex<BTreeMap<Vec<u8>, [u8; 32]>>,
+    labels: Mutex<Vec<RootLabel>>,
 }
 
 impl MemCustody {
     /// How many roots are live.
     pub fn live(&self) -> usize {
         self.roots.lock().unwrap().len()
+    }
+
+    /// The label of every root ever created (ADR-012 record of lane L16).
+    pub fn labels(&self) -> Vec<RootLabel> {
+        self.labels.lock().unwrap().clone()
+    }
+
+    /// The bytes of every live root, for the I-80 scans of lane L16.
+    pub fn root_bytes(&self) -> Vec<[u8; 32]> {
+        self.roots.lock().unwrap().values().copied().collect()
     }
 }
 
@@ -40,6 +51,7 @@ impl Custody for MemCustody {
         let handle = fstp_crypto::random_array::<16>().unwrap().to_vec();
         let key = fstp_crypto::random_array::<32>().unwrap();
         self.roots.lock().unwrap().insert(handle.clone(), key);
+        self.labels.lock().unwrap().push(label.clone());
         std::future::ready(Ok(RootRef {
             backend: BackendId::Keyd,
             cell: label.cell,

@@ -21,3 +21,7 @@ Answers from a model are advice for Daniel, not approved text. Daniel decides wh
 - The hosting provider is OVHcloud, named by Daniel on 2026-10-28 (ADR-005). The contracting entity is not confirmed yet.
 - The reference programme is the SuperSAFE Annexe FSTP, call HORIZON-CL4-2026-04-DATA-02.
 - Daniel fills in the seat of CrabNebula Ltd where a request marks `[seat of CrabNebula Ltd]`.
+
+## Drafts of the texts
+
+`legal/` at the repository root holds markdown drafts of every user-facing legal text, from lane L14 (2026-11-21). CrabNebula Ltd is the legal party and Daniel Thompson-Yvetot its designated Data Protection Officer. `legal/README.md` maps each draft to the code site it would replace and lists every point Daniel must supply or verify. The drafts carry the request item IDs used here.

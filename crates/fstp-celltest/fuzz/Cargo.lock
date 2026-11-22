@@ -209,6 +209,7 @@ dependencies = [
  "fstp-keys",
  "fstp-rt",
  "fstp-tls",
+ "zeroize",
 ]
 
 [[package]]
