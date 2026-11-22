@@ -1807,6 +1807,11 @@ pub trait CellPorts: Send + Sync + 'static {
     fn pending_actions(&self) -> Option<&dyn PendingActions> {
         None
     }
+    /// The store of anonymous drafts (ADR-032). `None` refuses every
+    /// claim as unavailable, so nothing is claimed without a store.
+    fn anonymous_drafts(&self) -> Option<&dyn crate::anon::AnonymousDrafts> {
+        None
+    }
 }
 
 /// The object-safe dispatch behind [`ApiCore`]. Private to this crate.
