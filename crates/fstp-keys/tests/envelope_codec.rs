@@ -108,7 +108,8 @@ fn spoil(g: &mut Gen, bytes: &mut [u8], field: HeaderField) {
             bytes[7..9].copy_from_slice(&v.to_be_bytes());
         }
         HeaderField::Chain => {
-            bytes[9] = if g.bool() { 0 } else { g.u8_in(6..=255) };
+            // Codes 1 to 6 are chains (VaultBackup 6 since lane L17).
+            bytes[9] = if g.bool() { 0 } else { g.u8_in(7..=255) };
         }
     }
 }
