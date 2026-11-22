@@ -289,6 +289,16 @@ pub enum AuthRecord {
         /// The account.
         account: AccountId,
     },
+    /// A Receiving account was created by self-registration with its
+    /// email proven and no passkey (Daniel, 2026-11-22: "Email only,
+    /// passkey optional", ADR-032, ADR-008). It signs in by magic link.
+    /// I-77 is unchanged: before it may act in a Drafting, Judging,
+    /// Operations or tenant admin role, it needs a phishing-resistant
+    /// method.
+    AccountSelfRegistered {
+        /// The account.
+        account: AccountId,
+    },
 }
 
 impl AuthRecord {

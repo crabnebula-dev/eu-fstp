@@ -1,6 +1,6 @@
 # ADR-032: Anonymous drafts with a resume link
 
-Status: Accepted in principle by Daniel on 2026-11-22. The readings marked "Interim, pending Daniel" below wait for his answer. Drafted 2026-11-22 by lane L25 `prod/anonymous-drafts`.
+Status: Accepted by Daniel on 2026-11-22. His decisions and the lead readings of the same day are recorded below. Drafted 2026-11-22 by lane L25 `prod/anonymous-drafts`.
 
 The number is the next free one after ADR-031. ADR-030 is taken by lane `prod/branding-theme`.
 
@@ -43,19 +43,19 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 | Token on the wire | Only in a JSON request body, never in a path or query. So no access log, route log or proxy log holds it | R-NF-02 |
 | Routes | Four cell routes, each `POST`, JSON, no session, `Origin` checked: `/auth/drafts` `{call}` starts a draft and answers `{token, expires}`; `/auth/drafts/open` `{token}` answers the call, the sections and the expiry; `/auth/drafts/save` `{token, title, summary, narrative}` replaces the sections; `/auth/drafts/discard` `{token}` deletes the draft. A start for a call that is not open answers 409. An unknown, expired or claimed token answers 404 with one body for every cause | ADR-008 shared checks |
 | Size | The workspace limits: title 300 bytes, summary 1 200 bytes, narrative as `forms::TEXT_LIMIT`. A control character other than tab and line breaks, and a Unicode line or paragraph separator, is refused | As for normal drafts |
-| Rate limits | Per peer: 10 starts per hour, and 120 opens, saves and discards per minute. Per cell: 600 starts per hour and at most 20 000 live anonymous drafts. Over any limit the route answers 429, and nothing is stored. Interim, pending Daniel (values) | ADR-024 |
+| Rate limits | Per peer: 10 starts per hour, and 120 opens, saves and discards per minute. Per cell: 600 starts per hour and at most 20 000 live anonymous drafts. Over any limit the route answers 429, and nothing is stored. Lead reading, 2026-11-22 (values) | ADR-024 |
 | Call | A draft starts only for a published call that is open now. Open and save refuse once the call has closed. The claim runs `CreateDraft`, which checks the call again | `CreateDraft` guard |
 | Lifetime | An unclaimed draft expires 30 days after it was started, or at the call's deadline if that is earlier. An expired draft is never served, and the cell's draft sweep deletes it within one hour | Daniel 2026-11-22, `pre-check.md` |
-| Registration | Submitting needs an account. An applicant account exists only after self-registration with email proof, so every account that can submit has a verified email. Nothing changes at `Submit` | Daniel 2026-11-22 |
+| Registration | Submitting needs an account. An applicant account exists only after self-registration with email proof, so every account that can submit has a verified email. The email proof alone is enough: a passkey is optional (Decided by Daniel, 2026-11-22). Nothing changes at `Submit` | Daniel 2026-11-22 |
 | Claim | One new operation, `proposal.claim_draft` (`POST /proposals/{proposal}/claim`, body `{token}`), web only, no MCP tool, acting as the lead of a proposal in DRAFT. The page first runs `proposal.create` for the draft's call. The claim then copies the sections into that proposal's workspace and deletes the anonymous draft. From then on the resume link answers 404 | I-84, R-MC-04 |
 | Claim checks | The caller is the active lead; the proposal is in DRAFT; the token names a live draft for the same call as the proposal. Any other case is refused with rule `Input` after the actor check, so the refusal tells nothing more | As `proposal.save_workspace` |
 | Signed-in people | A person who is signed in writes in the normal workspace, as before. A person with an anonymous draft who signs in to an existing account claims it the same way | Daniel 2026-11-22 |
-| Pre-check | Interim, pending Daniel: the AI pre-check does not run on anonymous drafts. It needs an account first | P-23, TH-02, TH-29 |
+| Pre-check | Lead reading, 2026-11-22: the AI pre-check does not run on anonymous drafts. It needs an account first | P-23, TH-02, TH-29 |
 | MCP | No tool reads, writes or claims an anonymous draft. Agents without an account stay read-only | R-MC-04 |
 | Audit | The claim leaves one audit entry, as every API call does. The anonymous routes write a route log event with the route template and status only, as the other auth routes do | I-24, R-NF-02 |
 | Files | An anonymous draft holds no upload, and no pre-check runs on it, so its deletion is the deletion of its row | Daniel 2026-11-22 |
 
-### Why no pre-check on anonymous drafts (Interim, pending Daniel)
+### Why no pre-check on anonymous drafts (lead reading, 2026-11-22)
 
 - **Cost.** Each pre-check is a model call that the tenant pays for. Without an account, the only limit is the peer limit, and a peer can change.
 - **Abuse.** `pre-check.md` names the pre-check as an oracle for probing the assessor (TH-02). Its mitigation is the rate limit per proposal and per account across drafts in the same call (P-23, TH-29). An anonymous draft has no account, so the account cap cannot apply. Anyone could start a fresh draft per check.
@@ -77,17 +77,26 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 - The cell holds one more sealed table. Its rows carry no identity data. A database reader sees sealed bytes, digests, call ids and times.
 - No email is sent for an anonymous draft, so no address is collected for it.
 
+## Decided by Daniel, 2026-11-22
+
+1. **Email only, passkey optional.** Daniel decided "Email only, passkey optional". Applicants register and submit with a confirmed email alone, and sign in by magic link. They are offered a passkey later, optionally. Staff and every role covered by I-77 still need a phishing-resistant method. I-77 is unchanged: a person who later takes such a role must enrol a passkey first, as today. This answers the ADR-008 open point "Self-registration without a passkey" with yes.
+   - Built: `POST /auth/signup {token}` with no passkey members creates the account where the tenant offers magic links (P-70), and opens a magic-link session. Where the tenant does not, it answers 403 `passkey` before the proof is spent, so the person can finish with a passkey.
+   - Ledger: the new cell command `RegisterBySelfRegistration { account }` (`fstp-cell-core`) records the new auth record `AccountSelfRegistered { account }` (`fstp-auth`). The fold names the account from then on, so it never registers twice. `decide` checks again that no record names the account and that it holds no role outside Receiving.
+   - Signup page: "Finish registration" is the main button. "Create a passkey" stays on offer beside it.
+   - Tests: `r_lg_01_adr032_email_only_registration_creates_a_magic_link_account`, `adr032_email_only_registration_needs_magic_links` and `i77_adr032_email_only_account_cannot_hold_a_management_role_weakly` (`fstp-cell-core`), and `r_lg_01_adr032_signup_with_email_only_opens_a_magic_link_session` (`fstp-cell`).
+2. **SPEC wording applied.** R-SB-06 in `SPEC/01-requirements/functional.md` and the pre-check line in `SPEC/04-llm-assessment/pre-check.md`, each as drafted here, with the note "Decided by Daniel on 2026-11-22 (ADR-032)".
+
+## Lead readings, 2026-11-22
+
+- **Pre-check.** No AI pre-check on anonymous drafts (lead reading, 2026-11-22).
+- **Rate limits.** As built: 10 starts per peer per hour, 600 starts per cell per hour, 20 000 live drafts per cell, and 120 opens, saves and discards per peer per minute (lead reading, 2026-11-22).
+- **Lifetime.** The call's deadline also ends an anonymous draft, when it comes before the 30 days (lead reading, 2026-11-22).
+- **Claim.** The claim stays two calls, `proposal.create` then `proposal.claim_draft`, and the page chains them. A retry reuses the proposal the first call started (lead reading, 2026-11-22).
+
 ## Open points for Daniel
 
-1. **Pre-check on anonymous drafts.** Interim: no pre-check until the draft is claimed (reasons above).
-2. **Rate limit values.** Interim: 10 starts per peer per hour, 600 starts per cell per hour, 20 000 live drafts per cell, 120 opens, saves and discards per peer per minute.
-3. **Lifetime at call close.** Interim: an anonymous draft also ends at its call's deadline, as `pre-check.md` deletes unsubmitted drafts when the call closes. Daniel named 30 days only.
-4. **Self-registration without a passkey (ADR-008 open point).** Daniel's words "simple registration" and "email, then the code or link from the email" may answer the ADR-008 question "May self-registration end without a passkey where the tenant enables magic links?" with yes. This lane does not change the signup ceremony: it still enrols a passkey after the email link. The change touches the ledger records of `fstp-cell-core`, so it waits for Daniel's explicit answer.
-5. **An emailed code instead of a link.** The signup proof is a link today. A short typed code needs its own attempt limit. Interim: the link only.
-6. **Claim in two calls.** The claim page runs `proposal.create` and then `proposal.claim_draft`. If the second call fails, a retry reuses the proposal the first call started (kept in the browser). Interim: two calls, so every guard of `CreateDraft` runs through its own operation unchanged. A single server-side operation is possible if Daniel prefers it.
-7. **SPEC wording.** Proposed additions, not edited until Daniel accepts them:
-   - `SPEC/01-requirements/functional.md`, after R-SB-04: "**R-SB-06** A person can start a draft for an open call without an account. The draft is kept under a secret resume link, holds no identity data, and is deleted after 30 days or at the call's deadline unless it is claimed. Submitting needs a registered account with a verified email. AC: an anonymous draft cannot be submitted; after a claim the resume link no longer opens the draft."
-   - `SPEC/04-llm-assessment/pre-check.md`, Rules: "The pre-check runs only on drafts of an account. An anonymous draft gets no pre-check until it is claimed (TH-29)."
+1. **An emailed code instead of a link.** The signup proof is a link today. A short typed code needs its own attempt limit. Interim: the link only.
+2. **Offering a passkey later.** The signup page offers a passkey beside "Finish registration". Afterwards, an email-only account gets its first passkey through recovery (`authentication.md` "First passkey"), since adding a passkey is high risk and a magic-link session never adds one. Interim: no separate prompt after registration.
 
 ## Record
 
@@ -100,3 +109,4 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 | New pages | `/auth/draft` (cell auth pages), `/app/calls/{call}/claim` (page table: a signed-in account), and the link "Start writing now, no account needed" on the public call page | 2026-11-22 |
 | Sweep | `fstp_cell::tasks::drafts`, hourly, started with the cell | 2026-11-22 |
 | Demo cell | `fstp-e2e-cell` emulates the four routes over the fake cell's store, so the claim works in the demo | 2026-11-22 |
+| Email-only registration | Cell command `RegisterBySelfRegistration`, auth record `AccountSelfRegistered`, route `POST /auth/signup {token}` (Decided by Daniel, 2026-11-22) | 2026-11-22 |

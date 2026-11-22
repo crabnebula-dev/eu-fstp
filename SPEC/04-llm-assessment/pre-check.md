@@ -11,6 +11,8 @@ Applicants can check a draft against the same rubric before submitting. This hel
 - Integrity findings are shown to the applicant as well, so attempts to address the assessor become visible to the person making them.
 - Rate-limited per proposal and per account across drafts in the same call (P-23). The interface shows remaining checks and when the next one becomes available.
 - Drafts and pre-check runs stay in the applicant workspace. Operator and Judging roles cannot read them (I-21).
+- The pre-check runs only on drafts of an account. An anonymous draft gets no pre-check until it is claimed (TH-29).
+  NOTE: Decided by Daniel on 2026-11-22 (ADR-032).
 - Unsubmitted drafts and their pre-check runs are deleted when the call closes or the applicant withdraws.
 - The operator sees aggregate usage counts only.
 - The submitted version receives a fresh assessment. Pre-check results are not carried over.

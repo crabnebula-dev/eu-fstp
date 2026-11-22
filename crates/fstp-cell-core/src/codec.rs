@@ -1356,6 +1356,10 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
                 ("credential", hex(credential)),
             ],
         ),
+        TenantCommand::RegisterBySelfRegistration { account } => tagged(
+            "RegisterBySelfRegistration",
+            vec![("account", account_json(*account))],
+        ),
     }
 }
 
@@ -1462,6 +1466,12 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
             Ok(TenantCommand::EnrolBySelfRegistration {
                 account: account_from(o, "account")?,
                 credential: bytes_from(o, "credential", MAX_CREDENTIAL)?,
+            })
+        }
+        "RegisterBySelfRegistration" => {
+            fields(o, &["account"])?;
+            Ok(TenantCommand::RegisterBySelfRegistration {
+                account: account_from(o, "account")?,
             })
         }
         _ => Err(unknown_variant()),

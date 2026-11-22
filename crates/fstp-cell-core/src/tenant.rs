@@ -128,15 +128,24 @@ pub enum TenantCommand {
     /// the route took the email proof token and the gate verified the
     /// registration. The batch records the key that admission verified.
     ///
-    /// Interim, pending Daniel (ADR-008 open point "Self-registration
-    /// without a passkey"): this form always enrols a passkey. The route
-    /// refuses the form without one, so the build neither requires nor
-    /// excludes it at the API.
+    /// This form always enrols a passkey. Daniel decided on 2026-11-22
+    /// "Email only, passkey optional" (ADR-032, ADR-008): the form without
+    /// one is [`TenantCommand::RegisterBySelfRegistration`].
     EnrolBySelfRegistration {
         /// The new account, drawn by the route with the email proof.
         account: AccountId,
         /// The new credential id.
         credential: Vec<u8>,
+    },
+    /// Create a new Receiving account by self-registration with its email
+    /// proven and no passkey (Daniel, 2026-11-22: "Email only, passkey
+    /// optional", ADR-032, ADR-008). Only the ceremony route admission
+    /// `gate::admit_email_registration` admits it, after the route took
+    /// the email proof token, and only where the tenant enables magic
+    /// links (P-70). The one record is `AccountSelfRegistered`.
+    RegisterBySelfRegistration {
+        /// The new account, drawn by the route with the email proof.
+        account: AccountId,
     },
 }
 

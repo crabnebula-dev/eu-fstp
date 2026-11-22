@@ -66,6 +66,8 @@ struct Mem {
     tokens: BTreeMap<[u8; 32], TokenRow>,
     outbox: Vec<(AccountId, [u8; 32])>,
     proofs: Vec<(String, [u8; 32])>,
+    /// The address each pending self-registration proves, until it binds.
+    signup_emails: BTreeMap<AccountId, String>,
     /// The steps of magic-link and recovery requests, for the L12 tests.
     /// It keeps at most [`MAX_TRAIL`] steps.
     trail: Vec<&'static str>,
@@ -522,6 +524,31 @@ impl Backend for MemoryBackend {
         token: [u8; 32],
     ) -> impl Future<Output = Result<(), BackendFault>> + Send {
         ready(self.with(|m| m.proofs.push((email, token))))
+    }
+
+    fn note_signup_email(
+        &self,
+        account: AccountId,
+        email: String,
+    ) -> impl Future<Output = Result<(), BackendFault>> + Send {
+        ready(self.with(|m| {
+            m.signup_emails.insert(account, email.to_ascii_lowercase());
+        }))
+    }
+
+    /// The proven address becomes the login email, unless another account
+    /// holds it already (`crate::routes::pg`).
+    fn bind_signup_email(
+        &self,
+        account: AccountId,
+    ) -> impl Future<Output = Result<bool, BackendFault>> + Send {
+        ready(self.with(|m| match m.signup_emails.remove(&account) {
+            Some(email) if !m.emails.contains_key(&email) => {
+                m.emails.insert(email, account);
+                true
+            }
+            _ => false,
+        }))
     }
 
     fn stepup_asserted_at(

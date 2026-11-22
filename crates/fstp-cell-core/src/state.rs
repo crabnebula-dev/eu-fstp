@@ -204,6 +204,9 @@ pub struct AuthState {
     recoveries: BTreeMap<[u8; 16], RecoveryCase>,
     invitations: BTreeMap<[u8; 16], Invitation>,
     first_admins: BTreeSet<AccountId>,
+    /// The accounts created by self-registration with email proof only
+    /// (ADR-032, ADR-008: Daniel, 2026-11-22).
+    email_only: BTreeSet<AccountId>,
     recovered: BTreeMap<AccountId, Timestamp>,
     /// The owner of each credential a `CredentialSuspect` record marked, in
     /// ledger order. The position, from 1, is the flagging event's ordinal
@@ -385,6 +388,12 @@ impl AuthState {
         })
     }
 
+    /// Whether `account` was created by self-registration with email
+    /// proof only and no passkey (ADR-032, ADR-008).
+    pub fn self_registered_email_only(&self, account: AccountId) -> bool {
+        self.email_only.contains(&account)
+    }
+
     /// Whether any auth record names `account`: a credential, an
     /// invitation that an enrolment used, a recovery case or a first-admin
     /// enrolment. An invitation that no enrolment used does not count
@@ -398,6 +407,7 @@ impl AuthState {
                 .any(|i| i.account == account && i.consumed)
             || self.recoveries.values().any(|r| r.account == account)
             || self.first_admins.contains(&account)
+            || self.email_only.contains(&account)
     }
 
     /// Whether a session of `account` that started at `started` began at or
@@ -1131,6 +1141,12 @@ fn fold_auth(
         }
         R::FirstAdminEnrolled { account } => {
             if !a.first_admins.insert(*account) {
+                return Err(duplicate());
+            }
+        }
+        // ADR-032, ADR-008: a new account only, as `decide` checks.
+        R::AccountSelfRegistered { account } => {
+            if a.names_account(*account) || !a.email_only.insert(*account) {
                 return Err(duplicate());
             }
         }

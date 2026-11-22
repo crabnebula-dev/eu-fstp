@@ -775,6 +775,12 @@ fn signup_register(inner: &Inner, req: &Request) -> Response {
     let Some(body) = wire::body(req) else {
         return wire::bad("body");
     };
+    // Daniel, 2026-11-22 (ADR-032, ADR-008): "Email only, passkey
+    // optional". The token alone creates the account and opens a
+    // magic-link session, as the cell's own route does.
+    if body.get("challenge_id").is_none() {
+        return signup_email_only(inner, &body);
+    }
     let made = {
         let mut a = lock(&inner.auth);
         let (Some(id), Some(token)) =
@@ -815,6 +821,38 @@ fn signup_register(inner: &Inner, req: &Request) -> Response {
     let tag = made.2;
     inner.ports.vault.change(|t| t.set_identity(made.0, tag));
     open_session(inner, made.0, made.1)
+}
+
+/// `POST /auth/signup {token}`: the email-only registration (ADR-032,
+/// ADR-008). The new account has no passkey and gets a magic-link
+/// session.
+fn signup_email_only(inner: &Inner, body: &fstp_json::Object) -> Response {
+    let made = {
+        let mut a = lock(&inner.auth);
+        let Some(token) = str_member(body, "token") else {
+            return wire::bad("body");
+        };
+        let Some(email) = a.signups.get(token).cloned() else {
+            return refuse(StatusCode::UNAUTHORIZED, "token");
+        };
+        let Some(tag) = a.fresh_identity() else {
+            return refuse(StatusCode::SERVICE_UNAVAILABLE, "identity");
+        };
+        let account = AccountId::from_raw(a.next_signup);
+        a.signups.remove(token);
+        a.next_signup = a.next_signup.saturating_add(1);
+        a.person(&email, account);
+        (account, tag)
+    };
+    inner.ports.vault.change(|t| t.set_identity(made.0, made.1));
+    let login = inner.ports.sessions.login(made.0, LoginMethod::MagicLink);
+    let mut r = wire::ok_empty();
+    let value = format!(
+        "{COOKIE}={}; Path=/; Secure; HttpOnly; SameSite=Strict",
+        String::from_utf8_lossy(&login.cookie)
+    );
+    let _ = r.headers.try_insert("set-cookie", value.as_str());
+    r
 }
 
 fn login_options(inner: &Inner) -> Response {

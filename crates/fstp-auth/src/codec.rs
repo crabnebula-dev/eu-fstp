@@ -581,6 +581,9 @@ impl ToJson for AuthRecord {
             AuthRecord::FirstAdminEnrolled { account } => {
                 Obj::new("FirstAdminEnrolled").account("account", *account)
             }
+            AuthRecord::AccountSelfRegistered { account } => {
+                Obj::new("AccountSelfRegistered").account("account", *account)
+            }
         }
         .done()
     }
@@ -707,6 +710,12 @@ impl FromJson for AuthRecord {
             "FirstAdminEnrolled" => {
                 let o = exactly(v, &["account"])?;
                 AuthRecord::FirstAdminEnrolled {
+                    account: account(o, "account")?,
+                }
+            }
+            "AccountSelfRegistered" => {
+                let o = exactly(v, &["account"])?;
+                AuthRecord::AccountSelfRegistered {
                     account: account(o, "account")?,
                 }
             }

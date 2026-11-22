@@ -1,17 +1,23 @@
 // Self-registration of a Receiving account, `/auth/signup` (M3 design
-// section 8.3 item 2): email proof, then passkey enrolment in the same
-// ceremony, at account creation.
+// section 8.3 item 2): email proof, then, optionally, a passkey.
 //
-// Body forms, a reading of this lane for the two routes of design
-// section 8.7, which lane w3ar has not fixed yet:
+// Daniel, 2026-11-22 (ADR-032, ADR-008): "Email only, passkey optional".
+// The confirmed email finishes the registration where the organisation
+// offers email links, and the account signs in by magic link. A passkey
+// stays on offer in the same step.
+//
+// Body forms:
 //
 // 1. `POST /auth/signup/options {email}` sends the email proof. Its reply
 //    is the same for every address, so the page shows one message.
 // 2. The proof link opens `/auth/signup#<token>`, with the token in the
-//    fragment. `POST /auth/signup/options {token}` then answers
-//    `{challenge_id, public_key}` with the creation options.
-// 3. `POST /auth/signup` with the new credential, `challenge_id` and
-//    `token` creates the account and its session.
+//    fragment.
+// 3. `POST /auth/signup {token}` creates the account with no passkey and
+//    opens a magic-link session. A 403 says the organisation asks for a
+//    passkey.
+// 4. Or `POST /auth/signup/options {token}` answers `{challenge_id,
+//    public_key}`, and `POST /auth/signup` with the new credential,
+//    `challenge_id` and `token` creates the account with its passkey.
 
 import { ok, post } from '../api.js';
 import { claimPath, kept } from '../anondraft.js';
@@ -42,8 +48,14 @@ async function register(token: string): Promise<void> {
   const c = await registration(publicKey);
   const r = await post('/auth/signup', { ...c, challenge_id: challengeId, token });
   if (!ok(r)) throw failureOf(r.status === 401 ? 403 : r.status);
-  // ADR-032: a draft started without an account moves into the new
-  // account on the claim page.
+  landAfterSignup();
+}
+
+/**
+ * Opens the page after a registration. ADR-032: a draft started without
+ * an account moves into the new account on the claim page.
+ */
+function landAfterSignup(): void {
   const draft = kept();
   go(draft === null ? signedInHome() : claimPath(draft.call));
 }
@@ -54,9 +66,32 @@ function mountRegister(token: string | null): void {
     showFailure(alert, new Failure('link'));
     return;
   }
-  const button = h('button', { id: 'signup-register', type: 'button', class: 'primary' }, [
+  // Daniel, 2026-11-22 (ADR-032, ADR-008): "Email only, passkey
+  // optional". The confirmed email finishes the registration, and the
+  // account signs in by email link. A passkey stays on offer.
+  const finish = h('button', { id: 'signup-finish', type: 'button', class: 'primary' }, [
+    t('signup.finish'),
+  ]) as HTMLButtonElement;
+  const button = h('button', { id: 'signup-register', type: 'button' }, [
     t('signup.register'),
   ]) as HTMLButtonElement;
+  finish.addEventListener(
+    'click',
+    busy(finish, async () => {
+      hush(alert);
+      const r = await post('/auth/signup', { token });
+      if (ok(r)) {
+        landAfterSignup();
+        return;
+      }
+      if (r.status === 403) {
+        // The organisation does not offer email links: a passkey is needed.
+        alert.textContent = t('signup.passkey.needed');
+        return;
+      }
+      showFailure(alert, failureOf(r.status === 401 ? 403 : r.status));
+    }),
+  );
   button.addEventListener(
     'click',
     busy(button, async () => {
@@ -68,7 +103,12 @@ function mountRegister(token: string | null): void {
       }
     }),
   );
-  main.append(h('p', {}, [t('signup.register.intro')]), button);
+  main.append(
+    h('p', {}, [t('signup.register.intro')]),
+    finish,
+    h('p', {}, [t('signup.passkey.optional')]),
+    button,
+  );
 }
 
 /**

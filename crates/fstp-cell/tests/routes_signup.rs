@@ -277,19 +277,50 @@ fn adr008_signup_without_a_sent_proof_is_refused() {
     assert_eq!(registered(&c).len(), before);
 }
 
-/// ADR-008 open point "Self-registration without a passkey", interim: the
-/// form without passkey members fails closed with 501 and records nothing.
+/// The accounts of every `AccountSelfRegistered` record (ADR-032).
+fn email_only(c: &LocalCell) -> Vec<fstp_domain::id::AccountId> {
+    let mut out = Vec::new();
+    for e in c.backend().records() {
+        if let fstp_cell_core::CellRecord::Auth(fstp_auth::AuthRecord::AccountSelfRegistered {
+            account,
+        }) = e
+        {
+            out.push(account);
+        }
+    }
+    out
+}
+
+/// R-LG-01, ADR-032, ADR-008 (Daniel, 2026-11-22: "Email only, passkey
+/// optional"): with magic links on, the email proof alone creates the
+/// account and opens a magic-link session. No passkey is registered. The
+/// proof is single use, and the proven address then gets magic links.
 #[test]
-fn adr008_signup_without_a_passkey_fails_closed() {
+fn r_lg_01_adr032_signup_with_email_only_opens_a_magic_link_session() {
     let c = cell();
     let before = registered(&c).len();
     let token = proof(&c);
-    let r = c.serve(post(
-        "/auth/signup",
-        format!("{{\"token\":\"{token}\"}}").as_bytes(),
+    let body = format!("{{\"token\":\"{token}\"}}");
+    let r = c.serve(post("/auth/signup", body.as_bytes()));
+    assert_eq!(status(&r), 200, "{}", text(&r));
+    assert!(r.headers.get("set-cookie").is_some(), "no session cookie");
+    assert_eq!(registered(&c).len(), before, "no passkey was registered");
+    assert_eq!(email_only(&c).len(), 1, "one new email-only account");
+    let again = c.serve(post("/auth/signup", body.as_bytes()));
+    assert_eq!(status(&again), 401, "{}", text(&again));
+    assert_eq!(email_only(&c).len(), 1, "the replay created an account");
+    let m = c.serve(post(
+        "/auth/magic/request",
+        format!("{{\"email\":\"{EMAIL}\"}}").as_bytes(),
     ));
-    assert_eq!(status(&r), 501, "{}", text(&r));
-    assert_eq!(registered(&c).len(), before);
+    assert_eq!(status(&m), 202, "{}", text(&m));
+    assert!(
+        c.backend()
+            .outbox()
+            .iter()
+            .any(|(a, _)| *a == email_only(&c)[0]),
+        "the proven address gets a magic link"
+    );
 }
 
 /// ADR-008 "Magic links" by analogy: the proof request answers the same
