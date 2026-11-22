@@ -517,6 +517,13 @@ fn header(
     ))
 }
 
+/// Whether the funding card carries the funder visibility element `key`
+/// of the pinned profile, so the footer shows no separate placeholder for
+/// it: the `acknowledgement` (lane L35, lead note of 2026-11-22).
+pub fn card_carries(key: &str) -> bool {
+    key == "acknowledgement"
+}
+
 /// The footer of every page: one element per mandatory element (I-69).
 /// It is built from platform data after the brand is applied, so no
 /// brand token can name, hide, size or reorder an element (M9 design
@@ -554,7 +561,10 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
     );
     if let Some(f) = funder {
         let version = f.version.to_string();
-        for key in &f.elements {
+        // The funding card carries the approved acknowledgement (lane
+        // L35, lead note of 2026-11-22), so the profile's acknowledgement
+        // element adds no placeholder of its own. The emblem element stays.
+        for key in f.elements.iter().filter(|k| !card_carries(k)) {
             visibility = visibility.child(Node::text(" ")).child(
                 Element::new("span")
                     .attr("data-mandatory", &format!("funder_visibility.{key}"))

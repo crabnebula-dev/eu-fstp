@@ -18,9 +18,11 @@ test("i69_programme_page_footer_shows_its_profile_elements", () => {
   eq(programmeOfPath("/app/programmes/7/reports"), "7", "a programme page");
   eq(programmeOfPath("/app/programmes/7"), "7", "the programme root");
   const got = profileElements("/app/programmes/7/audit", "7", HE);
+  // The funding card carries the acknowledgement (lane L35, lead note of
+  // 2026-11-22), so the emblem is the one profile element.
   eq(
     got.map((e) => e.key),
-    ["funder_visibility.acknowledgement", "funder_visibility.emblem"],
+    ["funder_visibility.emblem"],
     "the keys",
   );
   assert(got.every((e) => e.text.includes("approved wording is pending") && e.text.includes("horizon-europe")), "placeholder wording");

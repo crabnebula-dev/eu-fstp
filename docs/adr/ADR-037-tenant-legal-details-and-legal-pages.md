@@ -86,7 +86,8 @@ Interim, pending Daniel: approval ships with a release, since the drafts are emb
 
 - Every footer element for the privacy notice, the accessibility statement and the Data Act information becomes a link to its page. The footers also gain "Imprint" and "Terms of use" links. The `data-mandatory` keys stay, and two are added: `imprint` and `terms_of_use` (I-69).
 - The link names are the plain names from `legal/15-footer-texts.md`: "Privacy notice", "Accessibility statement", "Imprint", "Terms of use", "Data Act information". The draft status shows on each page, not in the footer.
-- The platform attribution, the AI disclosure, the funder visibility elements and the funding card are unchanged. Lane L35 owns the funding acknowledgement.
+- The platform attribution, the AI disclosure and the funding card are unchanged. Lane L35 owns the funding acknowledgement.
+- Lead note of 2026-11-22: lane L35 shows the approved acknowledgement inside the funding card. So the footer no longer adds the placeholder of the profile's `acknowledgement` visibility element, on public and app pages (`fstp_public::html::card_carries`, `CARD_ELEMENT` in `web/src/shell/brand.ts`). The `emblem` element stays as it was.
 
 ### 5. The demo values
 

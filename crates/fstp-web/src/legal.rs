@@ -7,7 +7,7 @@
 //! surface carries the public CSP (`script-src 'none'`). Every answer is
 //! sent with `no-store` by `headers::finish`.
 
-use fstp_api_core::legal::{DETAILS_PATH, LegalText, details_json, page_html};
+use fstp_api_core::legal::{DETAILS_PATH, details_json, page_html};
 use fstp_http::{Method, Request, Response, StatusCode};
 use fstp_web_assets::AssetSet;
 
@@ -32,12 +32,9 @@ pub(crate) fn answer(backend: &Backend, assets: &AssetSet, req: &Request) -> Res
             fstp_json::to_compact(&body).into_bytes(),
         );
     }
-    let Some(text) = LegalText::from_path(path) else {
-        return reply::not_found();
-    };
     let html = match core {
         Some(c) => c.legal_page(path),
-        None => page_html(text, None, None),
+        None => page_html(path, None, None),
     };
     match html {
         Some(h) => Response::with_body(
@@ -54,6 +51,15 @@ pub(crate) fn answer(backend: &Backend, assets: &AssetSet, req: &Request) -> Res
 mod tests {
     use super::*;
     use fstp_http::RequestTarget;
+
+    /// The five legal pages (ADR-037 section 2).
+    const LEGAL_PATHS: [&str; 5] = [
+        "/legal/privacy",
+        "/legal/accessibility",
+        "/legal/imprint",
+        "/legal/terms",
+        "/legal/data-act",
+    ];
 
     fn req(method: Method, path: &str) -> Request {
         let Ok(t) = RequestTarget::origin(path) else {
@@ -81,13 +87,13 @@ mod tests {
     #[test]
     fn adr037_legal_surface_answers() {
         let a = assets();
-        for t in LegalText::ALL {
-            let r = answer(&Backend::Refusing, &a, &req(Method::GET, t.path()));
-            assert_eq!(r.status, StatusCode::OK, "{t:?}");
+        for p in LEGAL_PATHS {
+            let r = answer(&Backend::Refusing, &a, &req(Method::GET, p));
+            assert_eq!(r.status, StatusCode::OK, "{p}");
             let html = String::from_utf8(r.body).unwrap_or_default();
-            assert!(html.contains("Draft, not yet approved"), "{t:?}");
-            assert!(html.contains("/app/assets/"), "{t:?}: platform sheets");
-            assert!(!html.to_ascii_lowercase().contains("<script"), "{t:?}");
+            assert!(html.contains("Draft, not yet approved"), "{p}");
+            assert!(html.contains("/app/assets/"), "{p}: platform sheets");
+            assert!(!html.to_ascii_lowercase().contains("<script"), "{p}");
         }
         let r = answer(&Backend::Refusing, &a, &req(Method::GET, DETAILS_PATH));
         assert_eq!(r.status, StatusCode::OK);

@@ -1983,10 +1983,9 @@ impl<P: CellPorts> Dispatch for Core<P> {
     }
 
     fn legal_page(&self, path: &str) -> Option<String> {
-        let text = crate::legal::LegalText::from_path(path)?;
         let state = self.ports.engine().snapshot();
         let sheet = crate::dispatch::brand_of(&state).map(|b| format!("/brand/{}.css", b.digest));
-        crate::legal::page_html(text, crate::legal::details(&state), sheet.as_deref())
+        crate::legal::page_html(path, crate::legal::details(&state), sheet.as_deref())
     }
 
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a> {

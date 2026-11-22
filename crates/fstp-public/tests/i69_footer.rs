@@ -149,7 +149,15 @@ fn i69_footer_carries_the_pinned_funder_profile_elements() {
                 .unwrap_or("");
             let want: Vec<String> = funder
                 .as_ref()
-                .map(|f| f.elements.iter().map(|k| element_key(k)).collect())
+                // The funding card carries the acknowledgement (lane L35,
+                // lead note of 2026-11-22), so only the others are elements.
+                .map(|f| {
+                    f.elements
+                        .iter()
+                        .filter(|k| !fstp_public::html::card_carries(k))
+                        .map(|k| element_key(k))
+                        .collect()
+                })
                 .unwrap_or_default();
             if attr_values(item, "data-mandatory") != want {
                 failures.push(format!(

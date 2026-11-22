@@ -29,6 +29,9 @@ import { footerItem } from "./legal.js";
 /** The id of the guard's footer. */
 const SHELL_FOOTER_ID = "shell-footer";
 
+/** The profile visibility element the funding card carries, as `fstp_public::html::card_carries`. */
+export const CARD_ELEMENT = "acknowledgement";
+
 /** The marker of the profile elements the guard adds. */
 const PROFILE_MARK = "data-profile-element";
 
@@ -87,7 +90,11 @@ export function profileElements(path: string, programme: string | null, view: Fu
   if (p === null || programme === null || programmeOfPath(path) !== programme) {
     return [];
   }
-  return p.visibility.map((k) => ({ key: `funder_visibility.${k}`, text: elementText(k, p.id, p.version) }));
+  // The funding card carries the approved acknowledgement (lane L35, lead
+  // note of 2026-11-22), so that element adds no placeholder of its own.
+  return p.visibility
+    .filter((k) => k !== CARD_ELEMENT)
+    .map((k) => ({ key: `funder_visibility.${k}`, text: elementText(k, p.id, p.version) }));
 }
 
 /** Brings the profile elements of `footer` to the page in view, touching the DOM only when they differ. */

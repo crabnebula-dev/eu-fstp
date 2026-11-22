@@ -6,8 +6,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use fstp_api_core::legal::{
-    APPROVALS_JSON, Approval, LegalText, approved, approves, details_json, digest_hex, page_html,
-    parse_approvals,
+    APPROVALS_JSON, Approval, approved, approves, details_json, digest_hex, file_of, page_html,
+    parse_approvals, text_keys,
 };
 use fstp_brand::legal::LegalDetails;
 
@@ -17,24 +17,22 @@ use fstp_brand::legal::LegalDetails;
 #[test]
 fn adr037_shipped_approvals_match_their_drafts() {
     let a = parse_approvals(APPROVALS_JSON).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(a.len(), LegalText::ALL.len());
-    for (t, approval) in &a {
+    assert_eq!(a.len(), text_keys().count());
+    for (k, approval) in &a {
+        let file = file_of(k).unwrap();
+        let digest = digest_hex(k).unwrap();
         if let Some(ap) = approval {
             assert_eq!(
-                ap.sha256,
-                digest_hex(*t),
-                "legal/{} changed after its approval of {}. Its current digest is {}; record it only once Daniel approves the new text",
-                t.file(),
-                ap.approved_on,
-                digest_hex(*t)
+                ap.sha256, digest,
+                "legal/{file} changed after its approval of {}. Its current digest is {digest}; record it only once Daniel approves the new text",
+                ap.approved_on
             );
             assert!(
-                approves(*t, Some(ap)),
-                "legal/{} is approved but still holds a TODO(legal) or NOT BUILT marker",
-                t.file()
+                approves(k, Some(ap)),
+                "legal/{file} is approved but still holds a TODO(legal) or NOT BUILT marker"
             );
         }
-        assert_eq!(approved(*t), approval.is_some());
+        assert_eq!(approved(k), approval.is_some());
     }
 }
 
@@ -44,39 +42,39 @@ fn adr037_approval_file_grammar_is_closed() {
     let ok = r#"{"accessibility":null,"data_act":null,"imprint":{"approved_on":"2026-12-01","sha256":"PLACE"},"privacy":null,"terms":null}"#
         .replace("PLACE", &"ab".repeat(32));
     let a = parse_approvals(&ok).unwrap();
-    assert!(a.get(&LegalText::Imprint).unwrap().is_some());
+    assert!(a.get("imprint").unwrap().is_some());
     for bad in [
-        "[]",
-        r#"{"privacy":null}"#,
-        &ok.replace("2026-12-01", "1 Dec 2026"),
-        &ok.replace(&"ab".repeat(32), &"AB".repeat(32)),
-        &ok.replace("\"terms\":null", "\"terms\":true"),
-        &ok.replace("}", ",\"extra\":1}"),
+        "[]".to_owned(),
+        r#"{"privacy":null}"#.to_owned(),
+        ok.replace("2026-12-01", "1 Dec 2026"),
+        ok.replace(&"ab".repeat(32), &"AB".repeat(32)),
+        ok.replace("\"terms\":null", "\"terms\":true"),
+        ok.replace("\"privacy\":null", "\"extra\":null"),
     ] {
-        assert!(parse_approvals(bad).is_err(), "{bad}");
+        assert!(parse_approvals(&bad).is_err(), "{bad}");
     }
 }
 
-/// ADR-037: a matching digest approves a text only once it holds no
-/// pending point; a stale digest never approves. Every draft holds
-/// pending points today, so none can be approved yet.
+/// ADR-037: a stale digest never approves, and a matching digest approves
+/// a text only once it holds no pending point. Every draft holds pending
+/// points today, so none can be approved yet.
 #[test]
 fn adr037_approval_needs_the_exact_text_and_no_pending_point() {
-    for t in LegalText::ALL {
+    for k in text_keys() {
         let exact = Approval {
             approved_on: "2026-12-01".to_owned(),
-            sha256: digest_hex(t),
+            sha256: digest_hex(k).unwrap(),
         };
         let stale = Approval {
             approved_on: "2026-12-01".to_owned(),
             sha256: "00".repeat(32),
         };
-        assert!(!approves(t, Some(&stale)), "{t:?}");
-        assert!(!approves(t, None), "{t:?}");
-        // Each draft still holds TODO(legal) markers (ADR-037 section 3).
-        assert!(!approves(t, Some(&exact)), "{t:?}");
-        assert_eq!(digest_hex(t).len(), 64);
+        assert!(!approves(k, Some(&stale)), "{k}");
+        assert!(!approves(k, None), "{k}");
+        assert!(!approves(k, Some(&exact)), "{k}: still holds TODO(legal)");
     }
+    assert_eq!(digest_hex("nope"), None);
+    assert!(!approves("nope", None));
 }
 
 /// ADR-037, I-68: the page shows the tenant's values as text and the
@@ -88,14 +86,15 @@ fn i68_adr037_page_fills_the_tenant_values() {
         ("company_number", "X 000000"),
     ])
     .unwrap();
-    let html = page_html(LegalText::Imprint, Some(&d), None).unwrap();
+    let html = page_html("/legal/imprint", Some(&d), None).unwrap();
     assert!(html.contains("Synthetic Org Ltd"));
     assert!(html.contains("X 000000"));
     assert!(html.contains("[not set: tenant.vat_number]"));
     assert!(html.contains("Draft, not yet approved"));
-    let html = page_html(LegalText::Privacy, None, Some("/brand/x.css")).unwrap();
+    let html = page_html("/legal/privacy", None, Some("/brand/x.css")).unwrap();
     assert!(html.contains("href=\"/brand/x.css\""));
     assert!(html.contains("[not set: controller.legal_name]"));
+    assert_eq!(page_html("/legal/nope", None, None), None);
     assert_eq!(
         fstp_json::to_compact(&details_json(Some(&d))),
         r#"{"legal_name":"Synthetic Org Ltd","company_number":"X 000000"}"#

@@ -19,7 +19,18 @@ use std::sync::OnceLock;
 use fstp_brand::legal::LegalDetails;
 use fstp_engine::EngineState;
 use fstp_json::{Object, Value};
-pub use fstp_public::legal::{LEGAL_PREFIX, LegalText};
+use fstp_public::legal::LegalText;
+
+/// The legal text whose key in the approval file is `key`.
+fn text_of(key: &str) -> Option<LegalText> {
+    LegalText::ALL.into_iter().find(|t| t.key() == key)
+}
+
+/// The key of every legal text, in footer order: `privacy`,
+/// `accessibility`, `imprint`, `terms`, `data_act`.
+pub fn text_keys() -> impl Iterator<Item = &'static str> {
+    LegalText::ALL.into_iter().map(LegalText::key)
+}
 
 /// The approval file as shipped.
 pub const APPROVALS_JSON: &str = include_str!("../../../legal/page-approvals.json");
@@ -57,7 +68,9 @@ fn hex64(s: &str) -> bool {
 /// # Errors
 ///
 /// A constant naming the rule the file breaks.
-pub fn parse_approvals(text: &str) -> Result<BTreeMap<LegalText, Option<Approval>>, &'static str> {
+pub fn parse_approvals(
+    text: &str,
+) -> Result<BTreeMap<&'static str, Option<Approval>>, &'static str> {
     let v = fstp_json::parse(text.as_bytes()).map_err(|_| "the file is not JSON")?;
     let o = v.as_object().ok_or("the file is not an object")?;
     if o.len() != LegalText::ALL.len() {
@@ -67,7 +80,7 @@ pub fn parse_approvals(text: &str) -> Result<BTreeMap<LegalText, Option<Approval
     for t in LegalText::ALL {
         let e = o.get(t.key()).ok_or("a text is missing")?;
         if e.is_null() {
-            out.insert(t, None);
+            out.insert(t.key(), None);
             continue;
         }
         let e = e.as_object().ok_or("an approval is not an object")?;
@@ -82,7 +95,7 @@ pub fn parse_approvals(text: &str) -> Result<BTreeMap<LegalText, Option<Approval
             return Err("an approval holds a malformed date or digest");
         }
         out.insert(
-            t,
+            t.key(),
             Some(Approval {
                 approved_on: on.to_owned(),
                 sha256: sha.to_owned(),
@@ -94,37 +107,47 @@ pub fn parse_approvals(text: &str) -> Result<BTreeMap<LegalText, Option<Approval
 
 /// The shipped approvals. A malformed file approves nothing, and a test
 /// fails on it.
-pub fn approvals() -> &'static BTreeMap<LegalText, Option<Approval>> {
-    static A: OnceLock<BTreeMap<LegalText, Option<Approval>>> = OnceLock::new();
+pub fn approvals() -> &'static BTreeMap<&'static str, Option<Approval>> {
+    static A: OnceLock<BTreeMap<&'static str, Option<Approval>>> = OnceLock::new();
     A.get_or_init(|| parse_approvals(APPROVALS_JSON).unwrap_or_default())
 }
 
-/// The lower-case hex SHA-256 of `text`'s draft file, as `shasum -a 256`
-/// prints it.
-pub fn digest_hex(text: LegalText) -> String {
-    fstp_crypto::sha256(text.source().as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+/// The lower-case hex SHA-256 of the draft file of the text `key`, as
+/// `shasum -a 256` prints it, or `None` for an unknown key.
+pub fn digest_hex(key: &str) -> Option<String> {
+    let text = text_of(key)?;
+    Some(
+        fstp_crypto::sha256(text.source().as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    )
 }
 
-/// Whether `approval` approves `text` as embedded: the digest matches and
-/// the shown part holds no pending point.
-pub fn approves(text: LegalText, approval: Option<&Approval>) -> bool {
-    approval.is_some_and(|a| a.sha256 == digest_hex(text))
+/// The file name under `legal/` of the text `key`.
+pub fn file_of(key: &str) -> Option<&'static str> {
+    text_of(key).map(LegalText::file)
+}
+
+/// Whether `approval` approves the text `key` as embedded: the digest
+/// matches and the shown part holds no pending point.
+pub fn approves(key: &str, approval: Option<&Approval>) -> bool {
+    let Some(text) = text_of(key) else {
+        return false;
+    };
+    approval.is_some_and(|a| Some(&a.sha256) == digest_hex(key).as_ref())
         && fstp_public::legal::pending_points(text.source()) == 0
 }
 
-/// Whether `text` is approved by the shipped file. Computed once.
-pub fn approved(text: LegalText) -> bool {
-    static A: OnceLock<BTreeMap<LegalText, bool>> = OnceLock::new();
+/// Whether the text `key` is approved by the shipped file. Computed once.
+pub fn approved(key: &str) -> bool {
+    static A: OnceLock<BTreeMap<&'static str, bool>> = OnceLock::new();
     A.get_or_init(|| {
-        LegalText::ALL
-            .into_iter()
-            .map(|t| (t, approves(t, approvals().get(&t).and_then(Option::as_ref))))
+        text_keys()
+            .map(|k| (k, approves(k, approvals().get(k).and_then(Option::as_ref))))
             .collect()
     })
-    .get(&text)
+    .get(key)
     .copied()
     .unwrap_or(false)
 }
@@ -143,17 +166,19 @@ pub fn details_json(details: Option<&LegalDetails>) -> Value {
     Value::Object(o)
 }
 
-/// The legal page of `text` with `details` and the brand sheet
-/// `stylesheet`, as HTML. `None` only on a writer defect.
+/// The legal page at `path` (such as `/legal/privacy`) with `details`
+/// and the brand sheet `stylesheet`, as HTML. `None` for any other path,
+/// and on a writer defect.
 pub fn page_html(
-    text: LegalText,
+    path: &str,
     details: Option<&LegalDetails>,
     stylesheet: Option<&str>,
 ) -> Option<String> {
+    let text = LegalText::from_path(path)?;
     let value = |name: &str| details.and_then(|d| d.placeholder(name)).map(str::to_owned);
     fstp_public::legal::render_legal(&fstp_public::legal::LegalPage {
         text,
-        approved: approved(text),
+        approved: approved(text.key()),
         value: &value,
         stylesheet,
     })

@@ -261,7 +261,7 @@ pub(crate) fn take(
 #[cfg(test)]
 mod legal_tests {
     use super::DEMO_LEGAL_DETAILS;
-    use fstp_api_core::legal::{LegalText, page_html};
+    use fstp_api_core::legal::page_html;
     use fstp_brand::legal::LegalDetails;
 
     /// ADR-037 section 5: the demo values are valid legal details and
@@ -271,7 +271,7 @@ mod legal_tests {
     fn adr037_demo_legal_details_fill_the_imprint() {
         let d = LegalDetails::from_pairs(DEMO_LEGAL_DETAILS);
         assert!(d.is_some(), "the demo values are plain text");
-        let html = page_html(LegalText::Imprint, d.as_ref(), None).unwrap_or_default();
+        let html = page_html("/legal/imprint", d.as_ref(), None).unwrap_or_default();
         for v in [
             "CrabNebula Ltd",
             "C 103590",
@@ -280,7 +280,7 @@ mod legal_tests {
         ] {
             assert!(html.contains(v), "{v}");
         }
-        let html = page_html(LegalText::Accessibility, d.as_ref(), None).unwrap_or_default();
+        let html = page_html("/legal/accessibility", d.as_ref(), None).unwrap_or_default();
         assert!(html.contains("[not set: tenant.accessibility_contact]"));
     }
 }
