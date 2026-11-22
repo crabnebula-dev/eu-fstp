@@ -23,6 +23,7 @@ import { h } from "../core/dom.js";
 import { defaultMandatoryElements } from "../creator/frame.js";
 import { t } from "../creator/i18n.js";
 import type { FunderProfileView } from "../operations/profile.js";
+import { type FundingAnswer, cardsFor, syncFunding } from "./funding.js";
 
 /** The id of the guard's footer. */
 const SHELL_FOOTER_ID = "shell-footer";
@@ -128,14 +129,32 @@ export function syncFooter(): void {
   const footer = document.querySelector("footer");
   if (footer !== null) {
     syncProfileElements(footer);
+    // ADR-034: the funding card of the page's programme, or of every
+    // active programme on a tenant-wide page (I-69).
+    if (funding !== null) {
+      syncFunding(footer, cardsFor(programmeOfPath(location.pathname), funding.cards));
+    }
   }
 }
 
+/** Reads the funding cards, or null when they cannot be read (ADR-034). */
+export type FundingReader = () => Promise<FundingAnswer | null>;
+
+/** The funding cards once read. */
+let funding: FundingAnswer | null = null;
+
 /** Keeps exactly one footer on the page while pages render and change. */
-export function installFooterGuard(read: ProfileReader | null = null): void {
+export function installFooterGuard(read: ProfileReader | null = null, readFunding: FundingReader | null = null): void {
   reader = read;
   current = null;
   pending = null;
+  funding = null;
+  if (readFunding !== null) {
+    void readFunding().then((f) => {
+      funding = f;
+      syncFooter();
+    });
+  }
   syncFooter();
   new MutationObserver(() => {
     syncFooter();

@@ -6,6 +6,16 @@
 export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
   "admin.branding.title": "Logos and brand colours",
   "admin.branding.colours.heading": "Brand colours",
+  // ADR-034: the funding card defaults.
+  "admin.branding.funding.heading": "Funding card",
+  "admin.branding.funding.intro":
+    "Every page, email and PDF of a programme shows its funding card: the Funded by the European Union logo, the grant agreement number, and the coordinator's name and contact. A new programme takes the coordinator's name and contact from here. You can change them for each programme in step 1 of the programme editor.",
+  "admin.branding.funding.role": "Use an organisation name and a role address such as privacy@example.org, not a person.",
+  "admin.branding.funding.name": "Coordinator name",
+  "admin.branding.funding.contact": "Coordinator contact",
+  "admin.branding.funding.save": "Save the funding card defaults",
+  "admin.branding.funding.saved": "Saved. New programmes take these values.",
+  "admin.branding.funding.invalid": "Fill in both fields with plain text of up to 200 characters, without < or >.",
   "admin.branding.logos.heading": "Logos",
   "admin.branding.logos.programme_title": "Programme logo",
   "admin.branding.logos.loading": "Loading the logos in force.",

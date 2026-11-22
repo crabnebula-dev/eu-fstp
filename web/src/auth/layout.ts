@@ -4,6 +4,7 @@
 // a status region, and field errors tied to their field.
 
 import { clear, h } from './dom.js';
+import { fillFunding } from './funding.js';
 import { createI18n } from './i18n.js';
 import { AUTH_EN, type AuthMessageId } from './messages.en.js';
 import { LANDING_META, homeOf } from './next.js';
@@ -84,15 +85,16 @@ function chrome(main: HTMLElement): void {
   // fragment (`main.ts`), and the top bar holds three links and a
   // landmark before `main` (WCAG 2.2 SC 2.4.1 by landmarks).
   main.before(header);
-  main.after(
-    h('footer', { class: 'site-footer' }, [
-      h('div', { class: 'inner' }, [
-        h('p', {}, [t('footer.privacy')]),
-        h('p', {}, [t('footer.accessibility')]),
-        h('p', {}, [t('footer.attribution')]),
-      ]),
+  const footer = h('footer', { class: 'site-footer' }, [
+    h('div', { class: 'inner' }, [
+      h('p', {}, [t('footer.privacy')]),
+      h('p', {}, [t('footer.accessibility')]),
+      h('p', {}, [t('footer.attribution')]),
     ]),
-  );
+  ]);
+  main.after(footer);
+  // ADR-034: the funding card of each active programme (I-69).
+  void fillFunding(footer);
 }
 
 /** The live regions of a page. */

@@ -22,6 +22,7 @@
 
 import { type Reply, get, ok, record } from './api.js';
 import { h } from './dom.js';
+import { fillFunding } from './funding.js';
 import { PATHS, t } from './layout.js';
 import { AUTH_EN, type AuthMessageId } from './messages.en.js';
 import { type NavRoles, type SiteLink, navRolesOf, siteLinks } from './sitenav.js';
@@ -131,13 +132,16 @@ function topBar(mailbox: HTMLElement): HTMLElement {
 
 /** The footer, as the PublicLayout and the app pages show it. */
 function footer(): HTMLElement {
-  return h('footer', { class: 'site-footer' }, [
+  const f = h('footer', { class: 'site-footer' }, [
     h('div', { class: 'inner' }, [
       h('p', {}, [t('footer.privacy')]),
       h('p', {}, [t('footer.accessibility')]),
       h('p', {}, [t('footer.attribution')]),
     ]),
   ]);
+  // ADR-034: the funding card of each active programme (I-69).
+  void fillFunding(f);
+  return f;
 }
 
 /**

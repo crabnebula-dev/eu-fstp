@@ -223,6 +223,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.field.funder.action_acronym": "Action acronym",
   "creator.field.funder.coordinator_name": "Name of the coordinator who runs the calls",
   "creator.field.funder.coordinator_contact": "Contact of the coordinator, shown on the funding card",
+  "creator.funding.suggested": "Filled in from your organisation's funding card default. Saving this step keeps it.",
   "creator.field.funder.p56_fstp_budget": "FSTP budget of the action (P-56)",
   "creator.field.funder.p57_action_dates": "Action dates (P-57)",
   "creator.field.funder.p58_recipient_ceiling": "Per-recipient ceiling of the funder (P-58)",
@@ -535,6 +536,13 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.approvals.no_self_grants": "No role grant to an admin's own account waits.",
   "creator.approvals.self_grants_unlisted":
     "This inbox cannot list role grants to an admin's own account yet, so none is shown here.",
+  // ADR-034: the funding card in every footer (I-69, R-NF-04).
+  "footer.funding.label": "EU funding",
+  "footer.funding.alt": "Funded by the European Union",
+  "footer.funding.grant": "Grant agreement number",
+  "footer.funding.coordinator": "Coordinator",
+  "footer.funding.contact": "Contact",
+  "footer.funding.not_set": "Not set yet",
 };
 
 // TODO(legal): the privacy notice, accessibility statement and Data Act
@@ -547,6 +555,9 @@ const APPROVED: Readonly<Record<string, string>> = {
   "footer.platform_attribution": "Runs on the FSTP platform.",
   "footer.funder_visibility": "Funder visibility: the approved wording is pending.",
   "footer.ai_disclosure": "AI disclosure: the approved wording is pending.",
+  // TODO(legal): the EU funding acknowledgement beside the funding card
+  // (L-08, ADR-034). The placeholder states no wording.
+  "footer.eu_funding": "EU funding acknowledgement: the approved wording is pending.",
   // TODO(legal): the wording of each funder visibility element of the
   // pinned profile on a programme page (L-08, L-09). The placeholder names
   // the element key only, as on the public pages.
