@@ -108,6 +108,51 @@ pub struct MailConfig {
     /// The DKIM signers. Empty means DKIM is off, which is the default
     /// until the flag is set (M6 design section 5.3).
     pub dkim: Vec<DkimSigner>,
+    /// The tenant's logos and colour for the HTML part (ADR-030 section
+    /// 5), or `None` for the plain platform look.
+    pub brand: Option<MailBrand>,
+}
+
+/// The most logos one message carries: the tenant's, then the programme's.
+pub const MAX_MAIL_LOGOS: usize = 2;
+
+/// The largest logo a message carries, in bytes (the logo check's bound).
+pub const MAX_MAIL_LOGO_BYTES: usize = 256 * 1024;
+
+/// One logo of a message: a checked PNG and its text alternative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailLogo {
+    /// The PNG bytes, as the logo check stored them.
+    pub png: Vec<u8>,
+    /// The text alternative: the tenant's or the programme's name. It
+    /// reaches the HTML part escaped only.
+    pub alt: String,
+}
+
+/// The tenant's look in a message (ADR-030 section 5; I-68). Every value
+/// is typed data: the colour is three bytes and each logo is a PNG that
+/// travels as an inline part. No tenant markup or style reaches the
+/// message, and the plain-text part and every approved text stay as they
+/// are (I-72, I-94).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailBrand {
+    /// The brand colour of the rule under the header, as `[r, g, b]`.
+    pub colour: [u8; 3],
+    /// The logos, at most [`MAX_MAIL_LOGOS`]. A logo that is no PNG or is
+    /// over [`MAX_MAIL_LOGO_BYTES`] is left out.
+    pub logos: Vec<MailLogo>,
+}
+
+impl MailBrand {
+    /// The logos the message carries, in order.
+    pub fn carried(&self) -> impl Iterator<Item = &MailLogo> {
+        self.logos
+            .iter()
+            .filter(|l| {
+                l.png.len() <= MAX_MAIL_LOGO_BYTES && l.png.starts_with(b"\x89PNG\r\n\x1a\n")
+            })
+            .take(MAX_MAIL_LOGOS)
+    }
 }
 
 /// One message to compose.
@@ -141,7 +186,10 @@ pub fn compose(cfg: &MailConfig, msg: &Message<'_>) -> Result<Vec<u8>, MailError
     if msg.pdf.is_some() && !msg.template.allows_pdf() {
         return Err(MailError::AttachmentNotAllowed);
     }
-    let rendered = msg.template.render(msg.bindings, &cfg.origin)?;
+    let mut rendered = msg.template.render(msg.bindings, &cfg.origin)?;
+    if let Some(b) = &cfg.brand {
+        rendered.html = mime::branded_html(&rendered.html, b);
+    }
     let mut raw = mime::build(cfg, msg, &rendered)?;
     for signer in &cfg.dkim {
         raw = dkim::sign(&raw, signer)?;

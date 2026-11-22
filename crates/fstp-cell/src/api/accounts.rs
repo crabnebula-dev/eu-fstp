@@ -64,6 +64,26 @@ fn enrol_command_id(cell: [u8; 16], invitation: u128) -> [u8; 16] {
 }
 
 impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
+    /// The tenant's look for a message about `programme` (ADR-030 section
+    /// 5): the brand colour and the logos an email shows, their bytes
+    /// read from the blob store. A logo that does not read is left out,
+    /// so the message still goes with the tenant's name as text.
+    async fn mail_brand(&self, programme: ProgrammeId) -> Option<fstp_mail::MailBrand> {
+        use fstp_api_core::port::{BlobRef, BlobStore as _};
+        let (colour, plan) = {
+            let st = self.0.engine.state();
+            fstp_api_core::brand::mail_plan(st.engine().tenant.state()?, Some(programme))?
+        };
+        let blobs = super::content::CellBlobs(Arc::clone(&self.0));
+        let mut logos = Vec::new();
+        for (l, alt) in plan {
+            if let Ok(png) = blobs.get_brand(BlobRef(l.digest.bytes())).await {
+                logos.push(fstp_mail::MailLogo { png, alt });
+            }
+        }
+        Some(fstp_mail::MailBrand { colour, logos })
+    }
+
     /// Admits `command` for the system task `task` under `id` and runs it,
     /// with the outbox bodies of a firing. A duplicate of a committed id is
     /// success.
@@ -174,6 +194,8 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
             from: Mailbox::new(relay.sender()).map_err(|_| PortError::Unavailable)?,
             from_name: None,
             dkim: Vec::new(),
+            // ADR-030: the tenant's and the programme's logos and colour.
+            brand: self.mail_brand(programme).await,
         };
         let bindings = Bindings::new().with(
             Slot::Link,

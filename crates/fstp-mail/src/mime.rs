@@ -17,7 +17,7 @@ use crate::encode::{
 };
 use crate::placeholder::civil_from_days;
 use crate::template::Rendered;
-use crate::{MailConfig, MailError, Message};
+use crate::{MailBrand, MailConfig, MailError, Message};
 
 /// The largest message the parser reads.
 pub const MAX_MESSAGE: usize = 32 * 1024 * 1024;
@@ -141,6 +141,53 @@ fn push_header(out: &mut String, name: &str, value: &str) {
     out.push_str("\r\n");
 }
 
+/// The `Content-ID` of logo `i` (ADR-030 section 5).
+pub fn logo_cid(i: usize) -> String {
+    format!("logo-{i}@fstp")
+}
+
+fn escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The HTML part `html` with the tenant's header after `<body>`
+/// (ADR-030 section 5): each carried logo as an inline image by its
+/// `Content-ID`, its text alternative escaped, above a rule in the brand
+/// colour. The colour is written from its three bytes, so no tenant text
+/// reaches the style. The rest of the part is unchanged.
+pub(crate) fn branded_html(html: &str, b: &MailBrand) -> String {
+    const BODY: &str = "<body>\n";
+    let Some(at) = html.find(BODY).and_then(|i| i.checked_add(BODY.len())) else {
+        return html.to_owned();
+    };
+    let [r, g, bl] = b.colour;
+    let mut head = format!(
+        "<div style=\"border-bottom:4px solid #{r:02x}{g:02x}{bl:02x};padding:0 0 12px;margin:0 0 16px\">"
+    );
+    for (i, logo) in b.carried().enumerate() {
+        head.push_str(&format!(
+            "<img src=\"cid:{}\" alt=\"{}\" height=\"40\" style=\"height:40px;width:auto;margin-right:16px\">",
+            logo_cid(i),
+            escape(&logo.alt)
+        ));
+    }
+    head.push_str("</div>\n");
+    let (before, after) = html.split_at(at);
+    format!("{before}{head}{after}")
+}
+
 /// Builds the message for `msg` from its rendering `r`. No DKIM
 /// signature is added here.
 ///
@@ -176,13 +223,38 @@ pub fn build(cfg: &MailConfig, msg: &Message<'_>, r: &Rendered) -> Result<Vec<u8
         &format!("{}/{}/{}", t.id().code(), t.version(), t.locale().code()),
     );
 
+    let html_part = format!(
+        "Content-Type: text/html; charset=utf-8\r\n\
+         Content-Transfer-Encoding: quoted-printable\r\n\r\n{html}\r\n",
+        html = qp_encode(&r.html),
+    );
+    // ADR-030: with logos, the HTML part and its images travel together
+    // in a `multipart/related` part, each image by its `Content-ID`.
+    let logos: Vec<&crate::MailLogo> = cfg.brand.iter().flat_map(MailBrand::carried).collect();
+    let html_part = if logos.is_empty() {
+        html_part
+    } else {
+        let related = format!("=_fstp_r_{tag}");
+        let mut out = format!(
+            "Content-Type: multipart/related; boundary=\"{related}\"; type=\"text/html\"\r\n\r\n--{related}\r\n{html_part}"
+        );
+        for (i, logo) in logos.iter().enumerate() {
+            out.push_str(&format!(
+                "--{related}\r\nContent-Type: image/png\r\nContent-ID: <{cid}>\r\n\
+                 Content-Disposition: inline; filename=\"logo-{i}.png\"\r\n\
+                 Content-Transfer-Encoding: base64\r\n\r\n{b64}",
+                cid = logo_cid(i),
+                b64 = base64_encode_wrapped(&logo.png),
+            ));
+        }
+        out.push_str(&format!("--{related}--\r\n"));
+        out
+    };
     let alt_body = format!(
         "--{alt}\r\nContent-Type: text/plain; charset=utf-8\r\n\
          Content-Transfer-Encoding: quoted-printable\r\n\r\n{text}\r\n\
-         --{alt}\r\nContent-Type: text/html; charset=utf-8\r\n\
-         Content-Transfer-Encoding: quoted-printable\r\n\r\n{html}\r\n--{alt}--\r\n",
+         --{alt}\r\n{html_part}--{alt}--\r\n",
         text = qp_encode(&r.text),
-        html = qp_encode(&r.html),
     );
     let body = match msg.pdf {
         None => {

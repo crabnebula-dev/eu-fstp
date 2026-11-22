@@ -201,3 +201,33 @@ pub fn public_logos(ts: Option<&TenantState>, programme: ProgrammeId) -> fstp_pu
         emblem: EU_EMBLEM_PNG.map(|_| "/brand/eu-emblem.png".to_owned()),
     }
 }
+
+/// What a message shows of the tenant (ADR-030 section 5): the brand
+/// colour of the light family, as `[r, g, b]`, and the light logos an
+/// email can show, the tenant's then the programme's, each with its text
+/// alternative. `None` while the tenant set neither tokens nor a logo, so
+/// the message keeps the platform look.
+pub fn mail_plan(
+    ts: &TenantState,
+    programme: Option<ProgrammeId>,
+) -> Option<([u8; 3], Vec<(LogoRef, String)>)> {
+    let tokens = ts.branding().map(|(t, _)| t);
+    let name = tokens
+        .map(|t| t.name.as_str().to_owned())
+        .unwrap_or_default();
+    let mut logos = Vec::new();
+    if let Some(l) = logo_of(ts, LogoOwner::Tenant, ThemeMode::Light) {
+        logos.push((l, name));
+    }
+    if let Some(p) = programme
+        && let Some(l) = logo_of(ts, LogoOwner::Programme(p), ThemeMode::Light)
+    {
+        logos.push((l, String::new()));
+    }
+    logos.retain(|(l, _)| l.format.in_email());
+    if tokens.is_none() && logos.is_empty() {
+        return None;
+    }
+    let c = tokens.map_or(fstp_brand::Palette::PLATFORM_LIGHT.brand, |t| t.light.brand);
+    Some(([c.r, c.g, c.b], logos))
+}
