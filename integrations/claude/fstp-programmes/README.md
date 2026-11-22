@@ -41,6 +41,20 @@ The demo cell runs on your own machine with synthetic data. Follow `docs/guide/c
 http://localhost:8640/mcp
 ```
 
+## Running the AI assessment (FSTP coordinators)
+
+An FSTP coordinator can run the AI assessment of a call's submitted proposals in their own Claude Code (ADR-033). The plugin adds a second server entry, `fstp-assess`, which asks only for the permission "Run the AI assessment of proposals you may read". Run `/mcp`, choose `plugin:fstp-programmes:fstp-assess` and sign in.
+
+Ask Claude, for example: "Run the AI assessment of call 3". The `run-assessment` skill lists the proposals, and the assessor agent `fstp-programmes:fstp-assessor` assesses each one. That agent has only the three assessment tools and the platform's pinned prompt set. Proposal text never enters your main conversation. The platform checks every reply, records advisory findings, and drops whatever fails its checks.
+
+Before you start:
+
+- The programme's P-21 inference provider must be `coordinator_agent`, set before the call is published. It is off by default.
+- Declare in the platform that you have no conflict on each proposal.
+- Run the model the call pins. The skill tells you which one, and `/model` switches it.
+
+Sending proposal text to Claude is a transfer to Anthropic. Enable it only for programmes whose applicants were told and whose legal basis is settled.
+
 ## Confirming prepared actions
 
 Every `fstp_prepare_*` tool leaves a pending action. Open the platform, go to your pending actions and confirm or discard each one. Pending actions expire after 24 hours. Some steps need a second person: a programme is activated by a tenant admin who did not build it, and a call is approved by someone who did not draft it.
