@@ -139,6 +139,9 @@ pub struct PublicFunding {
     pub coordinator: String,
     /// The coordinator's contact.
     pub contact: String,
+    /// The funding acknowledgement (L-08, ADR-036), or `None` while a
+    /// value it names is missing. Shown as text, never a broken sentence.
+    pub acknowledgement: Option<String>,
 }
 
 /// The footer data of a pinned funder profile: its id, its version and
@@ -273,14 +276,9 @@ const ENTRIES: &[EntrySource<'static>] = &[
         message: "Funder visibility element {element} of funder profile {profile} version {version}: the approved wording is pending.",
     },
     label("public.footer.attribution", "Runs on the FSTP platform."),
-    // TODO(legal): the EU funding acknowledgement beside the emblem slot
-    // and the emblem's alternative text (L-08, ADR-030). Daniel supplies
-    // the approved wording and the emblem file.
-    EntrySource {
-        id: "public.footer.eu_funding",
-        kind: MessageKind::Approved,
-        message: "EU funding acknowledgement: the approved wording is pending.",
-    },
+    // L-08 (ADR-036): the funding acknowledgement is the programme's
+    // approved sentence from `fstp_report::wording`, approved by Daniel,
+    // 2026-11-22. It is not a catalogue entry.
     // ADR-034: the words the Funded by the EU logo shows (R-NF-04).
     label(
         "public.footer.eu_emblem_alt",
@@ -547,9 +545,7 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
         }
     }
     // ADR-030: the fixed slot for the EU emblem and the funding
-    // acknowledgement, from platform data only. The emblem shows once
-    // Daniel supplies the file. TODO(legal): the acknowledgement wording
-    // and the emblem usage rules (L-08).
+    // acknowledgement, from platform data only.
     //
     // ADR-034: with the programme's funding card, the slot is a labelled
     // region keyed `funding_card`, whose logo sits on a white card in both
@@ -564,8 +560,6 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
         ),
         None => None,
     };
-    let acknowledgement =
-        Element::new("span").approved(&ApprovedText::new("public.footer.eu_funding"), &[]);
     let funding = match &logos.funding {
         Some(card) => {
             let pair = |dl: Element, id: &str, value: &str| {
@@ -595,24 +589,28 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
             if let Some(img) = logo {
                 section = section.child(img);
             }
-            section.child(
-                Element::new("div")
-                    .attr("class", "funding-card-text")
-                    .child(
-                        Element::new("p")
-                            .attr("class", "funding-card-name")
-                            .text(&card.programme),
-                    )
-                    .child(dl)
-                    .child(Element::new("p").child(acknowledgement)),
-            )
+            let text = Element::new("div")
+                .attr("class", "funding-card-text")
+                .child(
+                    Element::new("p")
+                        .attr("class", "funding-card-name")
+                        .text(&card.programme),
+                )
+                .child(dl);
+            // L-08 (ADR-036): the approved sentence as text, or nothing
+            // while a value it names is missing (I-68).
+            let text = match &card.acknowledgement {
+                Some(s) => text.child(Element::new("p").attr("class", "funding-card-ack").text(s)),
+                None => text,
+            };
+            section.child(text)
         }
         None => {
             let mut div = Element::new("div").attr("class", "eu-funding");
             if let Some(img) = logo {
                 div = div.child(img);
             }
-            div.child(acknowledgement)
+            div
         }
     };
     Ok(Element::new("footer").attr("class", "site-footer").child(

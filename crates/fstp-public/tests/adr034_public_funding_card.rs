@@ -22,6 +22,7 @@ fn chrome(contact: &str) -> Chrome {
                 grant_number: "SYNTHETIC-000000000".to_owned(),
                 coordinator: "Synthetic coordinator org".to_owned(),
                 contact: contact.to_owned(),
+                acknowledgement: None,
             }),
             ..PublicLogos::default()
         },
@@ -58,7 +59,6 @@ fn i69_public_footer_holds_the_funding_card() {
             "Synthetic coordinator org",
             "Contact",
             "role@example.org",
-            "EU funding acknowledgement",
         ] {
             assert!(footer.contains(text), "{p:?}: {text}");
         }

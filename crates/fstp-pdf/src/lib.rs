@@ -42,6 +42,6 @@ pub use increment::{
 };
 pub use object::{Object, ParseError, ParseErrorKind};
 pub use writer::{
-    Block, BlockKind, Document, Image, ImageColours, Letterhead, SignatureField, WriteError, write,
-    write_with_letterhead,
+    Block, BlockKind, Document, Image, ImageColours, Letterhead, SignatureField, WriteError,
+    letterhead_size, write, write_with_letterhead,
 };
