@@ -647,9 +647,106 @@ fn lower_values(n: usize, max: u32) -> Value {
     )
 }
 
+/// The world facts a well-formed request body names (lane L26). The
+/// direct harness fills them from its world, and the PostgreSQL sample of
+/// `fstp-celltest` from its own, so both send one body per operation and
+/// a cell reaches the cell's authorisation, never a decoder refusal.
+#[derive(Clone, Debug)]
+pub struct BodyIds {
+    /// The programme manager's binding of P, which `identity.unmask`
+    /// names.
+    pub pm_binding: Option<u128>,
+    /// The tenant's onboarding revision.
+    pub tenant_revision: String,
+    /// The values of a valid save of the onboarding step the route names.
+    pub onboarding_values: Value,
+    /// The account `tenant.grant_signatory` grants.
+    pub signatory_grantee: u128,
+    /// The creator draft's head revision.
+    pub revision: Option<String>,
+    /// The key of a warning of the draft report.
+    pub warning: Option<String>,
+    /// The invitee who accepted the terms, which a draft's grant names.
+    pub pm_invitee: u128,
+    /// An account with no binding.
+    pub unbound: u128,
+    /// The world clock, microseconds.
+    pub now: u128,
+    /// When a drafted call opens, microseconds.
+    pub opens: u128,
+    /// The deadline of a drafted call, microseconds.
+    pub deadline: u128,
+    /// The account a team or guardian addition names.
+    pub team_candidate: u128,
+    /// The body of a work plan.
+    pub plan_body: Value,
+    /// The agreed plan.
+    pub plan: Option<u128>,
+    /// The call.
+    pub call: Option<u128>,
+    /// The knock-out criteria.
+    pub knock_outs: Vec<u128>,
+    /// The number of scored criteria.
+    pub criteria: usize,
+    /// The top of the scale.
+    pub scale: u32,
+    /// The ranked proposals.
+    pub ranked: Vec<u128>,
+    /// The committee member a reviewer assignment or a delegation names.
+    pub member: u128,
+    /// The digest of the caller's pending action, if any.
+    pub shown: Option<String>,
+}
+
 /// The body members of a valid request of `op` by `who`.
 fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object, String> {
     let t = &w.targets;
+    let pm_binding = t.programme.and_then(|p| {
+        let state = w.ports.engine.state();
+        state
+            .core
+            .roster()
+            .bindings()
+            .find(|(_, b)| b.account == PM && b.programme == p)
+            .map(|(id, _)| id.raw())
+    });
+    let ids = BodyIds {
+        pm_binding,
+        tenant_revision: w.tenant_revision.clone(),
+        onboarding_values: step_values(step_name(state), &w.admins),
+        signatory_grantee: SIGNATORY_GRANTEE.raw(),
+        revision: t.revision.clone(),
+        warning: t.warning.clone(),
+        pm_invitee: PM_INVITEE.raw(),
+        unbound: UNBOUND.raw(),
+        now: u128::try_from(w.now).unwrap_or(0),
+        opens: u128::try_from(OPENS).unwrap_or(0),
+        deadline: u128::try_from(DEADLINE).unwrap_or(0),
+        team_candidate: AccountId::from_raw(990).raw(),
+        plan_body: plan_body("50000.00"),
+        plan: t.plan,
+        call: t.call.map(|c| c.raw()),
+        knock_outs: w.knock_outs.clone(),
+        criteria: w.criteria,
+        scale: w.scale,
+        ranked: w.ranked.iter().map(|p| p.raw()).collect(),
+        member: MEMBER.raw(),
+        shown: account_of(who)
+            .and_then(|a| t.pending.get(&a))
+            .map(|(_, d)| d.clone()),
+    };
+    request_body(op, state, &ids)
+}
+
+/// The body members of a valid request of `op` in `state`, with the world
+/// facts `ids` (lane L26: one builder for the direct harness and the
+/// PostgreSQL sample).
+///
+/// # Errors
+///
+/// A body that is not a JSON object.
+pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Object, String> {
+    let rev = || ids.revision.as_deref().unwrap_or("1.1");
     let v = match op {
         "me.begin_verification"
         | "tenant.complete"
@@ -680,18 +777,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         // ADR-023: the subject is the programme manager's binding of P,
         // which every world past activation holds.
         "identity.unmask" => {
-            let state = w.ports.engine.state();
-            let binding = t
-                .programme
-                .and_then(|p| {
-                    state
-                        .core
-                        .roster()
-                        .bindings()
-                        .find(|(_, b)| b.account == PM && b.programme == p)
-                        .map(|(id, _)| id.raw())
-                })
-                .unwrap_or(1);
+            let binding = ids.pm_binding.unwrap_or(1);
             obj(vec![
                 (
                     "subject",
@@ -700,13 +786,10 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
                 ("purpose", s("SYNTHETIC PURPOSE")),
             ])
         }
-        "tenant.save_step" => {
-            let step = step_name(state);
-            obj(vec![
-                ("base", s(&w.tenant_revision)),
-                ("values", step_values(step, &w.admins)),
-            ])
-        }
+        "tenant.save_step" => obj(vec![
+            ("base", s(&ids.tenant_revision)),
+            ("values", ids.onboarding_values.clone()),
+        ]),
         // J2: an acceptance names the terms version the landing showed.
         // The link token names no invitation, so the cell meets the
         // `Input` refusal outside authorisation, as `people.get_invitation`
@@ -715,7 +798,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "tenant.invite_admin" => obj(vec![("email", s("new-admin@matrix.invalid"))]),
         "proposal.request_copy" => obj(vec![("email", s("copy@matrix.invalid"))]),
         "tenant.grant_signatory" => obj(vec![
-            ("account", dec(SIGNATORY_GRANTEE.raw())),
+            ("account", dec(ids.signatory_grantee)),
             ("role", s("legal_signatory")),
         ]),
         "tenant.approve_activation" => obj(vec![("request", s("1"))]),
@@ -798,11 +881,11 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ("role", s("programme_manager")),
         ]),
         "creator.apply_start" => obj(vec![
-            ("base", s(t.revision.as_deref().unwrap_or("1.1"))),
+            ("base", s(rev())),
             ("start", crate::fake::creator_requests::supersafe_start()),
         ]),
         "creator.save_fields" => obj(vec![
-            ("base", s(t.revision.as_deref().unwrap_or("1.1"))),
+            ("base", s(rev())),
             (
                 "fields",
                 Value::Array(Array::from(vec![obj(vec![
@@ -814,24 +897,21 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         // SA-12: a synthetic narrative edit, and the removal of a document
         // no world registers, each judged at the head revision.
         "creator.edit_narrative" => obj(vec![
-            ("base", s(t.revision.as_deref().unwrap_or("1.1"))),
+            ("base", s(rev())),
             ("value", s("SYNTHETIC narrative text, matrix cell.")),
         ]),
-        "import.remove" => obj(vec![("base", s(t.revision.as_deref().unwrap_or("1.1")))]),
-        "creator.accept_narrative" => {
-            obj(vec![("base", s(t.revision.as_deref().unwrap_or("1.1")))])
-        }
+        "import.remove" => obj(vec![("base", s(rev()))]),
+        "creator.accept_narrative" => obj(vec![("base", s(rev()))]),
         "creator.acknowledge" => obj(vec![
-            ("revision", s(t.revision.as_deref().unwrap_or("1.1"))),
-            ("warning", s(t.warning.as_deref().unwrap_or("null"))),
+            ("revision", s(rev())),
+            ("warning", s(ids.warning.as_deref().unwrap_or("null"))),
         ]),
-        "creator.request_activation" | "creator.approve_activation" => obj(vec![(
-            "revision",
-            s(t.revision.as_deref().unwrap_or("1.1")),
-        )]),
+        "creator.request_activation" | "creator.approve_activation" => {
+            obj(vec![("revision", s(rev()))])
+        }
         // ADR-022: a synthetic reason, never personal data.
         "creator.override_activation" => obj(vec![
-            ("revision", s(t.revision.as_deref().unwrap_or("1.1"))),
+            ("revision", s(rev())),
             ("reason", s("SYNTHETIC: the second admin is on leave.")),
         ]),
         "import.upload" => obj(vec![
@@ -842,7 +922,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ),
         ]),
         "import.resolve" => obj(vec![
-            ("base", s(t.revision.as_deref().unwrap_or("1.1"))),
+            ("base", s(rev())),
             ("conflict_acknowledged", Value::Bool(false)),
             ("resolution", obj(vec![("kind", s("dismiss"))])),
             ("shown", s(&"0".repeat(64))),
@@ -854,14 +934,14 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         // terms to an account with no binding. Either way the grant is
         // valid for the state (design section 8.3, valid inputs per cell).
         "roles.grant" if state == StateProfile::ProgrammeDraft => obj(vec![
-            ("account", dec(PM_INVITEE.raw())),
+            ("account", dec(ids.pm_invitee)),
             ("role", s("ProgrammeManager")),
-            ("start", dec(u128::try_from(w.now).unwrap_or(0))),
+            ("start", dec(ids.now)),
         ]),
         "roles.grant" => obj(vec![
-            ("account", dec(UNBOUND.raw())),
+            ("account", dec(ids.unbound)),
             ("role", s("Auditor")),
-            ("start", dec(u128::try_from(w.now).unwrap_or(0))),
+            ("start", dec(ids.now)),
         ]),
         "roles.end" => obj(vec![]),
         // SA-11: a synthetic display name, valid in every cell.
@@ -870,8 +950,8 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "me.set_theme" => obj(vec![("theme", s("dark"))]),
         "roles.reinstate" => obj(vec![("reason", s("SYNTHETIC REINSTATEMENT REASON"))]),
         "call.draft" | "call.edit" => obj(vec![
-            ("opens", dec(u128::try_from(OPENS).unwrap_or(0))),
-            ("deadline", dec(u128::try_from(DEADLINE).unwrap_or(0))),
+            ("opens", dec(ids.opens)),
+            ("deadline", dec(ids.deadline)),
             ("deadline_zone", s("Europe/Brussels")),
             ("currency", s("EUR")),
             ("budget", s("400000.00")),
@@ -882,9 +962,9 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ("summary", s("SYNTHETIC SUMMARY")),
             ("title", s("SYNTHETIC TITLE")),
         ]),
-        "proposal.record_plan" => plan_body("50000.00"),
+        "proposal.record_plan" => ids.plan_body.clone(),
         "proposal.add_member" | "proposal.add_guardian" => {
-            obj(vec![("account", dec(AccountId::from_raw(990).raw()))])
+            obj(vec![("account", dec(ids.team_candidate))])
         }
         "proposal.state_country" => obj(vec![("country", s("BE"))]),
         // MB-Q1, ADR-020: an id no world holds as a notice, so the call
@@ -894,14 +974,14 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "proposal.state_birth_date" => obj(vec![("date_of_birth", s("1990-01-01"))]),
         "proposal.submit" => obj(vec![("ethics", s("none")), ("notice_version", s("1"))]),
         "stage2.answer" => obj(vec![("text", s("SYNTHETIC ANSWERS"))]),
-        "stage2.revise" => obj(vec![("plan", dec(t.plan.unwrap_or(1)))]),
+        "stage2.revise" => obj(vec![("plan", dec(ids.plan.unwrap_or(1)))]),
         "negotiation.acknowledge_notice" => obj(vec![("notice_version", s("1"))]),
         "review.declare_proposal" | "review.declare_assignment" | "irc.declare" => obj(vec![
             ("conflicted", Value::Bool(false)),
             ("notifiable", Value::Bool(false)),
         ]),
         "review.knock_out" => {
-            let outcomes: Vec<Value> = w
+            let outcomes: Vec<Value> = ids
                 .knock_outs
                 .iter()
                 .map(|k| obj(vec![("criterion", dec(*k)), ("passed", Value::Bool(true))]))
@@ -912,17 +992,17 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             )])
         }
         "review.assign" => obj(vec![
-            ("reviewer", dec(MEMBER.raw())),
+            ("reviewer", dec(ids.member)),
             ("kind", obj(vec![("type", s("Reviewer"))])),
         ]),
         "review.score" => obj(vec![
-            ("plan", dec(t.plan.unwrap_or(1))),
+            ("plan", dec(ids.plan.unwrap_or(1))),
             ("stage", s(stage_of(state))),
-            ("values", score_values(w.criteria, w.scale)),
+            ("values", score_values(ids.criteria, ids.scale)),
         ]),
         "review.correct_score" => obj(vec![
             ("stage", s(stage_of(state))),
-            ("values", score_values(w.criteria, w.scale)),
+            ("values", score_values(ids.criteria, ids.scale)),
             ("reason", s("SYNTHETIC CORRECTION")),
         ]),
         "review.ranking_summary" => obj(vec![
@@ -932,7 +1012,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         ]),
         "stage2.ask" => obj(vec![("text", s("SYNTHETIC QUESTION"))]),
         "committee.open_round" => {
-            let order: Vec<Value> = w.ranked.iter().map(|p| dec(p.raw())).collect();
+            let order: Vec<Value> = ids.ranked.iter().map(|p| dec(*p)).collect();
             obj(vec![
                 ("order", Value::Array(order.into_iter().collect())),
                 ("nominated", int(1)),
@@ -941,11 +1021,11 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         }
         "committee.cast" => obj(vec![("vote", s("For"))]),
         "review.mark_finding" => obj(vec![("mark", s("Agreed"))]),
-        "committee.delegate" => obj(vec![("to", dec(MEMBER.raw()))]),
+        "committee.delegate" => obj(vec![("to", dec(ids.member))]),
         "irc.review" => obj(vec![("verdict", obj(vec![("type", s("Validate"))]))]),
         "agents.consent" => obj(vec![]),
         "grant.determine_amount" => obj(vec![
-            ("agreed", dec(t.plan.unwrap_or(1))),
+            ("agreed", dec(ids.plan.unwrap_or(1))),
             ("deductions", Value::Array(Array::new())),
             ("currency", s("EUR")),
         ]),
@@ -960,7 +1040,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             ("deliverables", Value::Array(Array::new())),
         ]),
         "grant.publicity.withdraw" => obj(vec![("phase", s("Funded"))]),
-        "amendment.propose" => obj(vec![("plan", dec(t.plan.unwrap_or(1)))]),
+        "amendment.propose" => obj(vec![("plan", dec(ids.plan.unwrap_or(1)))]),
         "amendment.route" => obj(vec![("route", s("Irc"))]),
         "contract.propose_change" => obj(vec![
             ("clause", int(1)),
@@ -988,12 +1068,10 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         ]),
         "report.generate" => obj(vec![
             ("kind", s("audit_file")),
-            ("call", dec(t.call.map_or(1, |c| c.raw()))),
+            ("call", dec(ids.call.unwrap_or(1))),
         ]),
         "pending.confirm" => {
-            let shown = account_of(who)
-                .and_then(|a| t.pending.get(&a))
-                .map_or_else(|| "0".repeat(64), |(_, d)| d.clone());
+            let shown = ids.shown.clone().unwrap_or_else(|| "0".repeat(64));
             obj(vec![("shown", s(&shown))])
         }
         _ => obj(vec![]),
