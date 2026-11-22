@@ -342,3 +342,135 @@ fn adr008_signup_options_answer_uniformly_and_check_their_body() {
     ));
     assert_eq!(status(&r), 400, "{}", text(&r));
 }
+
+// ---------------------------------------------------------------------------
+// The typed registration code and the later passkey (Daniel, 2026-11-22,
+// ADR-008 "Registration code" and "Later passkey").
+// ---------------------------------------------------------------------------
+
+/// The code the registration email carries for the newest proof.
+fn code_of_newest(c: &LocalCell) -> String {
+    let (_, token) = c.backend().signup_proofs().last().cloned().unwrap();
+    String::from_utf8(fstp_auth::ceremony::signup_code(&token).to_vec()).unwrap()
+}
+
+fn code_body(code: &str, email: &str) -> Vec<u8> {
+    format!("{{\"code\":\"{code}\",\"email\":\"{email}\"}}").into_bytes()
+}
+
+/// The `name=value` of the session cookie a reply set.
+fn cookie_of(r: &Response) -> String {
+    let v = r.headers.get("set-cookie").expect("a session cookie");
+    let s = String::from_utf8_lossy(v.as_bytes()).into_owned();
+    s.split(';').next().unwrap().to_owned()
+}
+
+fn with_cookie(req: Request, cookie: &str) -> Request {
+    req.try_with_header("cookie", cookie.to_owned()).unwrap()
+}
+
+/// ADR-008 "Registration code": the code of the email answers the proof
+/// token once, and the token then finishes the registration as the link
+/// does. The code works once.
+#[test]
+fn adr008_registration_code_completes_registration() {
+    let c = cell();
+    let _ = proof(&c);
+    let code = code_of_newest(&c);
+    let r = c.serve(post("/auth/signup/code", &code_body(&code, EMAIL)));
+    assert_eq!(status(&r), 200, "{}", text(&r));
+    let token = member(&r, "token");
+    let (_, sent) = c.backend().signup_proofs().last().cloned().unwrap();
+    assert_eq!(token, hex(&sent), "the code names the email's proof");
+    let done = c.serve(post(
+        "/auth/signup",
+        format!("{{\"token\":\"{token}\"}}").as_bytes(),
+    ));
+    assert_eq!(status(&done), 200, "{}", text(&done));
+    let again = c.serve(post("/auth/signup/code", &code_body(&code, EMAIL)));
+    assert_eq!(status(&again), 401, "single use");
+}
+
+/// ADR-008 "Registration code": a wrong code, an unknown address and a
+/// used code get the same 401 reply, so the answer tells nothing about
+/// the address.
+#[test]
+fn adr008_wrong_code_and_unknown_address_answer_alike() {
+    let c = cell();
+    let _ = proof(&c);
+    let code = code_of_newest(&c);
+    let wrong = if code == "000000" { "000001" } else { "000000" };
+    let a = c.serve(post("/auth/signup/code", &code_body(wrong, EMAIL)));
+    let b = c.serve(post(
+        "/auth/signup/code",
+        &code_body(&code, "nobody.synthetic@example.test"),
+    ));
+    assert_eq!(status(&a), 401);
+    assert_eq!((status(&b), text(&b)), (401, text(&a)));
+}
+
+/// ADR-008 "Registration code": five wrong attempts kill the code, so
+/// the right code is refused after them. The link still works.
+#[test]
+fn adr008_registration_code_dies_after_five_wrong_attempts() {
+    let c = cell();
+    let token = proof(&c);
+    let code = code_of_newest(&c);
+    let wrong = if code == "000000" { "000001" } else { "000000" };
+    for _ in 0..5 {
+        let r = c.serve(post("/auth/signup/code", &code_body(wrong, EMAIL)));
+        assert_eq!(status(&r), 401);
+    }
+    let r = c.serve(post("/auth/signup/code", &code_body(&code, EMAIL)));
+    assert_eq!(status(&r), 401, "the code is dead");
+    let link = c.serve(post(
+        "/auth/signup",
+        format!("{{\"token\":\"{token}\"}}").as_bytes(),
+    ));
+    assert_eq!(status(&link), 200, "the link still works: {}", text(&link));
+}
+
+/// ADR-008 "Later passkey": an email-only account asks for a fresh
+/// "email link, then create passkey" link in its session. The cell opens
+/// a recovery case for that account and sends its email proof. An account
+/// that holds a passkey is refused, since a completed recovery revokes its
+/// credentials. Without a session the route answers 401.
+#[test]
+fn adr008_email_only_account_gets_a_passkey_link() {
+    let c = cell();
+    c.backend()
+        .set_deployment(Some(fstp_auth::recovery::Deployment::Saas));
+    let token = proof(&c);
+    let r = c.serve(post(
+        "/auth/signup",
+        format!("{{\"token\":\"{token}\"}}").as_bytes(),
+    ));
+    assert_eq!(status(&r), 200, "{}", text(&r));
+    let cookie = cookie_of(&r);
+    let _ = c.backend().take_magic_trail();
+    let link = c.serve(with_cookie(post("/auth/passkey-link", b"{}"), &cookie));
+    assert_eq!(status(&link), 202, "{}", text(&link));
+    assert!(
+        c.backend()
+            .take_magic_trail()
+            .contains(&"send_recovery_proof"),
+        "a fresh link was sent"
+    );
+    let none = c.serve(post("/auth/passkey-link", b"{}"));
+    assert_eq!(status(&none), 401);
+    // An account with a passkey.
+    let c2 = cell();
+    let token = proof(&c2);
+    let (id, challenge) = options(&c2, &token);
+    let (att, client) = registration(challenge);
+    let r = c2.serve(post(
+        "/auth/signup",
+        &signup_body(&id, &att, &client, &token),
+    ));
+    assert_eq!(status(&r), 200, "{}", text(&r));
+    let refused = c2.serve(with_cookie(
+        post("/auth/passkey-link", b"{}"),
+        &cookie_of(&r),
+    ));
+    assert_eq!(status(&refused), 409, "{}", text(&refused));
+}
