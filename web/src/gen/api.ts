@@ -4641,6 +4641,16 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           } }, optional: false },
         },
       } }, optional: false },
+      "scan": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "section": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+          "quote": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
     },
   },
   "proposal.precheck_runs": {
@@ -4679,6 +4689,16 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
               } }, optional: false },
             },
           } }, optional: false },
+        },
+      } }, optional: false },
+      "scan": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "section": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+          "quote": { schema: { kind: "string" }, optional: false },
         },
       } }, optional: false },
     },

@@ -21,7 +21,14 @@ import { loadProposal } from "../applicant/load.js";
 import { draftEditable, teamReadsOffered } from "../applicant/rules.js";
 import { APP, button, clearAlert, frame, run, setStatus, showFailure, statusRegion, type Frame } from "../applicant/ui.js";
 import { FINDINGS_LABELS } from "../findings/messages.en.js";
-import { canRun, decodePrecheckView, instantText, type PrecheckRun, type PrecheckView } from "../findings/model.js";
+import {
+  canRun,
+  decodePrecheckView,
+  instantText,
+  type PrecheckRun,
+  type PrecheckScan,
+  type PrecheckView,
+} from "../findings/model.js";
 
 let catalogue: I18n | null = null;
 
@@ -115,6 +122,45 @@ function runSection(r: PrecheckRun, first: boolean): HTMLElement {
   return h("section", { class: "precheck-run", "data-run": r.run, "data-state": r.state, ...(first ? { id: "precheck-latest" } : {}) }, body);
 }
 
+/**
+ * The platform's injection check of the draft (ADR-035, TH-02): what it
+ * found and where, in plain words, so the team can fix an honest mistake
+ * before submitting. No AI runs, and it never counts as a check. Quotes
+ * are the team's own text, shown as text nodes only.
+ */
+export function scanSection(scan: readonly PrecheckScan[]): HTMLElement {
+  const children: Child[] = [
+    h("h2", { id: "precheck-scan-heading" }, [l("pre.scan.heading")]),
+    h("p", {}, [l("pre.scan.lead")]),
+  ];
+  if (scan.length === 0) {
+    children.push(h("p", { id: "precheck-scan-none" }, [l("pre.scan.none")]));
+  } else {
+    children.push(
+      h(
+        "ul",
+        {},
+        scan.map((s) => {
+          const parts: Child[] = [
+            l("pre.scan.where", {
+              section: l(`pre.section.${s.section}`),
+              start: String(s.start + 1),
+              end: String(s.end),
+            }),
+            ": ",
+            l(`pre.scan.reason.${s.reason}`),
+          ];
+          if (s.quote !== "") {
+            parts.push(" ", h("q", {}, [s.quote]));
+          }
+          return h("li", { "data-scan-reason": s.reason }, parts);
+        }),
+      ),
+    );
+  }
+  return h("section", { id: "precheck-scan", "aria-labelledby": "precheck-scan-heading" }, children);
+}
+
 function render(f: Frame, id: string, slot: HTMLElement, v: PrecheckView, status: HTMLElement): void {
   const runBtn = button("precheck-run", l("pre.run"));
   runBtn.disabled = !canRun(v);
@@ -141,6 +187,7 @@ function render(f: Frame, id: string, slot: HTMLElement, v: PrecheckView, status
   });
   slot.replaceChildren(
     disclosure(v.assessor),
+    scanSection(v.scan),
     h("p", {}, [l("pre.intro")]),
     ...remaining(v),
     h("p", {}, [runBtn]),
