@@ -16,6 +16,7 @@ import { APPLICANT_APPROVED, APPLICANT_LABELS, FOOTER_APPROVED } from "./message
 import type { ProposalState } from "./rules.js";
 import type { Day, Instant } from "./wire.js";
 import { appShell } from "../home/nav.js";
+import { legalPath } from "../shell/legal.js";
 
 // ---------------------------------------------------------------------------
 // Catalogue
@@ -121,6 +122,10 @@ export interface MandatoryElements {
   readonly privacy: ApprovedText;
   /** The accessibility statement. */
   readonly accessibility: ApprovedText;
+  /** The imprint (ADR-037). */
+  readonly imprint: ApprovedText;
+  /** The terms of use (ADR-037). */
+  readonly terms: ApprovedText;
   /** The platform attribution (P-68, R-WL-04). */
   readonly attribution: ApprovedText;
 }
@@ -130,6 +135,8 @@ function mandatoryElements(): MandatoryElements {
   return Object.freeze({
     privacy: approved("footer.privacy"),
     accessibility: approved("footer.accessibility"),
+    imprint: approved("footer.imprint"),
+    terms: approved("footer.terms"),
     attribution: approved("footer.attribution"),
   });
 }
@@ -141,9 +148,14 @@ function mandatoryElements(): MandatoryElements {
  * yet. When one lands, `frame` takes it and this function goes.
  */
 export function footer(m: MandatoryElements): HTMLElement {
+  // ADR-037: each legal text is a link to its page under `/legal/`.
+  const link = (id: string, key: string, text: ApprovedText): HTMLElement =>
+    h("p", { id }, [h("a", { href: legalPath(key) ?? "/legal/privacy", "data-mandatory": key }, [text])]);
   return h("footer", { class: "fstp-footer" }, [
-    h("p", { id: "footer-privacy" }, [m.privacy]),
-    h("p", { id: "footer-accessibility" }, [m.accessibility]),
+    link("footer-privacy", "privacy_notice", m.privacy),
+    link("footer-accessibility", "accessibility_statement", m.accessibility),
+    link("footer-imprint", "imprint", m.imprint),
+    link("footer-terms", "terms_of_use", m.terms),
     h("p", { id: "footer-attribution" }, [m.attribution]),
   ]);
 }

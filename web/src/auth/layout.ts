@@ -29,6 +29,28 @@ export const PATHS = {
   account: '/auth/account',
 } as const;
 
+/**
+ * The legal pages behind the footer (ADR-037; Daniel, 2026-11-22, Q6),
+ * with their `data-mandatory` keys (I-69). The same paths as
+ * `web/src/shell/legal.ts`; these pages import nothing outside
+ * `web/src/auth`. Each page works signed out and carries the draft banner
+ * until Daniel approves its text.
+ */
+const LEGAL_LINKS: readonly (readonly [AuthMessageId, string, string])[] = [
+  ['footer.privacy', 'privacy_notice', '/legal/privacy'],
+  ['footer.accessibility', 'accessibility_statement', '/legal/accessibility'],
+  ['footer.imprint', 'imprint', '/legal/imprint'],
+  ['footer.terms', 'terms_of_use', '/legal/terms'],
+];
+
+/** The footer's links to the legal pages, one paragraph each, then the platform attribution. */
+export function legalFooterParts(): HTMLElement[] {
+  return [
+    ...LEGAL_LINKS.map(([id, key, href]) => h('p', {}, [h('a', { href, 'data-mandatory': key }, [t(id)])])),
+    h('p', {}, [t('footer.attribution')]),
+  ];
+}
+
 /** The public links of the top bar, with the path each opens. */
 const PUBLIC_LINKS: readonly (readonly [AuthMessageId, string])[] = [
   ['top.calls', '/app/calls'],
@@ -88,9 +110,8 @@ function chrome(main: HTMLElement): void {
   main.before(header);
   const footer = h('footer', { class: 'site-footer' }, [
     h('div', { class: 'inner' }, [
-      h('p', {}, [t('footer.privacy')]),
-      h('p', {}, [t('footer.accessibility')]),
-      h('p', {}, [t('footer.attribution')]),
+      // ADR-037: links to the legal pages.
+      ...legalFooterParts(),
     ]),
   ]);
   main.after(footer);

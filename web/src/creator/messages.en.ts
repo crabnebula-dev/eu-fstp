@@ -546,13 +546,16 @@ const LABELS: Readonly<Record<string, string>> = {
   "footer.funding.not_set": "Not set yet",
 };
 
-// TODO(legal): the privacy notice, accessibility statement and Data Act
-// information below are placeholders until Daniel supplies approved
-// wording. They state no legal content.
+// ADR-037 (Daniel, 2026-11-22, Q6): the privacy notice, accessibility
+// statement, imprint, terms of use and Data Act information are links to
+// their pages under `/legal/`, named as in `legal/15-footer-texts.md`.
+// Each page carries the draft banner until Daniel approves its text.
 const APPROVED: Readonly<Record<string, string>> = {
-  "footer.privacy_notice": "Privacy notice: the approved wording is pending.",
-  "footer.accessibility_statement": "Accessibility statement: the approved wording is pending.",
-  "footer.data_act_information": "Data Act information for tenants: the approved wording is pending.",
+  "footer.privacy_notice": "Privacy notice",
+  "footer.accessibility_statement": "Accessibility statement",
+  "footer.imprint": "Imprint",
+  "footer.terms_of_use": "Terms of use",
+  "footer.data_act_information": "Data Act information",
   "footer.platform_attribution": "Runs on the FSTP platform.",
   "footer.funder_visibility": "Funder visibility: the approved wording is pending.",
   "footer.ai_disclosure": "AI disclosure: the approved wording is pending.",

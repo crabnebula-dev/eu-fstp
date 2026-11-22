@@ -224,7 +224,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "setup.progress.remind_why": "Reminders are not available in this release yet.",
   "setup.progress.people_link": "Members and roles of this programme",
   "setup.progress.logo_link": "Logo of this programme",
-  "setup.progress.branding_link": "Logos and brand colours of the organisation",
+  "setup.progress.branding_link": "Logos, brand colours and legal details of the organisation",
   "setup.progress.calls_unread": "The calls of this programme could not be read, so the call milestones show as not started.",
 
   "setup.milestone.drafted": "Programme drafted",

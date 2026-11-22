@@ -102,7 +102,7 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "home.admin.programmes": "Programmes",
   "home.group.reviewer": "Your review assignments",
   "home.work.org": "Open the organisation step",
-  "home.work.branding": "Set the brand colours",
+  "home.work.branding": "Set the logos, brand colours and legal details",
   "home.work.terminology": "Set the terminology",
   "home.work.erasures": "Erasures and retention",
   "home.work.system": "System: is everything running?",

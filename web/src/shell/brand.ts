@@ -24,6 +24,7 @@ import { defaultMandatoryElements } from "../creator/frame.js";
 import { t } from "../creator/i18n.js";
 import type { FunderProfileView } from "../operations/profile.js";
 import { type FundingAnswer, cardsFor, syncFunding } from "./funding.js";
+import { footerItem } from "./legal.js";
 
 /** The id of the guard's footer. */
 const SHELL_FOOTER_ID = "shell-footer";
@@ -34,14 +35,16 @@ const PROFILE_MARK = "data-profile-element";
 /** The platform footer: one element per mandatory element. */
 export function shellFooter(): HTMLElement {
   const m = defaultMandatoryElements();
-  const item = (key: string, text: string): HTMLElement =>
-    h("li", {}, [h("span", { "data-mandatory": key }, [text])]);
+  // ADR-037: the legal texts are links to their pages.
+  const item = footerItem;
   return h("footer", { class: "fstp-footer", id: SHELL_FOOTER_ID }, [
     h("ul", {}, [
       item("funder_visibility", t.approved("footer.funder_visibility")),
       item("ai_disclosure", t.approved("footer.ai_disclosure")),
       item("privacy_notice", m.privacyNotice),
       item("accessibility_statement", m.accessibilityStatement),
+      item("imprint", m.imprint),
+      item("terms_of_use", m.termsOfUse),
       item("data_act_information", m.dataActInformation),
       item("platform_attribution", m.platformAttribution),
     ]),
