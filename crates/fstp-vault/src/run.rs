@@ -435,7 +435,9 @@ async fn load_runner<'c, R: Runtime, C: Custody>(
     let snapshots = snapshots_of(rt, cfg, custody).await?;
     let runner = Runner::load(client, cfg.cell, custody).await?;
     Ok(match snapshots {
-        Some(s) => runner.with_snapshots(s),
+        Some(s) => runner
+            .with_snapshots(s)
+            .with_snapshot_status(cfg.credentials_dir.clone()),
         None => runner,
     })
 }
@@ -624,10 +626,28 @@ pub async fn start_with<R: Runtime, C: Custody>(
     checked?;
     // The registrar's keys connection holds the keystore lock while the
     // vault serves.
+    // ADR-012 record of lane L27: the daily snapshot, over the vault's
+    // own custody entry, when an object store is configured.
+    let daily: Option<Arc<dyn crate::snapshot::DailySnapshot>> = match cfg.object_store {
+        None => None,
+        Some(_) => {
+            let custody = keyd(cfg)?;
+            match snapshots_of(&rt, cfg, &custody).await? {
+                None => None,
+                Some(snapshots) => Some(Arc::new(crate::snapshot::Daily {
+                    cell: cfg.cell,
+                    snapshots,
+                    custody,
+                    status_dir: Some(cfg.credentials_dir.clone()),
+                })),
+            }
+        }
+    };
     let registrar = service::RegistrarParts {
         registrar,
         keys_db: login(cfg, &creds, Login::Keys)?,
         check_every: service::KEYSTORE_CHECK,
+        daily,
     };
     service::serve_with_registrar(rt, parts, Some(registrar)).await
 }

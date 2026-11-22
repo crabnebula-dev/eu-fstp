@@ -736,3 +736,86 @@ fn adr012_vault_restore_takes_the_newest_copy_that_opens() {
         .is_err()
     );
 }
+
+fn status_dir(what: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!(
+        "fstp-vault-l27-{what}-{}",
+        fstp_backup::sigv4::hex(&fstp_crypto::random_array::<6>().unwrap())
+    ));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// I-81, ADR-012 record of lane L27, row "Daily snapshot": the daily
+/// snapshot uploads the keystore, fetches it back and opens it under the
+/// current root, with no rotation: the epoch stays and no root dies. The
+/// pointer names it and the status file says it verified.
+#[test]
+fn i81_vault_daily_snapshot_verifies_without_a_rotation() {
+    use fstp_vault::snapshot::{Daily, DailySnapshot as _};
+    let w = genesis();
+    let mut p = start(&w);
+    let a = p.register(ALICE);
+    drop(p);
+    let before = read_rows(&w);
+    let dir = status_dir("ok");
+    let daily = Daily {
+        cell: CELL,
+        snapshots: w.snapshots.clone(),
+        custody: w.custody.clone(),
+        status_dir: Some(dir.clone()),
+    };
+    assert!(
+        block_on(daily.run(before.clone())),
+        "the daily snapshot failed"
+    );
+    let after = read_rows(&w);
+    assert!(after == before, "the daily snapshot changed the keystore");
+    assert!(epoch_lives(&w, &after, 1));
+    let images = snapshot_images(&w);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].root.epoch, 1);
+    assert_eq!(opens_tuple(&w, &[&images[0]], a).as_deref(), Some(ALICE));
+    assert!(block_on(w.snapshots.latest()).unwrap().is_some());
+    let s = fstp_obs::snapshot_status::read(&dir);
+    assert!(s.last_verified.is_some() && !s.failing());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// ADR-012 record of lane L27, rows "Daily snapshot" and "Status file": a
+/// daily snapshot the object store refuses fails, shows as failing in the
+/// status file, writes no pointer and changes no key.
+#[test]
+fn adr012_vault_daily_snapshot_failure_shows_on_status() {
+    use fstp_vault::snapshot::{Daily, DailySnapshot as _};
+    let w = genesis();
+    let before = read_rows(&w);
+    let wrong = S3Client::with_tls(
+        rt().clone(),
+        Endpoint {
+            host: "localhost".to_owned(),
+            port: w.fake.port(),
+            region: REGION.to_owned(),
+            bucket: BUCKET.to_owned(),
+        },
+        Credentials::new(AK, "not-the-secret").unwrap(),
+        fstp_tls::ClientConfig::new(fake_s3::CA_PEM).unwrap(),
+    );
+    let dir = status_dir("fail");
+    let daily = Daily {
+        cell: CELL,
+        snapshots: Snapshots::new(Arc::new(wrong), w.snapshots.key().clone()),
+        custody: w.custody.clone(),
+        status_dir: Some(dir.clone()),
+    };
+    assert!(
+        !block_on(daily.run(before.clone())),
+        "a refused upload verified"
+    );
+    let s = fstp_obs::snapshot_status::read(&dir);
+    assert!(s.failing(), "the failure does not show on status");
+    assert_eq!(block_on(w.snapshots.latest()).unwrap(), None);
+    assert!(read_rows(&w) == before);
+    assert!(epoch_lives(&w, &before, 1));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

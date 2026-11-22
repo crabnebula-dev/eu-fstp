@@ -56,6 +56,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use fstp_backup::Snapshots;
@@ -322,6 +323,9 @@ pub struct Runner<'c, R: Runtime, C: Custody> {
     /// configured (ADR-012 record of lane L17). Without one, step 5 reads
     /// the committed rows back from the database (record of lane L11).
     snapshots: Option<Snapshots>,
+    /// The directory of the snapshot status file (ADR-012 record of lane
+    /// L27): the credentials directory of a serving vault.
+    snapshot_status: Option<PathBuf>,
 }
 
 impl<R: Runtime, C: Custody> std::fmt::Debug for Runner<'_, R, C> {
@@ -427,6 +431,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             work: Work::default(),
             identities: Arc::default(),
             snapshots: None,
+            snapshot_status: None,
         };
         // Every group of the chain state has its row.
         for g in runner.chain_groups() {
@@ -1178,30 +1183,13 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
     ) -> Result<ErasureEvent, VaultError> {
         let snap = if let Some(s) = self.snapshots.clone() {
             self.work.snapshot = None;
-            let id = match self.work.snapshot_id.take() {
-                Some(id) => id,
-                None => {
-                    // A restart lost the id: a fresh snapshot of the
-                    // committed rows.
-                    self.take_snapshot().await?;
-                    self.work.snapshot = None;
-                    self.work.snapshot_id.take().ok_or(bad("the snapshot"))?
-                }
-            };
-            let image = s
-                .fetch(self.custody, id)
-                .await
-                .map_err(|_| VaultError::Unavailable("the keystore snapshot fetch"))?;
-            let (cell, rows) = crate::snapshot::decode_image(&image)?;
-            if cell != self.cell {
-                return Err(bad("the snapshot cell"));
-            }
-            check_epoch(&rows, e)?;
-            check_rows(self.custody, &self.cell, &rows).await?;
-            s.publish(id)
-                .await
-                .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))?;
-            rows
+            let checked = self.verify_fetched(&s, e).await;
+            crate::snapshot::note(
+                self.snapshot_status.as_deref(),
+                fstp_obs::SnapshotTrigger::Rotation,
+                checked.is_ok(),
+            );
+            checked?
         } else {
             let snap = match self.work.snapshot.take() {
                 Some(s) => s,
@@ -1218,6 +1206,60 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         plan::apply(&mut c, step).map_err(planner)?;
         self.persist(&c, now).await?;
         Ok(ErasureEvent::SnapshotVerified { epoch: e.0 })
+    }
+
+    /// Step 5 with an object store: the uploaded snapshot, fetched back,
+    /// opens under `R(e)` through custody, and the pointer names it.
+    async fn verify_fetched(
+        &mut self,
+        s: &Snapshots,
+        e: Epoch,
+    ) -> Result<KeystoreRows, VaultError> {
+        let id = match self.work.snapshot_id.take() {
+            Some(id) => id,
+            None => {
+                // A restart lost the id: a fresh snapshot of the
+                // committed rows.
+                self.take_snapshot().await?;
+                self.work.snapshot = None;
+                self.work.snapshot_id.take().ok_or(bad("the snapshot"))?
+            }
+        };
+        let image = s
+            .fetch(self.custody, id)
+            .await
+            .map_err(|_| VaultError::Unavailable("the keystore snapshot fetch"))?;
+        let (cell, rows) = crate::snapshot::decode_image(&image)?;
+        if cell != self.cell {
+            return Err(bad("the snapshot cell"));
+        }
+        check_epoch(&rows, e)?;
+        check_rows(self.custody, &self.cell, &rows).await?;
+        s.publish(id)
+            .await
+            .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))?;
+        Ok(rows)
+    }
+
+    /// Writes the snapshot status file into `dir` after each snapshot
+    /// from now on (ADR-012 record of lane L27, row "Status file").
+    #[must_use]
+    pub fn with_snapshot_status(mut self, dir: PathBuf) -> Self {
+        self.snapshot_status = Some(dir);
+        self
+    }
+
+    /// The keystore rows as the keys connection reads them now, for the
+    /// daily snapshot of a serving vault (ADR-012 record of lane L27).
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Unavailable`] for a failed read, and
+    /// [`VaultError::Malformed`] for a keystore with no row.
+    pub async fn keystore_rows(&mut self) -> Result<KeystoreRows, VaultError> {
+        keystore::read_rows(&mut self.client)
+            .await?
+            .ok_or(bad("the keystore rows"))
     }
 
     /// Step 6: `R(e)` destroyed, and its row marked with the receipt.
@@ -1762,6 +1804,7 @@ impl<R: Runtime, C: Custody> Runner<'_, R, C> {
             work: Work::default(),
             identities: self.identities,
             snapshots: None,
+            snapshot_status: None,
         })
     }
 }
