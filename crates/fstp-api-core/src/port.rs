@@ -1366,17 +1366,25 @@ pub enum ErasureKind {
     Text,
     /// A display name an account replaced or cleared (SA-11).
     DisplayName,
+    /// A document the blob store sealed (ADR-007 section "Built by lane
+    /// L37").
+    Document,
 }
 
 impl ErasureKind {
     /// Every kind.
-    pub const ALL: [ErasureKind; 2] = [ErasureKind::Text, ErasureKind::DisplayName];
+    pub const ALL: [ErasureKind; 3] = [
+        ErasureKind::Text,
+        ErasureKind::DisplayName,
+        ErasureKind::Document,
+    ];
 
     /// The wire name (`fstp_access::ERASURE_KINDS`).
     pub const fn wire(self) -> &'static str {
         match self {
             ErasureKind::Text => "text",
             ErasureKind::DisplayName => "display_name",
+            ErasureKind::Document => "document",
         }
     }
 }
