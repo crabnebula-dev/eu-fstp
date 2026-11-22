@@ -90,6 +90,8 @@ members = [
     "crates/fstp-assessor",
     # ADR-029, lane L21: in-house Unicode normalisation.
     "crates/fstp-unorm",
+    # ADR-028, lane L19: the operator tool.
+    "crates/fstp-admin",
     "tools/deps-check",
     "tools/gen-ts",
     "tools/test-gate",
@@ -171,6 +173,7 @@ fstp-cell = { path = "crates/fstp-cell" }
 fstp-cp-proto = { path = "crates/fstp-cp-proto" }
 fstp-control = { path = "crates/fstp-control" }
 fstp-witness = { path = "crates/fstp-witness" }
+fstp-admin = { path = "crates/fstp-admin" }
 fstp-edge = { path = "crates/fstp-edge" }
 fstp-release = { path = "crates/fstp-release" }
 fstp-release-svc = { path = "crates/fstp-release-svc" }

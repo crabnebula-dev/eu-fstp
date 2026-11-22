@@ -94,3 +94,5 @@ fstp-assessor
 # and its table generator parses the Unicode Character Database files (target ucd_parse).
 fstp-unorm
 unorm-gen
+# ADR-028, lane L19: the host configuration decoder.
+fstp-admin

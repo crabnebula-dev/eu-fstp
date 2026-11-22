@@ -165,6 +165,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-admin"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-migrate",
+ "fstp-pgwire",
+ "fstp-pki",
+]
+
+[[package]]
 name = "fstp-api-core"
 version = "0.1.0"
 dependencies = [
@@ -397,6 +408,7 @@ version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "fstp-access",
+ "fstp-admin",
  "fstp-api-core",
  "fstp-api-testkit",
  "fstp-audit",
