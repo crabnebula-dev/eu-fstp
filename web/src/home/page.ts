@@ -424,6 +424,8 @@ function cards(w: Work, own: readonly ProposalInfo[], c: Counts): { readonly mai
       title: homeLabel("home.admin.org"),
       body: [
         h("p", {}, [homeLabel("home.admin.org.intro")]),
+        // ADR-028 record of lane L20: whether everything runs, in plain words.
+        h("p", {}, [h("a", { href: WORK_PATHS.system, "data-work": "system" }, [homeLabel("home.work.system")])]),
         h("p", {}, [h("a", { href: ONBOARDING_STEP("organisation") }, [homeLabel("home.work.org")])]),
         h("p", {}, [h("a", { href: WORK_PATHS.branding, "data-work": "branding" }, [homeLabel("home.work.branding")])]),
         h("p", {}, [h("a", { href: WORK_PATHS.terminology, "data-work": "terminology" }, [homeLabel("home.work.terminology")])]),

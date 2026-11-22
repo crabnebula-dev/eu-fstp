@@ -38,6 +38,7 @@
 
 import { mountAdminBranding } from "../admin/branding/page.js";
 import { mountAdminErasures } from "../admin/erasures/page.js";
+import { mountSystemPage } from "../admin/system/page.js";
 import { mountAdminProfiles } from "../admin/profiles/page.js";
 import { mountTeamPages } from "../admin/team/page.js";
 import { mountApplicantPage, mountNotFound } from "../applicant/app.js";
@@ -192,6 +193,10 @@ async function run(path: string): Promise<void> {
   }
   // Lane m5/retention (P-41, ADR-007): the tenant admin's erasure page.
   if (await mountAdminErasures(browserEnv(root()), path)) {
+    return;
+  }
+  // ADR-028 record of lane L20: the tenant admins' System page.
+  if (await mountSystemPage(browserEnv(root()), path)) {
     return;
   }
   // Daniel, 2026-11-15 (late): the tenant admin's funder profiles page.
