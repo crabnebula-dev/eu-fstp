@@ -77,6 +77,8 @@ test("i68_card_values_are_text", () => {
     grantNumber: "1",
     coordinatorName: "<b>x</b>",
     coordinatorContact: "c",
+    acknowledgement: null,
+    acknowledgementMissing: [],
   }) as unknown as FakeElement;
   eq(el.getElementsByTagName("img").length, 1, "only the logo");
   eq(el.getElementsByTagName("b").length, 0, "no markup");

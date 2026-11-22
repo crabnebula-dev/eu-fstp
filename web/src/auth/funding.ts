@@ -6,7 +6,8 @@
 // The card is platform markup with the programme's values as text only
 // (I-68). Its logo is the platform's Funded by the European Union logo,
 // on a white card in both themes, never recoloured.
-// TODO(legal): the acknowledgement wording (L-08) stays the placeholder.
+// The card ends with the approved funding acknowledgement (L-08, ADR-036),
+// as text, or with nothing while a value it names is missing.
 
 import { get, ok } from './api.js';
 import { h, mailtoHref } from './dom.js';
@@ -24,6 +25,8 @@ export interface FundingCard {
   readonly grantNumber: string | null;
   readonly coordinatorName: string | null;
   readonly coordinatorContact: string | null;
+  /** The approved funding acknowledgement, or null while a value it names is missing (L-08). */
+  readonly acknowledgement: string | null;
 }
 
 function text(v: unknown): string | null {
@@ -48,6 +51,7 @@ export function decodeCards(body: unknown): FundingCard[] | null {
       grantNumber: text(r['grant_number']),
       coordinatorName: text(r['coordinator_name']),
       coordinatorContact: text(r['coordinator_contact']),
+      acknowledgement: text(r['acknowledgement']),
     });
   }
   return out;
@@ -71,7 +75,8 @@ export function fundingCard(c: FundingCard): HTMLElement {
       line(t('funding.grant'), c.grantNumber),
       line(t('funding.coordinator'), c.coordinatorName),
       line(t('funding.contact'), c.coordinatorContact, true),
-      h('p', {}, [t('funding.acknowledgement')]),
+      // L-08 (ADR-036): the approved sentence as text, or nothing.
+      ...(c.acknowledgement === null ? [] : [h('p', { class: 'funding-card-ack' }, [c.acknowledgement])]),
     ]),
   ]);
 }
