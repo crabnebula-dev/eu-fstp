@@ -1611,6 +1611,8 @@ fn body_of(w: &Pg<'_>, op: &str, state: StateProfile) -> Value {
             obj(vec![("account", dec(w.id(UNBOUND).raw()))])
         }
         "proposal.state_country" => obj(vec![("country", s("BE"))]),
+        // ADR-032: a well-formed token no world holds (guard `Input`).
+        "proposal.claim_draft" => obj(vec![("token", s(&"5a".repeat(32)))]),
         "me.mailbox.mark_read" => obj(vec![("message", s("notice.outcome:1"))]),
         "proposal.declare_affiliations" => obj(vec![("affiliations", s("SYNTHETIC AFFILIATIONS"))]),
         "proposal.state_birth_date" => obj(vec![("date_of_birth", s("1990-01-01"))]),
