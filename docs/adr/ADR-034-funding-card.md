@@ -66,7 +66,7 @@ Interim, pending Daniel: the defaults are kept inline in the ledger record, not 
 | Other app pages | None | One compact card per active programme of the tenant, as a list |
 | Sign-in pages `/auth/...` | None | One compact card per active programme, as a list |
 | Vault pages | None | None. They run on another origin with no programme context, and their CSP admits only the vault origin. Interim, pending Daniel |
-| Contract PDFs | The contract's programme | The logo in the letterhead's emblem slot, and the card's lines under the band, marked as artifacts |
+| Contract PDFs | The contract's programme | The logo in the letterhead's emblem slot, and the card's lines as the first paragraphs under the band. They are tagged `/P`, so a screen reader reads them |
 | Emails about a programme | That programme | The logo as an inline image and the card's lines at the foot of the HTML part, and the same lines at the foot of the plain-text part |
 
 Before the organisation is activated (ADR-021), no programme is active, so the list is empty and no card shows.
@@ -75,7 +75,8 @@ The app and sign-in pages read `GET /brand/funding`, a JSON answer of the `/bran
 
 ### 5. Markup, contrast and accessibility
 
-- The card is a `section` with `aria-label` "EU funding", inside the footer. It holds the logo as `<img alt="Funded by the European Union">` and the lines as a `dl` of label and value. Screen readers read the alternative text, then each label with its value.
+- The card is a `section` with `aria-label` "EU funding", inside the footer. It holds the logo as `<img alt="Funded by the European Union">` and the lines as a `dl` of label and value. The sign-in pages, whose element allowlist has no `dl`, write each line as a paragraph "Label: value". Screen readers read the alternative text, then each label with its value.
+- On the public pages the card is keyed `data-mandatory="funding_card"` itself. On app and sign-in pages the footer part that holds the cards carries the key, once.
 - The card's ground is `#ffffff` in light and dark. Its text is `#1f2328` and its labels `#4b5563`, fixed colours that no brand token and no theme changes. A test checks each pair with `fstp_creator::meets_aa` for the card in both themes (I-70).
 - Values are always text nodes, never markup (I-68).
 
@@ -99,3 +100,5 @@ The app and sign-in pages read `GET /brand/funding`, a JSON answer of the `/bran
 4. Interim, pending Daniel: the tenant defaults sit inline in the ledger (section 3).
 5. Interim, pending Daniel: the contact shows as text, not as a `mailto:` link, so no tenant text becomes a URL.
 6. Interim, pending Daniel: `tenant.set_funding_defaults` asks for a step-up like the other tenant settings.
+7. Interim, pending Daniel: only the contract PDF carries the card, as only it carries a letterhead (ADR-030 open question 7). Funder reports and the Guide PDF get it when their letterhead is pinned in their records.
+8. Interim, pending Daniel: the demo cell seeds the defaults "CrabNebula Ltd" and "privacy@crabnebula.dev" for its tenant. They name an organisation and a role address, not a person.
