@@ -108,3 +108,4 @@ The PostgreSQL authorisation sample (`t_authz_matrix_pg_sample`) now builds its 
 | Third-party crates added by this ADR | None | 2026-11-22 |
 | Reserved P-21 provider | `coordinator_agent` | 2026-11-22 |
 | New scope | `assess:run` | 2026-11-22 |
+| Dependency tree | `fstp-api-core` now depends on `fstp-assess` and `fstp-infer` for stage 8 and the prompt set digest. `fstp-infer` carries its HTTP transport, so the API core's tree, and the lockfiles of five fuzz crates, now reach `fstp-http`, `fstp-tls` and their allowlisted crates (`rustls`, `ring`, `webpki-roots`). No new third-party crate enters the workspace, and deps-check passes. A feature that leaves the transport out of `fstp-infer` would shrink the tree | Interim, pending Daniel; CLAUDE.md dependency policy (a tree change needs review) |
