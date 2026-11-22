@@ -177,6 +177,7 @@ start() {
   echo "  demo page     $CONTROL/demo   (the front door: people, scenes, mailbox; open this first)"
   if [[ $SIGNIN == on ]]; then
     echo "  demo sign-in  on: choose \"Sign in as\" on the demo page, no passkey needed"
+    echo "  demo inbox    $CONTROL/demo/inbox   (every email the cell would send: \"Send me a link\" lands here)"
   fi
   echo "  manifest      $STATE/stack.json"
   echo
