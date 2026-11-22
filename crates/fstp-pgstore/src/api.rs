@@ -62,6 +62,18 @@ const PUT_DOCUMENT_SQL: &str = "INSERT INTO doc.blob (digest, kind, dek, envelop
 const GET_DOCUMENT_SQL: &str = "SELECT dek, envelope FROM doc.blob WHERE digest = $1";
 const GET_WORKSPACE_SQL: &str =
     "SELECT key_ix, sealed FROM workspace.drafts WHERE proposal = $1 AND slot = $2";
+const ANON_INSERT_SQL: &str = "INSERT INTO workspace.anonymous_drafts \
+     (token_hash, call, key_ix, sealed, started_at, updated_at, expires_at) \
+     VALUES ($1, $2, $3, $4, $5, $5, $6) ON CONFLICT (token_hash) DO NOTHING";
+const ANON_OPEN_SQL: &str = "SELECT call, key_ix, sealed, started_at, expires_at \
+     FROM workspace.anonymous_drafts WHERE token_hash = $1 AND expires_at > $2";
+const ANON_SAVE_SQL: &str = "UPDATE workspace.anonymous_drafts \
+     SET key_ix = $2, sealed = $3, updated_at = GREATEST(updated_at, $4) \
+     WHERE token_hash = $1 AND expires_at > $4";
+const ANON_REMOVE_SQL: &str = "DELETE FROM workspace.anonymous_drafts WHERE token_hash = $1";
+const ANON_LIVE_SQL: &str = "SELECT count(*)::pg_catalog.int8 FROM workspace.anonymous_drafts \
+     WHERE expires_at > $1";
+const ANON_SWEEP_SQL: &str = "DELETE FROM workspace.anonymous_drafts WHERE expires_at <= $1";
 
 /// The stored status of a pending action. A confirmation is not stored
 /// here: it is the row of `api.pending_confirmed`.
@@ -148,6 +160,39 @@ pub fn workspace_aad(cell: &[u8; 16], proposal: &[u8; 16]) -> Vec<u8> {
     out.extend_from_slice(cell);
     out.extend_from_slice(proposal);
     out
+}
+
+/// The AAD of an anonymous draft (ADR-032):
+/// `"fstp-anondraft-v1" || cell || token_hash`. A value sealed for
+/// one token never opens for another.
+pub fn anonymous_draft_aad(cell: &[u8; 16], token_hash: &[u8; 32]) -> Vec<u8> {
+    let mut out = b"fstp-anondraft-v1".to_vec();
+    out.extend_from_slice(cell);
+    out.extend_from_slice(token_hash);
+    out
+}
+
+/// One live anonymous draft as the store holds it, with its text opened
+/// (ADR-032). Its `Debug` shows no text.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AnonDraftRow {
+    /// The call it is for.
+    pub call: [u8; 16],
+    /// The opened text: the canonical JSON of the three sections.
+    pub plain: Vec<u8>,
+    /// When it started, UTC microseconds.
+    pub started: i64,
+    /// When it expires.
+    pub expires: i64,
+}
+
+impl std::fmt::Debug for AnonDraftRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnonDraftRow")
+            .field("started", &self.started)
+            .field("expires", &self.expires)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Seals a workspace value of `proposal` under the current ledger key
@@ -419,6 +464,164 @@ impl<R: Runtime> ApiStore<R> {
         sealed.extend_from_slice(&ix_of(ix).to_be_bytes());
         sealed.extend_from_slice(&body);
         Ok(Some(sealed))
+    }
+
+    /// Stores a new anonymous draft (ADR-032) under `token_hash`, its text
+    /// `plain` sealed under the current ledger key generation with
+    /// [`anonymous_draft_aad`]. A digest in use stores nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreFault::Refused`] for a digest in use or a text over
+    /// [`MAX_API_PLAIN`], a seal fault, or a pool or database fault.
+    pub async fn anon_start(
+        &self,
+        token_hash: [u8; 32],
+        call: [u8; 16],
+        plain: &[u8],
+        started: i64,
+        expires: i64,
+    ) -> Result<(), StoreFault> {
+        let (ix, sealed) = self.anon_seal(&token_hash, plain)?;
+        let mut client = self.pool.get().await?;
+        let n = client
+            .execute(
+                ANON_INSERT_SQL,
+                &[
+                    &token_hash.as_slice(),
+                    &call.as_slice(),
+                    &ix_column(ix),
+                    &sealed,
+                    &started,
+                    &expires,
+                ],
+            )
+            .await?;
+        client.release();
+        if n == 1 {
+            Ok(())
+        } else {
+            Err(StoreFault::Refused("an anonymous draft digest in use"))
+        }
+    }
+
+    fn anon_seal(&self, token_hash: &[u8; 32], plain: &[u8]) -> Result<(u32, Vec<u8>), StoreFault> {
+        if plain.len() > MAX_API_PLAIN {
+            return Err(StoreFault::Refused("an anonymous draft over its limit"));
+        }
+        self.keys
+            .seal(&anonymous_draft_aad(&self.cell(), token_hash), plain)
+    }
+
+    /// The live anonymous draft under `token_hash` at `now`: its call, its
+    /// opened text, its start and its expiry. `None` when no row has the
+    /// digest or the row expired.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault, or a row that does not open.
+    pub async fn anon_open(
+        &self,
+        token_hash: [u8; 32],
+        now: i64,
+    ) -> Result<Option<AnonDraftRow>, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let row = client
+            .query_opt(ANON_OPEN_SQL, &[&token_hash.as_slice(), &now])
+            .await?;
+        client.release();
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let call = id16(&row.get::<Vec<u8>>(0)?)?;
+        let ix: i32 = row.get(1)?;
+        let sealed: Vec<u8> = row.get(2)?;
+        let started: i64 = row.get(3)?;
+        let expires: i64 = row.get(4)?;
+        if sealed.len() < NONCE_LEN {
+            return Err(StoreFault::Corrupt(
+                "an anonymous draft too short to be sealed",
+            ));
+        }
+        let plain = self.keys.open(
+            ix_of(ix),
+            &anonymous_draft_aad(&self.cell(), &token_hash),
+            &sealed,
+        )?;
+        Ok(Some(AnonDraftRow {
+            call,
+            plain: plain.to_vec(),
+            started,
+            expires,
+        }))
+    }
+
+    /// Replaces the text of the live anonymous draft under `token_hash`.
+    /// `false` when no live row has the digest.
+    ///
+    /// # Errors
+    ///
+    /// As [`ApiStore::anon_start`].
+    pub async fn anon_save(
+        &self,
+        token_hash: [u8; 32],
+        plain: &[u8],
+        now: i64,
+    ) -> Result<bool, StoreFault> {
+        let (ix, sealed) = self.anon_seal(&token_hash, plain)?;
+        let mut client = self.pool.get().await?;
+        let n = client
+            .execute(
+                ANON_SAVE_SQL,
+                &[&token_hash.as_slice(), &ix_column(ix), &sealed, &now],
+            )
+            .await?;
+        client.release();
+        Ok(n == 1)
+    }
+
+    /// Deletes the anonymous draft under `token_hash`. `false` when none
+    /// had the digest.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn anon_remove(&self, token_hash: [u8; 32]) -> Result<bool, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let n = client
+            .execute(ANON_REMOVE_SQL, &[&token_hash.as_slice()])
+            .await?;
+        client.release();
+        Ok(n == 1)
+    }
+
+    /// How many anonymous drafts are live at `now`.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn anon_live(&self, now: i64) -> Result<u64, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let row = client.query_opt(ANON_LIVE_SQL, &[&now]).await?;
+        client.release();
+        let n: i64 = match row {
+            Some(r) => r.get(0)?,
+            None => 0,
+        };
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    /// Deletes every anonymous draft expired at `now`, and answers how
+    /// many (ADR-032: the draft sweep).
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn anon_sweep(&self, now: i64) -> Result<u64, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let n = client.execute(ANON_SWEEP_SQL, &[&now]).await?;
+        client.release();
+        Ok(n)
     }
 
     fn decode(&self, r: &fstp_pgwire::Row) -> Result<PendingRow, StoreFault> {

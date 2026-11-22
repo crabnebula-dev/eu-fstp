@@ -29,6 +29,7 @@
 )]
 
 mod action;
+pub mod anon;
 pub mod assess;
 pub mod audit;
 pub mod brand;

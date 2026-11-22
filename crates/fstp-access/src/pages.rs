@@ -253,6 +253,10 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/calls", &["calls.list_open"]),
     PageRow::read("/app/calls/{call}", &["calls.get"]),
     PageRow::read("/app/calls/{call}/guide", &["calls.guide"]),
+    // ADR-032: the claim of a draft started without an account. It needs a
+    // signed-in account, so a visitor without a session signs in first
+    // and comes back.
+    PageRow::need("/app/calls/{call}/claim", PageNeed::Account),
     PageRow::read("/app/proposals", &["proposal.list_own"]),
     PageRow::read("/app/proposals/{proposal}", PROPOSAL_VIEW),
     PageRow::read(

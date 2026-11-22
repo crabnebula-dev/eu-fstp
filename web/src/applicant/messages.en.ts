@@ -314,6 +314,13 @@ export const APPLICANT_APPROVED: Readonly<Record<string, string>> = Object.freez
 export const FOOTER_APPROVED: Readonly<Record<string, string>> = Object.freeze({
   "footer.privacy": "Privacy notice: wording pending legal review.",
   "footer.accessibility": "Accessibility statement: wording pending legal review.",
+  // ADR-032: the claim of a draft started without an account.
+  "claim.title": "Moving your draft",
+  "claim.working": "Moving your draft into your account.",
+  "claim.none": "This browser keeps no draft for this call. If you saved a draft link, open it first.",
+  "claim.gone": "Your new proposal is ready, but the draft could not be moved into it. The draft link may have expired or been used already.",
+  "claim.open": "Open your proposal",
+  "claim.proposals": "Your proposals",
   "footer.attribution": "This service runs on the FSTP platform.",
 });
 

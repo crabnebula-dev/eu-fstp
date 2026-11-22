@@ -16,7 +16,9 @@ import { type Body, canonical } from "./wire.js";
 
 /** The operations the applicant and call pages call (design section 2.2 J4). */
 export type ApplicantOp =
-  | "calls.list_open"
+  | "proposal.save_workspace"
+  | "proposal.claim_draft"
+| "calls.list_open"
   | "calls.get"
   | "calls.guide"
   | "proposal.create"

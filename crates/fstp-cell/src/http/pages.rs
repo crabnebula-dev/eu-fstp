@@ -39,9 +39,10 @@ use std::path::Path;
 
 /// The page paths that serve the shell (`web/src/auth/layout.ts`
 /// `PATHS`). `/auth/magic` is served by its table route.
-pub const PAGE_PATHS: [&str; 5] = [
+pub const PAGE_PATHS: [&str; 6] = [
     "/auth/login",
     "/auth/signup",
+    "/auth/draft",
     "/auth/invite",
     "/auth/recovery",
     "/auth/account",

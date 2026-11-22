@@ -968,6 +968,9 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
             obj(vec![("account", dec(ids.team_candidate))])
         }
         "proposal.state_country" => obj(vec![("country", s("BE"))]),
+        // ADR-032: a well-formed token no world holds, so the call ends
+        // in the guard refusal `Input` after authorisation.
+        "proposal.claim_draft" => obj(vec![("token", s(&"5a".repeat(32)))]),
         // MB-Q1, ADR-020: an id no world holds as a notice, so the call
         // ends in the guard refusal `Input` after authorisation.
         "me.mailbox.mark_read" => obj(vec![("message", s("notice.outcome:1"))]),

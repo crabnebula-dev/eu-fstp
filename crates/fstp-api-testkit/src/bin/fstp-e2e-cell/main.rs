@@ -54,6 +54,7 @@
 //!   `https://<host>` with no port, which no loopback listener can be.
 //!   The real ceremonies are M3's, in `fstp-cell`.
 
+mod anondraft;
 mod assess;
 mod assets;
 mod auth;

@@ -2746,6 +2746,8 @@ enum PortCall {
     /// A tenant admin requests the erasure of a grant's texts with its
     /// cause (ADR-007, P-41, lane m5/retention).
     RequestErasure(crate::port::ErasureCause, ProposalId),
+    /// The lead claims an anonymous draft into its own draft (ADR-032).
+    ClaimDraft(ProposalId, crate::anon::Token),
     /// The caller sets or clears its own display name (SA-11).
     SetDisplayName(Option<String>),
     /// The caller sets its own theme (ADR-030).
@@ -2894,6 +2896,20 @@ async fn m3_port<P: Seams>(
             }
             PortCall::SaveWorkspace(p, w)
         }
+        // ADR-032: the lead first, then a well-formed token, then the
+        // draft state. The store is asked only once the call can run.
+        PortKind::ClaimDraft => {
+            let p = ProposalId::from_raw(id("proposal")?);
+            let lead = actor_first(p, &["lead"])?;
+            let token = op
+                .request
+                .get("token")
+                .and_then(Value::as_str)
+                .and_then(crate::anon::Token::parse)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            lead_drafts(p, lead)?;
+            PortCall::ClaimDraft(p, token)
+        }
         PortKind::StateCountry => {
             let p = ProposalId::from_raw(id("proposal")?);
             let lead = actor_first(p, &["lead"])?;
@@ -3022,6 +3038,10 @@ async fn m3_port<P: Seams>(
         Err(e) => Err(call.refuse(port_failed(e, rule))),
     };
     match port_call {
+        PortCall::ClaimDraft(p, token) => {
+            claim_draft(call, p, &token).await?;
+            done(Ok(()), "Input")
+        }
         PortCall::AddPasskey(reg) => {
             let Some(session) = call.caller.session else {
                 return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-78")));
@@ -3319,6 +3339,45 @@ async fn store_workspace<P: Seams>(
         .put(p, slot, sealed)
         .await
         .map_err(|e| port_failed(e, "I-21"))
+}
+
+/// ADR-032: copies the live anonymous draft of `token` into the draft
+/// workspace of `p`, then deletes the anonymous draft, so its resume link
+/// stops working. The draft must be for the call of `p`. An unknown,
+/// expired, claimed or foreign draft gets the one refusal `Input`, so the
+/// answer tells nothing more. The workspace is stored before the delete:
+/// a failed delete leaves the claim to be repeated, never lost text.
+async fn claim_draft<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    token: &crate::anon::Token,
+) -> Result<(), ApiError> {
+    let input = || call.refuse(ApiError::refused(ErrorCode::NotFound, "Input"));
+    let Some(store) = call.ports.anonymous_drafts() else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "Input")));
+    };
+    let digest = token.digest();
+    let row = store
+        .open(digest, call.now)
+        .await
+        .map_err(|e| call.refuse(port_failed(e, "Input")))?
+        .ok_or_else(input)?;
+    if forms::call_of_proposal(&call.state, p) != Some(row.call) {
+        return Err(input());
+    }
+    let w = row.draft.to_workspace();
+    store_workspace(call, p, WorkspaceSlot::Draft, &w)
+        .await
+        .map_err(|e| call.refuse(e))?;
+    match lock(&call.st.content).save(p, w) {
+        Ok(()) | Err(SaveError::Full) => {}
+        Err(SaveError::TooLong) => return Err(input()),
+    }
+    store
+        .remove(digest)
+        .await
+        .map_err(|e| call.refuse(port_failed(e, "Input")))?;
+    Ok(())
 }
 
 /// The content of `p` in `slot` from the workspace port, opened under

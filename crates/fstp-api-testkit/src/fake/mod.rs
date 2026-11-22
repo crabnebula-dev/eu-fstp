@@ -151,6 +151,8 @@ pub struct FakePorts {
     pub ids: FakeIds,
     /// The MCP token grants, held for the token port `port.rs` lacks.
     pub tokens: FakeTokens,
+    /// The anonymous drafts (ADR-032), in memory.
+    pub anon: std::sync::Arc<fstp_api_core::anon::MemoryAnonymousDrafts>,
 }
 
 impl CellPorts for FakePorts {
@@ -239,6 +241,9 @@ impl CellPorts for FakePorts {
     fn tokens(&self) -> &FakeTokens {
         &self.tokens
     }
+    fn anonymous_drafts(&self) -> Option<&dyn fstp_api_core::anon::AnonymousDrafts> {
+        Some(self.anon.as_ref())
+    }
 }
 
 /// Builds the `FakePorts` of the I-85 world.
@@ -295,6 +300,7 @@ impl FakePorts {
             clock,
             ids: FakeIds::default(),
             tokens: FakeTokens::default(),
+            anon: std::sync::Arc::default(),
         })
     }
 }

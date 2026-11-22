@@ -467,6 +467,7 @@ fn overdue(s: &CellState, c: &CellCommand, now: Timestamp) -> Result<(), CellRef
                 TenantCommand::EndTenantAdmin { .. }
                     | TenantCommand::EnrolByInvitation { .. }
                     | TenantCommand::EnrolBySelfRegistration { .. }
+                    | TenantCommand::RegisterBySelfRegistration { .. }
             )
     ) {
         return Ok(());
@@ -767,6 +768,9 @@ fn decide_unchecked(
             account,
             credential,
         }) => decide_self_registration(s, *account, credential, actor, now, inputs),
+        CellCommand::Tenant(TenantCommand::RegisterBySelfRegistration { account }) => {
+            decide_email_registration(s, *account, actor, now)
+        }
         CellCommand::Tenant(cmd) => decide_tenant(s, cmd, actor, now, stepup_at),
         CellCommand::Text(cmd) => decide_text(s, cmd, actor, now),
         CellCommand::Release(cmd) => decide_release(s, cmd, actor, now, command, answers),
@@ -1591,7 +1595,8 @@ fn decide_tenant(
         | TenantCommand::IssueAdminInvitation { .. }
         | TenantCommand::ProvisionTenant { .. }
         | TenantCommand::EnrolByInvitation { .. }
-        | TenantCommand::EnrolBySelfRegistration { .. } => Err(wrong_actor()),
+        | TenantCommand::EnrolBySelfRegistration { .. }
+        | TenantCommand::RegisterBySelfRegistration { .. } => Err(wrong_actor()),
     }
 }
 
@@ -1979,6 +1984,37 @@ fn decide_self_registration(
     Ok(vec![CellRecord::Auth(fstp_auth::AuthRecord::registration(
         account, cred,
     ))])
+}
+
+/// `RegisterBySelfRegistration`, a new Receiving account with its email
+/// proven and no passkey (Daniel, 2026-11-22: "Email only, passkey
+/// optional", ADR-032, ADR-008).
+///
+/// The route took the email proof token, and the admission
+/// `crate::gate::admit_email_registration` checked that the tenant enables
+/// magic links. The batch checks again what the ledger can tell at the
+/// commit instant: the account is the actor, no record names it yet, and
+/// it holds no role outside Receiving (I-77: an account holding such a
+/// role logs in with a phishing-resistant method only). The one record is
+/// `AccountSelfRegistered`.
+fn decide_email_registration(
+    s: &CellState,
+    account: AccountId,
+    actor: AccountId,
+    now: Timestamp,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    if account != actor {
+        return Err(wrong_actor());
+    }
+    fstp_auth::ceremony::admit_self_registration(
+        !account_known(s, account),
+        !holds_management_at(s, account, now),
+        true,
+    )
+    .map_err(|_| refuse(RuleRef::Input, RefusalReason::WrongState))?;
+    Ok(vec![CellRecord::Auth(
+        fstp_auth::AuthRecord::AccountSelfRegistered { account },
+    )])
 }
 
 fn decide_text(

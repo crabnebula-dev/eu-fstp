@@ -149,9 +149,11 @@ fn r_nf_02_every_route_path_is_a_loggable_template() {
 /// The page paths of `web/src/auth/layout.ts` `PATHS` but `/auth/magic`,
 /// which is a row of section 8.7, and the asset routes the shell loads
 /// from (design section 11.2). Transcribed again from those sources.
-const SECTION_11_2_PAGES: [&str; 7] = [
+/// ADR-032 adds the anonymous draft page `/auth/draft` after the signup.
+const SECTION_11_2_PAGES: [&str; 8] = [
     "/auth/login",
     "/auth/signup",
+    "/auth/draft",
     "/auth/invite",
     "/auth/recovery",
     "/auth/account",

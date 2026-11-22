@@ -1091,7 +1091,9 @@ fn route_only(c: &CellCommand) -> bool {
                 | A::ProveRecoveryEmail { .. }
                 | A::CompleteRecovery { .. }
         ) | CellCommand::Tenant(
-            TenantCommand::EnrolByInvitation { .. } | TenantCommand::EnrolBySelfRegistration { .. }
+            TenantCommand::EnrolByInvitation { .. }
+                | TenantCommand::EnrolBySelfRegistration { .. }
+                | TenantCommand::RegisterBySelfRegistration { .. }
         )
     )
 }
@@ -1125,6 +1127,9 @@ pub enum RouteDeny {
     UnknownCredential,
     /// The recovery case is not open.
     UnknownCase,
+    /// Self-registration without a passkey where the tenant does not offer
+    /// magic links (ADR-032, ADR-008).
+    MagicLinksDisabled,
     /// The recovery case id is taken already.
     CaseTaken,
 }
@@ -1374,6 +1379,52 @@ pub fn admit_self_registration(
         at: now,
         command: Some(command_id),
         inputs: RouteInputs::none().with_credential(cred),
+    })
+}
+
+/// `POST /auth/signup` without a passkey (Daniel, 2026-11-22: "Email
+/// only, passkey optional", ADR-032, ADR-008): admits
+/// `RegisterBySelfRegistration` of the new account `account`, which signs
+/// in by magic link.
+///
+/// The route drew `account` when it sent the email proof, and took that
+/// proof token once, within its lifetime, before it calls this. The gate
+/// checks that the tenant offers magic links (P-70, `enabled`), since an
+/// account without a passkey could not sign in otherwise, and
+/// `fstp_auth::ceremony::admit_self_registration`: no record names the
+/// account and it holds no role outside Receiving (I-77).
+///
+/// # Errors
+///
+/// The first check that fails: `MagicLinksDisabled` when the tenant does
+/// not offer magic links.
+pub fn admit_email_registration(
+    s: &CellState,
+    account: AccountId,
+    enabled: &fstp_auth::EnabledMethods,
+    command_id: [u8; 16],
+    now: Timestamp,
+) -> Result<Admitted, RouteDeny> {
+    if !enabled.offers(fstp_auth::Method::MagicLink) {
+        return Err(RouteDeny::MagicLinksDisabled);
+    }
+    let known = s.tenant().is_admin(account)
+        || s.auth().names_account(account)
+        || s.engine()
+            .core
+            .roster()
+            .bindings()
+            .any(|(_, b)| b.account == account);
+    let holds = holds_management(s, account, now).map_err(RouteDeny::Gate)?;
+    fstp_auth::ceremony::admit_self_registration(!known, !holds, true).map_err(RouteDeny::Enrol)?;
+    let command = CellCommand::Tenant(TenantCommand::RegisterBySelfRegistration { account });
+    Ok(Admitted {
+        action: Action::Command(command),
+        principal: Principal::Ceremony(account),
+        stepup: None,
+        at: now,
+        command: Some(command_id),
+        inputs: RouteInputs::none(),
     })
 }
 
@@ -2013,7 +2064,7 @@ pub fn management_holders(s: &CellState, now: Timestamp) -> Vec<AccountId> {
 /// Whether `a` holds a management role at `now`, through
 /// `fstp_auth::holds_management` over the engine roster and the tenant
 /// fold.
-fn holds_management(s: &CellState, a: AccountId, now: Timestamp) -> Result<bool, Deny> {
+pub(crate) fn holds_management(s: &CellState, a: AccountId, now: Timestamp) -> Result<bool, Deny> {
     let roster = RosterView {
         management: management_holders(s, now),
     };
