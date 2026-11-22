@@ -17,8 +17,28 @@ pub use fstp_brand::emblem::{EU_EMBLEM_PNG, FUNDING_ACKNOWLEDGEMENT};
 pub use fstp_brand::image::{LogoFormat, logo_path_digest};
 use fstp_domain::id::ProgrammeId;
 use fstp_json::{Object, ToJson, Value};
-/// A person's theme choice (ADR-030 section 1).
-pub use fstp_tenant::Theme as ThemeChoice;
+/// A person's theme choice as the web adapter writes it (ADR-030
+/// section 1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ThemeChoice {
+    /// Follow the device. The default.
+    #[default]
+    System,
+    /// Always light.
+    Light,
+    /// Always dark.
+    Dark,
+}
+
+impl From<fstp_tenant::Theme> for ThemeChoice {
+    fn from(t: fstp_tenant::Theme) -> ThemeChoice {
+        match t {
+            fstp_tenant::Theme::System => ThemeChoice::System,
+            fstp_tenant::Theme::Light => ThemeChoice::Light,
+            fstp_tenant::Theme::Dark => ThemeChoice::Dark,
+        }
+    }
+}
 use fstp_tenant::{LogoOwner, LogoRef, LogoSlot, TenantState};
 
 /// The served bytes of one logo, with its checked format.
@@ -211,10 +231,7 @@ pub type MailPlan = ([u8; 3], Vec<(LogoRef, String)>);
 /// email can show, the tenant's then the programme's, each with its text
 /// alternative. `None` while the tenant set neither tokens nor a logo, so
 /// the message keeps the platform look.
-pub fn mail_plan(
-    ts: &TenantState,
-    programme: Option<ProgrammeId>,
-) -> Option<MailPlan> {
+pub fn mail_plan(ts: &TenantState, programme: Option<ProgrammeId>) -> Option<MailPlan> {
     let tokens = ts.branding().map(|(t, _)| t);
     let name = tokens
         .map(|t| t.name.as_str().to_owned())

@@ -10,6 +10,7 @@
 
 use std::collections::BTreeSet;
 
+use fstp_api_core::brand::ThemeChoice as Theme;
 use fstp_api_core::decode::{Method, decode_route};
 use fstp_api_core::port::LoginMethod;
 use fstp_api_core::{ApiError, Credential, Op, OpResult, RequestHead};
@@ -22,7 +23,6 @@ use fstp_engine::{Record, record_from_json_at};
 use fstp_json::{Object, ToJson, Value};
 use fstp_ledger::{MemStore, RecordStore};
 use fstp_rt::future::block_on;
-use fstp_tenant::Theme;
 
 const A1: AccountId = AccountId::from_raw(0x0a01);
 const A2: AccountId = AccountId::from_raw(0x0a02);

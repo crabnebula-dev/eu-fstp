@@ -1855,7 +1855,11 @@ impl<P: CellPorts> Dispatch for Core<P> {
     }
 
     fn theme<'a>(&'a self, cred: Credential, head: &'a RequestHead) -> crate::ThemeFuture<'a> {
-        Box::pin(async move { crate::dispatch::brand::theme(&self.ports, &cred, head).await })
+        Box::pin(async move {
+            crate::dispatch::brand::theme(&self.ports, &cred, head)
+                .await
+                .into()
+        })
     }
 
     fn page<'a>(

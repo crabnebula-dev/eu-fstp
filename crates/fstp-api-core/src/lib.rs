@@ -491,7 +491,7 @@ type PageFuture<'a> = Pin<Box<dyn Future<Output = PageAdmission> + Send + 'a>>;
 type AssetFuture<'a> = Pin<Box<dyn Future<Output = Option<brand::LogoAsset>> + Send + 'a>>;
 
 /// The future of a session's theme (ADR-030).
-type ThemeFuture<'a> = Pin<Box<dyn Future<Output = fstp_tenant::Theme> + Send + 'a>>;
+type ThemeFuture<'a> = Pin<Box<dyn Future<Output = brand::ThemeChoice> + Send + 'a>>;
 
 /// Whether the server may serve an `/app/` page (SA-09), as
 /// [`ApiCore::page`] judges it from the page table `fstp_access::PAGES`.
@@ -598,7 +598,7 @@ impl ApiCore {
 
     /// The theme choice of the account `cred`'s session holds, or System
     /// for no session (ADR-030 section 1). Nothing is recorded.
-    pub async fn theme(&self, cred: Credential, head: &RequestHead) -> fstp_tenant::Theme {
+    pub async fn theme(&self, cred: Credential, head: &RequestHead) -> brand::ThemeChoice {
         self.inner.theme(cred, head).await
     }
 
