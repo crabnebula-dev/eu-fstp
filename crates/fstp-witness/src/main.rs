@@ -8,7 +8,13 @@
 //! lane L16): `copy-key-file <out>` copies the sealed file off the host
 //! and records the copy, and `retire-key-file-copy <id>` records that
 //! every copy of an id is destroyed.
+//!
+//! Two install commands of a self-hosted witness (ADR-028, lane L19,
+//! `fstp_witness::install`): `init-keys <dir>` creates the receipt key
+//! file, and `register <cell> <cell-ca.pem> <app-anchor.pub>
+//! <vault-anchor.pub>` registers a cell in the file store.
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use fstp_witness::WitnessError;
@@ -22,6 +28,10 @@ fn command(args: &[String]) -> Result<(), WitnessError> {
         [c, id] if c == "retire-key-file-copy" => fstp_custody::copies::CopyId::parse(id)
             .ok_or(WitnessError::Config("arguments"))
             .and_then(fstp_witness::key_copy::run_retire),
+        [c, dir] if c == "init-keys" => fstp_witness::install::init_keys(Path::new(dir)),
+        [c, cell, ca, app, vault] if c == "register" => {
+            fstp_witness::install::register(cell, Path::new(ca), Path::new(app), Path::new(vault))
+        }
         _ => Err(WitnessError::Config("arguments")),
     }
 }
