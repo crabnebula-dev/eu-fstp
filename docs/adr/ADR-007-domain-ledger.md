@@ -187,3 +187,22 @@ Status of this section: Accepted 2026-10-28 (Daniel Thompson-Yvetot). The sectio
 - Startup cost grows with the ledger, bounded by the latest checkpoint. The latency budget is measured in W2. Record at first use: the measured replay time from a checkpoint.
 - If a later milestone needs a queryable projection table, its columns must fit the classes above or be sealed. A plaintext amount column would need a new amendment.
 - The tenant export decrypts bodies inside the cell before it writes the export file (`SPEC/schemas/README.md`).
+
+## Built by lane L33 `prod/erasure-log`, 2026-11-22: the erasure log of the production cell
+
+Daniel decided on 2026-11-22: build the production erasure log now, with a row for each display name a person replaces or clears. Written before the code. Every other row is interim, pending Daniel, unless it says otherwise.
+
+Until this lane the production cell served no erasure log. `CellTexts::erasures` and the route backend's `erasures` answered `Unavailable`, so `admin.erasures` and `GET /api/v1/erasures` failed closed, and the System page named no cell erasure.
+
+| Topic | Reading |
+| --- | --- |
+| Home | The ledger, as section "Erasure-log entries" says: the log is the set of its erasure records, each in the audit chain (I-24). So the log survives a restart, and a restore of the ledger restores it. No new table |
+| Ledger texts | Unchanged: `EraseTexts` by a tenant admin appends `ErasureRequested` and `TextsErased`, so a request names its cause and authoriser |
+| Keystore texts | A text the keystore keeps that no ledger record names, today a replaced or cleared display name (ADR-004 section "Written by lane L26"), gets its request entry from the new key record `KeystoreErasureRequested { ids, cause, by, kind }`. The erasure runner appends it as the system task `ErasureRunner`, before it requests the erasure in its chain state. It names the text id, the cause 2 (an erasure request), the account that replaced or cleared the name as the authoriser, and the kind 2 (a display name). It holds no name. The fold refuses an id that the ledger names as a text, or that has an entry already |
+| Authoriser | The section above says that no system path records an erasure, since a tenant admin requests every cause. A display name change is the person's own act, so the entry names the person, and the runner only writes it for them. Interim, pending Daniel |
+| Completion | Step 7 of a batch appends `KeyEpochDestroyed`, then the new key record `ErasuresCompleted { epoch, ids }` for every text whose key the batch destroyed and that has an entry. The fold records the destroyed epoch and the instant on each entry. Both commands have a fixed id per epoch, so a step repeated after a crash appends nothing twice. A batch of more than `MAX_TEXT_IDS` texts appends several records |
+| `completed_at` | The section above says that `completed_at` follows the destroy receipt. A display name entry takes it from `ErasuresCompleted`. A ledger text entry keeps the `TextsErased` instant that M3 records in the request's batch, and the log shows the destruction instant once `ErasuresCompleted` names it. The move of `TextsErased` itself after the destruction stays with lane W2c |
+| What the log serves | One row per entry: the text id, the kind, the cause, the authoriser, the request instant, the completion instant, and the destroyed root epoch once known. No content, no name and no address |
+| `admin.erasures` | `CellTexts::erasures` reads the entries from the engine's state, oldest request first. So `admin.erasures`, the work plan read (`plan_text`) and the System page's key copy check (`last_cell_erasure`) read the log. The no-log fallback of `plan_text` stays for a store that keeps none |
+| `GET /api/v1/erasures` | The route backend reads the same entries. A text's programme is not recorded, so each entry is tenant-wide: a tenant admin reads it, and an Auditor does not, as section "Erasure-log entries" reads Q42 for tenant-wide texts |
+| Documents | A document's data key has no text id, so a document erasure gets no entry here. `DocumentErased` stays with its own lane |
