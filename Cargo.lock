@@ -885,6 +885,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-png"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-programme"
 version = "0.1.0"
 dependencies = [
