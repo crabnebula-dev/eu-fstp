@@ -749,10 +749,10 @@ Written by lane L13b before its code. Every row is interim, pending Daniel, unle
 
 | Method | Tuple |
 | --- | --- |
-| Every method | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8 bytes`, in this order: family names, given names, date of birth as `YYYY-MM-DD`, and the ISO 3166-1 alpha-3 code of the state that issued the identity evidence. The method is not part of the tuple, so one person verified by two methods has one identity |
+| Every method | `"fstp-identity-tuple-v2"` (the label was `"fstp-identity-tuple-v1"` until lane L21, see row "Normalisation"), then each field as `be16(len) \|\| UTF-8 bytes`, in this order: family names, given names, date of birth as `YYYY-MM-DD`, and the ISO 3166-1 alpha-3 code of the state that issued the identity evidence. The method is not part of the tuple, so one person verified by two methods has one identity |
 | `manual` (R-ID-02) | The four fields as printed on the checked document, entered by the recorder. No document number and no image enter the tuple, as R-ID-02 forbids storing them |
 | EUDI (M4, not built) | The same four fields from the person identification data. Which attribute of the presentation fills each field is open |
-| Normalisation | Leading and trailing spaces are removed and inner runs of spaces become one. No case folding and no Unicode normalisation are applied yet: two spellings of one name give two identities, which over-separates and never merges two persons. Open for Daniel, with `TODO(legal)` for the data minimisation basis of the four fields |
+| Normalisation | Decided by Daniel on 2026-11-21: NFKC + case fold. Each name is `fstp_unorm::name_key`: the compatibility caseless key `toNFKC_Casefold(NFD(s))`, then leading and trailing white space removed and inner runs one space (ADR-029). Case, canonical equivalence, compatibility variants (ligatures, full-width letters) and default ignorables (soft hyphen, zero width joiner) no longer separate two spellings of one name. Diacritics still count: `Muller` and `Müller` stay two names. A name that folds to nothing is refused. The label is `fstp-identity-tuple-v2` since lane L21. A vault that stores a tuple under the label `fstp-identity-tuple-v1` refuses to start, as for shared-key identity facts, since its match keys would give the same person a second identity. Such a pilot vault is recreated. The `TODO(legal)` on the data minimisation basis of the four fields stays |
 
 ### Where the tuple travels: a conflict, stopped for Daniel
 
@@ -804,7 +804,7 @@ Written before the code. Every row is interim, pending Daniel, unless it says ot
 | Reply | 204, as every write with no reference. The reply names no identity |
 | Sans-IO path | `Vault::origin` has no keystore, so it answers a kind 6 write 503. The serving vault routes it to its registrar |
 | Page | The write page of the vault origin shows a form for `write:verification_recorded`: the account id of the person checked, method, document type, checks, and the four identity fields. It posts to `/w` as the other forms do. The cell never sees the entries. The ticket names the proposal but not the person, so the recorder enters the account id. Open for Daniel: whether the ticket should name the person |
-| Tuple | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8`, in this order: family names, given names, date of birth, issuing state. Names are trimmed and inner runs of white space become one space. NFC and case folding are decided, but not built: see the next table |
+| Tuple | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8`, in this order: family names, given names, date of birth, issuing state. Names are trimmed and inner runs of white space become one space. NFC and case folding are decided, but not built: see the next table. Superseded by lane L21: label `fstp-identity-tuple-v2`, names through `fstp_unorm::name_key` (row "Normalisation" above) |
 | Static page | The shipped vault does not serve the static write page yet (ADR-009, third route group). Only the test world serves `web/dist/vault`. So a recorder on a pilot vault cannot open the form until the vault serves its pages. Open for Daniel |
 | Not on real binaries | No end-to-end test runs on the real binaries. The cell issues the ticket only to a verified recorder, and no account is verified in production before the operator path of ADR-008, which waits on the ML-DSA-65 pull request. The g12 harness cannot seed a verification. The flow is tested through the cell's command decision with the vault's ground truth, and through the vault over PostgreSQL |
 
@@ -902,3 +902,42 @@ Built by lane L16 after Daniel's answer of 2026-11-21. The readings are interim,
 | Report | At each start, after the key file opens, the owner logs `key_file_assurance` with the file name and `ReducedReason::CopyHoldsReplacedKey` (code 24): "an off-host copy of a key file holds a replaced key". Nothing is logged when no copy holds a replaced key, since the owner does not vouch for the credentials directory |
 
 Tests: `i81_copy_register_flags_a_copy_holding_a_replaced_key`, `i81_unreadable_copy_register_counts_as_reduced`, `i80_copy_register_holds_no_key_bytes` and `adr004_copy_register_round_trips_in_one_spelling` in `crates/fstp-custody/tests/copy_register.rs`; `i81_cell_key_file_copy_reports_reduced_after_a_key_is_replaced`, `i80_cell_key_file_copy_register_holds_no_key` and `adr004_cell_binary_takes_the_key_file_copy_commands` in `fstp_cell::key_copy`; `i81_witness_key_file_copy_reports_reduced_after_the_key_is_replaced` in `fstp_witness::key_copy`.
+
+## Written by lane L17 `prod/vault-snapshots`, 2026-11-21: the VaultBackup chain and the snapshot keys
+
+Written by lane L17 before its code. Decided by Daniel on 2026-11-21: ADR-012 "Keystore snapshots" option A, a vault-held snapshot key under the vault's own custody entry. This record is the amendment that option needs. The snapshot writers, step 5 and the restore rule are in ADR-012 (record of lane L17). Every row is interim, pending Daniel, unless it says otherwise.
+
+**A chain, not a purpose.** Option A named two forms: a `Backup` purpose on the Vault chain that never takes part in erasure, or a separate `VaultBackup` chain. This lane takes the chain, for three reasons.
+
+1. A `Backup` group on the Vault chain is a level 2 group. Its secret is sealed under `S(e)` of the Vault chain, resealed at step 3 of each rotation, and its old seal dies with `R(e)` at step 6. A restore needs that secret to open the newest snapshot. A restored database that predates the last rotation holds the secret sealed only under a destroyed epoch. The snapshot then does not open in exactly the case that ADR-012's restore rule takes it for.
+2. A held import of an off-host copy (record of lane L16, rule 2) serves only the backup chains, so the restore commands run while no erasable epoch can open. A purpose on the Vault chain could not be served there without serving the Vault chain itself.
+3. A chain of its own is never reached by the planner `fstp_keys::erasure`, as CellBackup and ClusterBackup are not. So "never takes part in erasure" holds by construction, not by a rule in the runner.
+
+| Topic | Reading |
+| --- | --- |
+| Chain code | `VaultBackup`, code 6, file custody name `vaultbackup`. The chain codes of part 1 become App 1, Vault 2, CellBackup 3, ClusterBackup 4, ControlPlane 5, VaultBackup 6. No code is renumbered. `fstp_keys::Chain::from_code` and the reference copy `fstp_celltest::reference::keys::chain_code` take it |
+| Chains table | A new row: VaultBackup, process `fstp-vault`, purpose `Backup` (code 5), the vault's keystore snapshot containers. Yearly re-wrap. Never rotated by erasure. The owner is the cell id, as for CellBackup |
+| Custody | The vault's own `fstp-keyd` entry. The `vault` client role reaches Vault and VaultBackup. The `cell` role never reaches VaultBackup, and the `vault` role never reaches App or CellBackup (R-NF-08, I-83). The console role is unchanged |
+| Vault snapshot key | `vault-snapshot.key` in the vault's credentials directory. It has the layout of `cluster-backup.key` (ADR-012 record of lane L10) under the 22-byte magic `"fstp-vault-snapshot-v1"`. The owner field holds the cell. Its root is `{cell, VaultBackup, epoch 1}` in the vault's entry. The file holds the group public key, the custody handle, `S` wrapped under the root and the group secret sealed under `S`. It never holds an open key (I-80) |
+| App snapshot key | `cell-snapshot.key` in the cell's credentials directory, the same layout under the magic `"fstp-cell-snapshots-v1"`. Its root is `{cell, CellBackup, epoch 1}` in the cell's own entry, which the `cell` role reaches. It is not the dedicated root of the cell key file (record of lane L4), which lives in another entry. The CellBackup chain of part 2 now has a key, as that row always said |
+| Genesis | Automatic, with no operator step (usability rule of 2026-11-21). `fstp-vault init-keys` writes `vault-snapshot.key` beside the keystore. A vault or a cell whose configuration names an object store and whose credentials directory has no snapshot key file creates it at its next start, then serves. A crash between the custody create and the file write leaves a root that no file names. The next start creates another, as genesis does (record of lane L8) |
+| Separation | A key file decodes only under its own magic, so neither process reads the other's file. Each container's data key is sealed to its chain's group (`FSK1` context with chain 3 or 6), so a vault snapshot never opens under the App snapshot key, and the reverse (R-NF-08) |
+| Held import | While a volume is held, `fstp-keyd` serves unwrap and usage requests on VaultBackup too, to a socket whose role reaches it. VaultBackup takes no part in erasure, so this opens no erasable epoch (I-81). Release still names App and Vault only |
+| Cell erasure | `fstp-control` destroys every live root of the App, Vault, CellBackup and VaultBackup chains of the cell that it is given (R-SW-02). So every snapshot of an erased cell stays sealed under a destroyed root. A VaultBackup root is optional (`OPTIONAL_CELL_CHAINS`), since a pilot with no bucket has none. The list of the cell's roots must name it when it exists |
+| Copies | The off-host copy of the vault's entry carries the live VaultBackup root like any live root (record of lane L16). The snapshot key files hold no key that an erasure replaces, so they need no copy register (Q-L16-3). A copy of a credentials directory carries them |
+| Rotation | The yearly re-wrap of CellBackup and VaultBackup is not built, as for ClusterBackup |
+
+Tests, written before the code: `r_nf_08_vault_socket_reaches_vault_backup_and_never_app_chains` in `crates/fstp-keyd/tests/serve.rs`; `adr004_vault_backup_chain_code_is_six` in `fstp-keys`; `r_nf_08_snapshot_keys_never_open_each_other` and `adr004_snapshot_key_files_decode_only_under_their_magic` in `crates/fstp-backup/tests/keystore_snapshots.rs`; `r_sw_02_cell_erasure_destroys_vault_backup_roots` in `fstp-control`. Also `i81_held_volume_serves_vault_backup_unwrap_only` in `fstp_keyd::export`. Built by lane L17 on 2026-11-21 as written above.
+
+## Built by lane L21 `prod/unicode-normaliser`, 2026-11-22: the normaliser in the tuple
+
+Decided by Daniel on 2026-11-21: NFKC + case fold (ADR-029). Every other reading is the lead's, pending Daniel.
+
+| Topic | Reading |
+| --- | --- |
+| Seam | `fstp_vault::codec::tuple_name` is `fstp_unorm::name_key`. `fstp_vault::codec::TUPLE_LABEL` is `fstp-identity-tuple-v2` |
+| Field check | A name field must also give a non-empty `name_key`, so a name of only default ignorables is refused at decode |
+| Earlier labels | `fstp_vault::codec::OLD_TUPLE_LABELS` holds `fstp-identity-tuple-v1`. `Runner::check_tuple_labels` opens every live tuple and refuses a keystore that stores one under an earlier label. `fstp-vault serve` runs it at each start (`resume_keystore`), and `fstp-vault verify-first-admin` runs it before it registers. The refusal reads "an identity tuple of an earlier label: recreate this pilot vault". An erased tuple is not checked, since it no longer opens |
+| Pilot vaults | A pilot vault that verified anyone before lane L21 is recreated: a fresh vault database, then `init-keys` (the operator guide says so) |
+
+Tests: `i81_adr004_name_variants_register_as_one_identity` and `i81_start_refuses_identity_tuples_of_an_earlier_label` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `adr004_name_variants_give_one_tuple` (`crates/fstp-vault/tests/codecs.rs`).

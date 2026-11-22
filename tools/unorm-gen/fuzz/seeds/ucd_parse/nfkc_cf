@@ -1,0 +1,3 @@
+0041 ; NFKC_CF; 0061 # x
+00AD ; NFKC_CF;  # y
+0300 ; NFD_QC; N

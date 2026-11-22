@@ -340,6 +340,7 @@ dependencies = [
  "fstp-api-core",
  "fstp-audit",
  "fstp-auth",
+ "fstp-backup",
  "fstp-cell",
  "fstp-cell-core",
  "fstp-checks",
@@ -884,6 +885,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-png"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+ "fstp-prop",
+]
+
+[[package]]
 name = "fstp-programme"
 version = "0.1.0"
 dependencies = [
@@ -1048,10 +1057,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-unorm"
+version = "0.1.0"
+dependencies = [
+ "fstp-prop",
+ "unorm-gen",
+]
+
+[[package]]
 name = "fstp-vault"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
+ "fstp-backup",
  "fstp-crypto",
  "fstp-custody",
  "fstp-edge",
@@ -1066,6 +1084,7 @@ dependencies = [
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",
+ "fstp-unorm",
  "fstp-vault-core",
  "fstp-vault-proto",
  "fstp-witness",
@@ -1393,6 +1412,10 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unorm-gen"
+version = "0.1.0"
 
 [[package]]
 name = "untrusted"

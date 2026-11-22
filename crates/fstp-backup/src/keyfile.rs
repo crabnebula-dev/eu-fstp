@@ -15,6 +15,12 @@
 //! under [`CUSTODIAN_MAGIC`] (ADR-012 record of lane L16): its group
 //! field is the custodian id, and its secret is the custodian key.
 //!
+//! The snapshot key files `cell-snapshot.key` and `vault-snapshot.key`
+//! have the same layout under their own magics ([`FileKind`], ADR-004
+//! record of lane L17). Their owner field holds the cell, and their root
+//! is `{cell, CellBackup or VaultBackup, epoch 1}` in the process's own
+//! custody entry.
+//!
 //! The writer reads the public key only, so it cannot open what it wrote
 //! (ADR-012 "Writer"). Opening the secret needs the custody root, which
 //! the `fstp-keyd` console socket serves. The file never holds an open
@@ -25,7 +31,7 @@
 use fstp_crypto::aead;
 use fstp_crypto::hybrid_kem::{self, HybridPublicKey, HybridSecretKey};
 use fstp_custody::{
-    Aad, BackendId, Chain, Custody, CustodyHandle, Epoch, RootLabel, RootRef, SealKey,
+    Aad, BackendId, CellId, Chain, Custody, CustodyHandle, Epoch, RootLabel, RootRef, SealKey,
     WrappedSealKey,
 };
 use fstp_keys::GroupId;
@@ -39,6 +45,72 @@ pub const MAGIC: &[u8; 22] = b"fstp-cluster-backup-v1";
 pub const CUSTODIAN_MAGIC: &[u8; 22] = b"fstp-backup-custodian1";
 /// The file's name in the credentials directory.
 pub const KEY_FILE: &str = "cluster-backup.key";
+/// The magic of the App chain's snapshot key file `cell-snapshot.key`
+/// (ADR-004 record of lane L17).
+pub const CELL_SNAPSHOT_MAGIC: &[u8; 22] = b"fstp-cell-snapshots-v1";
+/// The magic of the vault's snapshot key file `vault-snapshot.key`
+/// (ADR-004 record of lane L17).
+pub const VAULT_SNAPSHOT_MAGIC: &[u8; 22] = b"fstp-vault-snapshot-v1";
+/// The App chain's snapshot key file name in the cell's credentials
+/// directory.
+pub const CELL_SNAPSHOT_KEY_FILE: &str = "cell-snapshot.key";
+/// The vault's snapshot key file name in the vault's credentials
+/// directory.
+pub const VAULT_SNAPSHOT_KEY_FILE: &str = "vault-snapshot.key";
+
+/// What a key file is for. Each kind has its own magic, so no file decodes
+/// as another kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    /// `cluster-backup.key`: the ClusterBackup group of a cluster.
+    ClusterBackup,
+    /// `custodian.key`: a second custodian's key (record of lane L16).
+    Custodian,
+    /// `cell-snapshot.key`: the CellBackup group of a cell's App chain
+    /// keystore snapshots (record of lane L17).
+    CellSnapshot,
+    /// `vault-snapshot.key`: the VaultBackup group of a vault's keystore
+    /// snapshots (record of lane L17).
+    VaultSnapshot,
+}
+
+impl FileKind {
+    /// Every kind.
+    pub const ALL: [FileKind; 4] = [
+        FileKind::ClusterBackup,
+        FileKind::Custodian,
+        FileKind::CellSnapshot,
+        FileKind::VaultSnapshot,
+    ];
+
+    /// The magic of the kind.
+    #[must_use]
+    pub const fn magic(self) -> &'static [u8; 22] {
+        match self {
+            FileKind::ClusterBackup => MAGIC,
+            FileKind::Custodian => CUSTODIAN_MAGIC,
+            FileKind::CellSnapshot => CELL_SNAPSHOT_MAGIC,
+            FileKind::VaultSnapshot => VAULT_SNAPSHOT_MAGIC,
+        }
+    }
+
+    /// The chain of the kind's root and group.
+    #[must_use]
+    pub const fn chain(self) -> Chain {
+        match self {
+            FileKind::ClusterBackup | FileKind::Custodian => Chain::ClusterBackup,
+            FileKind::CellSnapshot => Chain::CellBackup,
+            FileKind::VaultSnapshot => Chain::VaultBackup,
+        }
+    }
+
+    /// Whether the root names the owner as its cell: the snapshot keys do,
+    /// the cluster keys name no cell.
+    #[must_use]
+    pub const fn per_cell(self) -> bool {
+        matches!(self, FileKind::CellSnapshot | FileKind::VaultSnapshot)
+    }
+}
 /// The epoch of the root at genesis.
 pub const ROOT_EPOCH: u64 = 1;
 /// The group generation at genesis.
@@ -55,7 +127,7 @@ fn bad(rule: &'static str) -> BackupError {
 /// A decoded key file: the public key, references and sealed bytes.
 #[derive(Clone, PartialEq, Eq)]
 pub struct KeyFile {
-    /// The cluster that owns the group.
+    /// The owner of the group: the cluster, or the cell of a snapshot key.
     pub cluster: [u8; 16],
     /// The group.
     pub group: [u8; 16],
@@ -73,9 +145,8 @@ pub struct KeyFile {
     pub nonce: [u8; aead::NONCE_LEN],
     /// The sealed group secret.
     pub sealed: Vec<u8>,
-    /// Whether this is a second custodian's key file
-    /// ([`CUSTODIAN_MAGIC`]) rather than a group key file ([`MAGIC`]).
-    pub custodian: bool,
+    /// What the file is for, which fixes its magic and its chain.
+    pub kind: FileKind,
 }
 
 impl std::fmt::Debug for KeyFile {
@@ -91,11 +162,7 @@ impl KeyFile {
     /// The magic of this file's kind.
     #[must_use]
     pub fn magic(&self) -> &'static [u8; 22] {
-        if self.custodian {
-            CUSTODIAN_MAGIC
-        } else {
-            MAGIC
-        }
+        self.kind.magic()
     }
 
     /// The AAD of the wrap and the seal.
@@ -135,8 +202,8 @@ impl KeyFile {
     pub fn root(&self) -> RootRef {
         RootRef {
             backend: BackendId::Keyd,
-            cell: None,
-            chain: Chain::ClusterBackup,
+            cell: self.kind.per_cell().then_some(CellId(self.cluster)),
+            chain: self.kind.chain(),
             epoch: Epoch(self.epoch),
             handle: CustodyHandle(self.handle.clone()),
         }
@@ -205,7 +272,7 @@ impl<'a> Reader<'a> {
 /// [`BackupError::KeyFile`] for a wrong magic, a cut or overlong field,
 /// a generation or epoch of 0, or trailing bytes.
 pub fn decode(bytes: &[u8]) -> Result<KeyFile, BackupError> {
-    decode_as(bytes, false)
+    decode_kind(bytes, FileKind::ClusterBackup)
 }
 
 /// Decodes a second custodian's key file: the layout of [`decode`] under
@@ -216,11 +283,17 @@ pub fn decode(bytes: &[u8]) -> Result<KeyFile, BackupError> {
 ///
 /// As [`decode`].
 pub fn decode_custodian(bytes: &[u8]) -> Result<KeyFile, BackupError> {
-    decode_as(bytes, true)
+    decode_kind(bytes, FileKind::Custodian)
 }
 
-fn decode_as(bytes: &[u8], custodian: bool) -> Result<KeyFile, BackupError> {
-    let magic = if custodian { CUSTODIAN_MAGIC } else { MAGIC };
+/// Decodes a key file of `kind`: the layout of [`decode`] under the
+/// kind's magic. Fuzzed (`backup_key_file_decode`).
+///
+/// # Errors
+///
+/// As [`decode`].
+pub fn decode_kind(bytes: &[u8], kind: FileKind) -> Result<KeyFile, BackupError> {
+    let magic = kind.magic();
     let mut r = Reader { rest: bytes };
     if r.take(magic.len())? != magic {
         return Err(bad("magic"));
@@ -250,7 +323,7 @@ fn decode_as(bytes: &[u8], custodian: bool) -> Result<KeyFile, BackupError> {
         wrapped,
         nonce,
         sealed,
-        custodian,
+        kind,
     })
 }
 
@@ -263,7 +336,7 @@ fn decode_as(bytes: &[u8], custodian: bool) -> Result<KeyFile, BackupError> {
 /// [`BackupError::Custody`] when custody refuses, and
 /// [`BackupError::Seal`] when a draw or the seal fails.
 pub async fn create<C: Custody>(custody: &C, cluster: [u8; 16]) -> Result<Vec<u8>, BackupError> {
-    create_as(custody, cluster, false).await
+    create_kind(custody, cluster, FileKind::ClusterBackup).await
 }
 
 /// As [`create`], for a group key file or, with `custodian`, a second
@@ -279,12 +352,34 @@ pub async fn create_as<C: Custody>(
     cluster: [u8; 16],
     custodian: bool,
 ) -> Result<Vec<u8>, BackupError> {
+    let kind = if custodian {
+        FileKind::Custodian
+    } else {
+        FileKind::ClusterBackup
+    };
+    create_kind(custody, cluster, kind).await
+}
+
+/// As [`create`], for a key file of `kind` owned by `owner`: a cluster, or
+/// the cell of a snapshot key (ADR-004 record of lane L17). It creates the
+/// root of the kind's chain at epoch 1, labelled with the cell for a
+/// snapshot key, and no other.
+///
+/// # Errors
+///
+/// As [`create`].
+pub async fn create_kind<C: Custody>(
+    custody: &C,
+    owner: [u8; 16],
+    kind: FileKind,
+) -> Result<Vec<u8>, BackupError> {
+    let cluster = owner;
     let secret = hybrid_kem::generate().map_err(|_| BackupError::Seal("group key"))?;
     let group = fstp_crypto::random_array::<16>().map_err(|_| BackupError::Seal("group id"))?;
     let root = custody
         .create_root(RootLabel {
-            cell: None,
-            chain: Chain::ClusterBackup,
+            cell: kind.per_cell().then_some(CellId(owner)),
+            chain: kind.chain(),
             epoch: Epoch(ROOT_EPOCH),
         })
         .await
@@ -299,7 +394,7 @@ pub async fn create_as<C: Custody>(
         wrapped: Vec::new(),
         nonce: [0; aead::NONCE_LEN],
         sealed: Vec::new(),
-        custodian,
+        kind,
     };
     let seal = SealKey::generate().map_err(|_| BackupError::Seal("seal key"))?;
     let aad = file.aad();

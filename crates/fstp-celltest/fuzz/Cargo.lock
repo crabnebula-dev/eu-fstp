@@ -228,6 +228,7 @@ dependencies = [
  "fstp-api-core",
  "fstp-audit",
  "fstp-auth",
+ "fstp-backup",
  "fstp-cell-core",
  "fstp-checks",
  "fstp-cp-proto",
@@ -816,10 +817,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-unorm"
+version = "0.1.0"
+
+[[package]]
 name = "fstp-vault"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
+ "fstp-backup",
  "fstp-crypto",
  "fstp-custody",
  "fstp-edge",
@@ -831,6 +837,7 @@ dependencies = [
  "fstp-pgwire",
  "fstp-rt",
  "fstp-tls",
+ "fstp-unorm",
  "fstp-vault-core",
  "fstp-vault-proto",
  "fstp-witness",

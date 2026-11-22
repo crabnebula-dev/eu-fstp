@@ -10,6 +10,9 @@
 //!   Vault chain anchor public key the witness registers into `<dir>`;
 //! - `erase-identity <account>`: erase the identity of the account on the
 //!   Vault chain, with the vault stopped (ADR-004 record of lane L11).
+//! - `restore-keystore [<snapshot id>]`: after a restore of the vault
+//!   cluster, keep the newest keystore copy that opens, with the vault
+//!   stopped (ADR-012 record of lane L17).
 //!
 //! It writes typed events only (R-NF-02). A refused configuration or
 //! argument exits with status 2, any other failure with status 1.

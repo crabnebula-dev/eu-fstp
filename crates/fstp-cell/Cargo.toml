@@ -67,6 +67,7 @@ fstp-report.workspace = true
 # its ports and mounts the web adapter behind its own table, with the
 # API core and fstp-access listed above for lane L2.
 fstp-web.workspace = true
+fstp-backup.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

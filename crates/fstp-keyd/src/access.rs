@@ -7,7 +7,7 @@
 //! | Role | Client | Chains | CA sign keys |
 //! | --- | --- | --- | --- |
 //! | [`ClientRole::Cell`] | `fstp-cell` | App, CellBackup | the cell CA |
-//! | [`ClientRole::Vault`] | `fstp-vault` | Vault | none |
+//! | [`ClientRole::Vault`] | `fstp-vault` | Vault, VaultBackup | none |
 //! | [`ClientRole::PgAgent`] | `fstp-pgagent` | none | the local cluster CAs |
 //! | [`ClientRole::Console`] | root, at the host console | CellBackup, ClusterBackup | none |
 //! | [`ClientRole::Control`] | `fstp-control` of a pilot | ControlPlane | none |
@@ -57,7 +57,8 @@ use fstp_custody::keyd::Request;
 pub enum ClientRole {
     /// `fstp-cell`: the App and CellBackup chains, and the cell CA key.
     Cell,
-    /// `fstp-vault`: the Vault chain only.
+    /// `fstp-vault`: the Vault chain, and the VaultBackup chain of its
+    /// snapshot key (ADR-004 record of lane L17).
     Vault,
     /// `fstp-pgagent`: the local cluster CA sign keys only.
     PgAgent,
@@ -116,7 +117,7 @@ impl ClientRole {
     pub const fn chains(self) -> &'static [Chain] {
         match self {
             ClientRole::Cell => &[Chain::App, Chain::CellBackup],
-            ClientRole::Vault => &[Chain::Vault],
+            ClientRole::Vault => &[Chain::Vault, Chain::VaultBackup],
             ClientRole::PgAgent => &[],
             ClientRole::Console => &[Chain::CellBackup, Chain::ClusterBackup],
             ClientRole::Control => &[Chain::ControlPlane],

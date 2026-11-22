@@ -27,6 +27,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+#[path = "../../fstp-backup/tests/support/fake_s3.rs"]
+mod fake_s3;
 mod stepup_common;
 
 use std::collections::BTreeMap;
@@ -1080,4 +1082,248 @@ fn adr004_level2_signer_create_and_rotate_append_key_records() {
         r.key_calls
     );
     assert_eq!(r.signer_custody_calls, 0, "no custody call for a signer");
+}
+
+// ---------------------------------------------------------------------
+// Keystore snapshots through an object store (ADR-012 record of lane L17).
+// ---------------------------------------------------------------------
+
+/// What a batch with an object store did.
+#[derive(Debug)]
+struct SnapRun {
+    ops: Vec<Op>,
+    /// The GETs of snapshot objects served before step 6 ran.
+    gets_before_destroy: usize,
+    /// Failed steps.
+    failures: usize,
+    /// The custody roots alive right after each failed step.
+    roots_at_failure: Vec<usize>,
+    /// The custody roots alive before the batch, and after it.
+    roots_before: usize,
+    roots_after: usize,
+    /// The snapshot objects uploaded.
+    objects: usize,
+    /// Whether the pointer names an uploaded snapshot.
+    pointer_ok: bool,
+    /// Whether the newest snapshot opens text T2 and not T1.
+    opens_live_not_erased: bool,
+}
+
+/// Runs one batch erasing T1, with the App chain's snapshot writer over
+/// the fake S3 of lane L10. With `tamper`, the first snapshot is changed
+/// in the store before step 5 fetches it.
+fn run_snapshots(tamper: bool) -> Result<SnapRun, &'static str> {
+    use fstp_backup::snapshot::{SnapshotKey, SnapshotOwner, Snapshots};
+    let rt = TokioRuntime::new_multi_thread(2).map_err(|_| "no runtime")?;
+    let rt2 = rt.clone();
+    let fake = fake_s3::FakeS3::start(&rt, "TESTACCESSKEYC17", "cell/l17", "gra", "fstp-test-app");
+    let state = Arc::clone(&fake.state);
+    let port = fake.port();
+    let out = rt.block_on(async move {
+        let (mem, stepup) = store_with_admin_stepup()?;
+        let store = Unanchored::open(mem, CELL)
+            .await
+            .map_err(|_| "the store did not open")?;
+        let shutdown = Shutdown::new();
+        let (engine, task) = CellEngine::start(&rt2, store, GenesisVault, &shutdown, 8)
+            .await
+            .map_err(|_| "the engine did not start")?;
+        as_admin(
+            &engine,
+            CellCommand::Tenant(TenantCommand::GrantTenantAdmin { account: ADMIN }),
+            GRANT_ADMIN,
+            Some(stepup),
+        )
+        .await?;
+        for (n, t) in [T1, T2].into_iter().enumerate() {
+            let id = 0xA1 + u8::try_from(n).unwrap();
+            as_admin(
+                &engine,
+                CellCommand::Text(TextCommand::PutText { id: t }),
+                id,
+                None,
+            )
+            .await?;
+        }
+        let sim = Custodian::default();
+        let client = fstp_backup::s3::S3Client::with_tls(
+            rt2.clone(),
+            fstp_backup::s3::Endpoint {
+                host: "localhost".to_owned(),
+                port,
+                region: "gra".to_owned(),
+                bucket: "fstp-test-app".to_owned(),
+            },
+            fstp_backup::sigv4::Credentials::new("TESTACCESSKEYC17", "cell/l17").unwrap(),
+            fstp_tls::ClientConfig::new(fake_s3::CA_PEM).unwrap(),
+        );
+        let key = SnapshotKey::create(&sim, CELL, SnapshotOwner::App)
+            .await
+            .map_err(|_| "no snapshot key")?;
+        let key = SnapshotKey::decode(&key, CELL, SnapshotOwner::App).map_err(|_| "key")?;
+        let snaps = Snapshots::new(Arc::new(client), key);
+        let mut runner = ErasureRunner::genesis(sim.clone(), engine.clone(), CELL)
+            .await
+            .map_err(|_| "the key chain did not start")?
+            .with_snapshots(snaps.clone());
+        runner.add_group(G1).map_err(|_| "no group 1")?;
+        runner
+            .put_text(G1, T1, b"synthetic text one")
+            .map_err(|_| "no T1")?;
+        runner
+            .put_text(G1, T2, b"synthetic text two")
+            .map_err(|_| "no T2")?;
+        as_admin(
+            &engine,
+            CellCommand::Text(TextCommand::EraseTexts {
+                ids: vec![T1],
+                cause: 2,
+            }),
+            0xB0,
+            None,
+        )
+        .await?;
+        let gets = |s: &fake_s3::State| {
+            s.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, p)| m == "GET" && p.contains("/keystore/") && !p.contains("latest"))
+                .count()
+        };
+        let roots_before = lock(&sim.0.roots).len();
+        let mut run = SnapRun {
+            ops: Vec::new(),
+            gets_before_destroy: 0,
+            failures: 0,
+            roots_at_failure: Vec::new(),
+            roots_before,
+            roots_after: 0,
+            objects: 0,
+            pointer_ok: false,
+            opens_live_not_erased: false,
+        };
+        let mut tampered = !tamper;
+        loop {
+            match runner.step().await {
+                Ok(Some(e)) => {
+                    let op = op_of(e);
+                    if matches!(op, Op::RootDestroyed { .. }) {
+                        run.gets_before_destroy = gets(&state);
+                    }
+                    run.ops.push(op);
+                    if matches!(op, Op::SnapshotTaken { .. }) && !tampered {
+                        tampered = true;
+                        let mut objects = state.objects.lock().unwrap();
+                        let o = objects
+                            .iter_mut()
+                            .find(|(k, _)| k.contains("/keystore/"))
+                            .map(|(_, v)| v)
+                            .ok_or("no snapshot object")?;
+                        let at = o.len() - 5;
+                        o[at] ^= 0x40;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    run.failures += 1;
+                    run.roots_at_failure.push(lock(&sim.0.roots).len());
+                    if run.failures > 4 {
+                        return Err("the runner did not recover");
+                    }
+                }
+            }
+        }
+        run.roots_after = lock(&sim.0.roots).len();
+        let objects: Vec<(String, Vec<u8>)> = state
+            .objects
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        run.objects = objects
+            .iter()
+            .filter(|(k, _)| !k.contains("latest"))
+            .count();
+        let latest = snaps.latest().await.map_err(|_| "no pointer")?;
+        if let Some(id) = latest {
+            run.pointer_ok = objects
+                .iter()
+                .any(|(k, _)| k.ends_with(&fstp_backup::sigv4::hex(&id)));
+            // The newest snapshot opens T2 under the live root and never T1.
+            let image = snaps.fetch(&sim, id).await.map_err(|_| "fetch")?;
+            let image = erasure::snapshot::decode_image(&image).map_err(|_| "image")?;
+            let mut seals = Vec::new();
+            for r in &image.roots {
+                if let Ok(s) = sim
+                    .unwrap(
+                        &erasure::snapshot::root_ref(CELL, r),
+                        &erasure::snapshot::wrapped_of(r),
+                        &erasure::snapshot::seal_key_aad(CELL, r.epoch),
+                    )
+                    .await
+                {
+                    seals.push(s);
+                }
+            }
+            let text = |id: [u8; 16]| image.texts.iter().find(|t| t.id == id).cloned();
+            let t2 = text(T2).ok_or("no T2 in the image")?;
+            let live = erasure::snapshot::open_text(CELL, &[&image], &seals, &t2);
+            let gone =
+                text(T1).and_then(|t| erasure::snapshot::open_text(CELL, &[&image], &seals, &t));
+            run.opens_live_not_erased =
+                live.as_deref() == Some(&b"synthetic text two"[..]) && gone.is_none();
+        }
+        drop(runner);
+        drop(engine);
+        task.await.map_err(|_| "the engine task failed")?;
+        Ok(run)
+    });
+    fake.stop(&rt);
+    out
+}
+
+/// I-81, R-KY-02, ADR-004 step 5, ADR-012 record of lane L17: with an
+/// object store, step 5 of an App chain batch uploads a snapshot sealed to
+/// the cell's snapshot key and fetches it back before step 6 destroys the
+/// old root. The pointer names it. The snapshot opens the live text under
+/// the new root and never the erased one.
+#[test]
+fn i81_app_old_epoch_dies_only_after_a_fetched_snapshot_opens() {
+    let r = run_snapshots(false).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(first_of_each(&r.ops), design_order(0));
+    assert_eq!(r.failures, 0);
+    assert_eq!(r.objects, 1, "one snapshot per batch");
+    assert!(
+        r.gets_before_destroy >= 1,
+        "step 6 ran before step 5 fetched the snapshot"
+    );
+    assert!(r.pointer_ok, "the pointer does not name the snapshot");
+    assert_eq!(r.roots_after, r.roots_before, "R(0) outlived step 6");
+    assert!(
+        r.opens_live_not_erased,
+        "I-81: the snapshot opens the wrong texts"
+    );
+}
+
+/// I-81, ADR-012 record of lane L17 "Failure": a snapshot changed in the
+/// object store fails step 5 and the old root lives. The next attempt
+/// uploads a fresh snapshot, and only then is the old root destroyed.
+#[test]
+fn i81_app_tampered_snapshot_blocks_destroy() {
+    let r = run_snapshots(true).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(first_of_each(&r.ops), design_order(0));
+    assert_eq!(r.failures, 1, "a changed snapshot verified");
+    // Before the batch: R(0) and the snapshot root. During the failure,
+    // R(1) too. After it, R(0) is gone.
+    assert_eq!(
+        r.roots_at_failure,
+        vec![r.roots_before + 1],
+        "I-81: R(0) died after a failed check"
+    );
+    assert_eq!(r.roots_after, r.roots_before);
+    assert_eq!(r.objects, 2, "no fresh snapshot after the failure");
+    assert!(r.pointer_ok);
+    assert!(r.opens_live_not_erased);
 }

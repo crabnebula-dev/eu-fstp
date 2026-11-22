@@ -58,6 +58,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::Arc;
 
+use fstp_backup::Snapshots;
 use fstp_crypto::aead;
 use fstp_crypto::composite::CompositeSigningKey;
 use fstp_crypto::hybrid_kem::{self, HybridSecretKey};
@@ -299,6 +300,8 @@ struct Work {
     rekeyed: bool,
     /// The committed rows read back in step 5.
     snapshot: Option<KeystoreRows>,
+    /// The snapshot uploaded in step 5, not yet verified.
+    snapshot_id: Option<[u8; 16]>,
 }
 
 /// The erasure runner of one vault (module documentation).
@@ -315,6 +318,10 @@ pub struct Runner<'c, R: Runtime, C: Custody> {
     /// The fact keys `F(X)` of the live identities (ADR-004 record of lane
     /// L13), shared with the sealer of the vault's rows.
     identities: Arc<IdentityKeys>,
+    /// The keystore snapshot writer of step 5, when an object store is
+    /// configured (ADR-012 record of lane L17). Without one, step 5 reads
+    /// the committed rows back from the database (record of lane L11).
+    snapshots: Option<Snapshots>,
 }
 
 impl<R: Runtime, C: Custody> std::fmt::Debug for Runner<'_, R, C> {
@@ -419,6 +426,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             open,
             work: Work::default(),
             identities: Arc::default(),
+            snapshots: None,
         };
         // Every group of the chain state has its row.
         for g in runner.chain_groups() {
@@ -437,6 +445,14 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             .map(|g| GroupId(g.group))
             .filter(|g| self.chain.group(*g).is_some())
             .collect()
+    }
+
+    /// Takes step 5's snapshots through `snapshots` from now on (ADR-012
+    /// record of lane L17).
+    #[must_use]
+    pub fn with_snapshots(mut self, snapshots: Snapshots) -> Self {
+        self.snapshots = Some(snapshots);
+        self
     }
 
     /// The current root epoch.
@@ -533,6 +549,40 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             .ok_or(VaultError::Conflict("an erased or unknown identity tuple"))?;
         let dk = self.open_tuple_key(d)?;
         open_tuple(&self.cell, &dk, t)
+    }
+
+    /// The start check of ADR-004 row "Normalisation": refuses a keystore
+    /// that stores a live identity tuple under an earlier label
+    /// ([`crate::codec::OLD_TUPLE_LABELS`]). Its match key was computed
+    /// from names normalised another way, so the same person would get a
+    /// second identity. Such a pilot vault is recreated.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Malformed`] for such a tuple, or for rows that do not
+    /// open.
+    pub fn check_tuple_labels(&self) -> Result<(), VaultError> {
+        let refused = VaultError::Malformed(
+            "an identity tuple of an earlier label: recreate this pilot vault",
+        );
+        for t in &self.rows.tuples {
+            if self.chain.refused_for_open(DekId(t.identity)) {
+                continue;
+            }
+            let Some(d) = self.rows.data_keys.iter().find(|d| d.id == t.identity) else {
+                continue;
+            };
+            let dk = self.open_tuple_key(d)?;
+            let tuple = open_tuple(&self.cell, &dk, t)?;
+            let old = crate::codec::OLD_TUPLE_LABELS
+                .iter()
+                .any(|l| tuple.starts_with(l));
+            zero(tuple);
+            if old {
+                return Err(refused);
+            }
+        }
+        Ok(())
     }
 
     fn open_tuple_key(&self, d: &DataKeyRow) -> Result<DataKey, VaultError> {
@@ -788,7 +838,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
                 let mut c = self.chain.clone();
                 plan::apply(&mut c, &step).map_err(planner)?;
                 self.persist(&c, now).await?;
-                self.work.snapshot = keystore::read_rows(&mut self.client).await?;
+                self.take_snapshot().await?;
                 ErasureEvent::SnapshotTaken { epoch: e.0 }
             }
             Step::VerifySnapshot(e) => self.verify_snapshot(*e, &step, now).await?,
@@ -1093,50 +1143,77 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         Ok(())
     }
 
-    /// Step 5: the copy read back opens under `R(e+1)` through custody:
-    /// every group secret, every data key and every tuple.
+    /// Step 5 "take": with an object store, the committed rows read back
+    /// are sealed into a snapshot container and uploaded (ADR-012 record
+    /// of lane L17). Without one, the rows read back are the snapshot
+    /// (record of lane L11).
+    async fn take_snapshot(&mut self) -> Result<(), VaultError> {
+        let rows = keystore::read_rows(&mut self.client)
+            .await?
+            .ok_or(bad("the snapshot"))?;
+        if let Some(s) = &self.snapshots {
+            let image = crate::snapshot::encode_image(&self.cell, &rows)?;
+            let id = s
+                .upload(&image)
+                .await
+                .map_err(|_| VaultError::Unavailable("the keystore snapshot upload"))?;
+            self.work.snapshot_id = Some(id);
+        }
+        self.work.snapshot = Some(rows);
+        Ok(())
+    }
+
+    /// Step 5 "verify": the snapshot opens under `R(e+1)` through custody,
+    /// every group secret, data key and tuple ([`check_rows`]). With an
+    /// object store the snapshot is fetched back from it and opened with
+    /// the vault's snapshot key first, and the pointer to it is written
+    /// once it opens (ADR-012 record of lane L17). A snapshot that is
+    /// missing or does not open fails the step, so `R(e)` lives, and the
+    /// next attempt uploads a fresh one.
     async fn verify_snapshot(
         &mut self,
         e: Epoch,
         step: &Step,
         now: i64,
     ) -> Result<ErasureEvent, VaultError> {
-        let snap = match self.work.snapshot.take() {
-            Some(s) => s,
-            None => keystore::read_rows(&mut self.client)
-                .await?
-                .ok_or(bad("the snapshot"))?,
+        let snap = if let Some(s) = self.snapshots.clone() {
+            self.work.snapshot = None;
+            let id = match self.work.snapshot_id.take() {
+                Some(id) => id,
+                None => {
+                    // A restart lost the id: a fresh snapshot of the
+                    // committed rows.
+                    self.take_snapshot().await?;
+                    self.work.snapshot = None;
+                    self.work.snapshot_id.take().ok_or(bad("the snapshot"))?
+                }
+            };
+            let image = s
+                .fetch(self.custody, id)
+                .await
+                .map_err(|_| VaultError::Unavailable("the keystore snapshot fetch"))?;
+            let (cell, rows) = crate::snapshot::decode_image(&image)?;
+            if cell != self.cell {
+                return Err(bad("the snapshot cell"));
+            }
+            check_epoch(&rows, e)?;
+            check_rows(self.custody, &self.cell, &rows).await?;
+            s.publish(id)
+                .await
+                .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))?;
+            rows
+        } else {
+            let snap = match self.work.snapshot.take() {
+                Some(s) => s,
+                None => keystore::read_rows(&mut self.client)
+                    .await?
+                    .ok_or(bad("the snapshot"))?,
+            };
+            check_epoch(&snap, e)?;
+            check_rows(self.custody, &self.cell, &snap).await?;
+            snap
         };
-        if snap.root.epoch != e.0 {
-            return Err(bad("the snapshot root"));
-        }
-        let seal = unwrap_root(self.custody, &self.cell, &snap.root).await?;
-        let s = aead_key(&seal)?;
-        let mut open = BTreeMap::new();
-        for g in &snap.groups {
-            if g.epoch != e.0 {
-                return Err(bad("the snapshot groups"));
-            }
-            open.insert(g.group, open_row(&s, &self.cell, g)?);
-        }
-        for d in &snap.data_keys {
-            let g = open.get(&d.group).ok_or(bad("the snapshot data keys"))?;
-            match g.purpose {
-                Purpose::Fact => {
-                    keystore::open_fact_key(&self.cell, g.secret.kem()?, d)?;
-                }
-                Purpose::Attribute => {
-                    let dk = open_attribute_key(&self.cell, g.secret.kem()?, d)?;
-                    let t = snap
-                        .tuples
-                        .iter()
-                        .find(|t| t.identity == d.id)
-                        .ok_or(bad("the snapshot tuples"))?;
-                    zero(open_tuple(&self.cell, &dk, t)?);
-                }
-                _ => return Err(bad("the snapshot data keys")),
-            }
-        }
+        drop(snap);
         let mut c = self.chain.clone();
         plan::apply(&mut c, step).map_err(planner)?;
         self.persist(&c, now).await?;
@@ -1229,6 +1306,66 @@ fn open_tuple(cell: &[u8; 16], dk: &DataKey, t: &TupleRow) -> Result<Vec<u8>, Va
     envelope::open_blob(dk, &ctx, &blob)
         .map(|p| p.to_vec())
         .map_err(|_| bad("a sealed tuple"))
+}
+
+/// The snapshot of step 5 of the batch to epoch `e` is at epoch `e`.
+fn check_epoch(rows: &KeystoreRows, e: Epoch) -> Result<(), VaultError> {
+    if rows.root.epoch != e.0 {
+        return Err(bad("the snapshot root"));
+    }
+    Ok(())
+}
+
+/// Checks that `rows` of `cell` open whole through `custody` (ADR-004 step
+/// 5, ADR-012 record of lane L17): custody unwraps the seal key of the
+/// current root, the sealed chain state opens under it, and so does every
+/// live group secret, sealed under that epoch. Every data key opens under
+/// its group secret, and every identity tuple under its data key. Step 5
+/// runs it on each snapshot, and a restore on each copy it may take.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] for a refused unwrap, and
+/// [`VaultError::Malformed`] for a row that does not open.
+pub async fn check_rows<C: Custody>(
+    custody: &C,
+    cell: &[u8; 16],
+    rows: &KeystoreRows,
+) -> Result<(), VaultError> {
+    let e = rows.root.epoch;
+    let seal = unwrap_root(custody, cell, &rows.root).await?;
+    if let Some(i) = &rows.intent {
+        open_state(&seal, cell, e, &i.plan)?;
+    }
+    let s = aead_key(&seal)?;
+    let mut open = BTreeMap::new();
+    for g in &rows.groups {
+        if g.epoch != e {
+            return Err(bad("the snapshot groups"));
+        }
+        if open.insert(g.group, open_row(&s, cell, g)?).is_some() {
+            return Err(bad("the snapshot groups"));
+        }
+    }
+    for d in &rows.data_keys {
+        let g = open.get(&d.group).ok_or(bad("the snapshot data keys"))?;
+        match g.purpose {
+            Purpose::Fact => {
+                keystore::open_fact_key(cell, g.secret.kem()?, d)?;
+            }
+            Purpose::Attribute => {
+                let dk = open_attribute_key(cell, g.secret.kem()?, d)?;
+                let t = rows
+                    .tuples
+                    .iter()
+                    .find(|t| t.identity == d.id)
+                    .ok_or(bad("the snapshot tuples"))?;
+                zero(open_tuple(cell, &dk, t)?);
+            }
+            _ => return Err(bad("the snapshot data keys")),
+        }
+    }
+    Ok(())
 }
 
 /// Overwrites a buffer of key or tuple bytes before it is dropped. The
@@ -1624,6 +1761,7 @@ impl<R: Runtime, C: Custody> Runner<'_, R, C> {
             open: self.open,
             work: Work::default(),
             identities: self.identities,
+            snapshots: None,
         })
     }
 }
