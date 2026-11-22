@@ -141,6 +141,20 @@ Points of lane L18, decided as lead reading, 2026-11-22 (under Daniel's usabilit
 2. **Loopback resolver.** A resolver on a loopback address may use any port, beside port 53 everywhere else. This amends the accepted ADR-027 row "DNS" for tests and the devstack. Lead reading, 2026-11-22: yes, for tests and the devstack only.
 3. **Devstack.** The external devstack runs no relay and no resolver (rule A9), so its onboarding stops at the second admin's invitation. A devstack that should onboard needs a relay of its own. Lead reading, 2026-11-22: yes, a later lane gives the devstack a relay. Not now.
 
+## Record of lane L20 `prod/operator-web`: a relay for the devstack
+
+Written by lane L20 before its code. It closes point 3 of the record of lane L18: "a later lane gives the devstack a relay".
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Relay process | `fstp-devstack external-cell` starts `fstp-devstack-relay`, a binary of the test-only crate `fstp-api-testkit`, as a child process. It runs the test SMTP sink of that crate on loopback with implicit TLS from the `fstp-tls` test CA and its synthetic credential. The cell's `mail` member names it, pinned by address, as for the binary test of lane L18 | ADR-026 "Relay address"; rule A9 |
+| Rule A9 | The sink stays in `fstp-api-testkit`. No production crate and no library takes that crate as a normal dependency. The devstack reaches the sink only as a separate process, by its printed address | M4 design section 1.3, rule A9 |
+| Fake resolver | The same process runs a fake DNS resolver on loopback, which the cell's `shell.resolver` names under the loopback reading of lane L18. It answers every TXT question with a record of the asked kind: DMARC under `_dmarc.`, DKIM under `._domainkey.`, SPF otherwise. So any sending domain a developer types passes the Domains and email step | ADR-026 record of lane L18 "Loopback resolver" |
+| Reading the mail | The relay writes each accepted message, byte for byte, to `<run dir>/mail/<n>.eml` and prints the directory as `mail-dir <path>`. A developer opens the second admin's invitation link from there | Usability rule of 2026-11-21 |
+| Scope | Development only. Every value is synthetic. The default devstack mode, the e2e mode and the production binaries are unchanged | Rule A9 |
+
+Test: `l20_devstack_relay_accepts_mail_and_answers_txt` in `fstp-api-testkit`, over the built relay binary.
+
 ## Record of lane L8 `prod/vault-run`: the vault process
 
 Written by lane L8 before its code (gap G12, Wave 3 of `docs/handoff/production-mcp-design.md`). Every row is interim, pending Daniel, unless it says otherwise. The vault keystore is ADR-004, record of lane L8.
