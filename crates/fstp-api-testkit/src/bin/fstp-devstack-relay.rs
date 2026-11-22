@@ -1,4 +1,4 @@
-//! `fstp-devstack-relay <mail dir>`: the mail relay and the fake resolver
+//! `fstp-devstack-relay <mail dir> <ready file>`: the mail relay and the fake resolver
 //! of the devstack (ADR-026 record of lane L20). Development only: it
 //! never ships, and every value is synthetic.
 //!
@@ -14,16 +14,12 @@
 //! - Each accepted message is written byte for byte to
 //!   `<mail dir>/<n>.eml`, so a developer can open the links it carries.
 //!
-//! It prints `relay <address>`, `resolver <address>`, `mail-dir <path>`,
-//! `user <name>`, `password <secret>` and then `ready`, one per line. It
+//! Once it serves, it writes `<ready file>` at once, with the lines
+//! `relay <address>`, `resolver <address>`, `mail-dir <path>`, `user
+//! <name>`, `password <secret>` and `ready`. It prints nothing (R-NF-02):
+//! a wrong argument exits with status 2 and any failure with status 1. It
 //! serves until its standard input closes, so it ends with the process
 //! that started it.
-
-#![allow(
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
-    reason = "R-NF-02 print ban: test-only code that never ships, so it may print"
-)]
 
 use std::io::{Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -122,41 +118,39 @@ fn keep_mail(sink: fstp_api_testkit::smtp_sink::SinkHandle, dir: PathBuf) {
     });
 }
 
-fn run(dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("the mail directory: {e}"))?;
-    let rt = TokioRuntime::new_multi_thread(1).map_err(|e| format!("no runtime: {e}"))?;
+fn run(dir: &Path, ready: &Path) -> Option<()> {
+    std::fs::create_dir_all(dir).ok()?;
+    let rt = TokioRuntime::new_multi_thread(1).ok()?;
     let cfg = SinkConfig::default();
-    let sink = rt
-        .block_on(SmtpSink::start(&rt, cfg.clone()))
-        .map_err(|e| format!("the sink: {e}"))?;
-    let dns = resolver().map_err(|e| format!("the resolver: {e}"))?;
+    let sink = rt.block_on(SmtpSink::start(&rt, cfg.clone())).ok()?;
+    let dns = resolver().ok()?;
     keep_mail(sink.handle().clone(), dir.to_owned());
-    // Standard output is line buffered, so each line leaves at once.
-    print!(
+    let lines = format!(
         "relay {}\nresolver {dns}\nmail-dir {}\nuser {}\npassword {}\nready\n",
         sink.addr(),
         dir.display(),
         cfg.username,
         cfg.password,
     );
+    // Written beside, then renamed, so the reader sees every line or none.
+    let mut tmp = ready.as_os_str().to_owned();
+    tmp.push(".tmp");
+    std::fs::write(&tmp, lines).ok()?;
+    std::fs::rename(&tmp, ready).ok()?;
     // Serve until standard input closes.
-    let mut sink_stdin = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut sink_stdin);
+    let mut held = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut held);
     drop(sink);
-    Ok(())
+    Some(())
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [dir] = args.as_slice() else {
-        eprintln!("usage: fstp-devstack-relay <mail dir>");
+    let [dir, ready] = args.as_slice() else {
         return ExitCode::from(2);
     };
-    match run(Path::new(dir)) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("fstp-devstack-relay: {e}");
-            ExitCode::FAILURE
-        }
+    match run(Path::new(dir), Path::new(ready)) {
+        Some(()) => ExitCode::SUCCESS,
+        None => ExitCode::FAILURE,
     }
 }

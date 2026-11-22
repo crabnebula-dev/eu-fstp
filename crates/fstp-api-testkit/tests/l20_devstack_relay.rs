@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{Read as _, Write as _};
 use std::net::{SocketAddr, TcpStream};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -53,16 +53,20 @@ fn l20_devstack_relay_accepts_mail_and_answers_txt() {
         "fstp-l20-relay-{}",
         tag.iter().map(|b| format!("{b:02x}")).collect::<String>()
     ));
+    let ready = dir.join("relay.ready");
     let mut child = Command::new(env!("CARGO_BIN_EXE_fstp-devstack-relay"))
         .arg(dir.join("mail"))
+        .arg(&ready)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let start = Instant::now();
+    while !ready.exists() && start.elapsed() < Duration::from_secs(30) {
+        assert!(child.try_wait().unwrap().is_none(), "the relay ended early");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let mut got = std::collections::BTreeMap::new();
-    for line in lines.by_ref() {
-        let line = line.unwrap();
+    for line in std::fs::read_to_string(&ready).unwrap().lines() {
         if line == "ready" {
             break;
         }

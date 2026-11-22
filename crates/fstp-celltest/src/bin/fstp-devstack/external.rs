@@ -300,23 +300,32 @@ impl Drop for DevRelay {
 }
 
 /// Starts `fstp-devstack-relay` with its mail directory in `dir` and
-/// reads its lines up to `ready`.
+/// reads the lines of its ready file.
 fn start_relay(dir: &Path) -> Result<DevRelay, WorldError> {
-    use std::io::BufRead as _;
     let mail_dir = dir.join("mail");
+    let ready = dir.join("relay.ready");
     let mut child = std::process::Command::new(bin_path("fstp-devstack-relay")?)
         .arg(&mail_dir)
+        .arg(&ready)
         .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| fail("fstp-devstack-relay", &e))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| fail("fstp-devstack-relay", &"no output"))?;
+    let start = std::time::Instant::now();
+    while !ready.exists() {
+        let ended = child
+            .try_wait()
+            .map_err(|e| fail("fstp-devstack-relay", &e))?;
+        if let Some(status) = ended {
+            return Err(fail("fstp-devstack-relay", &status));
+        }
+        if start.elapsed() > std::time::Duration::from_secs(30) {
+            return Err(fail("fstp-devstack-relay", &"not ready within 30 seconds"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let text = std::fs::read_to_string(&ready).map_err(|e| fail("fstp-devstack-relay", &e))?;
     let mut got = std::collections::BTreeMap::new();
-    for line in std::io::BufReader::new(stdout).lines() {
-        let line = line.map_err(|e| fail("fstp-devstack-relay", &e))?;
+    for line in text.lines() {
         if line == "ready" {
             break;
         }
