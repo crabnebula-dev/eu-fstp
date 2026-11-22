@@ -1,0 +1,11 @@
+[package]
+name = "unorm-gen"
+description = "Build tool: writes crates/fstp-unorm/src/tables.rs from the vendored Unicode Character Database, and checks it with --check (ADR-029). Never ships."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

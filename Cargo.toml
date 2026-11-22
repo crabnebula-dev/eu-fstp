@@ -88,6 +88,8 @@ members = [
     "crates/fstp-assess",
     # M7, docs/handoff/m7-design.md section 10, lane L-PROC.
     "crates/fstp-assessor",
+    # ADR-029, lane L21: in-house Unicode normalisation.
+    "crates/fstp-unorm",
     # ADR-028, lane L19: the operator tool.
     "crates/fstp-admin",
     "tools/deps-check",
@@ -95,6 +97,8 @@ members = [
     "tools/test-gate",
     # M7, docs/handoff/m7-design.md section 5, lane L-CORPUS.
     "tools/corpus",
+    # ADR-029, lane L21: the table generator of fstp-unorm.
+    "tools/unorm-gen",
 ]
 # Each cargo-fuzz project is its own workspace with its own lockfile.
 exclude = ["crates/*/fuzz", "tools/*/fuzz"]
@@ -214,6 +218,9 @@ fstp-mcp = { path = "crates/fstp-mcp" }
 fstp-signup = { path = "crates/fstp-signup" }
 fstp-web = { path = "crates/fstp-web" }
 fstp-web-assets = { path = "crates/fstp-web-assets" }
+# ADR-029, lane L21. unorm-gen is a build tool and only a dev-dependency.
+fstp-unorm = { path = "crates/fstp-unorm" }
+unorm-gen = { path = "tools/unorm-gen" }
 # fstp-api-testkit is test only and never a normal dependency (M4 layering rule A9).
 
 [workspace.lints.rust]
