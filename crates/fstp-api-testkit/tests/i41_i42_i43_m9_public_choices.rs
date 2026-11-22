@@ -290,6 +290,7 @@ fn outputs(view: &PublicView) -> Result<Vec<String>, String> {
     let chrome = Chrome {
         stylesheet: None,
         funder: None,
+        logos: Default::default(),
     };
     let mut out = Vec::new();
     for page in [

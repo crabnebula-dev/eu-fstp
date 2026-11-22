@@ -41,4 +41,7 @@ pub use increment::{
     IncrementError, VerifiedIncrement, embed_signature, prepare_increment, verify_increment,
 };
 pub use object::{Object, ParseError, ParseErrorKind};
-pub use writer::{Block, BlockKind, Document, SignatureField, WriteError, write};
+pub use writer::{
+    Block, BlockKind, Document, Image, ImageColours, Letterhead, SignatureField, WriteError, write,
+    write_with_letterhead,
+};

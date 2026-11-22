@@ -32,10 +32,10 @@ use crate::command::{TenantCommand, TenantRecord};
 use crate::refusal::{DecodeError, TenantError};
 use crate::types::{
     ActivationRequestId, ApprovalId, BankInterface, BrandingPackage, DomainName, GrantRef,
-    GuideNoticeOverride, InferenceDefault, InvitationId, LoginMethod, MailRelay, McpSettings,
-    Milestone, ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue, SignatoryRole,
-    StepFailure, StepOutcome, StepValues, TenantParam, TenantProfile, TenantRevision, Terminology,
-    Token, TokenDigest, VerifyMethod,
+    GuideNoticeOverride, InferenceDefault, InvitationId, LoginMethod, LogoOwner, LogoRef, LogoSlot,
+    MailRelay, McpSettings, Milestone, ModelRef, OnboardingStep, PaymentMode, RpMode, SettingValue,
+    SignatoryRole, StepFailure, StepOutcome, StepValues, TenantParam, TenantProfile,
+    TenantRevision, Terminology, Theme, Token, TokenDigest, VerifyMethod,
 };
 
 /// The record schema versions this build decodes. Version 1 is the only
@@ -435,6 +435,8 @@ fn command_value(cmd: &TenantCommand) -> Value {
         TenantCommand::SaveFunderProfile { profile } => {
             tagged("SaveFunderProfile", profile_members(profile))
         }
+        TenantCommand::SetLogo { slot, logo } => tagged("SetLogo", slot_members(slot, logo)),
+        TenantCommand::SetTheme { theme } => tagged("SetTheme", vec![("theme", s(theme.name()))]),
     }
 }
 
@@ -614,7 +616,80 @@ fn record_value(rec: &TenantRecord) -> Value {
             members.insert(0, ("by", dec(by.raw())));
             tagged("FunderProfileSaved", members)
         }
+        TenantRecord::LogoSet { slot, logo, by } => {
+            let mut members = slot_members(slot, logo);
+            members.insert(0, ("by", dec(by.raw())));
+            tagged("LogoSet", members)
+        }
+        TenantRecord::ThemeSet { theme, by } => tagged(
+            "ThemeSet",
+            vec![("by", dec(by.raw())), ("theme", s(theme.name()))],
+        ),
     }
+}
+
+/// The members of a logo slot and its logo (ADR-030), in name order:
+/// `logo` (`null` or the digest, format, size and PDF flag), `mode`, `programme`
+/// (`null` for the tenant).
+fn slot_members(slot: &LogoSlot, logo: &Option<LogoRef>) -> Vec<(&'static str, Value)> {
+    let logo = logo.map_or(Value::Null, |l| {
+        object(vec![
+            ("contrast", l.contrast_x100.map_or(Value::Null, dec)),
+            ("digest", s(&hex(&l.digest.bytes()))),
+            ("format", s(l.format.name())),
+            ("height", dec(l.height)),
+            ("pdf", Value::Bool(l.pdf)),
+            ("width", dec(l.width)),
+        ])
+    });
+    let programme = match slot.owner {
+        LogoOwner::Tenant => Value::Null,
+        LogoOwner::Programme(p) => dec(p.raw()),
+    };
+    vec![
+        ("logo", logo),
+        ("mode", s(slot.mode_name())),
+        ("programme", programme),
+    ]
+}
+
+/// The slot and logo of [`slot_members`].
+fn take_slot(f: &Fields<'_>) -> R<(LogoSlot, Option<LogoRef>)> {
+    let mode = match str_of(f.get("mode")?)? {
+        "light" => fstp_brand::ThemeMode::Light,
+        "dark" => fstp_brand::ThemeMode::Dark,
+        _ => return Err(err("unknown mode")),
+    };
+    let p = f.get("programme")?;
+    let owner = if p.is_null() {
+        LogoOwner::Tenant
+    } else {
+        LogoOwner::Programme(ProgrammeId::from_raw(take_u128(p)?))
+    };
+    let l = f.get("logo")?;
+    let logo = if l.is_null() {
+        None
+    } else {
+        let g = Fields::of(
+            l,
+            &["contrast", "digest", "format", "height", "pdf", "width"],
+        )?;
+        let contrast = g.get("contrast")?;
+        Some(LogoRef {
+            digest: ContentDigest::from_bytes(take_digest(g.get("digest")?)?),
+            format: fstp_brand::image::LogoFormat::from_name(str_of(g.get("format")?)?)
+                .ok_or(err("unknown logo format"))?,
+            height: take_u32(g.get("height")?)?,
+            pdf: bool_of(g.get("pdf")?)?,
+            contrast_x100: if contrast.is_null() {
+                None
+            } else {
+                Some(take_u32(contrast)?)
+            },
+            width: take_u32(g.get("width")?)?,
+        })
+    };
+    Ok((LogoSlot { owner, mode }, logo))
 }
 
 /// The members of a tenant funder profile version, in name order after
@@ -1193,6 +1268,17 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 profile: take_profile(&f)?,
             }
         }
+        "SetLogo" => {
+            let f = Fields::of(v, &["kind", "logo", "mode", "programme"])?;
+            let (slot, logo) = take_slot(&f)?;
+            TenantCommand::SetLogo { slot, logo }
+        }
+        "SetTheme" => {
+            let f = Fields::of(v, &["kind", "theme"])?;
+            TenantCommand::SetTheme {
+                theme: take_named(f.get("theme")?, &Theme::ALL, Theme::name)?,
+            }
+        }
         _ => return Err(err("unknown command kind")),
     })
 }
@@ -1354,6 +1440,22 @@ fn take_record(v: &Value) -> R<TenantRecord> {
                 by: take_account(f.get("by")?)?,
             }
         }
+        "LogoSet" => {
+            let f = Fields::of(v, &["by", "kind", "logo", "mode", "programme"])?;
+            let (slot, logo) = take_slot(&f)?;
+            TenantRecord::LogoSet {
+                slot,
+                logo,
+                by: take_account(f.get("by")?)?,
+            }
+        }
+        "ThemeSet" => {
+            let f = Fields::of(v, &["by", "kind", "theme"])?;
+            TenantRecord::ThemeSet {
+                theme: take_named(f.get("theme")?, &Theme::ALL, Theme::name)?,
+                by: take_account(f.get("by")?)?,
+            }
+        }
         _ => return Err(err("unknown record kind")),
     })
 }
@@ -1385,7 +1487,7 @@ mod tests {
             "save_payments", "invite_admin", "accept_admin_invitation", "request_self_grant", "approve_self_grant",
             "use_self_grant_approval", "set_p74", "set_p72", "record_inference", "complete",
             "grant_signatory", "end_signatory", "request_activation", "approve_activation", "set_branding",
-            "set_terminology", "set_mail_relay", "save_funder_profile");
+            "set_terminology", "set_mail_relay", "save_funder_profile", "set_logo", "set_theme");
         for (name, bytes) in seeds {
             let c = decode_command(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_command(&c).as_deref(), Ok(bytes), "{name}");
@@ -1401,7 +1503,7 @@ mod tests {
             "admin_added", "self_grant_requested", "self_grant_approved", "self_grant_approval_used", "setting_p70",
             "inference_recorded", "completed", "signatory_granted", "signatory_ended",
             "activation_requested", "activation_approved", "branding_set",
-            "terminology_set", "mail_relay_set", "funder_profile_saved");
+            "terminology_set", "mail_relay_set", "funder_profile_saved", "logo_set", "theme_set");
         for (name, bytes) in seeds {
             let r = decode_record(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(encode_record(&r).as_deref(), Ok(bytes), "{name}");

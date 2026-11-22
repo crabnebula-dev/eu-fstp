@@ -86,11 +86,14 @@ const WEB: &str = "x-fstp-internal-web";
 
 /// Whether `path` belongs to a surface of the web adapter that the cell
 /// table does not serve (ADR-026 "Composition"): the journey UI under
-/// `/app`, the API core's `/api/` routes, `/mcp`, `/oauth` and the
-/// two OAuth metadata documents. `/p/` stays the cell's own.
+/// `/app`, the API core's `/api/` routes, `/mcp`, `/oauth`, the
+/// two OAuth metadata documents, and `/brand`: the brand stylesheet, the
+/// logos and the emblem slot (M9 lane B2, ADR-030). `/p/` stays the
+/// cell's own.
 fn web_path(path: &str) -> bool {
     path == "/app"
         || path.starts_with("/app/")
+        || path.starts_with("/brand/")
         || path.starts_with("/api/")
         || path == "/mcp"
         || path.starts_with("/mcp/")

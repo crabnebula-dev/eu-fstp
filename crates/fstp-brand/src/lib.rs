@@ -26,6 +26,8 @@
 use std::fmt;
 
 mod css;
+pub mod emblem;
+pub mod image;
 pub use css::css;
 
 use fstp_json::{Object, ParseLimits, Value, parse_with, to_canonical};

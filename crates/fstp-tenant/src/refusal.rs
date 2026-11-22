@@ -101,6 +101,8 @@ pub enum TenantRefusal {
     /// The brand tokens fail I-70: these pairs of the table miss WCAG 2.2
     /// AA contrast. The set names pairs only, never a colour.
     BrandingContrast(fstp_brand::PairSet),
+    /// A logo lies outside the bounds of the logo check (I-68, ADR-030).
+    LogoInvalid,
     /// The terminology breaks the shape bounds (I-68, I-72).
     TerminologyInvalid,
     /// A tenant funder profile version breaks the shape bounds, is not the
@@ -157,6 +159,7 @@ impl TenantRefusal {
             TenantRefusal::SelfActivationApproval => "self_activation_approval",
             TenantRefusal::InvalidAddress => "invalid_address",
             TenantRefusal::BrandingContrast(_) => "branding_contrast",
+            TenantRefusal::LogoInvalid => "logo_invalid",
             TenantRefusal::TerminologyInvalid => "terminology_invalid",
             TenantRefusal::FunderProfileInvalid => "funder_profile_invalid",
             TenantRefusal::InvalidMailRelay => "invalid_mail_relay",

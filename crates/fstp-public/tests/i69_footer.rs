@@ -39,14 +39,17 @@ fn i69_footer_survives_any_branding() {
         Chrome {
             stylesheet: None,
             funder: None,
+            logos: Default::default(),
         },
         Chrome {
             stylesheet: Some(brand.clone()),
             funder: None,
+            logos: Default::default(),
         },
         Chrome {
             stylesheet: Some(brand.clone()),
             funder: Some(he_v1()),
+            logos: Default::default(),
         },
     ];
     let mut failures = Vec::new();
@@ -120,6 +123,7 @@ fn i69_footer_carries_the_pinned_funder_profile_elements() {
         let chrome = Chrome {
             stylesheet: None,
             funder: funder.clone(),
+            logos: Default::default(),
         };
         for p in traced_pages(&view) {
             let html = match render_html(&view, &p, &chrome) {

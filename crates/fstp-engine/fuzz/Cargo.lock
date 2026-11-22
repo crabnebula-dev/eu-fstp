@@ -38,6 +38,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-creator",
  "fstp-json",
+ "fstp-png",
 ]
 
 [[package]]
@@ -153,6 +154,13 @@ name = "fstp-money"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+]
+
+[[package]]
+name = "fstp-png"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
 ]
 
 [[package]]

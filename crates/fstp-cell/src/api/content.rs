@@ -429,28 +429,48 @@ const MAX_BLOB: usize = 16 * 1024 * 1024;
 /// the contract documents of `fstp_contract::BlobKind`.
 const KIND_IMPORT_DOCUMENT: i16 = 5;
 
+/// The `doc.blob.kind` of a brand asset, a checked logo (ADR-030).
+const KIND_BRAND_ASSET: i16 = 6;
+
+/// The `doc.blob.kind` of a blob of `owner`.
+const fn kind_of(owner: BlobOwner) -> i16 {
+    match owner {
+        BlobOwner::Programme(_) => KIND_IMPORT_DOCUMENT,
+        BlobOwner::Brand => KIND_BRAND_ASSET,
+    }
+}
+
+/// The owner kind byte and id sealed in front of a blob of `owner`: 1
+/// and the programme id, or 2 and zero for the brand assets.
+fn owner_tag(owner: BlobOwner) -> (u8, u128) {
+    match owner {
+        BlobOwner::Programme(p) => (1, p.raw()),
+        BlobOwner::Brand => (2, 0),
+    }
+}
+
 /// The form label sealed in front of a blob's owner and bytes.
 const BLOB_FORM: &[u8; 8] = b"fstpblb1";
 
 /// The sealed plaintext of a blob of `owner`: the form label, the owner
 /// kind and id, then the bytes.
 fn blob_plain(owner: BlobOwner, bytes: &[u8]) -> Vec<u8> {
-    let BlobOwner::Programme(p) = owner;
+    let (kind, id) = owner_tag(owner);
     let mut out = Vec::with_capacity(bytes.len().saturating_add(25));
     out.extend_from_slice(BLOB_FORM);
-    out.push(1);
-    out.extend_from_slice(&p.raw().to_be_bytes());
+    out.push(kind);
+    out.extend_from_slice(&id.to_be_bytes());
     out.extend_from_slice(bytes);
     out
 }
 
 /// The bytes of `plain` when it is a blob of `owner`.
 fn blob_body(owner: BlobOwner, plain: &[u8]) -> Option<&[u8]> {
-    let BlobOwner::Programme(p) = owner;
+    let (kind, want) = owner_tag(owner);
     let rest = plain.strip_prefix(BLOB_FORM.as_slice())?;
-    let rest = rest.strip_prefix(&[1u8][..])?;
+    let rest = rest.strip_prefix(&[kind][..])?;
     let id: [u8; 16] = rest.get(..16)?.try_into().ok()?;
-    (u128::from_be_bytes(id) == p.raw()).then(|| rest.get(16..))?
+    (u128::from_be_bytes(id) == want).then(|| rest.get(16..))?
 }
 
 /// The blob store over `doc.blob` (module documentation).
@@ -516,13 +536,7 @@ impl<R: Runtime, V: Send + Sync> BlobStore for CellBlobs<R, V> {
         let inserted = self
             .0
             .store
-            .put_document(
-                digest,
-                KIND_IMPORT_DOCUMENT,
-                id,
-                &envelope,
-                self.0.now().micros(),
-            )
+            .put_document(digest, kind_of(owner), id, &envelope, self.0.now().micros())
             .await
             .map_err(|_| PortError::Unavailable)?;
         if !inserted {
@@ -542,6 +556,12 @@ impl<R: Runtime, V: Send + Sync> BlobStore for CellBlobs<R, V> {
     ) -> Result<Vec<u8>, PortError> {
         let _ = clearance;
         self.open(owner, r.0).await
+    }
+
+    /// The bytes of brand asset `r` (ADR-030). The owner sealed in front
+    /// of the bytes must be the brand, so no other blob is served.
+    async fn get_brand(&self, r: BlobRef) -> Result<Vec<u8>, PortError> {
+        self.open(BlobOwner::Brand, r.0).await
     }
 }
 

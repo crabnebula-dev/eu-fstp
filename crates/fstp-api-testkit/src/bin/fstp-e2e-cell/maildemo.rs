@@ -322,6 +322,7 @@ impl MailDemo {
             from: Mailbox::new(SENDER).map_err(|e| format!("{e:?}"))?,
             from_name: DisplayName::new("FSTP demo").ok(),
             dkim: Vec::new(),
+            brand: None,
         };
         for b in bodies {
             let spec = MessageSpec::decode(&b.body).map_err(|e| format!("{e:?}"))?;

@@ -233,6 +233,9 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/programmes/{programme}/people", DRAFT),
     // SA-11: the team page, for the manager and the tenant admins.
     PageRow::read("/app/programmes/{programme}/team", &["team.list"]),
+    // ADR-030 (lead reading of 2026-11-22): the programme's logo, for its
+    // programme managers.
+    PageRow::read("/app/programmes/{programme}/logo", &["programme.logos"]),
     PageRow::read(
         "/app/programmes/{programme}/audit",
         &["audit.entries", "audit.unmasks"],

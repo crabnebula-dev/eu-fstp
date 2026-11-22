@@ -181,6 +181,9 @@ pub enum ReadModel {
     /// `tenant.funder_profiles`: every shipped and tenant-owned funder
     /// profile version (Daniel, 2026-11-15 late).
     FunderProfiles(Vec<crate::views::ProfileRow>),
+    /// `tenant.branding.logos`: the logos of the tenant and of each
+    /// programme (ADR-030). Paths name digests only.
+    Logos(crate::brand::LogosView),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -340,6 +343,7 @@ impl ToJson for ReadModel {
             ReadModel::Audit(v) => v.to_json(),
             ReadModel::Erasures(v) => v.to_json(),
             ReadModel::FunderProfiles(rows) => crate::views::profiles_json(rows),
+            ReadModel::Logos(v) => v.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1795,6 +1799,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Deliveries(_) => &["tenant.deliveries"],
             ReadModel::Erasures(_) => &["admin.erasures"],
             ReadModel::FunderProfiles(_) => &["tenant.funder_profiles"],
+            ReadModel::Logos(_) => &["tenant.branding.logos", "programme.logos"],
             ReadModel::Timeline(_) => &["programme.timeline"],
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
             ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],
@@ -2194,10 +2199,32 @@ pub(crate) mod reply_shape_tests {
         }
     }
 
+    /// A stored logo of `format` for the samples (ADR-030).
+    fn sample_logo(format: fstp_brand::image::LogoFormat) -> fstp_tenant::LogoRef {
+        fstp_tenant::LogoRef {
+            digest: fstp_domain::id::ContentDigest::from_bytes([0xab; 32]),
+            format,
+            width: 320,
+            height: 80,
+            pdf: true,
+            contrast_x100: Some(250),
+        }
+    }
+
     /// One read model of each variant, with every optional member set.
     fn one_of_each() -> Vec<ReadModel> {
         vec![
             ReadModel::Accepted,
+            ReadModel::Logos(crate::brand::LogosView {
+                light: Some(sample_logo(fstp_brand::image::LogoFormat::Png)),
+                dark: None,
+                programmes: vec![crate::brand::ProgrammeLogos {
+                    programme: ProgrammeId::from_raw(7),
+                    name: "Programme 7".to_owned(),
+                    light: None,
+                    dark: Some(sample_logo(fstp_brand::image::LogoFormat::Webp)),
+                }],
+            }),
             ReadModel::FunderProfiles(vec![
                 crate::views::ProfileRow {
                     id: "horizon-europe".to_owned(),
@@ -2594,7 +2621,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 58;
+    const VARIANTS: usize = 59;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2659,6 +2686,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Plan(_) => 55,
             ReadModel::FindingsRefusals(_) => 56,
             ReadModel::ConsentRequest(_) => 57,
+            ReadModel::Logos(_) => 58,
         }
     }
 

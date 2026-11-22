@@ -5,6 +5,7 @@
 
 import { type Checker, type FuzzTarget, readExpectations, runTarget } from "../fuzz/harness.js";
 import * as applicantWire from "../fuzz/applicant_wire.fuzz.js";
+import * as brandingWire from "../fuzz/branding_wire.fuzz.js";
 import * as postgrantWire from "../fuzz/postgrant_wire.fuzz.js";
 import * as message from "../fuzz/message_format.fuzz.js";
 import * as money from "../fuzz/money_parse.fuzz.js";
@@ -62,6 +63,7 @@ test("th26_every_typescript_parser_has_a_fuzz_target", () => {
     TARGETS.map((t) => t.name).sort(),
     [
       "applicant_wire",
+      "branding_wire",
       "message_format",
       "money_parse",
       "pdf_document",
@@ -81,6 +83,21 @@ test("th26_every_typescript_parser_has_a_fuzz_target", () => {
   for (const t of TARGETS) {
     assert(t.seeds().length > 0, `${t.name} has seeds`);
     assert(readExpectations(t.name).length > 0, `${t.name} has an expect.tsv corpus`);
+  }
+});
+
+/** TH-26, I-68, ADR-030: `branding_wire` holds on a seeded run over web/src/admin/branding/logos.ts, and its corpus verdicts hold. */
+test("th26_branding_wire_target_holds", async () => {
+  await holds(brandingWire.target);
+  const logos = await import("../src/admin/branding/logos.js");
+  for (const e of readExpectations("branding_wire")) {
+    let v: unknown = e.input;
+    try {
+      v = JSON.parse(e.input);
+    } catch {
+      // Not JSON: the string itself is decoded.
+    }
+    eq(logos.decodeLogos(v) === null ? "refused" : "accepted", e.verdict, `branding_wire line ${e.line}`);
   }
 });
 

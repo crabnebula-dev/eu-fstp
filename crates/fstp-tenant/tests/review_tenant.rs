@@ -48,7 +48,8 @@ fn run(
         match q {
             TenantQuery::AdminVerified(a) => answers.verified(a, false),
             TenantQuery::HoldsReceiving(a) => answers.holds_receiving(a, false),
-            TenantQuery::Probe(_) | TenantQuery::Agreements => {}
+            TenantQuery::Probe(_) | TenantQuery::Agreements | TenantQuery::ProgrammeManagers(_) => {
+            }
         }
     }
     let recs = decide(s, &ctx, cmd, &answers)?;

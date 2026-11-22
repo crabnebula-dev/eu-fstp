@@ -34,10 +34,12 @@ export class DomRefusal extends Error {
  *
  * Interim, pending Daniel: ADR-014 names tag allowlists but not their
  * members. This list holds the text, table, form and landmark elements
- * that pages and the accessibility rules of R-NF-03 need.
+ * that pages and the accessibility rules of R-NF-03 need. ADR-030 adds
+ * `canvas` for the logo preview, drawn from an `ImageBitmap` the browser
+ * decoded, since the CSP admits no `blob:` image.
  */
 const TAGS: ReadonlySet<string> = new Set([
-  "a", "abbr", "article", "aside", "b", "blockquote", "br", "button", "caption", "code", "col",
+  "a", "abbr", "article", "aside", "b", "blockquote", "br", "button", "canvas", "caption", "code", "col",
   "colgroup", "dd", "del", "details", "dfn", "div", "dl", "dt", "em", "fieldset", "figcaption",
   "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "i", "img", "input",
   "ins", "kbd", "label", "legend", "li", "main", "mark", "meter", "nav", "ol", "optgroup", "option",

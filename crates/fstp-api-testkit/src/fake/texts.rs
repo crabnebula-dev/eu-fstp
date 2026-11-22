@@ -415,7 +415,12 @@ impl BlobStore for FakeBlobs {
         if bytes.len() > BLOB_LIMIT {
             return Err(PortError::Refused);
         }
-        let r = BlobRef(fake_digest(&bytes).bytes());
+        // A brand asset is served by the SHA-256 its record names (ADR-030),
+        // as the port documents every address.
+        let r = match owner {
+            BlobOwner::Brand => BlobRef(fstp_crypto::sha256(bytes)),
+            BlobOwner::Programme(_) => BlobRef(fake_digest(&bytes).bytes()),
+        };
         lock(&self.rows).insert((owner, r), bytes.to_vec());
         Ok(r)
     }
@@ -429,6 +434,13 @@ impl BlobStore for FakeBlobs {
         let _ = clearance;
         lock(&self.rows)
             .get(&(owner, r))
+            .cloned()
+            .ok_or(PortError::Refused)
+    }
+
+    async fn get_brand(&self, r: BlobRef) -> Result<Vec<u8>, PortError> {
+        lock(&self.rows)
+            .get(&(BlobOwner::Brand, r))
             .cloned()
             .ok_or(PortError::Refused)
     }

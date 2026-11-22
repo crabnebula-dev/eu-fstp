@@ -154,6 +154,7 @@ fn i70_served_public_route_paints_itself_in_the_text_colour() {
     let served = Chrome {
         stylesheet: None,
         funder: None,
+        logos: Default::default(),
     };
     let html = render_html(
         &sample_view(true),

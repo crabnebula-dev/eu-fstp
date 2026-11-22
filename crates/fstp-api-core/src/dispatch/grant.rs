@@ -679,6 +679,7 @@ fn base_terms(
             .iter()
             .map(|x| (x.field.clone(), party_label(x.role).to_owned()))
             .collect(),
+        letterhead: fstp_pdf::Letterhead::default(),
     }
 }
 
@@ -741,7 +742,10 @@ async fn draft<P: Seams>(
         }
         _ => (ContractId::from_raw(call.draw()?), 1),
     };
-    let terms = base_terms(state, p, version, &parties);
+    let mut terms = base_terms(state, p, version, &parties);
+    // ADR-030: the logos of the tenant and the programme, captured now,
+    // so revision 0 renders what the draft digest names.
+    terms.letterhead = super::brand::letterhead(call.ports, state, Some(programme)).await;
     let (_, base) = render_digest(&terms)?;
     let cmd = ContractCommand::Draft {
         contract,

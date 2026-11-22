@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 fstp-creator.workspace = true
 fstp-json.workspace = true
+fstp-png.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
