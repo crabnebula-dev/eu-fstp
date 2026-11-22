@@ -24,6 +24,8 @@ fstp-pgwire.workspace = true
 # The statement splitter, for the migration ledger rows (ADR-028
 # "Migrations").
 fstp-migrate.workspace = true
+# The host status file of the System page (ADR-028 record of lane L20).
+fstp-obs.workspace = true
 
 [lints]
 workspace = true

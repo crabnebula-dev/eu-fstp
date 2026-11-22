@@ -300,8 +300,11 @@ function applicantsSection(t: I18n, f: Frame, people: readonly PersonRow[]): Chi
       "ul",
       { id: "verify-applicant-list", class: "fstp-list" },
       people.map((p) =>
-        h("li", { "data-account": p.account, "data-proposal": p.proposal }, [
-          t.label("team.verify.person", { proposal: p.proposal, role: roleOf(p.role), account: p.account }),
+        h("li", { "data-account": p.account, "data-proposal": p.proposal ?? "", "data-requested": String(p.requested) }, [
+          p.proposal === null
+            ? t.label("team.verify.staff_person", { account: p.account })
+            : t.label("team.verify.person", { proposal: p.proposal, role: roleOf(p.role), account: p.account }),
+          ...(p.requested ? [" ", h("strong", { class: "fstp-badge" }, [t.label("team.verify.asked")])] : []),
           " ",
           verifyControl(t, f, p.account, p.proposal),
         ]),

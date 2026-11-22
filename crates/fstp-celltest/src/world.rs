@@ -4654,6 +4654,8 @@ fn start_cell(
         // ADR-026 record of lane L18: a world cell runs no probes, so every
         // onboarding probe fails, as before (Q5).
         tenant_prober: None,
+        // ADR-028 record of lane L20: a world cell has no host status file.
+        host_status: None,
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,

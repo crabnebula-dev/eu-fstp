@@ -572,6 +572,10 @@ pub struct StartOptions {
     /// record of lane L18): the relay's greeting and a saved sending
     /// domain. `None` fails every probe (Q5).
     pub tenant_prober: Option<Arc<dyn crate::shell::probe::TenantProbe>>,
+    /// The host status file of the tenant admins' System page (ADR-028
+    /// record of lane L20), which `fstp-admin` writes. `None` shows the
+    /// page's host rows as not configured.
+    pub host_status: Option<std::path::PathBuf>,
 }
 
 impl Default for StartOptions {
@@ -593,6 +597,7 @@ impl Default for StartOptions {
             api_relay: None,
             keystore_snapshots: None,
             tenant_prober: None,
+            host_status: None,
         }
     }
 }
@@ -653,6 +658,7 @@ where
         api_relay,
         keystore_snapshots,
         tenant_prober,
+        host_status,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -857,6 +863,8 @@ where
                 app: app_pool.clone(),
                 relay: api_relay,
                 prober: tenant_prober,
+                rt: rt.clone(),
+                host_status,
                 // Lane L6's shell facts, fresh in the request, as the
                 // cell's command route reads them (ADR-027, wave 2 merge).
                 facts: Some(Arc::new(crate::api::facts::FreshFacts(Arc::clone(

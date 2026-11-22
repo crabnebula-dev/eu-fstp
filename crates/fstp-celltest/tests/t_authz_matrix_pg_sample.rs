@@ -485,6 +485,10 @@ struct Pg<'w> {
     next: u128,
     /// The engine entries the cell held once the world was built.
     engine_head: usize,
+    /// The tenant revision of the onboarding step `tenant.save_step` names,
+    /// read through the cell's own route as the direct harness reads it,
+    /// or "0" when the cell answers none.
+    tenant_revision: String,
 }
 
 impl<'w> Pg<'w> {
@@ -695,6 +699,7 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
         t: Targets::default(),
         next: 7_000_000,
         engine_head: 0,
+        tenant_revision: String::new(),
     };
     let p = P1;
     w.t.programme = Some(p);
@@ -963,6 +968,17 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
             .unwrap_or_else(|| "null".to_owned())
     };
     w.agent = register(cell);
+    // The onboarding revision `tenant.save_step` names, as the direct
+    // harness reads it through the tenant admin's own route.
+    let admin = w.session(FIRST_ADMIN);
+    let step = web(
+        cell,
+        "GET",
+        "/api/v1/admin/onboarding/agreements",
+        Some(&admin),
+        b"",
+    );
+    w.tenant_revision = str_member(&json(&step), "revision").unwrap_or_else(|| "0".to_owned());
     w.engine_head = w.engine_entries();
     w
 }
@@ -1463,6 +1479,25 @@ fn body_of(w: &Pg<'_>, op: &str, state: StateProfile) -> Value {
             "terms_version",
             Value::Number(fstp_json::Number::from(1u32)),
         )]),
+        // The well-formed body of the direct harness: the revision and the
+        // values of a valid save of the step the route names (`param`).
+        "tenant.save_step" => {
+            let admins: Vec<AccountId> = [FIRST_ADMIN, ADMIN_2]
+                .into_iter()
+                .filter_map(|m| w.client.cell_account(m))
+                .collect();
+            obj(vec![
+                ("base", s(&w.tenant_revision)),
+                (
+                    "values",
+                    fstp_api_testkit::harness::onboarding_step_values(
+                        "agreements",
+                        w.id(FIRST_ADMIN),
+                        &admins,
+                    ),
+                ),
+            ])
+        }
         "tenant.invite_admin" => obj(vec![("email", s("new-admin@matrix.invalid"))]),
         "proposal.request_copy" => obj(vec![("email", s("copy@matrix.invalid"))]),
         "tenant.grant_signatory" => obj(vec![

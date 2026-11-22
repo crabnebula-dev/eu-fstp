@@ -1278,6 +1278,11 @@ pub const OPS: &[OpSpec] = &[
     )
     .hr()
     .acting(ADMIN),
+    // ADR-028 record of lane L20 (Daniel, 2026-11-21, usability rule): the
+    // facts of the System page. A read with no personal data, no tool and
+    // no step-up. Its `tenant.` name lets the ADR-021 setup gate admit it
+    // before activation, when the page matters most.
+    OpSpec::read("tenant.system", RK::GetSystemStatus, "/admin/system").acting(ADMIN),
     // SA-11 (Daniel, 2026-11-15, night): every member account of the
     // organisation with its roles, for the tenant admins. Web only: it
     // names emails and display names (I-86).

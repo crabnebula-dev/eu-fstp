@@ -1009,6 +1009,16 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         "*-*-* 03:30:00",
     )
     .map_err(|e| Fail::Step("timers", e.into()))?;
+    // ADR-028 record of lane L20: the status file of the web page System,
+    // every 15 minutes, and once now.
+    m.timer(
+        "fstp-admin-report",
+        &layout.bin("fstp-admin"),
+        "report",
+        "*:0/15",
+    )
+    .map_err(|e| Fail::Step("timers", e.into()))?;
+    crate::status::report_quietly(layout);
 
     out(&[Part::T("")]);
     out(&[Part::T("Setup is complete.")]);

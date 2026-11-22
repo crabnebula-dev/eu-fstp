@@ -141,6 +141,25 @@ Points of lane L18, decided as lead reading, 2026-11-22 (under Daniel's usabilit
 2. **Loopback resolver.** A resolver on a loopback address may use any port, beside port 53 everywhere else. This amends the accepted ADR-027 row "DNS" for tests and the devstack. Lead reading, 2026-11-22: yes, for tests and the devstack only.
 3. **Devstack.** The external devstack runs no relay and no resolver (rule A9), so its onboarding stops at the second admin's invitation. A devstack that should onboard needs a relay of its own. Lead reading, 2026-11-22: yes, a later lane gives the devstack a relay. Not now.
 
+## Record of lane L20 `prod/operator-web`: a relay for the devstack
+
+Written by lane L20 before its code. It closes point 3 of the record of lane L18: "a later lane gives the devstack a relay".
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Relay process | `fstp-devstack external-cell` starts `fstp-devstack-relay`, a binary of the test-only crate `fstp-api-testkit`, as a child process. It runs the test SMTP sink of that crate on loopback with implicit TLS from the `fstp-tls` test CA and its synthetic credential. The cell's `mail` member names it, pinned by address, as for the binary test of lane L18. It prints nothing (R-NF-02 scans `fstp-api-testkit` as shipped code): it writes its addresses to a ready file that the devstack reads | ADR-026 "Relay address"; rule A9 |
+| Rule A9 | The sink stays in `fstp-api-testkit`. No production crate and no library takes that crate as a normal dependency. The devstack reaches the sink only as a separate process, by its printed address | M4 design section 1.3, rule A9 |
+| Fake resolver | The same process runs a fake DNS resolver on loopback, which the cell's `shell.resolver` names under the loopback reading of lane L18. It answers every TXT question with a record of the asked kind: DMARC under `_dmarc.`, DKIM under `._domainkey.`, SPF otherwise. So any sending domain a developer types passes the Domains and email step | ADR-026 record of lane L18 "Loopback resolver" |
+| Reading the mail | The relay writes each accepted message, byte for byte, to `<run dir>/mail/<n>.eml` and prints the directory as `mail-dir <path>`. A developer opens the second admin's invitation link from there | Usability rule of 2026-11-21 |
+| Scope | Development only. Every value is synthetic. The default devstack mode, the e2e mode and the production binaries are unchanged | Rule A9 |
+
+Test: `l20_devstack_relay_accepts_mail_and_answers_txt` in `fstp-api-testkit`, over the built relay binary.
+
+Open points found by `t_authz_matrix_pg_sample` in CI run 44977026057, once `tenant.system` reshuffled the sample (lane L20). Each waits for Daniel; lane L20 changed neither the cell nor the sample for them:
+
+1. `me.begin_verification`, an unbound account on the web with a passkey: the reference expects Allow, the production cell refuses with `oracle`. The row "Vault intake" of the record of lane L5 keeps `Vault::begin_verification` refused as `OracleDown`, and no production verification method exists to redirect to: EUDI verification is not built, and the pilot verifies admins on the host only (lane L13b). Allowing it needs a decision on what a production verification begins, and where it redirects.
+2. `tenant.save_step`, the programme manager of another programme on the web: the reference expects an actor refusal, the cell answers `bad_request` with rule `request`. The sample sends an empty body for `tenant.save_step` (its `body_of` has no arm for it), while the direct harness sends `{base, values}`. M4 design section 3.7 runs the strict decoder (step 1) before every authorisation step, for every operation. Moving the actor check of one operation before its decoder departs from that order. Lead ruling of 2026-11-22: the sample sends the harness's well-formed body, so the actor check is reached. Done by lane L20 (commit d280b54a).
+
 ## Record of lane L8 `prod/vault-run`: the vault process
 
 Written by lane L8 before its code (gap G12, Wave 3 of `docs/handoff/production-mcp-design.md`). Every row is interim, pending Daniel, unless it says otherwise. The vault keystore is ADR-004, record of lane L8.
@@ -177,3 +196,23 @@ Tests: `i18_vault_configuration_refuses_a_seed_member`, `g12_vault_config_refuse
 - `i21_workspace_rows_hold_sealed_bytes_only`, `r_nf_08_api_and_workspace_columns_are_classed`.
 - `t_db_m4_migrations_forward_only`, `t_db_app_role_has_no_ledger_update`, `i82_role_plan_grants_api_and_workspace_to_app_only`.
 - `i23_restart_replays_pending_and_workspace`.
+
+## Written by lane L24 `prod/verification-request`, 2026-11-22: the verification request
+
+Decided by Daniel on 2026-11-22 (ADR-008, same date): "Request, staff record it." It replaces the `OracleDown` of `begin_verification` in the row "Vault intake" for the identity purposes. The other intake calls stay refused. Every reading below is interim, pending Daniel, unless it says otherwise. Written by lane L24 before its code.
+
+| Topic | Reading |
+| --- | --- |
+| Purposes | `me.begin_verification` (purposes `Applicant` and `AdminIdentity`) and `people.begin_verification` (`ProgrammeRole`) record a request. The guardian consent and the bank purposes keep their own write tickets on the vault origin and stay as they were |
+| Record | The cell port appends the cell record `VerificationRequested { account }` through the command `RequestVerification { account }` of `fstp-cell-core`. The command is admitted only for the new system task `IdentityPort`, which only the vault port of the cell issues, after the API core admitted the caller's own call. The record holds the account id and its entry time only, no identity data (I-17). A request of an account with an open request appends nothing more, so pressing twice is harmless |
+| Open request | A request is open until the vault confirms a verification of that person. The cell's timeline task asks the vault's one-bit `IsVerified` for each open request at each tick, through the command `CloseVerificationRequest { account }` (system task `Timeline`), which appends `VerificationRequestClosed { account }` only when the answer holds. An issued but unused ticket leaves the request open. Lead reading, 2026-11-22 |
+| Reply | The port answers the redirect `/app/me/identity`, the applicant's own identity page. It says, in plain words, "We have your request. We will contact you to check your ID, in person or by video call." No vault origin is involved yet |
+| Where staff see it | The tenant admin's member page lists the open requests in the section of people to verify, marked "asked for an ID check", from the cell route `GET /api/v1/verification-people`. Each row now carries `requested`. A staff member with no Receiving binding is listed with no proposal. An applicant is listed with the proposal, and only once it is in NEGOTIATION or later (R-NG-01). An applicant whose proposal is earlier is not listed yet |
+| Task | The app shell of a tenant admin shows "ID checks waiting (n)" in its navigation, linked to the member page, when the route lists open requests. The route answers 403 to everyone else, so no one else sees the count |
+| Email | Each request, once it is visible to the recorders, is one timeline event of the new kind `VERIFICATION_REQUEST`, sourced by the account and the request's ordinal. It fires once (I-25), with one email of the new template `id-check-waiting` to each tenant admin with no Judging binding, other than the person, when the tenant has a mail relay. The email says only that a person is waiting for an ID check, with a link to Members (`/app/admin/members`). It names no person, no account and no identity data (I-27). A staff request is visible at once, an applicant's once the proposal is in NEGOTIATION or later. Lead reading, 2026-11-22. `TODO(legal)`: the wording is a draft |
+| Applicant status | `me.get_verification` reads "pending" while the person's request is open in the ledger, through the vault port's new `verification_requested`, and "verified" once the vault answers `IsVerified`. The in-memory hour of the API core stays for other ports. Lead reading, 2026-11-22 |
+| Earlier list | No list of requests before NEGOTIATION (R-NG-01). Lead reading, 2026-11-22 |
+| Who may record | Unchanged: a verified tenant admin with no Judging binding, never for themselves or a person of their own identity (ADR-004 record of lane L13b) |
+| Not built | An entry of the API core's mailbox: the mailbox is derived from the domain state, which holds no request. A cancel of a request |
+
+Tests, written before the code: `adr008_verification_request_records_one_open_request` and `adr008_only_the_identity_port_records_a_request` (`crates/fstp-cell-core/tests/l24_verification_request.rs`), `adr008_begin_verification_records_a_request_on_the_production_cell` (over PostgreSQL, `crates/fstp-celltest/tests/l24_verification_request_pg.rs`), and the web test `adr008_identity_page_says_we_will_contact_you`. The cell `me.begin_verification` of `t_authz_matrix_pg_sample` now agrees with the reference, with no edit to either.

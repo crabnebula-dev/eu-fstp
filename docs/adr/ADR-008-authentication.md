@@ -364,3 +364,10 @@ Daniel's standing rule of 2026-11-21: the platform must be runnable by two peopl
 - **The ticket names the person.** The recorder chooses "Record verification" next to a person in the cell. The vault form opens for that person, and only their identity details are typed. Decided by Daniel on 2026-11-21.
 - **The vault serves its static pages.** The shipped vault serves the write and release pages (ADR-009, third route group), so a pilot recorder can open the form. Decided by Daniel on 2026-11-21.
 - The readings that build these decisions are in ADR-004, record of lane L13b, "The first admins and the person in the ticket".
+
+## Decided by Daniel, 2026-11-22: request, staff record it
+
+- **Verification method.** "Request, staff record it." The applicant presses "Start verification". The platform records a verification request, which holds no identity data (I-17), and gives the staff who may record a task. A staff member checks the ID in person or by video call, and records it through the vault form of ADR-004 record of lane L13b: the person-scoped ticket and the vault's recorder route. Decided by Daniel on 2026-11-22.
+- **Later methods.** The EUDI Wallet may be added later as a second method. Decided by Daniel on 2026-11-22.
+- **When.** A full identity verification is required at NEGOTIATION, as `02-domain/state-machine.md` already says. A request may come earlier. Its check of an applicant is recorded once the proposal is in NEGOTIATION (R-NG-01). Decided by Daniel on 2026-11-22.
+- The readings that build this are in ADR-026, record of lane L24.

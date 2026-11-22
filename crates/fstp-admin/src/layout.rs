@@ -198,6 +198,12 @@ impl Layout {
     pub fn admin_dir(&self) -> PathBuf {
         self.state("admin")
     }
+    /// The host status file the System page reads (ADR-028 record of
+    /// lane L20). Readable by every local user: it holds no secret.
+    #[must_use]
+    pub fn host_status(&self) -> PathBuf {
+        self.state("status").join("host.json")
+    }
     /// The CA directory.
     #[must_use]
     pub fn ca_dir(&self) -> PathBuf {

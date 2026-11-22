@@ -81,7 +81,7 @@ fn i_27_placeholder_enum_is_enumerated() {
             }
             Value::Link(x) => {
                 let _: LinkTarget = match x {
-                    LinkTarget::Home | LinkTarget::Notices => x,
+                    LinkTarget::Home | LinkTarget::Notices | LinkTarget::Members => x,
                     LinkTarget::Proposal(p) | LinkTarget::ProposalProgress(p) => {
                         let _: ProposalId = p;
                         x
@@ -318,6 +318,11 @@ const PINNED: &[(&str, &str)] = &[
     (
         "admin-invitation/1/en",
         "75ae8782ef48ba73318ec41d1858ce3dc7794b8a6aac6c861698b6e2493dfcd2",
+    ),
+    // ADR-026 record of lane L24 (lead reading, 2026-11-22).
+    (
+        "id-check-waiting/1/en",
+        "f556657d942133da6d1572f997a09b060dc0b7427d8b9a4971c4372dc2b861ee",
     ),
 ];
 

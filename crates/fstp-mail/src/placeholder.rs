@@ -207,6 +207,9 @@ pub enum LinkTarget {
     /// `/auth/invite#<token>` (J0, ADR-026 record of lane L18). The token
     /// travels in the fragment only.
     AdminInvitation(InvitationToken),
+    /// The tenant admin's member page, `/app/admin/members`, where the
+    /// people to verify are listed (ADR-026 record of lane L24).
+    Members,
 }
 
 impl LinkTarget {
@@ -215,6 +218,7 @@ impl LinkTarget {
         match self {
             LinkTarget::Home => "/app/".to_owned(),
             LinkTarget::Notices => "/app/notices".to_owned(),
+            LinkTarget::Members => "/app/admin/members".to_owned(),
             LinkTarget::Proposal(p) => format!("/app/proposals/{}", p.raw()),
             LinkTarget::ProposalProgress(p) => format!("/app/proposals/{}/progress", p.raw()),
             LinkTarget::CallGuide(c) => format!("/app/calls/{}/guide", c.raw()),
