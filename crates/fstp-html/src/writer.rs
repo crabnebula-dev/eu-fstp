@@ -783,6 +783,12 @@ impl<S: Sink> Writer<'_, '_, S> {
             AttrValue::Msg(_) | AttrValue::Parts(_) if svg && svg_value_ruled(name) => {
                 return Err(attr_err(tag, name, "the SVG attribute takes a fixed text"));
             }
+            // ADR-034: only the `href` of an `a` takes a `mailto:` link.
+            AttrValue::Url(u)
+                if u.as_str().starts_with("mailto:") && !(tag == "a" && name == "href") =>
+            {
+                return Err(attr_err(tag, name, "only a link takes a mailto: URL"));
+            }
             _ => {}
         }
         self.out.push(' ');

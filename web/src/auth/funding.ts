@@ -9,7 +9,7 @@
 // TODO(legal): the acknowledgement wording (L-08) stays the placeholder.
 
 import { get, ok } from './api.js';
-import { h } from './dom.js';
+import { h, mailtoHref } from './dom.js';
 import { t } from './layout.js';
 
 /** Where the cards are read. */
@@ -55,18 +55,22 @@ export function decodeCards(body: unknown): FundingCard[] | null {
 
 /** One card: the logo with its alternative text, the programme name and the label and value lines. */
 export function fundingCard(c: FundingCard): HTMLElement {
-  const line = (label: string, value: string | null): HTMLElement =>
-    h('p', { class: 'funding-card-line' }, [
-      h('span', { class: 'funding-card-label' }, [`${label}: `]),
-      h('span', {}, [value ?? t('funding.not_set')]),
+  const line = (label: string, value: string | null, link = false): HTMLElement => {
+    // ADR-034 (lead decision): a contact that is one e-mail address is a link.
+    const href = link && value !== null ? mailtoHref('mailto:' + value) : null;
+    const shown = value ?? t('funding.not_set');
+    return h('p', { class: 'funding-card-line' }, [
+      h('span', { class: 'funding-card-label' }, [label + ': ']),
+      href === null ? h('span', {}, [shown]) : h('a', { href }, [shown]),
     ]);
+  };
   return h('section', { class: 'funding-card', 'aria-label': t('funding.label') }, [
     h('img', { class: 'eu-emblem', src: LOGO_PATH, alt: t('funding.alt') }),
     h('div', { class: 'funding-card-text' }, [
       h('p', { class: 'funding-card-name' }, [c.name]),
       line(t('funding.grant'), c.grantNumber),
       line(t('funding.coordinator'), c.coordinatorName),
-      line(t('funding.contact'), c.coordinatorContact),
+      line(t('funding.contact'), c.coordinatorContact, true),
       h('p', {}, [t('funding.acknowledgement')]),
     ]),
   ]);

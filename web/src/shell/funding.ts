@@ -12,7 +12,7 @@
 // it, so branding cannot remove or hide it (I-69).
 // TODO(legal): the acknowledgement wording (L-08) stays the placeholder.
 
-import { h } from "../core/dom.js";
+import { h, mailtoHref } from "../core/dom.js";
 import { t } from "../creator/i18n.js";
 
 /** Where the cards are read. */
@@ -105,10 +105,12 @@ export function cardsFor(programme: string | null, cards: readonly FundingCard[]
 
 /** One card: the logo with its alternative text, the programme name, and the label and value pairs. */
 export function fundingCard(c: FundingCard): HTMLElement {
-  const pair = (label: string, value: string | null): HTMLElement[] => [
-    h("dt", {}, [label]),
-    h("dd", {}, [value ?? t.label("footer.funding.not_set")]),
-  ];
+  const pair = (label: string, value: string | null, link = false): HTMLElement[] => {
+    // ADR-034 (lead decision): a contact that is one e-mail address is a link.
+    const href = link && value !== null ? mailtoHref(`mailto:${value}`) : null;
+    const shown = value ?? t.label("footer.funding.not_set");
+    return [h("dt", {}, [label]), h("dd", {}, [href === null ? shown : h("a", { href }, [shown])])];
+  };
   return h("section", { class: "funding-card", "aria-label": t.label("footer.funding.label") }, [
     h("img", { class: "eu-emblem", src: LOGO_PATH, alt: t.label("footer.funding.alt") }),
     h("div", { class: "funding-card-text" }, [
@@ -116,7 +118,7 @@ export function fundingCard(c: FundingCard): HTMLElement {
       h("dl", {}, [
         ...pair(t.label("footer.funding.grant"), c.grantNumber),
         ...pair(t.label("footer.funding.coordinator"), c.coordinatorName),
-        ...pair(t.label("footer.funding.contact"), c.coordinatorContact),
+        ...pair(t.label("footer.funding.contact"), c.coordinatorContact, true),
       ]),
       h("p", {}, [t.approved("footer.eu_funding")]),
     ]),

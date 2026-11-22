@@ -576,7 +576,16 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
                 &card.grant_number,
             );
             let dl = pair(dl, "public.footer.funding.coordinator", &card.coordinator);
-            let dl = pair(dl, "public.footer.funding.contact", &card.contact);
+            // ADR-034 (lead decision): a contact that is one e-mail address
+            // is a `mailto:` link; anything else stays text (I-68).
+            let contact = match SafeUrl::mailto(&card.contact) {
+                Ok(href) => Element::new("dd")
+                    .child(Element::new("a").attr_url("href", href).text(&card.contact)),
+                Err(_) => Element::new("dd").text(&card.contact),
+            };
+            let dl = dl
+                .child(Element::new("dt").label(&l("public.footer.funding.contact"), &[]))
+                .child(contact);
             let mut section = Element::new("section")
                 .attr("class", "eu-funding funding-card")
                 .attr("data-mandatory", "funding_card")

@@ -99,3 +99,26 @@ fn i69_no_card_means_no_card_region() {
         );
     }
 }
+
+/// ADR-034 (lead decision), I-68: a contact that is one e-mail address is
+/// a `mailto:` link; any other contact stays text.
+#[test]
+fn adr034_contact_address_is_a_mailto_link() {
+    let view = sample_view(true);
+    for p in traced_pages(&view) {
+        let html = render_html(&view, &p, &chrome("role@example.org"))
+            .unwrap()
+            .as_str()
+            .to_owned();
+        assert!(
+            html.contains("<a href=\"mailto:role@example.org\">role@example.org</a>"),
+            "{p:?}"
+        );
+        let html = render_html(&view, &p, &chrome("Call +00 0000"))
+            .unwrap()
+            .as_str()
+            .to_owned();
+        assert!(!html.contains("mailto:"), "{p:?}");
+        assert!(html.contains("Call +00 0000"), "{p:?}");
+    }
+}

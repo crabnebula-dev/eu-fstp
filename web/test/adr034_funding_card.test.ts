@@ -2,6 +2,8 @@
 // plain messages for its missing values, and the defaults form.
 
 import { fundingDefaultsBody } from "../src/admin/branding/fundingpage.js";
+import { mailtoHref as authMailto } from "../src/auth/dom.js";
+import { mailtoHref as coreMailto } from "../src/core/dom.js";
 import { decodeCards } from "../src/auth/funding.js";
 import { checkText } from "../src/creator/pages/common.js";
 import { cardsFor, decodeFunding, fundingCard, fundingPart } from "../src/shell/funding.js";
@@ -108,4 +110,22 @@ test("i68_funding_defaults_body_is_plain_text", () => {
   eq(fundingDefaultsBody("", "a"), null, "empty");
   eq(fundingDefaultsBody("<b>", "a"), null, "markup");
   eq(fundingDefaultsBody("x".repeat(201), "a"), null, "too long");
+});
+
+/** ADR-034 (lead decision), I-68: a contact that is one e-mail address is a `mailto:` link; nothing else is. */
+test("adr034_contact_address_is_a_mailto_link", () => {
+  freshDom();
+  for (const f of [coreMailto, authMailto]) {
+    eq(f("mailto:privacy@crabnebula.dev"), "mailto:privacy@crabnebula.dev", "one address");
+    for (const bad of ["mailto:a@b", "mailto:a@example.org?bcc=x@example.org", "mailto:a@Example.org", "mailto:.a@example.org", "mailto:a@example.org,b@example.org", "mailto:a@1.2.3.4", "javascript:x"]) {
+      eq(f(bad), null, bad);
+    }
+  }
+  const c = decodeFunding(ANSWER)?.cards[0];
+  if (c === undefined) return;
+  const links = (fundingCard(c) as unknown as FakeElement).getElementsByTagName("a");
+  eq(links.length, 1, "one link");
+  eq(links[0]?.getAttribute("href"), "mailto:role@example.org", "the contact");
+  const text = (fundingCard({ ...c, coordinatorContact: "Call +00 0000" }) as unknown as FakeElement).getElementsByTagName("a");
+  eq(text.length, 0, "other contacts stay text");
 });

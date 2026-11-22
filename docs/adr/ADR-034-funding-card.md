@@ -98,7 +98,7 @@ The app and sign-in pages read `GET /brand/funding`, a JSON answer of the `/bran
 2. TODO(legal): the emblem usage rules: minimum size, clear space, placement and colour versions (section 1).
 3. Interim, pending Daniel: vault pages show no card (section 4).
 4. Interim, pending Daniel: the tenant defaults sit inline in the ledger (section 3).
-5. Interim, pending Daniel: the contact shows as text, not as a `mailto:` link, so no tenant text becomes a URL.
+5. Decided by the lead on 2026-11-22 (usability): a contact that is one e-mail address is a `mailto:` link on web pages. Only the `href` of an `a` takes it, for one address with no query, in `fstp_html` (`SafeUrl::mailto`, checked again by the well-formedness check) and in both DOM builders (`mailtoHref`). Any other contact stays text. Emails and PDFs show it as text.
 6. Interim, pending Daniel: `tenant.set_funding_defaults` asks for a step-up like the other tenant settings.
 7. Interim, pending Daniel: only the contract PDF carries the card, as only it carries a letterhead (ADR-030 open question 7). Funder reports and the Guide PDF get it when their letterhead is pinned in their records.
 8. Interim, pending Daniel: the demo cell seeds the defaults "CrabNebula Ltd" and "privacy@crabnebula.dev" for its tenant. They name an organisation and a role address, not a person.
