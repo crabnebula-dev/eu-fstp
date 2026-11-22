@@ -1,51 +1,58 @@
 //! The route feed from `fstp-control` to a remote `fstp-edge` (design
 //! section 3.7 step 3, ADR-004 "Decided by Daniel, 2026-11-15 (late)":
 //! "Each `fstp-edge` polls a signed route table from `fstp-control`").
-//! Lane m3/erase-prod.
+//! Lane m3/erase-prod. Lane L15 added the tunnel server pins and the
+//! rollback refusal (ADR-009 "Pilot route feed", decided by Daniel on
+//! 2026-11-21).
 //!
 //! The control plane publishes one route table with a version that rises
 //! with each change, signed with its composite control-plane key. Each
 //! edge polls it, reports the version it serves in each poll, checks the
 //! signature (I-90: both halves), and swaps the table in only when its
-//! version is newer than the one it serves ([`LiveRoutes::apply`]). An
-//! erasure finishes route removal once every edge reports a version
-//! without the cell's routes.
+//! version is newer than the one it serves ([`LiveRoutes::apply_pinned`]).
+//! An older version is refused ([`FeedError::Rollback`]). An erasure
+//! finishes route removal once every edge reports a version without the
+//! cell's routes.
 //!
-//! Interim, pending Daniel, the bytes:
+//! Interim, pending Daniel, the bytes (version 2, lane L15):
 //!
 //! ```text
 //! signed = body | signature len u16 | composite signature
-//! body   = "FRT1" | version u64 | count u16 | route*
+//! body   = "FRT2" | version u64 | count u16 | route*
 //! route  = cell 16 | host len u8 | host | endpoint (app) | endpoint (vault)
 //! endpoint = family u8 (4 or 6) | address 4 or 16 | port u16
-//!          | tls name len u8 | tls name
+//!          | tls name len u8 | tls name | pin 32
 //! poll   = "FRP1" | version u64
 //! ```
 //!
 //! Integers are big-endian. The signature context is
 //! [`ROUTE_TABLE_CONTEXT`]. Each route names a cell's application host;
 //! its vault origin `id.<host>` follows from it ([`RouteTable::add_cell`]).
-//! Routes appear in ascending host order, so a table has one spelling.
-//! The decoder is fuzzed (`route_table_decode`).
+//! A pin is the SHA-256 of the DER of the tunnel server's end-entity
+//! certificate. Routes appear in ascending host order, so a table has one
+//! spelling. The decoder is fuzzed (`route_table_decode`).
 
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 
 use fstp_rt::{IoExt as _, Runtime};
 use fstp_tls::ClientConfig;
 
 use crate::host::HostName;
-use crate::route::{CELL_ID_LEN, CellEndpoint, LiveRoutes, RouteError, RouteKind, RouteTable};
+use crate::route::{
+    CELL_ID_LEN, CellEndpoint, LiveRoutes, Pins, RouteError, RouteKind, RouteTable,
+};
 
-/// The magic of a route table body.
-pub const ROUTE_TABLE_MAGIC: [u8; 4] = *b"FRT1";
+/// The magic of a route table body, version 2 with pins (lane L15).
+pub const ROUTE_TABLE_MAGIC: [u8; 4] = *b"FRT2";
 /// The magic of a poll.
 pub const POLL_MAGIC: [u8; 4] = *b"FRP1";
 /// Length of a poll.
 pub const POLL_LEN: usize = 12;
-/// The composite signature context of a route table.
-pub const ROUTE_TABLE_CONTEXT: &[u8] = b"fstp-route-table-v1";
+/// The composite signature context of a route table, version 2.
+pub const ROUTE_TABLE_CONTEXT: &[u8] = b"fstp-route-table-v2";
 /// The most routes a table holds.
 pub const MAX_ROUTES: usize = 4096;
 /// The longest TLS name of an endpoint.
@@ -54,6 +61,8 @@ pub const MAX_TLS_NAME_LEN: usize = 253;
 pub const MAX_SIGNATURE_LEN: usize = 8192;
 /// The longest signed route table.
 pub const MAX_SIGNED_TABLE_LEN: usize = 4 * 1024 * 1024;
+/// The length of a tunnel server pin.
+pub const PIN_LEN: usize = 32;
 
 /// Why a route table or a poll was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,8 +73,30 @@ pub enum FeedError {
     BadSignature,
     /// A route breaks a rule of [`RouteTable::add_cell`].
     Route(RouteError),
+    /// Two endpoints carry one pin.
+    PinTaken,
+    /// The table is older than the one the edge serves (lane L15). The
+    /// edge keeps its table.
+    Rollback,
     /// The poll exchange failed.
     Io(io::ErrorKind),
+    /// The signed cache could not be read or written (lane L15). A table
+    /// that could not be cached is not applied.
+    Cache(io::ErrorKind),
+}
+
+impl FeedError {
+    /// The rule a refusal of this kind is logged under (ADR-009 "Pilot
+    /// route feed", row "Unreachable or refused feed").
+    pub fn rule(&self) -> &'static str {
+        match self {
+            FeedError::BadSignature => "I-90",
+            FeedError::Malformed(_) | FeedError::Route(_) | FeedError::PinTaken => "I-19",
+            FeedError::Rollback => "R-SW-02",
+            FeedError::Io(_) => "R-NF-09",
+            FeedError::Cache(_) => "TH-48",
+        }
+    }
 }
 
 impl std::fmt::Display for FeedError {
@@ -74,7 +105,10 @@ impl std::fmt::Display for FeedError {
             FeedError::Malformed(rule) => write!(f, "route feed: {rule}"),
             FeedError::BadSignature => f.write_str("route feed: the signature does not verify"),
             FeedError::Route(e) => write!(f, "route feed: a route is refused: {e:?}"),
+            FeedError::PinTaken => f.write_str("route feed: two endpoints carry one pin"),
+            FeedError::Rollback => f.write_str("route feed: an older table"),
             FeedError::Io(k) => write!(f, "route feed: {k:?}"),
+            FeedError::Cache(k) => write!(f, "route feed cache: {k:?}"),
         }
     }
 }
@@ -92,13 +126,25 @@ pub struct RouteEntry {
     pub vault: CellEndpoint,
 }
 
+/// A route with the pins of both its tunnel servers, as the feed carries
+/// it (lane L15).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinnedRoute {
+    /// The route.
+    pub route: RouteEntry,
+    /// The pin of the application's tunnel server certificate.
+    pub app_pin: [u8; PIN_LEN],
+    /// The pin of the vault's tunnel server certificate.
+    pub vault_pin: [u8; PIN_LEN],
+}
+
 /// A decoded signed route table, before its signature is checked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedRouteTable {
     /// The table version.
     pub version: u64,
     /// The routes, in ascending host order.
-    pub routes: Vec<RouteEntry>,
+    pub routes: Vec<PinnedRoute>,
     /// The signed body.
     pub body: Vec<u8>,
     /// The composite signature over the body.
@@ -118,7 +164,11 @@ fn push_name(out: &mut Vec<u8>, name: &[u8], max: usize) -> Result<(), FeedError
     Ok(())
 }
 
-fn push_endpoint(out: &mut Vec<u8>, ep: &CellEndpoint) -> Result<(), FeedError> {
+fn push_endpoint(
+    out: &mut Vec<u8>,
+    ep: &CellEndpoint,
+    pin: &[u8; PIN_LEN],
+) -> Result<(), FeedError> {
     match ep.address.ip() {
         IpAddr::V4(v4) => {
             out.push(4);
@@ -130,7 +180,26 @@ fn push_endpoint(out: &mut Vec<u8>, ep: &CellEndpoint) -> Result<(), FeedError> 
         }
     }
     out.extend_from_slice(&ep.address.port().to_be_bytes());
-    push_name(out, ep.tls_name.as_bytes(), MAX_TLS_NAME_LEN)
+    push_name(out, ep.tls_name.as_bytes(), MAX_TLS_NAME_LEN)?;
+    out.extend_from_slice(pin);
+    Ok(())
+}
+
+/// Appends the bytes of one route (the `route` rule of the module
+/// documentation). `fstp-control`'s operator request reuses them.
+///
+/// # Errors
+///
+/// [`FeedError::Malformed`] for endpoints that name two cells or a name
+/// out of bounds.
+pub fn encode_route(out: &mut Vec<u8>, r: &PinnedRoute) -> Result<(), FeedError> {
+    if r.route.app.cell != r.route.vault.cell {
+        return Err(malformed("the endpoints of a route name two cells"));
+    }
+    out.extend_from_slice(&r.route.app.cell);
+    push_name(out, r.route.host.as_bytes(), crate::host::MAX_HOST_LEN)?;
+    push_endpoint(out, &r.route.app, &r.app_pin)?;
+    push_endpoint(out, &r.route.vault, &r.vault_pin)
 }
 
 /// The body of a route table of `version` with `routes`, in ascending
@@ -141,15 +210,15 @@ fn push_endpoint(out: &mut Vec<u8>, ep: &CellEndpoint) -> Result<(), FeedError> 
 /// [`FeedError::Malformed`] for more than [`MAX_ROUTES`] routes, a host
 /// listed twice, a cell id that differs between a route's endpoints, or
 /// a TLS name out of bounds.
-pub fn encode_route_table_body(version: u64, routes: &[RouteEntry]) -> Result<Vec<u8>, FeedError> {
+pub fn encode_route_table_body(version: u64, routes: &[PinnedRoute]) -> Result<Vec<u8>, FeedError> {
     if routes.len() > MAX_ROUTES {
         return Err(malformed("too many routes"));
     }
-    let mut sorted: Vec<&RouteEntry> = routes.iter().collect();
-    sorted.sort_by(|a, b| a.host.cmp(&b.host));
+    let mut sorted: Vec<&PinnedRoute> = routes.iter().collect();
+    sorted.sort_by(|a, b| a.route.host.cmp(&b.route.host));
     if sorted
         .windows(2)
-        .any(|w| matches!(w, [a, b] if a.host == b.host))
+        .any(|w| matches!(w, [a, b] if a.route.host == b.route.host))
     {
         return Err(malformed("a host listed twice"));
     }
@@ -158,13 +227,7 @@ pub fn encode_route_table_body(version: u64, routes: &[RouteEntry]) -> Result<Ve
     let n = u16::try_from(sorted.len()).map_err(|_| malformed("too many routes"))?;
     out.extend_from_slice(&n.to_be_bytes());
     for r in sorted {
-        if r.app.cell != r.vault.cell {
-            return Err(malformed("the endpoints of a route name two cells"));
-        }
-        out.extend_from_slice(&r.app.cell);
-        push_name(&mut out, r.host.as_bytes(), crate::host::MAX_HOST_LEN)?;
-        push_endpoint(&mut out, &r.app)?;
-        push_endpoint(&mut out, &r.vault)?;
+        encode_route(&mut out, r)?;
     }
     Ok(out)
 }
@@ -185,7 +248,9 @@ pub fn encode_signed_route_table(body: &[u8], signature: &[u8]) -> Result<Vec<u8
     Ok(out)
 }
 
-struct Reader<'a> {
+/// A reader over the bytes of a table or of a request that holds a
+/// route.
+pub(crate) struct Reader<'a> {
     rest: &'a [u8],
 }
 
@@ -215,7 +280,10 @@ impl<'a> Reader<'a> {
         self.take(n)
     }
 
-    fn endpoint(&mut self, cell: [u8; CELL_ID_LEN]) -> Result<CellEndpoint, FeedError> {
+    fn endpoint(
+        &mut self,
+        cell: [u8; CELL_ID_LEN],
+    ) -> Result<(CellEndpoint, [u8; PIN_LEN]), FeedError> {
         let ip = match self.u8()? {
             4 => IpAddr::V4(Ipv4Addr::from(self.array::<4>()?)),
             6 => IpAddr::V6(Ipv6Addr::from(self.array::<16>()?)),
@@ -226,12 +294,45 @@ impl<'a> Reader<'a> {
         let tls_name = std::str::from_utf8(name)
             .map_err(|_| malformed("a TLS name that is not UTF-8"))?
             .to_owned();
-        Ok(CellEndpoint {
-            cell,
-            address: SocketAddr::new(ip, port),
-            tls_name,
+        let pin = self.array::<PIN_LEN>()?;
+        Ok((
+            CellEndpoint {
+                cell,
+                address: SocketAddr::new(ip, port),
+                tls_name,
+            },
+            pin,
+        ))
+    }
+
+    fn route(&mut self) -> Result<PinnedRoute, FeedError> {
+        let cell = self.array::<CELL_ID_LEN>()?;
+        let host = HostName::parse_lowercase(self.name(crate::host::MAX_HOST_LEN)?)
+            .map_err(|_| malformed("a host that is not a lowercase host name"))?;
+        let (app, app_pin) = self.endpoint(cell)?;
+        let (vault, vault_pin) = self.endpoint(cell)?;
+        Ok(PinnedRoute {
+            route: RouteEntry { host, app, vault },
+            app_pin,
+            vault_pin,
         })
     }
+}
+
+/// Decodes exactly one route (the `route` rule of the module
+/// documentation) and nothing after it. `fstp-control`'s operator
+/// request carries one. Fuzzed (`route_table_decode`).
+///
+/// # Errors
+///
+/// [`FeedError::Malformed`] naming the rule broken.
+pub fn decode_route(bytes: &[u8]) -> Result<PinnedRoute, FeedError> {
+    let mut r = Reader { rest: bytes };
+    let route = r.route()?;
+    if !r.rest.is_empty() {
+        return Err(malformed("trailing bytes"));
+    }
+    Ok(route)
 }
 
 /// Decodes a signed route table without checking its signature. A table
@@ -255,17 +356,16 @@ pub fn decode_signed_route_table(bytes: &[u8]) -> Result<SignedRouteTable, FeedE
     if count > MAX_ROUTES {
         return Err(malformed("too many routes"));
     }
-    let mut routes: Vec<RouteEntry> = Vec::with_capacity(count.min(64));
+    let mut routes: Vec<PinnedRoute> = Vec::with_capacity(count.min(64));
     for _ in 0..count {
-        let cell = r.array::<CELL_ID_LEN>()?;
-        let host = HostName::parse_lowercase(r.name(crate::host::MAX_HOST_LEN)?)
-            .map_err(|_| malformed("a host that is not a lowercase host name"))?;
-        if routes.last().is_some_and(|p| p.host >= host) {
+        let route = r.route()?;
+        if routes
+            .last()
+            .is_some_and(|p| p.route.host >= route.route.host)
+        {
             return Err(malformed("routes out of host order"));
         }
-        let app = r.endpoint(cell)?;
-        let vault = r.endpoint(cell)?;
-        routes.push(RouteEntry { host, app, vault });
+        routes.push(route);
     }
     let body_len = bytes.len().saturating_sub(r.rest.len());
     let body = bytes
@@ -288,16 +388,58 @@ pub fn decode_signed_route_table(bytes: &[u8]) -> Result<SignedRouteTable, FeedE
     })
 }
 
+/// Builds the table and the pins that `routes` name, through the rules of
+/// [`RouteTable::add_cell`] and the pin rule: two endpoints never share a
+/// pin. The edge runs it on each verified table, and `fstp-control` on
+/// each table before it signs, so it never signs a table an edge refuses
+/// (ADR-009 "Pilot route feed", row "Checks before signing").
+///
+/// # Errors
+///
+/// [`FeedError::Route`] for a route that [`RouteTable::add_cell`]
+/// refuses, and [`FeedError::PinTaken`] for a pin given twice.
+pub fn check_routes(routes: &[PinnedRoute]) -> Result<(RouteTable, Pins), FeedError> {
+    let mut table = RouteTable::new();
+    let mut pins = Pins::default();
+    for r in routes {
+        table
+            .add_cell(
+                r.route.host.clone(),
+                r.route.app.clone(),
+                r.route.vault.clone(),
+            )
+            .map_err(FeedError::Route)?;
+        if !pins.add(r.route.app.clone(), r.app_pin)
+            || !pins.add(r.route.vault.clone(), r.vault_pin)
+        {
+            return Err(FeedError::PinTaken);
+        }
+    }
+    Ok((table, pins))
+}
+
+/// A verified table: its version, its routes and their pins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedTable {
+    /// The version.
+    pub version: u64,
+    /// The routes, in ascending host order.
+    pub routes: Vec<PinnedRoute>,
+    /// The table the routes build.
+    pub table: RouteTable,
+    /// The tunnel server pins of the routes.
+    pub pins: Pins,
+}
+
 /// Decodes `bytes`, checks the composite signature of its body under
 /// one of `keys`, the pinned control-plane public keys (I-90: both
-/// halves), and builds the table its routes name.
+/// halves), and builds the table its routes name ([`check_routes`]).
 ///
 /// # Errors
 ///
 /// The errors of [`decode_signed_route_table`],
-/// [`FeedError::BadSignature`], and [`FeedError::Route`] for routes that
-/// [`RouteTable::add_cell`] refuses, such as two cells on one address.
-pub fn verify_route_table(keys: &[Vec<u8>], bytes: &[u8]) -> Result<(u64, RouteTable), FeedError> {
+/// [`FeedError::BadSignature`], and the errors of [`check_routes`].
+pub fn verify_route_table(keys: &[Vec<u8>], bytes: &[u8]) -> Result<VerifiedTable, FeedError> {
     let signed = decode_signed_route_table(bytes)?;
     let ok = keys.iter().any(|k| {
         fstp_crypto::composite::verify_with_context(
@@ -311,13 +453,13 @@ pub fn verify_route_table(keys: &[Vec<u8>], bytes: &[u8]) -> Result<(u64, RouteT
     if !ok {
         return Err(FeedError::BadSignature);
     }
-    let mut table = RouteTable::new();
-    for r in signed.routes {
-        table
-            .add_cell(r.host, r.app, r.vault)
-            .map_err(FeedError::Route)?;
-    }
-    Ok((signed.version, table))
+    let (table, pins) = check_routes(&signed.routes)?;
+    Ok(VerifiedTable {
+        version: signed.version,
+        routes: signed.routes,
+        table,
+        pins,
+    })
 }
 
 /// The routes of `table`, one per cell application host, so a control
@@ -373,12 +515,15 @@ pub trait FeedTransport {
 /// connection, as the control-private links write it (the client writes
 /// its request, closes its sending side, and reads the reply up to the
 /// peer's close). The edge presents its edge certificate and pins the
-/// control-plane CA.
+/// control-plane CA. A pilot edge also pins the control plane's
+/// end-entity certificate with one or two pins ([`TlsFeed::with_pins`],
+/// lane L15).
 pub struct TlsFeed<R: Runtime> {
     rt: R,
     addr: SocketAddr,
     server_name: String,
     config: ClientConfig,
+    pins: Vec<[u8; PIN_LEN]>,
 }
 
 impl<R: Runtime> TlsFeed<R> {
@@ -390,7 +535,27 @@ impl<R: Runtime> TlsFeed<R> {
             addr,
             server_name: server_name.to_owned(),
             config,
+            pins: Vec::new(),
         }
+    }
+
+    /// The same transport, which also requires the SHA-256 of the DER of
+    /// the server's end-entity certificate to be `pin` before it writes
+    /// the poll (ADR-009 "Pilot route feed", row "How the edge pins the
+    /// control plane").
+    #[must_use]
+    pub fn with_pin(self, pin: [u8; PIN_LEN]) -> TlsFeed<R> {
+        self.with_pins(vec![pin])
+    }
+
+    /// The same transport, which requires the SHA-256 of the server's
+    /// end-entity certificate to equal one of `pins`: the current and the
+    /// next pin, so a certificate renewal is staged without a restart
+    /// (Daniel, 2026-11-21). An empty list pins nothing.
+    #[must_use]
+    pub fn with_pins(mut self, pins: Vec<[u8; PIN_LEN]>) -> TlsFeed<R> {
+        self.pins = pins;
+        self
     }
 }
 
@@ -398,6 +563,14 @@ impl<R: Runtime> FeedTransport for TlsFeed<R> {
     async fn fetch(&self, poll: &[u8]) -> io::Result<Vec<u8>> {
         let tcp = self.rt.connect_tcp(self.addr).await?;
         let mut stream = fstp_tls::connect(&self.config, &self.server_name, tcp).await?;
+        if !self.pins.is_empty() {
+            let leaf = stream
+                .peer_end_entity_der()
+                .ok_or(io::ErrorKind::PermissionDenied)?;
+            if !self.pins.contains(&fstp_crypto::sha256(leaf)) {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+        }
         stream.write_all(poll).await?;
         stream.flush().await?;
         stream.shutdown().await?;
@@ -413,6 +586,7 @@ pub struct RouteFeed<T: FeedTransport> {
     transport: T,
     keys: Vec<Vec<u8>>,
     routes: LiveRoutes,
+    cache: Option<PathBuf>,
 }
 
 impl<T: FeedTransport> RouteFeed<T> {
@@ -423,7 +597,41 @@ impl<T: FeedTransport> RouteFeed<T> {
             transport,
             keys,
             routes,
+            cache: None,
         }
+    }
+
+    /// The same feed, which keeps the signed bytes of each newer verified
+    /// table at `path` before it applies it (ADR-009 "Pilot route feed",
+    /// row "Signed cache", Daniel, 2026-11-21).
+    #[must_use]
+    pub fn with_cache(mut self, path: PathBuf) -> RouteFeed<T> {
+        self.cache = Some(path);
+        self
+    }
+
+    /// Serves the signed cache, verified again under the feed keys with
+    /// the decoder and checks of the feed. Returns the version served, or
+    /// `None` when there is no cache. A cache no newer than the table
+    /// served changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`FeedError::Cache`] for a cache that cannot be read, and the
+    /// errors of [`verify_route_table`]. A refused cache changes nothing.
+    pub fn load_cache(&self) -> Result<Option<u64>, FeedError> {
+        let Some(path) = &self.cache else {
+            return Ok(None);
+        };
+        let bytes = match read_cache(path) {
+            Ok(Some(b)) => b,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(FeedError::Cache(e.kind())),
+        };
+        let verified = verify_route_table(&self.keys, &bytes)?;
+        self.routes
+            .apply_pinned(verified.version, verified.table, verified.pins);
+        Ok(Some(self.routes.version()))
     }
 
     /// The transport.
@@ -431,22 +639,88 @@ impl<T: FeedTransport> RouteFeed<T> {
         &self.transport
     }
 
+    /// The live routes the feed applies to.
+    pub fn routes(&self) -> &LiveRoutes {
+        &self.routes
+    }
+
     /// Polls once: reports the version the edge serves, checks the table
-    /// that comes back, and applies it when it is newer. It returns the
+    /// that comes back, and applies it with its pins when it is newer. A
+    /// table of the version served changes nothing. It returns the
     /// version the edge serves after the poll.
     ///
     /// # Errors
     ///
-    /// [`FeedError::Io`] when the exchange fails, and the errors of
-    /// [`verify_route_table`]. A refused table changes nothing.
+    /// [`FeedError::Io`] when the exchange fails, the errors of
+    /// [`verify_route_table`], and [`FeedError::Rollback`] for a verified
+    /// table older than the one served. A refused table changes nothing:
+    /// the edge keeps serving its last verified table.
     pub async fn poll_once(&self) -> Result<u64, FeedError> {
+        let serving = self.routes.version();
         let reply = self
             .transport
-            .fetch(&encode_poll(self.routes.version()))
+            .fetch(&encode_poll(serving))
             .await
             .map_err(|e| FeedError::Io(e.kind()))?;
-        let (version, table) = verify_route_table(&self.keys, &reply)?;
-        self.routes.apply(version, table);
+        let verified = verify_route_table(&self.keys, &reply)?;
+        if verified.version < serving {
+            return Err(FeedError::Rollback);
+        }
+        if verified.version > serving
+            && let Some(path) = &self.cache
+        {
+            // The cache holds the table before any poll reports its
+            // version, so a restart never serves an older one (TH-48).
+            write_cache(path, &reply).map_err(|e| FeedError::Cache(e.kind()))?;
+        }
+        self.routes
+            .apply_pinned(verified.version, verified.table, verified.pins);
         Ok(self.routes.version())
     }
+}
+
+/// The cache at `path`, at most [`MAX_SIGNED_TABLE_LEN`] bytes, or `None`
+/// when there is none.
+fn read_cache(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let cap = u64::try_from(MAX_SIGNED_TABLE_LEN)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(cap).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_SIGNED_TABLE_LEN {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    Ok(Some(bytes))
+}
+
+/// Writes the cache so a crash leaves the old one or the new one: a new
+/// file of mode 0600 beside it, synced, renamed over it, and the
+/// directory synced.
+fn write_cache(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let mut tmp_name = path
+        .file_name()
+        .ok_or(io::ErrorKind::InvalidInput)?
+        .to_os_string();
+    tmp_name.push(".new");
+    let tmp = dir.join(tmp_name);
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)?;
+    std::fs::File::open(dir)?.sync_all()
 }

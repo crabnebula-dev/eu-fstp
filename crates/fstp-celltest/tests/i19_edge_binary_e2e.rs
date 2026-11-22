@@ -4,27 +4,29 @@
 //!
 //! The production `fstp-cell` binary runs from its configuration file
 //! (`World::start_external`, lane L4). In front of it, the `fstp-edge`
-//! binary runs from its own configuration file, a static route file and
-//! a credentials directory, as an operator writes them. A browser's
-//! HTTPS request with the tenant SNI then passes through the edge to the
-//! cell's tunnel listener, and the cell answers with its public origin.
+//! binary runs from its own configuration file and credentials
+//! directory, as an operator writes them. Since lane L15 it takes its
+//! routes from the signed route feed of the `fstp-control route-feed`
+//! binary (ADR-009 "Pilot route feed"). A browser's HTTPS request with
+//! the tenant SNI then passes through the edge to the cell's tunnel
+//! listener, and the cell answers with its public origin.
 //!
-//! Both binaries must be built first: `cargo build -p fstp-cell --bin
-//! fstp-cell -p fstp-edge --bin fstp-edge`. The CI part that runs this
-//! test builds them. Every value is synthetic.
+//! The binaries must be built first: `cargo build -p fstp-cell --bin
+//! fstp-cell -p fstp-control --bin fstp-control -p fstp-edge --bin
+//! fstp-edge`. The CI part that runs this test builds them. Every value
+//! is synthetic.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use fstp_celltest::external_cell::ExternalSpec;
+use fstp_celltest::external_edge::PilotFeed;
 use fstp_celltest::world::{DbMode, VaultLayout, World, WorldSpec};
 use fstp_celltest::world_host::{SimProcess, bin_path};
-use fstp_edge::CellEndpoint;
 use fstp_rt::tokio::TokioRuntime;
 use fstp_rt::{IoExt as _, Runtime as _};
 
@@ -33,77 +35,6 @@ const READY: Duration = Duration::from_secs(60);
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn free_port() -> SocketAddr {
-    let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    l.local_addr().unwrap()
-}
-
-fn write_private(path: &Path, bytes: &[u8]) {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .unwrap();
-    f.write_all(bytes).unwrap();
-}
-
-/// The edge process. Dropping it sends SIGTERM and waits for the drain.
-struct Edge {
-    child: Option<Child>,
-}
-
-impl Edge {
-    /// Sends SIGTERM and returns whether the edge exited with status 0.
-    fn stop(&mut self) -> bool {
-        let Some(mut child) = self.child.take() else {
-            return true;
-        };
-        let sent = Command::new("kill")
-            .arg("-TERM")
-            .arg(child.id().to_string())
-            .status()
-            .is_ok_and(|s| s.success());
-        let begun = Instant::now();
-        while sent && begun.elapsed() < Duration::from_secs(60) {
-            if let Ok(Some(status)) = child.try_wait() {
-                return status.success();
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        false
-    }
-}
-
-impl Drop for Edge {
-    fn drop(&mut self) {
-        let _ = self.stop();
-    }
-}
-
-/// The SHA-256 of the end-entity certificate the tunnel server of
-/// `endpoint` presents, as an operator reads it off the certificate.
-fn tunnel_pin(rt: &TokioRuntime, tls: &fstp_tls::ClientConfig, endpoint: &CellEndpoint) -> String {
-    rt.block_on(async {
-        let tcp = rt.connect_tcp(endpoint.address).await.unwrap();
-        let stream = fstp_tls::connect(tls, &endpoint.tls_name, tcp)
-            .await
-            .unwrap();
-        hex(&fstp_crypto::sha256(stream.peer_end_entity_der().unwrap()))
-    })
-}
-
-fn endpoint_json(e: &CellEndpoint, pin: &str) -> String {
-    format!(
-        r#"{{"address":"{}","cert_sha256":"{pin}","server_name":"{}"}}"#,
-        e.address, e.tls_name
-    )
 }
 
 /// A TLS connection through the edge at `edge` with `sni`, verified
@@ -159,9 +90,6 @@ fn i19_r_mc_01_edge_binary_routes_tenant_sni_to_the_cell_binary() {
     let cell_bin = bin_path("fstp-cell").unwrap_or_else(|e| {
         panic!("{e}: run `cargo build -p fstp-cell --bin fstp-cell` before this test")
     });
-    let edge_bin = bin_path("fstp-edge").unwrap_or_else(|e| {
-        panic!("{e}: run `cargo build -p fstp-edge --bin fstp-edge` before this test")
-    });
     let tag = fstp_crypto::random_array::<6>().unwrap();
     let dir: PathBuf = std::env::temp_dir().join(format!("fstp-l9-{}", hex(&tag)));
     std::fs::create_dir_all(&dir).unwrap();
@@ -197,59 +125,19 @@ fn i19_r_mc_01_edge_binary_routes_tenant_sni_to_the_cell_binary() {
         Some(host.as_str())
     );
 
-    // The operator's files: credentials, route file, configuration.
-    let parts = world.edge_tunnel_parts().unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(parts.routes.len(), 1, "{parts:?}");
-    let route = &parts.routes[0];
-    assert_eq!(route.host.as_str(), host);
+    // The operator's files and processes: the pilot route feed of lane
+    // L15 in front of the cell, and the cell's route added through it.
+    let control_custody = SimProcess::spawn(2, &dir).unwrap_or_else(|e| panic!("{e}"));
+    let mut feed = PilotFeed::start(&world, &dir, control_custody.socket(), 1).unwrap_or_else(|e| {
+        panic!("{e}: run `cargo build -p fstp-control --bin fstp-control -p fstp-edge --bin fstp-edge` before this test")
+    });
+    let routes = feed.pinned_routes().unwrap();
+    assert_eq!(routes.len(), 1, "{routes:?}");
+    assert_eq!(routes[0].route.host.as_str(), host);
+    let file = feed.route_file(&routes[0], "cell").unwrap();
+    assert!(feed.add(&file).unwrap().success(), "route add failed");
+    let public = feed.edge_addr();
     let rt = TokioRuntime::new_multi_thread(2).unwrap();
-    let tunnel = fstp_tls::ClientConfig::mutual(
-        &parts.ca_pem,
-        &parts.client_cert_pem,
-        &parts.client_key_pem,
-    )
-    .unwrap();
-    let app_pin = tunnel_pin(&rt, &tunnel, &route.app);
-    let vault_pin = tunnel_pin(&rt, &tunnel, &route.vault);
-    let edge_dir = dir.join("edge");
-    let creds = edge_dir.join("credentials");
-    std::fs::create_dir_all(&creds).unwrap();
-    write_private(&creds.join("tunnel-ca.pem"), &parts.ca_pem);
-    write_private(&creds.join("tunnel.pem"), &parts.client_cert_pem);
-    write_private(&creds.join("tunnel.key"), &parts.client_key_pem);
-    let routes_path = edge_dir.join("routes.json");
-    write_private(
-        &routes_path,
-        format!(
-            r#"{{"routes":[{{"app":{},"cell":"{}","host":"{host}","vault":{}}}]}}"#,
-            endpoint_json(&route.app, &app_pin),
-            hex(&route.app.cell),
-            endpoint_json(&route.vault, &vault_pin),
-        )
-        .as_bytes(),
-    );
-    let public = free_port();
-    let config_path = edge_dir.join("edge.json");
-    write_private(
-        &config_path,
-        format!(
-            r#"{{"credentials_dir":"{}","limits":{{"hello_seconds":10,"open_seconds":10}},"listen":{{"public":"{public}"}},"routes":"{}"}}"#,
-            creds.display(),
-            routes_path.display()
-        )
-        .as_bytes(),
-    );
-
-    let mut edge = Edge {
-        child: Some(
-            Command::new(&edge_bin)
-                .env("FSTP_EDGE_CONFIG", &config_path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .spawn()
-                .unwrap(),
-        ),
-    };
 
     // A browser trusts the public origin CA and sends the tenant SNI.
     let origin = fstp_tls::ClientConfig::new(&world.origin_ca_pem().unwrap()).unwrap();
@@ -264,9 +152,6 @@ fn i19_r_mc_01_edge_binary_routes_tenant_sni_to_the_cell_binary() {
         ) {
             Ok(answer) => break answer,
             Err(e) => {
-                if let Some(Ok(Some(status))) = edge.child.as_mut().map(Child::try_wait) {
-                    panic!("fstp-edge exited before it routed: {status}");
-                }
                 assert!(begun.elapsed() < READY, "the edge never routed: {e}");
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -290,8 +175,13 @@ fn i19_r_mc_01_edge_binary_routes_tenant_sni_to_the_cell_binary() {
     let other = rt.block_on(through_edge(&rt, public, &origin, "other.fstp.localhost"));
     assert!(other.is_err(), "an unknown host was routed");
 
-    assert!(edge.stop(), "the edge did not drain to status 0");
+    assert!(feed.stop_edge(), "the edge did not drain to status 0");
+    assert!(
+        feed.stop_control(),
+        "fstp-control did not drain to status 0"
+    );
+    drop(feed);
     drop(world);
-    drop((custody, key_file_custody));
+    drop((custody, key_file_custody, control_custody));
     let _ = std::fs::remove_dir_all(&dir);
 }
