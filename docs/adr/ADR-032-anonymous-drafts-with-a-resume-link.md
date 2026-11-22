@@ -93,10 +93,10 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 - **Lifetime.** The call's deadline also ends an anonymous draft, when it comes before the 30 days (lead reading, 2026-11-22).
 - **Claim.** The claim stays two calls, `proposal.create` then `proposal.claim_draft`, and the page chains them. A retry reuses the proposal the first call started (lead reading, 2026-11-22).
 
-## Open points for Daniel
+## Open points, closed on 2026-11-22
 
-1. **An emailed code instead of a link.** The signup proof is a link today. A short typed code needs its own attempt limit. Interim: the link only.
-2. **Offering a passkey later (stopped, conflict with I-78).** The lead asked on 2026-11-22 for a dismissible "Add a passkey" prompt after sign-in, through the normal `me.add_passkey` flow and not recovery. That flow cannot complete for an email-only account. I-78 reads: "No high-risk action completes without a phishing-resistant step-up within P-71." `authentication.md` lists "Adding a passkey" as high-risk, says "A magic-link session never adds one", and "An account without a phishing-resistant method cannot perform a high-risk action. It gets a passkey only through a ceremony under First passkey". An email-only account has no phishing-resistant method for the step-up, so the prompt was not built. Options for Daniel: (a) the prompt opens the recovery ceremony `EmailThenPasskey`, which `authentication.md` names for this case; (b) a fourth first-passkey ceremony for email-only accounts, which needs an amendment of `authentication.md` and a decision on I-78; (c) the passkey offer at signup only, as built. Interim: (c).
+1. **An emailed code beside the link.** Decided by Daniel on 2026-11-22: the registration email carries the link and a 6-digit typed code, and either completes the registration (ADR-008, lane L32).
+2. **Offering a passkey later.** Decided by Daniel on 2026-11-22: option (a). A dismissible "Add a passkey" prompt after sign-in sends a fresh link through the existing ceremony "email link, then create passkey" (`EmailThenPasskey`, `authentication.md` "First passkey"). No invariant changes (ADR-008, lane L32).
 
 ## Record
 
