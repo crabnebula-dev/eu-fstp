@@ -31,7 +31,7 @@ No invariant or SPEC rule forbids the design below. The rules that bear on it:
 
 | Topic | Decision | Basis |
 | --- | --- | --- |
-| Where it lives | A new pure crate, `fstp-injscan`: no I/O, no clock, no allocation beyond the bounded output, no third-party crate. It depends on `fstp-unorm` only, for the compatibility caseless key of ADR-029 | CLAUDE.md dependency policy |
+| Where it lives | A new pure crate, `fstp-injscan`: no I/O, no clock, memory linear in the text it scans, no third-party crate. It depends on `fstp-unorm` only, for the compatibility caseless key of ADR-029 | CLAUDE.md dependency policy |
 | When it runs | At submission, on the title, summary and narrative that the submission freezes. At every read that hands proposal text to a model or an agent: the ADR-033 input, `review.read_content` through MCP, and stage 7 of the pipeline (pre-check and the cell assessor) | Daniel, 2026-11-22; TH-01; TH-60 |
 | What it returns | A list of detections. Each has a closed reason, a start and an end in bytes of the scanned text. At most `MAX_DETECTIONS` (64) per text, with a count of the ones left out | Bounded output |
 | Bounds | Linear passes over at most `MAX_SCAN_BYTES` (1 MiB) per text. The submission limits are smaller, so every submitted text is scanned whole. A longer text yields the reason `truncated` for the rest | Bounded time and memory |
