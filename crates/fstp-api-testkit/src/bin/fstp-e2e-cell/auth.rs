@@ -61,9 +61,11 @@ const FIRST_SIGNUP: u128 = 0x0e2e_0000_0000_0001;
 const FIRST_SYNTHETIC_IDENTITY: u64 = 0x0e2e_1d00_0000_0001;
 
 /// The M3 page paths that serve the shell.
-const PAGES: [&str; 6] = [
+const PAGES: [&str; 7] = [
     "/auth/login",
     "/auth/signup",
+    // ADR-032: the anonymous draft page.
+    "/auth/draft",
     "/auth/invite",
     "/auth/magic",
     "/auth/recovery",
@@ -657,6 +659,9 @@ pub(crate) async fn handle(info: &SiteInfo, inner: &Inner, req: Request) -> Resp
         (Method::DELETE, ["auth", "sessions", id]) => end_session(inner, &req, id).await,
         (Method::GET, ["auth", "devices"]) => devices(inner, &req).await,
         (Method::POST, ["auth", "stepup"]) => step_up(inner, &req).await,
+        // ADR-032: the anonymous draft routes.
+        (Method::POST, ["auth", "drafts"]) => crate::anondraft::handle(inner, None, &req),
+        (Method::POST, ["auth", "drafts", op]) => crate::anondraft::handle(inner, Some(op), &req),
         _ => wire::not_found(),
     }
 }
