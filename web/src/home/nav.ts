@@ -146,7 +146,7 @@ export function installThemeSwitch(save: (t: Theme) => Promise<boolean>): void {
 function themeSwitch(save: (t: Theme) => Promise<boolean>): HTMLElement {
   const now = currentTheme();
   const options = THEMES.map((t) => {
-    const attrs: Record<string, string | boolean> = { type: "radio", name: "theme", value: t, id: `theme-` };
+    const attrs: Record<string, string | boolean> = { type: "radio", name: "theme", value: t, id: `theme-${t}` };
     if (t === now) {
       attrs["checked"] = true;
     }
@@ -155,7 +155,7 @@ function themeSwitch(save: (t: Theme) => Promise<boolean>): HTMLElement {
       applyTheme(t);
       void save(t);
     });
-    return h("label", { class: "theme-option", for: `theme-` }, [input, homeLabel(`nav.theme.`)]);
+    return h("label", { class: "theme-option", for: `theme-${t}` }, [input, homeLabel(`nav.theme.${t}`)]);
   });
   return h("fieldset", { class: "theme-switch", "data-slot": "theme" }, [
     h("legend", {}, [homeLabel("nav.theme")]),
@@ -267,7 +267,7 @@ function brandMark(): HTMLElement[] {
   if (logos.light === null && logos.dark === null) {
     return [h("span", { class: "brand-mark", "aria-hidden": "true" }, ["F"]), name];
   }
-  const img = (src: string, mode: string): HTMLElement => h("img", { class: `brand-logo brand-logo--`, src, alt: "" });
+  const img = (src: string, mode: string): HTMLElement => h("img", { class: `brand-logo brand-logo--${mode}`, src, alt: "" });
   const images =
     logos.light !== null && logos.dark !== null
       ? [img(logos.light, "light"), img(logos.dark, "dark")]

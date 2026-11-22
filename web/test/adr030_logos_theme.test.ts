@@ -79,3 +79,19 @@ test("adr030_theme_choices_map_to_data_theme", () => {
     assert(!logoPathOk(bad), `I-68: ${String(bad)} is no logo path`);
   }
 });
+
+test("adr030_sidebar_holds_the_theme_switch_once_the_shell_installs_it", async () => {
+  const { freshDom } = await import("./support/fakedom.js");
+  freshDom();
+  const nav = await import("../src/home/nav.js");
+  const { h } = await import("../src/core/dom.js");
+  const saved: string[] = [];
+  nav.installThemeSwitch(async (t) => {
+    saved.push(t);
+    return true;
+  });
+  const parts = nav.appShell(h("main", {}));
+  const text = parts.map((p) => p.textContent ?? "").join(" ");
+  assert(text.includes("Theme"), "the switch is in the shell");
+  assert(text.includes("System") && text.includes("Light") && text.includes("Dark"), "three choices");
+});
