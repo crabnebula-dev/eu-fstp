@@ -262,6 +262,10 @@ const IRC_ASSIGNEE: AccountId = model(31);
 const IRC_UNDECLARED: AccountId = model(32);
 const IRC_CONFLICTED: AccountId = model(33);
 const IRC_2: AccountId = model(34);
+/// An IRC member whose binding a conflict suspended and whose clash then
+/// ended: the binding `roles.reinstate` names, as the direct harness's
+/// `IRC_REINSTATABLE` (lane L26).
+const IRC_REINSTATABLE: AccountId = model(35);
 const LEAD: AccountId = model(40);
 const TEAM: AccountId = model(41);
 const GUARDIAN: AccountId = model(42);
@@ -750,6 +754,7 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
         IRC_UNDECLARED,
         IRC_CONFLICTED,
         IRC_2,
+        IRC_REINSTATABLE,
         LEAD,
         TEAM,
         GUARDIAN,
@@ -807,11 +812,11 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
     ] {
         w.grant(g, a, p, Role::IrcMember);
     }
+    let reinstatable = w.grant(g, IRC_REINSTATABLE, p, Role::IrcMember);
     w.grant(g, FINANCE, p, Role::FinanceApprover);
     w.grant(g, RELEASER, p, Role::PaymentReleaser);
     w.grant(g, SIGNATORY, p, Role::ContractSignatory);
     w.grant(g, AUDITOR, p, Role::Auditor);
-    w.t.binding_suspended = suspended;
     // The programme manager's binding, which `identity.unmask` names, and
     // the call drafter's, which `roles.end` names.
     {
@@ -914,10 +919,23 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
     let tuple = "pg-matrix-shared-identity";
     w.verify(STAFF_DRAFTER, tuple);
     w.verify(REVIEWER_SUSPENDED, tuple);
-    let now = Timestamp::from_micros(w.now());
-    cell.block_on(cell.cell_engine().unwrap().react_to_vault(now))
-        .unwrap()
-        .unwrap_or_else(|e| panic!("the vault reaction: {e:?}"));
+    w.verify(IRC_REINSTATABLE, tuple);
+    let react = |w: &Pg<'_>| {
+        let now = Timestamp::from_micros(w.now());
+        cell.block_on(cell.cell_engine().unwrap().react_to_vault(now))
+            .unwrap()
+            .unwrap_or_else(|e| panic!("the vault reaction: {e:?}"));
+    };
+    react(&w);
+    // The reinstatable binding, as the direct harness's `reinstatable`:
+    // a seeded verification gives the IRC member its own identity back
+    // (the seeded vault is test code, and its seed path takes a newer
+    // verification of an account), so its I-06 clash ends and its
+    // suspension may be lifted (lane L26).
+    w.verify(IRC_REINSTATABLE, "pg-matrix-own-identity");
+    w.at(w.now() + 1_000_000);
+    react(&w);
+    w.t.binding_suspended = Some(reinstatable);
     {
         let st = w.state();
         let status = st
@@ -932,6 +950,19 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
                 Some(fstp_domain::roles::BindingStatus::Suspended(_))
             ),
             "the suspended reviewer's binding is {status:?}"
+        );
+        let status = st
+            .engine()
+            .core
+            .roster()
+            .binding(reinstatable)
+            .map(|b| b.status);
+        assert!(
+            matches!(
+                status,
+                Some(fstp_domain::roles::BindingStatus::Suspended(_))
+            ),
+            "the reinstatable binding is {status:?}"
         );
     }
     // The ended programme manager.
