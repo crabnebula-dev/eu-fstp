@@ -171,3 +171,29 @@ fn i68_tenant_defaults_are_plain_text() {
         assert!(FundingDefaults::new("Org", bad).is_none(), "{bad:?}");
     }
 }
+
+/// I-70, I-69: the stylesheets of the app, public and sign-in pages give
+/// the card exactly the checked colours, once, in `:root`, and never for
+/// a dark theme, so neither a theme nor a brand token changes them.
+#[test]
+fn i70_card_colours_in_the_stylesheets_are_the_checked_ones() {
+    let hex = |c: fstp_brand::Rgb| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+    for css in [
+        include_str!("../../../web/src/site/tokens.css"),
+        include_str!("../../../web/src/auth/tokens.css"),
+    ] {
+        for (name, colour) in [
+            ("--funding-card-ground", CARD_GROUND.of(ThemeMode::Light)),
+            ("--funding-card-text", CARD_TEXT.of(ThemeMode::Light)),
+            ("--funding-card-label", CARD_LABEL.of(ThemeMode::Light)),
+        ] {
+            let decl = format!("{name}: {};", hex(colour));
+            assert_eq!(css.matches(&decl).count(), 1, "{decl}");
+            assert_eq!(
+                css.matches(&format!("{name}:")).count(),
+                1,
+                "{name} set once"
+            );
+        }
+    }
+}

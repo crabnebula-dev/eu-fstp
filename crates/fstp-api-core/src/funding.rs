@@ -109,6 +109,22 @@ pub fn cards_json(cards: &[FundingCard], defaults: Option<&FundingDefaults>) -> 
     Value::Object(o)
 }
 
+/// The funding card a public page of `programme` shows, each missing
+/// value as "Not set yet" (ADR-034 section 4).
+pub fn public_card(
+    state: &EngineState,
+    programme: ProgrammeId,
+) -> Option<fstp_public::PublicFunding> {
+    let c = card(state, programme)?;
+    let [(_, grant), (_, coordinator), (_, contact)] = c.lines();
+    Some(fstp_public::PublicFunding {
+        programme: c.name.clone(),
+        grant_number: grant.to_owned(),
+        coordinator: coordinator.to_owned(),
+        contact: contact.to_owned(),
+    })
+}
+
 /// The JSON answer of `GET /brand/funding` for `state`.
 pub fn answer(state: &EngineState) -> Value {
     cards_json(&cards(state), defaults(state))

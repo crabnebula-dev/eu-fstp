@@ -234,8 +234,21 @@ pub fn public_logos(ts: Option<&TenantState>, programme: ProgrammeId) -> fstp_pu
         tenant_dark,
         programme_light,
         programme_dark,
-        emblem: EU_EMBLEM_PNG.map(|_| "/brand/eu-emblem.png".to_owned()),
+        // ADR-034: pages show the Funded by the EU logo as SVG.
+        emblem: Some(funding::SVG_PATH.to_owned()),
+        funding: None,
     }
+}
+
+/// The logos of a public page of `programme` with its funding card
+/// (ADR-034, I-69).
+pub fn public_chrome_logos(
+    state: &fstp_engine::EngineState,
+    programme: ProgrammeId,
+) -> fstp_public::PublicLogos {
+    let mut logos = public_logos(state.tenant.state(), programme);
+    logos.funding = crate::funding::public_card(state, programme);
+    logos
 }
 
 /// The plan of a branded message: the colour and the logos with their

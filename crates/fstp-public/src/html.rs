@@ -119,8 +119,26 @@ pub struct PublicLogos {
     pub programme_light: Option<String>,
     /// The programme's dark logo, when it differs from the light one.
     pub programme_dark: Option<String>,
-    /// The platform's EU emblem, once Daniel supplies the file.
+    /// The platform's EU emblem slot: the Funded by the European Union
+    /// logo (ADR-034).
     pub emblem: Option<String>,
+    /// The programme's funding card (ADR-034, I-69), or `None` while the
+    /// creator holds no draft of it.
+    pub funding: Option<PublicFunding>,
+}
+
+/// The funding card of a public page's programme (ADR-034): platform
+/// labels with the programme's values, each shown as text only (I-68).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PublicFunding {
+    /// The programme's name.
+    pub programme: String,
+    /// The grant agreement number.
+    pub grant_number: String,
+    /// The coordinator's name.
+    pub coordinator: String,
+    /// The coordinator's contact.
+    pub contact: String,
 }
 
 /// The footer data of a pinned funder profile: its id, its version and
@@ -261,10 +279,15 @@ const ENTRIES: &[EntrySource<'static>] = &[
         kind: MessageKind::Approved,
         message: "EU funding acknowledgement: the approved wording is pending.",
     },
+    // ADR-034: the words the Funded by the EU logo shows (R-NF-04).
     label(
         "public.footer.eu_emblem_alt",
-        "Emblem of the European Union",
+        "Funded by the European Union",
     ),
+    label("public.footer.funding", "EU funding"),
+    label("public.footer.funding.grant", "Grant agreement number"),
+    label("public.footer.funding.coordinator", "Coordinator"),
+    label("public.footer.funding.contact", "Contact"),
     // TODO(legal): the approved AI disclosure for applicants (R-LA-08, AI
     // Act Article 50). This placeholder states only what the platform
     // does, in the words of the shipped Guide template.
@@ -488,7 +511,8 @@ fn header(
 /// (`data-mandatory="funder_visibility.<key>"`), each with placeholder wording until Daniel
 /// supplies the approved text (TODO(legal), L-08). A page whose programme
 /// pins no shipped profile keeps the platform element only.
-fn footer(funder: Option<&FunderFooter>, emblem: Option<&String>) -> Result<Element, PublicError> {
+fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element, PublicError> {
+    let emblem = logos.emblem.as_ref();
     let item = |key: &'static str, id: &str, approved: bool| {
         let span = Element::new("span").attr("data-mandatory", key);
         let span = if approved {
@@ -524,17 +548,62 @@ fn footer(funder: Option<&FunderFooter>, emblem: Option<&String>) -> Result<Elem
     // acknowledgement, from platform data only. The emblem shows once
     // Daniel supplies the file. TODO(legal): the acknowledgement wording
     // and the emblem usage rules (L-08).
-    let mut funding = Element::new("div").attr("class", "eu-funding");
-    if let Some(path) = emblem {
-        funding = funding.child(
+    //
+    // ADR-034: with the programme's funding card, the slot is a labelled
+    // region keyed `funding_card`, whose logo sits on a white card in both
+    // themes, with the grant agreement number and the coordinator's name
+    // and contact as label and value pairs (I-69, R-NF-04).
+    let logo = match emblem {
+        Some(path) => Some(
             Element::new("img")
                 .attr("class", "eu-emblem")
                 .attr_url("src", url(path)?)
                 .attr_label("alt", &l("public.footer.eu_emblem_alt"), &[]),
-        );
-    }
-    let funding = funding
-        .child(Element::new("span").approved(&ApprovedText::new("public.footer.eu_funding"), &[]));
+        ),
+        None => None,
+    };
+    let acknowledgement =
+        Element::new("span").approved(&ApprovedText::new("public.footer.eu_funding"), &[]);
+    let funding = match &logos.funding {
+        Some(card) => {
+            let pair = |dl: Element, id: &str, value: &str| {
+                dl.child(Element::new("dt").label(&l(id), &[]))
+                    .child(Element::new("dd").text(value))
+            };
+            let dl = pair(
+                Element::new("dl"),
+                "public.footer.funding.grant",
+                &card.grant_number,
+            );
+            let dl = pair(dl, "public.footer.funding.coordinator", &card.coordinator);
+            let dl = pair(dl, "public.footer.funding.contact", &card.contact);
+            let mut section = Element::new("section")
+                .attr("class", "eu-funding funding-card")
+                .attr("data-mandatory", "funding_card")
+                .attr_label("aria-label", &l("public.footer.funding"), &[]);
+            if let Some(img) = logo {
+                section = section.child(img);
+            }
+            section.child(
+                Element::new("div")
+                    .attr("class", "funding-card-text")
+                    .child(
+                        Element::new("p")
+                            .attr("class", "funding-card-name")
+                            .text(&card.programme),
+                    )
+                    .child(dl)
+                    .child(Element::new("p").child(acknowledgement)),
+            )
+        }
+        None => {
+            let mut div = Element::new("div").attr("class", "eu-funding");
+            if let Some(img) = logo {
+                div = div.child(img);
+            }
+            div.child(acknowledgement)
+        }
+    };
     Ok(Element::new("footer").attr("class", "site-footer").child(
         Element::new("div")
             .attr("class", "inner")
@@ -581,10 +650,7 @@ fn page(
                 .attr("class", "page-body page-body--public")
                 .child(main.attr("id", "main-content")),
         )
-        .body(footer(
-            chrome.funder.as_ref(),
-            chrome.logos.emblem.as_ref(),
-        )?))
+        .body(footer(chrome.funder.as_ref(), &chrome.logos)?))
 }
 
 /// A deadline or opening: the instant, then its zone.

@@ -31,7 +31,8 @@ pub use guide::{
     CorrigendaSource, GuideSource, corrigenda, publication_guide, published_guide, served_guide,
 };
 pub use html::{
-    Chrome, FunderFooter, PublicDocument, PublicLogos, PublicPage, render_html, render_traced,
+    Chrome, FunderFooter, PublicDocument, PublicFunding, PublicLogos, PublicPage, render_html,
+    render_traced,
 };
 pub use preview::{draft_guide_preview, draft_public_preview};
 pub use query::{PublicPart, PublicQuery, parse_public_query};
