@@ -1059,6 +1059,11 @@ pub const OPS: &[OpSpec] = &[
     // set changes what every interface shows, so it is high-risk by the
     // same strict reading as the brand tokens. Web only: a logo carries
     // up to 256 KiB, and the admin sees it before it applies.
+    // The acting roles are the tenant admins', as the reference rule of the
+    // matrix body (the tenant slot) has it. A programme manager's right to
+    // that programme's slots (lead reading of 2026-11-22) is judged on the
+    // body's slot by the dispatch and the domain. The acting set feeds only
+    // the P-74 channel policy, and no tool reaches this operation.
     OpSpec::read("tenant.branding.logos", RK::ListLogos, "/admin/branding/logos").acting(ADMIN),
     OpSpec::new(
         "tenant.branding.set_logo",
@@ -1067,7 +1072,7 @@ pub const OPS: &[OpSpec] = &[
         "/admin/branding/logo",
     )
     .hr()
-    .acting(MANAGER_OR_ADMIN),
+    .acting(ADMIN),
     // ADR-030 (lead reading of 2026-11-22): a programme manager reads and
     // sets the logos of the programme. Web only.
     OpSpec::read(
