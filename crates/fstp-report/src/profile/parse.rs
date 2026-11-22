@@ -30,6 +30,8 @@ const MAX_REF: usize = 128;
 const FORMAT: u64 = 1;
 /// The stored status of a wording that waits for approved text.
 const PENDING_LEGAL: &str = "TODO(legal)";
+/// The stored status of a wording Daniel approved (ADR-036).
+const APPROVED: &str = "approved";
 
 /// Why a profile was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,9 +233,13 @@ fn element(v: &Value, id: &str) -> Result<VisibilityElement, ProfileError> {
     if !is_ref(wording, id) {
         return Err(shape("a wording ref is not a ref of the profile"));
     }
-    // Only pending wording exists until Daniel supplies approved text.
+    // ADR-036 section 2: `approved` holds only for a ref whose text the
+    // wording store holds, so no profile claims approval for text that
+    // does not exist.
     let status = match string(w, "status", "a wording status is not a string")? {
         PENDING_LEGAL => WordingStatus::PendingLegal,
+        APPROVED if crate::wording::approved(wording).is_some() => WordingStatus::Approved,
+        APPROVED => return Err(shape("an approved wording has no stored text")),
         _ => return Err(shape("a wording status is unknown")),
     };
     Ok(VisibilityElement {
