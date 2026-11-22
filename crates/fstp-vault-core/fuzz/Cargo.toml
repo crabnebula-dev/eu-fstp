@@ -19,6 +19,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "mask_spans"
+path = "fuzz_targets/mask_spans.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

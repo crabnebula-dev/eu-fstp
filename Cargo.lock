@@ -1116,6 +1116,7 @@ dependencies = [
  "fstp-json",
  "fstp-money",
  "fstp-prop",
+ "fstp-unorm",
  "fstp-vault-proto",
 ]
 

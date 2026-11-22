@@ -23,6 +23,7 @@
 
 pub mod eval;
 pub mod fact;
+pub mod mask;
 pub mod ticket;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
