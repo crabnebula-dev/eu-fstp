@@ -177,6 +177,7 @@ dependencies = [
  "fstp-rt",
  "fstp-sigval",
  "fstp-tenant",
+ "fstp-unorm",
 ]
 
 [[package]]
@@ -456,6 +457,10 @@ dependencies = [
  "rustls-pki-types",
  "webpki-roots",
 ]
+
+[[package]]
+name = "fstp-unorm"
+version = "0.1.0"
 
 [[package]]
 name = "fstp-web"

@@ -974,6 +974,8 @@ Until this lane, `TextStore::set_display_name` failed closed on the production c
 - A name whose key is empty, such as one made only of default ignorables, is refused under SA-11, as the tuple refuses one (row "Field check" of lane L21).
 - Stability: no fingerprint was stored before this lane. The production cell refused every set, and the test kit's store lives in memory only. So no stored fingerprint needs a migration, and the key label stays `v1`. A later change of the key form, such as a new Unicode version, needs a new label and a recompute of every fingerprint from its sealed name.
 
+Tests, written with the code: `sa11_unique_adr029_variants_of_one_name_are_one_name` and `sa11_unique_name_of_ignorables_only_is_empty` (`fstp_api_core::display_name`); `sa11_unique_adr004_display_key_is_derived_from_lookup`, `sa11_unique_production_display_name_is_sealed_unique_and_read_back`, `sa11_unique_i81_replacing_a_name_erases_it_and_replaces_lookup`, `sa11_unique_clearing_a_name_frees_and_erases_it`, `sa11_unique_display_names_survive_a_restart` and `sa11_set_during_a_batch_is_served_after_its_commit` (`crates/fstp-cell/tests/keystore_tables.rs`); `sa11_unique_display_name_index_holds_one_account_per_fingerprint` (over PostgreSQL, `crates/fstp-pgstore/tests/keystore_tables.rs`); `sa11_production_cell_sets_unique_display_names` (the production cell over PostgreSQL, `crates/fstp-celltest/tests/sa11_display_names_pg.rs`).
+
 ### Open points, pending Daniel
 
 - The normaliser choice above, which replaces the "Simpler comparison" of 2026-11-15.
