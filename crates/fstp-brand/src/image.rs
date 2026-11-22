@@ -726,3 +726,43 @@ pub fn sample_png(width: u32, height: u32) -> Vec<u8> {
     chunk(&mut out, b"IEND", &[]);
     out
 }
+
+// ---------------------------------------------------------------- paths
+
+/// The same-origin path a logo is served at: `/brand/`, the 64 lower-case
+/// hex digits of its digest, then `.png` or `.webp` (ADR-030 section 3).
+/// Only digits and a fixed extension, so no tenant text reaches a page.
+pub fn logo_path(digest: &[u8; 32], format: LogoFormat) -> String {
+    let mut out = String::with_capacity(80);
+    out.push_str("/brand/");
+    for b in digest {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out.push('.');
+    out.push_str(format.name());
+    out
+}
+
+const HEX: [u8; 16] = *b"0123456789abcdef";
+
+/// The digest and format a logo path names, if `path` has exactly the
+/// form [`logo_path`] writes.
+pub fn logo_path_digest(path: &str) -> Option<([u8; 32], LogoFormat)> {
+    let rest = path.strip_prefix("/brand/")?;
+    let (hex, ext) = rest.split_once('.')?;
+    let format = LogoFormat::from_name(ext)?;
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (o, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let n = |c: u8| {
+            HEX.iter()
+                .position(|h| *h == c)
+                .and_then(|i| u8::try_from(i).ok())
+        };
+        let (hi, lo) = (n(*pair.first()?)?, n(*pair.get(1)?)?);
+        *o = hi.checked_mul(16)?.checked_add(lo)?;
+    }
+    Some((out, format))
+}

@@ -2,7 +2,9 @@
 //! sections 3.1 step 1, 3.3 and 3.4; R-CT-01, R-GA-02).
 //!
 //! Equal input gives equal bytes. The output has one classic xref table,
-//! no object streams, no xref streams and no filters. It embeds the one
+//! no object streams, no xref streams and no filters, except the image
+//! streams of a letterhead, which pass a PNG's zlib data through
+//! unchanged (ADR-030 section 6). It embeds the one
 //! font of ADR-017 in full as a `CIDFontType2` with `Identity-H`, so every
 //! glyph the font has can be shown. It is tagged: a structure tree, marked
 //! content, `/MarkInfo` and `/Lang` (design section 3.3).
@@ -93,6 +95,64 @@ pub struct Document {
     pub signature_fields: Vec<SignatureField>,
 }
 
+/// The colour space of a letterhead image (ADR-030 section 6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImageColours {
+    /// `/DeviceGray`.
+    Gray,
+    /// `/DeviceRGB`.
+    Rgb,
+    /// `/Indexed` over `/DeviceRGB` with this palette, three bytes per
+    /// entry, 1 to 256 entries.
+    Indexed(Vec<u8>),
+}
+
+/// An opaque PNG passed through by its zlib stream (ADR-030 section 6):
+/// the writer decodes nothing. The caller read these values from the
+/// PNG header (`fstp_brand::image::pdf_image`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Image {
+    /// The width in pixels, 1 to 2048.
+    pub width: u32,
+    /// The height in pixels, 1 to 2048.
+    pub height: u32,
+    /// The colour space.
+    pub colours: ImageColours,
+    /// Bits per component: 1, 2, 4 or 8.
+    pub bits: u8,
+    /// A colour-key mask, two values per component.
+    pub mask: Option<Vec<u16>>,
+    /// The concatenated `IDAT` data.
+    pub data: Vec<u8>,
+}
+
+/// What the first page shows above the text (ADR-030 section 6): the
+/// tenant's and the programme's logos from the left, and the EU emblem
+/// slot on the right. Each is marked as an artifact. An empty letterhead
+/// writes exactly what [`write`] writes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Letterhead {
+    /// The logos, left to right. At most [`MAX_LOGOS`].
+    pub logos: Vec<Image>,
+    /// The EU emblem, once the platform holds it.
+    pub emblem: Option<Image>,
+}
+
+impl Letterhead {
+    /// Whether nothing is shown.
+    pub fn is_empty(&self) -> bool {
+        self.logos.is_empty() && self.emblem.is_none()
+    }
+}
+
+/// Most logos in one letterhead.
+pub const MAX_LOGOS: usize = 2;
+/// The height of the letterhead band, in points.
+pub const LETTERHEAD_HEIGHT: i64 = 40;
+/// The widest image in the band, in points.
+const LETTERHEAD_MAX_WIDTH: i64 = 200;
+const LETTERHEAD_GAP: i64 = 16;
+
 /// Why a document was not written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteError {
@@ -121,6 +181,9 @@ pub enum WriteError {
         /// The field index.
         index: usize,
     },
+    /// A letterhead image breaks the bounds of [`Image`], or there are
+    /// more than [`MAX_LOGOS`] logos.
+    Image,
     /// A size or offset computation overflowed.
     Overflow,
 }
@@ -291,16 +354,150 @@ fn validate(doc: &Document) -> Result<(), WriteError> {
 ///
 /// A [`WriteError`] naming the first fault in `doc`.
 pub fn write(doc: &Document) -> Result<Vec<u8>, WriteError> {
+    write_with_letterhead(doc, &Letterhead::default())
+}
+
+/// One placed letterhead image: the image, its lower-left corner and
+/// its drawn size in points.
+struct Placed<'a> {
+    image: &'a Image,
+    x: i64,
+    y: i64,
+    w: i64,
+    h: i64,
+}
+
+fn image_ok(i: &Image) -> bool {
+    let palette_ok = match &i.colours {
+        ImageColours::Indexed(p) => !p.is_empty() && p.len() % 3 == 0 && p.len() <= 768,
+        _ => true,
+    };
+    let components: usize = match i.colours {
+        ImageColours::Rgb => 3,
+        _ => 1,
+    };
+    (1..=2048).contains(&i.width)
+        && (1..=2048).contains(&i.height)
+        && matches!(i.bits, 1 | 2 | 4 | 8)
+        && !(matches!(i.colours, ImageColours::Rgb) && i.bits != 8)
+        && palette_ok
+        && !i.data.is_empty()
+        && i.mask
+            .as_ref()
+            .is_none_or(|m| Some(m.len()) == components.checked_mul(2))
+}
+
+/// The drawn width and height of `i` in the band: [`LETTERHEAD_HEIGHT`]
+/// high, or narrower when it would pass [`LETTERHEAD_MAX_WIDTH`].
+fn drawn(i: &Image) -> (i64, i64) {
+    let (w, h) = (i64::from(i.width), i64::from(i.height).max(1));
+    let width = w
+        .saturating_mul(LETTERHEAD_HEIGHT)
+        .checked_div(h)
+        .unwrap_or(0);
+    if width <= LETTERHEAD_MAX_WIDTH {
+        (width.max(1), LETTERHEAD_HEIGHT)
+    } else {
+        let height = LETTERHEAD_HEIGHT
+            .saturating_mul(LETTERHEAD_MAX_WIDTH)
+            .checked_div(width)
+            .unwrap_or(0);
+        (LETTERHEAD_MAX_WIDTH, height.max(1))
+    }
+}
+
+/// The images of `head`, placed in the band at the top of the first page.
+fn place(head: &Letterhead) -> Result<Vec<Placed<'_>>, WriteError> {
+    if head.logos.len() > MAX_LOGOS || !head.logos.iter().chain(&head.emblem).all(image_ok) {
+        return Err(WriteError::Image);
+    }
+    let top = TOP.saturating_sub(LETTERHEAD_HEIGHT);
+    let mut out = Vec::new();
+    let mut x = MARGIN;
+    for image in &head.logos {
+        let (w, h) = drawn(image);
+        out.push(Placed {
+            image,
+            x,
+            y: top,
+            w,
+            h,
+        });
+        x = x.saturating_add(w).saturating_add(LETTERHEAD_GAP);
+    }
+    if let Some(image) = &head.emblem {
+        let (w, h) = drawn(image);
+        let x = PAGE_WIDTH.saturating_sub(MARGIN).saturating_sub(w);
+        out.push(Placed {
+            image,
+            x,
+            y: top,
+            w,
+            h,
+        });
+    }
+    Ok(out)
+}
+
+/// The image XObject of `i`: its zlib stream with the PNG predictor.
+fn image_object(i: &Image) -> Vec<u8> {
+    let (space, colours) = match &i.colours {
+        ImageColours::Gray => ("/DeviceGray".to_owned(), 1),
+        ImageColours::Rgb => ("/DeviceRGB".to_owned(), 3),
+        ImageColours::Indexed(p) => {
+            let mut hex = Vec::new();
+            write_hex_string(&mut hex, p);
+            (
+                format!(
+                    "[/Indexed /DeviceRGB {} {}]",
+                    (p.len() / 3).saturating_sub(1),
+                    String::from_utf8_lossy(&hex)
+                ),
+                1,
+            )
+        }
+    };
+    let mask = i.mask.as_ref().map_or(String::new(), |m| {
+        let v: Vec<String> = m.iter().map(u16::to_string).collect();
+        format!(" /Mask [{}]", v.join(" "))
+    });
+    stream(
+        &format!(
+            "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {space} /BitsPerComponent {b} /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors {colours} /BitsPerComponent {b} /Columns {w} >>{mask} /Length {len} >>",
+            w = i.width,
+            h = i.height,
+            b = i.bits,
+            len = i.data.len()
+        ),
+        &i.data,
+    )
+}
+
+/// Renders `doc` as revision 0 with `head` above the text of its first
+/// page (ADR-030 section 6). The images are passed through and marked
+/// as artifacts, so the structure tree is unchanged. An empty `head`
+/// gives the bytes of [`write`].
+///
+/// # Errors
+///
+/// A [`WriteError`] naming the first fault in `doc` or `head`.
+pub fn write_with_letterhead(doc: &Document, head: &Letterhead) -> Result<Vec<u8>, WriteError> {
     validate(doc)?;
+    let placed = place(head)?;
     let font = embedded_font().map_err(WriteError::Font)?;
     let mut shaper = Shaper {
         font: &font,
         used: BTreeMap::new(),
     };
 
-    // Layout.
+    // Layout. A letterhead takes its band at the top of the first page.
     let mut pages: Vec<Page> = vec![Page::default()];
-    let mut y = TOP;
+    let mut y = if placed.is_empty() {
+        TOP
+    } else {
+        TOP.saturating_sub(LETTERHEAD_HEIGHT)
+            .saturating_sub(LETTERHEAD_GAP)
+    };
     for (bi, block) in doc.blocks.iter().enumerate() {
         let (size, leading, before, _) = block.kind.style();
         let lines = shaper.wrap(&block.text, size)?;
@@ -375,6 +572,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, WriteError> {
         .iter()
         .map(|_| (alloc(), alloc(), alloc()))
         .collect();
+    let image_nums: Vec<u32> = placed.iter().map(|_| alloc()).collect();
     let size = next;
     if size >= crate::file::MAX_OBJECT_NUMBER {
         return Err(WriteError::Overflow);
@@ -399,6 +597,21 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, WriteError> {
         let (pnum, cnum) = *page_nums.get(pi).ok_or(WriteError::Overflow)?;
         let mut content = String::new();
         let mut mcid_elems = Vec::new();
+        let mut xobjects = String::new();
+        if pi == 0 {
+            for (n, (p, num)) in placed.iter().zip(&image_nums).enumerate() {
+                content.push_str(&format!(
+                    "/Artifact BMC q {} 0 0 {} {} {} cm /Im{n} Do Q EMC\n",
+                    p.w, p.h, p.x, p.y
+                ));
+                xobjects.push_str(&format!(" /Im{n} {}", r(*num)));
+            }
+        }
+        let xobjects = if xobjects.is_empty() {
+            String::new()
+        } else {
+            format!(" /XObject <<{xobjects} >>")
+        };
         for (mcid, run) in page.runs.iter().enumerate() {
             let kind = doc.blocks.get(run.block).ok_or(WriteError::Overflow)?.kind;
             let (_, _, _, tag) = kind.style();
@@ -431,7 +644,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, WriteError> {
         objs.insert(
             pnum,
             format!(
-                "<< /Type /Page /Parent {} /MediaBox [0 0 {PAGE_WIDTH} {PAGE_HEIGHT}] /Resources << /Font << /F1 {} >> >> /Contents {} /StructParents {pi} /Tabs /S{annots} >>",
+                "<< /Type /Page /Parent {} /MediaBox [0 0 {PAGE_WIDTH} {PAGE_HEIGHT}] /Resources << /Font << /F1 {} >>{xobjects} >> /Contents {} /StructParents {pi} /Tabs /S{annots} >>",
                 r(PAGES),
                 r(TYPE0),
                 r(cnum)
@@ -630,6 +843,9 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, WriteError> {
             EMBEDDED_FONT,
         ),
     );
+    for (p, num) in placed.iter().zip(&image_nums) {
+        objs.insert(*num, image_object(p.image));
+    }
     let cmap = to_unicode(&shaper.used);
     objs.insert(
         TOUNICODE,

@@ -403,3 +403,24 @@ fn b64(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// I-68: a logo path holds only hex digits of the digest and a fixed
+/// extension, and only that form parses back.
+#[test]
+fn i68_logo_path_grammar_is_closed() {
+    use fstp_brand::image::{logo_path, logo_path_digest};
+    let d = [0xAB; 32];
+    let p = logo_path(&d, LogoFormat::Webp);
+    assert_eq!(p, format!("/brand/{}.webp", "ab".repeat(32)));
+    assert_eq!(logo_path_digest(&p), Some((d, LogoFormat::Webp)));
+    for bad in [
+        format!("/brand/{}.svg", "ab".repeat(32)),
+        format!("/brand/{}.png", "AB".repeat(32)),
+        format!("/brand/{}.png", "ab".repeat(31)),
+        format!("/brand/{}.css", "ab".repeat(32)),
+        format!("/brand/{}.png/x", "ab".repeat(32)),
+        format!("/brand/x/{}.png", "ab".repeat(32)),
+    ] {
+        assert_eq!(logo_path_digest(&bad), None, "{bad}");
+    }
+}
