@@ -19,10 +19,13 @@
 //! the raw `std::io::stdout` and `std::io::stderr` handles. A binary writes
 //! its events through [`log_to_stderr`] and [`metric_to_stdout`] instead.
 //!
-//! The crate has no parser, so it has no fuzz project (design section 15).
+//! [`host_status`] holds the crate's one parser, the host status file of the
+//! System page (ADR-028 record of lane L20). Its fuzz target is
+//! `host_status_decode`.
 
 pub mod assurance;
 mod encode;
+pub mod host_status;
 
 use crate::assurance::{Assurance, DeploymentMode, HostCheck};
 pub use crate::encode::{

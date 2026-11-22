@@ -16,7 +16,9 @@ fstp-ledger
 fstp-domain
 fstp-findings
 fstp-engine
-# M3, docs/handoff/m3-design.md section 15. fstp-obs has no parser.
+# M3, docs/handoff/m3-design.md section 15. fstp-obs gained its host status
+# file parser in lane L20 (ADR-028).
+fstp-obs
 fstp-crypto
 fstp-pki
 fstp-keys
