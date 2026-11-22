@@ -510,6 +510,17 @@ pub enum OpKind {
     M3Port(PortKind),
     /// An M5 contract, report or vault ticket operation.
     Grant(GrantKind),
+    /// A batch of commands under one step-up (Q38).
+    Batch(BatchKind),
+}
+
+/// A batch operation kind (Q38, decided by Daniel on 2026-11-22: "Step-up,
+/// batched").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BatchKind {
+    /// The coordinator's assignments and unassignments on one proposal,
+    /// as the engine's `AssignmentBatch`, in one entry under one step-up.
+    Assignments,
 }
 
 /// The input schema of a tool. Interim, pending ADR-013: it states the
@@ -2095,12 +2106,18 @@ pub const OPS: &[OpSpec] = &[
         "/proposals/{proposal}/assignments",
     )
     .acting(COORDINATOR),
+    // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"): assigning
+    // a reviewer grants a Judging role, so assigning and unassigning are
+    // high-risk (authentication.md, I-78), as the cell's gate already
+    // reads them (ADR-008 strict additions). Web only: no tool, so I-85
+    // holds through MCP.
     OpSpec::command(
         "review.assign",
         CK::Assign,
         Post,
         "/proposals/{proposal}/assignments",
     )
+    .hr()
     .acting(COORDINATOR),
     OpSpec::command(
         "review.unassign",
@@ -2108,6 +2125,19 @@ pub const OPS: &[OpSpec] = &[
         Delete,
         "/assignments/{assignment}",
     )
+    .hr()
+    .acting(COORDINATOR),
+    // Q38: many assignments and unassignments on one proposal, confirmed
+    // once. One step-up binds the digest of the whole request; the engine
+    // decides every command in one entry, all or nothing.
+    OpSpec::new(
+        "review.assign_batch",
+        OpKind::Batch(BatchKind::Assignments),
+        Post,
+        "/proposals/{proposal}/assignment-batch",
+    )
+    .binding()
+    .hr()
     .acting(COORDINATOR),
     OpSpec::command(
         "review.admit",
@@ -2261,10 +2291,10 @@ pub const OPS: &[OpSpec] = &[
     // The engine's `Mark` rule admits a reviewer or an IRC assignee.
     .acting(FINDING_MARKER),
     // Issue 6 M3 (Daniel, 2026-11-19): the coordinator asks for the
-    // assessment of a proposal to run again. Like `review.assign` and
-    // `review.admit`, the coordinator's other commands on a proposal, it
-    // is a binding command and not high-risk, so it takes no step-up. The
-    // engine bounds it: one in flight, three in all.
+    // assessment of a proposal to run again. Like `review.admit`, it is a
+    // binding command and not high-risk: it grants no role and binds no
+    // decision (I-10), so it takes no step-up. The engine bounds it: one
+    // in flight, three in all.
     OpSpec::new(
         "assess.rerun",
         OpKind::Finding(FindingKind::RequestRerun),

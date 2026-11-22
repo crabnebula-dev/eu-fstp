@@ -14,12 +14,14 @@
 // - R-CF-04: notifiable conflicts reach the coordinator as drafts.
 
 import { declaredHere, markDeclared } from "./declared.js";
+import { act, anyObject } from "../grant/kit.js";
 import { findingsStatusSection } from "../findings/panel.js";
 import { h, type Child } from "../core/dom.js";
 import type { I18n } from "../core/i18n.js";
 import {
   FormErrors,
   buttonEl,
+  checkbox,
   contentSection,
   declarationBody,
   declarationForm,
@@ -410,28 +412,19 @@ async function mountAssignments(env: PageEnv, params: Readonly<Record<string, st
     const programme = parties.ok ? parties.data.programme : null;
     const parts: Child[] = [checksSection(t, v)];
     const open = ASSIGNABLE.has(v.state);
+    // Q38 (Daniel, 2026-11-22: "Step-up, batched"): the coordinator ticks
+    // the reviewers to add and the assignments to remove, then confirms
+    // all of them once, with one step-up (I-78).
+    const removals: { readonly assignment: string; readonly control: HTMLInputElement }[] = [];
     const assigned = v.assigned.map((a) => {
       const item: Child[] = [a.label];
       if (programme !== null) {
         item.push(" ", unmaskControl(env, t, f, programme, "assignment", a.assignment, a.label));
       }
       if (open) {
-        const remove = buttonEl(`unassign-${a.assignment}`, "button", t.label("coord.assign.remove", { member: a.label }));
-        remove.addEventListener("click", () => {
-          void guarded(f, () =>
-            whileBusy(remove, async () => {
-              f.clearAlert();
-              const answer = await writeOp(env, "review.unassign", { assignment: a.assignment }, undefined);
-              if (!answer.ok) {
-                f.problem(answer.problem);
-                return;
-              }
-              f.status(t.label("coord.assign.removed"));
-              await render();
-            }),
-          );
-        });
-        item.push(" ", remove);
+        const remove = checkbox(`unassign-${a.assignment}`, "unassign", t.label("coord.assign.remove", { member: a.label }));
+        removals.push({ assignment: a.assignment, control: remove.control });
+        item.push(" ", remove.root);
       }
       return h("li", {}, item);
     });
@@ -455,13 +448,17 @@ async function mountAssignments(env: PageEnv, params: Readonly<Record<string, st
       f.show(parts);
       return;
     }
-    const select = selectEl({ id: "assign-reviewer", name: "assign-reviewer" }, [
-      h("option", { value: "" }, [t.label("coord.assign.choose")]),
-      ...v.candidates.map((c) => h("option", { value: c.account }, [c.label])),
-    ]);
+    const additions = v.candidates.map((c) => ({
+      account: c.account,
+      choice: checkbox(`assign-${c.account}`, "assign", t.label("coord.assign.add", { member: c.label })),
+    }));
     const submit = buttonEl("assign-submit", "submit", t.label("coord.assign.submit"));
     const form = formEl("assign-form", [
-      h("div", { class: "fstp-field" }, [h("label", { for: "assign-reviewer" }, [t.label("coord.assign.reviewer")]), select]),
+      h("fieldset", { id: "assign-candidates" }, [
+        h("legend", {}, [t.label("coord.assign.reviewer")]),
+        ...(additions.length === 0 ? [h("p", {}, [t.label("coord.assign.no_candidates")])] : additions.map((a) => a.choice.root)),
+      ]),
+      h("p", { class: "fstp-hint" }, [t.label("coord.assign.once")]),
       submit,
     ]);
     const errors = new FormErrors(form, "assign-errors", t);
@@ -469,19 +466,22 @@ async function mountAssignments(env: PageEnv, params: Readonly<Record<string, st
       ev.preventDefault();
       void guarded(f, () =>
         whileBusy(submit, async () => {
-          const reviewer = select.value;
-          if (reviewer === "") {
-            errors.show([{ control: select, message: t.label("coord.assign.err_reviewer") }]);
+          const assign = additions
+            .filter((a) => a.choice.control.checked)
+            .map((a) => ({ kind: { type: "Reviewer" }, reviewer: a.account }));
+          const unassign = removals.filter((r) => r.control.checked).map((r) => ({ assignment: r.assignment }));
+          if (assign.length === 0 && unassign.length === 0) {
+            errors.show([{ control: additions[0]?.choice.control ?? submit, message: t.label("coord.assign.err_reviewer") }]);
             return;
           }
           errors.clear();
           f.clearAlert();
-          const answer = await writeOp(env, "review.assign", { proposal }, { reviewer, kind: { type: "Reviewer" } });
+          const answer = await act(env, "review.assign_batch", { proposal }, { assign, unassign }, anyObject);
           if (!answer.ok) {
             f.problem(answer.problem);
             return;
           }
-          f.status(t.label("coord.assign.assigned_one"));
+          f.status(t.label("coord.assign.applied"));
           await render();
         }),
       );

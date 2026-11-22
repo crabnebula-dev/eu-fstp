@@ -558,7 +558,12 @@ fn ops_high_risk_and_binding_follow_the_domain() {
     let mut kinds: BTreeSet<String> = BTreeSet::new();
     for o in OPS {
         if let OpKind::Command(k) = o.kind {
-            assert_eq!(o.high_risk, k.high_risk(), "{} high_risk", o.name);
+            // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"):
+            // `Assign` and `Unassign` grant or end a Judging role, so their
+            // operations are high-risk as the cell gate's strict additions
+            // are (ADR-008), although the M2 domain kind is not.
+            let strict = matches!(k, CommandKind::Assign | CommandKind::Unassign);
+            assert_eq!(o.high_risk, k.high_risk() || strict, "{} high_risk", o.name);
             assert_eq!(o.binding, k.binding_action(), "{} binding", o.name);
             checked += 1;
             kinds.insert(kind_name(k));
@@ -591,6 +596,11 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 11] = [
             "admin.approve_self_grant",
             "tenant.grant_signatory",
             "tenant.end_signatory",
+            // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"):
+            // assigning a reviewer grants a Judging role.
+            "review.assign",
+            "review.unassign",
+            "review.assign_batch",
         ],
         "",
     ),

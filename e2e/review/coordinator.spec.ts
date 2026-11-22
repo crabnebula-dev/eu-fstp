@@ -19,7 +19,7 @@
  */
 
 import { expect } from '@playwright/test';
-import { test } from '../playwright.config';
+import { confirmStepUp, test } from '../playwright.config';
 import { REVIEW_API, REVIEW_PAGES, REVIEW_UI } from './contract';
 import {
   apiGet,
@@ -130,14 +130,14 @@ test.describe('J5 FSTP coordinator', () => {
     await openPage(c1, cell.origin, REVIEW_PAGES.assignments(x.id));
     const assign = async (who: 'r1' | 'r2' | 'r4'): Promise<void> => {
       const label = s.people[who].label;
-      await c1.locator(REVIEW_UI.assign.reviewer).selectOption({ label });
-      expect(await clickWrite(c1, REVIEW_UI.assign.submit, /\/assignments$/)).toBeLessThan(300);
+      // Q38: tick the member, apply, and confirm the batch with one
+      // step-up (I-78).
+      await c1.getByLabel(REVIEW_UI.assign.addLabel(label), { exact: true }).check();
+      await c1.locator(REVIEW_UI.assign.submit).click();
+      await confirmStepUp(c1);
       // The page re-renders after the write and drops the assignee from
-      // the select. A choice made before that re-render is reset, and the
-      // next click then sends nothing (CI runs 44100079149, 44100123474).
-      await expect(
-        c1.locator(`${REVIEW_UI.assign.reviewer} option`).filter({ hasText: new RegExp(`^${label}$`) }),
-      ).toHaveCount(0);
+      // the candidates (CI runs 44100079149, 44100123474).
+      await expect(c1.getByLabel(REVIEW_UI.assign.addLabel(label), { exact: true })).toHaveCount(0);
     };
     // R1 and R4 share organisation O1, so P-39 = 2 is not met yet.
     await assign('r1');

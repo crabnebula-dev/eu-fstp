@@ -183,6 +183,7 @@ export type OpName =
   | "review.assignments"
   | "review.assign"
   | "review.unassign"
+  | "review.assign_batch"
   | "review.admit"
   | "review.close_stage1"
   | "review.notifiable_conflicts"
@@ -442,6 +443,7 @@ export interface OpParams {
   readonly "review.assignments": { readonly "proposal": string };
   readonly "review.assign": { readonly "proposal": string };
   readonly "review.unassign": { readonly "assignment": string };
+  readonly "review.assign_batch": { readonly "proposal": string };
   readonly "review.admit": { readonly "proposal": string };
   readonly "review.close_stage1": { readonly "proposal": string };
   readonly "review.notifiable_conflicts": { readonly "call": string };
@@ -674,6 +676,7 @@ export const OP_NAMES: readonly OpName[] = [
   "review.assignments",
   "review.assign",
   "review.unassign",
+  "review.assign_batch",
   "review.admit",
   "review.close_stage1",
   "review.notifiable_conflicts",
@@ -2537,9 +2540,9 @@ export const OPERATIONS: readonly Operation[] = [
     segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "assignments" }],
     params: ["proposal"],
     body: true,
-    highRisk: false,
+    highRisk: true,
     binding: true,
-    session: "any",
+    session: "phishing_resistant",
     classification: "confidential",
     tool: null,
   },
@@ -2551,9 +2554,23 @@ export const OPERATIONS: readonly Operation[] = [
     segments: [{ kind: "literal", text: "assignments" }, { kind: "param", name: "assignment" }],
     params: ["assignment"],
     body: true,
-    highRisk: false,
+    highRisk: true,
     binding: true,
-    session: "any",
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "review.assign_batch",
+    method: "POST",
+    path: "/proposals/{proposal}/assignment-batch",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "assignment-batch" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: true,
+    binding: true,
+    session: "phishing_resistant",
     classification: "confidential",
     tool: null,
   },

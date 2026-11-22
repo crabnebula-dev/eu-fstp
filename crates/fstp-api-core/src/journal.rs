@@ -490,6 +490,12 @@ impl Journal {
             Command::ApprovedSelfGrant(g) => self.fold_core(g.grant(), before, now),
             // ADR-035: a flagged submission is its core `Submit`.
             Command::ScannedSubmit(s) => self.fold_core(s.submit(), before, now),
+            // Q38: an assignment batch is its core commands, in order.
+            Command::AssignmentBatch(b) => {
+                for c in b.commands() {
+                    self.fold_core(c, before, now);
+                }
+            }
             _ => {}
         }
     }

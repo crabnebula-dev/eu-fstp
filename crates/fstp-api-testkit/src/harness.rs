@@ -996,6 +996,17 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
             ("reviewer", dec(ids.member)),
             ("kind", obj(vec![("type", s("Reviewer"))])),
         ]),
+        // Q38: one assignment in a batch, as `review.assign` names it.
+        "review.assign_batch" => obj(vec![
+            (
+                "assign",
+                Value::Array(Array::from(vec![obj(vec![
+                    ("reviewer", dec(ids.member)),
+                    ("kind", obj(vec![("type", s("Reviewer"))])),
+                ])])),
+            ),
+            ("unassign", Value::Array(Array::new())),
+        ]),
         "review.score" => obj(vec![
             ("plan", dec(ids.plan.unwrap_or(1))),
             ("stage", s(stage_of(state))),

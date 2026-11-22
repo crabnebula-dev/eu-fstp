@@ -53,15 +53,15 @@ pub use reads::{
     authorize_read, read_rule,
 };
 pub use registry::{
-    AgentKind, BridgeKind, COMPOSED_ONLY, Classification, CreatorKind, FindingKind, GrantKind,
-    ImportKind, LATER, Method, Milestone, OPS, OpKind, OpSpec, PendingKind, PortKind, PublicKind,
-    RoleOrApplicant, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER, Schema, Scope,
-    SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
+    AgentKind, BatchKind, BridgeKind, COMPOSED_ONLY, Classification, CreatorKind, FindingKind,
+    GrantKind, ImportKind, LATER, Method, Milestone, OPS, OpKind, OpSpec, PendingKind, PortKind,
+    PublicKind, RoleOrApplicant, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER, Schema,
+    Scope, SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
 };
 pub use replies::{
-    BRAND_PAIR_NAMES, ENTRY_KIND_NAMES, ERASURE_CAUSES, HOST_NEXT, INTEGRITY_REASONS, INVITED_ROLES,
-    MAILBOX_KINDS, Member, PART_STATES, REFUSED_STAGE_CODES, REFUSED_STAGE_NAMES, REPLIES, STATE_NAMES, Shape,
-    TEAM_ROLES, invitable, reply, role_wire_name,
+    BRAND_PAIR_NAMES, ENTRY_KIND_NAMES, ERASURE_CAUSES, HOST_NEXT, INTEGRITY_REASONS,
+    INVITED_ROLES, MAILBOX_KINDS, Member, PART_STATES, REFUSED_STAGE_CODES, REFUSED_STAGE_NAMES,
+    REPLIES, STATE_NAMES, Shape, TEAM_ROLES, invitable, reply, role_wire_name,
 };
 
 pub use setup::{

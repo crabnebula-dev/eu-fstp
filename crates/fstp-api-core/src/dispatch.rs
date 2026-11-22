@@ -129,6 +129,7 @@ use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadMod
 
 // ADR-033: the assessment run by the FSTP coordinator's connected agent.
 mod assess;
+mod assign_batch;
 mod audit;
 // ADR-030: logos and themes.
 pub(crate) mod brand;
@@ -848,6 +849,9 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         ))),
         OpKind::Public(kind) => public::read(call, op, kind).await,
         OpKind::Grant(kind) => grant::command(call, op, kind).await,
+        OpKind::Batch(fstp_access::BatchKind::Assignments) => {
+            assign_batch::command(call, op, verdict).await
+        }
     }
 }
 

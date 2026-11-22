@@ -1725,8 +1725,18 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane m4reg: one proposal's assignments, candidates and the P-39 and
     // proximity results as pass or fail, for the assignment screen (J5).
     RefOp::read("review.assignments", T::Proposal, R::AssignmentBoard),
-    RefOp::act("review.assign", T::Proposal, R::Coordinator).binding(),
-    RefOp::act("review.unassign", T::Assignment, R::Coordinator).binding(),
+    // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"): assigning
+    // grants a Judging role, so assigning and unassigning are high-risk
+    // (authentication.md, I-78), one at a time or in one batch.
+    RefOp::act("review.assign", T::Proposal, R::Coordinator)
+        .binding()
+        .hr(),
+    RefOp::act("review.unassign", T::Assignment, R::Coordinator)
+        .binding()
+        .hr(),
+    RefOp::act("review.assign_batch", T::Proposal, R::Coordinator)
+        .binding()
+        .hr(),
     RefOp::act("review.admit", T::Proposal, R::Coordinator).binding(),
     RefOp::act("review.close_stage1", T::Proposal, R::Coordinator).binding(),
     RefOp::read(
