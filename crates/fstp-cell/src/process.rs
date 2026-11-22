@@ -564,6 +564,10 @@ pub struct StartOptions {
     /// here at merge. A test world passes one of its own.
     pub api_relay: Option<ApiRelay>,
     // ---- End of lane L5's block.
+    /// The keystore snapshot writer of the App chain, when the
+    /// configuration names an object store (ADR-012 record of lane L17).
+    /// `None` keeps step 5's in-memory copy.
+    pub keystore_snapshots: Option<fstp_backup::Snapshots>,
 }
 
 impl Default for StartOptions {
@@ -583,6 +587,7 @@ impl Default for StartOptions {
             organisation: crate::public::OrganisationPort::default(),
             web_assets: None,
             api_relay: None,
+            keystore_snapshots: None,
         }
     }
 }
@@ -641,6 +646,7 @@ where
         organisation,
         web_assets,
         api_relay,
+        keystore_snapshots,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -748,6 +754,12 @@ where
         store
     };
     let keystore = Keystore::from_rows(cell, rows, sink)?;
+    // ADR-012 record of lane L17: step 5 takes its snapshots through the
+    // object store, when one is configured.
+    let keystore = match keystore_snapshots {
+        Some(s) => keystore.with_snapshots(s),
+        None => keystore,
+    };
     // ---- End of lane L3's block.
     // The API core asks the vault through a clone of the engine's client.
     let api_vault = vault.clone();

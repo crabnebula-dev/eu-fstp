@@ -191,6 +191,8 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
 //  "mail": {"address": "127.0.0.1:2465", "relay": "smtp.example.eu",
 //           "sender": "noreply@example.eu", "username": "cell"},     optional
 //  "mode": "saas",
+//  "object_store": {"bucket": "fstp-pilot", "endpoint": "s3.gra.io.cloud.ovh.net",
+//                   "region": "gra"},                              optional
 //  "organisation_active": false,                                   optional
 //  "registered_servers": [{"kind": "application", "spki_sha256": "<64 hex>"}],
 //  "vault": {"address": "127.0.0.1:4100"},
@@ -219,7 +221,7 @@ pub const MAX_RECEIPT_KEYS: usize = 8;
 /// The longest encoded witness receipt key, in bytes.
 pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 
-const FILE_MEMBERS: [&str; 18] = [
+const FILE_MEMBERS: [&str; 19] = [
     "assets_dir",
     "cell",
     "credentials_dir",
@@ -232,6 +234,7 @@ const FILE_MEMBERS: [&str; 18] = [
     "listen",
     "mail",
     "mode",
+    "object_store",
     "organisation_active",
     "registered_servers",
     "shell",
@@ -431,6 +434,10 @@ pub struct FileConfig {
     pub organisation_active: bool,
     /// The creator shell's settings (ADR-027), if any.
     pub shell: Option<ShellConfig>,
+    /// The object store of the App chain's keystore snapshots, if one is
+    /// configured (ADR-012 record of lane L17), in the shape `fstp-backup`
+    /// uses.
+    pub object_store: Option<fstp_backup::s3::Endpoint>,
 }
 
 fn file_limits() -> ParseLimits {
@@ -697,6 +704,15 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
             v.as_object().ok_or(ConfigError::Invalid("shell"))?,
         )?),
     };
+    let object_store = match o.get("object_store") {
+        None => None,
+        Some(v) => Some(
+            fstp_backup::config::decode_object_store(
+                v.as_object().ok_or(ConfigError::Invalid("object_store"))?,
+            )
+            .map_err(|_| ConfigError::Invalid("object_store"))?,
+        ),
+    };
     let organisation_active = match o.get("organisation_active") {
         None => false,
         Some(v) => v
@@ -718,6 +734,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
         mail,
         organisation_active,
         shell,
+        object_store,
     })
 }
 
@@ -839,6 +856,32 @@ mod file_tests {
         format!(
             r#"{{"cell":"{CELL}","credentials_dir":"/etc/fstp/cell","database":{{"dbname":"c_{CELL}","host":"db.internal","port":5432}},"host":"grants.example.test","key_file_keyd_socket":"/run/fstp-keyd/cell-keys.sock","keyd_socket":"/run/fstp-keyd/cell.sock","listen":{{"health":"127.0.0.1:9090","internal":"0.0.0.0:7444","tunnel":"0.0.0.0:7443"}},"mode":"saas","registered_servers":[{{"kind":"application","spki_sha256":"{spki}"}}],"vault":{{"address":"127.0.0.1:4100"}},"version":"0.3.0","witness":{{"address":"10.0.0.5:7443","ca_spki_sha256":"{spki}","server_name":"witness.internal"}}{extra}}}"#
         )
+    }
+
+    /// ADR-012 record of lane L17: `object_store` is optional, absent by
+    /// default, and decodes in the shape `fstp-backup` uses. A malformed
+    /// one is refused by name.
+    #[test]
+    fn adr012_cell_config_takes_an_optional_object_store() {
+        assert_eq!(decode_file(file("").as_bytes()).unwrap().object_store, None);
+        let c = decode_file(
+            file(r#","object_store":{"bucket":"fstp-pilot","endpoint":"s3.gra.io.cloud.ovh.net","port":8443,"region":"gra"}"#)
+                .as_bytes(),
+        )
+        .unwrap();
+        let os = c.object_store.unwrap();
+        assert_eq!((os.bucket.as_str(), os.port), ("fstp-pilot", 8443));
+        for bad in [
+            r#","object_store":{"bucket":"fstp-pilot","region":"gra"}"#,
+            r#","object_store":{"bucket":"fstp-pilot","endpoint":"s3.gra.io.cloud.ovh.net","region":"gra","x":1}"#,
+            r#","object_store":"s3""#,
+        ] {
+            assert_eq!(
+                decode_file(file(bad).as_bytes()),
+                Err(ConfigError::Invalid("object_store")),
+                "{bad}"
+            );
+        }
     }
 
     /// ADR-026: the full grammar decodes, with and without its optional

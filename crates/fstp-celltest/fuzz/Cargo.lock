@@ -228,6 +228,7 @@ dependencies = [
  "fstp-api-core",
  "fstp-audit",
  "fstp-auth",
+ "fstp-backup",
  "fstp-cell-core",
  "fstp-checks",
  "fstp-cp-proto",
