@@ -47,16 +47,6 @@
 //!   cell: `me.add_passkey` (a WebAuthn registration over the session's
 //!   own options) and `agents.consent` and `agents.consent_request` (an
 //!   authorize request per cell);
-//! - for now, the operations of ADR-030 (`tenant.branding.logos`,
-//!   `tenant.branding.set_logo`, `me.set_theme`, `programme.logos`), added
-//!   after the sample was
-//!   fixed. Their cells would reshuffle every stratum, and the reshuffled
-//!   sample reaches `me.set_display_name` in a cell whose production text
-//!   store keeps no display names yet (it fails closed under SA-11). That
-//!   is a gap of the cell, recorded for the lead, not of this sample. The
-//!   matrices over fake ports cover the three operations on every channel;
-//!   the request bodies below are ready for when they rejoin, which a
-//!   follow-up lane does once it fixes those display names;
 //! - `Who::SuspendedReviewer` with a magic-link session: the cell refuses
 //!   the login, since M3 design section 8.2 counts a suspended binding as
 //!   held for I-77, while the reference counts it as not held
@@ -143,17 +133,6 @@ const STATES: [StateProfile; 2] = [
 /// Operations whose cells need a ceremony per cell (module documentation).
 const CEREMONY_OPS: [&str; 3] = ["me.add_passkey", "agents.consent", "agents.consent_request"];
 
-/// The operations of ADR-030 (lane L22), left out of the candidates so the
-/// sample stays the one it was (module documentation). Temporary: they
-/// return once production display names (SA-11) work (ADR-030, lead
-/// reading of 2026-11-22).
-const ADR030_OPS: [&str; 4] = [
-    "tenant.branding.logos",
-    "tenant.branding.set_logo",
-    "me.set_theme",
-    "programme.logos",
-];
-
 /// A SplitMix64 stream.
 struct Mix(u64);
 
@@ -207,7 +186,6 @@ fn sample() -> BTreeMap<StateProfile, Vec<(Cell, Expected)>> {
             if cell.session.login == Some(Login::Opaque)
                 || !realisable(cell.who)
                 || CEREMONY_OPS.contains(&cell.op)
-                || ADR030_OPS.contains(&cell.op)
                 || (cell.who == Who::SuspendedReviewer
                     && cell.session.login == Some(Login::MagicLink))
             {

@@ -961,7 +961,7 @@ Until this lane, `TextStore::set_display_name` failed closed on the production c
 | Replace and clear | The old fingerprint leaves the index at once, so the name is free at once. The old text's data key gets an erasure request in the chain state directly, at the sequence of the ledger head, and its batch starts at once. The batch gives the `Lookup` group a new generation (G24) |
 | Step 2 | A batch that gives `Lookup` a new generation recomputes the fingerprint of every live display name from its sealed text under the new key, beside the login email digests. Step 4 commits both. A name whose text the batch erases leaves the index |
 | A batch in flight | A set that arrives while a batch is before its commit first runs that batch to its commit, then is served. So a person who changes the name twice in a row is not refused. A step that fails answers `Unavailable`, and the person tries again |
-| Erasure log | No ledger record names a display name text (SA-11 reading "A display name changes no domain fact"). So the erasure of a replaced or cleared name writes no `ErasureRequested` record. The batch's `KeyEpochDestroyed` records the key destruction. Open for Daniel: whether such an erasure needs an erasure-log row of its own |
+| Erasure log | No ledger record names a display name text (SA-11 reading "A display name changes no domain fact"). So the erasure of a replaced or cleared name writes no `ErasureRequested` record. The batch's `KeyEpochDestroyed` records the key destruction. A later lane adds an erasure-log row (lead reading, 2026-11-22) |
 | Account erasure | The production cell has no account erasure path yet. `Keystore::display_text` names the text, as `Keystore::login_text` does, for that path. When a batch erases that text, the name leaves the index at the commit |
 | Reads | `TextStore::display_names` releases names only to the team read, the member read and the account's own read, as the test kit's store does (`clears`). No other read shows a name, so no Judging read model and no applicant read carries one (I-17, P-11, R-AN-01). No message carries one (I-27) |
 | Snapshot image | The keystore image of ADR-012 holds the display name texts among its text rows, but not the index rows, as it holds no signing key rows yet. The index rows are in the keystore tables, which the cell's backups hold |
@@ -976,8 +976,8 @@ Until this lane, `TextStore::set_display_name` failed closed on the production c
 
 Tests, written with the code: `sa11_unique_adr029_variants_of_one_name_are_one_name` and `sa11_unique_name_of_ignorables_only_is_empty` (`fstp_api_core::display_name`); `sa11_unique_adr004_display_key_is_derived_from_lookup`, `sa11_unique_production_display_name_is_sealed_unique_and_read_back`, `sa11_unique_i81_replacing_a_name_erases_it_and_replaces_lookup`, `sa11_unique_clearing_a_name_frees_and_erases_it`, `sa11_unique_display_names_survive_a_restart` and `sa11_set_during_a_batch_is_served_after_its_commit` (`crates/fstp-cell/tests/keystore_tables.rs`); `sa11_unique_display_name_index_holds_one_account_per_fingerprint` (over PostgreSQL, `crates/fstp-pgstore/tests/keystore_tables.rs`); `sa11_production_cell_sets_unique_display_names` (the production cell over PostgreSQL, `crates/fstp-celltest/tests/sa11_display_names_pg.rs`).
 
-### Open points, pending Daniel
+### Lead reading, 2026-11-22
 
-- The normaliser choice above, which replaces the "Simpler comparison" of 2026-11-15.
-- An erasure-log row for a replaced or cleared display name (row "Erasure log").
-- The index rows in the keystore image (row "Snapshot image").
+- The normaliser: `fstp_unorm::name_key` for display names is accepted, consistent with Daniel's NFKC choice for identity names (ADR-029). It replaces the "Simpler comparison" of 2026-11-15.
+- The erasure log: no erasure-log row for a replaced or cleared display name for now. A later lane adds one (row "Erasure log").
+- The snapshot image need not hold the index rows, since they are derived from the sealed texts under the `Lookup` key (row "Snapshot image").

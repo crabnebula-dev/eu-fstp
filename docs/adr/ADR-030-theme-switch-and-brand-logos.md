@@ -108,7 +108,7 @@ No MCP tool is added. `fstp_prepare_branding` stays for the colour tokens only. 
 5. Logos with soft transparency in PDFs (section 6).
 6. The EU emblem file, its alternative text and the usage rules. TODO(legal): the emblem usage rules and the acknowledgement wording (L-08).
 7. Interim, pending Daniel: only the contract PDF carries the letterhead. Funder reports and the Guide PDF are pinned and re-rendered from their records, so their letterhead must first be pinned in those records. That is left for a later lane.
-8. Interim, pending Daniel: the PostgreSQL matrix sample leaves the three ADR-030 operations out. With them, the sample reaches `me.set_display_name` in a production cell, whose text store keeps no display names yet and fails closed under SA-11. That is a gap of the cell for the lead. The matrices over fake ports cover the three operations.
+8. Closed by lane L26 on 2026-11-22: the PostgreSQL matrix sample no longer leaves the ADR-030 operations out. Production display names work (SA-11, ADR-004 section "Written by lane L26"), so `me.set_theme`, `tenant.branding.logos`, `tenant.branding.set_logo` and `programme.logos` are candidates of the sample like every other operation.
 9. Interim, pending Daniel: no MCP prepare tool for logos (section 4).
 
 ## Lead reading, 2026-11-22
@@ -118,7 +118,7 @@ Under the usability rule, the lead decided these for the lane. Each replaces the
 1. `me.set_theme` is a personal display preference, not organisation data. The setup gate of ADR-021 lets it through before activation, onboarding pages included (`fstp_access::PERSONAL_PREFERENCE_OPS`). It stays a ledger record as built (section 1, open question 1).
 2. A programme manager of a programme sets that programme's logos, with the same step-up as a tenant admin. The domain asks the shell for the programme's managers (`TenantQuery::ProgrammeManagers`) and the engine answers from the roster. A tenant logo stays the tenant admins' (section 2, open question 4). Programme managers read the programme's logos through `programme.logos` on the page `/app/programmes/{programme}/logo`, which the programme's set-up progress page links.
 3. A follow-up lane writes an in-house inflate and a PNG decoder and encoder, with no new crate. Uploads are then re-encoded, alpha is flattened for PDFs, and the cell checks logo contrast. The seam is `fstp_brand::image::reencode`, which every upload already passes, `pdf_image` and `header_contrast` (open questions 2, 3 and 5).
-4. The exclusion of the ADR-030 operations from the PostgreSQL matrix sample is temporary. A follow-up lane fixes production display names (SA-11), then adds the three operations and `programme.logos` back to the sample (open question 8).
+4. The exclusion of the ADR-030 operations from the PostgreSQL matrix sample was temporary. Lane L26 fixed production display names (SA-11) and put the four operations back into the sample on 2026-11-22 (open question 8).
 5. Reports and the Guide PDF, MCP prepare tools for logos, and the theme on signed-in `/auth` pages come later (open questions 7 and 9, section 1). Daniel supplies the EU emblem file (open question 6).
 
 ## Lead reading, 2026-11-22, with the codec of ADR-031

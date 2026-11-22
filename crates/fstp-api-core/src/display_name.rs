@@ -10,7 +10,7 @@
 //!   one space. Lane L26 chose it in place of the "Simpler comparison" of
 //!   2026-11-15, which trimmed, collapsed and lower-cased only, because no
 //!   workspace code did NFC or case folding then (ADR-004, section
-//!   "Written by lane L26", interim, pending Daniel). Two encodings of one
+//!   "Written by lane L26", lead reading of 2026-11-22). Two encodings of one
 //!   accented name, case variants such as "Straße" and "STRASSE", and a
 //!   name with a zero width joiner inside are each one name.
 //! - [`fingerprint_key`] derives the fingerprint key from the tenant

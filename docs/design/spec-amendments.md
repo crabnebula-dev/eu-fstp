@@ -351,5 +351,5 @@ Readings, pending Daniel:
 #### Built by lane L26 `prod/display-names`, 2026-11-22: the production cell
 
 - The production cell's text store sets and reads display names. ADR-004, section "Written by lane L26", holds the readings: the sealed text, the `Lookup` subject, the index table of migration `0012_display_name.sql`, and the recompute at step 2.
-- Normalisation, interim, pending Daniel: `fstp_api_core::display_name::normalised` is `fstp_unorm::name_key` now (ADR-029). It replaces the "Simpler comparison" above, since an in-house NFC and case folding exists. Two encodings of one accented name, "Straße" and "STRASSE", and a name with a zero width joiner inside are each one name. A name whose key is empty is refused under SA-11.
-- A replaced or cleared name is erased through the erasure runner at once. No ledger record names it, so it has no erasure-log row in the ledger yet. Open for Daniel.
+- Normalisation, lead reading of 2026-11-22: `fstp_api_core::display_name::normalised` is `fstp_unorm::name_key` now (ADR-029). It replaces the "Simpler comparison" above, since an in-house NFC and case folding exists. Two encodings of one accented name, "Straße" and "STRASSE", and a name with a zero width joiner inside are each one name. A name whose key is empty is refused under SA-11.
+- A replaced or cleared name is erased through the erasure runner at once. No ledger record names it, so it has no erasure-log row in the ledger yet. Lead reading of 2026-11-22: none for now, a later lane adds one.
