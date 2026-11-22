@@ -91,6 +91,17 @@ pub fn finding_queries(
             .map(|(by, f)| conflict_query(&state.core, by, f.proposal))
             .into_iter()
             .collect()),
+        FindingCommand::ReadAssessmentInput { call, proposal, .. }
+        | FindingCommand::RecordClientAssessment { call, proposal, .. } => {
+            let Actor::Account(by) = ctx.actor else {
+                return Ok(Vec::new());
+            };
+            Ok(client_basis(&state.core, by, *call, *proposal, ctx.now)
+                .ok()
+                .map(|()| conflict_query(&state.core, by, *proposal))
+                .into_iter()
+                .collect())
+        }
         FindingCommand::Record(_)
         | FindingCommand::Regenerate { .. }
         | FindingCommand::RequestRerun { .. }
@@ -114,7 +125,55 @@ pub fn decide_finding(
     shared_checks(state, ctx)?;
     let core = &state.core;
     let store = &state.findings;
+    let records = match cmd {
+        FindingCommand::ReadAssessmentInput {
+            call,
+            proposal,
+            input,
+        } => {
+            let by = client_actor(state, *call, *proposal, ctx, answers)?;
+            vec![FindingRecord::AssessmentInputRead {
+                call: *call,
+                proposal: *proposal,
+                by,
+                input: *input,
+            }]
+        }
+        FindingCommand::RecordClientAssessment {
+            call,
+            proposal,
+            run,
+            findings,
+            refused,
+        } => {
+            let by = client_actor(state, *call, *proposal, ctx, answers)?;
+            client_records(store, *call, *proposal, by, run, findings, refused)?
+        }
+        other => vec![decide_one(state, other, ctx, answers)?],
+    };
+    let mut trial = store.clone();
+    for record in &records {
+        check_fold(core, &trial, record, ctx.now)
+            .map_err(|_| Refusal::new(RuleRef::I11, RefusalReason::GuardFailed))?;
+        trial.apply_at(record, ctx.now).map_err(store_refusal)?;
+    }
+    Ok(records)
+}
+
+/// The one record of every finding command but the two of ADR-033.
+fn decide_one(
+    state: &EngineState,
+    cmd: &FindingCommand,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<FindingRecord, Refusal> {
+    let core = &state.core;
+    let store = &state.findings;
     let record = match cmd {
+        FindingCommand::ReadAssessmentInput { .. }
+        | FindingCommand::RecordClientAssessment { .. } => {
+            return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+        }
         FindingCommand::Record(f) => decide_record(core, store, f, ctx)?,
         FindingCommand::Mark { finding, mark } => {
             decide_mark(state, *finding, *mark, ctx, answers)?
@@ -201,11 +260,161 @@ pub fn decide_finding(
             }
         }
     };
-    check_fold(core, store, &record, ctx.now)
-        .map_err(|_| Refusal::new(RuleRef::I11, RefusalReason::GuardFailed))?;
-    let mut trial = store.clone();
-    trial.apply_at(&record, ctx.now).map_err(store_refusal)?;
-    Ok(vec![record])
+    Ok(record)
+}
+
+/// The coordinator of an ADR-033 command, after [`client_basis`] and a
+/// fresh `HasConflict` answer of false at the state's epoch (I-03), as
+/// every read of content asks.
+fn client_actor(
+    state: &EngineState,
+    call: CallId,
+    proposal: ProposalId,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<AccountId, Refusal> {
+    let Actor::Account(by) = ctx.actor else {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+    };
+    client_basis(&state.core, by, call, proposal, ctx.now)?;
+    match answers.get(&conflict_query(&state.core, by, proposal)) {
+        None => Err(Refusal::new(
+            RuleRef::FactsIncomplete,
+            RefusalReason::AnswerMissing,
+        )),
+        Some(a) if a.epoch != state.core.epoch() => Err(Refusal::new(
+            RuleRef::StaleFacts,
+            RefusalReason::AnswerStale,
+        )),
+        Some(a) if a.holds => Err(Refusal::new(RuleRef::I03, RefusalReason::VaultRefused)),
+        Some(_) => Ok(by),
+    }
+}
+
+/// The records of one client assessment (ADR-033): the provenance, one
+/// `Recorded` per finding and the refusal list, which also ends a re-run
+/// in flight. Each finding names the run's call, proposal and trace, and
+/// the call's pin, which the trial fold checks (I-11).
+fn client_records(
+    store: &FindingStore,
+    call: CallId,
+    proposal: ProposalId,
+    by: AccountId,
+    run: &fstp_findings::ClientRun,
+    findings: &[Finding],
+    refused: &[fstp_findings::RefusedStage],
+) -> Result<Vec<FindingRecord>, Refusal> {
+    let invalid = || Refusal::new(RuleRef::Input, RefusalReason::InvalidValue);
+    if findings.len() > fstp_findings::MAX_CLIENT_FINDINGS
+        || refused.len() > fstp_findings::MAX_REFUSED
+    {
+        return Err(invalid());
+    }
+    if findings
+        .iter()
+        .any(|f| f.call != call || f.proposal != proposal || f.trace != run.trace)
+    {
+        return Err(invalid());
+    }
+    store.check_client_run(proposal).map_err(store_refusal)?;
+    let mut out = Vec::with_capacity(findings.len().saturating_add(2));
+    out.push(FindingRecord::ClientAssessed {
+        call,
+        proposal,
+        by,
+        run: run.clone(),
+    });
+    out.extend(findings.iter().cloned().map(FindingRecord::Recorded));
+    out.push(FindingRecord::RefusalsRecorded {
+        call,
+        proposal,
+        refused: refused.to_vec(),
+    });
+    Ok(out)
+}
+
+/// What an ADR-033 command needs from the core, also when its record is
+/// folded (without the vault answer):
+///
+/// - the call is published and its frozen P-21 names the client path;
+/// - `by` holds an active FSTP coordinator binding in its programme;
+/// - the proposal is a proposal of the call in a state where the
+///   coordinator reads its content: SUBMITTED, or STAGE1 and STAGE2 under
+///   P-10 "operator staff only" (R-AC-01);
+/// - `by` declared no conflict on it and holds no conflict fact (I-03,
+///   R-CF-02);
+/// - `by` holds no reviewer or IRC assignment on it, in any status, so no
+///   scorer of the proposal produces its findings (ADR-033).
+fn client_basis(
+    core: &State,
+    by: AccountId,
+    call: CallId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> Result<(), Refusal> {
+    use fstp_domain::policy::ReadAccess;
+    use fstp_domain::roles::Role;
+    use fstp_domain::rules::ParamId;
+    // The actor first, then the path: a caller who is no coordinator of
+    // the call's programme learns nothing of its P-21.
+    let Some(programme) = core.calls().get(call).map(CallView::programme) else {
+        return Err(Refusal::new(RuleRef::I11, RefusalReason::UnknownEntity));
+    };
+    if !core.roster().bindings().any(|(_, b)| {
+        b.account == by
+            && b.role == Role::FstpCoordinator
+            && b.programme == programme
+            && b.active_at(now)
+    }) {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
+    }
+    let (_, frozen) = published(core, call)?;
+    if !fstp_findings::client_run(&frozen.values().p21) {
+        return Err(Refusal::new(
+            RuleRef::Param(ParamId::P21),
+            RefusalReason::GuardFailed,
+        ));
+    }
+    if !proposal_in_call(core, proposal, call) {
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity));
+    }
+    let open = match fstp_domain::view::proposal_state(core, proposal) {
+        Some(fstp_domain::StateTag::Submitted) => true,
+        Some(fstp_domain::StateTag::Stage1 | fstp_domain::StateTag::Stage2) => {
+            frozen.values().p10 == ReadAccess::OperatorStaffOnly
+        }
+        _ => false,
+    };
+    if !open {
+        return Err(Refusal::new(RuleRef::Rac01, RefusalReason::WrongState));
+    }
+    let review = core.review();
+    if review.conflict_fact(by, proposal) {
+        return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    if !review.cleared(by, proposal) {
+        return Err(Refusal::new(RuleRef::Rcf02, RefusalReason::GuardFailed));
+    }
+    if review
+        .assignments()
+        .any(|(_, a)| a.reviewer == by && a.proposal == proposal)
+    {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+    }
+    Ok(())
+}
+
+/// The model a client run must report (ADR-033, I-11): the frozen P-21
+/// primary, or the fallback at the call's current position.
+fn client_model<'a>(
+    frozen: &'a FrozenPolicy,
+    store: &FindingStore,
+    call: CallId,
+) -> Option<&'a fstp_domain::policy::ModelRef> {
+    match store.fallback_of(call) {
+        None => Some(&frozen.values().p21.primary),
+        Some(k) => fallback_model(frozen, k),
+    }
 }
 
 /// The checks of a stored finding record that need the core (I-11, I-12).
@@ -245,6 +454,24 @@ pub fn check_fold(
                 return Err(FoldError::Inconsistent);
             }
             Ok(())
+        }
+        FindingRecord::AssessmentInputRead {
+            call, proposal, by, ..
+        } => client_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent),
+        FindingRecord::ClientAssessed {
+            call,
+            proposal,
+            by,
+            run,
+        } => {
+            client_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)?;
+            let (_, frozen) = published(core, *call).map_err(|_| FoldError::Inconsistent)?;
+            // I-11: the run reports the model the call pins.
+            if client_model(frozen, store, *call) == Some(&run.model) {
+                Ok(())
+            } else {
+                Err(FoldError::Inconsistent)
+            }
         }
         FindingRecord::RerunRequested { call, proposal, by } => {
             check_rerun_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)
@@ -593,7 +820,9 @@ fn store_refusal(r: FindingRefusal) -> Refusal {
         FindingRefusal::RerunInFlight { .. }
         | FindingRefusal::RerunLimit { .. }
         | FindingRefusal::NoRerunInFlight { .. }
-        | FindingRefusal::RerunNotStale { .. } => RefusalReason::GuardFailed,
+        | FindingRefusal::RerunNotStale { .. }
+        | FindingRefusal::ClientRunTaken { .. }
+        | FindingRefusal::InputNotRead { .. } => RefusalReason::GuardFailed,
         FindingRefusal::TooManyRefused { .. } => RefusalReason::InvalidValue,
         FindingRefusal::UnknownFinding { .. } => RefusalReason::UnknownEntity,
         FindingRefusal::WrongCall { .. } | FindingRefusal::MalformedEvidence { .. } => {
@@ -612,7 +841,9 @@ fn fold_error(r: FindingRefusal) -> FoldError {
         | FindingRefusal::RerunLimit { .. }
         | FindingRefusal::TooManyRefused { .. }
         | FindingRefusal::NoRerunInFlight { .. }
-        | FindingRefusal::RerunNotStale { .. } => FoldError::Inconsistent,
+        | FindingRefusal::RerunNotStale { .. }
+        | FindingRefusal::ClientRunTaken { .. }
+        | FindingRefusal::InputNotRead { .. } => FoldError::Inconsistent,
         FindingRefusal::UnknownFinding { .. } => FoldError::UnknownEntity,
         FindingRefusal::ForeignConfig { .. }
         | FindingRefusal::RetiredConfig { .. }

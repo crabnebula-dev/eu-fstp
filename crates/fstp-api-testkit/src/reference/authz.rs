@@ -1746,6 +1746,14 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Issue 6 M3: the coordinator runs the assessment of a proposal again.
     // Binding, not high-risk, as the coordinator's `review.assign`.
     RefOp::act("assess.rerun", T::Proposal, R::Coordinator).binding(),
+    // ADR-033: the assessment run by the coordinator's connected agent. The
+    // engine judges the P-21 path, the state, the declaration and the
+    // assignments after the actor, and those refusals are guards.
+    RefOp::read("assess.client_queue", T::Call, R::Coordinator)
+        .tool("fstp_assessment_list_proposals"),
+    RefOp::read("assess.client_input", T::Proposal, R::Coordinator)
+        .tool("fstp_assessment_get_input"),
+    RefOp::act("assess.client_submit", T::Proposal, R::Coordinator).tool("fstp_assessment_submit"),
     // J7: the committee.
     RefOp::read("committee.ranking", T::PublishedCall, R::Committee).tool("fstp_get_ranking_view"),
     RefOp::read("committee.round", T::Round, R::Committee),

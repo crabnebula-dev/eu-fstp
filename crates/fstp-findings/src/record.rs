@@ -7,7 +7,9 @@
 use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
 use fstp_domain::policy::ModelRef;
 
-use crate::finding::{Finding, FindingId, Mark, RefusedStage, RerunEnd};
+use fstp_domain::id::ContentDigest;
+
+use crate::finding::{ClientRun, Finding, FindingId, Mark, RefusedStage, RerunEnd};
 
 /// A command on findings, decided by `decide_finding` in `fstp-engine`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -70,6 +72,34 @@ pub enum FindingCommand {
         proposal: ProposalId,
         /// Why.
         reason: RerunEnd,
+    },
+    /// The FSTP coordinator of the call reads the assessable input of
+    /// `proposal` for its connected agent (ADR-033, R-AU-01). `input` is
+    /// the digest of what the cell serves. The decider asks the vault
+    /// for a conflict, as for every read of content (I-03).
+    ReadAssessmentInput {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The digest of the served input.
+        input: ContentDigest,
+    },
+    /// The FSTP coordinator of the call records the assessment its
+    /// connected agent made of `proposal` (ADR-033). The findings carry
+    /// the call's pin and the run's trace. The refused replies are
+    /// stages and codes only (I-10).
+    RecordClientAssessment {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The provenance of the run.
+        run: ClientRun,
+        /// The validated findings with located evidence.
+        findings: Vec<Finding>,
+        /// The replies the validator dropped, possibly none.
+        refused: Vec<RefusedStage>,
     },
 }
 
@@ -134,5 +164,32 @@ pub enum FindingRecord {
         proposal: ProposalId,
         /// Why.
         reason: RerunEnd,
+    },
+    /// `by`, the FSTP coordinator of the call, read the assessable input
+    /// of `proposal` for a connected agent (ADR-033). This is the
+    /// read's ledger record (R-AU-01). The latest one of each account
+    /// binds its next client assessment of the proposal.
+    AssessmentInputRead {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The coordinator's account.
+        by: AccountId,
+        /// The digest of the served input.
+        input: ContentDigest,
+    },
+    /// `by` recorded the assessment its connected agent made of
+    /// `proposal` (ADR-033). It precedes the run's `Recorded` findings
+    /// and its `RefusalsRecorded`, in the same entry.
+    ClientAssessed {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The coordinator's account.
+        by: AccountId,
+        /// The provenance of the run.
+        run: ClientRun,
     },
 }

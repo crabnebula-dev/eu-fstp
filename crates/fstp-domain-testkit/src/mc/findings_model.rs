@@ -1215,6 +1215,11 @@ fn named_ids(cmd: &FindingCommand) -> Vec<u128> {
         FindingCommand::RequestRerun { .. }
         | FindingCommand::AbandonRerun { .. }
         | FindingCommand::RecordRefusals { .. } => Vec::new(),
+        // ADR-033: the twin does not generate them.
+        FindingCommand::ReadAssessmentInput { .. } => Vec::new(),
+        FindingCommand::RecordClientAssessment { findings, .. } => {
+            findings.iter().map(|f| f.id.raw()).collect()
+        }
     }
 }
 
@@ -1333,7 +1338,9 @@ impl StateMachine for TwinMachine {
                     | FindingCommand::Regenerate { .. }
                     | FindingCommand::RequestRerun { .. }
                     | FindingCommand::AbandonRerun { .. }
-                    | FindingCommand::RecordRefusals { .. } => None,
+                    | FindingCommand::RecordRefusals { .. }
+                    | FindingCommand::ReadAssessmentInput { .. }
+                    | FindingCommand::RecordClientAssessment { .. } => None,
                 };
                 let mut es = EngineState::new(sut.b.sod.state.clone(), sut.b_store.clone());
                 es.finding_floor = sut.b_floor;

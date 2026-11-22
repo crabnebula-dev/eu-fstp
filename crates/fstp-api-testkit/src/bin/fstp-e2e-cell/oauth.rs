@@ -90,6 +90,9 @@ fn scope_text(s: fstp_oauth::Scope) -> &'static str {
         S::TenantDraft => {
             "Read your organisation's funder profiles and check brand colours. Prepare changes to funder profiles, brand tokens and interface labels. Nothing changes until you confirm each change in the platform."
         }
+        S::AssessRun => {
+            "Run the AI assessment of proposals you may read: read their text with personal data replaced, and record advisory findings. Nothing else."
+        }
     }
 }
 

@@ -95,6 +95,15 @@ pub(crate) fn untrusted_string(g: &mut Gen) -> String {
     }
 }
 
+/// A generated digest.
+pub(crate) fn digest(g: &mut Gen) -> ContentDigest {
+    let mut d = [0u8; 32];
+    for b in &mut d {
+        *b = g.u8();
+    }
+    ContentDigest::from_bytes(d)
+}
+
 /// A text reference with a generated id and digest.
 pub(crate) fn text_ref(g: &mut Gen) -> TextRef {
     let id = TextId::from_raw(u128_any(g));
@@ -175,7 +184,26 @@ pub(crate) fn any_finding(g: &mut Gen) -> Finding {
 
 /// A finding record of any variant.
 pub(crate) fn any_record(g: &mut Gen) -> FindingRecord {
-    match g.u8_in(0..=5) {
+    match g.u8_in(0..=7) {
+        6 => FindingRecord::AssessmentInputRead {
+            call: CallId::from_raw(u128_any(g)),
+            proposal: ProposalId::from_raw(u128_any(g)),
+            by: AccountId::from_raw(u128_any(g)),
+            input: digest(g),
+        },
+        7 => FindingRecord::ClientAssessed {
+            call: CallId::from_raw(u128_any(g)),
+            proposal: ProposalId::from_raw(u128_any(g)),
+            by: AccountId::from_raw(u128_any(g)),
+            run: fstp_findings::ClientRun {
+                model: ModelRef(
+                    (*g.pick(&["claude-opus-5-5", "claude-sonnet-5-5[1m]", "m"])).to_owned(),
+                ),
+                prompt_set: digest(g),
+                input: digest(g),
+                trace: TraceRef::from_raw(u128_any(g)),
+            },
+        },
         5 => FindingRecord::RerunAbandoned {
             call: CallId::from_raw(u128_any(g)),
             proposal: ProposalId::from_raw(u128_any(g)),
@@ -227,6 +255,8 @@ pub(crate) fn statements(record: &FindingRecord) -> Vec<String> {
         FindingRecord::Marked { .. }
         | FindingRecord::RerunRequested { .. }
         | FindingRecord::RerunAbandoned { .. }
+        | FindingRecord::AssessmentInputRead { .. }
+        | FindingRecord::ClientAssessed { .. }
         | FindingRecord::RefusalsRecorded { .. } => Vec::new(),
         FindingRecord::Regenerated { findings, .. } => findings
             .iter()

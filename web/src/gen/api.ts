@@ -51,7 +51,8 @@ export type Scope =
   | "creator:draft"
   | "calls:draft"
   | "audit:read"
-  | "tenant:draft";
+  | "tenant:draft"
+  | "assess:run";
 
 /** The name of an operation of the registry. */
 export type OpName =
@@ -199,6 +200,9 @@ export type OpName =
   | "assess.findings_status"
   | "review.mark_finding"
   | "assess.rerun"
+  | "assess.client_queue"
+  | "assess.client_input"
+  | "assess.client_submit"
   | "committee.ranking"
   | "committee.open_round"
   | "committee.round"
@@ -453,6 +457,9 @@ export interface OpParams {
   readonly "assess.findings_status": { readonly "call": string };
   readonly "review.mark_finding": { readonly "finding": string };
   readonly "assess.rerun": { readonly "proposal": string };
+  readonly "assess.client_queue": { readonly "call": string };
+  readonly "assess.client_input": { readonly "proposal": string };
+  readonly "assess.client_submit": { readonly "proposal": string };
   readonly "committee.ranking": { readonly "call": string };
   readonly "committee.open_round": { readonly "call": string };
   readonly "committee.round": { readonly "round": string };
@@ -680,6 +687,9 @@ export const OP_NAMES: readonly OpName[] = [
   "assess.findings_status",
   "review.mark_finding",
   "assess.rerun",
+  "assess.client_queue",
+  "assess.client_input",
+  "assess.client_submit",
   "committee.ranking",
   "committee.open_round",
   "committee.round",
@@ -2780,6 +2790,48 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "assess.client_queue",
+    method: "GET",
+    path: "/calls/{call}/client-assessment",
+    base: "api",
+    segments: [{ kind: "literal", text: "calls" }, { kind: "param", name: "call" }, { kind: "literal", text: "client-assessment" }],
+    params: ["call"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_assessment_list_proposals", scope: "assess:run", prepareOnly: false },
+  },
+  {
+    name: "assess.client_input",
+    method: "GET",
+    path: "/proposals/{proposal}/client-assessment/input",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "client-assessment" }, { kind: "literal", text: "input" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_assessment_get_input", scope: "assess:run", prepareOnly: false },
+  },
+  {
+    name: "assess.client_submit",
+    method: "POST",
+    path: "/proposals/{proposal}/client-assessment",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "client-assessment" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_assessment_submit", scope: "assess:run", prepareOnly: false },
+  },
+  {
     name: "committee.ranking",
     method: "GET",
     path: "/calls/{call}/ranking",
@@ -4805,6 +4857,74 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "rerun": { schema: { kind: "enum", values: ["available", "in_flight", "used_up"] }, optional: false },
     },
   } },
+  "assess.client_queue": {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "open": { schema: { kind: "bool" }, optional: false },
+      "model": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+      "prompt_set": { schema: {
+        kind: "object",
+        fields: {
+          "version": { schema: { kind: "string" }, optional: false },
+          "digest": { schema: { kind: "string" }, optional: false },
+        },
+      }, optional: false },
+      "proposals": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "proposal": { schema: { kind: "id" }, optional: false },
+          "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
+          "status": { schema: { kind: "enum", values: ["awaiting", "assessed", "rerun"] }, optional: false },
+          "declared": { schema: { kind: "bool" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "assess.client_input": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+      "input_digest": { schema: { kind: "string" }, optional: false },
+      "model": { schema: { kind: "string" }, optional: false },
+      "prompt_set": { schema: {
+        kind: "object",
+        fields: {
+          "version": { schema: { kind: "string" }, optional: false },
+          "digest": { schema: { kind: "string" }, optional: false },
+        },
+      }, optional: false },
+      "tasks": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "stage": { schema: { kind: "enum", values: ["completeness", "quality", "claims", "integrity"] }, optional: false },
+          "criterion": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "elements": { schema: { kind: "array", items: { kind: "string" } }, optional: false },
+        },
+      } }, optional: false },
+      "parts": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "label": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "assess.client_submit": {
+    kind: "object",
+    fields: {
+      "recorded": { schema: { kind: "int" }, optional: false },
+      "refused": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "stage": { schema: { kind: "enum", values: ["completeness", "quality", "claims", "verify", "integrity"] }, optional: false },
+          "code": { schema: { kind: "enum", values: ["json", "unknown_member", "shape", "score_like", "criterion", "element", "kind", "too_long"] }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "review.stage2_thread": {
     kind: "object",
     fields: {
@@ -4855,7 +4975,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     fields: {
       "client": { schema: { kind: "id" }, optional: false },
       "name": { schema: { kind: "string" }, optional: true },
-      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft"] } }, optional: false },
+      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft", "assess:run"] } }, optional: false },
       "method": { schema: { kind: "enum", values: ["passkey", "magic_link", "opaque", "eudi_wallet"] }, optional: false },
       "since": { schema: { kind: "string" }, optional: true },
       "until": { schema: { kind: "string" }, optional: true },
@@ -4868,7 +4988,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "name": { schema: { kind: "string" }, optional: true },
       "redirect_host": { schema: { kind: "string" }, optional: false },
       "loopback": { schema: { kind: "bool" }, optional: false },
-      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft"] } }, optional: false },
+      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft", "assess:run"] } }, optional: false },
       "expires": { schema: { kind: "string" }, optional: false },
     },
   },

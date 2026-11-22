@@ -270,23 +270,29 @@ fn finding_kind_of(c: &FindingCommand) -> FindingKind {
         FindingCommand::RequestRerun { .. } => FindingKind::RequestRerun,
         FindingCommand::RecordRefusals { .. } => FindingKind::RecordRefusals,
         FindingCommand::AbandonRerun { .. } => FindingKind::AbandonRerun,
+        FindingCommand::ReadAssessmentInput { .. } => FindingKind::ReadInput,
+        FindingCommand::RecordClientAssessment { .. } => FindingKind::RecordClient,
     }
 }
 
 /// Every finding kind. The match in `finding_kind_of` ties this list to
 /// `FindingCommand`, and the one below ties it to `FindingKind`.
-const FINDING_KINDS: [FindingKind; 6] = [
+const FINDING_KINDS: [FindingKind; 8] = [
     FindingKind::Record,
     FindingKind::Mark,
     FindingKind::Regenerate,
     FindingKind::RequestRerun,
     FindingKind::RecordRefusals,
     FindingKind::AbandonRerun,
+    FindingKind::ReadInput,
+    FindingKind::RecordClient,
 ];
 
 fn finding_routed(k: FindingKind) -> bool {
     match k {
-        FindingKind::Mark | FindingKind::RequestRerun => true,
+        FindingKind::Mark | FindingKind::RequestRerun | FindingKind::RecordClient => true,
+        // ADR-033: appended by the read `assess.client_input`.
+        FindingKind::ReadInput => false,
         FindingKind::Record
         | FindingKind::Regenerate
         | FindingKind::RecordRefusals

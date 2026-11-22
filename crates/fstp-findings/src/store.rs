@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
+use fstp_domain::id::{AccountId, CallId, ContentDigest, LlmConfigId, ProposalId};
 use fstp_domain::refusal::RuleRef;
 use fstp_domain::time::Timestamp;
 
@@ -122,6 +122,18 @@ pub enum FindingRefusal {
         /// The finding.
         finding: FindingId,
     },
+    /// ADR-033: the proposal holds a client assessment and no re-run is
+    /// in flight, so another is refused.
+    ClientRunTaken {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// ADR-033: the client assessment names an input its account did not
+    /// read last on the proposal.
+    InputNotRead {
+        /// The proposal.
+        proposal: ProposalId,
+    },
 }
 
 impl FindingRefusal {
@@ -138,7 +150,9 @@ impl FindingRefusal {
             | FindingRefusal::RerunLimit { .. }
             | FindingRefusal::TooManyRefused { .. }
             | FindingRefusal::NoRerunInFlight { .. }
-            | FindingRefusal::RerunNotStale { .. } => RuleRef::I10,
+            | FindingRefusal::RerunNotStale { .. }
+            | FindingRefusal::ClientRunTaken { .. } => RuleRef::I10,
+            FindingRefusal::InputNotRead { .. } => RuleRef::Input,
             FindingRefusal::WrongCall { .. }
             | FindingRefusal::UnknownFinding { .. }
             | FindingRefusal::MalformedEvidence { .. } => RuleRef::Input,
@@ -178,6 +192,11 @@ pub struct FindingStore {
     /// The re-runs of each proposal: how many were requested, and the call
     /// and request instant of the one still in flight (issue 6 M3).
     reruns: BTreeMap<ProposalId, (u32, Option<(CallId, Timestamp)>)>,
+    /// The digest of the latest assessable input each account read on
+    /// each proposal (ADR-033).
+    client_reads: BTreeMap<(ProposalId, AccountId), ContentDigest>,
+    /// How many client assessments each proposal holds (ADR-033).
+    client_runs: BTreeMap<ProposalId, u32>,
 }
 
 impl FindingStore {
@@ -189,6 +208,8 @@ impl FindingStore {
             retired: BTreeSet::new(),
             refusals: BTreeMap::new(),
             reruns: BTreeMap::new(),
+            client_reads: BTreeMap::new(),
+            client_runs: BTreeMap::new(),
         }
     }
 
@@ -247,6 +268,28 @@ impl FindingStore {
         }
         Ok(())
     }
+    /// How many client assessments `proposal` holds (ADR-033).
+    pub fn client_runs_of(&self, proposal: ProposalId) -> u32 {
+        self.client_runs.get(&proposal).copied().unwrap_or(0)
+    }
+
+    /// The digest of the latest assessable input `by` read on `proposal`
+    /// (ADR-033), if any.
+    pub fn client_read(&self, proposal: ProposalId, by: AccountId) -> Option<ContentDigest> {
+        self.client_reads.get(&(proposal, by)).copied()
+    }
+
+    /// Whether a client assessment of `proposal` may be recorded now
+    /// (ADR-033): the proposal holds none yet, or a coordinator's re-run
+    /// of it is in flight.
+    pub fn check_client_run(&self, proposal: ProposalId) -> Result<(), FindingRefusal> {
+        if self.client_runs_of(proposal) == 0 || self.rerun_in_flight(proposal).is_some() {
+            Ok(())
+        } else {
+            Err(FindingRefusal::ClientRunTaken { proposal })
+        }
+    }
+
     /// The configuration of `call`'s findings, or `None` when the call
     /// holds no findings and has never been regenerated.
     pub fn config_of(&self, call: CallId) -> Option<LlmConfigId> {
@@ -522,6 +565,28 @@ impl FindingStore {
                 if let Some(r) = self.reruns.get_mut(proposal) {
                     r.1 = None;
                 }
+                Ok(())
+            }
+            FindingRecord::AssessmentInputRead {
+                proposal,
+                by,
+                input,
+                ..
+            } => {
+                self.client_reads.insert((*proposal, *by), *input);
+                Ok(())
+            }
+            FindingRecord::ClientAssessed {
+                proposal, by, run, ..
+            } => {
+                if self.client_read(*proposal, *by) != Some(run.input) {
+                    return Err(FindingRefusal::InputNotRead {
+                        proposal: *proposal,
+                    });
+                }
+                self.check_client_run(*proposal)?;
+                let n = self.client_runs_of(*proposal);
+                self.client_runs.insert(*proposal, n.saturating_add(1));
                 Ok(())
             }
             FindingRecord::RefusalsRecorded {

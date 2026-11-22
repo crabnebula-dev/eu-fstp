@@ -181,6 +181,7 @@ name = "fstp-api-core"
 version = "0.1.0"
 dependencies = [
  "fstp-access",
+ "fstp-assess",
  "fstp-brand",
  "fstp-contract",
  "fstp-creator",
@@ -191,6 +192,7 @@ dependencies = [
  "fstp-guide",
  "fstp-html",
  "fstp-import",
+ "fstp-infer",
  "fstp-journey",
  "fstp-json",
  "fstp-ledger",

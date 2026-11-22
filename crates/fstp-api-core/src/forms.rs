@@ -692,6 +692,11 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::Finding(fstp_access::FindingKind::Mark) => BodyRule::Exactly(&["mark"]),
         // Issue 6 M3: `assess.rerun` names the proposal in its path only.
         OpKind::Finding(fstp_access::FindingKind::RequestRerun) => BodyRule::Empty,
+        // ADR-033: the input digest, the prompt set digest, the model the
+        // client reports, and one reply per task.
+        OpKind::Finding(fstp_access::FindingKind::RecordClient) => {
+            BodyRule::Exactly(&["input_digest", "model", "prompt_set", "replies"])
+        }
         OpKind::M3Port(PortKind::DeclareAffiliations) => BodyRule::Exactly(&["affiliations"]),
         OpKind::M3Port(PortKind::StateBirthDate) => BodyRule::Exactly(&["date_of_birth"]),
         // MB-Q1, ADR-020: the message id of the notice to mark read.

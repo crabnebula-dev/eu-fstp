@@ -110,6 +110,14 @@ const fn opt(name: &'static str, shape: Shape) -> Member {
 /// section 7): the in-memory synthetic model of a demo cell, or a model.
 const ASSESSOR_NAMES: &[&str] = &["synthetic", "model"];
 
+/// The stages a client assessment answers (ADR-033): every stage but
+/// verification, which needs the retrieval proxy.
+const CLIENT_STAGE_NAMES: &[&str] = &["completeness", "quality", "claims", "integrity"];
+
+/// The prompt set a client assessment names (ADR-033): its version and
+/// digest.
+const PROMPT_SET: Shape = Shape::Object(&[m("version", Shape::String), m("digest", Shape::String)]);
+
 /// The stage names a refused-stage notice may carry, as
 /// `fstp_assess::Stage::as_str` spells them (issue 6 M3, I-10, H-03).
 pub const REFUSED_STAGE_NAMES: &[&str] =
@@ -372,6 +380,7 @@ const SCOPE_NAMES: &[&str] = &[
     "calls:draft",
     "audit:read",
     "tenant:draft",
+    "assess:run",
 ];
 
 /// The party kinds of an unmask (ADR-023), as
@@ -1423,6 +1432,66 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("refused", Shape::Int),
             m("rerun", Shape::Enum(&["available", "in_flight", "used_up"])),
         ])),
+    ),
+    // ADR-033: the queue names proposals by id and state, never a title.
+    (
+        "assess.client_queue",
+        Shape::Object(&[
+            m("call", Shape::Id),
+            m("open", Shape::Bool),
+            m("model", Shape::Nullable(&Shape::String)),
+            m("prompt_set", PROMPT_SET),
+            m(
+                "proposals",
+                Shape::Array(&Shape::Object(&[
+                    m("proposal", Shape::Id),
+                    m("state", Shape::Enum(OWN_STATE_NAMES)),
+                    m("status", Shape::Enum(&["awaiting", "assessed", "rerun"])),
+                    m("declared", Shape::Bool),
+                ])),
+            ),
+        ]),
+    ),
+    // ADR-033: the stripped submission under closed labels, and the tasks
+    // as closed values. The texts are data (TH-60).
+    (
+        "assess.client_input",
+        Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("call", Shape::Id),
+            m("input_digest", Shape::String),
+            m("model", Shape::String),
+            m("prompt_set", PROMPT_SET),
+            m(
+                "tasks",
+                Shape::Array(&Shape::Object(&[
+                    m("stage", Shape::Enum(CLIENT_STAGE_NAMES)),
+                    m("criterion", Shape::Nullable(&Shape::String)),
+                    m("elements", Shape::Array(&Shape::String)),
+                ])),
+            ),
+            m(
+                "parts",
+                Shape::Array(&Shape::Object(&[
+                    m("label", Shape::Enum(&["title", "summary", "narrative"])),
+                    m("text", Shape::String),
+                ])),
+            ),
+        ]),
+    ),
+    // ADR-033, I-10: a count and the dropped replies as closed names.
+    (
+        "assess.client_submit",
+        Shape::Object(&[
+            m("recorded", Shape::Int),
+            m(
+                "refused",
+                Shape::Array(&Shape::Object(&[
+                    m("stage", Shape::Enum(REFUSED_STAGE_NAMES)),
+                    m("code", Shape::Enum(REFUSED_STAGE_CODES)),
+                ])),
+            ),
+        ]),
     ),
     // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.
     (

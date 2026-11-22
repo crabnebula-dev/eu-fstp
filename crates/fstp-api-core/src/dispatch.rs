@@ -127,6 +127,8 @@ use crate::port::{
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
+// ADR-033: the assessment run by the FSTP coordinator's connected agent.
+mod assess;
 mod audit;
 // ADR-030: logos and themes.
 pub(crate) mod brand;
@@ -834,6 +836,7 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         OpKind::Tenant(kind) => tenant::command(call, op, kind, verdict, None).await,
         OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(call, op).await,
         OpKind::Finding(fstp_access::FindingKind::RequestRerun) => finding_rerun(call, op).await,
+        OpKind::Finding(fstp_access::FindingKind::RecordClient) => assess::submit(call, op).await,
         // `Record`, `Regenerate` and `RecordRefusals` are the assessor's,
         // through no route.
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
@@ -2130,6 +2133,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             })
         }
         ReadKind::GetPrecheckRuns => precheck::runs(call, op, account).await?,
+        ReadKind::GetAssessmentQueue => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            assess::queue(call, op, a)?
+        }
+        ReadKind::GetAssessmentInput => return assess::input(call, op, &clearance).await,
         ReadKind::GetFindingsStatus => {
             let c = call_param(call, op)?;
             ReadModel::FindingsStatus(precheck::findings_status(call, c))

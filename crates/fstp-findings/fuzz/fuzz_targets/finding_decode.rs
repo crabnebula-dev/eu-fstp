@@ -28,6 +28,8 @@ fn statements(record: &FindingRecord) -> Vec<Vec<u8>> {
         FindingRecord::Marked { .. }
         | FindingRecord::RerunRequested { .. }
         | FindingRecord::RerunAbandoned { .. }
+        | FindingRecord::AssessmentInputRead { .. }
+        | FindingRecord::ClientAssessed { .. }
         | FindingRecord::RefusalsRecorded { .. } => Vec::new(),
         FindingRecord::Regenerated { findings, .. } => findings
             .iter()

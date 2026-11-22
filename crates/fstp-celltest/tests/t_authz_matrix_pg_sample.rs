@@ -1695,6 +1695,14 @@ fn body_of(w: &Pg<'_>, op: &str, state: StateProfile) -> Value {
         ]),
         "committee.cast" => obj(vec![("vote", s("For"))]),
         "review.mark_finding" => obj(vec![("mark", s("Agreed"))]),
+        // ADR-033: a well-formed submission with no reply. The engine judges
+        // the caller and the P-21 path before the body is read.
+        "assess.client_submit" => obj(vec![
+            ("input_digest", s(&"0".repeat(64))),
+            ("model", s("synthetic-model")),
+            ("prompt_set", s(&"0".repeat(64))),
+            ("replies", Value::Array(Array::new())),
+        ]),
         "committee.delegate" => obj(vec![("to", dec(w.id(MEMBER).raw()))]),
         "irc.review" => obj(vec![("verdict", obj(vec![("type", s("Validate"))]))]),
         "grant.determine_amount" => obj(vec![
