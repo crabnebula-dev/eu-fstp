@@ -14,7 +14,10 @@
 // Thresholds (ADR-028 record of lane L20, interim, pending Daniel beyond
 // those of `fstp-admin status`): the host report is old after one hour;
 // a backup is late after 36 hours and missing after 72; a certificate is
-// late under 2 days left and urgent under 1.
+// late under 2 days left and urgent under 1. A keystore snapshot is late
+// after 36 hours on a host with backups, as `fstp-admin status` reads it,
+// and a failed last try is a problem (ADR-028 records of lanes L27 and
+// L26).
 
 /** A part's state in the host report. */
 export const PART_STATES = ["running", "unhealthy", "stopped"] as const;
@@ -30,6 +33,7 @@ export const HOST_NEXT = [
   "public_certificate",
   "configure_backups",
   "backup",
+  "keystore_snapshot",
   "web_admins",
   "verify_admins",
   "copy_keys",
@@ -50,6 +54,12 @@ export interface HostReport {
   readonly lastBackup: bigint | null;
   readonly lastKeyCopy: bigint | null;
   readonly lastVaultErasure: bigint | null;
+  /** When the cell's keystore snapshot last verified. */
+  readonly lastAppSnapshot: bigint | null;
+  readonly appSnapshotFailed: boolean;
+  /** When the vault's keystore snapshot last verified. */
+  readonly lastVaultSnapshot: bigint | null;
+  readonly vaultSnapshotFailed: boolean;
   readonly certificateDays: number | null;
   readonly selfSigned: boolean;
   readonly route: "current" | "mismatch" | "unknown";
@@ -95,6 +105,10 @@ function host(v: unknown): HostReport | null {
     "last_backup",
     "last_key_copy",
     "last_vault_erasure",
+    "last_app_snapshot",
+    "app_snapshot_failed",
+    "last_vault_snapshot",
+    "vault_snapshot_failed",
     "certificate_days",
     "self_signed",
     "route",
@@ -113,12 +127,18 @@ function host(v: unknown): HostReport | null {
   const lastBackup = o["last_backup"] === null ? null : instant(o["last_backup"]);
   const lastKeyCopy = o["last_key_copy"] === null ? null : instant(o["last_key_copy"]);
   const lastVaultErasure = o["last_vault_erasure"] === null ? null : instant(o["last_vault_erasure"]);
+  const lastAppSnapshot = o["last_app_snapshot"] === null ? null : instant(o["last_app_snapshot"]);
+  const lastVaultSnapshot = o["last_vault_snapshot"] === null ? null : instant(o["last_vault_snapshot"]);
+  const { app_snapshot_failed: appSnapshotFailed, vault_snapshot_failed: vaultSnapshotFailed } = o;
   const days = o["certificate_days"];
   const { setup_done: setupDone, backups_configured: backupsConfigured, self_signed: selfSigned, route, next } = o;
   if (writtenAt === null) return null;
   if (o["last_backup"] !== null && lastBackup === null) return null;
   if (o["last_key_copy"] !== null && lastKeyCopy === null) return null;
   if (o["last_vault_erasure"] !== null && lastVaultErasure === null) return null;
+  if (o["last_app_snapshot"] !== null && lastAppSnapshot === null) return null;
+  if (o["last_vault_snapshot"] !== null && lastVaultSnapshot === null) return null;
+  if (typeof appSnapshotFailed !== "boolean" || typeof vaultSnapshotFailed !== "boolean") return null;
   if (days !== null && !(typeof days === "number" && Number.isSafeInteger(days) && days >= 0)) return null;
   if (typeof setupDone !== "boolean" || typeof backupsConfigured !== "boolean" || typeof selfSigned !== "boolean") return null;
   if (!oneOf(route, ["current", "mismatch", "unknown"] as const) || !oneOf(next, HOST_NEXT)) return null;
@@ -130,6 +150,10 @@ function host(v: unknown): HostReport | null {
     lastBackup,
     lastKeyCopy,
     lastVaultErasure,
+    lastAppSnapshot,
+    appSnapshotFailed,
+    lastVaultSnapshot,
+    vaultSnapshotFailed,
     certificateDays: days,
     selfSigned,
     route,
@@ -166,7 +190,7 @@ export type Light = "green" | "amber" | "red" | "unknown";
 export type Actor = "host" | "you";
 
 /** The rows of the page, in order. */
-export const ROW_IDS = ["report", "cell", "vault", "services", "edge", "mail", "backups", "keys", "certificates"] as const;
+export const ROW_IDS = ["report", "cell", "vault", "services", "edge", "mail", "backups", "keys", "snapshots", "certificates"] as const;
 /** One row id. */
 export type RowId = (typeof ROW_IDS)[number];
 
@@ -190,6 +214,8 @@ export const REPORT_MAX_AGE = HOUR;
 export const BACKUP_LATE = 36n * HOUR;
 /** The backup age shown as a problem (interim, pending Daniel). */
 export const BACKUP_MISSING = 72n * HOUR;
+/** The keystore snapshot age that `fstp-admin status` calls late (ADR-028 record of lane L27). */
+export const SNAPSHOT_LATE = 36n * HOUR;
 
 /** An age in plain words: the label id and its count. */
 export function ageOf(micros: bigint): { readonly label: string; readonly n: string } {
@@ -239,7 +265,7 @@ export function lastErasure(r: SystemReply): bigint | null {
 function hostRows(r: SystemReply): Row[] {
   const h = r.host;
   if (h === null) {
-    return (["services", "edge", "backups", "keys", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
+    return (["services", "edge", "backups", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
   }
   const out: Row[] = [];
   const others = [h.parts.witness, h.parts.databases, h.parts.keys];
@@ -272,6 +298,7 @@ function hostRows(r: SystemReply): Row[] {
       row("keys", "amber", "before_erasure", { date: dayOf(h.lastKeyCopy), erased: dayOf(erased) }, "host", "system.tell.copy_keys_again"),
     );
   } else out.push(row("keys", "green", "copied", { date: dayOf(h.lastKeyCopy) }));
+  out.push(snapshotRow(r, h));
   const days = h.certificateDays;
   if (days === null) out.push(row("certificates", "unknown", "unknown"));
   else if (days < 1) out.push(row("certificates", "red", "ending", { days: String(days) }, "host", "system.tell.renew"));
@@ -279,6 +306,26 @@ function hostRows(r: SystemReply): Row[] {
   else if (h.selfSigned) out.push(row("certificates", "amber", "self_signed", {}, "host", "system.tell.public_certificate"));
   else out.push(row("certificates", "green", "fine", { due: String(Math.max(0, days - 2)) }));
   return out;
+}
+
+/**
+ * The keystore snapshots of the cell and the vault (ADR-028 records of
+ * lanes L27 and L26): red when the last try of either failed, amber when
+ * either has none or the older one is over 36 hours old, on a host with
+ * backups. Without backups the snapshots stay on the host, and the backups
+ * row already asks for them.
+ */
+function snapshotRow(r: SystemReply, h: HostReport): Row {
+  const tell = "system.tell.keystore_snapshot";
+  if (!h.backupsConfigured) return row("snapshots", "green", "off");
+  if (h.appSnapshotFailed || h.vaultSnapshotFailed) return row("snapshots", "red", "failed", {}, "host", tell);
+  if (h.lastAppSnapshot === null || h.lastVaultSnapshot === null) return row("snapshots", "amber", "none", {}, "host", tell);
+  const oldest = h.lastAppSnapshot < h.lastVaultSnapshot ? h.lastAppSnapshot : h.lastVaultSnapshot;
+  const age = ageOf(r.now - oldest);
+  const params = { age: age.n, unit: age.label };
+  return r.now - oldest > SNAPSHOT_LATE
+    ? row("snapshots", "amber", "late", params, "host", tell)
+    : row("snapshots", "green", "fresh", params);
 }
 
 /** Every row of the page, in `ROW_IDS` order. */

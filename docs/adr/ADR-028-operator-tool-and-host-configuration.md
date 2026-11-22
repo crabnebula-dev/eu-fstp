@@ -99,6 +99,21 @@ Open points of lane L20, each Interim, pending Daniel:
 1. `SPEC/01-requirements/` names no requirement for what operators see of a running cell. The page claims R-NF-02 for the file and R-NF-03 for the page. A requirement such as "a tenant admin sees the health of the cell, its backups, certificates and mail on a web page" would let tests claim it.
 2. The one-hour age limit of the host report, and the light thresholds beyond those of `status`.
 3. Answered by the coordinator on 2026-11-22: a key copy older than the last erasure is amber. Open: `fstp-admin status` sees vault erasures only, not the cell's.
+## Record of lane L27 `prod/snapshot-ops`, 2026-11-22: keystore snapshots
+
+Written by lane L27 before its code. The snapshots themselves are ADR-012 (records of lanes L17 and L27). Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Turned on with backups | With `backup` in `fstp.json`, `setup` writes `object_store` into `cell.json` and `vault.json`, the same bucket, endpoint, port and region as the backups. Without it neither file names one, and both processes keep the fallback of ADR-012. No new member in `fstp.json` | Usability rule of 2026-11-21 |
+| Credentials | `setup` copies the two object store key files into the cell's and the vault's credentials directories as `s3-access-key-id` and `s3-secret-access-key`, owned by each service's user, mode 0600. On the pilot this is the backup credential. A credential limited to `<cell>/keystore/` waits on ADR-005 V15 | ADR-012 "Writer and upload" |
+| Snapshot keys | Each process creates its snapshot key file itself at its next start (ADR-004 record of lane L17, row "Genesis"). `setup` runs no extra step. `backup-keys` copies the credentials directories' key files as before | ADR-004 record of lane L17 |
+| Restore | `fstp-admin restore` restores both clusters, starts the two clusters, runs `fstp-vault restore-keystore`, then `fstp-cell restore-keystore`, then starts every service. Each prints `done` once its keys open, from the restored database or the newest snapshot. A keystore that opens from neither stops the restore with exit 1 and names the service, and the services stay stopped | ADR-012 record of lane L27, row "Restore order" |
+| Status | `status` shows one line per process: when its last keystore snapshot verified, or that the last one failed. A failure, or no verified snapshot in 36 hours on a host with backups, makes it the next thing to do: read the service's log and run `fstp-admin start`, since a start takes a snapshot a minute later | ADR-028 "Status" |
+| System page | `fstp_admin::status::snapshot_status` returns the same facts for the host status file of lane L20 (`fstp_obs::host_status`), which was not on `main` when this lane started. The seam is that function; lane L20's file takes it at merge | Lane L20 |
+| Dependencies | `fstp-admin` gains `fstp-obs` for the status file codec (`fstp_obs::snapshot_status`). It still reaches no custody, service or control crate | ADR-028 "Layering" |
+
+Tests, written before the code: `adr028_setup_turns_snapshots_on_with_backups` and `adr028_status_names_a_failed_keystore_snapshot` in `fstp-admin`.
 
 ## Open questions for Daniel (first draft, answered by the record above)
 
@@ -114,3 +129,16 @@ Open points of lane L20, each Interim, pending Daniel:
 - The production guide becomes a short how-to built around `fstp-admin`. The per-service detail moves to `docs/guide/production-reference.md`.
 - A host has one file to edit and one command to run.
 - `fstp-admin` holds no key material of a chain. It holds the five host CA keys and the passphrase credentials, as root-only files.
+
+## Record of lane L26 `prod/display-names`, 2026-11-22: lanes L20 and L27 joined
+
+The coordinator asked lane L26 to integrate lane L20 (`prod/verification-request`, with the System page) and lane L27 (`prod/snapshot-ops`, PR 43) on one branch. Each row is a lane reading under the usability rule of 2026-11-21, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Host status file | `fstp_obs::host_status` gains four members: `last_app_snapshot` and `last_vault_snapshot` (the last verified keystore snapshot of the cell and of the vault, Unix seconds or `null`), and `app_snapshot_failed` and `vault_snapshot_failed` (the last try failed). The version stays 1, since no file of L20's grammar left a test world. The fuzz seed of `host_status_decode` follows | Record of lane L20, row "Members"; record of lane L27, row "Status on the System page" |
+| Writer | `fstp-admin report`, `status` and the other writers fill the four members from `fstp_admin::status::snapshot_status`, the seam of lane L27. The next word `keystore_snapshot` joins the closed list, after `backup`, as `status` orders it | Record of lane L27, row "Status" |
+| Reply | `tenant.system` carries the four facts in `host`, as instants and flags. `keystore_snapshot` is a word of the reply's `next` | R-NF-02 |
+| Page row | The System page gains the row "Key store snapshots" beside the key copy. Red when the last try of either process failed. Amber when either has none, or the older one is over 36 hours old, as `status` reads it. Green with the age of the older one. Without backups it is green and says the snapshots start with backups, since the backups row already asks for them. Who acts: the host admin, who runs `fstp-admin status`, reads the named service's log, then runs `fstp-admin start` | Usability rule; record of lane L27, row "Status" |
+
+Tests: `adr028_l26_snapshots_reach_the_host_status_file` and `adr028_status_names_a_failed_keystore_snapshot` (`fstp-admin`); the snapshot cases of `r_nf_02_host_status_refuses_bad_input` and the round trip (`fstp-obs`); `adr028_l20_host_status_read_states` (`fstp-cell`); `r_nf_02_system_reply_holds_no_free_text` (`fstp-access`); `adr028_l26_keystore_snapshot_row` (`web/test/l20_system_page.test.ts`).

@@ -157,6 +157,7 @@ name = "fstp-admin-fuzz"
 version = "0.0.0"
 dependencies = [
  "fstp-admin",
+ "fstp-obs",
  "libfuzzer-sys",
 ]
 

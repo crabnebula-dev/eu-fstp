@@ -76,7 +76,7 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 11] = [
+pub const HOST_NEXT: [&str; 12] = [
     "run_setup",
     "start_service",
     "renew_route",
@@ -84,6 +84,7 @@ pub const HOST_NEXT: [&str; 11] = [
     "public_certificate",
     "configure_backups",
     "backup",
+    "keystore_snapshot",
     "web_admins",
     "verify_admins",
     "copy_keys",
@@ -125,6 +126,15 @@ pub struct HostReport {
     pub last_key_copy: Option<Timestamp>,
     /// The newest identity erasure the host ran in the vault.
     pub last_vault_erasure: Option<Timestamp>,
+    /// When the cell's keystore snapshot last verified (ADR-028 records
+    /// of lanes L27 and L26).
+    pub last_app_snapshot: Option<Timestamp>,
+    /// The cell's last keystore snapshot try failed.
+    pub app_snapshot_failed: bool,
+    /// When the vault's keystore snapshot last verified.
+    pub last_vault_snapshot: Option<Timestamp>,
+    /// The vault's last keystore snapshot try failed.
+    pub vault_snapshot_failed: bool,
     /// Whole days until the first host certificate ends. The reply
     /// shows an ended one as 0.
     pub certificate_days: Option<i64>,
@@ -251,6 +261,26 @@ fn report_json(r: &HostReport) -> Value {
         &mut o,
         "last_vault_erasure",
         r.last_vault_erasure.map_or(Value::Null, instant),
+    );
+    put(
+        &mut o,
+        "last_app_snapshot",
+        r.last_app_snapshot.map_or(Value::Null, instant),
+    );
+    put(
+        &mut o,
+        "app_snapshot_failed",
+        Value::Bool(r.app_snapshot_failed),
+    );
+    put(
+        &mut o,
+        "last_vault_snapshot",
+        r.last_vault_snapshot.map_or(Value::Null, instant),
+    );
+    put(
+        &mut o,
+        "vault_snapshot_failed",
+        Value::Bool(r.vault_snapshot_failed),
     );
     put(
         &mut o,

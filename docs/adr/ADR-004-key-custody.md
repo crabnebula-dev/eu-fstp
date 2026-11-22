@@ -980,4 +980,4 @@ Tests, written with the code: `sa11_unique_adr029_variants_of_one_name_are_one_n
 
 - The normaliser: `fstp_unorm::name_key` for display names is accepted, consistent with Daniel's NFKC choice for identity names (ADR-029). It replaces the "Simpler comparison" of 2026-11-15.
 - The erasure log: no erasure-log row for a replaced or cleared display name for now. A later lane adds one (row "Erasure log").
-- The snapshot image need not hold the index rows, since they are derived from the sealed texts under the `Lookup` key (row "Snapshot image").
+- The old image `FKI1` need not hold the index rows (row "Snapshot image"). Lane L27's image `FAK1`, from which a restore takes the tables whole, carries them from version 2, since only the index names the account of each name (ADR-012 record of lane L26).

@@ -7,11 +7,14 @@
 //! or a domain (R-NF-02).
 //!
 //! ```text
-//! {"backups_configured":true,"certificate_days":5,"last_backup":1795000000,
-//!  "last_key_copy":null,"last_vault_erasure":null,"next":"nothing",
+//! {"app_snapshot_failed":false,"backups_configured":true,"certificate_days":5,
+//!  "last_app_snapshot":1795000000,"last_backup":1795000000,
+//!  "last_key_copy":null,"last_vault_erasure":null,
+//!  "last_vault_snapshot":1795000000,"next":"nothing",
 //!  "parts":{"cell":"running","databases":"running","edge":"running",
 //!           "keys":"running","vault":"running","witness":"running"},
-//!  "route":"current","self_signed":false,"setup_done":true,"version":1,
+//!  "route":"current","self_signed":false,"setup_done":true,
+//!  "vault_snapshot_failed":false,"version":1,
 //!  "written_at":1795000000}
 //! ```
 //!
@@ -148,6 +151,9 @@ pub enum Next {
     WebAdmins,
     /// The host admin verifies the admins in person.
     VerifyAdmins,
+    /// A keystore snapshot failed, or none verified in a day and a half
+    /// (ADR-028 record of lane L27).
+    KeystoreSnapshot,
     /// The keys were never copied off the host.
     CopyKeys,
     /// Nothing.
@@ -156,7 +162,7 @@ pub enum Next {
 
 impl Next {
     /// Every value.
-    pub const ALL: [Next; 11] = [
+    pub const ALL: [Next; 12] = [
         Self::RunSetup,
         Self::StartService,
         Self::RenewRoute,
@@ -164,6 +170,7 @@ impl Next {
         Self::PublicCertificate,
         Self::ConfigureBackups,
         Self::Backup,
+        Self::KeystoreSnapshot,
         Self::WebAdmins,
         Self::VerifyAdmins,
         Self::CopyKeys,
@@ -181,6 +188,7 @@ impl Next {
             Self::PublicCertificate => "public_certificate",
             Self::ConfigureBackups => "configure_backups",
             Self::Backup => "backup",
+            Self::KeystoreSnapshot => "keystore_snapshot",
             Self::WebAdmins => "web_admins",
             Self::VerifyAdmins => "verify_admins",
             Self::CopyKeys => "copy_keys",
@@ -208,6 +216,15 @@ pub struct HostStatus {
     /// vault, in Unix seconds. A key copy older than it holds the erased
     /// key, so the runbook asks for a new copy.
     pub last_vault_erasure: Option<i64>,
+    /// When the cell's App chain keystore snapshot last verified, in Unix
+    /// seconds (ADR-012 and ADR-028 records of lane L27).
+    pub last_app_snapshot: Option<i64>,
+    /// The cell's last keystore snapshot try failed.
+    pub app_snapshot_failed: bool,
+    /// When the vault's keystore snapshot last verified, in Unix seconds.
+    pub last_vault_snapshot: Option<i64>,
+    /// The vault's last keystore snapshot try failed.
+    pub vault_snapshot_failed: bool,
     /// Whole days until the first host certificate ends.
     pub certificate_days: Option<i64>,
     /// The public origin certificate is self-signed.
@@ -253,17 +270,21 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 12] = [
+const MEMBERS: [&str; 16] = [
+    "app_snapshot_failed",
     "backups_configured",
     "certificate_days",
+    "last_app_snapshot",
     "last_backup",
     "last_key_copy",
     "last_vault_erasure",
+    "last_vault_snapshot",
     "next",
     "parts",
     "route",
     "self_signed",
     "setup_done",
+    "vault_snapshot_failed",
     "version",
     "written_at",
 ];
@@ -280,16 +301,20 @@ fn opt(v: Option<i64>) -> String {
 pub fn encode(s: &HostStatus) -> String {
     let p = &s.parts;
     format!(
-        "{{\"backups_configured\":{},\"certificate_days\":{},\"last_backup\":{},\
-         \"last_key_copy\":{},\"last_vault_erasure\":{},\"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
+        "{{\"app_snapshot_failed\":{},\"backups_configured\":{},\"certificate_days\":{},\
+         \"last_app_snapshot\":{},\"last_backup\":{},\"last_key_copy\":{},\
+         \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
          \"witness\":\"{}\"}},\"route\":\"{}\",\"self_signed\":{},\"setup_done\":{},\
-         \"version\":{VERSION},\"written_at\":{}}}\n",
+         \"vault_snapshot_failed\":{},\"version\":{VERSION},\"written_at\":{}}}\n",
+        s.app_snapshot_failed,
         s.backups_configured,
         opt(s.certificate_days),
+        opt(s.last_app_snapshot),
         opt(s.last_backup),
         opt(s.last_key_copy),
         opt(s.last_vault_erasure),
+        opt(s.last_vault_snapshot),
         s.next.word(),
         p.cell.word(),
         p.databases.word(),
@@ -300,6 +325,7 @@ pub fn encode(s: &HostStatus) -> String {
         s.route.word(),
         s.self_signed,
         s.setup_done,
+        s.vault_snapshot_failed,
         s.written_at,
     )
 }
@@ -400,6 +426,10 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
         last_backup: opt_int(o, "last_backup", 0, MAX_INSTANT)?,
         last_key_copy: opt_int(o, "last_key_copy", 0, MAX_INSTANT)?,
         last_vault_erasure: opt_int(o, "last_vault_erasure", 0, MAX_INSTANT)?,
+        last_app_snapshot: opt_int(o, "last_app_snapshot", 0, MAX_INSTANT)?,
+        app_snapshot_failed: flag(o, "app_snapshot_failed")?,
+        last_vault_snapshot: opt_int(o, "last_vault_snapshot", 0, MAX_INSTANT)?,
+        vault_snapshot_failed: flag(o, "vault_snapshot_failed")?,
         certificate_days: opt_int(o, "certificate_days", -MAX_DAYS, MAX_DAYS)?,
         self_signed: flag(o, "self_signed")?,
         route: word(

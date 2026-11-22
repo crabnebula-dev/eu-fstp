@@ -27,6 +27,8 @@ pub enum Next {
     ConfigureBackups,
     /// The newest base backup is old or missing.
     Backup,
+    /// A keystore snapshot failed, or none verified in a day and a half.
+    KeystoreSnapshot,
     /// The web admins must enrol and invite the second admin first.
     WebAdmins,
     /// The host admin verifies the admins in person.
@@ -65,6 +67,12 @@ pub struct Findings {
     /// When `fstp-admin erase-identity` last erased an identity in the
     /// vault, Unix seconds (ADR-028 record of lane L20).
     pub vault_erased_at: Option<i64>,
+    /// Age in hours of the older of the two processes' last verified
+    /// keystore snapshot, if both verified one (ADR-028 record of lane
+    /// L27).
+    pub snapshot_age_hours: Option<i64>,
+    /// The last keystore snapshot of a process failed.
+    pub snapshot_failed: bool,
 }
 
 /// Whether the newest key copy is older than the last vault erasure, so
@@ -97,6 +105,8 @@ pub fn next(f: &Findings) -> Next {
         Next::ConfigureBackups
     } else if f.backup_age_hours.is_none_or(|h| h > 36) {
         Next::Backup
+    } else if f.snapshot_failed || f.snapshot_age_hours.is_none_or(|h| h > 36) {
+        Next::KeystoreSnapshot
     } else if !f.keys_copied || key_copy_stale(f) {
         Next::CopyKeys
     } else {
@@ -121,6 +131,9 @@ fn next_text(n: Next) -> &'static str {
             "add \"backup\" with your object store to fstp.json, put its two key files in place, then run fstp-admin setup."
         }
         Next::Backup => "run fstp-admin backup. The newest backup is older than a day and a half.",
+        Next::KeystoreSnapshot => {
+            "the daily keystore snapshot failed or did not run. Read the log of fstp-cell and fstp-vault (journalctl -u <its name>), fix what it names, then run fstp-admin start: each service takes a snapshot a minute after it starts."
+        }
         Next::WebAdmins => {
             "web admins: the first admin opens the invitation and enrols a passkey, then invites the second admin by email on Onboarding summary; the second admin opens the mailed link within 72 hours. Then the host admin runs fstp-admin verify."
         }
@@ -156,6 +169,50 @@ fn min_days(layout: &Layout) -> Option<i64> {
     min
 }
 
+/// The keystore snapshot status of both processes (ADR-028 record of
+/// lane L27): each one's `keystore-snapshot.status`, read from its
+/// credentials directory. The host status file carries it to the System
+/// page (ADR-028 record of lane L26).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Snapshots {
+    /// The cell's App chain keystore.
+    pub app: fstp_obs::snapshot_status::SnapshotStatus,
+    /// The vault's keystore.
+    pub vault: fstp_obs::snapshot_status::SnapshotStatus,
+}
+
+impl Snapshots {
+    /// Whether the last snapshot of a process failed.
+    #[must_use]
+    pub fn failing(&self) -> bool {
+        self.app.failing() || self.vault.failing()
+    }
+
+    /// The last verified snapshot of the process that verified longest
+    /// ago, in Unix seconds, if both verified one.
+    #[must_use]
+    pub fn oldest_verified(&self) -> Option<u64> {
+        Some(self.app.last_verified?.min(self.vault.last_verified?))
+    }
+
+    /// Hours since [`Snapshots::oldest_verified`].
+    #[must_use]
+    pub fn age_hours(&self) -> Option<i64> {
+        let t = i64::try_from(self.oldest_verified()?).ok()?;
+        Some(crate::pki::now().saturating_sub(t).max(0) / 3600)
+    }
+}
+
+/// Reads [`Snapshots`] of the host.
+#[must_use]
+pub fn snapshot_status(layout: &Layout) -> Snapshots {
+    use fstp_obs::snapshot_status::read;
+    Snapshots {
+        app: read(&layout.creds("cell")),
+        vault: read(&layout.creds("vault")),
+    }
+}
+
 /// The part of the host a service belongs to (ADR-028 record of lane L20).
 fn part_slot<'a>(parts: &'a mut Parts, name: &str) -> &'a mut PartState {
     if name.starts_with("fstp-keyd") {
@@ -189,6 +246,8 @@ struct Survey {
     last_backup: Option<i64>,
     /// The newest key copy.
     last_key_copy: Option<i64>,
+    /// The keystore snapshots of both processes.
+    snapshots: Snapshots,
 }
 
 fn survey(layout: &Layout, state: &State) -> Survey {
@@ -224,6 +283,7 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         .try_fold(i64::MAX, |acc, t| t.map(|t| acc.min(t)))
         .filter(|t| *t != i64::MAX);
     let now = crate::pki::now();
+    let snapshots = snapshot_status(layout);
     let findings = Findings {
         setup_done: state.done("first-admin") && cell.is_some(),
         all_running,
@@ -237,6 +297,8 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         keys_copied: state.done("keys-copied"),
         keys_copied_at: instant_of(state, KEYS_COPIED_AT),
         vault_erased_at: instant_of(state, VAULT_ERASED_AT),
+        snapshot_age_hours: snapshots.age_hours(),
+        snapshot_failed: snapshots.failing(),
     };
     let last_key_copy = findings.keys_copied_at;
     Survey {
@@ -245,6 +307,7 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         findings,
         last_backup,
         last_key_copy,
+        snapshots,
     }
 }
 
@@ -273,6 +336,7 @@ pub fn next_word(n: Next) -> HostNext {
         Next::PublicCertificate => HostNext::PublicCertificate,
         Next::ConfigureBackups => HostNext::ConfigureBackups,
         Next::Backup => HostNext::Backup,
+        Next::KeystoreSnapshot => HostNext::KeystoreSnapshot,
         Next::WebAdmins => HostNext::WebAdmins,
         Next::VerifyAdmins => HostNext::VerifyAdmins,
         Next::CopyKeys => HostNext::CopyKeys,
@@ -288,8 +352,16 @@ pub fn host_status(
     parts: Parts,
     last_backup: Option<i64>,
     last_key_copy: Option<i64>,
+    snapshots: Snapshots,
     now: i64,
 ) -> HostStatus {
+    let secs = |t: Option<u64>| {
+        t.map(|t| {
+            i64::try_from(t)
+                .unwrap_or(i64::MAX)
+                .clamp(0, host_status::MAX_INSTANT)
+        })
+    };
     HostStatus {
         written_at: now.clamp(0, host_status::MAX_INSTANT),
         setup_done: f.setup_done,
@@ -300,6 +372,10 @@ pub fn host_status(
         last_vault_erasure: f
             .vault_erased_at
             .map(|t| t.clamp(0, host_status::MAX_INSTANT)),
+        last_app_snapshot: secs(snapshots.app.last_verified),
+        app_snapshot_failed: snapshots.app.failing(),
+        last_vault_snapshot: secs(snapshots.vault.last_verified),
+        vault_snapshot_failed: snapshots.vault.failing(),
         certificate_days: f
             .min_days
             .map(|d| d.clamp(-host_status::MAX_DAYS, host_status::MAX_DAYS)),
@@ -319,6 +395,7 @@ fn write_survey(layout: &Layout, s: &Survey) -> std::io::Result<()> {
         s.parts,
         s.last_backup,
         s.last_key_copy,
+        s.snapshots,
         crate::pki::now(),
     );
     let path = layout.host_status();
@@ -398,6 +475,32 @@ pub fn run(layout: &Layout) -> u8 {
         None if f.backups => out(&[Part::T("  backups    none yet")]),
         None => out(&[Part::T("  backups    not configured")]),
     }
+    if f.backups {
+        for (name, sn) in [("cell ", s.snapshots.app), ("vault", s.snapshots.vault)] {
+            let line = |tail: &[Part<'_>]| {
+                let mut parts = vec![Part::T("  snapshots  "), Part::T(name)];
+                parts.extend_from_slice(tail);
+                out(&parts);
+            };
+            match (sn.failing(), sn.last_verified) {
+                (true, _) => line(&[Part::T(
+                    " FAILED: the last keystore snapshot did not verify",
+                )]),
+                (false, Some(t)) => line(&[
+                    Part::T(" last verified "),
+                    Part::N(
+                        crate::pki::now()
+                            .saturating_sub(i64::try_from(t).unwrap_or(i64::MAX))
+                            .max(0)
+                            .unsigned_abs()
+                            / 3600,
+                    ),
+                    Part::T(" hours ago"),
+                ]),
+                (false, None) => line(&[Part::T(" none yet")]),
+            }
+        }
+    }
     out(&[Part::T(if key_copy_stale(f) {
         "  key copy   OLDER THAN THE LAST ERASURE: make a new copy"
     } else if f.keys_copied {
@@ -468,6 +571,8 @@ mod tests {
             keys_copied: true,
             keys_copied_at: Some(1_700_000_000),
             vault_erased_at: None,
+            snapshot_age_hours: Some(3),
+            snapshot_failed: false,
         }
     }
 
@@ -505,7 +610,14 @@ mod tests {
             edge: PartState::Unhealthy,
             ..Parts::RUNNING
         };
-        let s = host_status(&f, parts, Some(1_700_000_000), None, 1_700_003_600);
+        let s = host_status(
+            &f,
+            parts,
+            Some(1_700_000_000),
+            None,
+            Snapshots::default(),
+            1_700_003_600,
+        );
         assert_eq!(s.written_at, 1_700_003_600);
         assert_eq!(s.route, RouteState::Mismatch);
         assert_eq!(s.next, HostNext::RenewRoute);
@@ -524,6 +636,7 @@ mod tests {
             Next::PublicCertificate,
             Next::ConfigureBackups,
             Next::Backup,
+            Next::KeystoreSnapshot,
             Next::WebAdmins,
             Next::VerifyAdmins,
             Next::CopyKeys,
@@ -534,7 +647,7 @@ mod tests {
         let mut g = healthy();
         g.route_current = None;
         g.min_days = Some(i64::MAX);
-        let s = host_status(&g, Parts::RUNNING, None, None, -5);
+        let s = host_status(&g, Parts::RUNNING, None, None, Snapshots::default(), -5);
         assert_eq!(s.route, RouteState::Unknown);
         assert_eq!(s.written_at, 0);
         assert_eq!(s.certificate_days, Some(host_status::MAX_DAYS));
@@ -589,8 +702,87 @@ mod tests {
         assert_eq!(next(&f), Next::CopyKeys);
         f.keys_copied_at = None;
         assert!(key_copy_stale(&f), "a copy of unknown time");
-        let s = host_status(&f, Parts::RUNNING, Some(1), None, 1_700_000_100);
+        let s = host_status(
+            &f,
+            Parts::RUNNING,
+            Some(1),
+            None,
+            Snapshots::default(),
+            1_700_000_100,
+        );
         assert_eq!(s.last_vault_erasure, Some(1_700_000_001));
         assert_eq!(s.next, HostNext::CopyKeys);
+    }
+
+    /// ADR-028 record of lane L27, row "Status": a failed keystore
+    /// snapshot, or none verified in a day and a half, is the next thing
+    /// to do on a host with backups, after the backups themselves.
+    #[test]
+    fn adr028_status_names_a_failed_keystore_snapshot() {
+        let mut f = healthy();
+        f.snapshot_failed = true;
+        assert_eq!(next(&f), Next::KeystoreSnapshot);
+        f.backup_age_hours = None;
+        assert_eq!(next(&f), Next::Backup);
+        let mut g = healthy();
+        g.snapshot_age_hours = Some(40);
+        assert_eq!(next(&g), Next::KeystoreSnapshot);
+        g.snapshot_age_hours = None;
+        assert_eq!(next(&g), Next::KeystoreSnapshot);
+        let s = Snapshots {
+            app: fstp_obs::snapshot_status::SnapshotStatus::default().after(true, 100),
+            vault: fstp_obs::snapshot_status::SnapshotStatus::default()
+                .after(true, 50)
+                .after(false, 60),
+        };
+        assert!(s.failing());
+        assert_eq!(s.oldest_verified(), Some(50));
+        assert_eq!(Snapshots::default().oldest_verified(), None);
+    }
+
+    /// ADR-028 record of lane L26 (L20 and L27 joined): the host status
+    /// file carries each process's last verified keystore snapshot and
+    /// whether its last try failed, and the next thing names the snapshot.
+    #[test]
+    fn adr028_l26_snapshots_reach_the_host_status_file() {
+        use fstp_obs::snapshot_status::SnapshotStatus;
+        let snaps = Snapshots {
+            app: SnapshotStatus::default().after(true, 1_700_000_000),
+            vault: SnapshotStatus::default()
+                .after(true, 1_699_990_000)
+                .after(false, 1_700_000_050),
+        };
+        let mut f = healthy();
+        f.snapshot_failed = snaps.failing();
+        let s = host_status(
+            &f,
+            Parts::RUNNING,
+            Some(1_700_000_000),
+            Some(1_700_000_000),
+            snaps,
+            1_700_000_100,
+        );
+        assert_eq!(s.last_app_snapshot, Some(1_700_000_000));
+        assert!(!s.app_snapshot_failed);
+        assert_eq!(s.last_vault_snapshot, Some(1_699_990_000));
+        assert!(s.vault_snapshot_failed);
+        assert_eq!(s.next, HostNext::KeystoreSnapshot);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        let none = host_status(
+            &healthy(),
+            Parts::RUNNING,
+            None,
+            None,
+            Snapshots::default(),
+            1,
+        );
+        assert_eq!(
+            (none.last_app_snapshot, none.last_vault_snapshot),
+            (None, None)
+        );
+        assert!(!none.app_snapshot_failed && !none.vault_snapshot_failed);
     }
 }

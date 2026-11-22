@@ -37,6 +37,7 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.name.mail": "Outgoing mail",
   "system.name.backups": "Backups",
   "system.name.keys": "Key copy",
+  "system.name.snapshots": "Key store snapshots",
   "system.name.certificates": "Certificates",
 
   "system.row.report.fresh": "The host reported {age} ago.",
@@ -72,6 +73,12 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.keys.before_erasure":
     "The keys were last copied off the host on {date}, before the erasure of {erased}. That copy still holds the erased data's key.",
   "system.row.keys.unknown": "Not known until the host reports.",
+  "system.row.snapshots.fresh": "The key stores of the platform and the vault were last saved off the host {age} ago. This runs every day.",
+  "system.row.snapshots.late": "A key store was last saved off the host {age} ago. This should run every day.",
+  "system.row.snapshots.none": "A key store has not been saved off the host yet.",
+  "system.row.snapshots.failed": "The last daily save of a key store off the host failed.",
+  "system.row.snapshots.off": "The key stores are saved off the host once backups are set up.",
+  "system.row.snapshots.unknown": "Not known until the host reports.",
   "system.row.certificates.fine":
     "Certificates renew by themselves at night. The next renewal is due in {due} days.",
   "system.row.certificates.ending":
@@ -98,6 +105,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
     "Please run fstp-admin backup-keys to a USB stick, and keep the passphrases apart from it.",
   "system.tell.copy_keys_again":
     "Please run fstp-admin backup-keys to a USB stick again, then destroy the older copy. An erasure took place since the last copy.",
+  "system.tell.keystore_snapshot":
+    "Please run fstp-admin status. It names the key store snapshot that failed or is late; read that service's log, then run fstp-admin start.",
   "system.tell.public_certificate":
     "Please get a certificate for the domain, name it under tls in /etc/fstp/fstp.json, then run fstp-admin renew.",
 
@@ -108,6 +117,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.next.public_certificate": "The host admin gets a public certificate for the domain.",
   "system.next.configure_backups": "The host admin sets up backups.",
   "system.next.backup": "The host admin runs a backup with fstp-admin backup.",
+  "system.next.keystore_snapshot":
+    "The host admin checks why a key store snapshot failed or is late, then runs fstp-admin start.",
   "system.next.web_admins":
     "You: sign in with your passkey and invite the second admin on the onboarding checklist.",
   "system.next.verify_admins":

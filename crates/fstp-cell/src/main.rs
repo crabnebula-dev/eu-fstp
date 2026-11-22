@@ -18,6 +18,9 @@
 //!   record the copy (ADR-004 record of lane L16);
 //! - `retire-key-file-copy <id>`: record that every copy of `id` is
 //!   destroyed.
+//! - `restore-keystore [<snapshot id>]`: after a restore of the application
+//!   cluster, keep the newest keystore copy that opens, with the cell
+//!   stopped (ADR-012 record of lane L27).
 //!
 //! It writes typed events only (R-NF-02). A refused configuration or
 //! argument exits with status 2, any other failure with status 1.

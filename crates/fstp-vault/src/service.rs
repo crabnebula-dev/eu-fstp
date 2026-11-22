@@ -887,6 +887,9 @@ pub struct RegistrarParts<R: Runtime> {
     pub keys_db: fstp_pgwire::Config,
     /// The interval of the watch, [`KEYSTORE_CHECK`] in production.
     pub check_every: Duration,
+    /// The daily keystore snapshot, when an object store is configured
+    /// (ADR-012 record of lane L27). It runs beside the watch.
+    pub daily: Option<Arc<dyn crate::snapshot::DailySnapshot>>,
 }
 
 impl<R: Runtime> std::fmt::Debug for RegistrarParts<R> {
@@ -981,6 +984,9 @@ pub async fn serve_with_registrar<R: Runtime>(
                 shared.watch_once().await;
             }
         }));
+        if let Some(daily) = parts.daily {
+            spawn_daily(&rt, Arc::downgrade(&shared), daily);
+        }
     }
     let stopped = Arc::clone(&shared.stopped);
     let internal_tcp = rt
@@ -1150,6 +1156,56 @@ impl Sealer for AeadSealer {
     fn has_identity(&self, identity: fstp_vault_core::Person) -> bool {
         self.identities.contains(identity.0)
     }
+}
+
+/// How often the daily snapshot task wakes to see whether a snapshot is
+/// due (ADR-012 record of lane L27).
+const DAILY_WAKE: Duration = Duration::from_secs(60);
+
+/// The daily keystore snapshot of a serving vault (ADR-012 record of lane
+/// L27, rows "Daily snapshot" and "Where it runs"). It reads the rows
+/// through the registrar's keys connection under the registrar's lock,
+/// then takes and checks the snapshot without the lock. It ends with the
+/// vault, since it holds the shared state weakly.
+fn spawn_daily<R: Runtime>(
+    rt: &R,
+    weak: std::sync::Weak<Shared<R>>,
+    daily: Arc<dyn crate::snapshot::DailySnapshot>,
+) {
+    use fstp_obs::snapshot_status::{due, now};
+    let timer = rt.clone();
+    let started = now();
+    drop(rt.spawn(async move {
+        let mut last: Option<(u64, bool)> = None;
+        loop {
+            timer.sleep(DAILY_WAKE).await;
+            let Some(shared) = weak.upgrade() else {
+                break;
+            };
+            if shared.is_stopped() {
+                break;
+            }
+            if !due(started, last, now()) {
+                continue;
+            }
+            let rows = {
+                let mut registrar = shared.registrar.lock().await;
+                match registrar.as_mut() {
+                    Some(r) => r.keystore_rows().await.ok(),
+                    None => None,
+                }
+            };
+            drop(shared);
+            let ok = match rows {
+                Some(rows) => daily.run(rows).await,
+                None => {
+                    daily.failed();
+                    false
+                }
+            };
+            last = Some((now(), ok));
+        }
+    }));
 }
 
 #[cfg(test)]

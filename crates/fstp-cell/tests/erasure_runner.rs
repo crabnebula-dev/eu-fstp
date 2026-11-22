@@ -1107,12 +1107,19 @@ struct SnapRun {
     pointer_ok: bool,
     /// Whether the newest snapshot opens text T2 and not T1.
     opens_live_not_erased: bool,
+    /// Whether the newest snapshot holds the keystore tables whole and
+    /// opens as a keystore.
+    tables_whole: bool,
+    /// Whether the daily snapshot verified.
+    daily_ok: bool,
+    /// Whether the newest snapshot opens text T1.
+    opens_t1: bool,
 }
 
 /// Runs one batch erasing T1, with the App chain's snapshot writer over
 /// the fake S3 of lane L10. With `tamper`, the first snapshot is changed
 /// in the store before step 5 fetches it.
-fn run_snapshots(tamper: bool) -> Result<SnapRun, &'static str> {
+fn run_snapshots(tamper: bool, daily: bool) -> Result<SnapRun, &'static str> {
     use fstp_backup::snapshot::{SnapshotKey, SnapshotOwner, Snapshots};
     let rt = TokioRuntime::new_multi_thread(2).map_err(|_| "no runtime")?;
     let rt2 = rt.clone();
@@ -1173,16 +1180,18 @@ fn run_snapshots(tamper: bool) -> Result<SnapRun, &'static str> {
         runner
             .put_text(G1, T2, b"synthetic text two")
             .map_err(|_| "no T2")?;
-        as_admin(
-            &engine,
-            CellCommand::Text(TextCommand::EraseTexts {
-                ids: vec![T1],
-                cause: 2,
-            }),
-            0xB0,
-            None,
-        )
-        .await?;
+        if !daily {
+            as_admin(
+                &engine,
+                CellCommand::Text(TextCommand::EraseTexts {
+                    ids: vec![T1],
+                    cause: 2,
+                }),
+                0xB0,
+                None,
+            )
+            .await?;
+        }
         let gets = |s: &fake_s3::State| {
             s.requests
                 .lock()
@@ -1202,34 +1211,42 @@ fn run_snapshots(tamper: bool) -> Result<SnapRun, &'static str> {
             objects: 0,
             pointer_ok: false,
             opens_live_not_erased: false,
+            tables_whole: false,
+            daily_ok: false,
+            opens_t1: false,
         };
         let mut tampered = !tamper;
-        loop {
-            match runner.step().await {
-                Ok(Some(e)) => {
-                    let op = op_of(e);
-                    if matches!(op, Op::RootDestroyed { .. }) {
-                        run.gets_before_destroy = gets(&state);
+        if daily {
+            run.daily_ok = runner.daily_snapshot().await.unwrap_or(false);
+        }
+        if !daily {
+            loop {
+                match runner.step().await {
+                    Ok(Some(e)) => {
+                        let op = op_of(e);
+                        if matches!(op, Op::RootDestroyed { .. }) {
+                            run.gets_before_destroy = gets(&state);
+                        }
+                        run.ops.push(op);
+                        if matches!(op, Op::SnapshotTaken { .. }) && !tampered {
+                            tampered = true;
+                            let mut objects = state.objects.lock().unwrap();
+                            let o = objects
+                                .iter_mut()
+                                .find(|(k, _)| k.contains("/keystore/"))
+                                .map(|(_, v)| v)
+                                .ok_or("no snapshot object")?;
+                            let at = o.len() - 5;
+                            o[at] ^= 0x40;
+                        }
                     }
-                    run.ops.push(op);
-                    if matches!(op, Op::SnapshotTaken { .. }) && !tampered {
-                        tampered = true;
-                        let mut objects = state.objects.lock().unwrap();
-                        let o = objects
-                            .iter_mut()
-                            .find(|(k, _)| k.contains("/keystore/"))
-                            .map(|(_, v)| v)
-                            .ok_or("no snapshot object")?;
-                        let at = o.len() - 5;
-                        o[at] ^= 0x40;
-                    }
-                }
-                Ok(None) => break,
-                Err(_) => {
-                    run.failures += 1;
-                    run.roots_at_failure.push(lock(&sim.0.roots).len());
-                    if run.failures > 4 {
-                        return Err("the runner did not recover");
+                    Ok(None) => break,
+                    Err(_) => {
+                        run.failures += 1;
+                        run.roots_at_failure.push(lock(&sim.0.roots).len());
+                        if run.failures > 4 {
+                            return Err("the runner did not recover");
+                        }
                     }
                 }
             }
@@ -1253,7 +1270,19 @@ fn run_snapshots(tamper: bool) -> Result<SnapRun, &'static str> {
                 .any(|(k, _)| k.ends_with(&fstp_backup::sigv4::hex(&id)));
             // The newest snapshot opens T2 under the live root and never T1.
             let image = snaps.fetch(&sim, id).await.map_err(|_| "fetch")?;
-            let image = erasure::snapshot::decode_image(&image).map_err(|_| "image")?;
+            let (cell, rows) = erasure::rows_image::decode(&image).map_err(|_| "image")?;
+            // ADR-012 record of lane L27: the snapshot holds the tables whole,
+            // chain state included, and they open as a keystore under the
+            // live root.
+            run.tables_whole = cell == CELL
+                && rows.chain.is_some()
+                && erasure::restore::check_rows(&sim, CELL, rows.clone())
+                    .await
+                    .is_ok();
+            let image = erasure::Keystore::from_rows(CELL, rows, Arc::new(erasure::NoSink))
+                .map_err(|_| "rows")?
+                .image()
+                .map_err(|_| "image")?;
             let mut seals = Vec::new();
             for r in &image.roots {
                 if let Ok(s) = sim
@@ -1272,6 +1301,7 @@ fn run_snapshots(tamper: bool) -> Result<SnapRun, &'static str> {
             let live = erasure::snapshot::open_text(CELL, &[&image], &seals, &t2);
             let gone =
                 text(T1).and_then(|t| erasure::snapshot::open_text(CELL, &[&image], &seals, &t));
+            run.opens_t1 = gone.as_deref() == Some(&b"synthetic text one"[..]);
             run.opens_live_not_erased =
                 live.as_deref() == Some(&b"synthetic text two"[..]) && gone.is_none();
         }
@@ -1291,7 +1321,7 @@ fn run_snapshots(tamper: bool) -> Result<SnapRun, &'static str> {
 /// the new root and never the erased one.
 #[test]
 fn i81_app_old_epoch_dies_only_after_a_fetched_snapshot_opens() {
-    let r = run_snapshots(false).unwrap_or_else(|e| panic!("{e}"));
+    let r = run_snapshots(false, false).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(first_of_each(&r.ops), design_order(0));
     assert_eq!(r.failures, 0);
     assert_eq!(r.objects, 1, "one snapshot per batch");
@@ -1312,7 +1342,7 @@ fn i81_app_old_epoch_dies_only_after_a_fetched_snapshot_opens() {
 /// uploads a fresh snapshot, and only then is the old root destroyed.
 #[test]
 fn i81_app_tampered_snapshot_blocks_destroy() {
-    let r = run_snapshots(true).unwrap_or_else(|e| panic!("{e}"));
+    let r = run_snapshots(true, false).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(first_of_each(&r.ops), design_order(0));
     assert_eq!(r.failures, 1, "a changed snapshot verified");
     // Before the batch: R(0) and the snapshot root. During the failure,
@@ -1326,4 +1356,32 @@ fn i81_app_tampered_snapshot_blocks_destroy() {
     assert_eq!(r.objects, 2, "no fresh snapshot after the failure");
     assert!(r.pointer_ok);
     assert!(r.opens_live_not_erased);
+}
+
+/// ADR-012 record of lane L27, row "App plaintext": the snapshot of a
+/// rotation holds the keystore tables whole, chain state included, and
+/// they load and open as a keystore under the live root.
+#[test]
+fn adr012_app_snapshot_holds_the_keystore_tables_whole() {
+    let r = run_snapshots(false, false).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        r.tables_whole,
+        "the snapshot is not the keystore tables whole"
+    );
+}
+
+/// I-81, ADR-012 record of lane L27, row "Daily snapshot": with no batch,
+/// the daily snapshot uploads the keystore, fetches it back and opens it
+/// under the current root. No root is created or destroyed, the pointer
+/// names it, and both live texts open from it.
+#[test]
+fn i81_app_daily_snapshot_verifies_without_a_rotation() {
+    let r = run_snapshots(false, true).unwrap_or_else(|e| panic!("{e}"));
+    assert!(r.daily_ok, "the daily snapshot failed");
+    assert!(r.ops.is_empty(), "the daily snapshot ran a step");
+    assert_eq!(r.roots_after, r.roots_before, "a root changed");
+    assert_eq!(r.objects, 1);
+    assert!(r.pointer_ok);
+    assert!(r.tables_whole);
+    assert!(r.opens_t1, "the daily snapshot does not open a live text");
 }

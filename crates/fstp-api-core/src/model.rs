@@ -2521,6 +2521,12 @@ pub(crate) mod reply_shape_tests {
                         last_vault_erasure: Some(fstp_domain::time::Timestamp::from_micros(
                             1_794_950_000_000_000,
                         )),
+                        last_app_snapshot: Some(fstp_domain::time::Timestamp::from_micros(
+                            1_794_960_000_000_000,
+                        )),
+                        app_snapshot_failed: false,
+                        last_vault_snapshot: None,
+                        vault_snapshot_failed: true,
                         certificate_days: Some(-2),
                         self_signed: false,
                         route: crate::system::RouteState::Mismatch,

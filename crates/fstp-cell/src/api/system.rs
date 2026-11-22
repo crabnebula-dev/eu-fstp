@@ -52,6 +52,10 @@ fn report(s: &HostStatus) -> Option<HostReport> {
         last_backup: s.last_backup.map(instant),
         last_key_copy: s.last_key_copy.map(instant),
         last_vault_erasure: s.last_vault_erasure.map(instant),
+        last_app_snapshot: s.last_app_snapshot.map(instant),
+        app_snapshot_failed: s.app_snapshot_failed,
+        last_vault_snapshot: s.last_vault_snapshot.map(instant),
+        vault_snapshot_failed: s.vault_snapshot_failed,
         certificate_days: s.certificate_days,
         self_signed: s.self_signed,
         route: match s.route {
@@ -108,6 +112,10 @@ mod tests {
             last_backup: Some(1_794_990_000),
             last_key_copy: None,
             last_vault_erasure: Some(1_794_995_000),
+            last_app_snapshot: Some(1_794_996_000),
+            app_snapshot_failed: false,
+            last_vault_snapshot: None,
+            vault_snapshot_failed: true,
             certificate_days: Some(4),
             self_signed: true,
             route: host_status::RouteState::Current,
@@ -148,6 +156,14 @@ mod tests {
         assert_eq!(r.parts.keys, PartState::Stopped);
         assert_eq!(r.parts.cell, PartState::Running);
         assert_eq!(r.last_key_copy, None);
+        // ADR-028 record of lane L26: the keystore snapshots of L27.
+        assert_eq!(
+            r.last_app_snapshot,
+            Some(Timestamp::from_micros(1_794_996_000_000_000))
+        );
+        assert!(!r.app_snapshot_failed);
+        assert_eq!(r.last_vault_snapshot, None);
+        assert!(r.vault_snapshot_failed);
         assert_eq!(r.certificate_days, Some(4));
         assert!(r.self_signed);
         assert_eq!(r.next.wire(), "copy_keys");

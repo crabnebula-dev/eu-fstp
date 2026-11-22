@@ -11,6 +11,7 @@ import {
   HOST_NEXT,
   HOUR,
   ROW_IDS,
+  SNAPSHOT_LATE,
   ageOf,
   decodeSystem,
   hostNext,
@@ -48,6 +49,10 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
       last_backup: (NOW - 3n * HOUR).toString(),
       last_key_copy: "1794000000000000",
       last_vault_erasure: null,
+      last_app_snapshot: (NOW - 2n * HOUR).toString(),
+      app_snapshot_failed: false,
+      last_vault_snapshot: (NOW - 4n * HOUR).toString(),
+      vault_snapshot_failed: false,
       certificate_days: 5,
       self_signed: false,
       route: "current",
@@ -129,6 +134,8 @@ test("adr028_l20_problems_name_who_acts_and_what_to_tell", () => {
     [decoded({}, { backups_configured: false }), "backups", "amber", "system.tell.configure_backups"],
     [decoded({}, { last_backup: null }), "backups", "red", "system.tell.backup"],
     [decoded({}, { last_key_copy: null }), "keys", "amber", "system.tell.copy_keys"],
+    [decoded({}, { vault_snapshot_failed: true }), "snapshots", "red", "system.tell.keystore_snapshot"],
+    [decoded({}, { last_app_snapshot: null }), "snapshots", "amber", "system.tell.keystore_snapshot"],
     [decoded({}, { certificate_days: 1 }), "certificates", "amber", "system.tell.renew"],
     [decoded({}, { certificate_days: 0 }), "certificates", "red", "system.tell.renew"],
     [decoded({}, { self_signed: true }), "certificates", "amber", "system.tell.public_certificate"],
@@ -164,7 +171,7 @@ test("adr028_l20_old_or_missing_report_is_shown", () => {
     const report = rowOf(r, "report");
     eq(report.light, "amber", file);
     eq(report.actor, "host", file);
-    for (const id of ["services", "edge", "backups", "keys", "certificates"]) {
+    for (const id of ["services", "edge", "backups", "keys", "snapshots", "certificates"]) {
       eq(rowOf(r, id).light, "unknown", `${id} without a report`);
     }
     eq(rowOf(r, "mail").light, "green", "the cell's own facts stay");
@@ -181,6 +188,9 @@ test("adr028_l20_every_label_exists", () => {
     decoded({}, { route: "unknown", last_backup: null, certificate_days: null, self_signed: true }),
     decoded({}, { written_at: "1" }),
     decoded({ last_cell_erasure: "1794500000000000" }),
+    decoded({}, { app_snapshot_failed: true, last_vault_snapshot: null }),
+    decoded({}, { last_app_snapshot: "1" }),
+    decoded({}, { backups_configured: false }),
     ...["not_configured", "missing", "unreadable"].map((f) => decoded({ host_file: f, host: null })),
     ...HOST_NEXT.map((n) => decoded({}, { next: n })),
   ];
@@ -301,4 +311,24 @@ test("adr028_l20_key_copy_older_than_an_erasure_is_amber", () => {
   }
   eq(decodeSystem(wire({ last_cell_erasure: 5 })), null, "an erasure instant is a decimal string");
   eq(decodeSystem(wire({}, { last_vault_erasure: "x" })), null, "so is the vault's");
+});
+
+/** ADR-028 records of lanes L27 and L26: the keystore snapshot row is late after 36 hours, a problem when a last try failed, and off without backups; the reply refuses a snapshot fact out of its grammar. */
+test("adr028_l26_keystore_snapshot_row", () => {
+  const at = (age: bigint): string =>
+    rowOf(decoded({}, { last_vault_snapshot: (NOW - age).toString() }), "snapshots").light;
+  eq(at(SNAPSHOT_LATE), "green", "36 hours is still on time");
+  eq(at(SNAPSHOT_LATE + MIN), "amber", "just over 36 hours is late");
+  eq(rowOf(decoded(), "snapshots").params["age"], "4", "the older of the two");
+  eq(rowOf(decoded({}, { app_snapshot_failed: true }), "snapshots").light, "red", "a failed cell snapshot");
+  eq(rowOf(decoded({}, { backups_configured: false, last_app_snapshot: null }), "snapshots").light, "green", "off without backups");
+  eq(rowOf(decoded({}, { next: "keystore_snapshot" }), "report").light, "green", "the next word decodes");
+  eq(hostNext(decoded({}, { next: "keystore_snapshot" }))?.actor, "host", "the host admin acts");
+  for (const bad of [
+    wire({}, { app_snapshot_failed: "no" }),
+    wire({}, { last_vault_snapshot: "07" }),
+    wire({}, { vault_snapshot_failed: undefined }),
+  ]) {
+    eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
+  }
 });
