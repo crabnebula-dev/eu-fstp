@@ -227,6 +227,12 @@ pub trait Backend: Send + Sync + 'static {
         Arc::new(crate::public::NoPublicTexts)
     }
 
+    /// The store of anonymous drafts (ADR-032). `None` answers every
+    /// draft route 503, so nothing is kept without a store.
+    fn anonymous_drafts(&self) -> Option<Arc<dyn fstp_api_core::anon::AnonymousDrafts>> {
+        None
+    }
+
     /// Lane L2 hook (H-21, I-79, issue 6 M5): ends every agent grant of
     /// `account` at the cell's authorisation server (`crate::oauth`). The
     /// recovery route calls it after a completion commits. The default

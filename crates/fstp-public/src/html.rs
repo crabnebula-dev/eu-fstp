@@ -198,6 +198,8 @@ const ENTRIES: &[EntrySource<'static>] = &[
     label("public.call.guide", "Read the Guide for Applicants"),
     label("public.call.apply", "Sign in to apply"),
     label("public.call.signup", "Create an account"),
+    // ADR-032: a draft without an account, under a resume link.
+    label("public.call.draft", "Start writing now, no account needed"),
     label(
         "public.route.heading",
         "How a proposal moves through a call",
@@ -822,6 +824,14 @@ fn call_page(view: &PublicView, paths: &Paths, c: &PublicCall) -> Result<Element
                     .attr("class", "btn btn--secondary")
                     .attr_url("href", url("/auth/signup")?)
                     .label(&l("public.call.signup"), &[]),
+            )
+            // ADR-032 (Daniel, 2026-11-22): start writing without an
+            // account. Submitting still needs a registered account.
+            .child(
+                Element::new("a")
+                    .attr("class", "btn btn--secondary")
+                    .attr_url("href", url(&format!("/auth/draft?call={}", c.id))?)
+                    .label(&l("public.call.draft"), &[]),
             ),
     );
     let _ = view;

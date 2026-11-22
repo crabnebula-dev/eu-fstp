@@ -61,8 +61,8 @@ use fstp_webauthn::RelyingParty;
 
 use crate::http::pages::Pages;
 use crate::routes::{
-    Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, page_table, public_table, serve_route,
-    site_table, table,
+    Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, draft_table, page_table, public_table,
+    serve_route, site_table, table,
 };
 
 /// The CSP of the cell origin, verbatim from design section 11.2.
@@ -421,6 +421,7 @@ impl<B: Backend, L: LogSink> Front<B, L> {
             .iter()
             .chain(public_table())
             .chain(site_table())
+            .chain(draft_table())
             .chain(pages_rows)
         {
             if route.access() == Access::Loopback || route.access() == Access::Unserved {

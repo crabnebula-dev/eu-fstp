@@ -20,6 +20,7 @@
 mod api;
 mod auth;
 pub mod backend;
+pub mod drafts;
 mod handle;
 pub(crate) mod limits;
 /// Test only: the in-memory backend and the local cell. Built only with
@@ -160,6 +161,14 @@ pub enum Endpoint {
     /// `GET /app/assets/{file}`: a platform stylesheet of the public
     /// pages (`crate::http::site`, lane m4/pubtext).
     SiteSheet,
+    /// `POST /auth/drafts`: starts an anonymous draft (ADR-032).
+    DraftStart,
+    /// `POST /auth/drafts/open`: reads an anonymous draft (ADR-032).
+    DraftOpen,
+    /// `POST /auth/drafts/save`: saves an anonymous draft (ADR-032).
+    DraftSave,
+    /// `POST /auth/drafts/discard`: deletes an anonymous draft (ADR-032).
+    DraftDiscard,
     /// No handler: a route built with `Route::new` alone.
     Unserved,
 }
@@ -571,13 +580,62 @@ pub fn site_table() -> &'static [Route] {
     &SITE_TABLE
 }
 
+/// The anonymous draft routes of ADR-032 (Daniel, 2026-11-22). Each is a
+/// `POST` of canonical JSON with no session, so its access class is
+/// `Public`, and it starts, reads, saves or deletes form text that is no
+/// proposal, so its risk class is `Normal` (I-78). The token travels in
+/// the body only (R-NF-02).
+static DRAFT_TABLE: [Route; 4] = [
+    Route::served(
+        "POST",
+        "/auth/drafts",
+        Normal,
+        A::Public,
+        E::DraftStart,
+        drafts::SMALL_BODY_LIMIT,
+    ),
+    Route::served(
+        "POST",
+        "/auth/drafts/open",
+        Normal,
+        A::Public,
+        E::DraftOpen,
+        drafts::SMALL_BODY_LIMIT,
+    ),
+    Route::served(
+        "POST",
+        "/auth/drafts/save",
+        Normal,
+        A::Public,
+        E::DraftSave,
+        drafts::DRAFT_BODY_LIMIT,
+    ),
+    Route::served(
+        "POST",
+        "/auth/drafts/discard",
+        Normal,
+        A::Public,
+        E::DraftDiscard,
+        drafts::SMALL_BODY_LIMIT,
+    ),
+];
+
+/// The anonymous draft routes, with their classes (ADR-032). Like
+/// [`public_table`], they are not rows of [`table`], and every front
+/// serves them through the same shared checks as every other route.
+pub fn draft_table() -> &'static [Route] {
+    &DRAFT_TABLE
+}
+
 /// The routes of the compiled auth pages of design section 11.2
 /// (`crate::http::pages`). Each is a `GET` with no body, no session and
 /// no state change, so its risk class is `Normal` and its access class
 /// `Public`. Like every route, each row names its risk class (I-78).
-static PAGE_TABLE: [Route; 7] = [
+static PAGE_TABLE: [Route; 8] = [
     Route::served("GET", "/auth/login", Normal, A::Public, E::PageShell, 0),
     Route::served("GET", "/auth/signup", Normal, A::Public, E::PageShell, 0),
+    // ADR-032: the anonymous draft page.
+    Route::served("GET", "/auth/draft", Normal, A::Public, E::PageShell, 0),
     Route::served("GET", "/auth/invite", Normal, A::Public, E::PageShell, 0),
     Route::served("GET", "/auth/recovery", Normal, A::Public, E::PageShell, 0),
     Route::served("GET", "/auth/account", Normal, A::Public, E::PageShell, 0),
@@ -716,6 +774,55 @@ mod tests {
                 .chain(page_table())
                 .all(|t| !matches!(t.endpoint(), Endpoint::Public(_)))
         );
+    }
+
+    /// I-78, ADR-032, R-NF-02: the draft routes are four public `POST`
+    /// routes of risk class `Normal` under `/auth/drafts`, with no path
+    /// parameter, so no token ever sits in a path. None is a row of
+    /// another table, and their endpoints appear in no other row.
+    #[test]
+    fn adr032_draft_routes_are_public_posts_outside_the_other_tables() {
+        let got: Vec<&str> = draft_table().iter().map(|r| r.path).collect();
+        assert_eq!(
+            got,
+            [
+                "/auth/drafts",
+                "/auth/drafts/open",
+                "/auth/drafts/save",
+                "/auth/drafts/discard"
+            ]
+        );
+        for r in draft_table() {
+            assert_eq!(r.parts(), ("POST", r.path, RiskClass::Normal), "{}", r.path);
+            assert_eq!(r.access(), Access::Public, "{}", r.path);
+            assert!(!r.path.contains('{'), "{}", r.path);
+            assert!(
+                r.body_limit() > 0 && r.body_limit() <= 1 << 20,
+                "{}",
+                r.path
+            );
+            assert!(
+                matches!(
+                    r.endpoint(),
+                    Endpoint::DraftStart
+                        | Endpoint::DraftOpen
+                        | Endpoint::DraftSave
+                        | Endpoint::DraftDiscard
+                ),
+                "{}",
+                r.path
+            );
+            assert!(
+                table()
+                    .iter()
+                    .chain(page_table())
+                    .chain(public_table())
+                    .chain(site_table())
+                    .all(|t| t.path != r.path && t.endpoint() != r.endpoint()),
+                "{} is also a row of another table",
+                r.path
+            );
+        }
     }
 
     /// I-78, R-NF-03: the site table is the one sheet route, a public

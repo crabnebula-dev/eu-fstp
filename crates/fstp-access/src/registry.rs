@@ -405,6 +405,9 @@ pub enum PortKind {
     StateBirthDate,
     /// An autosave to the private workspace (I-21).
     SaveWorkspace,
+    /// The claim of an anonymous draft into the lead's own draft
+    /// (ADR-032). Web only.
+    ClaimDraft,
     /// A request for a copy of the application (R-SB-04).
     RequestCopy,
     /// A pre-check run on the team's draft (M7 design section 4,
@@ -1858,6 +1861,17 @@ pub const OPS: &[OpSpec] = &[
         &IN_PROPOSAL_BODY,
         Scope::ProposalsDraft,
     ),
+    // ADR-032 (Daniel, 2026-11-22): the lead claims an anonymous draft
+    // into the workspace of a proposal in DRAFT. Web only, so no agent
+    // drafts anonymously or claims a draft (R-MC-04). The token travels
+    // in the body only (R-NF-02).
+    OpSpec::new(
+        "proposal.claim_draft",
+        OpKind::M3Port(PortKind::ClaimDraft),
+        Post,
+        "/proposals/{proposal}/claim",
+    )
+    .acting(LEAD),
     // M7 lane L-PRE (slice built by L-DEMO), design section 4: the
     // pre-check of a draft and its runs, for the team only (I-21, R-LA-06)
     // and never through MCP. Each run counts against P-23 (TH-29).

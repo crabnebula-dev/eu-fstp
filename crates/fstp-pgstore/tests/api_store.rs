@@ -35,7 +35,7 @@ fn world() -> (CellDb, FakeWitness, Store) {
     db.psql(&format!(
         "GRANT USAGE ON SCHEMA api, workspace TO {app}; \
          GRANT USAGE ON SCHEMA api TO {writer}; \
-         GRANT SELECT, INSERT, UPDATE, DELETE ON api.pending_actions, workspace.drafts TO {app}; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON api.pending_actions, workspace.drafts, workspace.anonymous_drafts TO {app}; \
          GRANT SELECT ON api.pending_confirmed TO {app}; \
          GRANT SELECT, INSERT ON api.pending_confirmed TO {writer};"
     ))
@@ -163,6 +163,47 @@ fn i21_workspace_rows_hold_sealed_bytes_only() {
         "I-21: a clear value at rest"
     );
     assert!(block_on(api.put_workspace(proposal, "draft", b"clear", AT)).is_err());
+}
+
+/// ADR-032, R-NF-08, R-NF-02: an anonymous draft rests sealed under its
+/// token digest, never as clear text and never under the token. It opens
+/// while live only, a digest in use stores nothing, a save replaces the
+/// text, and the sweep deletes exactly the expired rows.
+#[test]
+fn adr032_anonymous_drafts_rest_sealed_under_the_token_digest() {
+    let (db, _w, _s) = world();
+    let api = api_store(&db);
+    let token = [0x7A_u8; 32];
+    let digest = fstp_crypto::sha256(&token);
+    let call = fresh16();
+    let one = b"{\"narrative\":\"synthetic-anon-one\",\"summary\":\"\",\"title\":\"\"}";
+    let two = b"{\"narrative\":\"synthetic-anon-two\",\"summary\":\"\",\"title\":\"\"}";
+    block_on(api.anon_start(digest, call, one, AT, AT + 100)).unwrap();
+    assert!(block_on(api.anon_start(digest, call, one, AT, AT + 100)).is_err());
+    let got = block_on(api.anon_open(digest, AT + 1)).unwrap().unwrap();
+    assert_eq!((got.call, got.plain.as_slice()), (call, &one[..]));
+    assert!(block_on(api.anon_save(digest, two, AT + 2)).unwrap());
+    let got = block_on(api.anon_open(digest, AT + 3)).unwrap().unwrap();
+    assert_eq!(got.plain.as_slice(), &two[..]);
+    let raw = db
+        .psql("SELECT encode(sealed, 'escape') || encode(token_hash, 'hex') FROM workspace.anonymous_drafts;")
+        .unwrap();
+    assert!(
+        !raw.contains("synthetic-anon"),
+        "R-NF-08: a clear value at rest"
+    );
+    let hex: String = token.iter().map(|b| format!("{b:02x}")).collect();
+    assert!(!raw.contains(&hex), "the token itself is stored");
+    let other = fstp_crypto::sha256(&[0x7B_u8; 32]);
+    block_on(api.anon_start(other, call, one, AT, AT + 10)).unwrap();
+    assert_eq!(block_on(api.anon_live(AT + 5)).unwrap(), 2);
+    assert!(block_on(api.anon_open(other, AT + 10)).unwrap().is_none());
+    assert!(!block_on(api.anon_save(other, two, AT + 10)).unwrap());
+    assert_eq!(block_on(api.anon_sweep(AT + 10)).unwrap(), 1);
+    assert_eq!(block_on(api.anon_live(AT + 10)).unwrap(), 1);
+    assert!(block_on(api.anon_remove(digest)).unwrap());
+    assert!(!block_on(api.anon_remove(digest)).unwrap());
+    assert!(block_on(api.anon_open(digest, AT + 4)).unwrap().is_none());
 }
 
 /// I-24, ADR-010 amendment of 2026-11-20: audit events commit as kind 2

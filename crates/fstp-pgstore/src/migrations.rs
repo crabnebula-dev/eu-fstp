@@ -78,6 +78,12 @@ pub const MIGRATIONS: &[Migration] = &[
         "display_name",
         include_str!("../migrations/app/0012_display_name.sql"),
     ),
+    // Lane L25 (ADR-032, Daniel 2026-11-22): anonymous drafts.
+    Migration::new(
+        13,
+        "anonymous_drafts",
+        include_str!("../migrations/app/0013_anonymous_drafts.sql"),
+    ),
 ];
 
 #[cfg(test)]

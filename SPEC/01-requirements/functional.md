@@ -25,6 +25,8 @@ Each requirement states an outcome and an acceptance criterion (AC). NOTEs carry
   AC: a withdrawal from any non-terminal state before GRANTED succeeds, including after signature while the contract is not yet EFFECTIVE.
   NOTE: The state machine permits withdrawal until GRANTED (`02-domain/state-machine.md`), which covers every point before signature. Terminal states, INELIGIBLE among them, have no exits.
 - **R-SB-04** Applicants can obtain a copy of their application at an email address they provide.
+- **R-SB-06** A person can start a draft for an open call without an account. The draft is kept under a secret resume link, holds no identity data, and is deleted after 30 days or at the call's deadline unless it is claimed. Submitting needs a registered account with a verified email. AC: an anonymous draft cannot be submitted; after a claim the resume link no longer opens the draft.
+  NOTE: Decided by Daniel on 2026-11-22 (ADR-032).
 
 ## Evaluation
 

@@ -688,6 +688,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
             BodyRule::Exactly(&["narrative", "summary", "title"])
         }
         OpKind::M3Port(PortKind::StateCountry) => BodyRule::Exactly(&["country"]),
+        // ADR-032: the resume token of the anonymous draft.
+        OpKind::M3Port(PortKind::ClaimDraft) => BodyRule::Exactly(&["token"]),
         // `review.mark_finding`: the reviewer's mark, `Agreed` or `Disputed`.
         OpKind::Finding(fstp_access::FindingKind::Mark) => BodyRule::Exactly(&["mark"]),
         // Issue 6 M3: `assess.rerun` names the proposal in its path only.

@@ -44,6 +44,8 @@ fn i82_role_plan_grants_api_and_workspace_to_app_only() {
         "api.pending_actions",
         "api.pending_confirmed",
         "workspace.drafts",
+        // Lane L25 (ADR-032): the anonymous drafts.
+        "workspace.anonymous_drafts",
     ]
     .into_iter()
     .collect();

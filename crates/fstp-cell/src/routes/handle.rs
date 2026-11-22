@@ -375,6 +375,11 @@ fn rate_limited<B: Backend>(ctx: &Ctx<B>, endpoint: Endpoint, req: &Request) -> 
     let ok = match endpoint {
         Endpoint::PasskeyLoginOptions | Endpoint::PasskeyLogin => ctx.limits.login(peer, now),
         Endpoint::MagicRequest | Endpoint::RecoveryRequest => ctx.limits.mail_peer(peer, now),
+        // ADR-032: starts per peer and per cell, the rest per peer.
+        Endpoint::DraftStart => ctx.limits.draft_start(peer, now),
+        Endpoint::DraftOpen | Endpoint::DraftSave | Endpoint::DraftDiscard => {
+            ctx.limits.draft_write(peer, now)
+        }
         Endpoint::Public(_) => return public_rate_limited(ctx, req),
         _ => true,
     };
@@ -478,6 +483,10 @@ async fn dispatch<B: Backend>(
         (Endpoint::Erasures, Some(c)) => api::erasures(ctx, &c).await,
         (Endpoint::Public(op), _) => public(ctx, req, op).await,
         (Endpoint::SiteSheet, _) => site_sheet(req),
+        (Endpoint::DraftStart, _) => crate::routes::drafts::start(ctx, req).await,
+        (Endpoint::DraftOpen, _) => crate::routes::drafts::open(ctx, req).await,
+        (Endpoint::DraftSave, _) => crate::routes::drafts::save(ctx, req).await,
+        (Endpoint::DraftDiscard, _) => crate::routes::drafts::discard(ctx, req).await,
         // A session route without a caller, the health route on the
         // tunnel, or an unserved route: never served.
         _ => Reply::refuse(StatusCode::NOT_FOUND, None, "route"),

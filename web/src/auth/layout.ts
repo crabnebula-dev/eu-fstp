@@ -22,6 +22,7 @@ export function t(id: AuthMessageId, args?: Readonly<Record<string, string>>): s
 export const PATHS = {
   login: '/auth/login',
   signup: '/auth/signup',
+  draft: '/auth/draft',
   invite: '/auth/invite',
   magic: '/auth/magic',
   recovery: '/auth/recovery',
