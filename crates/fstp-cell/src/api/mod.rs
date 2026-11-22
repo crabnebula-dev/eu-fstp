@@ -27,8 +27,10 @@
 //! - `mail`: the delivery of a message a port enqueued, through the
 //!   cell's `Relay` (I-26).
 //! - `closed`: the ports the production cell does not serve yet, each
-//!   failing closed: the vault's intake and Q35 queries, `Precheck`,
-//!   `Prober`, `Recovery` and `BreakGlass`.
+//!   failing closed: the vault's intake and Q35 queries, `Precheck` and
+//!   `BreakGlass`.
+//! - `tenant` also holds the `Prober` of onboarding over the ADR-027
+//!   probes (ADR-026 record of lane L18).
 //!
 //! The token store is lane L2's (`crate::oauth::tokens::CellTokens`),
 //! through [`CellTokens`]: the `Tokens` port of `ApiCore` and the agent
@@ -104,6 +106,9 @@ pub(crate) struct ApiParts<R: Runtime, V> {
     /// publications with, and the API core's creator inputs (`facts`).
     /// `None` reads the route backend's facts, as before.
     pub facts: Option<Arc<dyn facts::ShellFacts>>,
+    /// The onboarding probes of the `Prober` port (ADR-026 record of lane
+    /// L18). `None` fails every probe (Q5).
+    pub prober: Option<Arc<dyn crate::shell::probe::TenantProbe>>,
 }
 
 /// The shared state of every port of one cell.
@@ -150,7 +155,7 @@ pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     break_glass: closed::ClosedBreakGlass,
     tenant: tenant::CellTenant<R, V>,
     outbox: tenant::CellOutbox<R, V>,
-    prober: closed::ClosedProber,
+    prober: tenant::CellTenantProber,
     clock: tenant::CellClock<R, V>,
     ids: tenant::CellIds,
     tokens: Arc<T>,
@@ -177,6 +182,7 @@ where
         app,
         relay,
         facts,
+        prober,
     } = parts;
     let facts = facts.unwrap_or_else(|| Arc::new(facts::BackendFacts(Arc::clone(&backend))));
     let inner = Arc::new(Inner {
@@ -214,7 +220,7 @@ where
         break_glass: closed::ClosedBreakGlass,
         tenant: tenant::CellTenant(Arc::clone(&inner)),
         outbox: tenant::CellOutbox(Arc::clone(&inner)),
-        prober: closed::ClosedProber,
+        prober: tenant::CellTenantProber(prober),
         clock: tenant::CellClock(Arc::clone(&inner)),
         ids: tenant::CellIds,
         tokens,
@@ -245,7 +251,7 @@ where
     type BreakGlass = closed::ClosedBreakGlass;
     type Tenant = tenant::CellTenant<R, V>;
     type Outbox = tenant::CellOutbox<R, V>;
-    type Prober = closed::ClosedProber;
+    type Prober = tenant::CellTenantProber;
     type Clock = tenant::CellClock<R, V>;
     type Ids = tenant::CellIds;
     type Tokens = T;

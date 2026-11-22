@@ -389,3 +389,10 @@ Context: production SMTP relays (M6, `m6-design.md` Q1) and inference endpoints 
 - Decided by Daniel on 2026-11-20: `zeroize` may be used in `fstp-cell`, to wipe the plain body of the sealed cell key file (ADR-004 record of lane L4).
 - `fstp-cell` becomes a direct user of `zeroize 1.9.1`, as A1 asks of any further crate. The version, checksum and features (`alloc`, `default`) do not change. The crate is already in the resolved tree through moduletto and rustls. `derive` stays refused.
 - No package enters or leaves the tree. The `deps/adr-roots.txt` note for zeroize gains `fstp-cell`.
+
+## Record of 2026-11-21: zeroize in fstp-backup (lane L16 `prod/backup-custody`)
+
+- Decided by Daniel on 2026-11-21: `zeroize` may be used in `fstp-backup`, to wipe key material there (ADR-012 record of lane L16).
+- `fstp-backup` becomes a direct user of `zeroize 1.9.1`, as A1 asks of any further crate. It wraps the plain copies of a ClusterBackup group secret in `Zeroizing`: the bytes before they are sealed into a key file or an escrow container, and the escrow plaintext after it opens.
+- The version, checksum and features (`alloc`, `default`) do not change. The crate is already in the resolved tree. `derive` stays refused.
+- No package enters or leaves the tree. The `deps/adr-roots.txt` note for zeroize gains `fstp-backup`.

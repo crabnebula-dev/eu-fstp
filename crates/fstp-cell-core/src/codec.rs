@@ -525,6 +525,20 @@ fn key_record(v: &Value) -> Result<KeyRecord, FromJsonError> {
 
 fn release_record_json(r: &ReleaseRecord) -> Value {
     match r {
+        ReleaseRecord::VerificationTicketIssued {
+            id,
+            holder,
+            subject,
+            proposal,
+        } => tagged(
+            "VerificationTicketIssued",
+            vec![
+                ("holder", account_json(*holder)),
+                ("id", hex(id)),
+                ("proposal", opt_u128_json(*proposal)),
+                ("subject", account_json(*subject)),
+            ],
+        ),
         ReleaseRecord::TicketIssued {
             id,
             kind,
@@ -561,6 +575,15 @@ fn release_record_json(r: &ReleaseRecord) -> Value {
 fn release_record(v: &Value) -> Result<ReleaseRecord, FromJsonError> {
     let (tag, o) = variant(v)?;
     match tag {
+        "VerificationTicketIssued" => {
+            fields(o, &["holder", "id", "proposal", "subject"])?;
+            Ok(ReleaseRecord::VerificationTicketIssued {
+                id: array_from(o, "id")?,
+                holder: account_from(o, "holder")?,
+                subject: account_from(o, "subject")?,
+                proposal: opt_u128_from(o, "proposal")?,
+            })
+        }
         "TicketIssued" => {
             fields(o, &["holder", "id", "kind", "proposal"])?;
             Ok(ReleaseRecord::TicketIssued {
@@ -1301,6 +1324,18 @@ fn tenant_command_json(c: &TenantCommand) -> Value {
                 ("token_digest", hex(token_digest)),
             ],
         ),
+        TenantCommand::IssueAdminInvitation {
+            admin_invitation,
+            account,
+            token_digest,
+        } => tagged(
+            "IssueAdminInvitation",
+            vec![
+                ("account", account_json(*account)),
+                ("admin_invitation", dec_u128(*admin_invitation)),
+                ("token_digest", hex(token_digest)),
+            ],
+        ),
         TenantCommand::EnrolByInvitation {
             invitation,
             credential,
@@ -1403,6 +1438,14 @@ fn tenant_command(v: &Value) -> Result<TenantCommand, FromJsonError> {
             Ok(TenantCommand::IssueRoleInvitation {
                 programme: fstp_domain::id::ProgrammeId::from_raw(u128_from(o, "programme")?),
                 role_invitation: u128_from(o, "role_invitation")?,
+                account: account_from(o, "account")?,
+                token_digest: array_from(o, "token_digest")?,
+            })
+        }
+        "IssueAdminInvitation" => {
+            fields(o, &["account", "admin_invitation", "token_digest"])?;
+            Ok(TenantCommand::IssueAdminInvitation {
+                admin_invitation: u128_from(o, "admin_invitation")?,
                 account: account_from(o, "account")?,
                 token_digest: array_from(o, "token_digest")?,
             })
@@ -1525,6 +1568,13 @@ fn release_command_json(c: &ReleaseCommand) -> Value {
             "IssueCountryTicket",
             vec![("proposal", dec_u128(*proposal))],
         ),
+        ReleaseCommand::IssueVerificationTicket { account, proposal } => tagged(
+            "IssueVerificationTicket",
+            vec![
+                ("account", account_json(*account)),
+                ("proposal", opt_u128_json(*proposal)),
+            ],
+        ),
         ReleaseCommand::RecordRelationship { relationship } => tagged(
             "RecordRelationship",
             vec![("relationship", opaque_json(relationship))],
@@ -1557,6 +1607,13 @@ fn release_command(v: &Value) -> Result<ReleaseCommand, FromJsonError> {
             fields(o, &["proposal"])?;
             Ok(ReleaseCommand::IssueCountryTicket {
                 proposal: u128_from(o, "proposal")?,
+            })
+        }
+        "IssueVerificationTicket" => {
+            fields(o, &["account", "proposal"])?;
+            Ok(ReleaseCommand::IssueVerificationTicket {
+                account: account_from(o, "account")?,
+                proposal: opt_u128_from(o, "proposal")?,
             })
         }
         "RecordRelationship" => {
@@ -1801,6 +1858,11 @@ fn account_json(a: AccountId) -> Value {
     dec_u128(a.raw())
 }
 
+/// An optional decimal: the decimal string, or null.
+fn opt_u128_json(n: Option<u128>) -> Value {
+    n.map_or(Value::Null, dec_u128)
+}
+
 /// The owner of a text (ADR-025): `{"account": "<id>"}`.
 fn owner_json(owner: &crate::text::TextOwner) -> Value {
     let crate::text::TextOwner::Account(a) = owner;
@@ -1856,6 +1918,14 @@ fn u64_from(o: &Object, name: &'static str) -> Result<u64, FromJsonError> {
 
 fn account_from(o: &Object, name: &'static str) -> Result<AccountId, FromJsonError> {
     u128_from(o, name).map(AccountId::from_raw)
+}
+
+/// An optional decimal: null, or a canonical decimal string.
+fn opt_u128_from(o: &Object, name: &'static str) -> Result<Option<u128>, FromJsonError> {
+    match member(o, name)? {
+        Value::Null => Ok(None),
+        _ => u128_from(o, name).map(Some),
+    }
 }
 
 /// A signed 64-bit decimal: an optional `-` before a canonical unsigned

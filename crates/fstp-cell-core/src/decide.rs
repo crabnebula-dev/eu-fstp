@@ -113,6 +113,10 @@ pub const WRITE_KIND_GUARDIAN_CONSENT: u16 = 4;
 /// overview NOTE 6).
 pub const WRITE_KIND_COUNTRY_STATED: u16 = 1;
 
+/// The write kind of a recorded verification (ADR-009 "Write kinds",
+/// ADR-008 "Manual identity checks").
+pub(crate) const WRITE_KIND_VERIFICATION_RECORDED: u16 = 6;
+
 /// The erasure causes of design section 5.6, as closed codes: retention
 /// expiry (P-41), an erasure request, a cell erasure, and a completed
 /// identity verification of a document (R-ID-03).
@@ -433,6 +437,7 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Tenant(
                 TenantCommand::IssueFirstAdminInvitation { .. }
                     | TenantCommand::IssueRoleInvitation { .. }
+                    | TenantCommand::IssueAdminInvitation { .. }
                     | TenantCommand::ProvisionTenant { .. }
             )
     )
@@ -587,6 +592,9 @@ pub(crate) fn queries_with_inputs(
         CellCommand::Release(ReleaseCommand::IssueWriteTicket {
             kind: WRITE_KIND_GUARDIAN_CONSENT,
         }) => guardian_plan(s, actor, now).map(|p| p.queries()),
+        CellCommand::Release(ReleaseCommand::IssueVerificationTicket { account, proposal }) => {
+            verification_plan(s, *account, *proposal, actor).map(|p| p.queries())
+        }
         CellCommand::Auth(fstp_auth::AuthCommand::ApproveRecovery { case }) => {
             approval_plan(s, *case, actor).map(|p| p.queries())
         }
@@ -806,6 +814,14 @@ fn decide_system(
                 token_digest,
             }),
         ) => issue_role_invitation(s, *programme, *role_invitation, *account, *token_digest),
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueAdminInvitation {
+                admin_invitation,
+                account,
+                token_digest,
+            }),
+        ) => issue_admin_invitation(s, *admin_invitation, *account, *token_digest),
         (
             SystemTask::Timeline,
             CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account }),
@@ -1541,6 +1557,7 @@ fn decide_tenant(
         // ceremony admission enrols. Neither reaches this point.
         TenantCommand::IssueFirstAdminInvitation { .. }
         | TenantCommand::IssueRoleInvitation { .. }
+        | TenantCommand::IssueAdminInvitation { .. }
         | TenantCommand::ProvisionTenant { .. }
         | TenantCommand::EnrolByInvitation { .. }
         | TenantCommand::EnrolBySelfRegistration { .. } => Err(wrong_actor()),
@@ -1699,6 +1716,55 @@ fn issue_role_invitation(
     Ok(vec![CellRecord::Auth(record)])
 }
 
+/// Whether the tenant part holds the tenant admin invitation `id`, open,
+/// naming `account` with the token digest `digest` (SoD-07, ADR-026
+/// record of lane L18).
+fn open_admin_invitation(s: &CellState, id: u128, account: AccountId, digest: &[u8; 32]) -> bool {
+    let want = fstp_tenant::TokenDigest::from_bytes(*digest);
+    s.engine()
+        .tenant
+        .state()
+        .and_then(|ts| ts.invitation(fstp_tenant::InvitationId::from_raw(id)))
+        .is_some_and(|i| i.invitee == account && !i.taken && i.token_digest == want)
+}
+
+/// `IssueAdminInvitation` of the system task `Provisioning` for the
+/// accounts port (SoD-07, ADR-026 record of lane L18). The rule is
+/// `fstp_auth::ceremony::issue_invitation` with the issuer
+/// `AdminInvitation`: the tenant admin invitation `admin_invitation` is
+/// open, names `account` and holds `token_digest`, and no record names the
+/// account. The invitation id is the tenant invitation id, so a second
+/// issue for one tenant invitation is a reuse. The batch grants nothing:
+/// the enrolment through it takes the tenant invitation.
+fn issue_admin_invitation(
+    s: &CellState,
+    admin_invitation: u128,
+    account: AccountId,
+    token_digest: [u8; 32],
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let invitation = admin_invitation.to_be_bytes();
+    if s.auth().invitation(invitation).is_some() {
+        return Err(reused());
+    }
+    let open = open_admin_invitation(s, admin_invitation, account, &token_digest);
+    let issuer = fstp_auth::ceremony::Issuer::AdminInvitation {
+        invitation_open: open,
+    };
+    let record = fstp_auth::ceremony::issue_invitation(
+        issuer,
+        fstp_auth::recovery::Deployment::Saas,
+        invitation,
+        account,
+        token_digest,
+        !account_known(s, account),
+    )
+    .map_err(|e| match e {
+        fstp_auth::ceremony::EnrolDeny::InviteeNotNew => reused(),
+        _ => refuse(RuleRef::Input, RefusalReason::WrongState),
+    })?;
+    Ok(vec![CellRecord::Auth(record)])
+}
+
 /// `IssueInvitation` by a tenant admin (design section 8.3 ceremony 1,
 /// `authentication.md` "First passkey"). The rule is
 /// `fstp_auth::ceremony::issue_invitation` with the tenant admin issuer:
@@ -1796,7 +1862,13 @@ fn decide_enrolment(
     if cred.id != credential {
         return Err(invalid());
     }
-    if (inv.first_admin || holds_management_at(s, actor, now)) && !cred.user_verified {
+    // SoD-07, ADR-026 record of lane L18: an enrolment through the
+    // enrolment invitation of an open tenant admin invitation takes it.
+    let admin_invitation = u128::from_be_bytes(invitation);
+    let takes_admin =
+        open_admin_invitation(s, admin_invitation, actor, &inv.token_digest) && !inv.first_admin;
+    if (inv.first_admin || takes_admin || holds_management_at(s, actor, now)) && !cred.user_verified
+    {
         return Err(invalid());
     }
     let mut batch: Vec<CellRecord> =
@@ -1804,7 +1876,25 @@ fn decide_enrolment(
             .into_iter()
             .map(CellRecord::Auth)
             .collect();
-    if inv.first_admin && !s.tenant().is_admin(actor) {
+    if takes_admin {
+        // The account is new to the cell (`issue_admin_invitation`), so no
+        // binding names it and it holds no Receiving role (SoD-03).
+        if s.engine()
+            .core
+            .roster()
+            .bindings()
+            .any(|(_, b)| b.account == actor)
+        {
+            return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+        }
+        batch.push(CellRecord::Engine(fstp_engine::Record::Tenant(
+            fstp_engine::TenantEntry::Record(fstp_tenant::TenantRecord::AdminAdded {
+                account: actor,
+                invitation: fstp_tenant::InvitationId::from_raw(admin_invitation),
+            }),
+        )));
+    }
+    if (inv.first_admin || takes_admin) && !s.tenant().is_admin(actor) {
         batch.push(CellRecord::Tenant(TenantRecord::TenantAdminGranted {
             account: actor,
         }));
@@ -2087,6 +2177,149 @@ fn country_ticket(
     })])
 }
 
+/// The vault questions of a verification ticket (ADR-004 record of lane
+/// L13b, rows "Cell ticket" and "Ticket"): whether the recorder is
+/// verified, and whether the recorder shares an identity with the person
+/// or, for an applicant, with an account bound to the proposal.
+struct VerificationPlan {
+    actor: AccountId,
+    subject: AccountId,
+    others: BTreeSet<AccountId>,
+    proposal: Option<ProposalId>,
+}
+
+impl VerificationPlan {
+    fn verified(&self) -> Query {
+        Query::IsVerified {
+            account: self.actor,
+        }
+    }
+
+    fn same_identity(&self) -> Query {
+        Query::SameIdentityAsAny {
+            subject: self.actor,
+            others: self.others.clone(),
+        }
+    }
+
+    fn queries(&self) -> Vec<Query> {
+        vec![self.verified(), self.same_identity()]
+    }
+}
+
+/// The checks of a verification ticket that need no vault answer (ADR-008
+/// "Manual identity checks", ADR-004 record of lane L13b, rows "Cell
+/// ticket" and "Ticket"). The recorder is a tenant admin with no Judging
+/// binding in any state, and is not the person. With a proposal, the
+/// proposal is in NEGOTIATION or later, the person holds a binding on it
+/// and the recorder holds none. Without one, the person holds no
+/// Receiving binding at all, so an applicant is verified only in
+/// NEGOTIATION (R-NG-01).
+fn verification_plan(
+    s: &CellState,
+    subject: AccountId,
+    proposal: Option<u128>,
+    actor: AccountId,
+) -> Result<VerificationPlan, CellRefusal> {
+    let core = &s.engine().core;
+    if !s.tenant().is_admin(actor) {
+        return Err(wrong_actor());
+    }
+    // The I-17 guard of ADR-008: a recorder with a Judging binding, active,
+    // scheduled or suspended, would read identity attributes early.
+    let judging = core
+        .roster()
+        .bindings()
+        .any(|(_, b)| b.account == actor && b.group() == Group::Judging);
+    // ADR-008 rule 1: never the recorder's own account.
+    if judging || subject == actor {
+        return Err(wrong_actor());
+    }
+    let mut others = BTreeSet::from([subject]);
+    let p = match proposal {
+        Some(raw) => {
+            let p = ProposalId::from_raw(raw);
+            s.proposal(p).ok_or_else(unknown)?;
+            let team: BTreeSet<AccountId> = core
+                .roster()
+                .bindings()
+                .filter(|(_, b)| b.proposal() == Some(p))
+                .map(|(_, b)| b.account)
+                .collect();
+            if team.contains(&actor) {
+                return Err(wrong_actor());
+            }
+            if !team.contains(&subject) {
+                return Err(unknown());
+            }
+            let state = fstp_domain::view::proposal_state(core, p).ok_or_else(unknown)?;
+            if !RELEASE_STATES.contains(&state) {
+                return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+            }
+            others.extend(team);
+            Some(p)
+        }
+        None => {
+            // R-NG-01: an applicant's identity is collected in NEGOTIATION
+            // only, under a ticket that names the proposal.
+            let receiving = core
+                .roster()
+                .bindings()
+                .any(|(_, b)| b.account == subject && b.group() == Group::Receiving);
+            if receiving {
+                return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+            }
+            None
+        }
+    };
+    Ok(VerificationPlan {
+        actor,
+        subject,
+        others,
+        proposal: p,
+    })
+}
+
+/// A `verification_recorded` write ticket for one person (ADR-004 record
+/// of lane L13b, row "Ticket"), once the vault answered that the recorder
+/// is verified (ADR-008 interim) and shares no identity with the person or
+/// the proposal's accounts (rule 2).
+fn verification_ticket(
+    s: &CellState,
+    subject: AccountId,
+    proposal: Option<u128>,
+    actor: AccountId,
+    now: Timestamp,
+    command: Option<[u8; 16]>,
+    answers: &Answers,
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let plan = verification_plan(s, subject, proposal, actor)?;
+    let verified = answers.get(&plan.verified()).ok_or_else(answer_missing)?;
+    let same = answers
+        .get(&plan.same_identity())
+        .ok_or_else(answer_missing)?;
+    if !verified.holds || same.holds {
+        return Err(wrong_actor());
+    }
+    let kind = WRITE_KIND_VERIFICATION_RECORDED;
+    let mut payload = Vec::with_capacity(34);
+    payload.extend_from_slice(&kind.to_be_bytes());
+    payload.extend_from_slice(&plan.subject.raw().to_be_bytes());
+    payload.extend_from_slice(&plan.proposal.map_or(0, ProposalId::raw).to_be_bytes());
+    let id = derive_id(b"write", command, actor, now.micros(), &payload);
+    if s.ticket_issued(id) {
+        return Err(reused());
+    }
+    Ok(vec![CellRecord::Release(
+        ReleaseRecord::VerificationTicketIssued {
+            id,
+            holder: actor,
+            subject: plan.subject,
+            proposal: plan.proposal.map(ProposalId::raw),
+        },
+    )])
+}
+
 fn decide_release(
     s: &CellState,
     cmd: &ReleaseCommand,
@@ -2175,6 +2408,9 @@ fn decide_release(
         },
         ReleaseCommand::IssueCountryTicket { proposal } => {
             country_ticket(s, *proposal, actor, now, command)
+        }
+        ReleaseCommand::IssueVerificationTicket { account, proposal } => {
+            verification_ticket(s, *account, *proposal, actor, now, command, answers)
         }
         // No relationship form is defined yet, so every relationship is
         // refused (fail closed).

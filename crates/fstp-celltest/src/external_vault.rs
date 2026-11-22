@@ -327,6 +327,46 @@ impl ExternalVault {
         Ok(())
     }
 
+    /// Runs `fstp-vault verify-first-admin <account> <file>` as the
+    /// technical admin does on a pilot host (ADR-008, lane L13b; ADR-026
+    /// record of lane L18): `account` in the UUID form, and the synthetic
+    /// identity file `identity`, written to the run directory and removed
+    /// after. The vault must be stopped, since the command takes the
+    /// keystore lock.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be written or the command exits with a
+    /// failure.
+    pub fn verify_first_admin(&self, account: u128, identity: &str) -> Result<(), WorldError> {
+        let hex = format!("{account:032x}");
+        let uuid = format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+            account >> 96,
+            (account >> 80) & 0xffff,
+            (account >> 64) & 0xffff,
+            (account >> 48) & 0xffff,
+            account & 0xffff_ffff_ffff
+        );
+        let file = self.spec.dir.join(format!("admin-{hex}.json"));
+        std::fs::write(&file, identity).map_err(|e| fail("the identity file", &e))?;
+        let status = Command::new(&self.spec.binary)
+            .env(fstp_vault::run::CONFIG_ENV, &self.config)
+            .arg("verify-first-admin")
+            .arg(&uuid)
+            .arg(&file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .status();
+        let _ = std::fs::remove_file(&file);
+        let status = status.map_err(|e| fail("fstp-vault verify-first-admin", &e))?;
+        if !status.success() {
+            return Err(fail("fstp-vault verify-first-admin", &status));
+        }
+        Ok(())
+    }
+
     /// Sends SIGTERM and waits for a clean exit (ADR-002 drain).
     ///
     /// # Errors

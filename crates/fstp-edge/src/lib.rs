@@ -20,10 +20,11 @@
 //!   removal once every edge serves a table without the cell (design
 //!   section 3.7 step 3, ADR-004 "Decided by Daniel, 2026-11-15 (late)").
 //!   The table decoder is fuzzed (`route_table_decode`).
-//! - [`config`] and [`run`] start a pilot edge from a configuration file
-//!   and a static route file, with no control plane (ADR-009 "Pilot edge
-//!   configuration", D1). Both decoders are fuzzed (`edge_config_decode`,
-//!   `edge_routes_decode`).
+//! - [`config`] and [`run`] start a pilot edge from a configuration file.
+//!   It polls the signed route feed of a minimal `fstp-control` and
+//!   changes routes without a restart (ADR-009 "Pilot edge configuration"
+//!   and "Pilot route feed", decided by Daniel on 2026-11-21). The
+//!   decoders are fuzzed (`edge_config_decode`, `edge_routes_decode`).
 //!
 //! The edge holds no tenant TLS server and no tenant TLS key (boundary
 //! rule B5). It reaches `fstp-tls` for its tunnel client only, and a
@@ -41,8 +42,9 @@ mod splice;
 
 pub use crate::feed::{
     FeedError, FeedTransport, MAX_ROUTES, MAX_SIGNATURE_LEN, MAX_SIGNED_TABLE_LEN,
-    MAX_TLS_NAME_LEN, POLL_LEN, POLL_MAGIC, ROUTE_TABLE_CONTEXT, ROUTE_TABLE_MAGIC, RouteEntry,
-    RouteFeed, SignedRouteTable, TlsFeed, decode_poll, decode_signed_route_table, encode_poll,
+    MAX_TLS_NAME_LEN, PIN_LEN, POLL_LEN, POLL_MAGIC, PinnedRoute, ROUTE_TABLE_CONTEXT,
+    ROUTE_TABLE_MAGIC, RouteEntry, RouteFeed, SignedRouteTable, TlsFeed, VerifiedTable,
+    check_routes, decode_poll, decode_route, decode_signed_route_table, encode_poll, encode_route,
     encode_route_table_body, encode_signed_route_table, routes_of, verify_route_table,
 };
 pub use crate::header::{
@@ -51,8 +53,8 @@ pub use crate::header::{
 };
 pub use crate::host::{HostError, HostName, MAX_HOST_LEN, MAX_LABEL_LEN};
 pub use crate::route::{
-    CELL_ID_LEN, CellEndpoint, CloseReason, Decision, LiveRoutes, RouteError, RouteKind,
-    RouteTable, decide,
+    CELL_ID_LEN, CellEndpoint, CloseReason, Decision, LiveRoutes, PinSource, Pins, RouteError,
+    RouteKind, RouteTable, decide,
 };
 pub use crate::sni::{
     HelloPart, HelloScan, MAX_HELLO_BUF, SniError, SniOutcome, parse_client_hello_sni,
@@ -63,8 +65,8 @@ pub use crate::splice::{
 
 /// Runs the pilot edge from the configuration file that
 /// [`run::CONFIG_ENV`] names until SIGTERM or SIGINT ([`run::run`], ADR-009
-/// "Pilot edge configuration"). It serves a static route table and never
-/// polls the route feed, so it is a pilot, not a release (D1).
+/// "Pilot edge configuration"). It serves the routes of the signed route
+/// feed and changes them without a restart (ADR-009 "Pilot route feed").
 ///
 /// # Errors
 ///

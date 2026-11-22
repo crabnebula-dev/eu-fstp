@@ -38,10 +38,10 @@ use fstp_pki::cert::{
 use fstp_pki::pem::{PemLabel, encode};
 use fstp_rt::tokio::TokioRuntime;
 use fstp_vault::chain::{VaultChainParts, VaultWitness};
-use fstp_vault::erasure::{Registrar, Runner};
+use fstp_vault::erasure::Runner;
 use fstp_vault::keystore::{self, VaultKeys};
 use fstp_vault::service::{
-    AeadSealer, RegisteredSpki, VaultHandle, VaultParts, serve_with_registrar,
+    AeadSealer, RegisteredSpki, RegistrarParts, VaultHandle, VaultParts, serve_with_registrar,
 };
 use fstp_vault::start::ClusterRole;
 use fstp_vault_proto::{
@@ -381,7 +381,7 @@ impl Setup {
         &self,
         chain: bool,
         sealer: AeadSealer,
-        registrar: Option<Registrar<TokioRuntime>>,
+        registrar: Option<RegistrarParts<TokioRuntime>>,
     ) -> Result<Vault, fstp_vault::VaultError> {
         let (server_cert, server_key) = self.cell_ca.issue(CertKind::Server, "vault", None, &[]);
         let tls = |roots: Option<&[u8]>| {
@@ -437,6 +437,7 @@ impl Setup {
             internal_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             origin_listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             chain,
+            pages: None,
         };
         let handle = block_on(serve_with_registrar(rt().clone(), parts, registrar))?;
         let (cert, key) = self
@@ -450,6 +451,40 @@ impl Setup {
             },
         );
         Ok(Vault { handle, client })
+    }
+
+    /// The vault with a keystore from genesis and its registrar, which
+    /// checks its keys connection every `check_every` (ADR-004 records
+    /// of lanes L13 and L13b). Returns the identity fact keys too.
+    fn vault_with_keystore(
+        &self,
+        check_every: Duration,
+    ) -> (Vault, Arc<fstp_vault::keystore::IdentityKeys>) {
+        let custody = OneKeyCustody(fstp_crypto::aead::Key::generate().unwrap());
+        let keys = VaultKeys::generate().unwrap();
+        let rows = block_on(keystore::genesis(&custody, self.cell, &keys, 1)).unwrap();
+        let mut c = block_on(Client::connect(rt(), &self.db)).unwrap();
+        block_on(keystore::write_rows(&mut c, &rows)).unwrap();
+        block_on(fstp_vault::run::lock_keystore(&mut c)).unwrap();
+        let runner = block_on(Runner::load(c, self.cell, &custody)).unwrap();
+        let (_, sealer) = runner.service_keys().unwrap().into_service_keys().unwrap();
+        let sealer = sealer.with_identities(runner.identity_keys());
+        let identities = runner.identity_keys();
+        let registrar = RegistrarParts {
+            registrar: runner.into_registrar().unwrap(),
+            keys_db: self.db.clone(),
+            check_every,
+        };
+        let v = self.vault_with(true, sealer, Some(registrar)).unwrap();
+        (v, identities)
+    }
+
+    /// The pid of the session that holds the keystore lock, if any.
+    fn lock_holder(&self) -> String {
+        self.psql(&format!(
+            "SELECT coalesce(string_agg(pid::text, ','), '') FROM pg_locks WHERE locktype = 'advisory' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = '{}')",
+            self.dbname
+        ))
     }
 
     fn psql(&self, sql: &str) -> String {
@@ -708,17 +743,7 @@ fn adr004_vault_registers_an_identity_on_the_internal_route() {
     none.stop();
     assert_eq!(s.psql("SELECT count(*) FROM vault.identity_account"), "0");
 
-    let custody = OneKeyCustody(fstp_crypto::aead::Key::generate().unwrap());
-    let keys = VaultKeys::generate().unwrap();
-    let rows = block_on(keystore::genesis(&custody, s.cell, &keys, 1)).unwrap();
-    let mut c = block_on(Client::connect(rt(), &s.db)).unwrap();
-    block_on(keystore::write_rows(&mut c, &rows)).unwrap();
-    let runner = block_on(Runner::load(c, s.cell, &custody)).unwrap();
-    let (_, sealer) = runner.service_keys().unwrap().into_service_keys().unwrap();
-    let sealer = sealer.with_identities(runner.identity_keys());
-    let identities = runner.identity_keys();
-    let registrar = runner.into_registrar().unwrap();
-    let v = s.vault_with(true, sealer, Some(registrar)).unwrap();
+    let (v, identities) = s.vault_with_keystore(Duration::from_secs(5));
     let chain_rows = || s.psql("SELECT count(*) FROM vault_audit.chain");
     assert_eq!(
         v.call("/v1/identity", &register(101, ALICE)),
@@ -752,4 +777,83 @@ fn adr004_vault_registers_an_identity_on_the_internal_route() {
         s.psql("SELECT count(DISTINCT identity_id) || ':' || count(*) FROM vault.identity_account"),
         "1:2"
     );
+}
+
+/// Waits up to `limit` for `f` to hold, checking every 50 ms.
+fn eventually(limit: Duration, mut f: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + limit;
+    while std::time::Instant::now() < end {
+        if f() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    f()
+}
+
+/// I-81, ADR-004 record of lane L13b "Reconnect": when the session that
+/// holds the keystore lock ends, the serving vault takes the lock again
+/// on a new keys connection and keeps registering identities.
+#[test]
+fn i81_vault_retakes_the_keystore_lock_after_its_connection_drops() {
+    const ALICE: &[u8] = b"synthetic|manual|passport|name=Synthetic Alpha|0001";
+    const BRUNO: &[u8] = b"synthetic|manual|passport|name=Synthetic Bravo|0002";
+    let s = Setup::new();
+    let (v, _) = s.vault_with_keystore(Duration::from_millis(200));
+    assert_eq!(
+        v.call("/v1/identity", &register(101, ALICE)),
+        (200, Some(VaultResponse::Acked))
+    );
+    let first = s.lock_holder();
+    assert!(
+        !first.is_empty(),
+        "the serving vault holds no keystore lock"
+    );
+    s.psql(&format!("SELECT pg_terminate_backend({first})"));
+    assert!(
+        eventually(Duration::from_secs(10), || {
+            let now = s.lock_holder();
+            !now.is_empty() && now != first
+        }),
+        "I-81: the vault did not take the keystore lock again"
+    );
+    assert!(!v.handle.stopped());
+    assert_eq!(
+        v.call("/v1/identity", &register(102, BRUNO)),
+        (200, Some(VaultResponse::Acked))
+    );
+    v.stop();
+    assert_eq!(s.psql("SELECT count(*) FROM vault.identity_account"), "2");
+}
+
+/// I-81, ADR-004 record of lane L13b "Fail closed": when another process
+/// takes the keystore lock while the vault's keys connection is down, the
+/// vault stops serving: every request answers 503.
+#[test]
+fn i81_vault_stops_serving_when_another_process_takes_the_lock() {
+    const ALICE: &[u8] = b"synthetic|manual|passport|name=Synthetic Alpha|0001";
+    let s = Setup::new();
+    let (v, _) = s.vault_with_keystore(Duration::from_millis(500));
+    assert_eq!(
+        v.call("/v1/epoch", &VaultRequest::Epoch),
+        (200, Some(VaultResponse::Epoch(0)))
+    );
+    let first = s.lock_holder();
+    s.psql(&format!("SELECT pg_terminate_backend({first})"));
+    let mut other = block_on(Client::connect(rt(), &s.db)).unwrap();
+    assert!(
+        eventually(Duration::from_secs(5), || block_on(
+            fstp_vault::run::lock_keystore(&mut other)
+        )
+        .is_ok()),
+        "the test could not take the freed lock"
+    );
+    assert!(
+        eventually(Duration::from_secs(10), || v.handle.stopped()),
+        "I-81: the vault kept serving without its keystore lock"
+    );
+    assert_eq!(v.call("/v1/epoch", &VaultRequest::Epoch).0, 503);
+    assert_eq!(v.call("/v1/identity", &register(101, ALICE)).0, 503);
+    block_on(other.close()).unwrap();
+    v.stop();
 }

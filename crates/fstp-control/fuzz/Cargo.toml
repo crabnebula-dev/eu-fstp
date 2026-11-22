@@ -68,6 +68,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "route_feed_decode"
+path = "fuzz_targets/route_feed_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

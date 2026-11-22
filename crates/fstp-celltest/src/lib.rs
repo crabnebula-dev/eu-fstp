@@ -25,6 +25,7 @@ pub mod cycle;
 pub mod egress;
 pub mod erase_cell;
 pub mod external_cell;
+pub mod external_edge;
 pub mod external_vault;
 pub mod m2_http;
 pub mod mc;

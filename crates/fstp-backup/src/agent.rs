@@ -368,6 +368,21 @@ impl<R: Runtime> Agent<R> {
         keyfile::open(custody, &self.key).await
     }
 
+    /// Opens the group secret on a second custodian (ADR-012 record of
+    /// lane L16): the custodian key through `custody`, then the escrow.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`crate::custodian::open`].
+    pub async fn open_escrow<C: Custody>(
+        &self,
+        custody: &C,
+        custodian_key: &[u8],
+        escrow: &[u8],
+    ) -> Result<HybridSecretKey, BackupError> {
+        crate::custodian::open(custody, custodian_key, escrow, &self.key).await
+    }
+
     /// Writes the plaintext of base backup `entry` to `out`, part by part.
     /// Each part must exist, be of this cluster and carry its number, and
     /// the parts must add up to the entry's size.

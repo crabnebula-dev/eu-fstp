@@ -112,6 +112,9 @@ pub struct WitnessConfig {
 /// The vault process configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VaultConfig {
+    /// The installed static pages of the vault origin, if any (ADR-004
+    /// record of lane L13b, row "Static pages"). Optional.
+    pub assets_dir: Option<PathBuf>,
     /// The cell this vault belongs to.
     pub cell: [u8; 16],
     /// The directory of the role certificates and keys, readable only by
@@ -249,7 +252,16 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
     }
     let body = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     let v = parse_canonical(body, &limits()).map_err(|_| bad("canonical JSON"))?;
-    let o = obj(&v, &CONFIG_MEMBERS, "members")?;
+    // ADR-004 record of lane L13b, row "Static pages": `assets_dir` is the
+    // one optional member.
+    let has_assets = v.as_object().is_some_and(|o| o.get("assets_dir").is_some());
+    let o = if has_assets {
+        let mut names = vec!["assets_dir"];
+        names.extend_from_slice(&CONFIG_MEMBERS);
+        obj(&v, &names, "members")?
+    } else {
+        obj(&v, &CONFIG_MEMBERS, "members")?
+    };
     let d = obj(member(o, "database")?, &DATABASE_MEMBERS, "database")?;
     let cell = hex::<16>(o, "cell")?;
     let dbname = string(d, "dbname")?;
@@ -269,7 +281,13 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
     }
     let internal_listen = addr(o, "internal_listen")?;
     let origin_listen = addr(o, "origin_listen")?;
+    let assets_dir = if has_assets {
+        Some(path(o, "assets_dir")?)
+    } else {
+        None
+    };
     Ok(VaultConfig {
+        assets_dir,
         cell,
         credentials_dir: path(o, "credentials_dir")?,
         database: DatabaseConfig {
@@ -306,6 +324,32 @@ pub(crate) mod tests {
             t = "33".repeat(32),
             w = "44".repeat(32),
         ))
+    }
+
+    /// ADR-004 record of lane L13b, row "Static pages": `assets_dir` is
+    /// optional, absent by default, and an absolute path when present.
+    #[test]
+    fn adr009_vault_config_takes_an_optional_assets_dir() {
+        assert_eq!(
+            decode_config(text(|s| s).as_bytes()).unwrap().assets_dir,
+            None
+        );
+        let with = |p: &str| {
+            text(|s| {
+                s.replacen(
+                    "{\"cell\"",
+                    &format!("{{\"assets_dir\":\"{p}\",\"cell\""),
+                    1,
+                )
+            })
+        };
+        assert_eq!(
+            decode_config(with("/opt/fstp/web").as_bytes())
+                .unwrap()
+                .assets_dir,
+            Some(PathBuf::from("/opt/fstp/web"))
+        );
+        assert!(decode_config(with("opt/fstp/web").as_bytes()).is_err());
     }
 
     /// G12, ADR-026 record of lane L8: a valid configuration decodes into

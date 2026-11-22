@@ -209,6 +209,7 @@ dependencies = [
  "fstp-keys",
  "fstp-rt",
  "fstp-tls",
+ "zeroize",
 ]
 
 [[package]]
@@ -279,6 +280,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-programme",
  "fstp-report",
+ "fstp-tenant",
  "fstp-webauthn",
 ]
 

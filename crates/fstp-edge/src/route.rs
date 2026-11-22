@@ -161,6 +161,83 @@ impl RouteTable {
     }
 }
 
+/// The tunnel server pins of a table: one SHA-256 digest of an
+/// end-entity certificate DER per endpoint (ADR-009 "Pilot edge
+/// configuration", row "Tunnel server pin", and "Pilot route feed").
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Pins {
+    by_endpoint: Vec<(CellEndpoint, [u8; 32])>,
+}
+
+impl Pins {
+    /// The pin of `endpoint`: the one entry with its cell, its address and
+    /// its server name, or `None`.
+    pub fn pin_of(&self, endpoint: &CellEndpoint) -> Option<[u8; 32]> {
+        self.by_endpoint
+            .iter()
+            .find(|(ep, _)| {
+                ep.cell == endpoint.cell
+                    && ep.tls_name == endpoint.tls_name
+                    && same_endpoint(&ep.address, &endpoint.address)
+            })
+            .map(|(_, pin)| *pin)
+    }
+
+    /// The number of pins, two per cell.
+    pub fn len(&self) -> usize {
+        self.by_endpoint.len()
+    }
+
+    /// Whether there is no pin.
+    pub fn is_empty(&self) -> bool {
+        self.by_endpoint.is_empty()
+    }
+
+    /// Adds the pin of `endpoint`. Returns false, and adds nothing, when
+    /// another endpoint already carries `pin`: two endpoints never share
+    /// a pin.
+    pub(crate) fn add(&mut self, endpoint: CellEndpoint, pin: [u8; 32]) -> bool {
+        if self.by_endpoint.iter().any(|(_, p)| *p == pin) {
+            return false;
+        }
+        self.by_endpoint.push((endpoint, pin));
+        true
+    }
+
+    /// The pins without those of cell `cell`.
+    fn without_cell(&self, cell: &[u8; CELL_ID_LEN]) -> Pins {
+        Pins {
+            by_endpoint: self
+                .by_endpoint
+                .iter()
+                .filter(|(ep, _)| ep.cell != *cell)
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
+/// Where a tunnel opener finds the pin of an endpoint: a fixed set of
+/// [`Pins`], or the [`LiveRoutes`] the route feed keeps current.
+pub trait PinSource {
+    /// The pin of `endpoint` now, or `None` when it has none.
+    fn pin_now(&self, endpoint: &CellEndpoint) -> Option<[u8; 32]>;
+}
+
+impl PinSource for Pins {
+    fn pin_now(&self, endpoint: &CellEndpoint) -> Option<[u8; 32]> {
+        self.pin_of(endpoint)
+    }
+}
+
+impl PinSource for LiveRoutes {
+    /// The pin in the table that is current now. A route removed since
+    /// its hello arrived has no pin, so its tunnel never opens.
+    fn pin_now(&self, endpoint: &CellEndpoint) -> Option<[u8; 32]> {
+        self.pins().pin_of(endpoint)
+    }
+}
+
 /// The route table an edge serves from, shared between the listener and
 /// the route feed (design section 3.7 step 3, TH-48).
 ///
@@ -181,17 +258,36 @@ pub struct LiveRoutes {
 struct Live {
     version: u64,
     table: Arc<RouteTable>,
+    pins: Arc<Pins>,
 }
 
 impl LiveRoutes {
-    /// Live routes that start as `table`.
+    /// Live routes that start as `table`, with no pin.
     pub fn new(table: RouteTable) -> LiveRoutes {
+        LiveRoutes::pinned(table, Pins::default())
+    }
+
+    /// Live routes that start as `table` with the tunnel server pins
+    /// `pins`, at version 0.
+    pub fn pinned(table: RouteTable, pins: Pins) -> LiveRoutes {
         LiveRoutes {
             inner: Arc::new(RwLock::new(Live {
                 version: 0,
                 table: Arc::new(table),
+                pins: Arc::new(pins),
             })),
         }
+    }
+
+    /// The tunnel server pins of the current table.
+    pub fn pins(&self) -> Arc<Pins> {
+        Arc::clone(
+            &self
+                .inner
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pins,
+        )
     }
 
     /// The current table.
@@ -234,6 +330,7 @@ impl LiveRoutes {
         let removed = next.remove_cell_by_id(cell);
         if removed > 0 {
             slot.table = Arc::new(next);
+            slot.pins = Arc::new(slot.pins.without_cell(cell));
         }
         removed
     }
@@ -252,6 +349,13 @@ impl LiveRoutes {
     /// changes nothing, so a replayed table never brings back a removed
     /// route. Returns whether the table was swapped in.
     pub fn apply(&self, version: u64, table: RouteTable) -> bool {
+        self.apply_pinned(version, table, Pins::default())
+    }
+
+    /// As [`LiveRoutes::apply`], with the tunnel server pins of `table`
+    /// (ADR-009 "Pilot route feed"). The table and its pins swap in
+    /// together.
+    pub fn apply_pinned(&self, version: u64, table: RouteTable, pins: Pins) -> bool {
         let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
         if version <= slot.version {
             return false;
@@ -259,6 +363,7 @@ impl LiveRoutes {
         *slot = Live {
             version,
             table: Arc::new(table),
+            pins: Arc::new(pins),
         };
         true
     }

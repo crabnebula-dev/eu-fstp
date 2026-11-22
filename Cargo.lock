@@ -312,6 +312,7 @@ dependencies = [
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",
+ "zeroize",
 ]
 
 [[package]]
@@ -396,6 +397,7 @@ dependencies = [
  "fstp-programme",
  "fstp-prop",
  "fstp-report",
+ "fstp-tenant",
  "fstp-webauthn",
 ]
 
