@@ -202,6 +202,7 @@ dependencies = [
  "fstp-rt",
  "fstp-sigval",
  "fstp-tenant",
+ "fstp-unorm",
 ]
 
 [[package]]
