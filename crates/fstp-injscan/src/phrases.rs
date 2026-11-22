@@ -147,7 +147,7 @@ const PHRASES: &[Phrase] = &[
             (&["anweisung*", "instruktion*", "befehl*", "regeln"], 2),
         ],
     ),
-    // French, Spanish, Italian, Portuguese: the adjective follows.
+    // French, Spanish, Italian and Portuguese: the adjective follows.
     p(
         Override,
         &[
@@ -188,6 +188,31 @@ const PHRASES: &[Phrase] = &[
                 ],
                 1,
             ),
+        ],
+    ),
+    // Maltese (lead reading, 2026-11-22): "injora l-istruzzjonijiet
+    // preċedenti", "insa l-istruzzjonijiet ta' qabel".
+    p(
+        Override,
+        &[
+            (&["injora*", "tinjora*", "insa", "tinsiex"], 0),
+            (&["istruzzjoni*", "struzzjoni*"], 3),
+            (&["preċedenti", "precedenti", "qabel", "ta"], 2),
+        ],
+    ),
+    p(
+        Addressed,
+        &[
+            (&["għażiż*", "ghaziz*"], 0),
+            (&["valutatur*", "evalwatur*", "ai", "ia"], 1),
+        ],
+    ),
+    p(
+        Addressed,
+        &[
+            (&["nota", "messaġġ"], 0),
+            (&["lill", "għall"], 0),
+            (&["ai", "ia", "valutatur*", "evalwatur*", "mudell"], 1),
         ],
     ),
     // Dutch and Polish.

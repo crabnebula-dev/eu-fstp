@@ -111,9 +111,22 @@ pub fn finding_queries(
                 .into_iter()
                 .collect())
         }
+        // ADR-035: the release asks the vault for a conflict, as every
+        // read of content does (I-03).
+        FindingCommand::ReleaseIntegrityHold { call, proposal } => {
+            let Actor::Account(by) = ctx.actor else {
+                return Ok(Vec::new());
+            };
+            Ok(
+                check_release_basis(&state.core, by, *call, *proposal, ctx.now)
+                    .ok()
+                    .map(|()| conflict_query(&state.core, by, *proposal))
+                    .into_iter()
+                    .collect(),
+            )
+        }
         FindingCommand::Record(_)
         | FindingCommand::Regenerate { .. }
-        | FindingCommand::ReleaseIntegrityHold { .. }
         | FindingCommand::RequestRerun { .. }
         | FindingCommand::AbandonRerun { .. }
         | FindingCommand::RecordRefusals { .. } => Ok(Vec::new()),
@@ -194,12 +207,30 @@ fn decide_one(
             record
         }
         FindingCommand::ReleaseIntegrityHold { call, proposal } => {
-            // ADR-035: the call's FSTP coordinator, as for a re-run. The
-            // store checks that a hold is there, in the trial fold below.
+            // ADR-035: the call's FSTP coordinator, as for a re-run, with
+            // no conflict on the proposal (I-03, lead reading 2026-11-22).
             let Actor::Account(by) = ctx.actor else {
                 return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
             };
-            check_rerun_basis(core, by, *call, *proposal, ctx.now)?;
+            check_release_basis(core, by, *call, *proposal, ctx.now)?;
+            match answers.get(&conflict_query(core, by, *proposal)) {
+                None => {
+                    return Err(Refusal::new(
+                        RuleRef::FactsIncomplete,
+                        RefusalReason::AnswerMissing,
+                    ));
+                }
+                Some(a) if a.epoch != core.epoch() => {
+                    return Err(Refusal::new(
+                        RuleRef::StaleFacts,
+                        RefusalReason::AnswerStale,
+                    ));
+                }
+                Some(a) if a.holds => {
+                    return Err(Refusal::new(RuleRef::I03, RefusalReason::VaultRefused));
+                }
+                Some(_) => {}
+            }
             if !store.held(*proposal) {
                 return Err(store_refusal(FindingRefusal::NotHeld {
                     proposal: *proposal,
@@ -511,9 +542,12 @@ pub fn check_fold(
                 Err(FoldError::Inconsistent)
             }
         }
-        FindingRecord::RerunRequested { call, proposal, by }
-        | FindingRecord::IntegrityReleased { call, proposal, by } => {
+        FindingRecord::RerunRequested { call, proposal, by } => {
             check_rerun_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)
+        }
+        FindingRecord::IntegrityReleased { call, proposal, by } => {
+            check_release_basis(core, *by, *call, *proposal, at)
+                .map_err(|_| FoldError::Inconsistent)
         }
         FindingRecord::IntegrityHeld {
             call,
@@ -690,6 +724,24 @@ fn current_call(core: &State, proposal: ProposalId) -> Option<CallId> {
 /// and `by` holds an active FSTP coordinator binding in the call's
 /// programme, as `review.assign` requires. The store's bounds are
 /// checked by the fold.
+/// What a release of an integrity hold needs from the core (ADR-035):
+/// the basis of a re-run, and no conflict of `by` on the proposal, as
+/// for every content read (I-03). Another coordinator releases a proposal
+/// its own coordinator is conflicted on. Lead reading, 2026-11-22.
+fn check_release_basis(
+    core: &State,
+    by: AccountId,
+    call: CallId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> Result<(), Refusal> {
+    check_rerun_basis(core, by, call, proposal, now)?;
+    if core.review().conflict_fact(by, proposal) {
+        return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    Ok(())
+}
+
 fn check_rerun_basis(
     core: &State,
     by: AccountId,

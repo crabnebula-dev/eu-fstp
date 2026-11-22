@@ -2521,6 +2521,7 @@ pub(crate) mod reply_shape_tests {
                         }],
                     }],
                 }],
+                scan: Vec::new(),
             }),
             ReadModel::Precheck(crate::views::PrecheckView {
                 assessor: "model",
@@ -2529,6 +2530,13 @@ pub(crate) mod reply_shape_tests {
                 account_call: 5,
                 next: None,
                 runs: Vec::new(),
+                scan: vec![crate::views::PrecheckScanRow {
+                    section: "narrative",
+                    reason: "override",
+                    start: 10,
+                    end: 42,
+                    quote: "SYNTHETIC QUOTE".to_owned(),
+                }],
             }),
             ReadModel::FindingsRefusals(vec![
                 crate::views::RefusedStageRow {

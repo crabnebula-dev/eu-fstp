@@ -1005,6 +1005,39 @@ pub struct PrecheckView {
     pub next: Option<i64>,
     /// The runs, newest first.
     pub runs: Vec<PrecheckRunRow>,
+    /// The platform's injection check of the draft as it stands
+    /// (ADR-035): deterministic, no AI, never counted under P-23.
+    pub scan: Vec<PrecheckScanRow>,
+}
+
+/// One span the platform's injection check flagged in the draft
+/// (ADR-035, TH-02): the section, the reason code, the span in characters
+/// of that section, and a short quote of the applicant's own visible
+/// text, empty for hidden characters. No detector internals.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrecheckScanRow {
+    /// `title`, `summary` or `narrative`.
+    pub section: &'static str,
+    /// The reason code of `fstp_injscan::Reason`.
+    pub reason: &'static str,
+    /// The first character of the span.
+    pub start: u64,
+    /// The character just after the span.
+    pub end: u64,
+    /// At most 80 characters of the span; empty for hidden characters.
+    pub quote: String,
+}
+
+impl ToJson for PrecheckScanRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("section", Value::from(self.section)),
+            ("reason", Value::from(self.reason)),
+            ("start", int(self.start)),
+            ("end", int(self.end)),
+            ("quote", Value::from(self.quote.as_str())),
+        ])
+    }
 }
 
 impl ToJson for PrecheckView {
@@ -1021,6 +1054,7 @@ impl ToJson for PrecheckView {
                 ]),
             ),
             ("runs", array(&self.runs)),
+            ("scan", array(&self.scan)),
         ])
     }
 }

@@ -247,6 +247,19 @@ const PRECHECK_VIEW: Shape = Shape::Object(&[
             ),
         ])),
     ),
+    // ADR-035, TH-02: the platform's injection check of the draft as it
+    // stands: closed reason codes, spans and short quotes of the
+    // applicant's own text. No detector internals.
+    m(
+        "scan",
+        Shape::Array(&Shape::Object(&[
+            m("section", Shape::Enum(&["title", "summary", "narrative"])),
+            m("reason", Shape::Enum(INTEGRITY_REASONS)),
+            m("start", Shape::Int),
+            m("end", Shape::Int),
+            m("quote", Shape::String),
+        ])),
+    ),
 ]);
 
 /// The kinds of a mailbox message (lane m6/mailbox, `docs/handoff/mailbox-design.md`

@@ -982,3 +982,40 @@ fn adr035_th60_mcp_content_is_neutralised_and_marked() {
         assert!(fstp_access::INTEGRITY_REASONS.contains(&s(f, "reason").as_str()));
     }
 }
+
+/// ADR-035, I-03 (lead reading, 2026-11-22): a coordinator with a
+/// conflict on a held proposal cannot release it; another coordinator
+/// releases it instead. The refusal records nothing.
+#[test]
+fn adr035_i03_a_conflicted_coordinator_cannot_release() {
+    let (inner, _) = scene();
+    let v = 1004_u128;
+    assert!(
+        inner
+            .ports
+            .engine
+            .state()
+            .findings
+            .held(ProposalId::from_raw(v))
+    );
+    web(
+        &inner,
+        COORDINATOR,
+        fstp_api_core::decode::Method::Post,
+        &format!("/proposals/{v}/coordinator-declaration"),
+        r#"{"conflicted":true,"notifiable":false}"#,
+    )
+    .unwrap();
+    let before = ledger_len(&inner);
+    let e = release(&inner, v).unwrap_err();
+    assert!(e.contains("I-03"), "{e}");
+    assert_eq!(ledger_len(&inner), before);
+    assert!(
+        inner
+            .ports
+            .engine
+            .state()
+            .findings
+            .held(ProposalId::from_raw(v))
+    );
+}

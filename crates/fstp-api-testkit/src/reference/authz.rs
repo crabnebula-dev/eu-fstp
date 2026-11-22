@@ -867,6 +867,10 @@ pub enum Rule {
     /// The FSTP coordinator of P, declared and free of conflict: the
     /// knock-out check (`roles-and-sod.md` Conflict declarations).
     CoordinatorDeclared,
+    /// The FSTP coordinator of P with no conflict on X, declared or not:
+    /// the release of an integrity hold (ADR-035, I-03, lead reading of
+    /// 2026-11-22). A conflicted coordinator is refused under I-03.
+    CoordinatorUnconflicted,
     /// ADR-033: the FSTP coordinator of P assessing X through its agent,
     /// while the coordinator reads X's content (SUBMITTED, or STAGE1 and
     /// STAGE2 under P-10 "operator staff only"), declared and free of
@@ -1107,6 +1111,7 @@ impl Rule {
             ],
             Rule::Coordinator
             | Rule::CoordinatorDeclared
+            | Rule::CoordinatorUnconflicted
             | Rule::ClientAssessor
             | Rule::AssignmentBoard => &[Some(Role::FstpCoordinator)],
             Rule::ProposalDeclarant => &[Some(Role::FstpCoordinator), Some(Role::CommitteeMember)],
@@ -1755,7 +1760,12 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("assess.rerun", T::Proposal, R::Coordinator).binding(),
     // ADR-035: the coordinator releases the integrity hold of a flagged
     // proposal. Web only, binding, not high-risk, as `assess.rerun`.
-    RefOp::act("assess.release_integrity", T::Proposal, R::Coordinator).binding(),
+    RefOp::act(
+        "assess.release_integrity",
+        T::Proposal,
+        R::CoordinatorUnconflicted,
+    )
+    .binding(),
     // ADR-033: the assessment run by the coordinator's connected agent. The
     // engine judges the actor, the state, the declaration, then the P-21
     // path, whose refusal is a guard.
@@ -1951,6 +1961,14 @@ fn admit(
             who.manager() || who == Who::CallDrafter || who.coordinator() || who.tenant_admin(),
         ),
         Rule::Coordinator => open(who.coordinator()),
+        Rule::CoordinatorUnconflicted => {
+            open(who.coordinator())?;
+            if who == Who::CoordinatorConflicted {
+                Err(Conflict)
+            } else {
+                Ok(())
+            }
+        }
         Rule::ProposalDeclarant => {
             open(who.coordinator() || (who.committee_member() && policy.p10 == P10::AllCommittee))?;
             // A declared conflict is final (Daniel, 2026-11-06): a second
