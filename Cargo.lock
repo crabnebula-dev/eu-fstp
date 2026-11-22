@@ -714,6 +714,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-injscan"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+ "fstp-unorm",
+]
+
+[[package]]
 name = "fstp-journey"
 version = "0.1.0"
 dependencies = [

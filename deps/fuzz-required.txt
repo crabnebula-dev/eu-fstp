@@ -93,6 +93,8 @@ fstp-assessor
 # ADR-029, lane L21: the in-house normaliser takes any UTF-8 string (target fold_nfc),
 # and its table generator parses the Unicode Character Database files (target ucd_parse).
 fstp-unorm
+# ADR-035, lane L30: the injection scan reads any submission text (target scan_text).
+fstp-injscan
 unorm-gen
 # ADR-028, lane L19: the host configuration decoder.
 fstp-admin

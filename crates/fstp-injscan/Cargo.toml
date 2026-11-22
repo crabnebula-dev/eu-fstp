@@ -1,0 +1,18 @@
+[package]
+name = "fstp-injscan"
+description = "The deterministic injection scan of submission text: hidden characters, hidden markup and text addressed to an AI reader, with the neutralised view (ADR-035)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-unorm.workspace = true
+
+[dev-dependencies]
+fstp-json.workspace = true
+fstp-prop.workspace = true
+
+[lints]
+workspace = true
