@@ -44,7 +44,7 @@ No invariant or SPEC rule forbids the approach below. Three rules bear on it, an
 | Identity of the assessor | The findings are recorded by the coordinator's account through MCP, with the client in the audit entry, never as the system. `Actor` keeps no assessor variant. The provenance record names who ran it. The system path (`FindingCommand::Record`) stays for a cell assessor | I-10; I-84; ADR-013 audit row |
 | Provenance | `ClientAssessed`: call, proposal, the coordinator's account, the model as the client reported it, the prompt set digest, the input digest and the trace reference. The ledger entry holds the time, and the audit entry holds the agent client. Every finding of the run carries that trace reference and the call's `config_id` | `assessment.md` schema outline, `config_id` and `trace_id`; R-LA-07 |
 | Classification | Input results are `confidential` | `mcp-server.md` Untrusted content |
-| Data transfer | Sending submission content to the coordinator's AI client is a transfer to that client's provider. `TODO(legal)`: the transfer basis for a non-EU provider, the DPIA, and the provider in each tenant's DPA (ADR-019 open point). The switch is off by default, and Daniel enables it per programme once the basis is settled. The Guide's disclosure text is legal wording and is not written here (`TODO(legal)`) | ADR-019; R-LA-08 |
+| Data transfer | Sending submission content to the coordinator's AI client is a transfer to that client's provider. Decided by Daniel on 2026-11-22: the transfer of proposal text to Anthropic for assessment is agreed by the parties; the information is not used for training. The switch stays per call through P-21: a programme admin chooses the provider `coordinator_agent`. The Guide's disclosure text is legal wording and is not written here (`TODO(legal)`, drafts in `legal/`) | ADR-019; R-LA-08 |
 
 ## Operations
 
@@ -88,7 +88,7 @@ Claude Code wraps the assessor agent in its own system text, and the version of 
 | ADR-033, TH-01 | `adr033_th01_agent_reaches_only_the_assessment_server`, `adr033_th01_skill_treats_submissions_as_data` | same |
 | I-84 | `i84_reference_and_registry_name_the_same_operations`, with the three operations in `reference::authz` | `crates/fstp-api-testkit/src/matrix.rs` |
 
-The PostgreSQL authorisation sample (`t_authz_matrix_pg_sample`) now builds its world with P-21 on the client path, and the coordinator records a real finding on X through `assess.client_submit`. `review.findings` and `review.mark_finding` cells meet that finding. The three new operations are left out of the sample's candidates, as the ADR-030 operations are, so the sample stays the one it was.
+The PostgreSQL authorisation sample (`t_authz_matrix_pg_sample`) now builds its world with P-21 on the client path, and the coordinator records a real finding on X through `assess.client_submit`. `review.findings` and `review.mark_finding` cells meet that finding. The three new operations are candidates of the sample like every other operation.
 
 ## Record of lane L28 (2026-11-22)
 

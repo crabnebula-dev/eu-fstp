@@ -171,6 +171,7 @@ Record and replay are protocol-blind: the protocol is part of the body, so it is
 - Whether a `refusal` should switch to the next P-21 fallback (NOTE 10). Today it leaves findings pending. The API's server-side `fallbacks` parameter is not used, so every model stays pinned by the tenant.
 - Whether the decoder should accept `prompt_tokens_details` and `completion_tokens_details` on the chat-completions path.
 - `TODO(legal)`: the DPIA and the provider as a sub-processor in each tenant's DPA (`gdpr.md`), before a production tenant enables P-21. This covers Anthropic as a non-EU provider (TH-13).
+  - For the assessment run by the FSTP coordinator's agent (ADR-033): Decided by Daniel on 2026-11-22: the transfer of proposal text to Anthropic for assessment is agreed by the parties; the information is not used for training.
 
 ## Record
 

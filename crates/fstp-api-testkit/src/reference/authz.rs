@@ -867,6 +867,12 @@ pub enum Rule {
     /// The FSTP coordinator of P, declared and free of conflict: the
     /// knock-out check (`roles-and-sod.md` Conflict declarations).
     CoordinatorDeclared,
+    /// ADR-033: the FSTP coordinator of P assessing X through its agent,
+    /// while the coordinator reads X's content (SUBMITTED, or STAGE1 and
+    /// STAGE2 under P-10 "operator staff only"), declared and free of
+    /// conflict. Another state is a visibility denial for every act and
+    /// read, as the engine's `ReadAssessmentInput` judges it (R-AC-01).
+    ClientAssessor,
     /// The FSTP coordinator of P, and under P-10 "all committee members"
     /// every committee member of P: both declare per proposal before
     /// reading full content (`roles-and-sod.md` Conflict declarations).
@@ -1099,9 +1105,10 @@ impl Rule {
                 Some(Role::FstpCoordinator),
                 Some(Role::TenantAdmin),
             ],
-            Rule::Coordinator | Rule::CoordinatorDeclared | Rule::AssignmentBoard => {
-                &[Some(Role::FstpCoordinator)]
-            }
+            Rule::Coordinator
+            | Rule::CoordinatorDeclared
+            | Rule::ClientAssessor
+            | Rule::AssignmentBoard => &[Some(Role::FstpCoordinator)],
             Rule::ProposalDeclarant => &[Some(Role::FstpCoordinator), Some(Role::CommitteeMember)],
             Rule::NewApplicant => &[
                 None,
@@ -1747,13 +1754,14 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Binding, not high-risk, as the coordinator's `review.assign`.
     RefOp::act("assess.rerun", T::Proposal, R::Coordinator).binding(),
     // ADR-033: the assessment run by the coordinator's connected agent. The
-    // engine judges the P-21 path, the state, the declaration and the
-    // assignments after the actor, and those refusals are guards.
+    // engine judges the actor, the state, the declaration, then the P-21
+    // path, whose refusal is a guard.
     RefOp::read("assess.client_queue", T::Call, R::Coordinator)
         .tool("fstp_assessment_list_proposals"),
-    RefOp::read("assess.client_input", T::Proposal, R::Coordinator)
+    RefOp::read("assess.client_input", T::Proposal, R::ClientAssessor)
         .tool("fstp_assessment_get_input"),
-    RefOp::act("assess.client_submit", T::Proposal, R::Coordinator).tool("fstp_assessment_submit"),
+    RefOp::act("assess.client_submit", T::Proposal, R::ClientAssessor)
+        .tool("fstp_assessment_submit"),
     // J7: the committee.
     RefOp::read("committee.ranking", T::PublishedCall, R::Committee).tool("fstp_get_ranking_view"),
     RefOp::read("committee.round", T::Round, R::Committee),
@@ -1956,6 +1964,22 @@ fn admit(
             Who::CoordinatorUndeclared,
             Who::CoordinatorConflicted,
         ),
+        Rule::ClientAssessor => {
+            open(who.coordinator())?;
+            let reads = match x {
+                Some(StateTag::Submitted) => true,
+                Some(StateTag::Stage1 | StateTag::Stage2) => policy.p10 == P10::OperatorStaffOnly,
+                _ => false,
+            };
+            if !reads {
+                return Err(Visibility);
+            }
+            assignee(
+                Who::Coordinator,
+                Who::CoordinatorUndeclared,
+                Who::CoordinatorConflicted,
+            )
+        }
         Rule::NewApplicant => open(matches!(
             who,
             Who::Unbound | Who::Lead | Who::TeamMember | Who::Guardian | Who::OtherProgrammeManager

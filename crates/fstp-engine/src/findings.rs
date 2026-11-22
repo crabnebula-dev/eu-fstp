@@ -345,13 +345,14 @@ fn client_records(
 /// What an ADR-033 command needs from the core, also when its record is
 /// folded (without the vault answer):
 ///
-/// - the call is published and its frozen P-21 names the client path;
-/// - `by` holds an active FSTP coordinator binding in its programme;
+/// - `by` holds an active FSTP coordinator binding in its programme, and
+///   the call is published;
 /// - the proposal is a proposal of the call in a state where the
 ///   coordinator reads its content: SUBMITTED, or STAGE1 and STAGE2 under
 ///   P-10 "operator staff only" (R-AC-01);
 /// - `by` declared no conflict on it and holds no conflict fact (I-03,
 ///   R-CF-02);
+/// - the call's frozen P-21 names the client path;
 /// - `by` holds no reviewer or IRC assignment on it, in any status, so no
 ///   scorer of the proposal produces its findings (ADR-033).
 fn client_basis(
@@ -364,8 +365,9 @@ fn client_basis(
     use fstp_domain::policy::ReadAccess;
     use fstp_domain::roles::Role;
     use fstp_domain::rules::ParamId;
-    // The actor first, then the path: a caller who is no coordinator of
-    // the call's programme learns nothing of its P-21.
+    // The actor, the state and the declaration first, as for every read of
+    // content, then the path: the authorisation classes do not depend on
+    // P-21, and a call off the path ends in the `P-21` guard.
     let Some(programme) = core.calls().get(call).map(CallView::programme) else {
         return Err(Refusal::new(RuleRef::I11, RefusalReason::UnknownEntity));
     };
@@ -378,12 +380,6 @@ fn client_basis(
         return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
     }
     let (_, frozen) = published(core, call)?;
-    if !fstp_findings::client_run(&frozen.values().p21) {
-        return Err(Refusal::new(
-            RuleRef::Param(ParamId::P21),
-            RefusalReason::GuardFailed,
-        ));
-    }
     if !proposal_in_call(core, proposal, call) {
         return Err(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity));
     }
@@ -403,6 +399,12 @@ fn client_basis(
     }
     if !review.cleared(by, proposal) {
         return Err(Refusal::new(RuleRef::Rcf02, RefusalReason::GuardFailed));
+    }
+    if !fstp_findings::client_run(&frozen.values().p21) {
+        return Err(Refusal::new(
+            RuleRef::Param(ParamId::P21),
+            RefusalReason::GuardFailed,
+        ));
     }
     if review
         .assignments()

@@ -154,16 +154,6 @@ const ADR030_OPS: [&str; 4] = [
     "programme.logos",
 ];
 
-/// The operations of ADR-033 (lane L28), left out of the candidates so the
-/// sample stays the one it was, as for ADR-030. The matrices over fake
-/// ports cover them on every channel, and the world below records a real
-/// finding through `assess.client_submit`.
-const ADR033_OPS: [&str; 3] = [
-    "assess.client_queue",
-    "assess.client_input",
-    "assess.client_submit",
-];
-
 /// A SplitMix64 stream.
 struct Mix(u64);
 
@@ -218,7 +208,6 @@ fn sample() -> BTreeMap<StateProfile, Vec<(Cell, Expected)>> {
                 || !realisable(cell.who)
                 || CEREMONY_OPS.contains(&cell.op)
                 || ADR030_OPS.contains(&cell.op)
-                || ADR033_OPS.contains(&cell.op)
                 || (cell.who == Who::SuspendedReviewer
                     && cell.session.login == Some(Login::MagicLink))
             {

@@ -53,7 +53,7 @@ Before you start:
 - Declare in the platform that you have no conflict on each proposal.
 - Run the model the call pins. The skill tells you which one, and `/model` switches it.
 
-Sending proposal text to Claude is a transfer to Anthropic. Enable it only for programmes whose applicants were told and whose legal basis is settled.
+Sending proposal text to Claude is a transfer to Anthropic. Decided by Daniel on 2026-11-22: the transfer of proposal text to Anthropic for assessment is agreed by the parties; the information is not used for training.
 
 ## Confirming prepared actions
 
