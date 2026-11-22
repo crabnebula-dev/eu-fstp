@@ -37,6 +37,7 @@ fn terms() -> ContractTerms {
             ("member-1".into(), "Team member".into()),
             ("signatory".into(), "Contract signatory".into()),
         ],
+        letterhead: fstp_pdf::Letterhead::default(),
     }
 }
 

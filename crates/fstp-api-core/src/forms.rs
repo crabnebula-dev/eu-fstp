@@ -698,6 +698,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::M3Port(PortKind::StateBirthDate) => BodyRule::Exactly(&["date_of_birth"]),
         // MB-Q1, ADR-020: the message id of the notice to mark read.
         OpKind::M3Port(PortKind::MarkMailboxRead) => BodyRule::Exactly(&["message"]),
+        // ADR-030: the caller's own theme choice.
+        OpKind::M3Port(PortKind::SetTheme) => BodyRule::Exactly(&["theme"]),
         OpKind::M3Port(PortKind::AcknowledgeNegotiationNotice) => {
             BodyRule::Exactly(&["notice_version"])
         }
@@ -848,6 +850,7 @@ fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
         OpKind::M3Port(fstp_access::PortKind::AddPasskey) => {
             passkey_registration(request).is_some()
         }
+        OpKind::M3Port(fstp_access::PortKind::SetTheme) => theme_param(request).is_some(),
         OpKind::Agent(fstp_access::AgentKind::Consent) => consent_handle(request).is_some(),
         _ => true,
     };
@@ -856,6 +859,14 @@ fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
     } else {
         Err(ApiError::bad_request(REQUEST_RULE))
     }
+}
+
+/// The theme choice of a `me.set_theme` body (ADR-030).
+pub(crate) fn theme_param(request: &Object) -> Option<fstp_tenant::Theme> {
+    request
+        .get("theme")
+        .and_then(Value::as_str)
+        .and_then(fstp_tenant::Theme::from_name)
 }
 
 /// Checks the body members of a command request.

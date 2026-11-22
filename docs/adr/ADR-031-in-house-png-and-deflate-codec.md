@@ -78,3 +78,15 @@ Interim, pending Daniel: the lane recommends option 1, with option 2 for uploads
 | Reference stream | One raw DEFLATE stream with a dynamic block, written once by the system `gzip -9 -n` over synthetic text, is a constant of `tests/adr031_inflate.rs`. Its gzip CRC-32 and size are checked too |
 | Cross-checks, run once by hand | `gzip -d` read this crate's stored, fixed, dynamic and best streams back to their input. The best stream of a 43 KB text was 12,943 bytes against 12,620 for `gzip -9`. The macOS `sips` tool read this crate's PNGs, and its own PNG of an RGBA image (with `sRGB` and `eXIf` chunks) decoded here to identical pixels. These checks are not committed, since CI cannot rely on those tools |
 | Fuzzing | `crates/fstp-png/fuzz`, targets `inflate`, `png_decode` and `roundtrip`, with seeds written by the test helpers. The fuzz project depends on `fstp-png` and `fstp-creator` (for `Rgb`) and on `libfuzzer-sys` only |
+
+## Lead reading, 2026-11-22
+
+The lead accepted these rows of the decision as built, for ADR-030's logos:
+
+| Topic | Reading |
+| --- | --- |
+| Strictness | As built: the rules of the "PNG rules" and "Inflate" rows hold, and a refused file is refused, never repaired |
+| Colour chunks | Dropped with the other ancillary chunks. Pixels are read as sRGB |
+| Encode | One canonical shape: 8 bits a channel, not interlaced, `IHDR`, one `IDAT`, `IEND` |
+| Oversized re-encode | Refused with its own code. ADR-030 shows it as "too big" |
+| Use in ADR-030 | Every PNG logo is re-encoded on upload, reaches PDFs with an `/SMask` when transparent, and gets the contrast advice of `contrast`, which never refuses |

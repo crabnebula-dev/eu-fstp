@@ -42,6 +42,7 @@ const TAGS: ReadonlySet<string> = new Set([
   'h1',
   'h2',
   'header',
+  'img',
   'input',
   'label',
   'legend',
@@ -60,6 +61,7 @@ const TAGS: ReadonlySet<string> = new Set([
 /** The attributes these pages set, besides `aria-*` and `data-*`. */
 const ATTRIBUTES: ReadonlySet<string> = new Set([
   'action',
+  'alt',
   'autocomplete',
   'checked',
   'class',
@@ -81,12 +83,13 @@ const ATTRIBUTES: ReadonlySet<string> = new Set([
   'role',
   'rows',
   'spellcheck',
+  'src',
   'type',
   'value',
 ]);
 
 /** The attributes whose value is a URL. */
-const URL_ATTRIBUTES: ReadonlySet<string> = new Set(['href', 'action']);
+const URL_ATTRIBUTES: ReadonlySet<string> = new Set(['href', 'action', 'src']);
 
 /** `aria-*` and `data-*` names: lower-case ASCII words joined by `-`. */
 const ARIA_OR_DATA = /^(?:aria|data)(?:-[a-z][a-z0-9]*)+$/;

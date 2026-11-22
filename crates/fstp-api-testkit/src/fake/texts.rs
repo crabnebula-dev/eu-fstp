@@ -415,7 +415,12 @@ impl BlobStore for FakeBlobs {
         if bytes.len() > BLOB_LIMIT {
             return Err(PortError::Refused);
         }
-        let r = BlobRef(fake_digest(&bytes).bytes());
+        // A brand asset is served by the SHA-256 its record names (ADR-030),
+        // as the port documents every address.
+        let r = match owner {
+            BlobOwner::Brand => BlobRef(fstp_crypto::sha256(bytes)),
+            BlobOwner::Programme(_) => BlobRef(fake_digest(&bytes).bytes()),
+        };
         lock(&self.rows).insert((owner, r), bytes.to_vec());
         Ok(r)
     }
@@ -429,6 +434,13 @@ impl BlobStore for FakeBlobs {
         let _ = clearance;
         lock(&self.rows)
             .get(&(owner, r))
+            .cloned()
+            .ok_or(PortError::Refused)
+    }
+
+    async fn get_brand(&self, r: BlobRef) -> Result<Vec<u8>, PortError> {
+        lock(&self.rows)
+            .get(&(BlobOwner::Brand, r))
             .cloned()
             .ok_or(PortError::Refused)
     }
@@ -653,19 +665,23 @@ mod tests {
         assert_ne!(one.display_fingerprint(ANNA), two.display_fingerprint(BERG));
     }
 
-    /// SA-11 amendment, "Simpler comparison": with no NFC, two encodings
-    /// of one accented name may both be accepted. Known and accepted.
+    /// SA-11 amendment, ADR-029, lane L26: two encodings of one accented
+    /// name, and a look-alike with a zero width joiner, are one name, so
+    /// the second account is refused.
     #[test]
-    fn sa11_unique_names_differing_only_in_accent_encoding_may_both_be_set() {
+    fn sa11_unique_adr029_variants_of_one_name_are_taken() {
         let t = FakeTexts::default();
         assert_eq!(
             set(&t, ANNA, Some("Jos\u{e9} Synthetic")),
             DisplayNameSet::Set
         );
-        assert_eq!(
-            set(&t, BERG, Some("Jose\u{301} Synthetic")),
-            DisplayNameSet::Set
-        );
+        for other in ["Jose\u{301} Synthetic", "Jos\u{e9} Synth\u{200d}etic"] {
+            assert_eq!(
+                set(&t, BERG, Some(other)),
+                DisplayNameSet::Taken,
+                "{other:?}"
+            );
+        }
     }
 
     /// SA-11 amendment: a restarted cell keeps its `Lookup` key and its

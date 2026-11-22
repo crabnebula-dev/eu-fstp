@@ -599,6 +599,18 @@ pub enum RecordView {
         /// The setting admin.
         by: AccountId,
     },
+    /// A logo slot set or cleared (ADR-030). The machine issues no such
+    /// command.
+    LogoSet {
+        /// The setting admin.
+        by: AccountId,
+    },
+    /// An account set its theme (ADR-030). The machine issues no such
+    /// command.
+    ThemeSet {
+        /// The account.
+        by: AccountId,
+    },
 }
 
 /// The defaults of `SPEC/02-domain/policy-parameters.md` for the settable

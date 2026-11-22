@@ -177,6 +177,7 @@ dependencies = [
  "fstp-rt",
  "fstp-sigval",
  "fstp-tenant",
+ "fstp-unorm",
 ]
 
 [[package]]
@@ -193,6 +194,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-creator",
  "fstp-json",
+ "fstp-png",
 ]
 
 [[package]]
@@ -359,6 +361,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-png"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
+]
+
+[[package]]
 name = "fstp-programme"
 version = "0.1.0"
 dependencies = [
@@ -428,6 +437,10 @@ dependencies = [
  "fstp-json",
  "fstp-ledger",
 ]
+
+[[package]]
+name = "fstp-unorm"
+version = "0.1.0"
 
 [[package]]
 name = "getrandom"

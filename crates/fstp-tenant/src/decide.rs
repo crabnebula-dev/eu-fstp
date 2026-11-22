@@ -32,6 +32,10 @@ pub enum TenantQuery {
     /// programme (`Ctx::binds_tenant_admin`), and SoD-03 bars Operations
     /// with Receiving. Interim, pending Daniel.
     HoldsReceiving(AccountId),
+    /// The accounts that hold an active Programme manager binding in the
+    /// programme, who may set its logo (ADR-030, lead reading of
+    /// 2026-11-22).
+    ProgrammeManagers(fstp_domain::id::ProgrammeId),
 }
 
 /// What a prober check gave.
@@ -52,6 +56,7 @@ pub struct TenantAnswers {
     probes: BTreeMap<ProbeKind, ProbeOutcome>,
     agreements: Option<AgreementVersions>,
     receiving: BTreeMap<AccountId, bool>,
+    managers: BTreeMap<fstp_domain::id::ProgrammeId, std::collections::BTreeSet<AccountId>>,
 }
 
 impl TenantAnswers {
@@ -73,6 +78,22 @@ impl TenantAnswers {
     /// Records the agreement versions the control plane holds as accepted.
     pub fn agreements(&mut self, recorded: AgreementVersions) {
         self.agreements = Some(recorded);
+    }
+
+    /// Records the programme managers of `programme` (ADR-030).
+    pub fn programme_managers(
+        &mut self,
+        programme: fstp_domain::id::ProgrammeId,
+        accounts: std::collections::BTreeSet<AccountId>,
+    ) {
+        self.managers.insert(programme, accounts);
+    }
+
+    /// Whether `account` manages `programme`. No answer fails closed.
+    pub fn manages(&self, account: AccountId, programme: fstp_domain::id::ProgrammeId) -> bool {
+        self.managers
+            .get(&programme)
+            .is_some_and(|s| s.contains(&account))
     }
 
     /// Records whether `account` holds a Receiving binding.
@@ -123,6 +144,15 @@ pub fn queries(state: &TenantState, cmd: &TenantCommand) -> Vec<TenantQuery> {
         TenantCommand::GrantSignatory { account, .. } => {
             vec![TenantQuery::HoldsReceiving(*account)]
         }
+        // ADR-030: a programme slot may be set by its programme managers.
+        TenantCommand::SetLogo {
+            slot:
+                crate::types::LogoSlot {
+                    owner: crate::types::LogoOwner::Programme(p),
+                    ..
+                },
+            ..
+        } => vec![TenantQuery::ProgrammeManagers(*p)],
         _ => Vec::new(),
     }
 }
@@ -328,6 +358,24 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SetLogo { slot, logo } => {
+            // ADR-030 (lead reading of 2026-11-22): a tenant admin sets any
+            // slot, and a programme manager the slots of that programme.
+            let manages = match slot.owner {
+                crate::types::LogoOwner::Programme(p) => answers.manages(by, p),
+                crate::types::LogoOwner::Tenant => false,
+            };
+            if !state.is_admin(by) && !manages {
+                return Err(TenantRefusal::NotTenantAdmin);
+            }
+            check_logo(logo.as_ref())?;
+            Ok(vec![TenantRecord::LogoSet {
+                slot: *slot,
+                logo: *logo,
+                by,
+            }])
+        }
+        TenantCommand::SetTheme { theme } => Ok(vec![TenantRecord::ThemeSet { theme: *theme, by }]),
         TenantCommand::SetTerminology { terminology } => {
             check_terminology(terminology)?;
             Ok(vec![TenantRecord::TerminologySet {
@@ -404,6 +452,15 @@ pub(crate) fn check_branding(tokens: &fstp_brand::BrandTokens) -> Result<(), Ten
         Ok(())
     } else {
         Err(TenantRefusal::BrandingContrast(failing))
+    }
+}
+
+/// I-68: a set logo lies within the bounds of the logo check (ADR-030).
+pub(crate) fn check_logo(logo: Option<&crate::types::LogoRef>) -> Result<(), TenantRefusal> {
+    if logo.is_none_or(crate::types::LogoRef::within_bounds) {
+        Ok(())
+    } else {
+        Err(TenantRefusal::LogoInvalid)
     }
 }
 

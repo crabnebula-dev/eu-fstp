@@ -44,6 +44,7 @@ import { h } from "../core/dom.js";
 import { type I18n, type Label, createI18n } from "../core/i18n.js";
 import { HOME_LABELS } from "./messages.en.js";
 import { type MyRoles, type NavLink, WORK_PATHS, chipRoles, navOf } from "./model.js";
+import { THEMES, type Theme, applyTheme, currentTheme, shellLogos } from "../shell/theme.js";
 
 let catalogue: I18n | null = null;
 
@@ -125,6 +126,43 @@ function links(roles: MyRoles | null): { readonly main: HTMLElement[]; readonly 
   };
 }
 
+/** Saves a theme choice (ADR-030), once the shell installed a saver. */
+let saveTheme: ((t: Theme) => Promise<boolean>) | null = null;
+
+/**
+ * Installs the saver of the theme switch (ADR-030 section 1). The shell
+ * calls it once. Every sidebar built after it holds the switch, so a
+ * feature page or test that never loads the shell shows none.
+ */
+export function installThemeSwitch(save: (t: Theme) => Promise<boolean>): void {
+  saveTheme = save;
+}
+
+/**
+ * The theme switch of the sidebar foot (ADR-030): System, Light and Dark
+ * as one radio group. A choice shows at once and is then saved for the
+ * person's account, so it follows them to every device.
+ */
+function themeSwitch(save: (t: Theme) => Promise<boolean>): HTMLElement {
+  const now = currentTheme();
+  const options = THEMES.map((t) => {
+    const attrs: Record<string, string | boolean> = { type: "radio", name: "theme", value: t, id: `theme-${t}` };
+    if (t === now) {
+      attrs["checked"] = true;
+    }
+    const input = h("input", attrs);
+    input.addEventListener("change", () => {
+      applyTheme(t);
+      void save(t);
+    });
+    return h("label", { class: "theme-option", for: `theme-${t}` }, [input, homeLabel(`nav.theme.${t}`)]);
+  });
+  return h("fieldset", { class: "theme-switch", "data-slot": "theme" }, [
+    h("legend", {}, [homeLabel("nav.theme")]),
+    ...options,
+  ]);
+}
+
 /** The Account link of the sidebar foot: the profile page. */
 function profileLink(): HTMLElement {
   const attrs: Record<string, string> = { href: PROFILE, "data-nav": "account" };
@@ -171,6 +209,7 @@ function sidebar(): HTMLElement {
     h("p", { class: "sidebar-label", "aria-hidden": "true" }, [homeLabel("nav.section_label")]),
     siteNav(),
     profileLink(),
+    ...(saveTheme === null ? [] : [themeSwitch(saveTheme)]),
   ]);
 }
 
@@ -214,14 +253,33 @@ export function showMailboxCount(n: number): void {
   }
 }
 
+/**
+ * The tenant mark of the top bar: the tenant's logo when the shell names
+ * one (ADR-030), light and dark, decorative beside the hidden link text.
+ * Else the platform mark and name.
+ */
+function brandMark(): HTMLElement[] {
+  const logos =
+    typeof document === "object" && document !== null && typeof document.querySelector === "function"
+      ? shellLogos(document)
+      : { light: null, dark: null };
+  const name = h("span", {}, [homeLabel("nav.brand"), h("span", { class: "sr-only" }, [homeLabel("nav.brand_home")])]);
+  if (logos.light === null && logos.dark === null) {
+    return [h("span", { class: "brand-mark", "aria-hidden": "true" }, ["F"]), name];
+  }
+  const img = (src: string, mode: string): HTMLElement => h("img", { class: `brand-logo brand-logo--${mode}`, src, alt: "" });
+  const images =
+    logos.light !== null && logos.dark !== null
+      ? [img(logos.light, "light"), img(logos.dark, "dark")]
+      : [img(logos.light ?? logos.dark ?? "", "any")];
+  return [...images, h("span", { class: "sr-only" }, [homeLabel("nav.brand"), homeLabel("nav.brand_home")])];
+}
+
 /** The top bar: the tenant mark that links home, and Notifications. */
 function topBar(): HTMLElement {
   return h("header", { class: "site-header site-header--app" }, [
     h("div", { class: "topbar" }, [
-      h("a", { class: "brand", href: WORK_PATHS.home, "data-brand": "home" }, [
-        h("span", { class: "brand-mark", "aria-hidden": "true" }, ["F"]),
-        h("span", {}, [homeLabel("nav.brand"), h("span", { class: "sr-only" }, [homeLabel("nav.brand_home")])]),
-      ]),
+      h("a", { class: "brand", href: WORK_PATHS.home, "data-brand": "home" }, brandMark()),
       h("span", { class: "topbar-spacer" }),
       h(
         "ul",

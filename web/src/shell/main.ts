@@ -38,6 +38,7 @@
 
 import { mountAdminBranding } from "../admin/branding/page.js";
 import { mountAdminErasures } from "../admin/erasures/page.js";
+import { mountSystemPage } from "../admin/system/page.js";
 import { mountAdminProfiles } from "../admin/profiles/page.js";
 import { mountTeamPages } from "../admin/team/page.js";
 import { mountApplicantPage, mountNotFound } from "../applicant/app.js";
@@ -51,7 +52,7 @@ import { addJudgingStrip } from "../journey/pages.js";
 import { JOURNEY_ROUTES } from "../journey/routes.js";
 import { MAILBOX_PAGE_ROUTES } from "../mailbox/routes.js";
 import { myRoles, startSession } from "../home/session.js";
-import { showMailboxCount, showReviewWork } from "../home/nav.js";
+import { installThemeSwitch, showMailboxCount, showReviewWork } from "../home/nav.js";
 import { holdsOperations } from "../home/model.js";
 import { mailboxCount } from "../mailbox/pages.js";
 import { ONBOARDING_ROUTES } from "../onboarding/routes.js";
@@ -63,6 +64,8 @@ import { decodeFunderProfile, type FunderProfileView } from "../operations/profi
 import { mountJudging } from "../reviewer/judging.js";
 import { mountSite } from "../site/pages.js";
 import { installFooterGuard } from "./brand.js";
+import { act, anyObject } from "../grant/kit.js";
+import { themeBody } from "./theme.js";
 import { setReadRefusalGuard } from "../core/api.js";
 import { createGate, gateLinks } from "./gate.js";
 
@@ -194,6 +197,10 @@ async function run(path: string): Promise<void> {
   if (await mountAdminErasures(browserEnv(root()), path)) {
     return;
   }
+  // ADR-028 record of lane L20: the tenant admins' System page.
+  if (await mountSystemPage(browserEnv(root()), path)) {
+    return;
+  }
   // Daniel, 2026-11-15 (late): the tenant admin's funder profiles page.
   if (await mountAdminProfiles(browserEnv(root()), path)) {
     return;
@@ -216,6 +223,9 @@ async function run(path: string): Promise<void> {
 }
 
 installTrustedTypesPolicy();
+// ADR-030: the theme switch of every sidebar saves the choice for the
+// person's account, so it follows them to every device.
+installThemeSwitch(async (t) => (await act(browserEnv(root()), "me.set_theme", {}, themeBody(t), anyObject)).ok);
 // Daniel, 2026-11-15 (late): a page inside one programme shows the funder
 // visibility elements of that programme's pinned profile.
 installFooterGuard(async (programme) => {

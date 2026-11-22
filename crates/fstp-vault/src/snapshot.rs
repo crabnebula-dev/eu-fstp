@@ -35,9 +35,14 @@
 //! [`restore_with`] takes the first that opens, whole (ADR-012 record of
 //! lane L17, row "Restore rule, vault").
 
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+
 use fstp_backup::Snapshots;
 use fstp_custody::Custody;
 use fstp_keys::envelope::SEALED_KEY_LEN;
+use fstp_obs::{SnapshotChain, SnapshotTrigger, snapshot_status};
 use fstp_pgwire::Client;
 use fstp_rt::Runtime;
 
@@ -535,6 +540,106 @@ pub async fn restore_with<R: Runtime, C: Custody>(
         return Ok(source);
     }
     Err(VaultError::Unavailable("a keystore copy that opens"))
+}
+
+// ---------------------------------------------------------------------
+// The snapshot without a rotation, and the daily snapshot.
+// ---------------------------------------------------------------------
+
+/// Takes a snapshot of `rows` and checks it, with no rotation (ADR-012
+/// record of lane L27, row "Daily snapshot"): seals and uploads their
+/// image, fetches it back, opens it with the vault's snapshot key through
+/// `custody`, and checks that its rows all open under their own current
+/// root ([`crate::erasure::check_rows`]). Only then is the pointer
+/// written. Nothing is rotated or destroyed.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] for a failed upload, fetch or pointer
+/// write, and [`VaultError::Malformed`] for a snapshot that does not
+/// open.
+pub async fn snapshot_once<C: Custody>(
+    custody: &C,
+    cell: [u8; 16],
+    snapshots: &Snapshots,
+    rows: &KeystoreRows,
+) -> Result<(), VaultError> {
+    let image = encode_image(&cell, rows)?;
+    let id = snapshots
+        .upload(&image)
+        .await
+        .map_err(|_| VaultError::Unavailable("the keystore snapshot upload"))?;
+    let fetched = snapshots
+        .fetch(custody, id)
+        .await
+        .map_err(|_| VaultError::Unavailable("the keystore snapshot fetch"))?;
+    let (c, back) = decode_image(&fetched)?;
+    if c != cell || back.root.epoch != rows.root.epoch {
+        return Err(bad("the snapshot root"));
+    }
+    crate::erasure::check_rows(custody, &cell, &back).await?;
+    snapshots
+        .publish(id)
+        .await
+        .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))
+}
+
+/// Records one snapshot try: the status file in `dir`, if any, and one
+/// typed event (ADR-012 record of lane L27, rows "Event" and "Status
+/// file"). A status file that does not write is skipped: the event still
+/// says what happened.
+pub fn note(dir: Option<&Path>, trigger: SnapshotTrigger, verified: bool) {
+    if let Some(d) = dir {
+        let _ = snapshot_status::record(d, verified, snapshot_status::now());
+    }
+    let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::KeystoreSnapshot {
+        chain: SnapshotChain::Vault,
+        trigger,
+        verified,
+    });
+}
+
+/// A boxed future of a daily snapshot.
+pub type DailyFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
+/// The daily snapshot of a serving vault: what the task beside the
+/// keystore watch runs once a day with the rows it read
+/// (`crate::service::RegistrarParts::daily`).
+pub trait DailySnapshot: Send + Sync {
+    /// Takes, checks and records one snapshot of `rows`. Whether it
+    /// verified.
+    fn run(&self, rows: KeystoreRows) -> DailyFuture<'_>;
+    /// Records a try that failed before it had rows to snapshot.
+    fn failed(&self);
+}
+
+/// The daily snapshot over `custody`, writing the status file in
+/// `status_dir`.
+pub struct Daily<C> {
+    /// The cell.
+    pub cell: [u8; 16],
+    /// The snapshot writer.
+    pub snapshots: Snapshots,
+    /// The vault's own custody entry.
+    pub custody: C,
+    /// The directory of the status file: the credentials directory.
+    pub status_dir: Option<PathBuf>,
+}
+
+impl<C: Custody + Send + Sync> DailySnapshot for Daily<C> {
+    fn run(&self, rows: KeystoreRows) -> DailyFuture<'_> {
+        Box::pin(async move {
+            let ok = snapshot_once(&self.custody, self.cell, &self.snapshots, &rows)
+                .await
+                .is_ok();
+            note(self.status_dir.as_deref(), SnapshotTrigger::Daily, ok);
+            ok
+        })
+    }
+
+    fn failed(&self) {
+        note(self.status_dir.as_deref(), SnapshotTrigger::Daily, false);
+    }
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@ use fstp_cell::CellError;
 use fstp_cell::engine::{CellEngine, Unanchored, VaultClient};
 use fstp_cell::tasks::erasure::snapshot::{self, root_ref, seal_key_aad, wrapped_of};
 use fstp_cell::tasks::erasure::{
-    ErasureRunner, Keystore, KeystoreSink, LoginEmailSet, OpenRefusal, SinkFuture,
+    ErasureRunner, Keystore, KeystoreSink, LoginEmailSet, OpenRefusal, SinkFuture, display_key,
 };
 use fstp_cell_core::driver::VaultFault;
 use fstp_cell_core::gate::{self, Action, HighRiskAction, LoginPolicy, StepUpView};
@@ -42,8 +42,8 @@ use fstp_domain::time::Timestamp;
 use fstp_keys::Purpose;
 use fstp_ledger::{MemStore, Seq};
 use fstp_pgstore::{
-    ChainRow, Change, DataKeyRow, GroupKeyRow, KeystoreChanges, KeystoreRows, KeystoreTextRow,
-    LoginDigestRow, LoginTextRow, RootRow, RootStatus, SignerRow,
+    ChainRow, Change, DataKeyRow, DisplayNameRow, GroupKeyRow, KeystoreChanges, KeystoreRows,
+    KeystoreTextRow, LoginDigestRow, LoginTextRow, RootRow, RootStatus, SignerRow,
 };
 use fstp_rt::Shutdown;
 use fstp_rt::tokio::TokioRuntime;
@@ -212,6 +212,7 @@ struct Tables {
     digests: BTreeMap<[u8; 32], LoginDigestRow>,
     logins: BTreeMap<[u8; 16], LoginTextRow>,
     requested: BTreeSet<[u8; 16]>,
+    displays: BTreeMap<[u8; 16], DisplayNameRow>,
 }
 
 fn apply_to<K: Ord + Clone, R: Clone>(
@@ -257,6 +258,12 @@ impl Tables {
         }
         apply_to(&mut self.digests, &c.digests, |d| d.digest);
         apply_to(&mut self.logins, &c.logins, |l| l.account);
+        apply_to(&mut self.displays, &c.displays, |d| d.account);
+        // `keystore.display_name.fingerprint` is UNIQUE: a batch that
+        // leaves one fingerprint on two accounts fails in PostgreSQL.
+        let fingerprints: BTreeSet<[u8; 32]> =
+            self.displays.values().map(|d| d.fingerprint).collect();
+        assert_eq!(fingerprints.len(), self.displays.len(), "SA-11: UNIQUE");
         for r in &c.requested {
             match r {
                 Change::Put(t) => {
@@ -280,6 +287,7 @@ impl Tables {
             digests: self.digests.values().copied().collect(),
             logins: self.logins.values().copied().collect(),
             requested: self.requested.iter().copied().collect(),
+            displays: self.displays.values().copied().collect(),
         }
     }
 
@@ -311,6 +319,9 @@ impl Tables {
         }
         for d in self.digests.values() {
             out.push(d.digest.to_vec());
+        }
+        for d in self.displays.values() {
+            out.push(d.fingerprint.to_vec());
         }
         out
     }
@@ -811,5 +822,281 @@ fn r_cr_01_keystore_rows_sealed_at_rest() {
         let state = &tables.chain.as_ref().unwrap().state;
         assert!(fstp_keys::erasure::codec::decode(state).is_err());
         assert!(!state.windows(4).any(|w| w == b"FKC1"), "R-CR-01");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Display names (SA-11, SA-11 amendment, ADR-004 section "Written by lane
+// L26"). Every name is synthetic.
+
+use fstp_api_core::port::DisplayNameSet;
+
+const ANNA: AccountId = AccountId::from_raw(0x61);
+const BERG: AccountId = AccountId::from_raw(0x62);
+const CARL: AccountId = AccountId::from_raw(0x63);
+
+async fn set_name(c: &mut Cell, a: AccountId, name: Option<&str>) -> DisplayNameSet {
+    c.runner.set_display_name(a, name).await.unwrap()
+}
+
+fn names(c: &Cell) -> BTreeMap<AccountId, String> {
+    c.runner
+        .display_names(&c.engine.state(), &[ANNA, BERG, CARL])
+        .unwrap()
+}
+
+/// ADR-004 "Chains" (decided by Daniel on 2026-11-21): the display name
+/// fingerprint key is HKDF-SHA256 of the `Lookup` key with the label
+/// `fstp display name fingerprint v1`, as the API core derives it.
+#[test]
+fn sa11_unique_adr004_display_key_is_derived_from_lookup() {
+    let lookup = SealKey::from_bytes([9; 32]);
+    let key = display_key(&lookup).unwrap();
+    assert_eq!(
+        key.expose(),
+        &fstp_api_core::display_name::fingerprint_key(&[9; 32]).unwrap()
+    );
+    assert_ne!(key.expose(), lookup.expose());
+}
+
+/// SA-11, SA-11 amendment, R-CR-01: a display name is sealed as a text,
+/// read back as typed, and unique in the tenant under its comparison
+/// form. The own name again changes nothing. No row holds it in clear.
+#[test]
+fn sa11_unique_production_display_name_is_sealed_unique_and_read_back() {
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        assert_eq!(
+            set_name(&mut c, ANNA, Some("Synthetic Anna Berg")).await,
+            DisplayNameSet::Set
+        );
+        let text = c.runner.keystore().display_text(ANNA).unwrap();
+        for other in [
+            "Synthetic Anna Berg",
+            "  SYNTHETIC anna   berg",
+            "Synthetic An\u{200d}na Berg",
+        ] {
+            assert_eq!(
+                set_name(&mut c, BERG, Some(other)).await,
+                DisplayNameSet::Taken,
+                "SA-11 amendment: {other:?}"
+            );
+        }
+        assert_eq!(
+            set_name(&mut c, BERG, Some("Synthetic Berg")).await,
+            DisplayNameSet::Set
+        );
+        let epoch = c.runner.keystore().epoch();
+        assert_eq!(
+            set_name(&mut c, ANNA, Some("Synthetic Anna Berg")).await,
+            DisplayNameSet::Set
+        );
+        assert_eq!(c.runner.keystore().display_text(ANNA), Some(text));
+        c.runner.run_until_idle().await.unwrap();
+        assert_eq!(c.runner.keystore().epoch(), epoch, "no erasure ran");
+        let want: BTreeMap<AccountId, String> = [
+            (ANNA, "Synthetic Anna Berg".to_owned()),
+            (BERG, "Synthetic Berg".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(names(&c), want);
+        let tables = c.sink.tables();
+        assert_eq!(tables.displays.len(), 2, "keystore.display_name");
+        for v in tables.values() {
+            for p in [&b"Synthetic Anna Berg"[..], b"Synthetic Berg"] {
+                assert!(
+                    !v.windows(p.len()).any(|w| w == p),
+                    "R-CR-01: a row holds a display name in clear"
+                );
+            }
+        }
+    });
+}
+
+/// SA-11, ADR-004 (decided by Daniel on 2026-11-21), I-81, ADR-007: a
+/// replaced name is free at once and erased by a batch that replaces
+/// `Lookup`. Step 2 recomputes every live fingerprint and login digest
+/// under the new key, so uniqueness and login lookup still hold. A set
+/// that meets the batch before its commit is served after it.
+#[test]
+fn sa11_unique_i81_replacing_a_name_erases_it_and_replaces_lookup() {
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        set_name(&mut c, ANNA, Some("Synthetic One")).await;
+        set_name(&mut c, BERG, Some("Synthetic Two")).await;
+        c.runner.run_until_idle().await.unwrap();
+        let epoch = c.runner.keystore().epoch();
+        let old = c.runner.keystore().display_text(ANNA).unwrap();
+        let berg = c.runner.keystore().display_fingerprint(BERG).unwrap();
+        let logins = c.runner.keystore().login_digests();
+        assert_eq!(
+            set_name(&mut c, ANNA, Some("Synthetic Three")).await,
+            DisplayNameSet::Set
+        );
+        // The old name is free at once, while its batch is in flight.
+        assert_eq!(
+            set_name(&mut c, CARL, Some("synthetic one")).await,
+            DisplayNameSet::Set
+        );
+        c.runner.run_until_idle().await.unwrap();
+        assert!(c.runner.keystore().epoch() > epoch, "I-81: a batch ran");
+        assert!(
+            matches!(
+                c.runner.open_text(&c.engine.state(), old),
+                Err(OpenRefusal::Erased)
+            ),
+            "ADR-007: the replaced name is erased"
+        );
+        assert_ne!(
+            c.runner.keystore().display_fingerprint(BERG),
+            Some(berg),
+            "ADR-004: step 2 recomputes the live fingerprints"
+        );
+        for d in c.runner.keystore().login_digests() {
+            assert!(!logins.contains(&d), "G24: an old login digest survived");
+        }
+        assert_eq!(c.runner.login_account(LIVE_EMAIL).unwrap(), Some(LIVE));
+        assert_eq!(
+            set_name(&mut c, ANNA, Some("SYNTHETIC TWO")).await,
+            DisplayNameSet::Taken,
+            "SA-11 amendment: unique under the new key"
+        );
+        let want: BTreeMap<AccountId, String> = [
+            (ANNA, "Synthetic Three".to_owned()),
+            (BERG, "Synthetic Two".to_owned()),
+            (CARL, "synthetic one".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(names(&c), want);
+    });
+}
+
+/// SA-11, ADR-007: a cleared name leaves the index at once, so another
+/// account may take it, and its text is erased.
+#[test]
+fn sa11_unique_clearing_a_name_frees_and_erases_it() {
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        set_name(&mut c, ANNA, Some("Synthetic Clear")).await;
+        let old = c.runner.keystore().display_text(ANNA).unwrap();
+        assert_eq!(set_name(&mut c, ANNA, None).await, DisplayNameSet::Set);
+        assert_eq!(c.runner.keystore().display_text(ANNA), None);
+        assert_eq!(
+            set_name(&mut c, BERG, Some("synthetic clear")).await,
+            DisplayNameSet::Set
+        );
+        c.runner.run_until_idle().await.unwrap();
+        assert!(matches!(
+            c.runner.open_text(&c.engine.state(), old),
+            Err(OpenRefusal::Erased)
+        ));
+        let tables = c.sink.tables();
+        assert_eq!(tables.displays.len(), 1);
+        assert!(tables.displays.contains_key(&BERG.raw().to_be_bytes()));
+        assert_eq!(set_name(&mut c, ANNA, None).await, DisplayNameSet::Set);
+    });
+}
+
+/// ADR-004 (2026-11-20), SA-11 amendment, I-23: the display names and
+/// their index survive a restart from the tables, also after a batch that
+/// replaced `Lookup`, and a taken name stays taken.
+#[test]
+fn sa11_unique_display_names_survive_a_restart() {
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        set_name(&mut c, ANNA, Some("Synthetic Restart")).await;
+        set_name(&mut c, BERG, Some("Synthetic Before")).await;
+        set_name(&mut c, BERG, Some("Synthetic After")).await;
+        c.runner.run_until_idle().await.unwrap();
+        let before = c.runner.keystore().fingerprint().unwrap();
+        let named = names(&c);
+        c.restart().await;
+        assert_eq!(c.runner.keystore().fingerprint().unwrap(), before);
+        assert_eq!(names(&c), named);
+        assert_eq!(
+            set_name(&mut c, CARL, Some("synthetic restart")).await,
+            DisplayNameSet::Taken
+        );
+        assert_eq!(
+            set_name(&mut c, CARL, Some("synthetic before")).await,
+            DisplayNameSet::Set
+        );
+    });
+}
+
+/// SA-11, usability rule: a set that arrives while an erasure batch is
+/// before its commit runs that batch to its commit and is then served,
+/// rather than refused.
+#[test]
+fn sa11_set_during_a_batch_is_served_after_its_commit() {
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        c.erase(vec![T1], 0xB0).await;
+        c.runner.step().await.unwrap();
+        c.runner.step().await.unwrap();
+        assert_eq!(
+            set_name(&mut c, ANNA, Some("Synthetic Waiting")).await,
+            DisplayNameSet::Set
+        );
+        c.runner.run_until_idle().await.unwrap();
+        assert_eq!(
+            names(&c).get(&ANNA).map(String::as_str),
+            Some("Synthetic Waiting")
+        );
+        assert!(matches!(
+            c.runner.open_text(&c.engine.state(), T1),
+            Err(OpenRefusal::Erased)
+        ));
+    });
+}
+
+/// ADR-012 record of lane L27, row "App restore": tables restored from
+/// before the last rotation open nothing, so the restore takes the newer
+/// snapshot whole. The changes make the restored tables that snapshot, and
+/// a restart over them opens the live text and refuses the erased one
+/// (I-81). At an equal epoch the restored tables are kept as they are.
+/// With no snapshot, tables under a destroyed epoch are refused.
+#[test]
+fn adr012_app_restore_takes_the_newest_copy_that_opens() {
+    use fstp_cell::tasks::erasure::restore::{Source, choose};
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        let before = c.sink.rows();
+        erase_and_complete(&mut c).await;
+        let after = c.sink.rows();
+        // The restored tables are from before the rotation.
+        let (source, changes) = choose(&c.sim, CELL, Some(&before), Some(&after))
+            .await
+            .unwrap();
+        assert_eq!(source, Source::Snapshot);
+        let mut restored = Tables::default();
+        restored.apply(&fstp_cell::tasks::erasure::restore::changes_to(
+            None, &before,
+        ));
+        restored.apply(&changes.unwrap());
+        assert_eq!(restored.rows(), after, "the restore mixed two copies");
+        // A restart over the restored tables.
+        let sink = Arc::new(MemSink::default());
+        lock(&sink.tables).apply(&fstp_cell::tasks::erasure::restore::changes_to(
+            None, &after,
+        ));
+        let runner = load(&c.sim, &c.engine, &sink).await.unwrap();
+        assert!(opens(&runner, &c.engine, T2).is_some());
+        assert!(
+            matches!(
+                runner.open_text(&c.engine.state(), T1),
+                Err(OpenRefusal::Erased)
+            ),
+            "I-81: the restore brought back an erased text"
+        );
+        // An equal epoch: the restored tables stay.
+        let (source, changes) = choose(&c.sim, CELL, Some(&after), Some(&after))
+            .await
+            .unwrap();
+        assert_eq!((source, changes), (Source::Backup, None));
+        // No snapshot: tables under a destroyed epoch open nothing.
+        assert!(choose(&c.sim, CELL, Some(&before), None).await.is_err());
     });
 }

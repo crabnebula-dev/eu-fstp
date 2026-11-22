@@ -16,22 +16,24 @@ mod common;
 
 use common::{CellDb, block_on, fresh16, must, rt};
 use fstp_pgstore::{
-    ChainRow, Change, DataKeyRow, GroupKeyRow, KeystoreChanges, KeystoreRows, KeystoreTables,
-    KeystoreTextRow, LoginDigestRow, LoginTextRow, Pool, Role, RootRow, RootStatus, SignerRow,
-    StoreFault,
+    ChainRow, Change, DataKeyRow, DisplayNameRow, GroupKeyRow, KeystoreChanges, KeystoreRows,
+    KeystoreTables, KeystoreTextRow, LoginDigestRow, LoginTextRow, Pool, Role, RootRow, RootStatus,
+    SignerRow, StoreFault,
 };
 use fstp_rt::tokio::TokioRuntime;
 
-/// The keystore tables of migration 0011, granted to the keys role as the
+/// The keystore tables of migrations 0011 and 0012, granted to the keys role as the
 /// production plan grants them (`fstp_control::pg::cell_role_plan`). The
 /// reference plan of the W2e harness predates them.
-const NEW_TABLES: [&str; 6] = [
+const NEW_TABLES: [&str; 7] = [
     "keystore.chain",
     "keystore.text",
     "keystore.signer",
     "keystore.login_digest",
     "keystore.login_text",
     "keystore.erasure_request",
+    // Migration 0012 (lane L26, SA-11 amendment).
+    "keystore.display_name",
 ];
 
 fn provisioned() -> CellDb {
@@ -140,6 +142,11 @@ fn rows() -> KeystoreRows {
             text: dek,
         }],
         requested: vec![dek],
+        displays: vec![DisplayNameRow {
+            account: fresh16(),
+            text: fresh16(),
+            fingerprint: [6; 32],
+        }],
     }
 }
 
@@ -154,12 +161,14 @@ fn put_all(r: &KeystoreRows) -> KeystoreChanges {
         digests: r.digests.iter().copied().map(Change::Put).collect(),
         logins: r.logins.iter().copied().map(Change::Put).collect(),
         requested: r.requested.iter().copied().map(Change::Put).collect(),
+        displays: r.displays.iter().copied().map(Change::Put).collect(),
     }
 }
 
 fn sorted(mut r: KeystoreRows) -> KeystoreRows {
     r.digests.sort_by_key(|d| d.digest);
     r.logins.sort_by_key(|l| l.account);
+    r.displays.sort_by_key(|d| d.account);
     r
 }
 
@@ -233,4 +242,42 @@ fn i82_keystore_written_by_keys_role_only() {
             );
         }
     }
+}
+
+/// SA-11 amendment, ADR-004 (lane L26): a display name row round trips,
+/// one fingerprint names one account only, and a batch that deletes the
+/// row of a fingerprint may give it to another account.
+#[test]
+fn sa11_unique_display_name_index_holds_one_account_per_fingerprint() {
+    let db = provisioned();
+    let t = tables(&db);
+    block_on(t.apply(&put_all(&rows()))).unwrap();
+    let anna = DisplayNameRow {
+        account: fresh16(),
+        text: fresh16(),
+        fingerprint: [0xA1; 32],
+    };
+    let mut put = KeystoreChanges::default();
+    put.displays.push(Change::Put(anna));
+    block_on(t.apply(&put)).unwrap();
+    assert!(block_on(t.load()).unwrap().displays.contains(&anna));
+    let berg = DisplayNameRow {
+        account: fresh16(),
+        text: fresh16(),
+        fingerprint: anna.fingerprint,
+    };
+    let mut taken = KeystoreChanges::default();
+    taken.displays.push(Change::Put(berg));
+    assert!(
+        block_on(t.apply(&taken)).is_err(),
+        "SA-11: one fingerprint for two accounts"
+    );
+    assert!(!block_on(t.load()).unwrap().displays.contains(&berg));
+    // A clear and a set in one batch: the delete runs first.
+    let mut moved = KeystoreChanges::default();
+    moved.displays.push(Change::Put(berg));
+    moved.displays.push(Change::Delete(anna.account));
+    block_on(t.apply(&moved)).unwrap();
+    let after = block_on(t.load()).unwrap().displays;
+    assert!(after.contains(&berg) && !after.contains(&anna), "{after:?}");
 }

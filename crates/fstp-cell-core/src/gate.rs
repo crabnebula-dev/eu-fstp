@@ -1033,6 +1033,8 @@ fn system_only(c: &CellCommand) -> bool {
         c,
         CellCommand::Key(_)
             | CellCommand::Release(ReleaseCommand::RecordRelationship { .. })
+            | CellCommand::Release(ReleaseCommand::RequestVerification { .. })
+            | CellCommand::Release(ReleaseCommand::CloseVerificationRequest { .. })
             | CellCommand::Ops(
                 OpsCommand::ApplyOperatorTicket { .. } | OpsCommand::EndSessionsAtBindingEnd { .. }
             )
@@ -1918,6 +1920,17 @@ pub fn admit_system(
         (
             SystemTask::LoginVerifier,
             CellCommand::Auth(fstp_auth::AuthCommand::MarkCredentialSuspect { .. }),
+        ) => true,
+        // ADR-026 record of lane L24: the vault port's verification request.
+        (
+            SystemTask::IdentityPort,
+            CellCommand::Release(crate::release::ReleaseCommand::RequestVerification { .. }),
+        ) => true,
+        (
+            SystemTask::Timeline,
+            CellCommand::Release(crate::release::ReleaseCommand::CloseVerificationRequest {
+                ..
+            }),
         ) => true,
         (
             SystemTask::ContractPort,

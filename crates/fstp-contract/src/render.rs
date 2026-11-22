@@ -6,7 +6,7 @@
 //! `TODO(legal)`: the clause texts come from the signed grant agreement
 //! and legal review (`contracts.md`, I-49).
 
-use fstp_pdf::{Block, BlockKind, Document, SignatureField, WriteError};
+use fstp_pdf::{Block, BlockKind, Document, Letterhead, SignatureField, WriteError};
 
 use crate::digest::Digest;
 
@@ -28,6 +28,10 @@ pub struct ContractTerms {
     pub blocks: Vec<TermsBlock>,
     /// One signature field per party: field name and visible label.
     pub parties: Vec<(String, String)>,
+    /// The logos above the text of the first page (ADR-030). Captured
+    /// when the version is drafted, so revision 0 renders what the
+    /// draft digest names.
+    pub letterhead: Letterhead,
 }
 
 /// The values the sub-grant agreement layout shows, each already
@@ -119,7 +123,7 @@ impl ContractTerms {
 ///
 /// A [`RenderError`] when `fstp-pdf` refuses the document.
 pub fn render(terms: &ContractTerms) -> Result<Vec<u8>, RenderError> {
-    fstp_pdf::write(&terms.document()).map_err(RenderError)
+    fstp_pdf::write_with_letterhead(&terms.document(), &terms.letterhead).map_err(RenderError)
 }
 
 /// Renders revision 0 and returns it with its digest, the value

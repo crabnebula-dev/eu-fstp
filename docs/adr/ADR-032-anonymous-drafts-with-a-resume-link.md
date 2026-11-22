@@ -103,7 +103,7 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 | Item | Value | Recorded |
 | --- | --- | --- |
 | Third-party crates added by this ADR | None | 2026-11-22 |
-| New table | `workspace.anonymous_drafts`, app migration `0012_anonymous_drafts.sql` | 2026-11-22 |
+| New table | `workspace.anonymous_drafts`, app migration `0013_anonymous_drafts.sql` | 2026-11-22 |
 | New operation | `proposal.claim_draft`, web only | 2026-11-22 |
 | New fuzz targets | `anon_draft_body_decode` in `crates/fstp-cell/fuzz` (the route bodies) and `anon_draft_decode` in `crates/fstp-api-core/fuzz` (the sealed text and the token) | 2026-11-22 |
 | New pages | `/auth/draft` (cell auth pages), `/app/calls/{call}/claim` (page table: a signed-in account), and the link "Start writing now, no account needed" on the public call page | 2026-11-22 |

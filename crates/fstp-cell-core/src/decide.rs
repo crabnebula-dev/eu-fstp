@@ -398,7 +398,8 @@ fn system_ctx(task: SystemTask, now: Timestamp, command: Option<[u8; 16]>) -> Ct
         SystemTask::ErasureRunner
         | SystemTask::Timeline
         | SystemTask::Provisioning
-        | SystemTask::LoginVerifier => SystemCause::Timeline,
+        | SystemTask::LoginVerifier
+        | SystemTask::IdentityPort => SystemCause::Timeline,
     };
     Ctx {
         now,
@@ -544,6 +545,11 @@ pub(crate) fn queries_with_inputs(
         Who::Account(actor) => actor,
         Who::System(task) => {
             return match c {
+                CellCommand::Release(ReleaseCommand::CloseVerificationRequest { account })
+                    if task == SystemTask::Timeline =>
+                {
+                    Ok(vec![Query::IsVerified { account: *account }])
+                }
                 CellCommand::Engine(cmd) => {
                     let cmd = due_engine_command(s, task, cmd, now)?;
                     fstp_engine::DomainDecider
@@ -786,6 +792,31 @@ fn decide_system(
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     match (task, c) {
+        (
+            SystemTask::IdentityPort,
+            CellCommand::Release(ReleaseCommand::RequestVerification { account }),
+        ) => Ok(vec![CellRecord::Release(
+            ReleaseRecord::VerificationRequested { account: *account },
+        )]),
+        // ADR-026 record of lane L24 (lead reading, 2026-11-22): only the
+        // vault's confirmation closes an open request.
+        (
+            SystemTask::Timeline,
+            CellCommand::Release(ReleaseCommand::CloseVerificationRequest { account }),
+        ) => {
+            if !s.verification_requested(*account) {
+                return Err(invalid());
+            }
+            let verified = answers
+                .get(&Query::IsVerified { account: *account })
+                .ok_or_else(answer_missing)?;
+            if !verified.holds {
+                return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+            }
+            Ok(vec![CellRecord::Release(
+                ReleaseRecord::VerificationRequestClosed { account: *account },
+            )])
+        }
         (_, CellCommand::Engine(cmd)) => {
             let cmd = due_engine_command(s, task, cmd, now)?;
             let records = fstp_engine::DomainDecider
@@ -2451,6 +2482,9 @@ fn decide_release(
         // No relationship form is defined yet, so every relationship is
         // refused (fail closed).
         ReleaseCommand::RecordRelationship { .. } => Err(invalid()),
+        // ADR-026 record of lane L24: the identity port's system task only.
+        ReleaseCommand::RequestVerification { .. }
+        | ReleaseCommand::CloseVerificationRequest { .. } => Err(wrong_actor()),
     }
 }
 

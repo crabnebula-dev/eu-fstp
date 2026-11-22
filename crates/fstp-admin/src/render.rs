@@ -51,6 +51,21 @@ fn registered(f: &Facts) -> String {
     )
 }
 
+/// The `object_store` member of `cell.json` and `vault.json`, with its
+/// trailing comma: the backups' bucket, when `fstp.json` names one
+/// (ADR-028 record of lane L27, row "Turned on with backups").
+fn object_store(l: &Layout) -> String {
+    l.cfg.backup.as_ref().map_or_else(String::new, |b| {
+        format!(
+            "\"object_store\":{{\"bucket\":{},\"endpoint\":{},\"port\":{},\"region\":{}}},",
+            quote(&b.bucket),
+            quote(&b.endpoint),
+            b.port,
+            quote(&b.region)
+        )
+    })
+}
+
 /// `cell.json` (ADR-026 "Configuration").
 #[must_use]
 pub fn cell(l: &Layout, f: &Facts) -> String {
@@ -67,16 +82,17 @@ pub fn cell(l: &Layout, f: &Facts) -> String {
     format!(
         "{{{assets}\"cell\":\"{cell}\",\"credentials_dir\":{creds},\
          \"database\":{{\"dbname\":\"c_{cell}\",\"host\":\"127.0.0.1\",\"port\":{app_port}}},\
-         \"host\":{host},\"key_file_keyd_socket\":{kf},\"keyd_socket\":{keyd},\
+         \"host\":{host},\"host_status\":{status},\"key_file_keyd_socket\":{kf},\"keyd_socket\":{keyd},\
          \"listen\":{{\"health\":\"{health}\",\"internal\":\"{internal}\",\"tunnel\":\"{tunnel}\"}},\
          \"mail\":{{{address}\"relay\":{relay},\"sender\":{sender},\"username\":{user}}},\
-         \"mode\":\"saas\",\"registered_servers\":{reg},\
+         \"mode\":\"saas\",{os}\"registered_servers\":{reg},\
          \"vault\":{{\"address\":\"{vault}\"}},\"version\":{version},\
          \"witness\":{{\"address\":\"{waddr}\",\"ca_spki_sha256\":\"{wca}\",\"server_name\":\"{WITNESS_NAME}\"}}}}\n",
         cell = hex(&f.cell),
         creds = p(&l.creds("cell")),
         app_port = l.pg_port(Cluster::App),
         host = quote(&l.cfg.domain),
+        status = p(&l.host_status()),
         kf = p(&l.keyd_socket(Entry::CellKeys, "cell")),
         keyd = p(&l.keyd_socket(Entry::Cell, "cell")),
         health = l.cell_health(),
@@ -87,6 +103,7 @@ pub fn cell(l: &Layout, f: &Facts) -> String {
         user = quote(&m.username),
         reg = registered(f),
         vault = l.vault_internal(),
+        os = object_store(l),
         version = quote(&l.cfg.version),
         waddr = l.witness(),
         wca = hex(&f.witness_ca_spki),
@@ -103,7 +120,7 @@ pub fn vault(l: &Layout, f: &Facts) -> Option<String> {
         "{{\"cell\":\"{cell}\",\"credentials_dir\":{creds},\
          \"database\":{{\"dbname\":\"v_{cell}\",\"host\":\"127.0.0.1\",\"port\":{port}}},\
          \"internal_listen\":\"{internal}\",\"keyd_socket\":{keyd},\"origin_host\":{origin},\
-         \"origin_listen\":\"{olisten}\",\"registered_servers\":{reg},\"ticket_keys\":[\"{ticket}\"],\
+         \"origin_listen\":\"{olisten}\",{os}\"registered_servers\":{reg},\"ticket_keys\":[\"{ticket}\"],\
          \"witness\":{{\"address\":\"{waddr}\",\"ca_spki_sha256\":\"{wca}\",\"receipt_keys\":[{rk}],\"server_name\":\"{WITNESS_NAME}\"}}}}",
         cell = hex(&f.cell),
         creds = p(&l.creds("vault")),
@@ -113,6 +130,7 @@ pub fn vault(l: &Layout, f: &Facts) -> Option<String> {
         origin = quote(&l.vault_host()),
         olisten = l.vault_origin(),
         reg = registered(f),
+        os = object_store(l),
         waddr = l.witness(),
         wca = hex(&f.witness_ca_spki),
         rk = receipts.join(","),
@@ -333,6 +351,37 @@ mod tests {
         assert!(vault(&l, &g).is_none());
     }
 
+    /// ADR-028 record of lane L27, row "Turned on with backups": with a
+    /// backup bucket, `cell.json` and `vault.json` name it as their
+    /// `object_store`, the vault's still canonical. Without one, neither
+    /// names an object store.
+    #[test]
+    fn adr028_setup_turns_snapshots_on_with_backups() {
+        let l = layout();
+        let f = facts();
+        let v = vault(&l, &f).unwrap();
+        for text in [cell(&l, &f), v.clone()] {
+            let j = fstp_json::parse(text.as_bytes()).unwrap();
+            let os = j.get("object_store").unwrap();
+            assert_eq!(os.get("bucket").and_then(|b| b.as_str()), Some("fstp-b"));
+            assert_eq!(os.get("region").and_then(|b| b.as_str()), Some("gra"));
+        }
+        let canonical = fstp_json::parse(v.as_bytes())
+            .unwrap()
+            .to_canonical()
+            .unwrap();
+        assert_eq!(v.trim_end(), canonical);
+        let none = Layout::new(
+            decode(
+                br#"{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+                "mail":{"relay":"smtp.example.eu","username":"cell"}}"#,
+            )
+            .unwrap(),
+        );
+        assert!(!cell(&none, &f).contains("object_store"));
+        assert!(!vault(&none, &f).unwrap().contains("object_store"));
+    }
+
     /// ADR-028 "Plain route changes": a route file reads back.
     #[test]
     fn adr028_route_files_read_back() {
@@ -345,5 +394,17 @@ mod tests {
             vault_pin: "02".repeat(32),
         };
         assert_eq!(parse_routes(&routes(std::slice::from_ref(&r))), vec![r]);
+    }
+
+    /// ADR-028 record of lane L20: `cell.json` names the host status file,
+    /// so the cell's System page reads what `fstp-admin report` writes.
+    #[test]
+    fn adr028_l20_cell_json_names_the_status_file() {
+        let l = layout();
+        let v = fstp_json::parse(cell(&l, &facts()).as_bytes()).unwrap();
+        assert_eq!(
+            v.get("host_status").and_then(fstp_json::Value::as_str),
+            Some("/var/lib/fstp/status/host.json")
+        );
     }
 }

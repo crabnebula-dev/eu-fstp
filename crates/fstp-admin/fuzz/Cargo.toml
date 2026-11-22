@@ -10,10 +10,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-admin = { path = ".." }
+fstp-obs = { path = "../../fstp-obs" }
 
 [[bin]]
 name = "admin_config_decode"
 path = "fuzz_targets/admin_config_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "snapshot_status_decode"
+path = "fuzz_targets/snapshot_status_decode.rs"
 test = false
 doc = false
 bench = false

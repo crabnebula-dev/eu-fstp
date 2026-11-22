@@ -19,13 +19,15 @@
 //! <path>`: the configuration file the binary reads. SIGTERM stops the
 //! binary, then the world, then custody.
 //!
-//! The stack names no mail relay, since rule A9 keeps the test SMTP sink
-//! of `fstp-api-testkit` out of this binary. Sign-up, magic link and
-//! recovery proofs therefore answer 503 here, and the second admin's
-//! invitation is refused, so onboarding stops at the checklist's first
-//! item. It names no resolver either, so the Domains and email and
-//! Channels checks fail. `tests/prod_mcp_e2e.rs` runs the whole
-//! onboarding with a relay and a fake resolver.
+//! The stack runs a mail relay of its own (ADR-026 record of lane L20):
+//! the `fstp-devstack-relay` process of `fstp-api-testkit`, since rule A9
+//! keeps the test SMTP sink out of this binary. The cell submits to it,
+//! and each accepted message lands in `<run dir>/mail/<n>.eml`, printed
+//! as `mail-dir <path>`. Open the second admin's invitation link there.
+//! The same process runs a fake resolver, which the cell's `shell`
+//! member names with the DKIM selector printed as `dkim-selector`. It
+//! answers SPF, DKIM and DMARC for any name, so any sending domain passes
+//! the Domains and email step, and the Channels step passes too.
 //!
 //! With `--route-feed` (lane L15, ADR-009 "Pilot route feed") it also starts
 //! the `fstp-control route-feed` and `fstp-edge` binaries in front of the
@@ -49,7 +51,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use fstp_celltest::external_cell::ExternalSpec;
+use fstp_celltest::external_cell::{ExternalRelay, ExternalShell, ExternalSpec};
 use fstp_celltest::external_edge::PilotFeed;
 use fstp_celltest::world::{DbMode, VaultLayout, World, WorldError, WorldSpec};
 use fstp_celltest::world_host::{SimProcess, bin_path};
@@ -164,15 +166,21 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         let assets = assemble_assets(&dir)?;
         let custody = SimProcess::spawn(0, &dir)?;
         let key_file_custody = SimProcess::spawn(1, &dir)?;
+        // ADR-026 record of lane L20: the relay and resolver process, so
+        // onboarding runs end to end.
+        let relay = start_relay(&dir)?;
         let spec = ExternalSpec {
             binary,
             dir: dir.clone(),
             key_file_custody: key_file_custody.socket().to_path_buf(),
             assets_dir: Some(assets),
-            // Rule A9 keeps the test SMTP sink out of this binary, so the
-            // stack names no relay: proofs answer 503 (`NoProofMail`).
-            relay: None,
-            shell: None,
+            // Rule A9 keeps the test SMTP sink out of this binary, so it
+            // runs in the relay process of `fstp-api-testkit`.
+            relay: Some(relay.relay.clone()),
+            shell: Some(ExternalShell {
+                resolver: relay.resolver,
+                dkim_selector: DKIM_SELECTOR.to_owned(),
+            }),
         };
         let world = World::start_external(SPEC, custody.socket().to_path_buf(), &spec)?;
         let feed = if route_feed {
@@ -180,9 +188,9 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         } else {
             None
         };
-        Ok((world, custody, key_file_custody, dir, feed))
+        Ok((world, custody, key_file_custody, dir, feed, relay))
     })();
-    let (world, custody, key_file_custody, dir, feed) = match started {
+    let (world, custody, key_file_custody, dir, feed, relay) = match started {
         Ok(s) => s,
         Err(e) => {
             eprintln!("fstp-devstack external-cell: the stack did not start: {e}");
@@ -213,7 +221,12 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             )
         })
         .unwrap_or_default();
+    let relay_lines = format!(
+        "mail-dir {}\ndkim-selector {DKIM_SELECTOR}\n",
+        relay.mail_dir.display()
+    );
     let printed = writeln!(out, "config {config}")
+        .and_then(|()| write!(out, "{relay_lines}"))
         .and_then(|()| write!(out, "{feed_lines}"))
         .and_then(|()| {
             lines
@@ -234,6 +247,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     drop(feed);
     drop(world);
     drop(key_file_custody);
+    drop(relay);
     drop(custody);
     let _ = std::fs::remove_dir_all(&dir);
     ExitCode::SUCCESS
@@ -259,4 +273,101 @@ fn start_route_feed(
         return Err(fail("fstp-control route add", &added));
     }
     Ok((feed, custody, file))
+}
+
+/// The fstp-tls test CA, which issued the relay's `localhost` certificate.
+const RELAY_CA: &[u8] = include_bytes!("../../../../fstp-tls/testdata/ca.pem");
+
+/// The DKIM selector the cell's `shell` member names. The fake resolver
+/// answers every selector.
+const DKIM_SELECTOR: &str = "devstack";
+
+/// The `fstp-devstack-relay` process of the stack (ADR-026 record of lane
+/// L20). It ends when its standard input closes, so dropping this ends
+/// it.
+struct DevRelay {
+    child: std::process::Child,
+    relay: ExternalRelay,
+    resolver: std::net::SocketAddr,
+    mail_dir: PathBuf,
+}
+
+impl Drop for DevRelay {
+    fn drop(&mut self) {
+        drop(self.child.stdin.take());
+        let _ = self.child.wait();
+    }
+}
+
+/// Starts `fstp-devstack-relay` with its mail directory in `dir` and
+/// reads the lines of its ready file.
+fn start_relay(dir: &Path) -> Result<DevRelay, WorldError> {
+    let mail_dir = dir.join("mail");
+    let ready = dir.join("relay.ready");
+    let mut child = std::process::Command::new(bin_path("fstp-devstack-relay")?)
+        .arg(&mail_dir)
+        .arg(&ready)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| fail("fstp-devstack-relay", &e))?;
+    let start = std::time::Instant::now();
+    while !ready.exists() {
+        let ended = child
+            .try_wait()
+            .map_err(|e| fail("fstp-devstack-relay", &e))?;
+        if let Some(status) = ended {
+            return Err(fail("fstp-devstack-relay", &status));
+        }
+        if start.elapsed() > std::time::Duration::from_secs(30) {
+            return Err(fail("fstp-devstack-relay", &"not ready within 30 seconds"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let text = std::fs::read_to_string(&ready).map_err(|e| fail("fstp-devstack-relay", &e))?;
+    let mut got = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        if line == "ready" {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(' ') {
+            got.insert(k.to_owned(), v.to_owned());
+        }
+    }
+    let word = |k: &str| -> Result<String, WorldError> {
+        got.get(k)
+            .cloned()
+            .ok_or_else(|| fail("fstp-devstack-relay", &format!("no {k} line")))
+    };
+    let parse = |k: &str| -> Result<std::net::SocketAddr, WorldError> {
+        word(k)?
+            .parse()
+            .map_err(|e| fail("fstp-devstack-relay", &e))
+    };
+    let files = mail_dir.clone();
+    let relay = ExternalRelay {
+        address: parse("relay")?,
+        relay: "localhost".to_owned(),
+        username: word("user")?,
+        password: word("password")?,
+        ca_pem: RELAY_CA.to_vec(),
+        // The files hold the messages; the recipient is in each header.
+        messages: std::sync::Arc::new(move || {
+            let mut names: Vec<PathBuf> = std::fs::read_dir(&files)
+                .map(|rd| rd.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            names.retain(|p| p.extension().is_some_and(|x| x == "eml"));
+            names.sort();
+            names
+                .into_iter()
+                .filter_map(|p| std::fs::read(p).ok())
+                .map(|data| (String::new(), data))
+                .collect()
+        }),
+    };
+    Ok(DevRelay {
+        child,
+        relay,
+        resolver: parse("resolver")?,
+        mail_dir,
+    })
 }

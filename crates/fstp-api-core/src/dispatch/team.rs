@@ -181,8 +181,10 @@ pub struct DisplayNameView(pub Option<String>);
 
 /// The display name a request sets, checked (SA-11): plain text of at
 /// most [`DISPLAY_NAME_MAX`] characters, trimmed, with no markup and no
-/// control character. A missing, `null` or blank name clears it. Anything
-/// else refuses under SA-11.
+/// control character. Its comparison form
+/// (`crate::display_name::normalised`) must not be empty (ADR-029, lane
+/// L26). A missing, `null` or blank name clears it. Anything else refuses
+/// under SA-11.
 pub(crate) fn checked_name(request: &Object) -> Result<Option<String>, ApiError> {
     let refused = || ApiError::bad_request("SA-11");
     let name = match request.get("display_name") {
@@ -197,6 +199,7 @@ pub(crate) fn checked_name(request: &Object) -> Result<Option<String>, ApiError>
         || name
             .chars()
             .any(|c| c.is_control() || matches!(c, '<' | '>'))
+        || crate::display_name::normalised(name).is_empty()
     {
         return Err(refused());
     }
@@ -603,6 +606,8 @@ mod tests {
             req(Value::from("<b>Synthetic</b>")),
             req(Value::from("Synthetic>")),
             req(Value::from("Line\nbreak")),
+            // ADR-029, lane L26: a name of default ignorables only.
+            req(Value::from("\u{200d}\u{ad}")),
             req(Value::Bool(true)),
             req(Value::from(3_i64)),
         ] {

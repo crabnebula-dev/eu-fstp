@@ -178,10 +178,13 @@ pub fn last_backup(layout: &Layout, c: Cluster) -> Option<i64> {
 /// `fstp-admin restore`: both clusters from their newest base backups,
 /// with the services stopped. The old data directories stay beside the
 /// new ones.
+/// Then each process keeps the newest copy of its keys that opens
+/// (ADR-028 record of lane L27).
 ///
 /// # Errors
 ///
-/// [`Fail::Step`] when a part fails. The services start again either way.
+/// [`Fail::Step`] when a part fails. The services start again, unless
+/// the keys of the vault or the cell open from no copy.
 pub fn restore(layout: &Layout) -> Result<(), Fail> {
     if layout.cfg.backup.is_none() {
         return Err(Fail::Waits(
@@ -225,8 +228,59 @@ pub fn restore(layout: &Layout) -> Result<(), Fail> {
             Part::P(&old),
         ]);
     }
-    start(layout)?;
-    result
+    if result.is_err() {
+        start(layout)?;
+        return result;
+    }
+    restore_keystores(layout, &m)?;
+    start(layout)
+}
+
+/// After the clusters are restored (ADR-028 record of lane L27, row
+/// "Restore"): starts the two clusters, then runs `fstp-vault
+/// restore-keystore` and `fstp-cell restore-keystore`, in start order,
+/// with both services stopped. Each keeps the newest copy of its keys that
+/// opens: the restored database or the newest keystore snapshot.
+///
+/// # Errors
+///
+/// [`Fail::Refused`] naming the service whose keys open from no copy.
+/// The services stay stopped then.
+fn restore_keystores(layout: &Layout, m: &Manager) -> Result<(), Fail> {
+    for c in Cluster::ALL {
+        m.ensure(&crate::pg::service(layout, c))
+            .map_err(|e| Fail::Step("restore", e.into()))?;
+    }
+    for (step, user, bin, env, service) in [
+        (
+            "fstp-vault restore-keystore",
+            stack::VAULT_USER,
+            "fstp-vault",
+            "FSTP_VAULT_CONFIG",
+            "vault",
+        ),
+        (
+            "fstp-cell restore-keystore",
+            stack::CELL_USER,
+            "fstp-cell",
+            "FSTP_CELL_CONFIG",
+            "cell",
+        ),
+    ] {
+        let mut cmd = stack::as_user(layout, user, &layout.bin(bin));
+        cmd.env(env, layout.config_file(service))
+            .arg("restore-keystore");
+        match crate::svc::run_logged(&mut cmd, &m.log())
+            .map_err(|e| Fail::Step("restore", e.into()))?
+        {
+            Some(0) => out(&[
+                Part::T("  done     checked the keys of the "),
+                Part::T(service),
+            ]),
+            code => return Err(Fail::Refused(step, code)),
+        }
+    }
+    Ok(())
 }
 
 /// The copy id in a key copy's clear header: bytes 26 to 41 (ADR-004
@@ -336,6 +390,12 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
         }
     }
     state.mark("keys-copied").map_err(io(step))?;
+    state
+        .set(
+            crate::status::KEYS_COPIED_AT,
+            &crate::pki::now().to_string(),
+        )
+        .map_err(io(step))?;
     out(&[
         Part::T("The copy is in "),
         Part::P(dest),

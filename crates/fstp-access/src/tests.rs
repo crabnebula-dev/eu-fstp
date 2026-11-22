@@ -380,6 +380,7 @@ fn d11_every_read_has_one_rule_row() {
 fn adr021_setup_gate_names_registry_operations() {
     for name in ACCOUNT_SECURITY_OPS
         .iter()
+        .chain(PERSONAL_PREFERENCE_OPS.iter())
         .chain(ONBOARDING_ADMIN_OPS.iter())
         .chain(ADMIN_OWN_OPS.iter())
     {

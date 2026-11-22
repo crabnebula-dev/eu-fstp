@@ -37,14 +37,16 @@ use fstp_keys::envelope::{
 use fstp_keys::erasure::{ChainState, codec};
 use fstp_keys::{CellId, Chain, DekId, Epoch, GroupId, Purpose};
 use fstp_pgstore::{
-    ChainRow, Change, DataKeyRow, GroupKeyRow, KeystoreChanges, KeystoreRows, KeystoreTables,
-    KeystoreTextRow, LoginDigestRow, LoginTextRow, RootRow as TableRoot, RootStatus,
-    SignerRow as TableSigner,
+    ChainRow, Change, DataKeyRow, DisplayNameRow, GroupKeyRow, KeystoreChanges, KeystoreRows,
+    KeystoreTables, KeystoreTextRow, LoginDigestRow, LoginTextRow, RootRow as TableRoot,
+    RootStatus, SignerRow as TableSigner,
 };
 use fstp_rt::Runtime;
 
 use super::snapshot::{backend_code, backend_of};
-use super::{GroupRow, Keystore, LoginIndex, RootRow, SignerRow, TextRow, keys_err};
+use super::{
+    DisplayIndex, DisplayRow, GroupRow, Keystore, LoginIndex, RootRow, SignerRow, TextRow, keys_err,
+};
 use crate::CellError;
 
 /// The AAD label of the sealed chain state.
@@ -85,6 +87,8 @@ pub(super) struct Dirty {
     pub(super) digests: BTreeSet<[u8; 32]>,
     pub(super) logins: BTreeSet<u128>,
     pub(super) requested: BTreeSet<[u8; 16]>,
+    /// The display name rows, by account (lane L26).
+    pub(super) displays: BTreeSet<u128>,
 }
 
 /// The persistence state of a keystore.
@@ -277,6 +281,23 @@ impl Keystore {
                 .map(|d| (d.digest, u128::from_be_bytes(d.account)))
                 .collect(),
         };
+        let displays = DisplayIndex::of(
+            rows.displays
+                .iter()
+                .map(|d| {
+                    (
+                        u128::from_be_bytes(d.account),
+                        DisplayRow {
+                            text: d.text,
+                            fingerprint: d.fingerprint,
+                        },
+                    )
+                })
+                .collect(),
+        );
+        if displays.owners.len() != displays.names.len() {
+            return Err(keys_err("one display name fingerprint of two accounts"));
+        }
         Ok(Keystore {
             cell: cell_id,
             // A stand-in of the right epoch until the sealed state opens.
@@ -291,6 +312,7 @@ impl Keystore {
             pending_root,
             requested: rows.requested.into_iter().collect(),
             logins,
+            displays,
             startup_unwrap: chain.startup_unwrap.map(RequestId),
             snapshots: None,
             persist: Persist {
@@ -346,6 +368,7 @@ impl Keystore {
         d.digests.extend(self.logins.digests.keys().copied());
         d.logins.extend(self.logins.texts.keys().copied());
         d.requested.extend(self.requested.iter().copied());
+        d.displays.extend(self.displays.names.keys().copied());
     }
 
     /// The chain row, sealing the chain state under `seal` when it changed
@@ -495,6 +518,16 @@ impl Keystore {
                 None => Change::Delete(account.to_be_bytes()),
             });
         }
+        for account in &d.displays {
+            c.displays.push(match self.displays.names.get(account) {
+                Some(r) => Change::Put(DisplayNameRow {
+                    account: account.to_be_bytes(),
+                    text: r.text,
+                    fingerprint: r.fingerprint,
+                }),
+                None => Change::Delete(account.to_be_bytes()),
+            });
+        }
         for id in &d.requested {
             c.requested.push(if self.requested.contains(id) {
                 Change::Put(*id)
@@ -615,10 +648,81 @@ impl Keystore {
             put(d);
             put(&a.to_be_bytes());
         }
+        for (a, r) in &self.displays.names {
+            put(&a.to_be_bytes());
+            put(&r.text);
+            put(&r.fingerprint);
+        }
         for id in &self.requested {
             put(id);
         }
         put(self.startup_unwrap.as_ref().map_or(&[][..], |r| &r.0[..]));
         Ok(fstp_crypto::sha256(&out))
+    }
+}
+
+/// A sink that writes nothing, for a keystore loaded from a snapshot to
+/// be checked, never served (ADR-012 record of lane L27).
+pub struct NoSink;
+
+impl KeystoreSink for NoSink {
+    fn apply<'a>(&'a self, _: &'a KeystoreChanges) -> SinkFuture<'a> {
+        Box::pin(async { Err(keys_err("a checked snapshot writes no row")) })
+    }
+}
+
+fn put<K, R: Clone>(changes: &[Change<K, R>]) -> Vec<R> {
+    changes
+        .iter()
+        .filter_map(|c| match c {
+            Change::Put(r) => Some(r.clone()),
+            Change::Delete(_) => None,
+        })
+        .collect()
+}
+
+impl Keystore {
+    /// Every row of this keystore as its tables hold them (ADR-012 record
+    /// of lane L27, row "App plaintext"). An open chain state is sealed
+    /// again under `seal`, the seal key of its epoch. A chain state still
+    /// sealed keeps its sealed form.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Keys`] when a row does not encode or seal.
+    pub fn table_rows(&self, seal: &SealKey) -> Result<KeystoreRows, CellError> {
+        let mut k = self.clone();
+        k.persist.sink = None;
+        if !k.persist.closed {
+            k.persist.written = None;
+        }
+        let d = &mut k.persist.dirty;
+        d.meta = true;
+        d.roots.extend(k.roots.keys().copied());
+        d.roots
+            .extend(k.pending_root.iter().map(|r| r.root.epoch.0));
+        d.groups.extend(k.groups.keys().copied());
+        d.keys.extend(k.keys.keys().copied());
+        d.texts.extend(k.texts.keys().copied());
+        d.signers
+            .extend(k.signers.iter().map(|(p, r)| (*p, r.generation)));
+        d.signers.extend(k.retired.keys().copied());
+        d.digests.extend(k.logins.digests.keys().copied());
+        d.logins.extend(k.logins.texts.keys().copied());
+        d.requested.extend(k.requested.iter().copied());
+        d.displays.extend(k.displays.names.keys().copied());
+        let c = k.changes(Some(seal))?;
+        Ok(KeystoreRows {
+            chain: c.chain,
+            roots: put(&c.roots),
+            groups: put(&c.groups),
+            keys: put(&c.keys),
+            texts: put(&c.texts),
+            signers: put(&c.signers),
+            digests: put(&c.digests),
+            logins: put(&c.logins),
+            requested: put(&c.requested),
+            displays: put(&c.displays),
+        })
     }
 }

@@ -5,6 +5,7 @@
 //! ```text
 //! fstp-admin setup                      set up or resume; safe to run again
 //! fstp-admin status                     what runs, and the next thing to do
+//! fstp-admin report                     the status file of the web page System
 //! fstp-admin start | stop               every service, in order
 //! fstp-admin renew                      certificates near their end, and the route pins
 //! fstp-admin backup | restore           base backups of both databases
@@ -51,6 +52,7 @@ pub fn usage() {
         "",
         "  setup                      set up this host, or continue; safe to run again",
         "  status                     what runs, and the one next thing to do",
+        "  report                     write the status file of the web page System; a timer runs it",
         "  start | stop               start or stop every service",
         "  renew                      renew certificates near their end and update the route",
         "  backup                     back up both databases now",
@@ -116,6 +118,14 @@ fn verify(layout: &Layout, account: Option<&str>, file: Option<&str>) -> Result<
     Ok(())
 }
 
+/// Runs `op`, then writes the host status file the System page reads
+/// (ADR-028 record of lane L20), whether `op` succeeded or not.
+fn after(l: &Layout, op: fn(&Layout) -> Result<(), Fail>) -> Result<u8, Fail> {
+    let r = op(l);
+    status::report_quietly(l);
+    r.map(|()| OK)
+}
+
 fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     if words.first() == Some(&"setup") && !config_path.exists() {
@@ -125,16 +135,19 @@ fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
     match words.as_slice() {
         ["setup"] => setup::run(&need()?).map(|()| OK),
         ["status"] => Ok(status::run(&need()?)),
+        ["report"] => status::report(&need()?).map(|()| OK),
         ["start"] => ops::start(&need()?).map(|()| OK),
         ["stop"] => ops::stop(&need()?).map(|()| OK),
-        ["renew"] => ops::renew(&need()?).map(|()| OK),
-        ["backup"] => ops::backup(&need()?).map(|()| OK),
+        ["renew"] => after(&need()?, ops::renew),
+        ["backup"] => after(&need()?, ops::backup),
         ["restore"] => ops::restore(&need()?).map(|()| OK),
         ["backup-keys", dest] => {
             let l = need()?;
             let mut st = state::State::load(&l.admin_dir().join("state"))
                 .map_err(|_| Fail::Step("key copy", fail::Cause::Io))?;
-            ops::backup_keys(&l, &mut st, &PathBuf::from(dest)).map(|()| OK)
+            let r = ops::backup_keys(&l, &mut st, &PathBuf::from(dest));
+            status::report_quietly(&l);
+            r.map(|()| OK)
         }
         ["verify"] => verify(&need()?, None, None).map(|()| OK),
         ["verify", account] => verify(&need()?, Some(account), None).map(|()| OK),
@@ -148,7 +161,12 @@ fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
             }
             Ok(OK)
         }
-        ["erase-identity", account] => cellcmd::erase_identity(&need()?, account).map(|()| OK),
+        ["erase-identity", account] => {
+            let l = need()?;
+            let r = cellcmd::erase_identity(&l, account);
+            status::report_quietly(&l);
+            r.map(|()| OK)
+        }
         ["route", "list"] => {
             let l = need()?;
             for r in route::list(&l)? {

@@ -201,6 +201,8 @@ jobs:
               --test l2_oauth_pg --test prod_mcp_slice_pg --test g13_production_shell_facts
               --test l5_invitation_pg --test l5_sessions_recovery_pg --test l5_blobs_pg
               --test i78_i77_api_step_up_pg --test i84_audit_parity_pg --test l12_cell_decisions_pg
+              --test sa11_display_names_pg
+              --test l24_verification_request_pg
               ; -p fstp-celltest --doc
             skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross t_iso_public_rate_limit_keys_are_per_cell
             timeout: 60

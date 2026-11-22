@@ -9,6 +9,8 @@
 //! - Any caller keeps the account security operations
 //!   ([`ACCOUNT_SECURITY_OPS`]). Reading: R-LG-04 says users can see and
 //!   end their sessions and linked devices, and it ranks above the ADR.
+//! - Any caller keeps its personal display preferences
+//!   ([`PERSONAL_PREFERENCE_OPS`]): the theme choice of ADR-030.
 //! - A tenant admin keeps the onboarding operations ([`onboarding_op`]):
 //!   every `tenant.*` operation and the onboarding approvals. The grants
 //!   among them are the second tenant admin and the Financial and Legal
@@ -28,6 +30,11 @@ pub const SETUP_RULE: &str = "ADR-021";
 /// The operations every caller keeps before activation (R-LG-04): its
 /// own sessions and passkeys.
 pub const ACCOUNT_SECURITY_OPS: [&str; 3] = ["me.sessions", "me.end_session", "me.add_passkey"];
+
+/// The personal display preferences every caller keeps before activation:
+/// the theme choice (ADR-030, lead reading of 2026-11-22). It is no
+/// organisation data, so the setup gate has nothing to hold it for.
+pub const PERSONAL_PREFERENCE_OPS: [&str; 1] = ["me.set_theme"];
 
 /// The admin operations of onboarding besides the `tenant.*` ones: the
 /// approval list, the SoD-07 self-grant approval and account recovery.
@@ -52,5 +59,6 @@ pub fn onboarding_op(name: &str) -> bool {
 /// not yet activated (ADR-021).
 pub fn setup_admits(op: &OpSpec, p: &Principal) -> bool {
     ACCOUNT_SECURITY_OPS.contains(&op.name)
+        || PERSONAL_PREFERENCE_OPS.contains(&op.name)
         || (p.tenant_admin() && (onboarding_op(op.name) || ADMIN_OWN_OPS.contains(&op.name)))
 }

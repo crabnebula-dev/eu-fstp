@@ -260,6 +260,27 @@ pub const ERASURE_CAUSES: &[&str] = &[
     "verification_completed",
 ];
 
+/// How one part of the host runs, in the host status file (ADR-028 record
+/// of lane L20).
+pub const PART_STATES: &[&str] = &["running", "unhealthy", "stopped"];
+
+/// The one next thing on the host, as `fstp-admin status` names it
+/// (ADR-028 "Status", record of lane L20).
+pub const HOST_NEXT: &[&str] = &[
+    "run_setup",
+    "start_service",
+    "renew_route",
+    "renew",
+    "public_certificate",
+    "configure_backups",
+    "backup",
+    "keystore_snapshot",
+    "web_admins",
+    "verify_admins",
+    "copy_keys",
+    "nothing",
+];
+
 /// Every proposal state, as the state machine names it.
 pub const STATE_NAMES: &[&str] = &[
     "DRAFT",
@@ -558,6 +579,37 @@ const PROPOSAL_ROW: Shape = Shape::Object(&[
     m("proposal", Shape::Id),
     m("state", Shape::Enum(STATE_NAMES)),
     m("title", Shape::String),
+]);
+
+/// One logo slot of `tenant.branding.logos` (ADR-030): `null`, or the
+/// logo's same-origin path, format, size, whether PDFs and emails show
+/// it, and its contrast advice (I-70, never a refusal).
+const LOGO: Shape = Shape::Nullable(&Shape::Object(&[
+    m("path", Shape::String),
+    m("format", Shape::Enum(&["png", "webp"])),
+    m("width", Shape::String),
+    m("height", Shape::String),
+    m("pdf", Shape::Bool),
+    m("email", Shape::Bool),
+    m("contrast", Shape::Nullable(&Shape::String)),
+    m("advice", Shape::Bool),
+]));
+
+/// The reply of `tenant.branding.logos` and `programme.logos` (ADR-030).
+const LOGOS: Shape = Shape::Object(&[
+    m(
+        "tenant",
+        Shape::Object(&[m("light", LOGO), m("dark", LOGO)]),
+    ),
+    m(
+        "programmes",
+        Shape::Array(&Shape::Object(&[
+            m("programme", Shape::Id),
+            m("name", Shape::String),
+            m("light", LOGO),
+            m("dark", LOGO),
+        ])),
+    ),
 ]);
 
 /// One onboarding step as `tenant.get_step` answers it and a step save
@@ -1649,6 +1701,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("failing", Shape::Array(&Shape::Enum(BRAND_PAIR_NAMES))),
         ]),
     ),
+    // ADR-030: the tenant's logos in light and dark, and each
+    // programme's. A path names a digest only, never tenant text.
+    ("tenant.branding.logos", LOGOS),
+    // ADR-030 (lead reading of 2026-11-22): the same reply for one
+    // programme, to its programme managers.
+    ("programme.logos", LOGOS),
     // Lane m4tenant. R-TN-01: one onboarding step, and the reply of its
     // save. The values are those of `fstp-tenant`'s codec, with the data
     // protection contact as its text.
@@ -1769,6 +1827,52 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("programme", Shape::Id),
                     m("start", Shape::Id),
                     m("end", Shape::Id),
+                ])),
+            ),
+        ]),
+    ),
+    // ADR-028 record of lane L20: the facts of the System page. Instants,
+    // counts, flags and closed words only (R-NF-02).
+    (
+        "tenant.system",
+        Shape::Object(&[
+            m("now", Shape::Id),
+            m("vault", Shape::Enum(&["answers", "silent"])),
+            m("mail", Shape::Enum(&["works", "fails", "not_configured"])),
+            m("last_cell_erasure", Shape::Nullable(&Shape::Id)),
+            m(
+                "host_file",
+                Shape::Enum(&["present", "not_configured", "missing", "unreadable"]),
+            ),
+            m(
+                "host",
+                Shape::Nullable(&Shape::Object(&[
+                    m("written_at", Shape::Id),
+                    m("setup_done", Shape::Bool),
+                    m(
+                        "parts",
+                        Shape::Object(&[
+                            m("cell", Shape::Enum(PART_STATES)),
+                            m("vault", Shape::Enum(PART_STATES)),
+                            m("witness", Shape::Enum(PART_STATES)),
+                            m("edge", Shape::Enum(PART_STATES)),
+                            m("databases", Shape::Enum(PART_STATES)),
+                            m("keys", Shape::Enum(PART_STATES)),
+                        ]),
+                    ),
+                    m("backups_configured", Shape::Bool),
+                    m("last_backup", Shape::Nullable(&Shape::Id)),
+                    m("last_key_copy", Shape::Nullable(&Shape::Id)),
+                    m("last_vault_erasure", Shape::Nullable(&Shape::Id)),
+                    // ADR-028 record of lane L26: the keystore snapshots of L27.
+                    m("last_app_snapshot", Shape::Nullable(&Shape::Id)),
+                    m("app_snapshot_failed", Shape::Bool),
+                    m("last_vault_snapshot", Shape::Nullable(&Shape::Id)),
+                    m("vault_snapshot_failed", Shape::Bool),
+                    m("certificate_days", Shape::Nullable(&Shape::Int)),
+                    m("self_signed", Shape::Bool),
+                    m("route", Shape::Enum(&["current", "mismatch", "unknown"])),
+                    m("next", Shape::Enum(HOST_NEXT)),
                 ])),
             ),
         ]),

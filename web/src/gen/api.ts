@@ -70,6 +70,9 @@ export type OpName =
   | "tenant.approve_activation"
   | "tenant.branding.check"
   | "tenant.branding.set"
+  | "tenant.branding.logos"
+  | "tenant.branding.set_logo"
+  | "programme.logos"
   | "tenant.terminology.set"
   | "tenant.set_mail_relay"
   | "tenant.get_mail_relay"
@@ -92,6 +95,7 @@ export type OpName =
   | "admin.approve_break_glass"
   | "admin.erasures"
   | "admin.request_erasure"
+  | "tenant.system"
   | "admin.members"
   | "creator.open_draft"
   | "creator.list_programmes"
@@ -220,6 +224,7 @@ export type OpName =
   | "me.mailbox.mark_read"
   | "me.display_name"
   | "me.set_display_name"
+  | "me.set_theme"
   | "me.end_session"
   | "me.add_passkey"
   | "pending.list"
@@ -321,6 +326,9 @@ export interface OpParams {
   readonly "tenant.approve_activation": Readonly<Record<never, string>>;
   readonly "tenant.branding.check": Readonly<Record<never, string>>;
   readonly "tenant.branding.set": Readonly<Record<never, string>>;
+  readonly "tenant.branding.logos": Readonly<Record<never, string>>;
+  readonly "tenant.branding.set_logo": Readonly<Record<never, string>>;
+  readonly "programme.logos": { readonly "programme": string };
   readonly "tenant.terminology.set": Readonly<Record<never, string>>;
   readonly "tenant.set_mail_relay": Readonly<Record<never, string>>;
   readonly "tenant.get_mail_relay": Readonly<Record<never, string>>;
@@ -343,6 +351,7 @@ export interface OpParams {
   readonly "admin.approve_break_glass": { readonly "break_glass": string };
   readonly "admin.erasures": Readonly<Record<never, string>>;
   readonly "admin.request_erasure": Readonly<Record<never, string>>;
+  readonly "tenant.system": Readonly<Record<never, string>>;
   readonly "admin.members": Readonly<Record<never, string>>;
   readonly "creator.open_draft": Readonly<Record<never, string>>;
   readonly "creator.list_programmes": Readonly<Record<never, string>>;
@@ -471,6 +480,7 @@ export interface OpParams {
   readonly "me.mailbox.mark_read": Readonly<Record<never, string>>;
   readonly "me.display_name": Readonly<Record<never, string>>;
   readonly "me.set_display_name": Readonly<Record<never, string>>;
+  readonly "me.set_theme": Readonly<Record<never, string>>;
   readonly "me.end_session": { readonly "session": string };
   readonly "me.add_passkey": Readonly<Record<never, string>>;
   readonly "pending.list": Readonly<Record<never, string>>;
@@ -545,6 +555,9 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.approve_activation",
   "tenant.branding.check",
   "tenant.branding.set",
+  "tenant.branding.logos",
+  "tenant.branding.set_logo",
+  "programme.logos",
   "tenant.terminology.set",
   "tenant.set_mail_relay",
   "tenant.get_mail_relay",
@@ -567,6 +580,7 @@ export const OP_NAMES: readonly OpName[] = [
   "admin.approve_break_glass",
   "admin.erasures",
   "admin.request_erasure",
+  "tenant.system",
   "admin.members",
   "creator.open_draft",
   "creator.list_programmes",
@@ -695,6 +709,7 @@ export const OP_NAMES: readonly OpName[] = [
   "me.mailbox.mark_read",
   "me.display_name",
   "me.set_display_name",
+  "me.set_theme",
   "me.end_session",
   "me.add_passkey",
   "pending.list",
@@ -963,6 +978,48 @@ export const OPERATIONS: readonly Operation[] = [
     session: "phishing_resistant",
     classification: "confidential",
     tool: { name: "fstp_prepare_branding", scope: "tenant:draft", prepareOnly: true },
+  },
+  {
+    name: "tenant.branding.logos",
+    method: "GET",
+    path: "/admin/branding/logos",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "branding" }, { kind: "literal", text: "logos" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.branding.set_logo",
+    method: "PUT",
+    path: "/admin/branding/logo",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "branding" }, { kind: "literal", text: "logo" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "programme.logos",
+    method: "GET",
+    path: "/programmes/{programme}/logos",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "logos" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
   },
   {
     name: "tenant.terminology.set",
@@ -1269,6 +1326,20 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: true,
     binding: false,
     session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.system",
+    method: "GET",
+    path: "/admin/system",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "system" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
     classification: "confidential",
     tool: null,
   },
@@ -3056,6 +3127,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/me/display-name",
     base: "api",
     segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "display-name" }],
+    params: [],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "me.set_theme",
+    method: "PUT",
+    path: "/me/theme",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "theme" }],
     params: [],
     body: true,
     highRisk: false,
@@ -4957,6 +5042,144 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "failing": { schema: { kind: "array", items: { kind: "enum", values: ["light.brand-text/surface-0", "light.brand-text/surface-1", "light.on-brand/brand", "light.on-brand/brand-hover", "light.focus/surface-0", "dark.brand-text/surface-0", "dark.brand-text/surface-1", "dark.on-brand/brand", "dark.on-brand/brand-hover", "dark.focus/surface-0"] } }, optional: false },
     },
   },
+  "tenant.branding.logos": {
+    kind: "object",
+    fields: {
+      "tenant": { schema: {
+        kind: "object",
+        fields: {
+          "light": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+          "dark": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+        },
+      }, optional: false },
+      "programmes": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "programme": { schema: { kind: "id" }, optional: false },
+          "name": { schema: { kind: "string" }, optional: false },
+          "light": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+          "dark": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "programme.logos": {
+    kind: "object",
+    fields: {
+      "tenant": { schema: {
+        kind: "object",
+        fields: {
+          "light": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+          "dark": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+        },
+      }, optional: false },
+      "programmes": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "programme": { schema: { kind: "id" }, optional: false },
+          "name": { schema: { kind: "string" }, optional: false },
+          "light": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+          "dark": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+              "contrast": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+              "advice": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "tenant.get_step": {
     kind: "object",
     fields: {
@@ -5123,6 +5346,46 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "programme": { schema: { kind: "id" }, optional: false },
           "start": { schema: { kind: "id" }, optional: false },
           "end": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "tenant.system": {
+    kind: "object",
+    fields: {
+      "now": { schema: { kind: "id" }, optional: false },
+      "vault": { schema: { kind: "enum", values: ["answers", "silent"] }, optional: false },
+      "mail": { schema: { kind: "enum", values: ["works", "fails", "not_configured"] }, optional: false },
+      "last_cell_erasure": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "host_file": { schema: { kind: "enum", values: ["present", "not_configured", "missing", "unreadable"] }, optional: false },
+      "host": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "written_at": { schema: { kind: "id" }, optional: false },
+          "setup_done": { schema: { kind: "bool" }, optional: false },
+          "parts": { schema: {
+            kind: "object",
+            fields: {
+              "cell": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "vault": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "witness": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "edge": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "databases": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "keys": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+            },
+          }, optional: false },
+          "backups_configured": { schema: { kind: "bool" }, optional: false },
+          "last_backup": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_key_copy": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_vault_erasure": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_app_snapshot": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "app_snapshot_failed": { schema: { kind: "bool" }, optional: false },
+          "last_vault_snapshot": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "vault_snapshot_failed": { schema: { kind: "bool" }, optional: false },
+          "certificate_days": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
+          "self_signed": { schema: { kind: "bool" }, optional: false },
+          "route": { schema: { kind: "enum", values: ["current", "mismatch", "unknown"] }, optional: false },
+          "next": { schema: { kind: "enum", values: ["run_setup", "start_service", "renew_route", "renew", "public_certificate", "configure_backups", "backup", "keystore_snapshot", "web_admins", "verify_admins", "copy_keys", "nothing"] }, optional: false },
         },
       } }, optional: false },
     },
@@ -5562,6 +5825,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/admin/branding", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/terminology", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/erasures", need: { kind: "reads", reads: ["admin.erasures"] }, values: {}, listed: null },
+  { pattern: "/app/admin/system", need: { kind: "reads", reads: ["tenant.system"] }, values: {}, listed: null },
   { pattern: "/app/admin/funder-profiles", need: { kind: "reads", reads: ["tenant.funder_profiles"] }, values: {}, listed: null },
   { pattern: "/app/admin/members", need: { kind: "reads", reads: ["admin.members"] }, values: {}, listed: null },
   { pattern: "/app/creator/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },
@@ -5577,6 +5841,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/programmes/{programme}/setup/{stage}", need: { kind: "reads", reads: ["creator.get_draft"] }, values: { stage: ["programme", "applicants", "evaluation", "team", "communications", "review"] }, listed: null },
   { pattern: "/app/programmes/{programme}/people", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/team", need: { kind: "reads", reads: ["team.list"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/logo", need: { kind: "reads", reads: ["programme.logos"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/audit", need: { kind: "reads", reads: ["audit.entries", "audit.unmasks"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/reports", need: { kind: "reads", reads: ["report.list"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/funder-profile", need: { kind: "reads", reads: ["programme.funder_profile.view"] }, values: {}, listed: null },

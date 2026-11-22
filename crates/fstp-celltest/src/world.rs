@@ -4654,6 +4654,8 @@ fn start_cell(
         // ADR-026 record of lane L18: a world cell runs no probes, so every
         // onboarding probe fails, as before (Q5).
         tenant_prober: None,
+        // ADR-028 record of lane L20: a world cell has no host status file.
+        host_status: None,
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,
@@ -4665,10 +4667,9 @@ fn start_cell(
     // Lane L4: an external cell runs `fstp-cell first-admin` before it
     // serves, so its invitation comes from the token file.
     let (running, bound, first_token) = match &external {
-        None => match s
-            .rt
-            .block_on(fstp_cell::process::start_with(&s.rt, parts, options))
-        {
+        None => match s.rt.block_on(boxed(|| {
+            fstp_cell::process::start_with(&s.rt, parts, options)
+        })) {
             Ok(r) => {
                 let bound = r.bound();
                 (Some(r), bound, None)
@@ -6154,4 +6155,17 @@ fn world_auth_limits() -> fstp_cell::routes::AuthLimits {
         draft_start_per_cell: wide,
         draft_write_per_peer: wide,
     }
+}
+
+/// Builds the future of `make` in this function's own frame and keeps it
+/// on the heap (lane L26), so a large start-up future never lies in the
+/// frame of [`start_cell`], which the test thread runs.
+#[inline(never)]
+fn boxed<'a, T, F>(
+    make: impl FnOnce() -> F,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>
+where
+    F: std::future::Future<Output = T> + 'a,
+{
+    Box::pin(make())
 }

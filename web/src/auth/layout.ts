@@ -36,6 +36,23 @@ const PUBLIC_LINKS: readonly (readonly [AuthMessageId, string])[] = [
 ];
 
 /**
+ * The tenant's logo on the sign-in pages (ADR-030): the light and the
+ * dark image from the stable paths, which answer the current logo or
+ * 404. An image that does not load is removed, so a tenant with no logo
+ * keeps the platform mark. Each image is decorative beside the name.
+ */
+function tenantLogo(): HTMLElement[] {
+  const mark = h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, ['F']);
+  const images = (['light', 'dark'] as const).map((mode) => {
+    const img = h('img', { class: `brand-logo brand-logo--${mode}`, src: `/brand/logo/${mode}`, alt: '' });
+    img.addEventListener('error', () => img.remove());
+    img.addEventListener('load', () => mark.remove());
+    return img;
+  });
+  return [mark, ...images];
+}
+
+/**
  * The PublicLayout around `main`, once per document (lane m4/site
  * scope item 3; `docs/design/01-navigation-home.md` "Layout and
  * routing contract"): the top bar before it, the
@@ -60,10 +77,7 @@ function chrome(main: HTMLElement): void {
   ];
   const header = h('header', { class: 'site-header' }, [
     h('div', { class: 'topbar' }, [
-      h('a', { class: 'brand', href: '/app/' }, [
-        h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, ['F']),
-        h('span', {}, [t('top.brand')]),
-      ]),
+      h('a', { class: 'brand', href: '/app/' }, [...tenantLogo(), h('span', {}, [t('top.brand')])]),
       ...links,
     ]),
   ]);

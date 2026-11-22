@@ -147,6 +147,7 @@ dependencies = [
  "fstp-crypto",
  "fstp-json",
  "fstp-migrate",
+ "fstp-obs",
  "fstp-pgwire",
  "fstp-pki",
 ]
@@ -156,6 +157,7 @@ name = "fstp-admin-fuzz"
 version = "0.0.0"
 dependencies = [
  "fstp-admin",
+ "fstp-obs",
  "libfuzzer-sys",
 ]
 
@@ -179,6 +181,13 @@ dependencies = [
  "fstp-crypto",
  "fstp-pgwire",
  "fstp-rt",
+]
+
+[[package]]
+name = "fstp-obs"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
 ]
 
 [[package]]

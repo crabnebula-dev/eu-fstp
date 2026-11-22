@@ -126,6 +126,12 @@ pub mod kind {
     /// it. As for [`ROLE_INVITATION`], only that port fires it, the plan
     /// never cancels it, and [`super::firing`] never builds its entry.
     pub const ADMIN_INVITATION: u16 = 17;
+    /// A person's open verification request became visible to the people
+    /// who may record it (ADR-026 record of lane L24, lead reading of
+    /// 2026-11-22). Sourced by the account and the request's ordinal, both
+    /// big-endian, due at the first tick that sees it. It fires once, with
+    /// one email to each recorder when the tenant has a relay.
+    pub const VERIFICATION_REQUEST: u16 = 18;
 }
 
 /// A level 2 signing key is due for replacement this long after its
@@ -320,6 +326,24 @@ pub fn derive(s: &CellState, now: Timestamp) -> BTreeMap<EventId, Derived> {
     }
     for d in signer_events(t, s.signer_generations()) {
         put(d);
+    }
+    // ADR-026 record of lane L24: each open request, once visible.
+    for account in s.verification_requests() {
+        let (Some(ordinal), true) = (
+            s.verification_request_ordinal(account),
+            verification_request_visible(s, account),
+        ) else {
+            continue;
+        };
+        let source = verification_request_source(account, ordinal);
+        put(Derived {
+            kind: kind::VERIFICATION_REQUEST,
+            lead: 0,
+            due: scheduled_due(t, kind::VERIFICATION_REQUEST, &source, 0).unwrap_or(now.micros()),
+            source,
+            source_version: 0,
+            offset_minutes: 0,
+        });
     }
     for (i, _) in s.auth().suspect_flags().iter().enumerate() {
         let ordinal = u64::try_from(i).map_or(u64::MAX, |n| n.saturating_add(1));
@@ -597,6 +621,20 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
         kind::ROLE_INVITATION | kind::ADMIN_INVITATION => return None,
         // ADR-008, 2026-11-19: one email to the holder of the flagged
         // passkey, when the tenant has a relay.
+        // ADR-026 record of lane L24: one email to each recorder, when the
+        // tenant has a relay. It names no person (I-27).
+        kind::VERIFICATION_REQUEST => {
+            let head: [u8; 16] = e.source.get(..16)?.try_into().ok()?;
+            let account = AccountId::from_raw(u128::from_be_bytes(head));
+            verification_request_drafts(&verification_recorders(s, account), mail_relay_set(s))
+                .into_iter()
+                .map(|(to, template, bindings)| Draft {
+                    to,
+                    template,
+                    bindings,
+                })
+                .collect()
+        }
         kind::PASSKEY_DISABLED => {
             let ordinal = u64::from_be_bytes(e.source.as_slice().try_into().ok()?);
             let at = usize::try_from(ordinal.checked_sub(1)?).ok()?;
@@ -881,6 +919,7 @@ pub fn event_template(s: &CellState, event: &EventId) -> Option<TemplateId> {
         kind::PASSKEY_DISABLED => Some(TemplateId::PasskeyDisabled),
         kind::ROLE_INVITATION => Some(TemplateId::RoleInvitation),
         kind::ADMIN_INVITATION => Some(TemplateId::AdminInvitation),
+        kind::VERIFICATION_REQUEST => Some(TemplateId::IdCheckWaiting),
         _ => None,
     }
 }
@@ -1056,4 +1095,80 @@ pub fn command_id(cell: [u8; 16], c: &TimelineCommand) -> [u8; 16] {
         *o = *b;
     }
     fstp_cell_core::system_command_id(suffix)
+}
+
+/// The source of the `VERIFICATION_REQUEST` event of the request of
+/// `account` with `ordinal`: the account id, then the ordinal, both
+/// big-endian (ADR-026 record of lane L24).
+pub fn verification_request_source(account: AccountId, ordinal: u64) -> Vec<u8> {
+    let mut s = account.raw().to_be_bytes().to_vec();
+    s.extend_from_slice(&ordinal.to_be_bytes());
+    s
+}
+
+/// Whether the request of `account` is visible to the people who may
+/// record it (ADR-026 record of lane L24, R-NG-01): at once for a person
+/// with no Receiving binding, and for an applicant only once a proposal
+/// the person is bound to is in NEGOTIATION or later.
+pub fn verification_request_visible(s: &CellState, account: AccountId) -> bool {
+    use fstp_domain::roles::Group;
+    let core = &s.engine().core;
+    let mut receiving = false;
+    for (_, b) in core.roster().bindings() {
+        if b.account != account || b.group() != Group::Receiving {
+            continue;
+        }
+        receiving = true;
+        let open = b.proposal().is_some_and(|p| {
+            b.held()
+                && fstp_domain::view::proposal_state(core, p)
+                    .is_some_and(|st| fstp_cell_core::RELEASE_STATES.contains(&st))
+        });
+        if open {
+            return true;
+        }
+    }
+    !receiving
+}
+
+/// The people who may record the check of `account`: every tenant admin
+/// with no Judging binding, other than `account` (ADR-004 record of lane
+/// L13b, ADR-026 record of lane L24). The cell decides each ticket again.
+pub fn verification_recorders(s: &CellState, account: AccountId) -> BTreeSet<AccountId> {
+    use fstp_domain::roles::Group;
+    let core = &s.engine().core;
+    s.tenant()
+        .admins()
+        .into_iter()
+        .filter(|a| *a != account)
+        .filter(|a| {
+            !core
+                .roster()
+                .bindings()
+                .any(|(_, b)| b.account == *a && b.group() == Group::Judging)
+        })
+        .collect()
+}
+
+/// The messages of a `VERIFICATION_REQUEST` event to `recorders` (ADR-026
+/// record of lane L24): one per recorder's account, when the tenant has a
+/// relay, and none otherwise. Each holds one link to the member page and
+/// no other value, so no person, id or time reaches the email (I-27).
+pub fn verification_request_drafts(
+    recorders: &BTreeSet<AccountId>,
+    relay: bool,
+) -> Vec<(Recipient, TemplateId, Bindings)> {
+    if !relay {
+        return Vec::new();
+    }
+    recorders
+        .iter()
+        .map(|a| {
+            (
+                Recipient::Account(*a),
+                TemplateId::IdCheckWaiting,
+                Bindings::new().with(Slot::Link, Value::Link(LinkTarget::Members)),
+            )
+        })
+        .collect()
 }
