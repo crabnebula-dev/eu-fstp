@@ -20,13 +20,13 @@
 //! verification that shows the lead under 18 conflicts with it, so the
 //! vault answers nothing until a manual check (NOTE 14).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use fstp_api_core::port::{
-    Affiliations, AsyncIdentityOracle, BirthDate, CountryCode, ExclusionClasses, Receipt, Vault,
-    VaultBound, VerificationPurpose, VerificationRedirect,
+    Affiliations, AsyncIdentityOracle, BirthDate, CountryCode, ExclusionClasses, NameMaskSpan,
+    Receipt, Vault, VaultBound, VerificationPurpose, VerificationRedirect,
 };
 use fstp_domain::id::{AccountId, ClassId, ContentDigest, OrganisationId, ProgrammeId, ProposalId};
 use fstp_domain::oracle::{Answer, OracleDown, Query};
@@ -126,6 +126,9 @@ struct Log {
     next: u128,
 }
 
+/// The verified family names, given names and date of birth by account.
+type LegalNames = BTreeMap<AccountId, (String, String, Option<String>)>;
+
 /// The synthetic vault port. Cloning shares the facts and the log.
 #[derive(Clone, Debug)]
 pub struct FakeVault {
@@ -142,6 +145,12 @@ pub struct FakeVault {
     /// The vault origin, such as `http://id.a.fstp.localhost:8640`, whose
     /// write page a guardian consent opens (M3 design section 6.5).
     origin: Arc<Mutex<Option<String>>>,
+    /// The verified family names, given names and date of birth of each
+    /// account, for the name mask (M7 Q4, ADR-033 record of lane L31).
+    /// Synthetic values only.
+    names: Arc<Mutex<LegalNames>>,
+    /// Whether the name mask alone is down, the queries still answering.
+    mask_down: Arc<Mutex<bool>>,
 }
 
 /// What the synthetic vault knows for the Q35 answers (see
@@ -164,7 +173,34 @@ impl FakeVault {
             q35: Arc::new(Mutex::new((true, true))),
             q35_known: Arc::new(Mutex::new(None)),
             origin: Arc::new(Mutex::new(None)),
+            names: Arc::new(Mutex::new(BTreeMap::new())),
+            mask_down: Arc::new(Mutex::new(false)),
         }
+    }
+
+    /// Sets the name mask alone down or up (M7 Q4): the queries still
+    /// answer, so a test sees the mask fail closed on its own.
+    pub fn set_mask_down(&self, down: bool) {
+        *lock(&self.mask_down) = down;
+    }
+
+    /// Records the verified names and date of birth (`YYYY-MM-DD`) of
+    /// `account`, which the name mask masks (M7 Q4). Synthetic values only.
+    pub fn set_legal_name(
+        &self,
+        account: AccountId,
+        family: &str,
+        given: &str,
+        birth_date: Option<&str>,
+    ) {
+        lock(&self.names).insert(
+            account,
+            (
+                family.to_owned(),
+                given.to_owned(),
+                birth_date.map(str::to_owned),
+            ),
+        );
     }
 
     /// Sets the vault origin whose write page a guardian consent opens.
@@ -386,5 +422,40 @@ impl Vault for FakeVault {
         orgs: &BTreeSet<OrganisationId>,
     ) -> Result<Answer, OracleDown> {
         self.proximity_lists_declared_now(programme, orgs)
+    }
+
+    /// The name mask over the synthetic names, as the vault computes it
+    /// (`fstp_vault_core::mask`). A vault set down fails closed.
+    async fn mask_names(
+        &self,
+        team: &[AccountId],
+        texts: &[String],
+    ) -> Result<Vec<Vec<NameMaskSpan>>, OracleDown> {
+        if *lock(&self.down) || *lock(&self.mask_down) {
+            return Err(OracleDown);
+        }
+        let names = lock(&self.names);
+        let people: Vec<fstp_unorm::mask::MaskPerson> = team
+            .iter()
+            .map(|a| match names.get(a) {
+                Some((f, g, b)) => fstp_unorm::mask::MaskPerson::new(f, g, b.as_deref()),
+                None => fstp_unorm::mask::MaskPerson::new("", "", None),
+            })
+            .collect();
+        drop(names);
+        Ok(texts
+            .iter()
+            .map(|t| {
+                fstp_unorm::mask::mask_spans(t, &people)
+                    .into_iter()
+                    .map(|s| NameMaskSpan {
+                        start: s.start,
+                        end: s.end,
+                        person: s.person,
+                        birth_date: s.class == fstp_unorm::mask::MaskClass::BirthDate,
+                    })
+                    .collect()
+            })
+            .collect())
     }
 }

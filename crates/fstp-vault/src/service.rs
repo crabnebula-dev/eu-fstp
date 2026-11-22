@@ -74,6 +74,67 @@ use fstp_vault_proto::{
     VaultRefusal, VaultRequest, VaultResponse, WireAccount, decode_request, encode_response,
 };
 
+/// The most mask requests the vault serves per minute (ADR-033 record of
+/// lane L31). Interim, pending Daniel.
+pub const MASKS_PER_MINUTE: u32 = 120;
+
+/// The mask answer of `vault` and the keystore of `runner` (M7 Q4, ADR-033
+/// record of lane L31): for each text, the spans that hold a verified name
+/// or date of birth of one of `accounts`. Each tuple is opened in this
+/// process only, and nothing of the texts is kept. An account with no
+/// verified identity contributes nothing. A tuple that does not open, or
+/// that is not one of [`crate::codec::TUPLE_LABEL`], refuses as
+/// unavailable, so the cell fails closed.
+pub fn mask_response<R: Runtime, C: fstp_custody::Custody>(
+    vault: &Vault,
+    runner: &crate::erasure::Runner<'_, R, C>,
+    accounts: &[WireAccount],
+    texts: &[String],
+) -> VaultResponse {
+    let unavailable = VaultResponse::Refused(VaultRefusal::Unavailable);
+    let facts = vault.state().latest();
+    let mut people = Vec::with_capacity(accounts.len());
+    for a in accounts {
+        let person = match facts.person_of(*a) {
+            None => fstp_vault_core::mask::MaskPerson::new("", "", None),
+            Some(p) => {
+                let Ok(tuple) = runner.tuple(p) else {
+                    return unavailable;
+                };
+                let Some(id) = crate::codec::parse_identity_tuple(&tuple) else {
+                    return unavailable;
+                };
+                fstp_vault_core::mask::MaskPerson::new(
+                    &id.family_names,
+                    &id.given_names,
+                    Some(&id.birth_date),
+                )
+            }
+        };
+        people.push(person);
+    }
+    let mut masks = Vec::with_capacity(texts.len());
+    for t in texts {
+        let spans: Vec<fstp_vault_proto::WireSpan> = fstp_vault_core::mask::mask_spans(t, &people)
+            .into_iter()
+            .take(fstp_vault_proto::MAX_MASK_SPANS)
+            .map(|s| fstp_vault_proto::WireSpan {
+                start: s.start,
+                end: s.end,
+                person: s.person,
+                class: match s.class {
+                    fstp_vault_core::mask::MaskClass::Name => fstp_vault_proto::WireMaskClass::Name,
+                    fstp_vault_core::mask::MaskClass::BirthDate => {
+                        fstp_vault_proto::WireMaskClass::BirthDate
+                    }
+                },
+            })
+            .collect();
+        masks.push(spans);
+    }
+    VaultResponse::Masks(masks)
+}
+
 /// How long the two handshakes and the tunnel header may take.
 pub const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -339,6 +400,9 @@ struct Shared<R: Runtime> {
     /// The keystore that registers identities (ADR-004 record of lane
     /// L13). `None` refuses every registration as unavailable.
     registrar: AsyncMutex<Option<Registrar<R>>>,
+    /// The mask requests of the current minute: its start in UTC
+    /// microseconds and the count (ADR-033 record of lane L31).
+    mask_window: Mutex<(i64, u32)>,
 }
 
 fn now_us() -> i64 {
@@ -487,6 +551,37 @@ impl<R: Runtime> Shared<R> {
         })
     }
 
+    /// The name mask (M7 Q4, ADR-033 record of lane L31): the spans of
+    /// `texts` that hold a verified name or date of birth of one of
+    /// `accounts`. Each account's identity tuple is opened in this process
+    /// only, and nothing of the texts is kept. An account with no verified
+    /// identity contributes nothing. At most [`MASKS_PER_MINUTE`] requests
+    /// are served per minute. A vault without a registrar, or a tuple that
+    /// does not open, refuses as unavailable, so the cell fails closed.
+    async fn mask(&self, accounts: &[WireAccount], texts: &[String], now: i64) -> VaultResponse {
+        let unavailable = VaultResponse::Refused(VaultRefusal::Unavailable);
+        {
+            let mut w = self
+                .mask_window
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let minute = now.div_euclid(60_000_000);
+            if w.0 != minute {
+                *w = (minute, 0);
+            }
+            if w.1 >= MASKS_PER_MINUTE {
+                return unavailable;
+            }
+            w.1 = w.1.saturating_add(1);
+        }
+        let held = self.held.lock().await;
+        let guard = self.registrar.lock().await;
+        let Some(registrar) = guard.as_ref() else {
+            return unavailable;
+        };
+        mask_response(&held.vault, registrar, accounts, texts)
+    }
+
     /// Runs `call` on a copy of the vault at `now`. A call with an empty
     /// journal keeps the copy and is answered. A call with a journal is
     /// answered only once its rows, its kind 1 chain row and its anchor
@@ -561,6 +656,9 @@ impl<R: Runtime> fstp_http::Handler for Internal<R> {
         let body = req.body;
         if let Ok(VaultRequest::RegisterIdentity { account, tuple }) = decode_request(&body) {
             return response(self.0.register(account, &tuple, now).await);
+        }
+        if let Ok(VaultRequest::Mask { accounts, texts }) = decode_request(&body) {
+            return response(internal_answer(&self.0.mask(&accounts, &texts, now).await));
         }
         let a = self
             .0
@@ -964,6 +1062,7 @@ pub async fn serve_with_registrar<R: Runtime>(
         rt: rt.clone(),
         pages,
         registrar: AsyncMutex::new(None),
+        mask_window: Mutex::new((0, 0)),
     });
     if let Some(parts) = registrar {
         *shared.registrar.lock().await = Some(parts.registrar);

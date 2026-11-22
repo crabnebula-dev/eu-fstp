@@ -17,7 +17,7 @@ fstp-crypto.workspace = true
 fstp-domain.workspace = true
 fstp-findings.workspace = true
 fstp-http.workspace = true
-fstp-infer.workspace = true
+fstp-infer = { workspace = true, features = ["http"] }
 fstp-json.workspace = true
 fstp-retrieve.workspace = true
 fstp-rt.workspace = true

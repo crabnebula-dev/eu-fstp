@@ -20,9 +20,9 @@
 //!
 //! Interim readings, pending Daniel (ADR-033 "Known gaps"):
 //!
-//! - Names are not stripped: the vault mask query (M7 Q4) is not built,
-//!   so the name mask finds none. Emails, phone numbers and IBAN-shaped
-//!   strings are stripped.
+//! - The cell strips emails, phone numbers and IBAN-shaped strings, then
+//!   the vault masks the team's verified names and dates of birth (M7 Q4,
+//!   ADR-033 record of lane L31).
 //! - The evidence text references are derived from the proposal, the
 //!   section and the section's digest, as the e2e cell derives them.
 //! - The model reports no confidence, so each finding carries 0 permille,
@@ -55,7 +55,7 @@ use crate::assess::{
     ClientModel, DroppedRow, InputView, PartRow, PromptSetRef, QueueRow, QueueView, Receipt,
     TaskRow,
 };
-use crate::port::{AsyncEngine, ExecMeta, OpName};
+use crate::port::{AsyncEngine, ExecMeta, OpName, TextClass, TextOwner, TextStore as _};
 use crate::{ApiError, ErrorCode, Op, OpResult, ReadModel};
 
 /// The most replies one submission may carry: completeness, one quality
@@ -71,13 +71,33 @@ const CLIENT_STAGES: [Stage; 4] = [
     Stage::Integrity,
 ];
 
-/// The name mask of the client path: none, until the vault mask query of
-/// M7 Q4 exists (module documentation).
-struct NoNames;
+/// The name mask of the client path: the vault's (M7 Q4, ADR-033 record of
+/// lane L31), over the proposal's team from the cell's own bindings. A
+/// vault that cannot mask stops the input, so no text leaves the cell.
+struct VaultMask<'a, P: Seams> {
+    ports: &'a P,
+    team: Vec<AccountId>,
+}
 
-impl NameMask for NoNames {
-    async fn names(&self, _: ProposalId, _: &str) -> Result<Vec<NameSpan>, MaskUnavailable> {
-        Ok(Vec::new())
+impl<P: Seams> NameMask for VaultMask<'_, P> {
+    async fn names(&self, _: ProposalId, text: &str) -> Result<Vec<NameSpan>, MaskUnavailable> {
+        let spans = super::mask_spans(self.ports, &self.team, &[text.to_owned()])
+            .await
+            .map_err(|()| MaskUnavailable)?;
+        let spans = spans.into_iter().next().ok_or(MaskUnavailable)?;
+        Ok(spans
+            .into_iter()
+            .map(|s| NameSpan {
+                start: s.start as usize,
+                end: s.end as usize,
+                person: s.person,
+                class: if s.birth_date {
+                    fstp_assess::PiiClass::BirthDate
+                } else {
+                    fstp_assess::PiiClass::Person
+                },
+            })
+            .collect())
     }
 }
 
@@ -269,7 +289,11 @@ async fn input_of<P: Seams>(
             .collect(),
         handles: Vec::new(),
     };
-    let prepared = fstp_assess::prepare(&NoNames, &job)
+    let mask = VaultMask {
+        ports: call.ports,
+        team: super::team_of(&call.state, p),
+    };
+    let prepared = fstp_assess::prepare(&mask, &job)
         .await
         .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "content")))?;
     let parts: Vec<PartRow> = prepared
@@ -466,6 +490,29 @@ struct Reply {
     output: String,
 }
 
+/// The raw trace of a submission (R-LA-07): the replies as the client
+/// sent them, each written back as canonical JSON, with the model, the
+/// prompt set digest and the input digest. Canonical JSON throughout.
+fn raw_trace(body: &Submission) -> String {
+    let replies: Array = body
+        .replies
+        .iter()
+        .map(|r| {
+            let mut o = Object::new();
+            o.insert("stage", Value::from(r.stage.as_str()));
+            o.insert("output", Value::from(r.output.as_str()));
+            Value::Object(o)
+        })
+        .collect();
+    let mut o = Object::new();
+    o.insert("v", Value::from("fstp-api-core/client-trace/v1"));
+    o.insert("model", Value::from(body.model.as_str()));
+    o.insert("prompt_set", Value::from(hex(&body.prompt_set).as_str()));
+    o.insert("input", Value::from(hex(&body.input.bytes()).as_str()));
+    o.insert("replies", Value::Array(replies));
+    fstp_json::to_canonical(&Value::Object(o)).unwrap_or_default()
+}
+
 /// The decoded body of a submission.
 struct Submission {
     input: ContentDigest,
@@ -580,23 +627,44 @@ pub(super) async fn submit<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpRe
         });
     }
     let recorded = u64::try_from(findings.len()).unwrap_or(u64::MAX);
-    let cmd = Command::Finding(FindingCommand::RecordClientAssessment {
-        call: input.call,
-        proposal: p,
-        run: ClientRun {
-            model: ModelRef(body.model),
-            prompt_set: ContentDigest::from_bytes(body.prompt_set),
-            input: body.input,
-            trace,
-        },
-        findings,
-        refused,
-    });
+    let trace_text = raw_trace(&body);
+    let mut run = ClientRun {
+        model: ModelRef(body.model),
+        prompt_set: ContentDigest::from_bytes(body.prompt_set),
+        input: body.input,
+        trace,
+        raw: None,
+    };
+    let command = |run: ClientRun, findings: Vec<Finding>, refused: Vec<RefusedStage>| {
+        Command::Finding(FindingCommand::RecordClientAssessment {
+            call: input.call,
+            proposal: p,
+            run,
+            findings,
+            refused,
+        })
+    };
+    let cmd = command(run.clone(), findings.clone(), refused.clone());
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
     dry_run(call, account, &cmd, ctx)
         .await
         .map_err(|e| call.refuse(e))?;
+    // R-LA-07, P-22 (ADR-033 record of lane L31): the raw replies, sealed
+    // at rest as a confidential text of the proposal, erased with its
+    // texts. No read serves it, and nothing remembers it in this process.
+    let stored = call
+        .ports
+        .texts()
+        .put(
+            TextClass::Confidential,
+            TextOwner::Proposal(p),
+            trace_text.as_bytes(),
+        )
+        .await
+        .map_err(|e| call.refuse(super::port_failed(e, "text")))?;
+    run.raw = Some(crate::forms::text_ref(stored.0, &trace_text));
+    let cmd = command(run, findings, refused);
     let seq = call
         .ports
         .engine()

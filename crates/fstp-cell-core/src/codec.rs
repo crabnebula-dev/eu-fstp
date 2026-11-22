@@ -1251,6 +1251,15 @@ fn finding_command_json(c: &FindingCommand) -> Value {
                 ("input", hex(&run.input.bytes())),
                 ("trace", dec_u128(run.trace.raw())),
                 (
+                    "raw",
+                    run.raw.map_or(Value::Null, |r| {
+                        let mut t = Object::with_capacity(2);
+                        t.insert("id", dec_u128(r.id().raw()));
+                        t.insert("digest", hex(&r.digest().bytes()));
+                        Value::Object(t)
+                    }),
+                ),
+                (
                     "findings",
                     Value::Array(findings.iter().map(ToJson::to_json).collect::<Array>()),
                 ),
@@ -1300,6 +1309,24 @@ fn refused_from(o: &Object) -> Result<Vec<fstp_findings::RefusedStage>, FromJson
         );
     }
     Ok(refused)
+}
+
+/// The sealed raw trace of a client run (ADR-033 record of lane L31):
+/// `null`, or the text reference as `{"digest","id"}`.
+fn raw_from(o: &Object) -> Result<Option<fstp_domain::id::TextRef>, FromJsonError> {
+    match member(o, "raw")? {
+        Value::Null => Ok(None),
+        Value::Object(t) => {
+            reject_unknown(t, &["digest", "id"]).map_err(|e| e.at_field("raw"))?;
+            let id = u128_from(t, "id").map_err(|e| e.at_field("raw"))?;
+            let digest = digest_from(t, "digest").map_err(|e| e.at_field("raw"))?;
+            Ok(Some(fstp_domain::id::TextRef::new(
+                fstp_domain::id::TextId::from_raw(id),
+                digest,
+            )))
+        }
+        _ => Err(FromJsonError::invalid("not a text reference").at_field("raw")),
+    }
 }
 
 /// The 32-byte digest of member `key` of `o`, as 64 hex digits.
@@ -1398,6 +1425,7 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
                     "prompt_set",
                     "input",
                     "trace",
+                    "raw",
                     "findings",
                     "refused",
                 ],
@@ -1426,6 +1454,7 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
                     prompt_set: digest_from(o, "prompt_set")?,
                     input: digest_from(o, "input")?,
                     trace: fstp_findings::TraceRef::from_raw(u128_from(o, "trace")?),
+                    raw: raw_from(o)?,
                 },
                 findings,
                 refused: refused_from(o)?,

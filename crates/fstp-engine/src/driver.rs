@@ -206,6 +206,22 @@ fn outside_activation(c: &fstp_domain::Command, ctx: &Ctx) -> Result<(), Refusal
     }
 }
 
+/// ADR-033 record of lane L31 (Daniel, 2026-11-22), I-03: an account that
+/// recorded the AI assessment of a proposal through its agent is never
+/// assigned to review it, alone or in a batch. The runner's act makes the
+/// conflict, never a finding's content, so I-10 holds. The core never reads
+/// the finding store, so the engine checks it beside the core.
+fn runner_not_reviewer(state: &EngineState, c: &fstp_domain::Command) -> Result<(), Refusal> {
+    match c {
+        fstp_domain::Command::Assign {
+            proposal, reviewer, ..
+        } if state.findings.ran_client_assessment(*proposal, *reviewer) => {
+            Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// The vault questions of `cmd`, with the creator facts of `env`.
 fn route_queries(
     state: &EngineState,
@@ -283,6 +299,7 @@ fn route_decide(
         Command::Core(c) => {
             crate::ledger_clock(state, ctx)?;
             outside_activation(c, ctx)?;
+            runner_not_reviewer(state, c)?;
             let records = fstp_domain::decide(&state.core, c, ctx, answers)?
                 .into_iter()
                 .map(Record::Core)
@@ -320,6 +337,7 @@ fn route_decide(
             let mut out = Vec::new();
             for c in b.commands() {
                 outside_activation(c, ctx)?;
+                runner_not_reviewer(state, c)?;
                 let records = crate::compose::decide_core(&mut scratch, c, ctx, answers)?;
                 out.extend(records.into_iter().map(Record::Core));
             }

@@ -97,12 +97,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-unorm"
+version = "0.1.0"
+
+[[package]]
 name = "fstp-vault-core"
 version = "0.1.0"
 dependencies = [
  "fstp-crypto",
  "fstp-json",
  "fstp-money",
+ "fstp-unorm",
  "fstp-vault-proto",
 ]
 

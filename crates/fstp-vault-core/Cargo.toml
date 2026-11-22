@@ -13,6 +13,8 @@ fstp-money.workspace = true
 fstp-json.workspace = true
 # The Ed25519 ticket signature check (ADR-009 "Tickets"). No I/O (layering rule 1).
 fstp-crypto.workspace = true
+# The name mask (M7 Q4, ADR-033 record of lane L31): the ADR-029 name key.
+fstp-unorm.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

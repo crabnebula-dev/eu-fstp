@@ -568,7 +568,6 @@ dependencies = [
  "fstp-crypto",
  "fstp-domain",
  "fstp-findings",
- "fstp-http",
  "fstp-json",
  "fstp-rt",
 ]
@@ -894,6 +893,7 @@ dependencies = [
  "fstp-crypto",
  "fstp-json",
  "fstp-money",
+ "fstp-unorm",
  "fstp-vault-proto",
 ]
 

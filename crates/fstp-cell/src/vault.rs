@@ -101,7 +101,66 @@ impl<R: Runtime> HttpVaultClient<R> {
         match self.call("/v1/identity", &req).await? {
             VaultResponse::Acked => Ok(()),
             VaultResponse::Refused(_) => Err(VaultFault::Refused),
-            VaultResponse::Epoch(_) | VaultResponse::Answers(_) => Err(VaultFault::Unavailable),
+            VaultResponse::Epoch(_) | VaultResponse::Answers(_) | VaultResponse::Masks(_) => {
+                Err(VaultFault::Unavailable)
+            }
+        }
+    }
+}
+
+/// Whether `spans` fit the text `t` and a team of `team` accounts: each
+/// inside the text on character boundaries, with a person of the team
+/// (ADR-033 record of lane L31). The vault's answer is checked here, so
+/// a malformed mask is never applied.
+fn spans_fit(t: &str, team: usize, spans: &[fstp_vault_proto::WireSpan]) -> bool {
+    fstp_vault_proto::spans_lawful(spans)
+        && spans.iter().all(|s| {
+            (s.person as usize) < team
+                && (s.end as usize) <= t.len()
+                && t.is_char_boundary(s.start as usize)
+                && t.is_char_boundary(s.end as usize)
+        })
+}
+
+impl<R: Runtime> HttpVaultClient<R> {
+    /// The name mask on `POST /v1/mask` (M7 Q4, ADR-033 record of lane
+    /// L31): the spans of each text that hold a verified name or date of
+    /// birth of one of `team`. An answer that does not fit the texts is
+    /// refused as unavailable, so the cell fails closed.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultFault::Refused`] for a request out of its bounds or one the
+    /// vault refuses, [`VaultFault::Unavailable`] for any other fault.
+    pub async fn mask_texts(
+        &self,
+        team: &[AccountId],
+        texts: &[String],
+    ) -> Result<Vec<Vec<fstp_vault_proto::WireSpan>>, VaultFault> {
+        // The person index of each span is the position in `team`, which
+        // the request names in ascending order.
+        let accounts: Vec<fstp_vault_proto::WireAccount> = team
+            .iter()
+            .map(|a| fstp_vault_proto::WireAccount(a.raw()))
+            .collect();
+        if !fstp_vault_proto::mask_request_lawful(&accounts, texts) {
+            return Err(VaultFault::Refused);
+        }
+        let req = VaultRequest::Mask {
+            accounts,
+            texts: texts.to_vec(),
+        };
+        match self.call("/v1/mask", &req).await? {
+            VaultResponse::Masks(m)
+                if m.len() == texts.len()
+                    && m.iter()
+                        .zip(texts)
+                        .all(|(s, t)| spans_fit(t, team.len(), s)) =>
+            {
+                Ok(m)
+            }
+            VaultResponse::Refused(_) => Err(VaultFault::Refused),
+            _ => Err(VaultFault::Unavailable),
         }
     }
 }
@@ -111,7 +170,9 @@ impl<R: Runtime> VaultClient for HttpVaultClient<R> {
         match self.call("/v1/epoch", &VaultRequest::Epoch).await? {
             VaultResponse::Epoch(e) => Ok(VaultEpoch::from_raw(e)),
             VaultResponse::Refused(_) => Err(VaultFault::Refused),
-            VaultResponse::Answers(_) | VaultResponse::Acked => Err(VaultFault::Unavailable),
+            VaultResponse::Answers(_) | VaultResponse::Acked | VaultResponse::Masks(_) => {
+                Err(VaultFault::Unavailable)
+            }
         }
     }
 
@@ -133,7 +194,7 @@ impl<R: Runtime> VaultClient for HttpVaultClient<R> {
         let answers = match self.call("/v1/ask", &req).await? {
             VaultResponse::Answers(a) => a,
             VaultResponse::Refused(_) => return Err(VaultFault::Refused),
-            VaultResponse::Epoch(_) | VaultResponse::Acked => {
+            VaultResponse::Epoch(_) | VaultResponse::Acked | VaultResponse::Masks(_) => {
                 return Err(VaultFault::Unavailable);
             }
         };
@@ -169,7 +230,9 @@ impl<R: Runtime> VaultClient for HttpVaultClient<R> {
         match self.call("/v1/ack", &req).await? {
             VaultResponse::Acked => Ok(()),
             VaultResponse::Refused(_) => Err(VaultFault::Refused),
-            VaultResponse::Epoch(_) | VaultResponse::Answers(_) => Err(VaultFault::Unavailable),
+            VaultResponse::Epoch(_) | VaultResponse::Answers(_) | VaultResponse::Masks(_) => {
+                Err(VaultFault::Unavailable)
+            }
         }
     }
 }

@@ -590,6 +590,9 @@ impl ToJson for FindingRecord {
                 o.insert("prompt_set", digest_to_json(run.prompt_set));
                 o.insert("input", digest_to_json(run.input));
                 o.insert("trace_id", id_to_json(run.trace.raw()));
+                if let Some(raw) = run.raw {
+                    o.insert("raw", text_ref_to_json(raw));
+                }
             }
             FindingRecord::IntegrityHeld {
                 call,
@@ -737,8 +740,15 @@ impl FromJson for FindingRecord {
                         "prompt_set",
                         "input",
                         "trace_id",
+                        "raw",
                     ],
                 )?;
+                // ADR-033 record of lane L31: the sealed raw trace. A record
+                // written before it has no `raw`.
+                let raw = match o.get("raw") {
+                    None => None,
+                    Some(v) => Some(text_ref_from_json(v).map_err(|e| e.at_field("raw"))?),
+                };
                 Ok(FindingRecord::ClientAssessed {
                     call: CallId::from_raw(member(o, "call", id_from_json)?),
                     proposal: ProposalId::from_raw(member(o, "proposal", id_from_json)?),
@@ -748,6 +758,7 @@ impl FromJson for FindingRecord {
                         prompt_set: member(o, "prompt_set", digest_from_json)?,
                         input: member(o, "input", digest_from_json)?,
                         trace: TraceRef::from_raw(member(o, "trace_id", id_from_json)?),
+                        raw,
                     },
                 })
             }
@@ -819,8 +830,9 @@ mod tests {
                 v.get("statement").and_then(Value::as_str).unwrap()
             );
         }
-        let records: [&[u8]; 5] = [
+        let records: [&[u8]; 6] = [
             include_bytes!("../fuzz/seeds/finding_decode/record_assessment_input_read"),
+            include_bytes!("../fuzz/seeds/finding_decode/record_client_assessed_raw"),
             include_bytes!("../fuzz/seeds/finding_decode/record_client_assessed"),
             include_bytes!("../fuzz/seeds/finding_decode/record_recorded"),
             include_bytes!("../fuzz/seeds/finding_decode/record_marked"),

@@ -53,6 +53,7 @@ mod anthropic;
 mod data;
 mod decode;
 mod encode;
+#[cfg(feature = "http")]
 mod http;
 mod instruction;
 mod prompt;
@@ -72,6 +73,7 @@ pub use encode::{
     ModelName, OutputSchema, Protocol, encode,
 };
 pub use fstp_findings::UntrustedText;
+#[cfg(feature = "http")]
 pub use http::{ApiKey, HttpTransport};
 pub use instruction::{ElementTag, Instruction};
 pub use prompt::{PROMPT_SET_VERSION, Prompt, prompt_set_digest};

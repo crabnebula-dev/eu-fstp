@@ -35,6 +35,7 @@ fn assessed(by: AccountId, input: u8) -> FindingRecord {
             prompt_set: digest(0xaa),
             input: digest(input),
             trace: TraceRef::from_raw(77),
+            raw: None,
         },
     }
 }
@@ -139,4 +140,18 @@ fn adr033_i10_one_client_run_per_proposal_unless_a_rerun_is_in_flight() {
         s.apply(&assessed(COORD, 1)),
         Err(FindingRefusal::ClientRunTaken { proposal: X })
     );
+}
+
+/// ADR-033 record of lane L31, I-03: the store names every account that
+/// recorded a client assessment of a proposal, and only those.
+#[test]
+fn adr033_l31_store_names_the_runners_of_a_proposal() {
+    let mut s = FindingStore::genesis();
+    assert!(!s.ran_client_assessment(X, COORD));
+    s.apply(&read(COORD, 1)).unwrap();
+    assert!(!s.ran_client_assessment(X, COORD), "a read is no run");
+    s.apply(&assessed(COORD, 1)).unwrap();
+    assert!(s.ran_client_assessment(X, COORD));
+    assert!(!s.ran_client_assessment(X, OTHER));
+    assert!(!s.ran_client_assessment(ProposalId::from_raw(6), COORD));
 }

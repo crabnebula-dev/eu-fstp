@@ -371,4 +371,9 @@ pub struct ClientRun {
     pub input: fstp_domain::id::ContentDigest,
     /// The trace every finding of the run carries.
     pub trace: TraceRef,
+    /// The sealed raw trace (ADR-033 record of lane L31, R-LA-07): the
+    /// client's replies as sent, with the prompt set digest, the input
+    /// digest and the model, one confidential text of the proposal. A run
+    /// recorded before the lane holds none.
+    pub raw: Option<fstp_domain::id::TextRef>,
 }

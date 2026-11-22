@@ -1255,3 +1255,35 @@ fn i81_start_refuses_identity_tuples_of_an_earlier_label() {
         "I-81: a restarted vault took a v1 tuple"
     );
 }
+
+/// M7 Q4, I-17, R-NF-08 (ADR-033 record of lane L31): the vault masks the
+/// verified names and date of birth of a team from the tuple its keystore
+/// seals, in any case and spelling. It answers spans into the text only,
+/// and an account with no verified identity contributes nothing.
+#[test]
+fn m7_q4_i17_vault_masks_names_from_the_sealed_tuple() {
+    let w = genesis();
+    let mut p = start(&w);
+    p.verify_first_admin(A_ACCOUNT, ADMIN_FILE).unwrap();
+    let text = "Lead SYNTHETIC alpha, born 28.02.1990; Alphabet stays.".to_owned();
+    let accounts = [WireAccount(A_ACCOUNT), WireAccount(B_ACCOUNT)];
+    let r = fstp_vault::service::mask_response(
+        &p.vault,
+        &p.runner,
+        &accounts,
+        std::slice::from_ref(&text),
+    );
+    let fstp_vault_proto::VaultResponse::Masks(masks) = r else {
+        panic!("a mask answer: {r:?}");
+    };
+    let spans = &masks[0];
+    let shown: Vec<&str> = spans
+        .iter()
+        .map(|s| &text[s.start as usize..s.end as usize])
+        .collect();
+    assert_eq!(shown, vec!["SYNTHETIC alpha", "28.02.1990"]);
+    assert!(spans.iter().all(|s| s.person == 0));
+    let r =
+        fstp_vault::service::mask_response(&p.vault, &p.runner, &[WireAccount(B_ACCOUNT)], &[text]);
+    assert_eq!(r, fstp_vault_proto::VaultResponse::Masks(vec![Vec::new()]));
+}
