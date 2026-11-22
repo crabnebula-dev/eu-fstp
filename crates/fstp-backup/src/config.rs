@@ -209,6 +209,34 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         .get("object_store")
         .and_then(|v| v.as_object())
         .ok_or(cfg("object_store"))?;
+    let object_store = decode_object_store(os)?;
+    let keyd_socket = match o.get("keyd_socket") {
+        None => None,
+        Some(v) => Some(path_of(
+            v.as_str().ok_or(cfg("keyd_socket"))?,
+            "keyd_socket",
+        )?),
+    };
+    Ok(FileConfig {
+        cluster,
+        credentials_dir,
+        state_dir,
+        pg_bindir,
+        database: DatabaseConfig { host, port },
+        object_store,
+        keyd_socket,
+    })
+}
+
+/// Decodes the `object_store` member: `endpoint` (a host name), `port`
+/// (optional, 443), `region` and `bucket`, and no other. The cell and the
+/// vault configurations take the same member for their keystore
+/// snapshots (ADR-012 record of lane L17).
+///
+/// # Errors
+///
+/// [`BackupError::Config`] naming the rule broken.
+pub fn decode_object_store(os: &Object) -> Result<Endpoint, BackupError> {
     members(
         os,
         &["endpoint", "port", "region", "bucket"],
@@ -231,26 +259,11 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
     if !is_bucket(bucket) {
         return Err(cfg("object_store.bucket"));
     }
-    let keyd_socket = match o.get("keyd_socket") {
-        None => None,
-        Some(v) => Some(path_of(
-            v.as_str().ok_or(cfg("keyd_socket"))?,
-            "keyd_socket",
-        )?),
-    };
-    Ok(FileConfig {
-        cluster,
-        credentials_dir,
-        state_dir,
-        pg_bindir,
-        database: DatabaseConfig { host, port },
-        object_store: Endpoint {
-            host: endpoint.to_owned(),
-            port: os_port,
-            region: region.to_owned(),
-            bucket: bucket.to_owned(),
-        },
-        keyd_socket,
+    Ok(Endpoint {
+        host: endpoint.to_owned(),
+        port: os_port,
+        region: region.to_owned(),
+        bucket: bucket.to_owned(),
     })
 }
 

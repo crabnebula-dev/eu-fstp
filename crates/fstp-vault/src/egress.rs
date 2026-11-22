@@ -20,8 +20,10 @@ pub enum VaultDestination {
     Custody,
     /// The witness, for the Vault chain's prepares, aborts and receipts.
     Witness,
-    /// The `<cell>/keystore/` object storage prefix only. Proposed by
-    /// ADR-012 and pending Daniel, so no connector builds it yet.
+    /// The `<cell>/keystore/` object storage prefix only. Accepted by
+    /// Daniel on 2026-11-21 (ADR-012 record of lane L17). The keystore
+    /// snapshot writer reaches it through the S3 client of `fstp-backup`
+    /// when the configuration names an `object_store`.
     KeystoreSnapshots,
 }
 

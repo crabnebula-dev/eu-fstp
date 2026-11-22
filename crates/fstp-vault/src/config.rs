@@ -37,6 +37,12 @@ pub const CONFIG_MEMBERS: [&str; 10] = [
     "witness",
 ];
 
+/// The optional members of a configuration. `assets_dir` names the
+/// static pages (ADR-004 record of lane L13b). `object_store` names the
+/// bucket of the keystore snapshots (ADR-012 record of lane L17), in the
+/// shape `fstp-backup` uses.
+pub const OPTIONAL_MEMBERS: [&str; 2] = ["assets_dir", "object_store"];
+
 /// The members of the database part, in key order.
 pub const DATABASE_MEMBERS: [&str; 3] = ["dbname", "host", "port"];
 
@@ -136,6 +142,10 @@ pub struct VaultConfig {
     pub ticket_keys: Vec<[u8; 32]>,
     /// The witness.
     pub witness: WitnessConfig,
+    /// The object store of the keystore snapshots, if one is configured
+    /// (ADR-012 record of lane L17). Without one, step 5 of a rotation
+    /// reads the committed rows back from the database.
+    pub object_store: Option<fstp_backup::s3::Endpoint>,
 }
 
 /// The vault database name of `cell`: `v_` and 32 lowercase hex digits.
@@ -252,15 +262,18 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
     }
     let body = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     let v = parse_canonical(body, &limits()).map_err(|_| bad("canonical JSON"))?;
-    // ADR-004 record of lane L13b, row "Static pages": `assets_dir` is the
-    // one optional member.
-    let has_assets = v.as_object().is_some_and(|o| o.get("assets_dir").is_some());
-    let o = if has_assets {
-        let mut names = vec!["assets_dir"];
-        names.extend_from_slice(&CONFIG_MEMBERS);
-        obj(&v, &names, "members")?
-    } else {
-        obj(&v, &CONFIG_MEMBERS, "members")?
+    let mut names: Vec<&str> = CONFIG_MEMBERS.to_vec();
+    if let Some(o) = v.as_object() {
+        names.extend(OPTIONAL_MEMBERS.iter().filter(|n| o.contains_key(n)));
+    }
+    let o = obj(&v, &names, "members")?;
+    let has_assets = o.get("assets_dir").is_some();
+    let object_store = match o.get("object_store") {
+        None => None,
+        Some(os) => Some(
+            fstp_backup::config::decode_object_store(os.as_object().ok_or(bad("object_store"))?)
+                .map_err(|_| bad("object_store"))?,
+        ),
     };
     let d = obj(member(o, "database")?, &DATABASE_MEMBERS, "database")?;
     let cell = hex::<16>(o, "cell")?;
@@ -303,6 +316,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
         registered_servers: registered(o)?,
         ticket_keys,
         witness: witness(o)?,
+        object_store,
     })
 }
 
@@ -324,6 +338,47 @@ pub(crate) mod tests {
             t = "33".repeat(32),
             w = "44".repeat(32),
         ))
+    }
+
+    /// ADR-012 record of lane L17: `object_store` is optional, absent by
+    /// default, and decodes in the shape `fstp-backup` uses. A malformed
+    /// one is refused by name.
+    #[test]
+    fn adr012_vault_config_takes_an_optional_object_store() {
+        assert_eq!(
+            decode_config(text(|s| s).as_bytes()).unwrap().object_store,
+            None
+        );
+        let with = |os: &str| {
+            text(|s| {
+                s.replacen(
+                    "\"origin_host\"",
+                    &format!("\"object_store\":{os},\"origin_host\""),
+                    1,
+                )
+            })
+        };
+        let c = decode_config(
+            with(r#"{"bucket":"fstp-pilot","endpoint":"s3.gra.io.cloud.ovh.net","region":"gra"}"#)
+                .as_bytes(),
+        )
+        .unwrap();
+        let os = c.object_store.unwrap();
+        assert_eq!(
+            (os.bucket.as_str(), os.port, os.region.as_str()),
+            ("fstp-pilot", 443, "gra")
+        );
+        for bad_os in [
+            r#"{"bucket":"fstp-pilot","endpoint":"s3.gra.io.cloud.ovh.net"}"#,
+            r#"{"bucket":"X","endpoint":"s3.gra.io.cloud.ovh.net","region":"gra"}"#,
+            r#""s3""#,
+        ] {
+            assert_eq!(
+                decode_config(with(bad_os).as_bytes()),
+                Err(VaultError::Config("object_store")),
+                "{bad_os}"
+            );
+        }
     }
 
     /// ADR-004 record of lane L13b, row "Static pages": `assets_dir` is

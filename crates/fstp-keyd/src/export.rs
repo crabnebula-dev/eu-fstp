@@ -808,13 +808,17 @@ pub fn release_import(
 pub const ERASABLE: [Chain; 2] = [Chain::App, Chain::Vault];
 
 /// Whether a held volume may serve `request`: unwrap and usage requests
-/// on the backup chains only (rule 2).
+/// on the backup chains only (rule 2): CellBackup, ClusterBackup and,
+/// since lane L17, VaultBackup, which no erasure rotates either.
 #[must_use]
 pub fn held_permits(request: &fstp_custody::keyd::Request) -> bool {
     use fstp_custody::keyd::Request;
     match request {
         Request::Unwrap { root, .. } | Request::UsageSince { root, .. } => {
-            matches!(root.chain, Chain::CellBackup | Chain::ClusterBackup)
+            matches!(
+                root.chain,
+                Chain::CellBackup | Chain::ClusterBackup | Chain::VaultBackup
+            )
         }
         _ => false,
     }
@@ -923,6 +927,36 @@ mod tests {
 
     fn contains(hay: &[u8], needle: &[u8]) -> bool {
         hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// I-81, ADR-004 record of lane L17: a held volume serves unwrap and
+    /// usage on VaultBackup, as on the other backup chains, and never on
+    /// an erasable chain or another request.
+    #[test]
+    fn i81_held_volume_serves_vault_backup_unwrap_only() {
+        let unwrap = |chain| Request::Unwrap {
+            id: RequestId([2; 16]),
+            root: RootHandle {
+                chain,
+                epoch: Epoch(1),
+            },
+            aad: Vec::new(),
+            wrapped: Vec::new(),
+        };
+        for chain in [Chain::CellBackup, Chain::ClusterBackup, Chain::VaultBackup] {
+            assert!(held_permits(&unwrap(chain)), "{chain:?}");
+        }
+        for chain in [Chain::App, Chain::Vault, Chain::ControlPlane] {
+            assert!(!held_permits(&unwrap(chain)), "{chain:?}");
+        }
+        let destroy = Request::Destroy {
+            id: RequestId([3; 16]),
+            root: RootHandle {
+                chain: Chain::VaultBackup,
+                epoch: Epoch(1),
+            },
+        };
+        assert!(!held_permits(&destroy));
     }
 
     fn create(s: &mut Server, chain: Chain, epoch: u64) -> RootHandle {

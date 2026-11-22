@@ -66,6 +66,11 @@ const CONFIRMATION_MAGIC: &[u8; 4] = b"FCE1";
 /// The chains a cell erasure destroys (design section 3.7 step 1).
 pub const CELL_CHAINS: [Chain; 3] = [Chain::App, Chain::Vault, Chain::CellBackup];
 
+/// The chain a cell erasure also destroys when the cell has a root on it:
+/// the vault's snapshot key (ADR-004 record of lane L17). A pilot with no
+/// bucket has none, so it is not required as [`CELL_CHAINS`] are.
+pub const OPTIONAL_CELL_CHAINS: [Chain; 1] = [Chain::VaultBackup];
+
 /// A finished step of a cell erasure, as the approval log records it
 /// (design section 3.7). It holds ids and counts only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,7 +218,7 @@ pub fn verify_erasure_confirmation(public_key: &[u8], c: &ErasureConfirmation) -
 }
 
 /// Checks that `keys` are the cell's own: every root names `cell` and one
-/// of [`CELL_CHAINS`], each of those chains has a root, a CA key is
+/// of [`CELL_CHAINS`] or [`OPTIONAL_CELL_CHAINS`], each of the first has a root, a CA key is
 /// there, and no handle repeats.
 ///
 /// # Errors
@@ -225,7 +230,7 @@ pub fn check_cell_keys(cell: CellId, keys: &CellKeys) -> Result<(), ControlError
         if r.cell.map(|c| c.0) != Some(cell.0) {
             return Err(ControlError::Job("a root of another cell"));
         }
-        if !CELL_CHAINS.contains(&r.chain) {
+        if !CELL_CHAINS.contains(&r.chain) && !OPTIONAL_CELL_CHAINS.contains(&r.chain) {
             return Err(ControlError::Job("a root outside the cell chains"));
         }
         if !seen.insert(r.handle.0.clone()) {

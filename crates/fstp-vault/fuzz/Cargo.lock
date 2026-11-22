@@ -150,6 +150,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-backup"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-custody",
+ "fstp-http",
+ "fstp-json",
+ "fstp-keys",
+ "fstp-rt",
+ "fstp-tls",
+ "zeroize",
+]
+
+[[package]]
 name = "fstp-cp-proto"
 version = "0.1.0"
 dependencies = [
@@ -287,6 +301,7 @@ name = "fstp-vault"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
+ "fstp-backup",
  "fstp-crypto",
  "fstp-custody",
  "fstp-edge",

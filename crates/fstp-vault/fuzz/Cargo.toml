@@ -12,6 +12,13 @@ libfuzzer-sys = "=0.4.13"
 fstp-vault = { path = ".." }
 
 [[bin]]
+name = "vault_keystore_image_decode"
+path = "fuzz_targets/vault_keystore_image_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "origin_write_decode"
 path = "fuzz_targets/origin_write_decode.rs"
 test = false

@@ -63,8 +63,10 @@ pub enum Destination {
     /// Self-hosted only: a CrabNebula host. The request is built only by
     /// `fstp_release::egress` (I-38). A SaaS cell never builds it.
     CrabNebula(CnCall),
-    /// The `<cell>/keystore/` object storage prefix only. Proposed by
-    /// ADR-012 and pending Daniel, so no connector builds it yet.
+    /// The `<cell>/keystore/` object storage prefix only. Accepted by
+    /// Daniel on 2026-11-21 (ADR-012 record of lane L17). The keystore
+    /// snapshot writer reaches it through the S3 client of `fstp-backup`
+    /// when the configuration names an `object_store`.
     KeystoreSnapshots,
     /// The tenant's mail submission relay, port 465 only, with implicit
     /// TLS (ADR-018, proposed). The host comes from the tenant's mail

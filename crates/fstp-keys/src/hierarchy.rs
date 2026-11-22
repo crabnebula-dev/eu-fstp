@@ -1,7 +1,7 @@
 //! The key hierarchy as built (M3 design section 3.1, ADR-004 part 2).
 //!
 //! Chain codes come from ADR-004 part 1: App 1, Vault 2, CellBackup 3,
-//! ClusterBackup 4, ControlPlane 5. Purpose codes are the table of
+//! ClusterBackup 4, ControlPlane 5, VaultBackup 6 (lane L17). Purpose codes are the table of
 //! [`Purpose::code`]. ADR-004 part 1 says the purpose table is recorded
 //! at first use and frozen once written. Lane W2f wrote it here first.
 //! Its record in ADR-004 is with the lead, so the codes are proposed
@@ -24,16 +24,21 @@ pub enum Chain {
     ClusterBackup,
     /// The control plane.
     ControlPlane,
+    /// The vault's keystore snapshots (ADR-004 record of lane L17): a
+    /// chain of its own in the vault's custody entry, never rotated by
+    /// erasure.
+    VaultBackup,
 }
 
 impl Chain {
     /// Every chain, in code order.
-    pub const ALL: [Chain; 5] = [
+    pub const ALL: [Chain; 6] = [
         Chain::App,
         Chain::Vault,
         Chain::CellBackup,
         Chain::ClusterBackup,
         Chain::ControlPlane,
+        Chain::VaultBackup,
     ];
 
     /// The ADR-004 part 1 chain code.
@@ -45,6 +50,7 @@ impl Chain {
             Chain::CellBackup => 3,
             Chain::ClusterBackup => 4,
             Chain::ControlPlane => 5,
+            Chain::VaultBackup => 6,
         }
     }
 
@@ -57,6 +63,7 @@ impl Chain {
             3 => Some(Chain::CellBackup),
             4 => Some(Chain::ClusterBackup),
             5 => Some(Chain::ControlPlane),
+            6 => Some(Chain::VaultBackup),
             _ => None,
         }
     }
@@ -70,6 +77,7 @@ impl Chain {
             Chain::CellBackup => "cellbackup",
             Chain::ClusterBackup => "clusterbackup",
             Chain::ControlPlane => "controlplane",
+            Chain::VaultBackup => "vaultbackup",
         }
     }
 }
@@ -180,3 +188,24 @@ pub struct DekId(pub [u8; 16]);
 /// The object a sealed blob belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObjectId(pub [u8; 16]);
+
+#[cfg(test)]
+mod chain_tests {
+    use super::Chain;
+
+    /// ADR-004 record of lane L17: VaultBackup takes code 6, the next
+    /// free code. No earlier code moves, and each code maps back to its
+    /// chain.
+    #[test]
+    fn adr004_vault_backup_chain_code_is_six() {
+        let codes: Vec<u8> = Chain::ALL.iter().map(|c| c.code()).collect();
+        assert_eq!(codes, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(Chain::VaultBackup.code(), 6);
+        assert_eq!(Chain::from_code(6), Some(Chain::VaultBackup));
+        assert_eq!(Chain::VaultBackup.name(), "vaultbackup");
+        assert_eq!(Chain::from_code(7), None);
+        for c in Chain::ALL {
+            assert_eq!(Chain::from_code(c.code()), Some(c));
+        }
+    }
+}

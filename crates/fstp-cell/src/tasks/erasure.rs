@@ -296,6 +296,9 @@ pub struct Keystore {
     startup_unwrap: Option<RequestId>,
     /// The write-through to the keystore tables ([`tables`], lane L3).
     persist: tables::Persist,
+    /// The keystore snapshot writer the runner of this keystore takes
+    /// (ADR-012 record of lane L17). It holds no key row.
+    snapshots: Option<fstp_backup::Snapshots>,
 }
 
 impl std::fmt::Debug for Keystore {
@@ -309,6 +312,14 @@ impl std::fmt::Debug for Keystore {
 }
 
 impl Keystore {
+    /// Hands `snapshots` to the runner that opens this keystore at start
+    /// (ADR-012 record of lane L17).
+    #[must_use]
+    pub fn with_snapshots(mut self, snapshots: fstp_backup::Snapshots) -> Keystore {
+        self.snapshots = Some(snapshots);
+        self
+    }
+
     /// The current root epoch.
     pub fn epoch(&self) -> u64 {
         // A loaded keystore names its epoch beside its sealed chain state
@@ -654,6 +665,8 @@ struct Work {
     rows: BTreeMap<(GroupId, u32), GroupRow>,
     /// Step 5: the snapshot taken.
     snapshot: Option<Keystore>,
+    /// Step 5: the snapshot uploaded, not yet verified.
+    snapshot_id: Option<[u8; 16]>,
     /// The open composite signing keys of the committed state.
     signers: BTreeMap<Purpose, CompositeSigningKey>,
     /// Step 3: the signing keys resealed under the new seal key.
@@ -673,6 +686,10 @@ pub struct ErasureRunner<C> {
     work: Work,
     events: Vec<ErasureEvent>,
     erased: Vec<[u8; 16]>,
+    /// The keystore snapshot writer of step 5, when an object store is
+    /// configured (ADR-012 record of lane L17). Without one, step 5 keeps
+    /// an in-memory copy of the committed keystore.
+    snapshots: Option<fstp_backup::Snapshots>,
 }
 
 impl<C> std::fmt::Debug for ErasureRunner<C> {
@@ -720,11 +737,13 @@ impl<C: Custody> ErasureRunner<C> {
                 logins: LoginIndex::default(),
                 startup_unwrap: None,
                 persist: tables::Persist::default(),
+                snapshots: None,
             },
             chain: ChainState::genesis(Epoch(0)),
             work: Work::new(SealKey::generate().map_err(CellError::Custody)?),
             events: Vec::new(),
             erased: Vec::new(),
+            snapshots: None,
         };
         let root = runner.create_root(0).await?;
         let wrapped = runner.wrap(&root, &runner.work.current, 0).await?;
@@ -760,6 +779,7 @@ impl<C: Custody> ErasureRunner<C> {
             work: Work::new(SealKey::from_bytes([0; 32])),
             events: Vec::new(),
             erased: Vec::new(),
+            snapshots: None,
         };
         let s = runner.unwrap(&row, epoch).await?;
         runner.work.current = s;
@@ -789,6 +809,7 @@ impl<C: Custody> ErasureRunner<C> {
         store.persist.dirty.meta = true;
         let chain = store.chain_state.restart();
         let epoch = store.chain_state.epoch().0;
+        let snapshots = store.snapshots.take();
         let mut work = Work::new(seal);
         work.secrets = groups.0;
         work.signers = open_signers(&work.current, &store)?;
@@ -800,6 +821,7 @@ impl<C: Custody> ErasureRunner<C> {
             work,
             events: Vec::new(),
             erased: Vec::new(),
+            snapshots,
         };
         runner
             .record_call_as(KeyCall::Unwrap, epoch, request)
@@ -842,6 +864,14 @@ impl<C: Custody> ErasureRunner<C> {
     /// Every event so far, in order.
     pub fn events(&self) -> &[ErasureEvent] {
         &self.events
+    }
+
+    /// Takes step 5's snapshots through `snapshots` from now on (ADR-012
+    /// record of lane L17).
+    #[must_use]
+    pub fn with_snapshots(mut self, snapshots: fstp_backup::Snapshots) -> Self {
+        self.snapshots = Some(snapshots);
+        self
     }
 
     /// The custody backend.
@@ -1535,7 +1565,7 @@ impl<C: Custody> ErasureRunner<C> {
             Step::NewEpoch(e) => self.new_epoch(e).await?,
             Step::RewrapGroups(e) => self.rewrap(e)?,
             Step::Commit(e) => self.commit(e)?,
-            Step::Snapshot(e) => self.snapshot(e)?,
+            Step::Snapshot(e) => self.snapshot(e).await?,
             Step::VerifySnapshot(e) => self.verify_snapshot(e).await?,
             Step::DestroyRoot(e) => self.destroy(e).await?,
             Step::Complete { epoch, .. } => self.complete(epoch).await?,
@@ -1776,16 +1806,59 @@ impl<C: Custody> ErasureRunner<C> {
         Ok(ErasureEvent::Committed { epoch: e.0 })
     }
 
-    /// Step 5: a snapshot of the committed keystore.
-    fn snapshot(&mut self, e: Epoch) -> Result<ErasureEvent, CellError> {
-        self.work.snapshot = Some(self.store.clone());
+    /// Step 5: a snapshot of the committed keystore. With an object store
+    /// its image is sealed to the cell's snapshot key and uploaded
+    /// (ADR-012 record of lane L17). Without one the runner keeps an
+    /// in-memory copy.
+    async fn snapshot(&mut self, e: Epoch) -> Result<ErasureEvent, CellError> {
+        self.take_snapshot().await?;
         self.apply_durable(&Step::Snapshot(e))?;
         Ok(ErasureEvent::SnapshotTaken { epoch: e.0 })
     }
 
+    async fn take_snapshot(&mut self) -> Result<(), CellError> {
+        if let Some(s) = &self.snapshots {
+            let image = self
+                .store
+                .image()
+                .and_then(|i| snapshot::encode_image(&i))
+                .map_err(|_| keys_err("snapshot image"))?;
+            let id = s
+                .upload(&image)
+                .await
+                .map_err(|_| keys_err("snapshot upload"))?;
+            self.work.snapshot_id = Some(id);
+        }
+        self.work.snapshot = Some(self.store.clone());
+        Ok(())
+    }
+
     /// Step 5: a scratch restore of the snapshot opens a sample of live
-    /// keys under `R(e)`.
+    /// keys under `R(e)`. With an object store the snapshot is fetched
+    /// back and opened with the cell's snapshot key first: every group
+    /// secret and one data key of its image open under `R(e)`, and the
+    /// pointer to it is written (ADR-012 record of lane L17). A snapshot
+    /// that is missing or does not open fails the step, so `R(e-1)` lives,
+    /// and the next attempt uploads a fresh one.
     async fn verify_snapshot(&mut self, e: Epoch) -> Result<ErasureEvent, CellError> {
+        if let Some(s) = self.snapshots.clone() {
+            let id = match self.work.snapshot_id.take() {
+                Some(id) => id,
+                None => {
+                    self.take_snapshot().await?;
+                    self.work.snapshot_id.take().ok_or(keys_err("snapshot"))?
+                }
+            };
+            let bytes = s
+                .fetch(&self.custody, id)
+                .await
+                .map_err(|_| keys_err("snapshot fetch"))?;
+            let image = snapshot::decode_image(&bytes).map_err(|_| keys_err("snapshot image"))?;
+            self.verify_image(&image, e).await?;
+            s.publish(id)
+                .await
+                .map_err(|_| keys_err("snapshot pointer"))?;
+        }
         let snap = match self.work.snapshot.clone() {
             Some(s) => s,
             None => self.store.clone(),
@@ -1811,6 +1884,63 @@ impl<C: Custody> ErasureRunner<C> {
         }
         self.apply_durable(&Step::VerifySnapshot(e))?;
         Ok(ErasureEvent::SnapshotVerified { epoch: e.0 })
+    }
+
+    /// The fetched image of step 5 opens under `R(e)` through custody:
+    /// every group secret sealed under `S(e)`, at least one, and one data
+    /// key.
+    async fn verify_image(
+        &self,
+        image: &snapshot::KeystoreImage,
+        e: Epoch,
+    ) -> Result<(), CellError> {
+        let cell = self.store.cell;
+        if image.cell != cell.0 {
+            return Err(keys_err("snapshot cell"));
+        }
+        let root = image
+            .roots
+            .iter()
+            .find(|r| r.epoch == e.0 && r.receipt.is_none())
+            .ok_or(keys_err("snapshot root"))?;
+        let row = RootRow {
+            root: snapshot::root_ref(cell.0, root),
+            wrapped: snapshot::wrapped_of(root),
+        };
+        let s = self.unwrap(&row, e.0).await?;
+        let mut secrets = BTreeMap::new();
+        // Groups still sealed under an older epoch are the old generations
+        // of the batch, which die with their root at step 6.
+        for g in image.groups.iter().filter(|g| g.epoch == e.0) {
+            let grow = GroupRow {
+                epoch: g.epoch,
+                nonce: g.nonce,
+                body: g.body.clone(),
+                public: Vec::new(),
+            };
+            let id = GroupId(g.group);
+            secrets.insert(
+                (id, g.generation),
+                open_group(&s, cell, id, g.generation, &grow)?,
+            );
+        }
+        if secrets.is_empty() {
+            return Err(keys_err("snapshot groups"));
+        }
+        if let Some(k) = image.keys.first() {
+            let sk = secrets
+                .get(&(GroupId(k.group), k.generation))
+                .ok_or(keys_err("snapshot group"))?;
+            let sealed =
+                envelope::decode_sealed_key(&k.sealed).map_err(|_| keys_err("snapshot sample"))?;
+            envelope::open_key(
+                sk,
+                &sealed,
+                &ctx_for(cell, GroupId(k.group), k.generation, k.dek),
+            )
+            .map_err(|_| keys_err("snapshot sample"))?;
+        }
+        Ok(())
     }
 
     /// Step 6: destroys `R(e)` and keeps the digest of its receipt.
@@ -1885,6 +2015,7 @@ impl Work {
             new_seal: None,
             rows: BTreeMap::new(),
             snapshot: None,
+            snapshot_id: None,
             signers: BTreeMap::new(),
             signer_rows: BTreeMap::new(),
             new_logins: None,

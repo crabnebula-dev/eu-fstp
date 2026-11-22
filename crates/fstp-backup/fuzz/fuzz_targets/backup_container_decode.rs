@@ -3,12 +3,18 @@
 //! Design checks: no panic; chunk order and final flag enforced. An
 //! accepted container has chunks numbered from 0, exactly one final
 //! chunk, the last, and every chunk holds a nonce and a tag (ADR-012).
+//! It also runs the snapshot pointer decoder (ADR-012 record of lane L17).
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
+    // ADR-012 record of lane L17: the snapshot pointer is exactly 16 bytes.
+    assert_eq!(
+        fstp_backup::snapshot::decode_pointer(data).is_ok(),
+        data.len() == 16
+    );
     match fstp_backup::decode_container(data) {
         Ok(chunks) => {
             assert!(!chunks.is_empty());
