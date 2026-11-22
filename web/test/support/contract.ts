@@ -107,6 +107,11 @@ export interface DomModule {
    */
   safeUrl(input: unknown): string | null;
   /**
+   * The input itself when it is a `mailto:` link to one address, else
+   * null (ADR-034). Only the `href` of an `a` takes it.
+   */
+  mailtoHref(input: unknown): string | null;
+  /**
    * Creates the one Trusted Types policy, named `fstp-dom`, whose
    * `createHTML`, `createScript` and `createScriptURL` refuse every input.
    * Idempotent. A no-op without `trustedTypes`.

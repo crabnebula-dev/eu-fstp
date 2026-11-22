@@ -257,11 +257,10 @@ impl Who {
         }
     }
 
-    /// Whether I-77 covers the account: it holds a Drafting, Judging or
-    /// Operations role or is a tenant admin. The suspended reviewer holds
-    /// none: its conflict-of-interest suspension "never counts as held"
-    /// (`roles-and-sod.md` Identity discovery), and a suspended binding
-    /// "is inactive for every action" (Enforcement points NOTE).
+    /// Whether the account acts in a Drafting, Judging or Operations role
+    /// or as a tenant admin. The suspended reviewer acts in none: a
+    /// suspended binding "is inactive for every action" (Enforcement
+    /// points NOTE). For I-77 it still counts as held ([`Who::i77`]).
     pub const fn management(self) -> bool {
         !matches!(
             self,
@@ -275,6 +274,16 @@ impl Who {
                 | Who::Guardian
                 | Who::VoidedLead
         )
+    }
+
+    /// Whether I-77 covers the account's login: [`Who::management`], and
+    /// the suspended reviewer. Reading: ADR-008, "Holdings", decided by
+    /// Daniel on 2026-11-21: a suspended Drafting, Judging or Operations
+    /// binding counts as held for I-77. The suspended binding still admits
+    /// no action, so every other rule keeps reading [`Who::management`]
+    /// (SA-14 in `docs/design/spec-amendments.md`).
+    pub const fn i77(self) -> bool {
+        self.management() || matches!(self, Who::SuspendedReviewer)
     }
 
     const fn tenant_admin(self) -> bool {
@@ -1439,6 +1448,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // R-GA-01 (2026-11-06): the tenant's override of the Guide's data
     // protection texts, high-risk by the strict reading of settings.
     RefOp::act("tenant.set_guide_notice", T::None, R::TenantAdmin).hr(),
+    // ADR-034: the funding card defaults, a tenant setting as well.
+    RefOp::act("tenant.set_funding_defaults", T::None, R::TenantAdmin).hr(),
     RefOp::read("admin.approvals", T::None, R::TenantAdmin),
     RefOp::act("admin.approve_self_grant", T::None, R::SecondAdmin).hr(),
     RefOp::act("admin.approve_recovery", T::None, R::TenantAdmin).hr(),
@@ -1731,6 +1742,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"): assigning
     // grants a Judging role, so assigning and unassigning are high-risk
     // (authentication.md, I-78), one at a time or in one batch.
+    // ADR-033 record of lane L31 (Daniel, 2026-11-22): the assignee who
+    // recorded the AI assessment of X is refused under I-03, alone or in a
+    // batch. The rule judges the assignee, not the actor. The assignee of
+    // every matrix cell is a committee member who ran no assessment, so the
+    // reference expects no such refusal; `adr033_l31_i03_*` tests it.
     RefOp::act("review.assign", T::Proposal, R::Coordinator)
         .binding()
         .hr(),
@@ -2499,7 +2515,7 @@ pub fn expected(
         }
     }
     let weak = session.login.is_some_and(|l| !l.strong());
-    if weak && (op.high_risk || who.management()) {
+    if weak && (op.high_risk || who.i77()) {
         return Expected::Deny(AuthClass::LoginStrength);
     }
     if let Channel::Mcp { scope } = session.channel {

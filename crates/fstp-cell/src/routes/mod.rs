@@ -31,6 +31,7 @@ pub mod memory;
 /// The route backend of a serving cell over its engine and its application
 /// database (lane int5).
 pub mod pg;
+pub mod signup_code;
 
 pub use auth::{CHALLENGE_US, MAGIC_LINK_US};
 pub(crate) use auth::{holds, live as live_session, send_enrolment_by};
@@ -98,6 +99,11 @@ pub enum Endpoint {
     SignupOptions,
     /// `POST /auth/signup`.
     Signup,
+    /// `POST /auth/signup/code`: the typed registration code (ADR-008).
+    SignupCode,
+    /// `POST /auth/passkey-link`: a fresh "email link, then create
+    /// passkey" link for the session's own email-only account (ADR-008).
+    PasskeyLink,
     /// `POST /auth/passkey/login/options`.
     PasskeyLoginOptions,
     /// `POST /auth/passkey/login`.
@@ -580,6 +586,40 @@ pub fn site_table() -> &'static [Route] {
     &SITE_TABLE
 }
 
+/// The registration routes Daniel decided on 2026-11-22 (ADR-008
+/// "Registration code" and "Later passkey"). They are not rows of
+/// [`table`], which stays exactly design section 8.7, and every front
+/// serves them through the same shared checks as every other route. Each
+/// names its risk class (I-78): the code answers a proof token, and the
+/// link only sends an email, so both are `Normal`.
+static REGISTRATION_TABLE: [Route; 2] = [
+    // Daniel, 2026-11-22 (ADR-008 "Registration code"): the typed code of
+    // the registration email answers its proof token.
+    Route::served(
+        "POST",
+        "/auth/signup/code",
+        Normal,
+        A::Ceremony,
+        E::SignupCode,
+        signup_code::CODE_BODY_LIMIT,
+    ),
+    // Daniel, 2026-11-22 (ADR-008 "Later passkey"): an email-only
+    // account asks for a fresh "email link, then create passkey" link.
+    Route::served(
+        "POST",
+        "/auth/passkey-link",
+        Normal,
+        A::Session,
+        E::PasskeyLink,
+        AUTH_BODY_LIMIT,
+    ),
+];
+
+/// The registration routes, with their classes (ADR-008).
+pub fn registration_table() -> &'static [Route] {
+    &REGISTRATION_TABLE
+}
+
 /// The anonymous draft routes of ADR-032 (Daniel, 2026-11-22). Each is a
 /// `POST` of canonical JSON with no session, so its access class is
 /// `Public`, and it starts, reads, saves or deletes form text that is no
@@ -818,6 +858,52 @@ mod tests {
                     .chain(page_table())
                     .chain(public_table())
                     .chain(site_table())
+                    .all(|t| t.path != r.path && t.endpoint() != r.endpoint()),
+                "{} is also a row of another table",
+                r.path
+            );
+        }
+    }
+
+    /// I-78, ADR-008 (Daniel, 2026-11-22): the registration routes are
+    /// the code route, a ceremony, and the passkey link, in a session, both
+    /// `POST` of risk class `Normal`, outside every other table.
+    #[test]
+    fn adr008_registration_routes_are_classed_outside_the_other_tables() {
+        let got: Vec<(&str, &str, RiskClass, Access)> = registration_table()
+            .iter()
+            .map(|r| (r.method, r.path, r.risk, r.access()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "POST",
+                    "/auth/signup/code",
+                    RiskClass::Normal,
+                    Access::Ceremony
+                ),
+                (
+                    "POST",
+                    "/auth/passkey-link",
+                    RiskClass::Normal,
+                    Access::Session
+                ),
+            ]
+        );
+        for r in registration_table() {
+            assert!(
+                r.body_limit() > 0 && r.body_limit() <= 1 << 20,
+                "{}",
+                r.path
+            );
+            assert!(
+                table()
+                    .iter()
+                    .chain(page_table())
+                    .chain(public_table())
+                    .chain(site_table())
+                    .chain(draft_table())
                     .all(|t| t.path != r.path && t.endpoint() != r.endpoint()),
                 "{} is also a row of another table",
                 r.path

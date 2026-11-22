@@ -492,6 +492,27 @@ fn text_record(v: &Value) -> Result<TextRecord, FromJsonError> {
 
 fn key_record_json(r: &KeyRecord) -> Value {
     match r {
+        KeyRecord::KeystoreErasureRequested {
+            ids,
+            cause,
+            by,
+            kind,
+        } => tagged(
+            "KeystoreErasureRequested",
+            vec![
+                ("by", account_json(*by)),
+                ("cause", Value::from(u64::from(*cause))),
+                ("ids", id_list(ids)),
+                ("kind", Value::from(u64::from(*kind))),
+            ],
+        ),
+        KeyRecord::ErasuresCompleted { epoch, ids } => tagged(
+            "ErasuresCompleted",
+            vec![
+                ("epoch", Value::String(epoch.to_string())),
+                ("ids", id_list(ids)),
+            ],
+        ),
         KeyRecord::KeyOpRecorded { op } => tagged("KeyOpRecorded", vec![("op", opaque_json(op))]),
         KeyRecord::EpochDestroyed { epoch, receipt } => tagged(
             "EpochDestroyed",
@@ -517,6 +538,22 @@ fn key_record(v: &Value) -> Result<KeyRecord, FromJsonError> {
             Ok(KeyRecord::EpochDestroyed {
                 epoch: u64_from(o, "epoch")?,
                 receipt: array_from(o, "receipt")?,
+            })
+        }
+        "KeystoreErasureRequested" => {
+            fields(o, &["by", "cause", "ids", "kind"])?;
+            Ok(KeyRecord::KeystoreErasureRequested {
+                ids: id_list_from(o, "ids")?,
+                cause: u16_from(o, "cause")?,
+                by: account_from(o, "by")?,
+                kind: u8_from(o, "kind")?,
+            })
+        }
+        "ErasuresCompleted" => {
+            fields(o, &["epoch", "ids"])?;
+            Ok(KeyRecord::ErasuresCompleted {
+                epoch: u64_from(o, "epoch")?,
+                ids: id_list_from(o, "ids")?,
             })
         }
         _ => Err(unknown_variant()),
@@ -1214,6 +1251,15 @@ fn finding_command_json(c: &FindingCommand) -> Value {
                 ("input", hex(&run.input.bytes())),
                 ("trace", dec_u128(run.trace.raw())),
                 (
+                    "raw",
+                    run.raw.map_or(Value::Null, |r| {
+                        let mut t = Object::with_capacity(2);
+                        t.insert("id", dec_u128(r.id().raw()));
+                        t.insert("digest", hex(&r.digest().bytes()));
+                        Value::Object(t)
+                    }),
+                ),
+                (
                     "findings",
                     Value::Array(findings.iter().map(ToJson::to_json).collect::<Array>()),
                 ),
@@ -1263,6 +1309,24 @@ fn refused_from(o: &Object) -> Result<Vec<fstp_findings::RefusedStage>, FromJson
         );
     }
     Ok(refused)
+}
+
+/// The sealed raw trace of a client run (ADR-033 record of lane L31):
+/// `null`, or the text reference as `{"digest","id"}`.
+fn raw_from(o: &Object) -> Result<Option<fstp_domain::id::TextRef>, FromJsonError> {
+    match member(o, "raw")? {
+        Value::Null => Ok(None),
+        Value::Object(t) => {
+            reject_unknown(t, &["digest", "id"]).map_err(|e| e.at_field("raw"))?;
+            let id = u128_from(t, "id").map_err(|e| e.at_field("raw"))?;
+            let digest = digest_from(t, "digest").map_err(|e| e.at_field("raw"))?;
+            Ok(Some(fstp_domain::id::TextRef::new(
+                fstp_domain::id::TextId::from_raw(id),
+                digest,
+            )))
+        }
+        _ => Err(FromJsonError::invalid("not a text reference").at_field("raw")),
+    }
 }
 
 /// The 32-byte digest of member `key` of `o`, as 64 hex digits.
@@ -1361,6 +1425,7 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
                     "prompt_set",
                     "input",
                     "trace",
+                    "raw",
                     "findings",
                     "refused",
                 ],
@@ -1389,6 +1454,7 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
                     prompt_set: digest_from(o, "prompt_set")?,
                     input: digest_from(o, "input")?,
                     trace: fstp_findings::TraceRef::from_raw(u128_from(o, "trace")?),
+                    raw: raw_from(o)?,
                 },
                 findings,
                 refused: refused_from(o)?,
@@ -1673,6 +1739,27 @@ fn text_command(v: &Value) -> Result<TextCommand, FromJsonError> {
 
 fn key_command_json(c: &KeyCommand) -> Value {
     match c {
+        KeyCommand::RecordKeystoreErasure {
+            ids,
+            cause,
+            by,
+            kind,
+        } => tagged(
+            "RecordKeystoreErasure",
+            vec![
+                ("by", account_json(*by)),
+                ("cause", Value::from(u64::from(*cause))),
+                ("ids", id_list(ids)),
+                ("kind", Value::from(u64::from(*kind))),
+            ],
+        ),
+        KeyCommand::RecordErasuresCompleted { epoch, ids } => tagged(
+            "RecordErasuresCompleted",
+            vec![
+                ("epoch", Value::String(epoch.to_string())),
+                ("ids", id_list(ids)),
+            ],
+        ),
         KeyCommand::RecordKeyOp { op } => tagged("RecordKeyOp", vec![("op", opaque_json(op))]),
         KeyCommand::RecordEpochDestroyed { epoch, receipt } => tagged(
             "RecordEpochDestroyed",
@@ -1698,6 +1785,22 @@ fn key_command(v: &Value) -> Result<KeyCommand, FromJsonError> {
             Ok(KeyCommand::RecordEpochDestroyed {
                 epoch: u64_from(o, "epoch")?,
                 receipt: array_from(o, "receipt")?,
+            })
+        }
+        "RecordKeystoreErasure" => {
+            fields(o, &["by", "cause", "ids", "kind"])?;
+            Ok(KeyCommand::RecordKeystoreErasure {
+                ids: id_list_from(o, "ids")?,
+                cause: u16_from(o, "cause")?,
+                by: account_from(o, "by")?,
+                kind: u8_from(o, "kind")?,
+            })
+        }
+        "RecordErasuresCompleted" => {
+            fields(o, &["epoch", "ids"])?;
+            Ok(KeyCommand::RecordErasuresCompleted {
+                epoch: u64_from(o, "epoch")?,
+                ids: id_list_from(o, "ids")?,
             })
         }
         _ => Err(unknown_variant()),
@@ -2123,6 +2226,17 @@ fn u16_from(o: &Object, name: &'static str) -> Result<u16, FromJsonError> {
         .and_then(|x| u16::try_from(x).ok())
         .ok_or_else(|| {
             FromJsonError::new(FromJsonErrorKind::OutOfRange { target: "u16" }).at_field(name)
+        })
+}
+
+fn u8_from(o: &Object, name: &'static str) -> Result<u8, FromJsonError> {
+    let n = member(o, name)?
+        .as_number()
+        .ok_or_else(|| FromJsonError::invalid("not a number").at_field(name))?;
+    n.as_u64()
+        .and_then(|x| u8::try_from(x).ok())
+        .ok_or_else(|| {
+            FromJsonError::new(FromJsonErrorKind::OutOfRange { target: "u8" }).at_field(name)
         })
 }
 

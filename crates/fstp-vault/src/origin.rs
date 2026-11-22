@@ -207,7 +207,7 @@ pub const ORIGIN_ROUTES: [RouteSpec; 2] = [
 ];
 
 /// The routes of the internal mTLS listener (design section 6.1).
-pub const INTERNAL_ROUTES: [RouteSpec; 5] = [
+pub const INTERNAL_ROUTES: [RouteSpec; 6] = [
     RouteSpec {
         method: "POST",
         path: "/v1/epoch",
@@ -228,6 +228,11 @@ pub const INTERNAL_ROUTES: [RouteSpec; 5] = [
     RouteSpec {
         method: "POST",
         path: "/v1/identity",
+    },
+    // M7 Q4, ADR-033 record of lane L31: the name mask.
+    RouteSpec {
+        method: "POST",
+        path: "/v1/mask",
     },
 ];
 
@@ -1198,7 +1203,7 @@ impl Vault {
             // ADR-004 record of lane L13: a registration needs the vault
             // keystore, which the serving vault's registrar holds
             // (`crate::service`). This sans-IO path has none.
-            VaultRequest::RegisterIdentity { .. } => {
+            VaultRequest::RegisterIdentity { .. } | VaultRequest::Mask { .. } => {
                 VaultResponse::Refused(VaultRefusal::Unavailable)
             }
             VaultRequest::RecordRelationship { a, b, .. } => {

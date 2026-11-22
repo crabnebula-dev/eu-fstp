@@ -112,6 +112,7 @@ fn config() -> MailConfig {
         from_name: None,
         dkim: Vec::new(),
         brand: None,
+        funding: None,
     }
 }
 

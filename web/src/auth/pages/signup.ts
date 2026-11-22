@@ -19,8 +19,9 @@
 //    public_key}`, and `POST /auth/signup` with the new credential,
 //    `challenge_id` and `token` creates the account with its passkey.
 
-import { ok, post } from '../api.js';
+import { ok, post, record } from '../api.js';
 import { claimPath, kept } from '../anondraft.js';
+import { offerPasskeyThen } from '../passkeyoffer.js';
 import { isHex } from '../encoding.js';
 import { h } from '../dom.js';
 import {
@@ -81,7 +82,14 @@ function mountRegister(token: string | null): void {
       hush(alert);
       const r = await post('/auth/signup', { token });
       if (ok(r)) {
-        landAfterSignup();
+        // ADR-008 "Later passkey": with no draft to claim, the new
+        // email-only account is offered a passkey first.
+        const draft = kept();
+        if (draft === null) {
+          await offerPasskeyThen(signedInHome());
+        } else {
+          go(claimPath(draft.call));
+        }
         return;
       }
       if (r.status === 403) {
@@ -125,9 +133,55 @@ function sent(address: string): void {
       h('p', { class: 'pid' }, [address]),
       status,
     ]),
+    codeForm(address),
     h('p', {}, [h('a', { href: PATHS.signup }, [t('signup.sent.again')])]),
   );
   status.textContent = t('signup.sent');
+}
+
+/**
+ * The typed code of the registration email (Daniel, 2026-11-22, ADR-008
+ * "Registration code"). The right code answers the proof token, and the
+ * page goes on as the link does.
+ */
+function codeForm(address: string): HTMLElement {
+  const errorId = 'signup-code-error';
+  const input = h('input', {
+    id: 'signup-code',
+    name: 'code',
+    type: 'text',
+    inputmode: 'numeric',
+    autocomplete: 'one-time-code',
+    spellcheck: 'false',
+  }) as HTMLInputElement;
+  const error = h('p', { id: errorId, class: 'field-error' });
+  const submit = h('button', { id: 'signup-code-submit', type: 'submit' }, [
+    t('signup.code.submit'),
+  ]) as HTMLButtonElement;
+  const form = h('form', { id: 'signup-code-form', novalidate: true }, [
+    h('p', {}, [t('signup.code.intro')]),
+    h('div', { class: 'field' }, [h('label', { for: 'signup-code' }, [t('signup.code.label')]), input, error]),
+    submit,
+  ]);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const code = input.value.replace(/\s/g, '');
+    busy(submit, async () => {
+      const r = await post('/auth/signup/code', { code, email: address });
+      const o = record(r.body);
+      const token = o === null ? null : o['token'];
+      if (ok(r) && typeof token === 'string' && isHex(token, 32, 32)) {
+        input.removeAttribute('aria-invalid');
+        mountRegister(token);
+        return;
+      }
+      input.setAttribute('aria-invalid', 'true');
+      input.setAttribute('aria-describedby', errorId);
+      error.textContent = t('signup.code.wrong');
+      input.focus();
+    })();
+  });
+  return form;
 }
 
 function mountRequest(): void {

@@ -919,6 +919,13 @@ pub(crate) async fn signup_options<B: Backend>(ctx: &Ctx<B>, req: &Request) -> R
 /// and sends the token. A fault of the store or of the mail port is 503,
 /// which tells nothing about the address either.
 async fn send_signup_proof<B: Backend>(ctx: &Ctx<B>, email: String) -> Reply {
+    // ADR-024, ADR-008 "Registration code": a sign-up request is charged
+    // to the per-address mail limit, as magic links and recovery are. A
+    // request over it gets the same reply and sends nothing.
+    let address = crate::routes::limits::target_digest(&email);
+    if !ctx.limits.mail_target(address, ctx.backend.now().micros()) {
+        return signup_sent();
+    }
     let (token, raw) = match (random::<32>(), random::<16>()) {
         (Ok(t), Ok(a)) => (t, a),
         (Err(r), _) | (_, Err(r)) => return r,
@@ -939,7 +946,73 @@ async fn send_signup_proof<B: Backend>(ctx: &Ctx<B>, email: String) -> Reply {
     if let Err(f) = ctx.backend.send_signup_proof(email, token).await {
         return unavailable(f);
     }
+    // The email carries the code of this proof beside its link.
+    ctx.codes.issue(address, token, ctx.backend.now().micros());
     signup_sent()
+}
+
+/// `POST /auth/signup/code {code, email}` (Ceremony, Daniel 2026-11-22,
+/// ADR-008 "Registration code"): the typed code of the registration
+/// email answers its proof token, once, so the page goes on as the link
+/// does. A wrong, expired, used or unknown code, and an address over its
+/// attempts, all get 401 `code`, so the answer tells nothing about the
+/// address (`crate::routes::signup_code`).
+pub(crate) fn signup_code<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
+    let (email, code) = match crate::routes::signup_code::decode_signup_code(&req.body) {
+        Ok(v) => v,
+        Err(r) => return bad_body(r),
+    };
+    let address = crate::routes::limits::target_digest(&email);
+    match ctx.codes.redeem(address, &code, ctx.backend.now().micros()) {
+        Some(token) => {
+            let mut o = Object::with_capacity(1);
+            o.insert("token", hex_value(&token));
+            Reply::json(StatusCode::OK, &Value::Object(o))
+        }
+        None => Reply::refuse(StatusCode::UNAUTHORIZED, Some(Rule::Adr008), "code"),
+    }
+}
+
+/// `POST /auth/passkey-link {}` (Session, Daniel 2026-11-22, ADR-008
+/// "Later passkey"): the session's own account, signed up by email
+/// only, asks for a passkey. The route opens a recovery case for the
+/// account, the existing ceremony "email link, then create passkey"
+/// (`EmailThenPasskey`, `authentication.md` "First passkey"), and sends a
+/// fresh link to its login email. Opening the link lets the person create
+/// a passkey on the recovery page. An account that holds a passkey gets
+/// 409 `passkey` and nothing is opened, since a completed recovery
+/// revokes every earlier credential. The reply is 202 otherwise.
+pub(crate) async fn passkey_link<B: Backend>(
+    ctx: &Ctx<B>,
+    req: &Request,
+    caller: &Caller,
+) -> Reply {
+    if let Err(r) = decode_empty_object(&req.body) {
+        return bad_body(r);
+    }
+    let (s, _) = match admit(
+        ctx,
+        caller,
+        Action::Read(ReadAction::ReadContent),
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(x) => x,
+        Err(reply) => return reply,
+    };
+    let account = caller.view.account;
+    if !own_credentials(&s, account).is_empty() {
+        return Reply::refuse(StatusCode::CONFLICT, Some(Rule::Adr008), "passkey");
+    }
+    // ADR-024: the per-address mail limit, keyed by the account.
+    let key = fstp_crypto::sha256(&account.raw().to_be_bytes());
+    if ctx.limits.mail_target(key, ctx.backend.now().micros()) {
+        // Errors are not shown: the reply is the same as for a sent link.
+        let _ = open_recovery(ctx, Some(account)).await;
+    }
+    magic_accepted()
 }
 
 /// A signup body: the proof token and, when a passkey is enrolled, the

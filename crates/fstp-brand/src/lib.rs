@@ -27,6 +27,7 @@ use std::fmt;
 
 mod css;
 pub mod emblem;
+pub mod funding;
 pub mod image;
 pub use css::css;
 

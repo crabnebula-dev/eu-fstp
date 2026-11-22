@@ -188,6 +188,46 @@ pub(crate) fn branded_html(html: &str, b: &MailBrand) -> String {
     format!("{before}{head}{after}")
 }
 
+/// `r` with the funding card at the end of both parts (ADR-034, I-69):
+/// in the HTML part, a white box before `</body>` with the logo by its
+/// `Content-ID` and alternative text, then each line escaped; in the
+/// plain-text part, the alternative text and the lines after a blank
+/// line. Everything before them is unchanged. The box's colours are the
+/// card's fixed ones (I-70), never a tenant's.
+pub(crate) fn with_funding(r: &mut Rendered, f: &crate::MailFunding) {
+    const BODY_END: &str = "</body>";
+    let mut card = String::from(
+        "<div style=\"margin:24px 0 0;padding:12px;border:1px solid #4b5563;background:#ffffff;color:#1f2328\">",
+    );
+    if f.carried().is_some() {
+        card.push_str(&format!(
+            "<img src=\"cid:{}\" alt=\"{}\" height=\"48\" style=\"height:48px;width:auto;display:block;margin:0 0 8px\">",
+            crate::FUNDING_CID,
+            escape(&f.alt)
+        ));
+    }
+    for line in &f.lines {
+        card.push_str(&format!("<p style=\"margin:0\">{}</p>", escape(line)));
+    }
+    card.push_str("</div>\n");
+    match r.html.rfind(BODY_END) {
+        Some(at) => r.html.insert_str(at, &card),
+        None => r.html.push_str(&card),
+    }
+    let mut text = String::new();
+    if !r.text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push('\n');
+    text.push_str(&f.alt);
+    text.push('\n');
+    for line in &f.lines {
+        text.push_str(line);
+        text.push('\n');
+    }
+    r.text.push_str(&text);
+}
+
 /// Builds the message for `msg` from its rendering `r`. No DKIM
 /// signature is added here.
 ///
@@ -231,7 +271,9 @@ pub fn build(cfg: &MailConfig, msg: &Message<'_>, r: &Rendered) -> Result<Vec<u8
     // ADR-030: with logos, the HTML part and its images travel together
     // in a `multipart/related` part, each image by its `Content-ID`.
     let logos: Vec<&crate::MailLogo> = cfg.brand.iter().flat_map(MailBrand::carried).collect();
-    let html_part = if logos.is_empty() {
+    // ADR-034: the funding card's logo travels the same way.
+    let funding = cfg.funding.as_ref().and_then(crate::MailFunding::carried);
+    let html_part = if logos.is_empty() && funding.is_none() {
         html_part
     } else {
         let related = format!("=_fstp_r_{tag}");
@@ -245,6 +287,15 @@ pub fn build(cfg: &MailConfig, msg: &Message<'_>, r: &Rendered) -> Result<Vec<u8
                  Content-Transfer-Encoding: base64\r\n\r\n{b64}",
                 cid = logo_cid(i),
                 b64 = base64_encode_wrapped(&logo.png),
+            ));
+        }
+        if let Some(png) = funding {
+            out.push_str(&format!(
+                "--{related}\r\nContent-Type: image/png\r\nContent-ID: <{cid}>\r\n\
+                 Content-Disposition: inline; filename=\"funded-by-eu.png\"\r\n\
+                 Content-Transfer-Encoding: base64\r\n\r\n{b64}",
+                cid = crate::FUNDING_CID,
+                b64 = base64_encode_wrapped(png),
             ));
         }
         out.push_str(&format!("--{related}--\r\n"));

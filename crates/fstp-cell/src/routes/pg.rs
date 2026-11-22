@@ -987,10 +987,11 @@ impl<R: Runtime> Backend for PgBackend<R> {
             .collect()
     }
 
+    /// The cell's erasure log (ADR-007 section "Built by lane L33"). A
+    /// text's programme is not recorded, so every entry is tenant-wide: a
+    /// tenant admin reads it and an Auditor does not (Q42).
     fn erasures(&self) -> impl Future<Output = Result<Vec<ErasureRow>, BackendFault>> + Send {
-        // The programme scope of each text is not recorded (module
-        // documentation).
-        std::future::ready(Err(BackendFault::Unavailable))
+        std::future::ready(Ok(crate::routes::backend::log_rows(&self.engine.state())))
     }
 }
 

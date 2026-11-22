@@ -111,6 +111,33 @@ pub struct MailConfig {
     /// The tenant's logos and colour for the HTML part (ADR-030 section
     /// 5), or `None` for the plain platform look.
     pub brand: Option<MailBrand>,
+    /// The funding card of the message's programme (ADR-034), or `None`
+    /// for a message about no programme.
+    pub funding: Option<MailFunding>,
+}
+
+/// The `Content-ID` of the Funded by the European Union logo (ADR-034).
+pub const FUNDING_CID: &str = "funding@fstp";
+
+/// The funding card of a message about a programme (ADR-034, I-69): the
+/// Funded by the European Union logo as a PNG with its alternative text,
+/// and the card's lines. The lines close both parts as text only (I-68).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MailFunding {
+    /// The platform's PNG of the logo.
+    pub png: Vec<u8>,
+    /// The logo's alternative text.
+    pub alt: String,
+    /// The programme name, then each label with its value.
+    pub lines: Vec<String>,
+}
+
+impl MailFunding {
+    /// The logo, when it is a PNG within [`MAX_MAIL_LOGO_BYTES`].
+    pub fn carried(&self) -> Option<&[u8]> {
+        (self.png.len() <= MAX_MAIL_LOGO_BYTES && self.png.starts_with(b"\x89PNG\r\n\x1a\n"))
+            .then_some(self.png.as_slice())
+    }
 }
 
 /// The most logos one message carries: the tenant's, then the programme's.
@@ -189,6 +216,9 @@ pub fn compose(cfg: &MailConfig, msg: &Message<'_>) -> Result<Vec<u8>, MailError
     let mut rendered = msg.template.render(msg.bindings, &cfg.origin)?;
     if let Some(b) = &cfg.brand {
         rendered.html = mime::branded_html(&rendered.html, b);
+    }
+    if let Some(f) = &cfg.funding {
+        mime::with_funding(&mut rendered, f);
     }
     let mut raw = mime::build(cfg, msg, &rendered)?;
     for signer in &cfg.dkim {

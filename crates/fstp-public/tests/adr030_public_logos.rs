@@ -20,6 +20,7 @@ fn logos(emblem: bool) -> PublicLogos {
         programme_light: Some(path(0xb1, "png")),
         programme_dark: None,
         emblem: emblem.then(|| "/brand/eu-emblem.png".to_owned()),
+        funding: None,
     }
 }
 

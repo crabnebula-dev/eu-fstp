@@ -2120,6 +2120,58 @@ fn decide_key(s: &CellState, cmd: &KeyCommand) -> Result<Vec<CellRecord>, CellRe
                 receipt: *receipt,
             })])
         }
+        // ADR-007 section "Built by lane L33": the request entry of texts
+        // the keystore keeps and no ledger record names.
+        KeyCommand::RecordKeystoreErasure {
+            ids,
+            cause,
+            by,
+            kind,
+        } => {
+            if !ERASURE_CAUSES.contains(cause)
+                || !crate::KEYSTORE_ERASURE_KINDS.contains(kind)
+                || ids.is_empty()
+                || ids.len() > MAX_TEXT_IDS
+            {
+                return Err(invalid());
+            }
+            let mut seen = BTreeSet::new();
+            for id in ids {
+                if !seen.insert(*id) || s.text(*id).is_some() {
+                    return Err(invalid());
+                }
+                if s.erasure(*id).is_some() {
+                    return Err(reused());
+                }
+            }
+            Ok(vec![CellRecord::Key(KeyRecord::KeystoreErasureRequested {
+                ids: ids.clone(),
+                cause: *cause,
+                by: *by,
+                kind: *kind,
+            })])
+        }
+        // The destruction of `epoch` completed these erasures (I-81).
+        KeyCommand::RecordErasuresCompleted { epoch, ids } => {
+            if ids.is_empty() || ids.len() > MAX_TEXT_IDS || !s.epoch_destroyed(*epoch) {
+                return Err(invalid());
+            }
+            let mut seen = BTreeSet::new();
+            for id in ids {
+                if !seen.insert(*id) {
+                    return Err(invalid());
+                }
+                match s.erasure(*id) {
+                    Some(e) if e.destroyed_epoch.is_none() => {}
+                    Some(_) => return Err(reused()),
+                    None => return Err(unknown()),
+                }
+            }
+            Ok(vec![CellRecord::Key(KeyRecord::ErasuresCompleted {
+                epoch: *epoch,
+                ids: ids.clone(),
+            })])
+        }
     }
 }
 

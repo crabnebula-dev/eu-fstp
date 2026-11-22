@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex};
 
 use fstp_api_core::display_name::{self, FINGERPRINT_LEN};
 use fstp_api_core::port::{
-    BlobOwner, BlobRef, BlobStore, DisplayNameSet, ErasureCause, ErasureRow, PortError,
-    PublicTextRef, SealOwner, Sealed, Sealer, StepUpProof, TextClass, TextOwner, TextRef,
-    TextStore, WorkspaceSlot, Workspaces,
+    BlobOwner, BlobRef, BlobStore, DisplayNameSet, ErasureCause, ErasureKind, ErasureRow,
+    PortError, PublicTextRef, SealOwner, Sealed, Sealer, StepUpProof, TextClass, TextOwner,
+    TextRef, TextStore, WorkspaceSlot, Workspaces,
 };
 use fstp_domain::id::AccountId;
 use fstp_domain::id::ProposalId;
@@ -148,8 +148,14 @@ impl FakeTexts {
             .filter(|(_, (_, owner, _))| *owner == TextOwner::Account(a))
             .map(|(id, _)| *id)
             .collect();
+        let name = s.display.get(&a).map(|r| r.text);
         for id in &owned {
-            erase(&mut s, *id, at);
+            let kind = if name == Some(*id) {
+                ErasureKind::DisplayName
+            } else {
+                ErasureKind::Text
+            };
+            erase(&mut s, *id, at, kind);
         }
         // SA-11 amendment: the fingerprint goes with the name.
         if let Some(row) = s.display.remove(&a) {
@@ -183,7 +189,7 @@ impl FakeTexts {
 
 /// Removes text `id` and logs its erasure at `at`, at the person's
 /// request (ADR-007, cause 2), naming no grant.
-fn erase(s: &mut Texts, id: u128, at: Timestamp) {
+fn erase(s: &mut Texts, id: u128, at: Timestamp, kind: ErasureKind) {
     if s.rows.remove(&id).is_some() {
         s.erased.push(ErasureRow {
             text: TextRef(id),
@@ -191,6 +197,8 @@ fn erase(s: &mut Texts, id: u128, at: Timestamp) {
             grant: None,
             requested_at: at,
             completed_at: Some(at),
+            kind,
+            destroyed_epoch: None,
         });
     }
 }
@@ -320,6 +328,8 @@ impl TextStore for FakeTexts {
                 grant: Some(grant),
                 requested_at: at,
                 completed_at: Some(at),
+                kind: ErasureKind::Text,
+                destroyed_epoch: None,
             });
         }
         Ok(())
@@ -360,7 +370,7 @@ impl FakeTexts {
         };
         if let Some(old) = s.display.remove(&a) {
             s.fingerprints.remove(&old.fingerprint);
-            erase(&mut s, old.text, at);
+            erase(&mut s, old.text, at, ErasureKind::DisplayName);
         }
         if let (Some(name), Some(fingerprint)) = (name, fingerprint) {
             let n = s.next;

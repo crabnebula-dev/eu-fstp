@@ -2646,6 +2646,33 @@ mod tests {
         );
     }
 
+    /// I-77, ADR-008 (decided by Daniel on 2026-11-21): a suspended
+    /// Drafting, Judging or Operations binding counts as held for I-77. So
+    /// the suspended reviewer's magic-link session is refused for every
+    /// operation that needs an account, as a passkey session is judged by
+    /// the other rules. A Receiving account's magic-link session is not.
+    #[test]
+    fn i77_reference_suspended_binding_counts_as_held() {
+        let magic = web(Login::MagicLink, StepUp::Absent);
+        let strength = Expected::Deny(AuthClass::LoginStrength);
+        for op in ["me.roles", "review.read_content", "proposal.list_own"] {
+            assert_eq!(
+                at(op, Who::SuspendedReviewer, S1, SS, magic),
+                strength,
+                "{op}"
+            );
+            assert_ne!(
+                at(op, Who::SuspendedReviewer, S1, SS, PASS),
+                strength,
+                "{op}"
+            );
+        }
+        assert_ne!(at("proposal.list_own", Who::Lead, S1, SS, magic), strength);
+        assert!(Who::SuspendedReviewer.i77());
+        assert!(!Who::SuspendedReviewer.management());
+        assert!(!Who::Lead.i77());
+    }
+
     /// R-CF-02, `roles-and-sod.md` Conflict declarations: under P-10 "all
     /// committee members" every committee member declares per proposal,
     /// so the proposal-level declaration admits them. Under the other

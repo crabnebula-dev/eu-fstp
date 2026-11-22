@@ -93,6 +93,7 @@ fn pending_narratives(seed: &Seeder<'_>, p: ProgrammeId) -> Result<Vec<String>, 
             v,
             V::ActionAcronym(_)
                 | V::CoordinatorName(_)
+                | V::CoordinatorContact(_)
                 | V::ProgrammeName(_)
                 | V::ProgrammeNarrative(_)
                 | V::ProgrammeScope(_)

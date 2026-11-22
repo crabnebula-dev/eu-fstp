@@ -32,7 +32,7 @@ use crate::subset::{
     Open, URL_ATTRS, VOID, attr_allowed_in, holds_no_text, intern, is_lang_tag, is_plain,
     is_rcdata, svg_value_ok,
 };
-use crate::url::is_safe_url;
+use crate::url::{is_safe_link, is_safe_url};
 
 /// Checks that `bytes` is a well-formed document of the writer's subset.
 /// Fuzzed (`html_wellformed_check`).
@@ -331,7 +331,13 @@ impl<'a> Checker<'a> {
             if svg && !svg_value_ok(attr, &value) {
                 return Err(self.err("the value is outside the SVG subset"));
             }
-            if URL_ATTRS.contains(&attr) && !is_safe_url(&value) {
+            // ADR-034: only the `href` of an `a` takes a `mailto:` link.
+            let safe = if el == "a" && attr == "href" {
+                is_safe_link(&value)
+            } else {
+                is_safe_url(&value)
+            };
+            if URL_ATTRS.contains(&attr) && !safe {
                 return Err(self.err("the URL is not safe"));
             }
             if attrs.insert(attr, value).is_some() {

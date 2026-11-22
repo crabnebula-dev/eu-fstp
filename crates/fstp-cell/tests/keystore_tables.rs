@@ -1100,3 +1100,54 @@ fn adr012_app_restore_takes_the_newest_copy_that_opens() {
         assert!(choose(&c.sim, CELL, Some(&before), None).await.is_err());
     });
 }
+
+/// R-KY-02, I-81, ADR-007 (lane L33): the erasure log names a replaced
+/// display name with its account and kind as soon as it is replaced, and
+/// the batch that destroys its key completes the entry with that epoch. A
+/// ledger text's entry gains its destroyed epoch the same way. The log
+/// survives a restart, since it is the ledger's.
+#[test]
+fn r_ky_02_i81_erasure_log_names_requests_and_destroyed_epochs() {
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        set_name(&mut c, ANNA, Some("Synthetic Logged")).await;
+        let old = c.runner.keystore().display_text(ANNA).unwrap();
+        set_name(&mut c, ANNA, Some("Synthetic Logged Again")).await;
+        let entry = c.engine.state().erasure(old).expect("the request entry");
+        assert_eq!(entry.by, ANNA, "the person authorised it");
+        assert_eq!(entry.kind, fstp_cell_core::ERASURE_KIND_DISPLAY_NAME);
+        assert_eq!(entry.cause, 2);
+        assert_eq!(entry.completed_at, None, "R-KY-02: not before the key died");
+        c.runner.run_until_idle().await.unwrap();
+        let epoch = c.runner.keystore().epoch();
+        let entry = c.engine.state().erasure(old).unwrap();
+        assert_eq!(
+            entry.destroyed_epoch,
+            Some(epoch - 1),
+            "I-81: its epoch died"
+        );
+        assert!(entry.completed_at.is_some());
+        // A ledger text, erased by a tenant admin.
+        c.erase(vec![T1], 0xB5).await;
+        c.runner.run_until_idle().await.unwrap();
+        let t1 = c.engine.state().erasure(T1).unwrap();
+        assert_eq!(t1.kind, fstp_cell_core::ERASURE_KIND_LEDGER_TEXT);
+        assert!(
+            t1.destroyed_epoch.is_some(),
+            "I-81: the ledger text's epoch"
+        );
+        let log = fstp_cell::tasks::erasure::erasure_log(&c.engine.state());
+        assert!(log.iter().any(|(id, _)| *id == old));
+        assert!(log.iter().any(|(id, _)| *id == T1));
+        for w in log.windows(2) {
+            assert!(w[0].1.requested_at <= w[1].1.requested_at, "oldest first");
+        }
+        // A restarted runner repeats no record.
+        c.restart().await;
+        c.runner.run_until_idle().await.unwrap();
+        assert_eq!(
+            fstp_cell::tasks::erasure::erasure_log(&c.engine.state()),
+            log
+        );
+    });
+}

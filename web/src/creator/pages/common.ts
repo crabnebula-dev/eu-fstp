@@ -66,6 +66,14 @@ export async function loadReport(p: string, alert: HTMLElement): Promise<Report 
  * names, such as both amounts of `CapAboveCeiling`.
  */
 export function checkText(check: string, values: readonly string[], field: string | null = null): Label {
+  // ADR-034, I-69: a field with its own plain message says what to fill in and where.
+  if (field !== null && values.length === 0) {
+    try {
+      return t.label(`creator.check.${check}.${field}`);
+    } catch {
+      // No message of its own: the general one below.
+    }
+  }
   const name = labelOr(`creator.check.${check}`, () => t.label("creator.check.unnamed", { check }));
   const about = field === null ? name : t.label("creator.check.field", { check: name, field: fieldLabel(field) });
   return values.length === 0 ? about : t.label("creator.check.values", { check: about, values: values.join(", ") });

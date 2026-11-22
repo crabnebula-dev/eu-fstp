@@ -68,6 +68,14 @@ The IBM Plex Sans notice, copied from the first line of its licence file:
 Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
 ```
 
+## Images
+
+| Image | Where | Origin | Basis |
+| --- | --- | --- | --- |
+| "Funded by the European Union" logo (EU flag and words) | `third_party/eu-emblem/funded-by-eu.svg` (as supplied), `crates/fstp-brand/assets/funded-by-eu.svg` (Inkscape metadata removed) and `crates/fstp-brand/assets/funded-by-eu.png` (rasterised once) | Supplied by Daniel on 2026-11-22 | ADR-034 |
+
+TODO(legal): the terms under which the EU emblem and this logo may be used, and the usage rules (size, clear space, placement, colour versions). Daniel confirms them. Nothing here states them.
+
 ## Vendored code
 
 | Component | Where | Licence | Basis |

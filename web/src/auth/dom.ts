@@ -106,6 +106,31 @@ export function samePath(input: unknown): string | null {
 }
 
 /**
+ * The input itself when it is a `mailto:` link to one address, else null
+ * (ADR-034, as `fstp_html` `mailto_ok` and `web/src/core/dom.ts`): a local
+ * part of 1 to 64 letters, digits and `. _ + -` not starting or ending with
+ * `.`, then `@` and a host of at least two lower-case LDH labels whose last
+ * label is not numeric. No query, so no header or body can ride along.
+ */
+export function mailtoHref(input: unknown): string | null {
+  if (typeof input !== 'string' || !input.startsWith('mailto:')) return null;
+  const addr = input.slice('mailto:'.length);
+  const at = addr.indexOf('@');
+  if (at < 0 || addr.indexOf('@', at + 1) >= 0) return null;
+  const local = addr.slice(0, at);
+  const host = addr.slice(at + 1);
+  const labels = host.split('.');
+  const last = labels[labels.length - 1] ?? '';
+  const ok =
+    /^(?!\.)[A-Za-z0-9._+-]{1,64}(?<!\.)$/.test(local) &&
+    host.length <= 253 &&
+    labels.length >= 2 &&
+    labels.every((l) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(l)) &&
+    !/^[0-9]+$/.test(last);
+  return ok ? input : null;
+}
+
+/**
  * Builds `<tag>` with `attrs` and `children`. String children become text
  * nodes. It throws `DomRefusal` for a tag or attribute outside the
  * allowlists, or a URL that is not a same-origin path.
@@ -128,7 +153,8 @@ export function h(
       continue;
     }
     if (URL_ATTRIBUTES.has(name)) {
-      const url = samePath(value);
+      // ADR-034 (lead decision): only the `href` of an `a` takes a `mailto:` link.
+      const url = samePath(value) ?? (tag === 'a' && name === 'href' ? mailtoHref(value) : null);
       if (url === null) {
         throw new DomRefusal('dom.url');
       }

@@ -327,7 +327,6 @@ dependencies = [
  "fstp-crypto",
  "fstp-domain",
  "fstp-findings",
- "fstp-http",
  "fstp-json",
  "fstp-rt",
 ]

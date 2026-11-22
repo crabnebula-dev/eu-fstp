@@ -50,6 +50,9 @@ pub struct TenantSettings {
     /// The tenant's override of the Guide's data protection texts, or
     /// `None` for the platform default ([`TenantSettings::guide_notice`]).
     pub guide_notice: Option<GuideNoticeOverride>,
+    /// The funding card defaults (ADR-034), or `None` until an admin sets
+    /// them. Shared code holds no value.
+    pub funding_defaults: Option<fstp_brand::funding::FundingDefaults>,
 }
 
 impl TenantSettings {
@@ -64,6 +67,7 @@ impl TenantSettings {
             p72_absolute_us: P72_ABSOLUTE_DEFAULT_US,
             p74: p74_default(),
             guide_notice: None,
+            funding_defaults: None,
         }
     }
 
@@ -418,6 +422,10 @@ impl TenantState {
                 if let Some(a) = self.approvals.get_mut(approval) {
                     a.used = true;
                 }
+            }
+            TenantRecord::FundingDefaultsSet { defaults, by } => {
+                self.need_admin(*by)?;
+                self.settings.funding_defaults = Some(defaults.clone());
             }
             TenantRecord::GuideNoticeSet { notice, by } => {
                 self.need_admin(*by)?;
@@ -1071,6 +1079,11 @@ impl TenantState {
     /// The tenant settings.
     pub fn settings(&self) -> &TenantSettings {
         &self.settings
+    }
+
+    /// The funding card defaults (ADR-034), if an admin set them.
+    pub fn funding_defaults(&self) -> Option<&fstp_brand::funding::FundingDefaults> {
+        self.settings.funding_defaults.as_ref()
     }
 
     /// The tenant defaults: the values of the Identity and Inference

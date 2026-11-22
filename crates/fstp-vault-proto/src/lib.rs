@@ -164,6 +164,73 @@ pub enum VaultRequest {
         /// [`MAX_IDENTITY_TUPLE`] bytes, in lowercase hex on the wire.
         tuple: Vec<u8>,
     },
+    /// The name mask (M7 Q4, ADR-033 record of lane L31): the spans of
+    /// `texts` that hold a verified name or date of birth of one of
+    /// `accounts`, a proposal's team taken from the cell's own bindings.
+    /// The vault keeps nothing of the texts.
+    Mask {
+        /// The team, ascending, 1 to [`MAX_MASK_ACCOUNTS`].
+        accounts: Vec<WireAccount>,
+        /// The texts, 1 to [`MAX_MASK_TEXTS`], each at most
+        /// [`MAX_MASK_TEXT_BYTES`] bytes.
+        texts: Vec<String>,
+    },
+}
+
+/// The most accounts of one mask request.
+pub const MAX_MASK_ACCOUNTS: usize = 16;
+/// The most texts of one mask request.
+pub const MAX_MASK_TEXTS: usize = 3;
+/// The longest text of a mask request, in bytes: the string limit of the
+/// request parser.
+pub const MAX_MASK_TEXT_BYTES: usize = 64 << 10;
+/// The most spans the vault answers for one text.
+pub const MAX_MASK_SPANS: usize = 4096;
+
+/// What a mask span holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WireMaskClass {
+    /// A verified family or given name.
+    Name,
+    /// The verified date of birth.
+    BirthDate,
+}
+
+impl WireMaskClass {
+    /// The wire spelling.
+    pub const fn label(self) -> &'static str {
+        match self {
+            WireMaskClass::Name => "name",
+            WireMaskClass::BirthDate => "birth_date",
+        }
+    }
+}
+
+/// One span of a mask answer: byte offsets into the text the cell sent, a
+/// person by its index in the request's accounts, and the class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WireSpan {
+    /// The first byte offset.
+    pub start: u32,
+    /// The byte offset just after the span.
+    pub end: u32,
+    /// The person, by its index in the request's accounts.
+    pub person: u32,
+    /// The class.
+    pub class: WireMaskClass,
+}
+
+/// Whether `spans` are lawful for a text: each non-empty, sorted and
+/// disjoint, with a person under [`MAX_MASK_ACCOUNTS`], and at most
+/// [`MAX_MASK_SPANS`] of them.
+pub fn spans_lawful(spans: &[WireSpan]) -> bool {
+    spans.len() <= MAX_MASK_SPANS
+        && spans
+            .iter()
+            .all(|s| s.start < s.end && (s.person as usize) < MAX_MASK_ACCOUNTS)
+        && spans
+            .windows(2)
+            .all(|w| matches!(w, [a, b] if a.end <= b.start))
 }
 
 /// The longest identity attribute tuple a registration carries, in bytes.
@@ -230,6 +297,8 @@ pub enum VaultResponse {
     Epoch(u64),
     /// Answers, in query order.
     Answers(Vec<WireAnswer>),
+    /// The spans of each text of a mask request, in text order.
+    Masks(Vec<Vec<WireSpan>>),
     /// The acknowledgement was recorded.
     Acked,
     /// The vault refused.
@@ -370,8 +439,33 @@ pub fn decode_request(bytes: &[u8]) -> Result<VaultRequest, ProtoError> {
                 tuple: tuple_of(json::string(m, "tuple", REQUEST)?)?,
             }
         }
+        "mask" => {
+            let m = o(&["accounts", "texts", "type"])?;
+            let accounts = accounts_of(json::member(m, "accounts", REQUEST)?, REQUEST)?;
+            let items = json::member(m, "texts", REQUEST)?
+                .as_array()
+                .ok_or(ProtoError::Shape(REQUEST))?;
+            let mut texts = Vec::with_capacity(items.len());
+            for t in items.iter() {
+                texts.push(t.as_str().ok_or(ProtoError::Shape(REQUEST))?.to_owned());
+            }
+            if !mask_request_lawful(&accounts, &texts) {
+                return Err(ProtoError::Shape(REQUEST));
+            }
+            VaultRequest::Mask { accounts, texts }
+        }
         _ => return Err(ProtoError::Shape(REQUEST)),
     })
+}
+
+/// Whether a mask request keeps its bounds: 1 to [`MAX_MASK_ACCOUNTS`]
+/// ascending accounts and 1 to [`MAX_MASK_TEXTS`] texts of at most
+/// [`MAX_MASK_TEXT_BYTES`] bytes each.
+pub fn mask_request_lawful(accounts: &[WireAccount], texts: &[String]) -> bool {
+    (1..=MAX_MASK_ACCOUNTS).contains(&accounts.len())
+        && ascending(accounts)
+        && (1..=MAX_MASK_TEXTS).contains(&texts.len())
+        && texts.iter().all(|t| t.len() <= MAX_MASK_TEXT_BYTES)
 }
 
 fn typed(kind: &str, mut members: Vec<(&str, Value)>) -> Result<Value, ProtoError> {
@@ -489,6 +583,21 @@ pub fn encode_request(r: &VaultRequest) -> Result<Vec<u8>, ProtoError> {
                 ],
             )?
         }
+        VaultRequest::Mask { accounts, texts } => {
+            if !mask_request_lawful(accounts, texts) {
+                return Err(ProtoError::Shape(REQUEST));
+            }
+            typed(
+                "mask",
+                vec![
+                    ("accounts", json::id_list_json(accounts.iter().map(|a| a.0))),
+                    (
+                        "texts",
+                        Value::Array(texts.iter().map(|t| Value::String(t.clone())).collect()),
+                    ),
+                ],
+            )?
+        }
     };
     json::to_canonical(&v)
 }
@@ -537,6 +646,24 @@ fn refusal_of(v: &Value) -> Result<VaultRefusal, ProtoError> {
     })
 }
 
+fn span_of(v: &Value) -> Result<WireSpan, ProtoError> {
+    let o = json::object(v, &["class", "end", "person", "start"], RESPONSE)?;
+    let small = |name: &str| {
+        u32::try_from(json::uint(o, name, RESPONSE)?).map_err(|_| ProtoError::Shape(RESPONSE))
+    };
+    let class = match json::string(o, "class", RESPONSE)? {
+        "name" => WireMaskClass::Name,
+        "birth_date" => WireMaskClass::BirthDate,
+        _ => return Err(ProtoError::Shape(RESPONSE)),
+    };
+    Ok(WireSpan {
+        start: small("start")?,
+        end: small("end")?,
+        person: small("person")?,
+        class,
+    })
+}
+
 /// Decodes a response. Fuzzed (`vault_response_decode`).
 ///
 /// It parses within [`response_limits`], which admit every response
@@ -567,6 +694,28 @@ pub fn decode_response(bytes: &[u8]) -> Result<VaultResponse, ProtoError> {
         "acked" => {
             o(&["type"])?;
             VaultResponse::Acked
+        }
+        "masks" => {
+            let m = o(&["masks", "type"])?;
+            let items = json::member(m, "masks", RESPONSE)?
+                .as_array()
+                .ok_or(ProtoError::Shape(RESPONSE))?;
+            if items.len() > MAX_MASK_TEXTS {
+                return Err(ProtoError::Shape(RESPONSE));
+            }
+            let mut masks = Vec::with_capacity(items.len());
+            for t in items.iter() {
+                let list = t.as_array().ok_or(ProtoError::Shape(RESPONSE))?;
+                let mut spans = Vec::with_capacity(list.len());
+                for s in list.iter() {
+                    spans.push(span_of(s)?);
+                }
+                if !spans_lawful(&spans) {
+                    return Err(ProtoError::Shape(RESPONSE));
+                }
+                masks.push(spans);
+            }
+            VaultResponse::Masks(masks)
         }
         "refused" => {
             let m = o(&["refusal", "type"])?;
@@ -629,6 +778,25 @@ pub fn encode_response(r: &VaultResponse) -> Result<Vec<u8>, ProtoError> {
             typed("answers", vec![("answers", Value::Array(items))])?
         }
         VaultResponse::Acked => typed("acked", Vec::new())?,
+        VaultResponse::Masks(masks) => {
+            if masks.len() > MAX_MASK_TEXTS || !masks.iter().all(|m| spans_lawful(m)) {
+                return Err(ProtoError::Shape(RESPONSE));
+            }
+            let mut items = Array::with_capacity(masks.len());
+            for m in masks {
+                let mut list = Array::with_capacity(m.len());
+                for s in m {
+                    list.push(json::obj(vec![
+                        ("class", Value::String(s.class.label().to_owned())),
+                        ("end", n(u64::from(s.end))?),
+                        ("person", n(u64::from(s.person))?),
+                        ("start", n(u64::from(s.start))?),
+                    ])?);
+                }
+                items.push(Value::Array(list));
+            }
+            typed("masks", vec![("masks", Value::Array(items))])?
+        }
         VaultResponse::Refused(f) => typed("refused", vec![("refusal", refusal_json(f)?)])?,
     };
     let bytes = json::to_canonical(&v)?;

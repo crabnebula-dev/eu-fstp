@@ -40,6 +40,7 @@ mod dispatch;
 pub mod display_name;
 pub mod erasure;
 mod forms;
+pub mod funding;
 pub mod grant;
 pub mod grant_lists;
 pub mod ids;
@@ -590,6 +591,13 @@ impl ApiCore {
     /// back to light (ADR-030). Public data, with no credential.
     pub fn tenant_logos(&self) -> brand::LogoPaths {
         self.inner.tenant_logos()
+    }
+
+    /// The funding cards of the tenant's active programmes and the
+    /// tenant's defaults, as `GET /brand/funding` answers them (ADR-034).
+    /// Public data, with no credential.
+    pub fn funding(&self) -> fstp_json::Value {
+        self.inner.funding()
     }
 
     /// The bytes and format of the logo at `path`, when `path` has the

@@ -398,6 +398,34 @@ pub fn identity_tuple(a: &IdentityAttributes) -> Vec<u8> {
     out
 }
 
+/// The attributes an identity tuple holds, the inverse of
+/// [`identity_tuple`] (ADR-033 record of lane L31, the name mask). The
+/// names come back as the tuple holds them, through `name_key`. `None` for
+/// bytes that are not one tuple of [`TUPLE_LABEL`]. Fuzzed through
+/// `identity_tuple_decode`.
+#[must_use]
+pub fn parse_identity_tuple(t: &[u8]) -> Option<IdentityAttributes> {
+    let mut rest = t.strip_prefix(TUPLE_LABEL)?;
+    let mut fields: Vec<String> = Vec::with_capacity(4);
+    for _ in 0..4 {
+        let (len, tail) = rest.split_first_chunk::<2>()?;
+        let len = usize::from(u16::from_be_bytes(*len));
+        let field = tail.get(..len)?;
+        fields.push(String::from_utf8(field.to_vec()).ok()?);
+        rest = tail.get(len..)?;
+    }
+    if !rest.is_empty() {
+        return None;
+    }
+    let mut it = fields.into_iter();
+    Some(IdentityAttributes {
+        family_names: it.next()?,
+        given_names: it.next()?,
+        birth_date: it.next()?,
+        issuing_state: it.next()?,
+    })
+}
+
 /// The largest identity file of `fstp-vault verify-first-admin`, in bytes.
 pub const MAX_IDENTITY_FILE: usize = 4 << 10;
 

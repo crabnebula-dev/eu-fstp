@@ -113,6 +113,8 @@ pub(crate) struct Ctx<B> {
     pub(crate) cfg: CellCfg,
     /// The rate counters of the public routes (ADR-024).
     pub(crate) limits: crate::routes::limits::Limits,
+    /// The live registration codes (ADR-008 "Registration code").
+    pub(crate) codes: crate::routes::signup_code::CodeBook,
 }
 
 /// The caller of a session route: its session row and gate view.
@@ -374,6 +376,10 @@ fn rate_limited<B: Backend>(ctx: &Ctx<B>, endpoint: Endpoint, req: &Request) -> 
     let now = ctx.backend.now().micros();
     let ok = match endpoint {
         Endpoint::PasskeyLoginOptions | Endpoint::PasskeyLogin => ctx.limits.login(peer, now),
+        // ADR-008 "Registration code": code attempts per peer, beside the
+        // limits per code and per address of the code book.
+        Endpoint::SignupCode => ctx.limits.login(peer, now),
+        Endpoint::PasskeyLink => ctx.limits.mail_peer(peer, now),
         Endpoint::MagicRequest | Endpoint::RecoveryRequest => ctx.limits.mail_peer(peer, now),
         // ADR-032: starts per peer and per cell, the rest per peer.
         Endpoint::DraftStart => ctx.limits.draft_start(peer, now),
@@ -463,6 +469,8 @@ async fn dispatch<B: Backend>(
         (Endpoint::MagicConsume, _) => auth::magic_consume(ctx, req).await,
         (Endpoint::SignupOptions, _) => auth::signup_options(ctx, req).await,
         (Endpoint::Signup, _) => auth::signup(ctx, req).await,
+        (Endpoint::SignupCode, _) => auth::signup_code(ctx, req),
+        (Endpoint::PasskeyLink, Some(c)) => auth::passkey_link(ctx, req, &c).await,
         (Endpoint::RecoveryRequest, _) => auth::recovery_request(ctx, req).await,
         (Endpoint::RecoveryEmail, _) => auth::recovery_email(ctx, req).await,
         (Endpoint::RecoveryComplete, _) => auth::recovery_complete(ctx, req).await,

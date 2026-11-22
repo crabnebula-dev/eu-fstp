@@ -319,6 +319,27 @@ fn accounts_json(v: &[WireAccount]) -> String {
     format!("[{}]", parts.join(","))
 }
 
+/// A JSON string in its RFC 8785 spelling, written by hand as an
+/// independent oracle.
+pub fn json_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// The canonical bytes of a request.
 pub fn request(r: &VaultRequest) -> Vec<u8> {
     let s = match r {
@@ -380,6 +401,14 @@ pub fn request(r: &VaultRequest) -> Vec<u8> {
             id(account.0),
             hex(tuple)
         ),
+        VaultRequest::Mask { accounts, texts } => {
+            let ts: Vec<String> = texts.iter().map(|t| json_string(t)).collect();
+            format!(
+                "{{\"accounts\":{},\"texts\":[{}],\"type\":\"mask\"}}",
+                accounts_json(accounts),
+                ts.join(",")
+            )
+        }
     };
     s.into_bytes()
 }
@@ -418,6 +447,27 @@ pub fn response(r: &VaultResponse) -> Vec<u8> {
             format!("{{\"answers\":[{}],\"type\":\"answers\"}}", parts.join(","))
         }
         VaultResponse::Acked => "{\"type\":\"acked\"}".to_owned(),
+        VaultResponse::Masks(m) => {
+            let texts: Vec<String> = m
+                .iter()
+                .map(|spans| {
+                    let s: Vec<String> = spans
+                        .iter()
+                        .map(|s| {
+                            format!(
+                                "{{\"class\":\"{}\",\"end\":{},\"person\":{},\"start\":{}}}",
+                                s.class.label(),
+                                s.end,
+                                s.person,
+                                s.start
+                            )
+                        })
+                        .collect();
+                    format!("[{}]", s.join(","))
+                })
+                .collect();
+            format!("{{\"masks\":[{}],\"type\":\"masks\"}}", texts.join(","))
+        }
         VaultResponse::Refused(f) => format!("{{\"refusal\":{},\"type\":\"refused\"}}", refusal(f)),
     };
     s.into_bytes()

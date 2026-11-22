@@ -538,6 +538,11 @@ pub enum RecordView {
         /// The admin who set it.
         by: AccountId,
     },
+    /// `FundingDefaultsSet` (ADR-034). The machine issues no such command.
+    FundingDefaultsSet {
+        /// The admin who set them.
+        by: AccountId,
+    },
     /// `InferenceConfigRecorded`.
     InferenceConfigRecorded {
         /// The configuration.

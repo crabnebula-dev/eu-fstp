@@ -138,14 +138,20 @@ pub struct Image {
 pub struct Letterhead {
     /// The logos, left to right. At most [`MAX_LOGOS`].
     pub logos: Vec<Image>,
-    /// The EU emblem, once the platform holds it.
+    /// The EU emblem slot: the Funded by the European Union logo
+    /// (ADR-034).
     pub emblem: Option<Image>,
+    /// The funding card's lines of the document's programme (ADR-034,
+    /// I-69): the programme name, then each label with its value. They
+    /// are the first paragraphs of the text, tagged `/P`, so a screen
+    /// reader reads them (R-NF-04). Empty for none.
+    pub funding: Vec<String>,
 }
 
 impl Letterhead {
     /// Whether nothing is shown.
     pub fn is_empty(&self) -> bool {
-        self.logos.is_empty() && self.emblem.is_none()
+        self.logos.is_empty() && self.emblem.is_none() && self.funding.is_empty()
     }
 }
 
@@ -502,6 +508,27 @@ fn image_object(i: &Image, smask: Option<u32>) -> Vec<u8> {
 ///
 /// A [`WriteError`] naming the first fault in `doc` or `head`.
 pub fn write_with_letterhead(doc: &Document, head: &Letterhead) -> Result<Vec<u8>, WriteError> {
+    // ADR-034: the funding card's lines come first, as paragraphs.
+    if !head.funding.is_empty() {
+        let mut blocks: Vec<Block> = head
+            .funding
+            .iter()
+            .map(|text| Block {
+                kind: BlockKind::Paragraph,
+                text: text.clone(),
+            })
+            .collect();
+        blocks.extend(doc.blocks.iter().cloned());
+        let doc = Document {
+            blocks,
+            ..doc.clone()
+        };
+        let head = Letterhead {
+            funding: Vec::new(),
+            ..head.clone()
+        };
+        return write_with_letterhead(&doc, &head);
+    }
     validate(doc)?;
     let placed = place(head)?;
     let font = embedded_font().map_err(WriteError::Font)?;

@@ -425,11 +425,26 @@ pub fn proof_message(host: &str, kind: ProofKind, to: &str, token: &[u8; 32]) ->
             format!("https://{host}/auth/recovery#c.{}.{t}", hex(&case)),
         ),
     };
+    // ADR-008 "Registration code" (Daniel, 2026-11-22): the registration
+    // email carries a 6-digit code beside the link. Both name one proof.
+    let (code, once) = match kind {
+        ProofKind::Signup => {
+            let c = fstp_auth::ceremony::signup_code(token);
+            (
+                format!(
+                    "\n\nOr type this code on the sign-up page: {}",
+                    String::from_utf8_lossy(&c)
+                ),
+                "The link and the code work once, for 15 minutes.",
+            )
+        }
+        _ => (String::new(), "The link works once."),
+    };
     OutgoingMail {
         to: to.to_owned(),
         subject: subject.to_owned(),
         text: format!(
-            "{intro}\n\n{link}\n\nThe link works once. If you did not ask for this, you can ignore this message."
+            "{intro}\n\n{link}{code}\n\n{once} If you did not ask for this, you can ignore this message."
         ),
     }
 }
@@ -534,6 +549,12 @@ mod tests {
     /// nor its link.
     #[test]
     fn r_nf_02_outgoing_mail_debug_shows_nothing() {
+        // The registration email carries the code of its token (ADR-008).
+        let code = fstp_auth::ceremony::signup_code(&[7; 32]);
+        let m = proof_message("h.test", ProofKind::Signup, "a@b.test", &[7; 32]);
+        assert!(m.text.contains(std::str::from_utf8(&code).unwrap()));
+        let magic = proof_message("h.test", ProofKind::MagicLink, "a@b.test", &[7; 32]);
+        assert!(!magic.text.contains("code"));
         let m = proof_message("h.test", ProofKind::Signup, "a@b.test", &[7; 32]);
         assert_eq!(format!("{m:?}"), "OutgoingMail(..)");
     }

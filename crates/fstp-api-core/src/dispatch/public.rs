@@ -341,7 +341,7 @@ pub(super) async fn read<P: Seams>(
     let chrome = Chrome {
         stylesheet: sheet,
         funder: funder_footer(&call.state, programme),
-        logos: crate::brand::public_logos(call.state.tenant.state(), programme),
+        logos: crate::brand::public_chrome_logos(&call.state, programme),
     };
     let reply =
         answer(&view, kind, call_param(op), web, &chrome).map_err(|e| call.refuse(refused(e)))?;

@@ -14,6 +14,12 @@ export const ERASURE_CAUSES = ["retention_expiry", "erasure_request", "cell_eras
 /** One cause. */
 export type ErasureCause = (typeof ERASURE_CAUSES)[number];
 
+/** What an erased text held, as `fstp_access::ERASURE_KINDS` names them (ADR-007, lane L33). */
+export const ERASURE_KINDS = ["text", "display_name"] as const;
+
+/** One kind. */
+export type ErasureKind = (typeof ERASURE_KINDS)[number];
+
 /** One erasure-log row. */
 export interface ErasureEntry {
   readonly text: string;
@@ -21,6 +27,10 @@ export interface ErasureEntry {
   readonly grant: string | null;
   readonly requestedAt: string;
   readonly completedAt: string | null;
+  /** What the text held (lane L33). */
+  readonly kind: ErasureKind;
+  /** The root epoch whose destruction completed the erasure, once known (I-81). */
+  readonly destroyedEpoch: string | null;
 }
 
 /** One grant whose retention ended. */
@@ -54,11 +64,13 @@ function record(v: unknown): Readonly<Record<string, unknown>> | null {
 function entry(v: unknown): ErasureEntry | null {
   const o = record(v);
   if (o === null) return null;
-  const { text, cause, grant, requested_at: requestedAt, completed_at: completedAt } = o;
+  const { text, cause, grant, requested_at: requestedAt, completed_at: completedAt, kind, destroyed_epoch: destroyedEpoch } = o;
   if (!isId(text) || !isCause(cause) || !isId(requestedAt)) return null;
   if (grant !== null && !isId(grant)) return null;
   if (completedAt !== null && !isId(completedAt)) return null;
-  return Object.freeze({ text, cause, grant, requestedAt, completedAt });
+  if (typeof kind !== "string" || !(ERASURE_KINDS as readonly string[]).includes(kind)) return null;
+  if (destroyedEpoch !== null && !isId(destroyedEpoch)) return null;
+  return Object.freeze({ text, cause, grant, requestedAt, completedAt, kind: kind as ErasureKind, destroyedEpoch });
 }
 
 function ended(v: unknown): RetentionEnded | null {

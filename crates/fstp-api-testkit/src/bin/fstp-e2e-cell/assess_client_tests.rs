@@ -454,6 +454,25 @@ fn adr033_coordinator_agent_assesses_a_proposal_end_to_end() {
     let (by, run) = run.unwrap();
     assert_eq!(by, COORDINATOR);
     assert_eq!(run.model.0, MODEL);
+    // R-LA-07, P-22 (ADR-033 record of lane L31): the raw replies are one
+    // sealed confidential text of the proposal, with the prompt set and
+    // the input digests.
+    let raw = run.raw.expect("the sealed raw trace");
+    let held = inner
+        .ports
+        .texts
+        .peek(fstp_api_core::port::TextRef(raw.id().raw()))
+        .expect("the trace text");
+    let held = String::from_utf8(held).unwrap();
+    assert!(
+        held.contains(&s(&input, "input_digest")),
+        "the input digest"
+    );
+    assert!(held.contains("\"replies\""), "the replies");
+    assert_eq!(
+        raw.digest(),
+        fstp_domain::id::ContentDigest::from_bytes(fstp_crypto::sha256(held.as_bytes()))
+    );
     assert_eq!(run.trace, mine[0].trace);
     // The deterministic integrity scan found w's injection at submission.
     assert!(
@@ -1018,4 +1037,203 @@ fn adr035_i03_a_conflicted_coordinator_cannot_release() {
             .findings
             .held(ProposalId::from_raw(v))
     );
+}
+
+/// Runs a client assessment of `p` with no reply, as the coordinator.
+fn run_empty(inner: &Inner, p: u128) {
+    let t = token(inner, COORDINATOR, &[Scope::AssessRun]);
+    declare(inner, p);
+    let input = tool(
+        inner,
+        &t,
+        "fstp_assessment_get_input",
+        &format!(r#"{{"proposal":"{p}"}}"#),
+    )
+    .unwrap();
+    tool(
+        inner,
+        &t,
+        "fstp_assessment_submit",
+        &submission(&input, MODEL, Vec::new()),
+    )
+    .unwrap();
+}
+
+/// The coordinator's assignment of `reviewer` to `p`, run on the engine,
+/// with a fresh assignment id and handle.
+fn assign(inner: &Inner, p: u128, reviewer: AccountId, n: u8) -> Result<(), String> {
+    use fstp_domain_testkit::r#gen::roster::{Flags, Step};
+    tick(inner);
+    let step = Step::by(
+        COORDINATOR,
+        Flags::NONE,
+        fstp_domain::command::Command::Assign {
+            assignment: fstp_domain::id::AssignmentId::from_raw(990_000 + u128::from(n)),
+            proposal: ProposalId::from_raw(p),
+            reviewer,
+            kind: fstp_domain::assignment::AssignmentKind::Reviewer,
+            handle: Some(fstp_domain::id::Handle::from_bytes([n; 16])),
+        },
+    );
+    let ctx = step.ctx(
+        inner.ports.clock.now(),
+        fstp_domain::id::CommandId::from_bytes([n; 16]),
+    );
+    inner
+        .ports
+        .engine
+        .setup_step(&step.cmd, ctx)
+        .map(|_| ())
+        .map_err(|e| format!("{e}"))
+}
+
+/// ADR-033 record of lane L31 (Daniel, 2026-11-22), I-03: an account that
+/// recorded the AI assessment of a proposal is never assigned to review
+/// it. The coordinator who ran it on x, and who also holds a committee
+/// binding, is refused on x under I-03, while the same assignment on a
+/// proposal it did not assess meets no such refusal.
+#[test]
+fn adr033_l31_i03_the_runner_is_never_assigned_to_review_it() {
+    use fstp_domain_testkit::r#gen::roster;
+    let (inner, _) = scene();
+    let x: u128 = 1001;
+    run_empty(&inner, x);
+    tick(&inner);
+    let mut grant = roster::grant(
+        fstp_domain::id::BindingId::from_raw(990_100),
+        COORDINATOR,
+        fstp_domain::id::ProgrammeId::from_raw(1),
+        fstp_domain::roles::Role::CommitteeMember,
+        inner.ports.clock.now(),
+    );
+    if let fstp_domain::command::Command::GrantRole { organisation, .. } = &mut grant.cmd {
+        *organisation = Some(fstp_domain_testkit::r#gen::review::O3);
+    }
+    let ctx = grant.ctx(
+        inner.ports.clock.now(),
+        fstp_domain::id::CommandId::from_bytes([0xc0; 16]),
+    );
+    inner.ports.engine.setup_step(&grant.cmd, ctx).unwrap();
+    let refused = assign(&inner, x, COORDINATOR, 1).unwrap_err();
+    assert!(
+        refused.contains("I-03") || refused.contains("I03"),
+        "{refused}"
+    );
+    let other = assign(&inner, 1002, COORDINATOR, 2);
+    assert!(
+        other
+            .as_ref()
+            .err()
+            .is_none_or(|e| !e.contains("I-03") && !e.contains("I03")),
+        "{other:?}"
+    );
+}
+
+/// The lead of proposal `p`: its held Applicant binding.
+fn lead_of(inner: &Inner, p: u128) -> AccountId {
+    inner
+        .ports
+        .engine
+        .state()
+        .core
+        .roster()
+        .bindings()
+        .find(|(_, b)| {
+            b.held()
+                && b.proposal() == Some(ProposalId::from_raw(p))
+                && b.role == fstp_domain::roles::Role::Applicant
+        })
+        .map(|(_, b)| b.account)
+        .expect("the lead")
+}
+
+/// M7 Q4, I-17, TH-60 (ADR-033 record of lane L31, Daniel 2026-11-22):
+/// the team's verified names and date of birth, which the vault holds, are
+/// masked in the assessment input and in the agent's content view, with
+/// the same placeholders, while the coordinator reads the text as
+/// submitted in the web. The synthetic legal name is chosen from words of
+/// the corpus narrative, so the text holds it.
+#[test]
+fn m7_q4_i17_vault_masks_team_names_before_text_leaves_for_an_agent() {
+    crate::assess::set_test_p75(true);
+    let (inner, _) = scene();
+    crate::assess::set_test_p75(false);
+    let x: u128 = 1001;
+    inner
+        .ports
+        .vault
+        .set_legal_name(lead_of(&inner, x), "Vynaezor", "Oskvy", Some("1990-04-07"));
+    declare(&inner, x);
+    let web_view = web(
+        &inner,
+        COORDINATOR,
+        fstp_api_core::decode::Method::Get,
+        &format!("/proposals/{x}/content"),
+        "",
+    )
+    .unwrap();
+    assert!(
+        s(&web_view, "text").contains("Vynaezor"),
+        "the web shows the text as submitted"
+    );
+
+    let t = token(&inner, COORDINATOR, &[Scope::AssessRun]);
+    let input = tool(
+        &inner,
+        &t,
+        "fstp_assessment_get_input",
+        &format!(r#"{{"proposal":"{x}"}}"#),
+    )
+    .unwrap();
+    let n = narrative(&input);
+    assert!(
+        !n.to_lowercase().contains("vynaezor"),
+        "the input masks the name"
+    );
+    assert!(n.contains("[PERSON-1]"), "{n}");
+
+    let r = token(&inner, COORDINATOR, &[Scope::ReviewRead]);
+    let agent_view = tool(
+        &inner,
+        &r,
+        "fstp_get_proposal_content",
+        &format!(r#"{{"proposal":"{x}"}}"#),
+    )
+    .unwrap();
+    let text = s(&agent_view, "text");
+    assert!(
+        !text.to_lowercase().contains("vynaezor"),
+        "the agent view masks the name"
+    );
+    assert!(text.contains("[PERSON-1]"), "{text}");
+}
+
+/// M7 Q4, NOTE 2 of `overview.md`: a vault that cannot mask fails the
+/// assessment input and the agent's content view closed. No text leaves.
+#[test]
+fn m7_q4_a_vault_that_cannot_mask_lets_no_text_leave() {
+    crate::assess::set_test_p75(true);
+    let (inner, _) = scene();
+    crate::assess::set_test_p75(false);
+    let x: u128 = 1001;
+    declare(&inner, x);
+    inner.ports.vault.set_mask_down(true);
+    let t = token(&inner, COORDINATOR, &[Scope::AssessRun, Scope::ReviewRead]);
+    for (tool_name, arg) in [
+        (
+            "fstp_assessment_get_input",
+            format!(r#"{{"proposal":"{x}"}}"#),
+        ),
+        (
+            "fstp_get_proposal_content",
+            format!(r#"{{"proposal":"{x}"}}"#),
+        ),
+    ] {
+        let e = tool(&inner, &t, tool_name, &arg).unwrap_err();
+        assert!(
+            e.contains("unavailable") || e.contains("Unavailable"),
+            "{tool_name}: {e}"
+        );
+        assert!(!e.contains("Problem"), "{tool_name}: {e}");
+    }
 }

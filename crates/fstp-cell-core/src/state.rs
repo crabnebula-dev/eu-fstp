@@ -519,6 +519,15 @@ pub struct ErasureEntry {
     pub cause: u16,
     /// The account that authorised the erasure.
     pub by: AccountId,
+    /// What the text held, as a closed code: a ledger text
+    /// (`crate::ERASURE_KIND_LEDGER_TEXT`) or a keystore text such as a
+    /// display name (`crate::KEYSTORE_ERASURE_KINDS`, lane L33).
+    pub kind: u8,
+    /// The root epoch whose destruction completed the erasure, once the
+    /// erasure runner recorded it (lane L33).
+    pub destroyed_epoch: Option<u64>,
+    /// When the erasure runner recorded that destruction.
+    pub destroyed_at: Option<Timestamp>,
 }
 
 /// What the gate needs of one binding that the M2 roster does not keep.
@@ -679,6 +688,11 @@ impl CellState {
     /// A text with an entry resolves to the entry, never to the text.
     pub fn erasure(&self, id: [u8; 16]) -> Option<ErasureEntry> {
         self.erasures.get(&id).copied()
+    }
+
+    /// Every entry of the erasure log, by text id (ADR-007, lane L33).
+    pub fn erasures(&self) -> impl Iterator<Item = ([u8; 16], ErasureEntry)> + '_ {
+        self.erasures.iter().map(|(id, e)| (*id, *e))
     }
 
     /// Whether root epoch `epoch` was recorded as destroyed.
@@ -1358,6 +1372,9 @@ fn fold_text(s: &mut CellState, at: Timestamp, r: &TextRecord) -> Result<(), Fol
                         completed_at: None,
                         cause: *cause,
                         by: *by,
+                        kind: crate::ERASURE_KIND_LEDGER_TEXT,
+                        destroyed_epoch: None,
+                        destroyed_at: None,
                     },
                 );
             }
@@ -1385,6 +1402,67 @@ fn fold_key(s: &mut CellState, at: Timestamp, r: &KeyRecord) -> Result<(), FoldE
         KeyRecord::EpochDestroyed { epoch, .. } => {
             if !s.destroyed_epochs.insert(*epoch) {
                 return Err(duplicate());
+            }
+        }
+        // ADR-007 section "Built by lane L33": the request entry of a
+        // keystore text that no ledger record names.
+        KeyRecord::KeystoreErasureRequested {
+            ids,
+            cause,
+            by,
+            kind,
+        } => {
+            if ids.is_empty() || !crate::KEYSTORE_ERASURE_KINDS.contains(kind) {
+                return Err(inconsistent());
+            }
+            let mut seen = BTreeSet::new();
+            for id in ids {
+                if !seen.insert(*id) || s.erasures.contains_key(id) {
+                    return Err(duplicate());
+                }
+                if s.texts.contains_key(id) {
+                    return Err(inconsistent());
+                }
+            }
+            for id in ids {
+                s.erasures.insert(
+                    *id,
+                    ErasureEntry {
+                        requested_at: at,
+                        completed_at: None,
+                        cause: *cause,
+                        by: *by,
+                        kind: *kind,
+                        destroyed_epoch: None,
+                        destroyed_at: None,
+                    },
+                );
+            }
+        }
+        // The destruction of `epoch` completed these erasures (I-81).
+        KeyRecord::ErasuresCompleted { epoch, ids } => {
+            if ids.is_empty() || !s.destroyed_epochs.contains(epoch) {
+                return Err(inconsistent());
+            }
+            let mut seen = BTreeSet::new();
+            for id in ids {
+                if !seen.insert(*id) {
+                    return Err(duplicate());
+                }
+                match s.erasures.get(id) {
+                    Some(e) if e.destroyed_epoch.is_none() => {}
+                    Some(_) => return Err(duplicate()),
+                    None => return Err(unknown()),
+                }
+            }
+            for id in ids {
+                if let Some(e) = s.erasures.get_mut(id) {
+                    e.destroyed_epoch = Some(*epoch);
+                    e.destroyed_at = Some(at);
+                    if e.completed_at.is_none() {
+                        e.completed_at = Some(at);
+                    }
+                }
             }
         }
     }

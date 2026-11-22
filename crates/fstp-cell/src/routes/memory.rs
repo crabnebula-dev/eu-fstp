@@ -566,8 +566,9 @@ impl Backend for MemoryBackend {
         ready(Ok(Vec::new()))
     }
 
+    /// The erasure log of the ledger (ADR-007 section "Built by lane L33").
     fn erasures(&self) -> impl Future<Output = Result<Vec<ErasureRow>, BackendFault>> + Send {
-        ready(Ok(Vec::new()))
+        ready(self.with(|m| super::backend::log_rows(&m.state())))
     }
 }
 

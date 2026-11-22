@@ -67,7 +67,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use fstp_api_core::port::DisplayNameSet;
+use fstp_api_core::port::{DisplayNameSet, ErasureCause};
 use fstp_cell_core::gate::{self, Action};
 use fstp_cell_core::{CellCommand, CellState, KeyCommand, SystemTask, system_command_id};
 use fstp_crypto::aead;
@@ -318,6 +318,17 @@ fn digest_key(sk: &HybridSecretKey, purpose: Purpose) -> Result<SealKey, CellErr
 /// The keyed digest of the normalised `address` under `key`.
 fn keyed_digest(key: &SealKey, address: &[u8]) -> [u8; 32] {
     fstp_crypto::hmac_sha256(key.expose(), address)
+}
+
+/// The erasure log of the cell (ADR-007 section "Built by lane L33"): every
+/// entry of the ledger's state, oldest request first, then by text id. A
+/// ledger text's entry comes from `EraseTexts`, a keystore text's from
+/// `KeystoreErasureRequested`, and the destroyed epoch of either from
+/// `ErasuresCompleted`.
+pub fn erasure_log(state: &CellState) -> Vec<([u8; 16], fstp_cell_core::state::ErasureEntry)> {
+    let mut out: Vec<_> = state.erasures().collect();
+    out.sort_by_key(|(id, e)| (e.requested_at, *id));
+    out
 }
 
 /// The durable key state of one chain: what survives a crash.
@@ -1736,9 +1747,26 @@ impl<C: Custody> ErasureRunner<C> {
             });
         }
         if let Some(old) = current {
+            // ADR-007 section "Built by lane L33": the erasure log names the
+            // request, with the account as its authoriser and the kind of a
+            // display name, before the chain state takes it. A fixed id per
+            // text makes a retry append nothing twice.
+            let mut suffix = [b'r'; 8];
+            for (d, s) in suffix.iter_mut().skip(1).zip(old.text.iter()) {
+                *d = *s;
+            }
+            self.record(
+                KeyCommand::RecordKeystoreErasure {
+                    ids: vec![old.text],
+                    cause: ErasureCause::ErasureRequest.code(),
+                    by: account,
+                    kind: fstp_cell_core::ERASURE_KIND_DISPLAY_NAME,
+                },
+                system_command_id(suffix),
+            )
+            .await?;
             // The replaced or cleared name is erased at once (ADR-007,
-            // SA-11): its request joins the chain state directly, since no
-            // ledger record names a display name text.
+            // SA-11): its request joins the chain state directly.
             let dek = self
                 .store
                 .texts
@@ -2376,10 +2404,49 @@ impl<C: Custody> ErasureRunner<C> {
             .map_err(|_| keys_err("planner"))?
             .ok_or(keys_err("planner"))?;
         if let Step::Complete { erased, .. } = &step {
+            self.record_completions(old, erased).await?;
             self.erased.extend(erased.iter().map(|d| d.0));
         }
         self.apply_durable(&step)?;
         Ok(ErasureEvent::CompletionRecorded { epoch: old })
+    }
+
+    /// Step 7, the erasure log (ADR-007 section "Built by lane L33", I-81):
+    /// the destruction of epoch `old` completed the erasure of every text
+    /// whose data key is in `erased` and that the log names. At most
+    /// `MAX_TEXT_IDS` texts go in one record, each record under a fixed id
+    /// of the epoch and its place, so a step repeated after a crash
+    /// appends nothing twice.
+    async fn record_completions(&self, old: u64, erased: &[DekId]) -> Result<(), CellError> {
+        let erased: BTreeSet<DekId> = erased.iter().copied().collect();
+        let state = self.engine.state();
+        let ids: Vec<[u8; 16]> = self
+            .store
+            .texts
+            .iter()
+            .filter(|(id, t)| erased.contains(&t.dek) && state.erasure(**id).is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        let epoch = u32::try_from(old)
+            .map_err(|_| keys_err("epoch"))?
+            .to_be_bytes();
+        for (n, chunk) in ids.chunks(fstp_cell_core::codec::MAX_TEXT_IDS).enumerate() {
+            let place = u16::try_from(n)
+                .map_err(|_| keys_err("completion records"))?
+                .to_be_bytes();
+            let suffix = [
+                b'd', b'n', place[0], place[1], epoch[0], epoch[1], epoch[2], epoch[3],
+            ];
+            self.record(
+                KeyCommand::RecordErasuresCompleted {
+                    epoch: old,
+                    ids: chunk.to_vec(),
+                },
+                system_command_id(suffix),
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     fn apply_durable(&mut self, step: &Step) -> Result<(), CellError> {

@@ -201,7 +201,7 @@ fstp-report = { path = "crates/fstp-report" }
 fstp-report-core = { path = "crates/fstp-report-core" }
 fstp-smtp = { path = "crates/fstp-smtp" }
 # M7, docs/handoff/m7-design.md section 10.
-fstp-infer = { path = "crates/fstp-infer" }
+fstp-infer = { path = "crates/fstp-infer", default-features = false }
 fstp-injscan = { path = "crates/fstp-injscan" }
 fstp-sigval = { path = "crates/fstp-sigval" }
 fstp-contract-core = { path = "crates/fstp-contract-core" }

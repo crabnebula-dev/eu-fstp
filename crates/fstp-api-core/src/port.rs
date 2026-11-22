@@ -910,6 +910,35 @@ pub trait Vault: AsyncIdentityOracle {
         programme: ProgrammeId,
         orgs: &BTreeSet<OrganisationId>,
     ) -> impl Future<Output = Result<Answer, OracleDown>> + Send;
+    /// The name mask (M7 Q4, ADR-033 record of lane L31, `overview.md`
+    /// "Masks"): for each of `texts`, the spans that hold a verified name
+    /// or date of birth of one of `team`, a proposal's team from the
+    /// cell's own bindings in ascending order. The vault answers spans
+    /// only, into the texts the cell sent. The default fails closed.
+    fn mask_names(
+        &self,
+        team: &[AccountId],
+        texts: &[String],
+    ) -> impl Future<Output = Result<Vec<Vec<NameMaskSpan>>, OracleDown>> + Send {
+        let _ = (team, texts);
+        std::future::ready(Err(OracleDown))
+    }
+}
+
+/// One span of the vault name mask (M7 Q4, ADR-033 record of lane L31):
+/// byte offsets into the text the cell sent, the person by its index in
+/// the team the cell named, and whether it is a date of birth rather than
+/// a name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NameMaskSpan {
+    /// The first byte offset.
+    pub start: u32,
+    /// The byte offset just after the span.
+    pub end: u32,
+    /// The person, by its index in the team the cell named.
+    pub person: u32,
+    /// Whether the span holds a date of birth.
+    pub birth_date: bool,
 }
 
 /// The asynchronous driver over the M2 pure functions, with a dry run.
@@ -1297,7 +1326,12 @@ impl ErasureCause {
         }
     }
 
-    /// The cause of a wire name.
+    /// The cause of the closed code `code`, if it is one (lane L33).
+    pub fn from_code(code: u16) -> Option<ErasureCause> {
+        ErasureCause::ALL.into_iter().find(|c| c.code() == code)
+    }
+
+    /// The cause of the wire name `s`, if it is one.
     pub fn from_wire(s: &str) -> Option<ErasureCause> {
         ErasureCause::ALL.into_iter().find(|c| c.wire() == s)
     }
@@ -1318,6 +1352,33 @@ pub struct ErasureRow {
     pub requested_at: Timestamp,
     /// When it completed, once it did.
     pub completed_at: Option<Timestamp>,
+    /// What the text held (lane L33).
+    pub kind: ErasureKind,
+    /// The root epoch whose destruction completed the erasure, once the
+    /// store knows it (I-81, lane L33).
+    pub destroyed_epoch: Option<u64>,
+}
+
+/// What an erased text held (ADR-007 section "Built by lane L33").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ErasureKind {
+    /// A text the ledger names.
+    Text,
+    /// A display name an account replaced or cleared (SA-11).
+    DisplayName,
+}
+
+impl ErasureKind {
+    /// Every kind.
+    pub const ALL: [ErasureKind; 2] = [ErasureKind::Text, ErasureKind::DisplayName];
+
+    /// The wire name (`fstp_access::ERASURE_KINDS`).
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ErasureKind::Text => "text",
+            ErasureKind::DisplayName => "display_name",
+        }
+    }
 }
 
 /// Blobs, such as uploaded import documents (R-PG-02): content-addressed,
@@ -1860,6 +1921,8 @@ pub(crate) trait Dispatch: Send + Sync {
     fn brand(&self) -> Option<crate::Brand>;
     /// The paths of the tenant's logos (ADR-030).
     fn tenant_logos(&self) -> crate::brand::LogoPaths;
+    /// The funding cards and the tenant defaults (ADR-034).
+    fn funding(&self) -> fstp_json::Value;
     /// The bytes of the current logo at `path` (ADR-030).
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a>;
     /// The theme of the session `cred` names (ADR-030).
@@ -1905,6 +1968,10 @@ impl<P: CellPorts> Dispatch for Core<P> {
     fn tenant_logos(&self) -> crate::brand::LogoPaths {
         let state = self.ports.engine().snapshot();
         crate::brand::paths_of(state.tenant.state(), fstp_tenant::LogoOwner::Tenant)
+    }
+
+    fn funding(&self) -> fstp_json::Value {
+        crate::funding::answer(&self.ports.engine().snapshot())
     }
 
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a> {
@@ -2010,6 +2077,24 @@ pub fn api_core_with_signing<P: CellPorts>(
     }
 }
 
+/// The funding card of `programme` with the tenant's defaults filling its
+/// gaps, for the cell's messages (ADR-034, I-69), or `None` when the
+/// creator holds no draft of it.
+pub fn funding_card(
+    state: &fstp_engine::EngineState,
+    programme: fstp_domain::id::ProgrammeId,
+) -> Option<fstp_brand::funding::FundingCard> {
+    crate::funding::card(state, programme)
+}
+
+/// The logos of a public page of `programme` with its funding card, for
+/// the cell's public pages (ADR-030, ADR-034, I-69).
+pub fn public_chrome_logos(
+    state: &fstp_engine::EngineState,
+    programme: fstp_domain::id::ProgrammeId,
+) -> fstp_public::PublicLogos {
+    crate::brand::public_chrome_logos(state, programme)
+}
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

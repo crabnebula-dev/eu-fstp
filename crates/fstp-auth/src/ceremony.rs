@@ -358,6 +358,43 @@ pub fn enrol_by_invitation(
     Ok(invitation_records(inv, &cred))
 }
 
+/// The digits of a registration code (Daniel, 2026-11-22, ADR-008
+/// "Registration code").
+pub const SIGNUP_CODE_DIGITS: usize = 6;
+
+/// The 6-digit registration code of the proof `token`: the first 8 bytes
+/// of `SHA-256("fstp-signup-code-v1" || token)`, as a big-endian number,
+/// modulo one million, in ASCII digits with leading zeros. The email
+/// carries it beside the link, so both name the same proof. The token is
+/// 256 random bits, so the code tells nothing useful about it.
+pub fn signup_code(token: &[u8; 32]) -> [u8; SIGNUP_CODE_DIGITS] {
+    let mut input = b"fstp-signup-code-v1".to_vec();
+    input.extend_from_slice(token);
+    let d = fstp_crypto::sha256(&input);
+    let mut first = [0u8; 8];
+    first.copy_from_slice(d.get(..8).unwrap_or(&[0; 8]));
+    let mut n = u64::from_be_bytes(first) % 1_000_000;
+    let mut out = [b'0'; SIGNUP_CODE_DIGITS];
+    for slot in out.iter_mut().rev() {
+        // `n % 10` is below 10, so the cast keeps it.
+        *slot = b'0'.saturating_add(u8::try_from(n % 10).unwrap_or(0));
+        n /= 10;
+    }
+    out
+}
+
+/// The code `s` spells: exactly [`SIGNUP_CODE_DIGITS`] ASCII digits, or
+/// `None`.
+pub fn parse_signup_code(s: &str) -> Option<[u8; SIGNUP_CODE_DIGITS]> {
+    let b = s.as_bytes();
+    if b.len() != SIGNUP_CODE_DIGITS || !b.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let mut out = [0u8; SIGNUP_CODE_DIGITS];
+    out.copy_from_slice(b);
+    Some(out)
+}
+
 /// The self-registration rule: a new account, holding Receiving roles
 /// only, whose email was proven earlier in the same ceremony.
 pub const fn admit_self_registration(

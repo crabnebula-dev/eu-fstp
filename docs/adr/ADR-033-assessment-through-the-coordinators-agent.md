@@ -28,7 +28,7 @@ No invariant or SPEC rule forbids the approach below. Three rules bear on it, an
 | --- | --- | --- |
 | Who runs it | The FSTP coordinator of the call's programme, with an active binding. The proposal must be one the coordinator may read in the web: SUBMITTED, or STAGE1 and STAGE2 under P-10 "operator staff only". The coordinator must have declared on the proposal with no conflict, and the cell asks the vault again on every read (I-03) | Roles table: the coordinator runs the knock-out read; `fstp-access` content rule; R-AC-01 |
 | Not the administrator | A tenant admin has no proposal content access (roles table) and no conflict declaration, so I-03 could not hold. An admin who should run it holds an FSTP coordinator binding in the programme | Roles table; I-03 |
-| Reviewer independence | A coordinator who holds a reviewer or IRC assignment on the proposal, in any status, is refused. The findings anchor the scores of the assigned reviewers, so none of them produces the findings of a proposal they score. Interim, pending Daniel: the reverse, assigning a coordinator who already ran the assessment, is not refused | SoD-01 allows a coordinator to be a committee member (SoD-02 bars IRC only); P-28 NOTE 3 |
+| Reviewer independence | A coordinator who holds a reviewer or IRC assignment on the proposal, in any status, is refused. The findings anchor the scores of the assigned reviewers, so none of them produces the findings of a proposal they score. The reverse is refused too: an account that recorded the AI assessment of a proposal is never assigned to review it (decided by Daniel on 2026-11-22, record of lane L31) | SoD-01 allows a coordinator to be a committee member (SoD-02 bars IRC only); P-28 NOTE 3 |
 | The switch | Per programme, off by default. The programme's P-21 provider is the reserved token `coordinator_agent`. P-21 is frozen at publication (I-12), so the choice holds for the whole call and is fixed before applicants submit. Every other provider value leaves the client path closed | P-21; I-11; I-12 |
 | Why not a new parameter | A new frozen parameter would be a key of `FrozenValues::opaque`. `fstp_domain::policy::validate` refuses a version without every frozen key (I-12), so every stored policy version and every pilot programme would fail. P-21 already names the provider and is frozen | `policy::validate` |
 | Agents never set the switch | Through MCP, a creator save or clear that names P-21 is prepared, like P-75 and P-77. The person confirms it in the platform | ADR-013 "P-75 and P-77 through MCP" (Daniel, 2026-11-20), applied to P-21 |
@@ -58,12 +58,11 @@ Each has a web route under the same role (I-84). The queue lists ids and states 
 
 ## Residual: the client harness
 
-Claude Code wraps the assessor agent in its own system text, and the version of that text follows the client's updates. The pinned prompt is the only assessment instruction, but it is not the only text the model sees. The run records the model the client reports. The agent client's registered name is in the audit entry. Interim, pending Daniel: this lane reads "instructions come only from the pinned prompt" as "no instruction comes from submission or tenant text", which the design keeps.
+Claude Code wraps the assessor agent in its own system text, and the version of that text follows the client's updates. The pinned prompt is the only assessment instruction, but it is not the only text the model sees. The run records the model the client reports. The agent client's registered name is in the audit entry. Decided by Daniel on 2026-11-22: no instruction ever comes from submission or tenant text, and Claude Code's own system prompt is acceptable.
 
 ## Known gaps, each interim, pending Daniel
 
-- Names are not stripped in production. Stripping legal names needs the vault mask query of M7 Q4, which is not built. The cell strips emails, phone numbers and IBAN-shaped strings. The coordinator already reads the unstripped text in the web, so no new reader sees a name. The provider does.
-- No raw reply is retained. Production has no trace store (R-LA-07). The ledger keeps the digests and the accepted findings. Refused replies keep stage and code only.
+- Closed by lane L31: the vault name mask and the sealed raw traces (record of lane L31 below).
 - No fallback switch for a client-run call. `Regenerate` stays a system command, and the client cannot regenerate a whole call in one step (P-21 NOTE 10).
 - The model id is the client's own report. The cell cannot verify it.
 
@@ -108,4 +107,42 @@ The PostgreSQL authorisation sample (`t_authz_matrix_pg_sample`) now builds its 
 | Third-party crates added by this ADR | None | 2026-11-22 |
 | Reserved P-21 provider | `coordinator_agent` | 2026-11-22 |
 | New scope | `assess:run` | 2026-11-22 |
-| Dependency tree | `fstp-api-core` now depends on `fstp-assess` and `fstp-infer` for stage 8 and the prompt set digest. `fstp-infer` carries its HTTP transport, so the API core's tree, and the lockfiles of five fuzz crates, now reach `fstp-http`, `fstp-tls` and their allowlisted crates (`rustls`, `ring`, `webpki-roots`). No new third-party crate enters the workspace, and deps-check passes. A feature that leaves the transport out of `fstp-infer` would shrink the tree | Interim, pending Daniel; CLAUDE.md dependency policy (a tree change needs review) |
+| Dependency tree | `fstp-api-core` depends on `fstp-assess` and `fstp-infer` without the `http` feature, so it reaches no TLS crate (record of lane L31) | 2026-11-22 |
+
+## Record of lane L31 (2026-11-22)
+
+Daniel decided six points on 2026-11-22. This record states each decision and how the lane builds it, before the code.
+
+| Topic | Decision or reading | Basis |
+| --- | --- | --- |
+| Who runs it | The FSTP coordinator only. The row "Who runs it" above stands, and the tenant admin stays excluded | Decided by Daniel on 2026-11-22 |
+| The client harness | No instruction ever comes from submission or tenant text. Claude Code's own system prompt is acceptable | Decided by Daniel on 2026-11-22 |
+| The runner is never a reviewer | `Assign`, alone or in a `review.assign_batch`, is refused under I-03 when the assignee recorded a client assessment of that proposal. The runner's act makes the conflict, never a finding's content, so I-10 holds. The engine checks it beside the core, since the core never reads the finding store. The reference model states the rule. No matrix world holds such an assignee, so the matrices meet it only through its own tests | Decided by Daniel on 2026-11-22; I-03 |
+| Vault name mask | Built before the pilot runs assessment (M7 Q4). The cell sends the vault the proposal team's account ids, taken from its own bindings as for `HasConflict`, and the texts it is about to hand to an agent or a model. The vault resolves each account's verified identity, opens its sealed tuple inside the vault, and matches the family and given names and the date of birth. Names match word by word through `fstp_unorm::name_key`, words of two letters or more. Dates match in the ISO spelling and in day, month, year order with `.`, `/` or `-`. The vault answers spans only: byte offsets into the text sent, a person index in account order, and a class, name or date of birth | Decided by Daniel on 2026-11-22; I-17; ADR-029 |
+| Why spans | The cell holds the text already, so a span tells it only which part of its own text names a team member. It never receives a name or a date the text does not hold. Keyed digests of every name would let the cell test candidate names offline, so the vault sends none. Masked text would tell the cell the same as spans, at more bytes | I-17; I-86 |
+| R-NF-08 | The vault keeps nothing of the texts. The tuples stay sealed at rest under the vault's own keys, and are opened in the vault process only | R-NF-08 |
+| Bounds of the mask | At most 16 accounts, 3 texts and 192 KiB of text per request, and at most 120 mask requests per minute per vault. A compromised cell could still probe the mask with texts of its choosing within those bounds. Interim, pending Daniel | TH-01; residual |
+| Where the mask applies | Every text that leaves the cell for an agent or a model: the ADR-033 input and the agent view of the content tools (`review.read_content` and `irc.case` through MCP, ADR-035). The vault mask runs after the cell's own pattern stripping. Persons become `[PERSON-n]`, dates of birth `[BIRTHDATE-n]`. The web shows the text as submitted. A vault that cannot mask fails closed: no text leaves the cell | Decided by Daniel on 2026-11-22; TH-60; NOTE 2 of `overview.md` |
+| Spec | `03-architecture/overview.md` "Operations other than queries" gains a fifth kind, masks, with this decision | Decided by Daniel on 2026-11-22 |
+| Sealed raw traces | Each submission's raw replies, as the client sent them, with the prompt set digest, the input digest and the model, are stored as one confidential text of the proposal in the cell's text store, sealed at rest (R-NF-08). The `ClientAssessed` record names it. The proposal's texts are erased with the proposal's retention, which runs to the end of P-41, so P-22 holds. No read operation serves it. It is reached only through the audit path: the audit entries name its reference, and the appeal and calibration reads of `assessment.md` Traces are not built. Interim, pending Daniel: the trace read for appeals | Decided by Daniel on 2026-11-22; R-LA-07; P-22; ADR-007 |
+| Dependency tree | `fstp-infer` puts its HTTP transport behind the feature `http`. `fstp-assessor` and the test kit enable it. `fstp-api-core` does not, so its tree and the fuzz lockfiles return to the reviewed ones | Decided by Daniel on 2026-11-22; CLAUDE.md dependency policy |
+
+### Built by lane L31
+
+| ID | Test | Where |
+| --- | --- | --- |
+| M7 Q4, I-17, ADR-029 | `m7_q4_names_match_by_name_key_and_join`, `m7_q4_person_index_and_dates`, `r_nf_02_mask_person_debug_names_nothing` | `crates/fstp-unorm/src/mask.rs` |
+| M7 Q4, I-17 | `m7_q4_i17_spans_are_sound_and_mask_every_name_word` (property), fuzz target `mask_spans` | `crates/fstp-unorm` |
+| M7 Q4, TH-26 | `m7_q4_mask_request_and_answer_round_trip`, `m7_q4_mask_request_bounds`, `m7_q4_mask_answer_bounds` | `crates/fstp-vault-proto/tests/m7_q4_mask_codec.rs` |
+| M7 Q4, I-17, R-NF-08 | `m7_q4_i17_vault_masks_names_from_the_sealed_tuple`, on PostgreSQL with the real keystore; fuzz target `identity_tuple_decode` | `crates/fstp-vault` |
+| M7 Q4, I-17, TH-60 | `m7_q4_i17_vault_masks_team_names_before_text_leaves_for_an_agent`, `m7_q4_a_vault_that_cannot_mask_lets_no_text_leave` | `crates/fstp-api-testkit/src/bin/fstp-e2e-cell/assess_client_tests.rs` |
+| I-03 | `adr033_l31_store_names_the_runners_of_a_proposal`, `adr033_l31_i03_the_runner_is_never_assigned_to_review_it` | `crates/fstp-findings/tests/adr033_client_runs.rs`, the test cell |
+| R-LA-07, P-22 | the sealed trace in `adr033_coordinator_agent_assesses_a_proposal_end_to_end`; the `raw` member in the codecs, generator and fuzz seed `record_client_assessed_raw` | the test cell, `crates/fstp-findings` |
+
+Readings of lane L31, each interim, pending Daniel:
+
+- The mask lives in `fstp-unorm`, beside `name_key`, and `fstp-vault-core` re-exports it. The M3 layering rule keeps the test kit away from `fstp-vault-core`, and the synthetic vault must mask as the vault does.
+- A production tuple that is not one of `TUPLE_LABEL` refuses the mask as unavailable, so assessment of that team fails closed. The seeded vault of `fstp-celltest` reads such a tuple as holding no name.
+- The agent's content view records the content read before the vault masks it. A vault that cannot mask then refuses the call, with no text and no second audit entry.
+- A text over 64 KiB after the cell's pattern stripping cannot be sent to the vault, so its input fails closed.
+- `fstp-infer`'s `http` feature is on by default for the crate itself, and the workspace dependency turns default features off. `fstp-assessor` and the test kit ask for it.

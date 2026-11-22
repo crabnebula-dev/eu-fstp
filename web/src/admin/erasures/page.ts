@@ -67,14 +67,16 @@ function logList(t: I18n, r: ErasuresReply): Child[] {
       "ul",
       { id: "erasures-log" },
       r.erasures.map((e) =>
-        h("li", { "data-text": e.text, "data-cause": e.cause }, [
+        h("li", { "data-text": e.text, "data-cause": e.cause, "data-kind": e.kind }, [
           t.label("admin.erasures.log.row", {
             text: e.text,
+            kind: t.label(`admin.erasures.kind.${e.kind}`),
             grant: e.grant ?? t.label("admin.erasures.log.no_grant"),
             cause: t.label(`admin.erasures.cause.${e.cause}`),
             requested: dayOf(e.requestedAt),
             completed: e.completedAt === null ? t.label("admin.erasures.log.pending") : dayOf(e.completedAt),
           }),
+          ...(e.destroyedEpoch === null ? [] : [" ", t.label("admin.erasures.log.epoch", { epoch: e.destroyedEpoch })]),
         ]),
       ),
     ),

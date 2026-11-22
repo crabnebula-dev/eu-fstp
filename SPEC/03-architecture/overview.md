@@ -74,12 +74,13 @@ Identity attributes are released to Operations roles only in NEGOTIATION and lat
 
 ### Operations other than queries
 
-The queries are the vault's only answers to the application (decided 2026-10-28). The vault also takes four kinds of operation, and none of them returns an identity attribute to the application:
+The queries are the vault's only answers to the application (decided 2026-10-28). The vault also takes five kinds of operation, and none of them returns an identity attribute to the application:
 
 - **Writes** add a fact of a kind the vault holds. A person writes attributes, the P-17 country, affiliations, attestations, guardian consents and identity documents on the vault origin. The application writes only facts that carry no identity attributes, such as an I-54 relationship between two account ids.
 - **Releases** show identity attributes on the vault origin to an Operations role holder, only for a proposal in NEGOTIATION or later. Handles go only to the channel adapters.
 - **Acknowledgements** report that the application has recorded its reaction to a provisional fact. The vault then makes the fact effective (NOTE 4).
 - **Negotiation facts** tell the vault that a proposal has entered NEGOTIATION. The vault refuses a release for a subject that no negotiation fact lists. The one exception is the coordinator unmask ticket of ADR-023 (I-17 as amended 2026-11-15): the cell records the unmask first, and the vault admits that ticket kind without a negotiation fact.
+- **Masks** take texts the application is about to hand to an agent or a model, with the account ids of a proposal's team. The vault answers the byte spans of those texts that hold a team member's verified names or date of birth, so the application replaces them with placeholders. It returns no name, keeps nothing of the texts, and answers only about text the application already holds (decided by Daniel on 2026-11-22, `../docs/adr/ADR-033-assessment-through-the-coordinators-agent.md`, M7 Q4).
 
 From writes, the application learns only the resulting epoch change, through the change query.
 

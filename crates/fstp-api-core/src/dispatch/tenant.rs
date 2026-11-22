@@ -372,6 +372,13 @@ fn build<P: Seams>(
             let n = crate::tenant::notice_request(&op.request)?;
             Ok((n.command(crate::forms::text_ref(0, &n.summary)), None))
         }
+        // ADR-034: the funding card defaults, plain text only.
+        TenantKind::SetFundingDefaults => Ok((
+            TenantCommand::SetFundingDefaults {
+                defaults: crate::tenant::funding_defaults_request(&op.request)?,
+            },
+            None,
+        )),
         TenantKind::SetBranding => {
             let tokens = crate::tenant::branding_request(&op.request)?;
             let text = fstp_brand::canonical(&tokens);

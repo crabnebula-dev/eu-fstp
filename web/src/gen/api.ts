@@ -90,6 +90,7 @@ export type OpName =
   | "tenant.set_payment_mode"
   | "tenant.set_template_licence"
   | "tenant.set_guide_notice"
+  | "tenant.set_funding_defaults"
   | "admin.approvals"
   | "admin.approve_self_grant"
   | "admin.approve_recovery"
@@ -351,6 +352,7 @@ export interface OpParams {
   readonly "tenant.set_payment_mode": Readonly<Record<never, string>>;
   readonly "tenant.set_template_licence": Readonly<Record<never, string>>;
   readonly "tenant.set_guide_notice": Readonly<Record<never, string>>;
+  readonly "tenant.set_funding_defaults": Readonly<Record<never, string>>;
   readonly "admin.approvals": Readonly<Record<never, string>>;
   readonly "admin.approve_self_grant": { readonly "approval": string };
   readonly "admin.approve_recovery": { readonly "recovery": string };
@@ -585,6 +587,7 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.set_payment_mode",
   "tenant.set_template_licence",
   "tenant.set_guide_notice",
+  "tenant.set_funding_defaults",
   "admin.approvals",
   "admin.approve_self_grant",
   "admin.approve_recovery",
@@ -1253,6 +1256,20 @@ export const OPERATIONS: readonly Operation[] = [
     path: "/admin/settings/guide-notice",
     base: "api",
     segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "guide-notice" }],
+    params: [],
+    body: true,
+    highRisk: true,
+    binding: false,
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.set_funding_defaults",
+    method: "PUT",
+    path: "/admin/settings/funding-defaults",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "settings" }, { kind: "literal", text: "funding-defaults" }],
     params: [],
     body: true,
     highRisk: true,
@@ -5553,6 +5570,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "grant": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
           "requested_at": { schema: { kind: "id" }, optional: false },
           "completed_at": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["text", "display_name"] }, optional: false },
+          "destroyed_epoch": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
         },
       } }, optional: false },
       "retention_ended": { schema: { kind: "array", items: {

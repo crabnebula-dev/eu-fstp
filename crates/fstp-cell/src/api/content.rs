@@ -25,9 +25,10 @@ use fstp_api_core::pending::{
     OPEN_PER_ACCOUNT, PENDING_RETENTION_MICROS, PendingAction, PendingStatus,
 };
 use fstp_api_core::port::{
-    AgentClientId, BlobOwner, BlobRef, BlobStore, DisplayNameSet, PendingActions, PendingFuture,
-    PendingId, PendingInsertError, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass,
-    TextOwner, TextRef, TextStore, WorkspaceSlot, Workspaces,
+    AgentClientId, BlobOwner, BlobRef, BlobStore, DisplayNameSet, ErasureCause, ErasureKind,
+    ErasureRow, PendingActions, PendingFuture, PendingId, PendingInsertError, PortError,
+    PublicTextRef, SealOwner, Sealed, Sealer, TextClass, TextOwner, TextRef, TextStore,
+    WorkspaceSlot, Workspaces,
 };
 use fstp_domain::id::{AccountId, ProgrammeId, ProposalId};
 use fstp_domain::time::Timestamp;
@@ -148,6 +149,33 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
             (TextClass::Public, _, body) => Ok(body),
             _ => Err(PortError::Refused),
         }
+    }
+
+    /// The cell's erasure log (ADR-007 section "Built by lane L33"): every
+    /// entry of the ledger, oldest request first. A completion is the
+    /// destruction of the key's root epoch once the erasure runner recorded
+    /// it, and the `TextsErased` instant of a ledger text before. An entry
+    /// whose cause code is outside the closed list fails the read closed.
+    async fn erasures(&self) -> Result<Vec<ErasureRow>, PortError> {
+        let state = self.0.engine.state();
+        crate::tasks::erasure::erasure_log(&state)
+            .into_iter()
+            .map(|(id, e)| {
+                Ok(ErasureRow {
+                    text: TextRef(u128::from_be_bytes(id)),
+                    cause: ErasureCause::from_code(e.cause).ok_or(PortError::Unavailable)?,
+                    grant: None,
+                    requested_at: e.requested_at,
+                    completed_at: e.destroyed_at.or(e.completed_at),
+                    kind: if e.kind == fstp_cell_core::ERASURE_KIND_DISPLAY_NAME {
+                        ErasureKind::DisplayName
+                    } else {
+                        ErasureKind::Text
+                    },
+                    destroyed_epoch: e.destroyed_epoch,
+                })
+            })
+            .collect()
     }
 
     /// SA-11, SA-11 amendment (lane L26, ADR-004 section "Written by lane

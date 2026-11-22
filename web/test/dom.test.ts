@@ -117,7 +117,10 @@ test("adr014_dom_refuses_unsafe_urls_in_url_attributes", async () => {
   ];
   for (const [tag, attr] of cases) {
     for (const e of corpus) {
-      if (e.verdict === "accept") {
+      // ADR-034 (lead decision of 2026-11-22): the `href` of an `a` also
+      // takes a `mailto:` link to one address, and no other attribute does.
+      const mail = tag === "a" && d.mailtoHref(e.input) !== null;
+      if (e.verdict === "accept" || mail) {
         eq(asFake(d.h(tag, { [attr]: e.input })).getAttribute(attr), e.input, `${tag} ${attr}=${show(e.input)}`);
       } else {
         eq(refusalCode(d, () => d.h(tag, { [attr]: e.input }), `${tag} ${attr}=${show(e.input)}`), "url", "code");

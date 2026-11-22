@@ -42,6 +42,7 @@ import { anyObject, call, report } from "../ops.js";
 import { stepStates } from "../../studio/model.js";
 import { afterApprovalNote, frozenNote, kicker, nextControl, notOpenNote } from "../../studio/view.js";
 import { checkText, loadDraft, loadReport, queue, stepNav, stepTitle } from "./common.js";
+import { FUNDING_PATH, type FundingDefaults, decodeFunding } from "../../shell/funding.js";
 
 /**
  * The narrative fields, which `creator.edit_narrative` edits once the
@@ -50,6 +51,7 @@ import { checkText, loadDraft, loadReport, queue, stepNav, stepTitle } from "./c
 const NARRATIVE_KEYS: readonly string[] = [
   "funder.action_acronym",
   "funder.coordinator_name",
+  "funder.coordinator_contact",
   "identity.name",
   "identity.narrative",
   "identity.scope",
@@ -67,6 +69,28 @@ interface Shown {
   readonly editor: FieldEditor;
   /** Whether the draft holds template narrative for it that awaits acceptance. */
   pending: boolean;
+  /** Whether the editor shows an organisation default the draft does not hold yet (ADR-034). */
+  suggested: boolean;
+}
+
+/**
+ * ADR-034: the step 1 fields an empty draft fills from the organisation's
+ * funding card defaults (`tenant.set_funding_defaults`), so a new
+ * programme needs no typing. The value is saved with the step.
+ */
+const SUGGESTED: Readonly<Record<string, (d: FundingDefaults) => string>> = {
+  "funder.coordinator_name": (d) => d.name,
+  "funder.coordinator_contact": (d) => d.contact,
+};
+
+/** The organisation's funding card defaults, or null when none are set or they cannot be read. */
+async function fundingDefaults(): Promise<FundingDefaults | null> {
+  try {
+    const r = await fetch(FUNDING_PATH, { credentials: "same-origin", cache: "no-store", redirect: "error" });
+    return r.ok ? (decodeFunding(await r.json())?.defaults ?? null) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -120,18 +144,25 @@ export function mount(p: string, step: string): void {
   const write = queue();
   let draft: Draft | null = null;
   let shown: Shown[] = [];
+  let defaults: FundingDefaults | null = null;
 
   const render = (d: Draft): void => {
     clearProblems(fieldsBox);
     shown = fieldsOf(step).map((f) => {
       const pendingText = Object.hasOwn(d.pendingNarratives, f.key) ? d.pendingNarratives[f.key] : undefined;
-      const value = pendingText === undefined ? draftValue(d, f.key) : pendingValue(f, pendingText);
+      const held = pendingText === undefined ? draftValue(d, f.key) : pendingValue(f, pendingText);
+      const suggest = SUGGESTED[f.key];
+      const suggestion = held === null && defaults !== null && suggest !== undefined && d.status !== "active" ? suggest(defaults) : null;
+      const value = suggestion ?? held;
       const editor = fieldEditor(f, value, { mark: true, prefix: `f.${f.key}` });
+      if (suggestion !== null) {
+        editor.notes.append(h("p", { class: "fstp-note", "data-note": "funding-default" }, [t.label("creator.funding.suggested")]));
+      }
       const note = afterApprovalNote(f.key, d.status);
       if (note !== null) {
         editor.notes.append(note);
       }
-      const item: Shown = { key: f.key, editor, pending: pendingText !== undefined };
+      const item: Shown = { key: f.key, editor, pending: pendingText !== undefined, suggested: suggestion !== null };
       if (item.pending) {
         addAccept(item);
       } else if (NARRATIVE_KEYS.includes(f.key) && draftValue(d, f.key) !== null && d.status !== "active") {
@@ -213,11 +244,11 @@ export function mount(p: string, step: string): void {
     const fields: { field: string; value: unknown }[] = [];
     const problems: Problem[] = [];
     for (const x of shown) {
-      if (!x.editor.touched()) continue;
+      if (!x.editor.touched() && !x.suggested) continue;
       const r = x.editor.read();
       if (!r.ok) {
         problems.push(...r.problems);
-      } else if (canonicalJson(r.value) !== x.editor.initial || x.pending) {
+      } else if (canonicalJson(r.value) !== x.editor.initial || x.pending || x.suggested) {
         fields.push({ field: x.key, value: r.value });
       }
     }
@@ -292,6 +323,9 @@ export function mount(p: string, step: string): void {
   main.append(actions, status, h("h2", {}, [t.label("creator.step.checks")]), checks);
 
   void write(async () => {
+    if (step === "funder") {
+      defaults = await fundingDefaults();
+    }
     const d = await loadDraft(p, alert);
     if (d === null) return;
     draft = d;

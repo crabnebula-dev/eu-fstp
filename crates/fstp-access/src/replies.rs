@@ -311,6 +311,9 @@ pub const ERASURE_CAUSES: &[&str] = &[
     "verification_completed",
 ];
 
+/// What an erased text held (ADR-007 section "Built by lane L33").
+pub const ERASURE_KINDS: &[&str] = &["text", "display_name"];
+
 /// How one part of the host runs, in the host status file (ADR-028 record
 /// of lane L20).
 pub const PART_STATES: &[&str] = &["running", "unhealthy", "stopped"];
@@ -1941,6 +1944,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("grant", Shape::Nullable(&Shape::Id)),
                     m("requested_at", Shape::Id),
                     m("completed_at", Shape::Nullable(&Shape::Id)),
+                    // Lane L33: what the text held, and the destroyed root
+                    // epoch once known (I-81).
+                    m("kind", Shape::Enum(ERASURE_KINDS)),
+                    m("destroyed_epoch", Shape::Nullable(&Shape::Id)),
                 ])),
             ),
             m(
