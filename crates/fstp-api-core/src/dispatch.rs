@@ -4654,19 +4654,35 @@ async fn own_plan<P: Seams>(
 /// None)` while it is stored, or `(None, Some(day))` once the erasure log
 /// names it, from the day its erasure was requested. The log is read
 /// first, so no copy held in this process outlives an erasure. A store
-/// that keeps no log, or a text it cannot give, fails the read closed.
+/// that keeps no log is asked for the text itself, never a copy held in
+/// this process, and a text it cannot give fails the read closed.
 async fn plan_text<P: Seams>(
     call: &Call<'_, P>,
     r: TextRef,
     clearance: &fstp_access::ReadClearance,
 ) -> Result<(Option<String>, Option<String>), ApiError> {
     use crate::port::TextStore as _;
-    let log = call
-        .ports
-        .texts()
-        .erasures()
-        .await
-        .map_err(|e| call.refuse(port_failed(e, "ADR-007")))?;
+    let log = match call.ports.texts().erasures().await {
+        Ok(log) => log,
+        // A store that keeps no erasure log (the production cell's text
+        // store today): the store itself is asked, never a copy held in
+        // this process, and it refuses an erased text. So no copy outlives
+        // an erasure, and the team still reads its own plan (Daniel,
+        // 2026-11-15: "if i wrote it i should be able to read it").
+        Err(PortError::Unavailable) => {
+            let text = call
+                .ports
+                .texts()
+                .get(crate::port::TextRef(r.id().raw()), clearance)
+                .await
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .filter(|t| forms::text_digest(t) == r.digest())
+                .ok_or_else(|| call.refuse(text_unknown()))?;
+            return Ok((Some(text), None));
+        }
+        Err(e) => return Err(call.refuse(port_failed(e, "ADR-007"))),
+    };
     if let Some(row) = log.iter().find(|row| row.text.0 == r.id().raw()) {
         return Ok((None, Some(utc_day(row.requested_at))));
     }

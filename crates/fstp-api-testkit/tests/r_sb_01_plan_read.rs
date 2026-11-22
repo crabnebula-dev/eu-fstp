@@ -264,3 +264,40 @@ fn r_sb_01_adr007_erased_plan_text_reads_as_erased() {
         Some(day.as_str())
     );
 }
+
+/// R-SB-01, R-AC-01, ADR-007 (Daniel, 2026-11-15: "if i wrote it i should
+/// be able to read it"): a text store that keeps no erasure log, as the
+/// production cell's does today, still gives the team its plan text,
+/// read from the store itself. Once the store no longer holds the text,
+/// the read fails closed, even though the process that stored it still
+/// remembers it.
+#[test]
+fn r_sb_01_adr007_store_without_log_serves_the_plan_from_the_store() {
+    let c = cell();
+    let p = new_draft(&c);
+    record(&c, p, "1000.00", "SYNTHETIC WORK PLAN WITHOUT LOG");
+    c.ports.texts.without_log();
+    let v = body(read(&c, LEAD, p));
+    let plan = plan_of(&v);
+    assert_eq!(
+        plan.get("text").and_then(Value::as_str),
+        Some("SYNTHETIC WORK PLAN WITHOUT LOG")
+    );
+    // The store no longer holds the text (an erasure without a log).
+    for r in 0..64u128 {
+        if c.ports
+            .texts
+            .peek(fstp_api_core::port::TextRef(r))
+            .is_some_and(|b| b.ends_with(b"SYNTHETIC WORK PLAN WITHOUT LOG"))
+        {
+            c.ports.texts.forget(fstp_api_core::port::TextRef(r));
+        }
+    }
+    let after = read(&c, LEAD, p);
+    let shown = format!("{after:?}");
+    assert!(
+        !shown.contains("SYNTHETIC WORK PLAN WITHOUT LOG"),
+        "a copy held in the process was served: {shown}"
+    );
+    assert!(after.is_err(), "the read fails closed: {shown}");
+}
