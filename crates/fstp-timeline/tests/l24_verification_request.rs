@@ -113,7 +113,7 @@ fn adr008_i27_email_names_no_person_and_links_to_members() {
     let drafts = verification_request_drafts(&recorders, true);
     assert_eq!(drafts.len(), 2);
     for (to, template, bindings) in &drafts {
-        assert!(matches!(to, Recipient::Account(a) if recorders.contains(&a)));
+        assert!(matches!(to, Recipient::Account(a) if recorders.contains(a)));
         assert_eq!(*template, TemplateId::IdCheckWaiting);
         let slots: Vec<Slot> = bindings.slots().collect();
         assert_eq!(slots, vec![Slot::Link]);
