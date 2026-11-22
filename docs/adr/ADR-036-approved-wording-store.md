@@ -12,7 +12,7 @@ Daniel decided on 2026-11-22:
 - L-08: the funding acknowledgement is approved, with no disclaimer, as drafted in `legal/funder-profiles/horizon-europe/visibility-elements.md`:
   "{{programme.name}} is funded by the European Union under the Horizon Europe grant agreement {{action.number}}, {{action.acronym}}."
   It shows in the funding card of ADR-034: web footers, public pages, contract PDFs and programme emails. A programme that lacks a slot value shows no sentence rather than a broken one.
-- L-08: apply the official emblem usage rules to the funding card (ADR-034 section 1, "Usage rules").
+- L-08: apply the official emblem usage rules to the funding card (ADR-034 section 1a).
 - `legal/README.md` Q5: one email template per proposal outcome, wired to drafts A1 to A4 of `legal/09-emails.md`. The drafts stay "draft, pending Daniel's approval".
 
 Before this record:
@@ -69,13 +69,13 @@ A programme whose P-53 names a tenant-owned profile, or no profile, shows no sen
 | Public pages, `/app/` pages, sign-in pages | The last line of the card, as a text paragraph. The placeholder "EU funding acknowledgement: the approved wording is pending." is gone. A footer with no programme card shows the logo only |
 | `GET /brand/funding` | Each card gains `acknowledgement` (the rendered sentence or `null`) and `acknowledgement_missing`, a list of the values that keep it from showing: `programme_name`, `action_number`, `action_acronym` or `profile` |
 | Contract PDFs and programme emails | The last of the card's text lines (`FundingCard::text_lines`) |
-| The branding page | Under "Funding card", one plain line per active programme without the sentence. It names the programme and the values to fill in, and where. Example: "SuperSAFE: the funding sentence is not shown. Fill in the acronym in step 1, Funder and instrument." |
+| The branding page | Under "Funding card", one plain line per active programme without the sentence. It names the programme, each missing value and the editor step that holds it. Example: "SuperSAFE: the funding sentence is not shown. Missing: the acronym (step 1, Funder and instrument). The programme editor asks for these values before activation, so ask your technical administrator to fill them in." |
 
 Interim, pending Daniel: an active programme cannot edit its artefact fields in the creator today (only P-09). A gap found after activation therefore needs a new programme version or an operator fix. The branding page says what is missing, so the gap is visible.
 
 ### 6. Emblem usage rules (L-08)
 
-The rules come from the official source recorded in ADR-034 section 1, "Usage rules". This lane read the document and applied only what it states. Details are there.
+The rules come from the official source recorded in ADR-034 section 1a, with its URL and title. This lane read the document and applied only what it states. Details and the interim readings are there.
 
 ### 7. One outcome email template per outcome (Q5)
 
@@ -93,7 +93,7 @@ The rules come from the official source recorded in ADR-034 section 1, "Usage ru
 - New: one module and one text file in `fstp-report`, one profile file, one fuzz target, four template versions. No new crate and no new dependency.
 - `FundingCard` gains the acronym and the rendered acknowledgement. Its JSON gains two members.
 - `fstp_brand::emblem::FUNDING_ACKNOWLEDGEMENT` is removed: the sentence is per programme now.
-- The demo cell's review and applicant scenes save the SuperSAFE programme name, grant agreement number 101342989 and acronym before activation, so their cards show the sentence.
+- The demo cell's review and applicant scenes save the SuperSAFE programme name, grant agreement number 101342989 and acronym before activation, so their cards show the sentence. The test kit's seeder holds saved creator values again after a setup step replays the ledger (`FakeEngine::rehold`), as a production shell does from its value store.
 
 ## Open questions for Daniel
 
