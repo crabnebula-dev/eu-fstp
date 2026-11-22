@@ -816,6 +816,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstp-unorm"
+version = "0.1.0"
+
+[[package]]
 name = "fstp-vault"
 version = "0.1.0"
 dependencies = [
@@ -831,6 +835,7 @@ dependencies = [
  "fstp-pgwire",
  "fstp-rt",
  "fstp-tls",
+ "fstp-unorm",
  "fstp-vault-core",
  "fstp-vault-proto",
  "fstp-witness",

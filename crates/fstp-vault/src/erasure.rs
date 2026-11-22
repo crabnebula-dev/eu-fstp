@@ -535,6 +535,40 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         open_tuple(&self.cell, &dk, t)
     }
 
+    /// The start check of ADR-004 row "Normalisation": refuses a keystore
+    /// that stores a live identity tuple under an earlier label
+    /// ([`crate::codec::OLD_TUPLE_LABELS`]). Its match key was computed
+    /// from names normalised another way, so the same person would get a
+    /// second identity. Such a pilot vault is recreated.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Malformed`] for such a tuple, or for rows that do not
+    /// open.
+    pub fn check_tuple_labels(&self) -> Result<(), VaultError> {
+        let refused = VaultError::Malformed(
+            "an identity tuple of an earlier label: recreate this pilot vault",
+        );
+        for t in &self.rows.tuples {
+            if self.chain.refused_for_open(DekId(t.identity)) {
+                continue;
+            }
+            let Some(d) = self.rows.data_keys.iter().find(|d| d.id == t.identity) else {
+                continue;
+            };
+            let dk = self.open_tuple_key(d)?;
+            let tuple = open_tuple(&self.cell, &dk, t)?;
+            let old = crate::codec::OLD_TUPLE_LABELS
+                .iter()
+                .any(|l| tuple.starts_with(l));
+            zero(tuple);
+            if old {
+                return Err(refused);
+            }
+        }
+        Ok(())
+    }
+
     fn open_tuple_key(&self, d: &DataKeyRow) -> Result<DataKey, VaultError> {
         let g = self.open.get(&d.group).ok_or(bad("a tuple data key"))?;
         if g.purpose != Purpose::Attribute || g.generation != d.generation {

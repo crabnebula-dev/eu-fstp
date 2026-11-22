@@ -269,7 +269,7 @@ fn adr008_verification_write_body_decodes_and_refuses() {
     let spaced =
         decode_verification_write(verification_body("  Alpha  ", "1990-02-28", "DEU").as_bytes());
     let t = identity_tuple(&w.identity);
-    assert!(t.starts_with(b"fstp-identity-tuple-v1"));
+    assert!(t.starts_with(b"fstp-identity-tuple-v2"));
     if let Ok(s) = spaced {
         assert_eq!(identity_tuple(&s.identity), t, "spaces changed the tuple");
     }
@@ -317,5 +317,44 @@ fn adr008_verification_write_body_decodes_and_refuses() {
     assert!(
         decode_verification_write(verification_body("Alpha", "1900-02-29", "DEU").as_bytes())
             .is_err()
+    );
+}
+
+/// ADR-004 row "Normalisation", decided by Daniel on 2026-11-21 (NFKC plus
+/// case folding; ADR-029): spellings of one name that differ by case,
+/// canonical equivalence, compatibility variants, default ignorables or
+/// white space give one tuple. A different letter gives another tuple,
+/// and a name that folds to nothing is refused.
+#[test]
+fn adr004_name_variants_give_one_tuple() {
+    use fstp_vault::codec::{decode_verification_write, identity_tuple};
+    let tuple_of = |family: &str| {
+        let w =
+            decode_verification_write(verification_body(family, "1990-02-28", "DEU").as_bytes())
+                .unwrap_or_else(|e| panic!("{family:?} was refused: {e:?}"));
+        identity_tuple(&w.identity)
+    };
+    let t = tuple_of("M\u{00FC}ller-Stra\u{00DF}e");
+    for variant in [
+        "M\u{00DC}LLER-STRASSE",
+        "Mu\u{0308}ller-Strasse",
+        "\u{FF2D}\u{00FC}ller-Stra\u{00DF}e",
+        "  m\u{00FC}ller-stra\u{1E9E}e ",
+        "M\u{00FC}l\u{00AD}ler-Stra\u{00DF}e",
+        "M\u{00FC}ller\u{200D}-Strasse",
+    ] {
+        assert_eq!(tuple_of(variant), t, "{variant:?} gave another tuple");
+    }
+    for other in [
+        "Muller-Strasse",
+        "M\u{00FC}ller Strasse",
+        "M\u{00FC}ller-Strase",
+    ] {
+        assert_ne!(tuple_of(other), t, "{other:?} shared the tuple");
+    }
+    let only_ignorable = verification_body("\u{00AD}\u{200B}", "1990-02-28", "DEU");
+    assert!(
+        decode_verification_write(only_ignorable.as_bytes()).is_err(),
+        "a name that folds to nothing was taken"
     );
 }

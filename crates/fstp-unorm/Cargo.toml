@@ -1,0 +1,15 @@
+[package]
+name = "fstp-unorm"
+description = "In-house Unicode NFC, NFD and full case folding, with generated tables (ADR-029)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+unorm-gen.workspace = true
+
+[lints]
+workspace = true

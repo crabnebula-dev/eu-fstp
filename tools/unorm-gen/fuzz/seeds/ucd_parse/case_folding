@@ -1,0 +1,8 @@
+# ================================================================================
+# The entries in this file are in the following machine-readable format:
+#
+# <code>; <status>; <mapping>; # <name>
+#
+# The status field is:
+# C: common case folding, common mappings shared by both simple and full mappings.
+# F: full case folding, mappings that cause strings to grow in length. Multiple characters are separated by spaces.

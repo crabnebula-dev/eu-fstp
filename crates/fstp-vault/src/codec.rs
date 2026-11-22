@@ -200,14 +200,22 @@ impl std::fmt::Debug for VerificationWrite {
 pub const MAX_NAME_CHARS: usize = 200;
 
 /// The label that starts every identity tuple (ADR-004 record of lane
-/// L13b, row "Tuple").
-pub const TUPLE_LABEL: &[u8] = b"fstp-identity-tuple-v1";
+/// L13b, row "Tuple"). Version 2 names are [`tuple_name`]s, NFKC and case
+/// folded (ADR-029; decided by Daniel on 2026-11-21).
+pub const TUPLE_LABEL: &[u8] = b"fstp-identity-tuple-v2";
+
+/// The labels of earlier tuple versions. A vault that stores a tuple
+/// under one of them refuses to start, since its match keys would not
+/// find the same person again (ADR-004 row "Normalisation").
+pub const OLD_TUPLE_LABELS: [&[u8]; 1] = [b"fstp-identity-tuple-v1"];
 
 const VERIFICATION: &str = "verification write";
 
 fn name_ok(s: &str) -> bool {
     let n = s.chars().count();
-    (1..=MAX_NAME_CHARS).contains(&n) && !s.trim().is_empty() && !s.chars().any(char::is_control)
+    (1..=MAX_NAME_CHARS).contains(&n)
+        && !tuple_name(s).is_empty()
+        && !s.chars().any(char::is_control)
 }
 
 /// Whether `s` is a calendar date `YYYY-MM-DD` from 1900-01-01 on.
@@ -360,15 +368,15 @@ pub fn encode_verification_write(w: &VerificationWrite) -> Result<Vec<u8>, Vault
     Ok(bytes)
 }
 
-/// A name as the tuple holds it: trimmed, each inner run of white space
-/// one U+0020.
-///
-/// Seam: the NFC plus case folding lane replaces this one function, and
-/// changes [`TUPLE_LABEL`] with it (Daniel, 2026-11-21; ADR-004 record of
-/// lane L13b, "NFC and case folding" and "Normaliser seam").
+/// A name as the tuple holds it: [`fstp_unorm::name_key`], the
+/// compatibility caseless key `toNFKC_Casefold(NFD(s))` with white space
+/// trimmed and each inner run one U+0020 (ADR-029; ADR-004 row
+/// "Normalisation", decided by Daniel on 2026-11-21: NFKC plus case
+/// folding). Case, canonical equivalence, compatibility variants and
+/// default ignorables do not separate two spellings of one name.
 #[must_use]
 pub fn tuple_name(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    fstp_unorm::name_key(s)
 }
 
 /// The identity tuple of `a` (ADR-004 record of lane L13b, row "Tuple"):
