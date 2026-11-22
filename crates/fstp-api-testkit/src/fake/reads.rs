@@ -110,14 +110,22 @@ fn check(view: &Value, name: &str) -> String {
         .to_owned()
 }
 
-/// Assigns `reviewer` to PR1 through the coordinator's page route.
+/// Assigns `reviewer` to PR1 through the coordinator's page route, with
+/// the step-up the assignment needs (I-78, Q38).
 fn assign(c: &FakeCell, login: &super::WebLogin, reviewer: fstp_domain::id::AccountId) {
     let path = format!("/proposals/{}/assignments", PR1.raw());
     let body = format!(
         r#"{{"reviewer":"{}","kind":{{"type":"Reviewer"}}}}"#,
         reviewer.raw()
     );
-    let r = c.web(login, decode_route(Method::Post, &path, body.as_bytes()));
+    let send = || c.web(login, decode_route(Method::Post, &path, body.as_bytes()));
+    let r = match send() {
+        Ok(OpResult::StepUpRequired(ch)) => {
+            c.ports.step_up.approve(login.session, ch.action).unwrap();
+            send()
+        }
+        other => other,
+    };
     assert!(matches!(r, Ok(OpResult::Done { .. })), "assign: {r:?}");
 }
 
