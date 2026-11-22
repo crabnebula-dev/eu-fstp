@@ -10,7 +10,7 @@ Two people run a host. The **technical admin** uses a terminal over SSH, and par
 - A domain, for example `grants.example.eu`, and `id.grants.example.eu`, both pointing at the host, with TCP port 443 open.
 - A public certificate covering both names, for example from certbot. Without one, setup makes a self-signed one, which browsers refuse.
 - An account on a mail relay for sign-in mail. Put its password in `/etc/fstp/mail.password`.
-- Optional: an object storage bucket for backups, with its two key files in `/etc/fstp/s3-access-key-id` and `/etc/fstp/s3-secret-access-key`.
+- Optional: a versioned object storage bucket for backups and the daily key snapshots, with its two key files in `/etc/fstp/s3-access-key-id` and `/etc/fstp/s3-secret-access-key`.
 
 Install the release: the binaries into `/usr/local/bin`, and its `migrations/` and `web/` directories into `/usr/share/fstp`.
 
@@ -53,7 +53,7 @@ At the end it tells you two things:
 
 ## 4. Every day: `fstp-admin status`
 
-`status` shows every service, the route, the certificates, the backups and the admins on one screen, and ends with one line `Next:`, the single most urgent thing to do and who does it. Do that, then run `status` again. Exit status 0 means healthy, 3 means a problem.
+`status` shows every service, the route, the certificates, the backups, the daily key snapshots and the admins on one screen, and ends with one line `Next:`, the single most urgent thing to do and who does it. Do that, then run `status` again. Exit status 0 means healthy, 3 means a problem.
 
 ## 5. Other commands
 
@@ -62,7 +62,7 @@ At the end it tells you two things:
 | `fstp-admin verify` | Step 3 of part 3. `fstp-admin admins` only lists the accounts |
 | `fstp-admin backup-keys /media/usb/fstp-keys` | Once after setup, and after each erasure. Keep the stick apart from the passphrases |
 | `fstp-admin backup` | A backup now. A timer runs it daily |
-| `fstp-admin restore` | After data loss. It restores both databases from their newest backups |
+| `fstp-admin restore` | After data loss. It restores both databases from their newest backups, then the cell's and the vault's keys |
 | `fstp-admin renew` | Only when `status` asks. A daily timer renews certificates and updates the route |
 | `fstp-admin erase-identity <account>` | When a person's identity must be erased from the vault |
 | `fstp-admin stop` and `start` | Around host maintenance |

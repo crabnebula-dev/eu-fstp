@@ -583,10 +583,34 @@ FSTP_WITNESS_CONFIG=/etc/fstp/witness.json fstp-witness copy-key-file /root/rece
 - Once every copy of an id is destroyed, record it with `fstp-cell retire-key-file-copy <id>` or `fstp-witness retire-key-file-copy <id>`.
 - On the fresh host, put each copy back under its file name in the owner's credentials directory before step 6.
 
+### Keystore snapshots
+
+Written by lanes L17 and L27 (ADR-012 records of lanes L17 and L27, ADR-028 record of lane L27). Every item waits for Daniel unless it says otherwise.
+
+The cell and the vault each keep a sealed copy of their keys in the backup bucket, under `<cell>/keystore/`. A base backup and the WAL archive hold the keys too. A snapshot also covers the case where the restored database is older than the last erasure.
+
+- `fstp-admin setup` turns them on with `backup`: it writes `object_store` into `cell.json` and `vault.json` and copies `s3-access-key-id` and `s3-secret-access-key` into `/etc/fstp/cell` and `/etc/fstp/vault`. Without `backup`, neither takes snapshots.
+- Each process creates its own snapshot key file at its next start: `cell-snapshot.key` and `vault-snapshot.key` in its credentials directory. `backup-keys` copies these with the other key files.
+- The bucket must be versioned, which object lock needs anyway. Each process writes the pointer `latest-app` or `latest-vault` again after each verified snapshot, and a versioned bucket keeps every version (lead reading, 2026-11-22).
+- Each process takes a snapshot when an erasure rotates its keys, and once a day: a minute after its start, then every 24 hours, and an hour after a failure. Each snapshot is fetched back and opened before it counts. An erasure destroys the old keys only after its snapshot opens.
+- Each process writes `keystore-snapshot.status` in its credentials directory and logs `keystore_snapshot` with `verified` or `failed`. `fstp-admin status` shows the last verified snapshot of each, and names a failure as the next thing to do.
+
+`fstp-admin restore` runs, after the two database restores and with both services stopped:
+
+```sh
+FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault restore-keystore
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell restore-keystore
+```
+
+- Each takes the restored database's keys, or the newest snapshot when the database is older than the last erasure. It keeps the newest copy that opens, whole, and never mixes two.
+- Give a snapshot id as 32 hex digits to take another snapshot than the newest.
+- Each prints nothing. Exit status 0 when a copy opens, 1 when none does, 2 for a wrong argument or configuration.
+- Keys erased before the snapshot stay unreadable from it (I-81).
+
 ### What is not built yet
 
 - A second provider (Q25). One `object_store` only.
-- Keystore snapshots written by `fstp-cell` and `fstp-vault` (ADR-012 "Keystore snapshots").
+- A yearly re-wrap of the snapshot keys (lead reading, 2026-11-22: a later item).
 - Rotation of the ClusterBackup root and group. A new group generation needs a new escrow for each custodian.
 - A copy bound to a guard key that the second custodian destroys at each erasure. Decided by Daniel on 2026-11-21: a release item, built before a release (ADR-004 record of lane L16, Q-L16-1).
 - Declared restores at the witness and the monthly restore drill.
