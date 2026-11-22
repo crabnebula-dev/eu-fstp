@@ -196,3 +196,20 @@ Tests: `i18_vault_configuration_refuses_a_seed_member`, `g12_vault_config_refuse
 - `i21_workspace_rows_hold_sealed_bytes_only`, `r_nf_08_api_and_workspace_columns_are_classed`.
 - `t_db_m4_migrations_forward_only`, `t_db_app_role_has_no_ledger_update`, `i82_role_plan_grants_api_and_workspace_to_app_only`.
 - `i23_restart_replays_pending_and_workspace`.
+
+## Written by lane L24 `prod/verification-request`, 2026-11-22: the verification request
+
+Decided by Daniel on 2026-11-22 (ADR-008, same date): "Request, staff record it." It replaces the `OracleDown` of `begin_verification` in the row "Vault intake" for the identity purposes. The other intake calls stay refused. Every reading below is interim, pending Daniel, unless it says otherwise. Written by lane L24 before its code.
+
+| Topic | Reading |
+| --- | --- |
+| Purposes | `me.begin_verification` (purposes `Applicant` and `AdminIdentity`) and `people.begin_verification` (`ProgrammeRole`) record a request. The guardian consent and the bank purposes keep their own write tickets on the vault origin and stay as they were |
+| Record | The cell port appends the cell record `VerificationRequested { account }` through the command `RequestVerification { account }` of `fstp-cell-core`. The command is admitted only for the new system task `IdentityPort`, which only the vault port of the cell issues, after the API core admitted the caller's own call. The record holds the account id and its entry time only, no identity data (I-17). A request of an account with an open request appends nothing more, so pressing twice is harmless |
+| Open request | A request is open until a verification of that account is recorded. The cell learns that from the vault's one-bit answer `IsVerified` when it lists the requests. No record closes a request |
+| Reply | The port answers the redirect `/app/me/identity`, the applicant's own identity page. It says, in plain words, "We have your request. We will contact you to check your ID, in person or by video call." No vault origin is involved yet |
+| Where staff see it | The tenant admin's member page lists the open requests in the section of people to verify, marked "asked for an ID check", from the cell route `GET /api/v1/verification-people`. Each row now carries `requested`. A staff member with no Receiving binding is listed with no proposal. An applicant is listed with the proposal, and only once it is in NEGOTIATION or later (R-NG-01). An applicant whose proposal is earlier is not listed yet |
+| Task | The app shell of a tenant admin shows "ID checks waiting: n" beside the mailbox, linked to the member page, when the route lists open requests. The route answers 403 to everyone else, so no one else sees the count |
+| Who may record | Unchanged: a verified tenant admin with no Judging binding, never for themselves or a person of their own identity (ADR-004 record of lane L13b) |
+| Not built | An email to the recorders: the mail templates of `fstp-mail` hold no such message yet. An entry of the API core's mailbox: the mailbox is derived from the domain state, which holds no request. A cancel of a request |
+
+Tests, written before the code: `adr008_verification_request_records_one_open_request` (`crates/fstp-cell-core/tests/l24_verification_request.rs`), `adr008_begin_verification_records_a_request_on_the_production_cell` (`crates/fstp-celltest/tests/l12_cell_decisions_pg.rs` or its own file), `adr008_verification_people_list_open_requests` (`crates/fstp-cell/tests/routes_sweep.rs`), and the web test `adr008_identity_page_says_we_will_contact_you`.
