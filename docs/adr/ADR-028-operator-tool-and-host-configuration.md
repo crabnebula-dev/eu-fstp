@@ -72,6 +72,22 @@ The lead answered the open questions of the first draft. Each row below is a lea
 | Route feed | On, since lane L15 merged: `route::ROUTE_FEED` is true, and the CI devstack build and the end-to-end test include `fstp-control` | Lead reading, 2026-11-22 |
 | Key copies | `backup-keys` runs `fstp-keyd export` of lane L16, now on `main` | ADR-004 record of lane L16 |
 
+## Record of lane L27 `prod/snapshot-ops`, 2026-11-22: keystore snapshots
+
+Written by lane L27 before its code. The snapshots themselves are ADR-012 (records of lanes L17 and L27). Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Turned on with backups | With `backup` in `fstp.json`, `setup` writes `object_store` into `cell.json` and `vault.json`, the same bucket, endpoint, port and region as the backups. Without it neither file names one, and both processes keep the fallback of ADR-012. No new member in `fstp.json` | Usability rule of 2026-11-21 |
+| Credentials | `setup` copies the two object store key files into the cell's and the vault's credentials directories as `s3-access-key-id` and `s3-secret-access-key`, owned by each service's user, mode 0600. On the pilot this is the backup credential. A credential limited to `<cell>/keystore/` waits on ADR-005 V15 | ADR-012 "Writer and upload" |
+| Snapshot keys | Each process creates its snapshot key file itself at its next start (ADR-004 record of lane L17, row "Genesis"). `setup` runs no extra step. `backup-keys` copies the credentials directories' key files as before | ADR-004 record of lane L17 |
+| Restore | `fstp-admin restore` restores both clusters, starts the two clusters, runs `fstp-vault restore-keystore`, then `fstp-cell restore-keystore`, then starts every service. Each prints `done` with where its keys came from: the restored database or the newest snapshot. A keystore that opens from neither stops the restore with exit 1 and names the service, and the services stay stopped | ADR-012 record of lane L27, row "Restore order" |
+| Status | `status` shows one line per process: when its last keystore snapshot verified, or that the last one failed. A failure, or no verified snapshot in 36 hours on a host with backups, makes it the next thing to do: read the service's log and run `fstp-admin start`, since a start takes a snapshot a minute later | ADR-028 "Status" |
+| System page | `fstp_admin::status::snapshot_status` returns the same facts for the host status file of lane L20 (`fstp_obs::host_status`), which was not on `main` when this lane started. The seam is that function; lane L20's file takes it at merge | Lane L20 |
+| Dependencies | `fstp-admin` gains `fstp-obs` for the status file codec (`fstp_obs::snapshot_status`). It still reaches no custody, service or control crate | ADR-028 "Layering" |
+
+Tests, written before the code: `adr028_setup_turns_snapshots_on_with_backups` and `adr028_status_names_a_failed_keystore_snapshot` in `fstp-admin`.
+
 ## Open questions for Daniel (first draft, answered by the record above)
 
 1. The R-NF-02 exception for `fstp-admin`'s human output (row "Human output").

@@ -270,6 +270,30 @@ Tests, written before the code. In `crates/fstp-vault/tests/snapshots_pg.rs`, ov
 
 **Built.** Two readings changed while building. (1) On the App chain, the fetched image is checked under `R(e+1)` for every group secret sealed under `S(e+1)` and one data key. Group rows of the batch's old generations are still in the image under the old epoch, and they die with it at step 6. The image holds no signing key rows yet (lane F-ERASE), so the signing keys are still checked on the in-memory copy. (2) The vault check also opens the sealed chain state of the intent row, so a restore never keeps rows whose chain state does not open.
 
+## Record of lane L27 `prod/snapshot-ops`
+
+Written by lane L27 on 2026-11-22, before its code. It closes points 2, 3 and 6 that lane L17 left open: the daily snapshot, the App chain restore command, and `fstp-admin`'s use of snapshots (ADR-028 record of lane L27). Every row is interim, pending Daniel, unless it says otherwise.
+
+Lead readings, 2026-11-22, of lane L17's other open points:
+
+- **Pointer object.** Lead reading, 2026-11-22: keep the pointer objects `latest-app` and `latest-vault`. The production reference says the bucket must be versioned, which object lock needs anyway (ADR-005 V14).
+- **Yearly re-wrap.** Lead reading, 2026-11-22: no yearly re-wrap of the CellBackup and VaultBackup snapshot keys yet. It is a later item.
+- **Key records.** Lead reading, 2026-11-22: no `RecordKeyOp` for an unwrap of a snapshot key, as for the root of the cell key file (ADR-004 record of lane L4).
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Daily snapshot | Each serving process takes and verifies a keystore snapshot from inside the process, since it holds the keystore lock. It uploads, fetches back and opens the snapshot as step 5 does, with no rotation: the current root `R(e)` stays and nothing is destroyed. The first runs a minute after the start, then one runs every 24 hours. After a failure the next try comes after one hour | Daniel's brief of 2026-11-22; I-81 |
+| Where it runs | `fstp-cell`: the erasure task, while no batch runs, so a snapshot never sees a half-written batch. `fstp-vault`: a task beside the keystore watch, which reads the rows through the registrar's keys connection under the registrar's lock, then works without the lock | ADR-004 record of lane L13b, row "Watch" |
+| Event | One typed event per snapshot: `keystore_snapshot` with `chain` (`app` or `vault`), `trigger` (`rotation` or `daily`) and `outcome` (`verified` or `failed`). It names no id, path or key (R-NF-02) | R-NF-02 |
+| Status file | `keystore-snapshot.status` in the process's credentials directory, beside its snapshot key file: one line `v1 <last verified> <last failed>`, Unix seconds, 0 for never. The process rewrites it after each snapshot, step 5 included, through a temporary file and a rename. `fstp-admin status` reads it. The codec is `fstp_obs::snapshot_status`, so the writers and `fstp-admin` share it without `fstp-admin` reaching custody. The decoder accepts exactly this form and is fuzzed (`snapshot_status_decode`, in the fuzz project of `fstp-admin`) | ADR-028 "Status" |
+| App plaintext | The App snapshot now holds the keystore tables whole: the new image `"FAK1"` of `fstp_cell::tasks::erasure::rows_image`, every row of the nine `keystore` tables of `fstp_pgstore::KeystoreRows`. `"FKI1"` held no signing keys and no chain state, so a restore could not rebuild a keystore from it. `"FKI1"` stays for the test worlds. Fuzzed (`app_keystore_image_decode`) | ADR-012 "Restore rule" |
+| App check | Step 5 and the daily snapshot load the fetched rows as a keystore, unwrap `S(e)` from their own root row through custody, open the sealed chain state and every current group secret, every current signing key, and one data key. This replaces lane L17's group-and-one-key check | ADR-004 step 5 |
+| App restore | `fstp-cell restore-keystore [<snapshot id>]`, with the cell stopped, after `fstp-backup restore` of the application cluster. The rule is the vault's (record of lane L17, row "Restore rule, vault"): a live keystore first, then the copy at the higher chain epoch, the restored backup above the snapshot at an equal epoch. The first copy that opens is taken whole and written in one transaction of the keys role. No prompt, and nothing printed. Exit 0 when a copy opens, 1 when none does or a step fails, 2 for a refused argument or configuration | ADR-012 "Restore rule" |
+| Restore order | `fstp-admin restore` restores both clusters, starts the two database clusters and the custody entries, runs `fstp-vault restore-keystore`, then `fstp-cell restore-keystore`, then starts the rest. The vault comes first, as in the start order | ADR-028 record of lane L27 |
+| Status on the System page | `fstp_obs::host_status` of lane L20 was not on `main` when this lane started. `fstp_admin::status::snapshot_status` returns the fields it needs, the last verified snapshot of each process and whether the last try failed. The host status file takes them when lane L20 merges | Lane L20 |
+
+Tests, written before the code: `adr012_snapshot_status_file_round_trips_in_one_spelling` and `adr012_daily_snapshot_is_due_daily_and_retried_hourly` in `fstp_obs::snapshot_status`; `i81_vault_daily_snapshot_verifies_without_a_rotation` and `adr012_vault_daily_snapshot_failure_shows_on_status` in `crates/fstp-vault/tests/snapshots_pg.rs`; `i81_app_daily_snapshot_verifies_without_a_rotation`, `adr012_app_snapshot_holds_the_keystore_tables_whole` in `crates/fstp-cell/tests/erasure_runner.rs`; `adr012_app_restore_takes_the_newest_copy_that_opens` in `crates/fstp-cell/tests/keystore_tables.rs`; `adr012_app_keystore_image_round_trips_in_one_spelling` and `adr012_cell_restore_keystore_takes_an_optional_snapshot_id` in `fstp-cell`; `r_nf_02_keystore_snapshot_event_names_no_id` in `fstp-obs`.
+
 ## Consequences
 
 - No third-party crate is added.
