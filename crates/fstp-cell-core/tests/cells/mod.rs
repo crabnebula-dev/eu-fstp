@@ -299,7 +299,10 @@ pub(crate) fn record_in(g: &mut Gen, member: &str) -> Result<CellRecord, String>
                 receipt: id32(g),
             }
         }),
-        "release" => CellRecord::Release(match g.u8_in(0..=4) {
+        "release" => CellRecord::Release(match g.u8_in(0..=5) {
+            5 => ReleaseRecord::VerificationRequestClosed {
+                account: account(g),
+            },
             4 => ReleaseRecord::VerificationRequested {
                 account: account(g),
             },
@@ -422,7 +425,10 @@ pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, Strin
                 receipt: id32(g),
             }
         }),
-        "release" => CellCommand::Release(match g.u8_in(0..=6) {
+        "release" => CellCommand::Release(match g.u8_in(0..=7) {
+            7 => ReleaseCommand::CloseVerificationRequest {
+                account: account(g),
+            },
             6 => ReleaseCommand::RequestVerification {
                 account: account(g),
             },

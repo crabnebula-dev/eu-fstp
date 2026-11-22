@@ -123,6 +123,10 @@ impl<R: Runtime, V: VaultClient> Vault for CellVault<R, V> {
         Ok(VerificationRedirect(IDENTITY_PAGE.to_owned()))
     }
 
+    async fn verification_requested(&self, a: AccountId) -> bool {
+        self.0.engine.state().verification_requested(a)
+    }
+
     async fn classes_defined(
         &self,
         programme: ProgrammeId,

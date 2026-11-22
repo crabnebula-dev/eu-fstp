@@ -4136,8 +4136,11 @@ async fn own_verification<P: Seams>(
     use crate::model::{VerificationState, VerificationStatus};
     let answer = ask_vault(call, &Query::IsVerified { account }).await?;
     let begun = lock(&call.st.begun).pending(account, call.now);
+    // ADR-026 record of lane L24: an open request in the ledger reads
+    // "pending" until the vault confirms the check.
+    let requested = call.ports.vault().verification_requested(account).await;
     Ok(VerificationState {
-        status: VerificationStatus::of(answer.holds, begun),
+        status: VerificationStatus::of(answer.holds, begun || requested),
     })
 }
 

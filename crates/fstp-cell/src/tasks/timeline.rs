@@ -305,6 +305,30 @@ pub async fn tick<S: SessionSource + ?Sized>(
         });
     }
     out.extend(timeline_step(engine, now).await);
+    out.extend(close_verification_requests(engine, now).await);
+    out
+}
+
+/// ADR-026 record of lane L24 (lead reading, 2026-11-22): asks the vault,
+/// for each open verification request, whether the person is verified
+/// (`CloseVerificationRequest` asks `IsVerified`), and closes the request
+/// when it is. A refusal leaves the request open for the next tick. An
+/// issued but unused ticket closes nothing.
+pub async fn close_verification_requests(engine: &CellEngine, now: Timestamp) -> Vec<TickItem> {
+    let state = engine.state();
+    let mut out = Vec::new();
+    for account in state.verification_requests() {
+        let command = CellCommand::Release(
+            fstp_cell_core::release::ReleaseCommand::CloseVerificationRequest { account },
+        );
+        let id = next_occurrence_id(engine.cell(), &state, &command);
+        let result = issue(engine, command.clone(), id, Vec::new(), now).await;
+        out.push(TickItem {
+            command,
+            id,
+            result,
+        });
+    }
     out
 }
 

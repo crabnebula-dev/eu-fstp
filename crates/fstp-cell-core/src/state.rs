@@ -555,7 +555,9 @@ pub struct CellState {
     issued: BTreeMap<[u8; 16], crate::release::IssuedTicket>,
     /// The accounts that asked for an identity check (ADR-026 record of
     /// lane L24).
-    verification_requests: BTreeSet<AccountId>,
+    verification_requests: BTreeMap<AccountId, u64>,
+    /// How many requests opened so far: the ordinal of the latest.
+    verification_request_count: u64,
     pub(crate) break_glass: BTreeMap<[u8; 16], fstp_auth::breakglass::BreakGlassGrant>,
     pub(crate) timeline: crate::timeline::TimelineState,
     bindings: BTreeMap<BindingId, BindingFacts>,
@@ -589,7 +591,8 @@ impl CellState {
             destroyed_epochs: BTreeSet::new(),
             tickets: BTreeSet::new(),
             issued: BTreeMap::new(),
-            verification_requests: BTreeSet::new(),
+            verification_requests: BTreeMap::new(),
+            verification_request_count: 0,
             break_glass: BTreeMap::new(),
             timeline: crate::timeline::TimelineState::default(),
             bindings: BTreeMap::new(),
@@ -677,12 +680,18 @@ impl CellState {
     /// lane L24). A request stays until a verification is recorded,
     /// which only the vault knows.
     pub fn verification_requested(&self, account: AccountId) -> bool {
-        self.verification_requests.contains(&account)
+        self.verification_requests.contains_key(&account)
+    }
+
+    /// The ordinal of the open request of `account`, counted over every
+    /// request the cell opened, from 1 (ADR-026 record of lane L24).
+    pub fn verification_request_ordinal(&self, account: AccountId) -> Option<u64> {
+        self.verification_requests.get(&account).copied()
     }
 
     /// Every account that asked for an identity check, in id order.
     pub fn verification_requests(&self) -> impl Iterator<Item = AccountId> + '_ {
-        self.verification_requests.iter().copied()
+        self.verification_requests.keys().copied()
     }
 
     /// Whether ticket `id` was issued.
@@ -862,15 +871,19 @@ pub(crate) fn fold(
         CellRecord::Text(r) => fold_text(s, at, r)?,
         CellRecord::Key(r) => fold_key(s, at, r)?,
         CellRecord::Release(ReleaseRecord::VerificationRequested { account }) => {
-            // ADR-026 record of lane L24: a repeat is harmless.
-            s.verification_requests.insert(*account);
+            // ADR-026 record of lane L24: a repeat of an open request is
+            // harmless. A new request takes the next ordinal.
+            if !s.verification_requests.contains_key(account) {
+                s.verification_request_count = s.verification_request_count.saturating_add(1);
+                s.verification_requests
+                    .insert(*account, s.verification_request_count);
+            }
+        }
+        CellRecord::Release(ReleaseRecord::VerificationRequestClosed { account }) => {
+            s.verification_requests.remove(account);
         }
         CellRecord::Release(r) => {
             fold_release(&mut s.tickets, r)?;
-            // ADR-026 record of lane L24: a staff member took the request.
-            if let ReleaseRecord::VerificationTicketIssued { subject, .. } = r {
-                s.verification_requests.remove(subject);
-            }
             if let Some(t) = crate::release::IssuedTicket::of(r) {
                 s.issued.insert(command, t);
             }
@@ -1372,7 +1385,8 @@ fn fold_release(tickets: &mut BTreeSet<[u8; 16]>, r: &ReleaseRecord) -> Result<(
                 return Err(duplicate());
             }
         }
-        ReleaseRecord::VerificationRequested { .. } => {}
+        ReleaseRecord::VerificationRequested { .. }
+        | ReleaseRecord::VerificationRequestClosed { .. } => {}
     }
     Ok(())
 }

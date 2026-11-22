@@ -106,3 +106,66 @@ fn adr008_begin_verification_records_a_request_on_the_production_cell() {
     assert_eq!(row.get("requested").and_then(Value::as_bool), Some(true));
     assert!(row.get("proposal").is_some_and(Value::is_null));
 }
+
+/// The `status` of `me.get_verification` in the session `cookie`.
+fn status(cell: &CellHandle, cookie: &Cookie) -> String {
+    let r = web(cell, "GET", "/api/v1/me/verification", cookie, "");
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    json(&r)
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// ADR-026 record of lane L24, rows "Applicant status" and "Open
+/// request" (lead readings of 2026-11-22): the person's status reads
+/// "pending" from the ledger while the request is open, also long after
+/// the API core's in-memory hour. Once the vault confirms the check, the
+/// timeline task closes the request and the status reads "verified".
+#[test]
+fn adr008_status_reads_the_durable_request_until_the_vault_confirms() {
+    let world = world();
+    let cell = world.cell(0).unwrap();
+    let client = AuthClient::new(cell);
+    assert!(client.enrol(FIRST_ADMIN).unwrap());
+    assert!(client.enrol(PERSON).unwrap());
+    let id = client.cell_account(PERSON).unwrap();
+    let person = client
+        .login(PERSON, RefMethod::Passkey)
+        .unwrap()
+        .expect("the person's session");
+    assert_eq!(status(cell, &person), "unverified");
+    let r = web(cell, "POST", "/api/v1/me/verification", &person, "{}");
+    assert_eq!(r.status, 200);
+    let state = || cell.cell_engine().unwrap().state();
+    // Three hours later, past the in-memory hour.
+    cell.clock().set(cell.clock().now() + 3 * 3_600_000_000);
+    cell.timeline_tick().unwrap();
+    assert!(
+        state().verification_requested(id),
+        "an unverified request closed"
+    );
+    let person = client
+        .login(PERSON, RefMethod::Passkey)
+        .unwrap()
+        .expect("a fresh session");
+    assert_eq!(
+        status(cell, &person),
+        "pending",
+        "the durable request is not read"
+    );
+    cell.seed_verification(id, b"l24-person-synthetic")
+        .unwrap_or_else(|e| panic!("the verification: {e}"));
+    for _ in 0..3 {
+        cell.timeline_tick().unwrap();
+        if !state().verification_requested(id) {
+            break;
+        }
+    }
+    assert!(
+        !state().verification_requested(id),
+        "the vault's confirmation left the request open"
+    );
+    assert_eq!(status(cell, &person), "verified");
+}

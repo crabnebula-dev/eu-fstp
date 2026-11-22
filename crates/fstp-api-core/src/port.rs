@@ -888,6 +888,13 @@ pub trait Vault: AsyncIdentityOracle {
         purpose: VerificationPurpose,
         a: AccountId,
     ) -> impl Future<Output = Result<VerificationRedirect, OracleDown>> + Send;
+    /// Whether `a` has an open verification request in the cell's ledger
+    /// (ADR-026 record of lane L24, lead reading of 2026-11-22). A port
+    /// with no ledger has none.
+    fn verification_requested(&self, a: AccountId) -> impl Future<Output = bool> + Send {
+        let _ = a;
+        std::future::ready(false)
+    }
     /// Whether the vault knows every P-13 class (Q35).
     fn classes_defined(
         &self,

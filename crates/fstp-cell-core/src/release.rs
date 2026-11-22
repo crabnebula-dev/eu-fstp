@@ -51,6 +51,13 @@ pub enum ReleaseCommand {
         /// The account that asked.
         account: AccountId,
     },
+    /// Close the open request of `account` once the vault confirms its
+    /// verification (system task `Timeline`, ADR-026 record of lane L24,
+    /// lead reading of 2026-11-22). It asks `IsVerified`.
+    CloseVerificationRequest {
+        /// The account whose request closes.
+        account: AccountId,
+    },
     /// Record a relationship (system).
     RecordRelationship {
         /// The relationship, canonical.
@@ -61,6 +68,12 @@ pub enum ReleaseCommand {
 /// A release record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReleaseRecord {
+    /// The vault confirmed the verification of `account`, so its request
+    /// closed (ADR-026 record of lane L24).
+    VerificationRequestClosed {
+        /// The account.
+        account: AccountId,
+    },
     /// `account` asked for an identity check, which staff record on the
     /// vault origin (ADR-026 record of lane L24). It holds no identity data
     /// (I-17).
@@ -157,7 +170,8 @@ impl IssuedTicket {
     /// ticket, such as a verification request.
     pub fn of(r: &ReleaseRecord) -> Option<IssuedTicket> {
         Some(match r {
-            ReleaseRecord::VerificationRequested { .. } => return None,
+            ReleaseRecord::VerificationRequested { .. }
+            | ReleaseRecord::VerificationRequestClosed { .. } => return None,
             ReleaseRecord::TicketIssued {
                 id,
                 kind,

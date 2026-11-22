@@ -33,7 +33,9 @@ fn ask(c: &mut Cell, at: i64, n: u8, account: AccountId) {
     c.append(
         at,
         [0xA0 + n; 16],
-        vec![CellRecord::Release(ReleaseRecord::VerificationRequested { account })],
+        vec![CellRecord::Release(ReleaseRecord::VerificationRequested {
+            account,
+        })],
     );
 }
 
@@ -41,7 +43,9 @@ fn close(c: &mut Cell, at: i64, n: u8, account: AccountId) {
     c.append(
         at,
         [0xB0 + n; 16],
-        vec![CellRecord::Release(ReleaseRecord::VerificationRequestClosed { account })],
+        vec![CellRecord::Release(
+            ReleaseRecord::VerificationRequestClosed { account },
+        )],
     );
 }
 
@@ -94,7 +98,10 @@ fn adr008_applicant_request_waits_for_negotiation() {
     assert!(!verification_request_visible(&c.state, L1));
     ask(&mut c, at, 1, L1);
     c.tick(Timestamp::from_micros(at + 1)).unwrap();
-    assert!(events(&c).is_empty(), "R-NG-01: an applicant's request emailed before NEGOTIATION");
+    assert!(
+        events(&c).is_empty(),
+        "R-NG-01: an applicant's request emailed before NEGOTIATION"
+    );
 }
 
 /// I-27, ADR-026 record of lane L24, row "Email": with a relay, one email
@@ -106,11 +113,14 @@ fn adr008_i27_email_names_no_person_and_links_to_members() {
     let drafts = verification_request_drafts(&recorders, true);
     assert_eq!(drafts.len(), 2);
     for (to, template, bindings) in &drafts {
-        assert!(matches!(to, Recipient::Account(a) if recorders.contains(a)));
+        assert!(matches!(to, Recipient::Account(a) if recorders.contains(&a)));
         assert_eq!(*template, TemplateId::IdCheckWaiting);
         let slots: Vec<Slot> = bindings.slots().collect();
         assert_eq!(slots, vec![Slot::Link]);
-        assert_eq!(bindings.get(Slot::Link), Some(&Value::Link(LinkTarget::Members)));
+        assert_eq!(
+            bindings.get(Slot::Link),
+            Some(&Value::Link(LinkTarget::Members))
+        );
     }
     assert!(verification_request_drafts(&recorders, false).is_empty());
     assert_eq!(LinkTarget::Members.path(), "/app/admin/members");

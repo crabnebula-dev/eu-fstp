@@ -111,9 +111,18 @@ fn adr008_only_the_vaults_confirmation_closes_the_request() {
         subject: A,
         proposal: None,
     });
-    let s = state_of(&ledger(&[(NOW, cid(1), vec![asked.clone()]), (NOW, cid(2), vec![ticket])]).unwrap())
-        .unwrap();
-    assert!(s.verification_requested(A), "an unused ticket closed the request");
+    let s = state_of(
+        &ledger(&[
+            (NOW, cid(1), vec![asked.clone()]),
+            (NOW, cid(2), vec![ticket]),
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        s.verification_requested(A),
+        "an unused ticket closed the request"
+    );
     assert_eq!(s.verification_request_ordinal(A), Some(1));
 
     let close = CellCommand::Release(ReleaseCommand::CloseVerificationRequest { account: A });
@@ -143,7 +152,9 @@ fn adr008_only_the_vaults_confirmation_closes_the_request() {
     let batch = decide_system(&s, &close, &ctx, cid(3), &answer(true)).unwrap();
     assert_eq!(
         batch,
-        vec![CellRecord::Release(ReleaseRecord::VerificationRequestClosed { account: A })]
+        vec![CellRecord::Release(
+            ReleaseRecord::VerificationRequestClosed { account: A }
+        )]
     );
     let entries = ledger(&[
         (NOW, cid(1), vec![asked.clone()]),
@@ -154,9 +165,25 @@ fn adr008_only_the_vaults_confirmation_closes_the_request() {
     let s = state_of(&entries).unwrap();
     assert!(s.verification_requested(A));
     assert_eq!(s.verification_request_ordinal(A), Some(2));
-    assert!(gate::admit_system(&s, Action::Command(close.clone()), SystemTask::Timeline, cid(5), NOW).is_ok());
+    assert!(
+        gate::admit_system(
+            &s,
+            Action::Command(close.clone()),
+            SystemTask::Timeline,
+            cid(5),
+            NOW
+        )
+        .is_ok()
+    );
     assert_eq!(
-        gate::admit_system(&s, Action::Command(close), SystemTask::IdentityPort, cid(5), NOW).err(),
+        gate::admit_system(
+            &s,
+            Action::Command(close),
+            SystemTask::IdentityPort,
+            cid(5),
+            NOW
+        )
+        .err(),
         Some(Deny::NotPermitted)
     );
 }
