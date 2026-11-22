@@ -807,6 +807,23 @@ where
             .with_operator_key(operator_key)
             .with_ticket_key(keys.ticket),
     );
+    // ADR-032: the anonymous draft store, shared by the draft routes and
+    // the claim of the API core, and its hourly sweep.
+    let drafts: Arc<dyn fstp_api_core::anon::AnonymousDrafts> =
+        Arc::new(crate::tasks::drafts::PgAnonymousDrafts::new(
+            fstp_pgstore::ApiStore::new(app_pool.clone(), Arc::clone(&keys.ledger))
+                .map_err(store_err)?,
+        ));
+    let _ = backend.set_anonymous_drafts(Arc::clone(&drafts));
+    {
+        let signal = started.shutdown.signal();
+        let clock = crate::tasks::FnClock::new(rt.clone(), Arc::clone(&clock));
+        let drafts = Arc::clone(&drafts);
+        drop(rt.spawn(async move {
+            crate::tasks::drafts::run(&clock, drafts, &signal).await;
+            drop(signal);
+        }));
+    }
     // The public text class lives in memory, as the text store it copies
     // from does, so a start copies the texts of every published call
     // again (`crate::public`).
