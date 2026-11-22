@@ -118,6 +118,7 @@ fn i19_r_sw_02_route_feed_changes_routes_of_a_running_edge() {
         key_file_custody: key_file_custody.socket().to_path_buf(),
         assets_dir: None,
         relay: None,
+        shell: None,
     };
     let world = World::start_external(
         WorldSpec {
