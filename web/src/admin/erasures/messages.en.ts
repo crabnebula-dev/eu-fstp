@@ -29,6 +29,7 @@ export const ADMIN_ERASURE_LABELS: Readonly<Record<string, string>> = {
   "admin.erasures.log.epoch": "Its key died with key epoch {epoch}.",
   "admin.erasures.kind.text": "a text",
   "admin.erasures.kind.display_name": "a display name",
+  "admin.erasures.kind.document": "a document",
   "admin.erasures.log.no_grant": "none",
   "admin.erasures.log.pending": "not yet",
   "admin.erasures.back": "Back to home",

@@ -155,7 +155,7 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
     /// entry of the ledger, oldest request first. A completion is the
     /// destruction of the key's root epoch once the erasure runner recorded
     /// it, and the `TextsErased` instant of a ledger text before. An entry
-    /// whose cause code is outside the closed list fails the read closed.
+    /// whose cause or kind code is outside its closed list fails the read closed.
     async fn erasures(&self) -> Result<Vec<ErasureRow>, PortError> {
         let state = self.0.engine.state();
         crate::tasks::erasure::erasure_log(&state)
@@ -167,10 +167,13 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
                     grant: None,
                     requested_at: e.requested_at,
                     completed_at: e.destroyed_at.or(e.completed_at),
-                    kind: if e.kind == fstp_cell_core::ERASURE_KIND_DISPLAY_NAME {
-                        ErasureKind::DisplayName
-                    } else {
-                        ErasureKind::Text
+                    // Lane L37: every kind code maps, and any other
+                    // fails the read closed.
+                    kind: match e.kind {
+                        fstp_cell_core::ERASURE_KIND_LEDGER_TEXT => ErasureKind::Text,
+                        fstp_cell_core::ERASURE_KIND_DISPLAY_NAME => ErasureKind::DisplayName,
+                        fstp_cell_core::ERASURE_KIND_DOCUMENT => ErasureKind::Document,
+                        _ => return Err(PortError::Unavailable),
                     },
                     destroyed_epoch: e.destroyed_epoch,
                 })
