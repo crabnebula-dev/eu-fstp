@@ -564,6 +564,18 @@ const PROPOSAL_ROW: Shape = Shape::Object(&[
 /// replies (R-TN-01, lane m4tenant). `values` holds the members of
 /// whichever step was saved, so each member is optional. `accepted` holds
 /// the agreement versions the control plane recorded.
+/// One logo slot of `tenant.branding.logos` (ADR-030): `null`, or the
+/// logo's same-origin path, format, size, and whether PDFs and emails
+/// show it.
+const LOGO: Shape = Shape::Nullable(&Shape::Object(&[
+    m("path", Shape::String),
+    m("format", Shape::Enum(&["png", "webp"])),
+    m("width", Shape::String),
+    m("height", Shape::String),
+    m("pdf", Shape::Bool),
+    m("email", Shape::Bool),
+]));
+
 const ONBOARDING_STEP: Shape = Shape::Object(&[
     m(
         "step",
@@ -1647,6 +1659,26 @@ pub const REPLIES: &[(&str, Shape)] = &[
         Shape::Object(&[
             m("accepted", Shape::Bool),
             m("failing", Shape::Array(&Shape::Enum(BRAND_PAIR_NAMES))),
+        ]),
+    ),
+    // ADR-030: the tenant's logos in light and dark, and each
+    // programme's. A path names a digest only, never tenant text.
+    (
+        "tenant.branding.logos",
+        Shape::Object(&[
+            m(
+                "tenant",
+                Shape::Object(&[m("light", LOGO), m("dark", LOGO)]),
+            ),
+            m(
+                "programmes",
+                Shape::Array(&Shape::Object(&[
+                    m("programme", Shape::Id),
+                    m("name", Shape::String),
+                    m("light", LOGO),
+                    m("dark", LOGO),
+                ])),
+            ),
         ]),
     ),
     // Lane m4tenant. R-TN-01: one onboarding step, and the reply of its

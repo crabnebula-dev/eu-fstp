@@ -310,6 +310,8 @@ pub enum TenantKind {
     /// `TenantCommand::SaveFunderProfile` (Daniel, 2026-11-15 late): a
     /// copy or an edit of a tenant-owned funder profile. High-risk.
     SaveFunderProfile,
+    /// `TenantCommand::SetLogo` (ADR-030, I-68). High-risk.
+    SetLogo,
 }
 
 /// A finding operation kind, one per `FindingCommand` variant.
@@ -423,6 +425,9 @@ pub enum PortKind {
     /// The caller sets or clears its own display name, a confidential
     /// text of its account (SA-11, ADR-007).
     SetDisplayName,
+    /// The caller sets its own theme choice, a `ThemeSet` record of the
+    /// tenant ledger (ADR-030).
+    SetTheme,
 }
 
 /// An M5 operation that is neither a core command nor a read (M5 design
@@ -1050,6 +1055,19 @@ pub const OPS: &[OpSpec] = &[
         &IN_BODY,
         Scope::TenantDraft,
     ),
+    // ADR-030: the logos of the tenant and of each programme (I-68). The
+    // set changes what every interface shows, so it is high-risk by the
+    // same strict reading as the brand tokens. Web only: a logo carries
+    // up to 256 KiB, and the admin sees it before it applies.
+    OpSpec::read("tenant.branding.logos", RK::ListLogos, "/admin/branding/logos").acting(ADMIN),
+    OpSpec::new(
+        "tenant.branding.set_logo",
+        OpKind::Tenant(TenantKind::SetLogo),
+        Put,
+        "/admin/branding/logo",
+    )
+    .hr()
+    .acting(ADMIN),
     // M9 lane T1: interface label overrides and the Voyage switch (I-72,
     // O-55). It changes what every interface shows, so it is high-risk by
     // the strict reading, as the brand tokens are (interim, pending Daniel).
@@ -2355,6 +2373,15 @@ pub const OPS: &[OpSpec] = &[
         "/me/display-name",
     )
     .class(Personal),
+    // ADR-030: the caller's own theme choice, System, Light or Dark.
+    // Web only: no tool.
+    OpSpec::new(
+        "me.set_theme",
+        OpKind::M3Port(PortKind::SetTheme),
+        Put,
+        "/me/theme",
+    )
+    .class(Personal),
     OpSpec::new(
         "me.end_session",
         OpKind::M3Port(PortKind::EndSession),
@@ -2787,6 +2814,8 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     // data protection texts are a tenant setting too.
     OpKind::Tenant(TenantKind::SetGuideNotice),
     OpKind::Tenant(TenantKind::SetBranding),
+    // ADR-030: a logo slot, as the brand tokens.
+    OpKind::Tenant(TenantKind::SetLogo),
     OpKind::Tenant(TenantKind::SetTerminology),
     OpKind::Tenant(TenantKind::SetMailRelay),
     // Daniel, 2026-11-15 (late): a tenant funder profile version.

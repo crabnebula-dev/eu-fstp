@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use fstp_domain::id::{AccountId, ProgrammeId, TextRef};
+use fstp_domain::id::{AccountId, ContentDigest, ProgrammeId, TextRef};
 use fstp_domain::roles::Role;
 use fstp_domain::rules::ParamId;
 
@@ -929,4 +929,90 @@ pub struct MailRelay {
     pub credential: Token,
     /// The pinned CA certificate as PEM text, if any.
     pub ca: Option<TextRef>,
+}
+
+/// A person's theme choice (ADR-030 section 1). `System` follows the
+/// device's colour scheme.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Theme {
+    /// Follow the device (`prefers-color-scheme`). The default.
+    #[default]
+    System,
+    /// Always light.
+    Light,
+    /// Always dark.
+    Dark,
+}
+
+impl Theme {
+    /// Every choice, in the order the switch shows them.
+    pub const ALL: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
+
+    /// The codec and wire spelling.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Theme::System => "system",
+            Theme::Light => "light",
+            Theme::Dark => "dark",
+        }
+    }
+
+    /// The choice spelt `s`.
+    pub fn from_name(s: &str) -> Option<Theme> {
+        Theme::ALL.into_iter().find(|t| t.name() == s)
+    }
+}
+
+/// Whose logo a slot holds (ADR-030 section 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LogoOwner {
+    /// The tenant.
+    Tenant,
+    /// One programme of the tenant.
+    Programme(ProgrammeId),
+}
+
+/// One logo slot: an owner and a theme mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LogoSlot {
+    /// The owner.
+    pub owner: LogoOwner,
+    /// The mode the logo is drawn for.
+    pub mode: fstp_brand::ThemeMode,
+}
+
+impl LogoSlot {
+    /// The mode's spelling.
+    pub const fn mode_name(self) -> &'static str {
+        match self.mode {
+            fstp_brand::ThemeMode::Light => "light",
+            fstp_brand::ThemeMode::Dark => "dark",
+        }
+    }
+}
+
+/// A stored logo, as a record names it: the digest of its checked bytes
+/// in the blob store, its format and its size. Never the bytes (I-68).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LogoRef {
+    /// The SHA-256 of the stored bytes.
+    pub digest: ContentDigest,
+    /// The checked format.
+    pub format: fstp_brand::image::LogoFormat,
+    /// The width in pixels.
+    pub width: u32,
+    /// The height in pixels.
+    pub height: u32,
+    /// Whether a PDF can show it without a decoder (ADR-030 section 6).
+    pub pdf: bool,
+}
+
+impl LogoRef {
+    /// Whether the size lies within the bounds of the logo check (I-68).
+    pub fn within_bounds(&self) -> bool {
+        let ok = |d: u32| {
+            (fstp_brand::image::MIN_DIMENSION..=fstp_brand::image::MAX_DIMENSION).contains(&d)
+        };
+        ok(self.width) && ok(self.height)
+    }
 }

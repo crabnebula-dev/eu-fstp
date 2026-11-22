@@ -6,9 +6,9 @@ use fstp_domain::id::{AccountId, ContentDigest, LlmConfigId};
 use fstp_domain::time::Timestamp;
 
 use crate::types::{
-    ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, MailRelay,
-    ModelRef, OnboardingStep, SettingValue, SignatoryRole, StepOutcome, StepValues, TenantParam,
-    TenantProfile, TenantRevision, Terminology, TokenDigest,
+    ActivationRequestId, ApprovalId, GrantRef, GuideNoticeOverride, InvitationId, LogoRef,
+    LogoSlot, MailRelay, ModelRef, OnboardingStep, SettingValue, SignatoryRole, StepOutcome,
+    StepValues, TenantParam, TenantProfile, TenantRevision, Terminology, Theme, TokenDigest,
 };
 
 /// The context of one tenant command, supplied by the shell.
@@ -177,6 +177,20 @@ pub enum TenantCommand {
         /// The version.
         profile: TenantProfile,
     },
+    /// Set or clear one logo slot (`tenant.branding.set_logo`, ADR-030).
+    /// High-risk, as the brand tokens are. The shell checked and stored
+    /// the bytes first (I-68).
+    SetLogo {
+        /// The slot.
+        slot: LogoSlot,
+        /// The stored logo, or `None` to clear the slot.
+        logo: Option<LogoRef>,
+    },
+    /// Set the caller's own theme choice (`me.set_theme`, ADR-030).
+    SetTheme {
+        /// The choice.
+        theme: Theme,
+    },
 }
 
 /// The kind of a tenant command, as the operation registry names it.
@@ -218,11 +232,15 @@ pub enum TenantKind {
     SetMailRelay,
     /// `tenant.funder_profile.copy` and `tenant.funder_profile.save`.
     SaveFunderProfile,
+    /// `tenant.branding.set_logo`.
+    SetLogo,
+    /// `me.set_theme`.
+    SetTheme,
 }
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 23] = [
+    pub const ALL: [TenantKind; 25] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -246,6 +264,8 @@ impl TenantKind {
         TenantKind::SetTerminology,
         TenantKind::SetMailRelay,
         TenantKind::SaveFunderProfile,
+        TenantKind::SetLogo,
+        TenantKind::SetTheme,
     ];
 
     /// Whether the kind is high-risk and needs a fresh step-up (R-LG-03).
@@ -278,6 +298,7 @@ impl TenantKind {
                 | TenantKind::SetTerminology
                 | TenantKind::SetMailRelay
                 | TenantKind::SaveFunderProfile
+                | TenantKind::SetLogo
         )
     }
 
@@ -299,7 +320,10 @@ impl TenantKind {
     /// Whether only a tenant admin may issue the kind. Only taking an
     /// invitation is open to an account outside the admin set.
     pub const fn admin_only(self) -> bool {
-        !matches!(self, TenantKind::AcceptAdminInvitation)
+        !matches!(
+            self,
+            TenantKind::AcceptAdminInvitation | TenantKind::SetTheme
+        )
     }
 }
 
@@ -325,6 +349,8 @@ impl TenantCommand {
             TenantCommand::SetTerminology { .. } => TenantKind::SetTerminology,
             TenantCommand::SetMailRelay { .. } => TenantKind::SetMailRelay,
             TenantCommand::SaveFunderProfile { .. } => TenantKind::SaveFunderProfile,
+            TenantCommand::SetLogo { .. } => TenantKind::SetLogo,
+            TenantCommand::SetTheme { .. } => TenantKind::SetTheme,
         }
     }
 
@@ -517,6 +543,23 @@ pub enum TenantRecord {
         /// The version.
         profile: TenantProfile,
         /// The saving admin.
+        by: AccountId,
+    },
+    /// A tenant admin set or cleared one logo slot (ADR-030). A set logo
+    /// lies within the bounds of the logo check (I-68).
+    LogoSet {
+        /// The slot.
+        slot: LogoSlot,
+        /// The stored logo, or `None` when cleared.
+        logo: Option<LogoRef>,
+        /// The setting admin.
+        by: AccountId,
+    },
+    /// An account set its own theme choice (ADR-030 section 1).
+    ThemeSet {
+        /// The choice.
+        theme: Theme,
+        /// The account.
         by: AccountId,
     },
 }

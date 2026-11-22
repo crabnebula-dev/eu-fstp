@@ -328,6 +328,15 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SetLogo { slot, logo } => {
+            check_logo(logo.as_ref())?;
+            Ok(vec![TenantRecord::LogoSet {
+                slot: *slot,
+                logo: *logo,
+                by,
+            }])
+        }
+        TenantCommand::SetTheme { theme } => Ok(vec![TenantRecord::ThemeSet { theme: *theme, by }]),
         TenantCommand::SetTerminology { terminology } => {
             check_terminology(terminology)?;
             Ok(vec![TenantRecord::TerminologySet {
@@ -404,6 +413,15 @@ pub(crate) fn check_branding(tokens: &fstp_brand::BrandTokens) -> Result<(), Ten
         Ok(())
     } else {
         Err(TenantRefusal::BrandingContrast(failing))
+    }
+}
+
+/// I-68: a set logo lies within the bounds of the logo check (ADR-030).
+pub(crate) fn check_logo(logo: Option<&crate::types::LogoRef>) -> Result<(), TenantRefusal> {
+    if logo.is_none_or(crate::types::LogoRef::within_bounds) {
+        Ok(())
+    } else {
+        Err(TenantRefusal::LogoInvalid)
     }
 }
 

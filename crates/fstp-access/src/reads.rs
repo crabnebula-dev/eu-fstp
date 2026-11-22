@@ -186,6 +186,9 @@ pub enum ReadKind {
     // Daniel, 2026-11-15 (late): the shipped and tenant-owned funder
     // profiles, for the tenant admins who copy and edit them.
     ListFunderProfiles,
+    // ADR-030: the current logos of the tenant and of each programme,
+    // for the tenant admins who set them.
+    ListLogos,
     // M5 reads follow-up: the caller's own grants and the contracts
     // awaiting the caller's signature (module documentation).
     ListMyGrants,
@@ -237,7 +240,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 79] = [
+    pub const ALL: [ReadKind; 80] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -301,6 +304,7 @@ impl ReadKind {
         ReadKind::GetProgrammeTimeline,
         ReadKind::ListErasures,
         ReadKind::ListFunderProfiles,
+        ReadKind::ListLogos,
         ReadKind::ListMyGrants,
         ReadKind::ListMyContractsToSign,
         ReadKind::GetDetermination,
@@ -721,6 +725,8 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadRule::TenantAdmin,
         OPEN_ALWAYS,
     ),
+    // ADR-030: the tenant admins read the logos they set.
+    (ReadKind::ListLogos, ReadRule::TenantAdmin, OPEN_ALWAYS),
     (
         ReadKind::GetProgrammeTimeline,
         ReadRule::Holder(Role::ProgrammeManager),

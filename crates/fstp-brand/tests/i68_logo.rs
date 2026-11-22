@@ -9,6 +9,7 @@
     clippy::panic,
     clippy::arithmetic_side_effects,
     clippy::cast_possible_truncation,
+    clippy::indexing_slicing,
     reason = "test code asserts on known-good values"
 )]
 
@@ -357,4 +358,48 @@ fn i68_fuzzed_logo_is_data() {
         }
         Ok(())
     });
+}
+
+/// I-68: an upload is standard base64 of the file. Text that is not
+/// base64 is no image, and text longer than the bound is too large
+/// before it is decoded.
+#[test]
+fn i68_logo_upload_is_base64_of_a_checked_file() {
+    use fstp_brand::image::{MAX_BASE64_CHARS, from_base64, sample_png};
+    let png = sample_png(64, 32);
+    let text = b64(&png);
+    let logo = from_base64(&text).expect("accepted");
+    assert_eq!((logo.width, logo.height), (64, 32));
+    assert_eq!(logo.bytes, png);
+    for bad in ["", "!!!!", "abc", "ab=c", "====", " QUJD", "QQ==QQ=="] {
+        assert_eq!(
+            from_base64(bad).err(),
+            Some(LogoRefusal::WrongType),
+            "{bad:?}"
+        );
+    }
+    let svg = b64(b"<svg/>");
+    assert_eq!(from_base64(&svg).err(), Some(LogoRefusal::WrongType));
+    let long = "A".repeat(MAX_BASE64_CHARS + 4);
+    assert_eq!(from_base64(&long).err(), Some(LogoRefusal::TooLarge));
+}
+
+/// Standard base64 with padding, written here apart from the crate's
+/// decoder.
+fn b64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
+        for i in 0..4 {
+            if i <= c.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }

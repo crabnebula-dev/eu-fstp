@@ -2,15 +2,21 @@
 //!
 //! Checks: the logo check is total over any bytes. An accepted file is a
 //! PNG or WebP within the size and dimension bounds, and its rewrite
-//! passes the check again unchanged. The PDF reader is total too.
+//! passes the check again unchanged. The PDF reader and the base64
+//! upload decoder are total too.
 
 #![no_main]
 
-use fstp_brand::image::{MAX_DIMENSION, MAX_LOGO_BYTES, MIN_DIMENSION, inspect, pdf_image};
+use fstp_brand::image::{
+    MAX_DIMENSION, MAX_LOGO_BYTES, MIN_DIMENSION, from_base64, inspect, pdf_image,
+};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let _ = pdf_image(data);
+    if let Ok(text) = std::str::from_utf8(data) {
+        let _ = from_base64(text);
+    }
     let Ok(logo) = inspect(data) else {
         return;
     };

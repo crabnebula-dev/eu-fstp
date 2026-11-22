@@ -632,3 +632,97 @@ pub fn pdf_image(bytes: &[u8]) -> Option<PdfImage> {
         data: w.data,
     })
 }
+
+// --------------------------------------------------------------- upload
+
+/// The longest base64 text of a logo: four characters per three bytes
+/// of [`MAX_LOGO_BYTES`], rounded up.
+pub const MAX_BASE64_CHARS: usize = MAX_LOGO_BYTES.div_ceil(3) * 4;
+
+fn sextet(c: u8) -> Option<u32> {
+    let v = match c {
+        b'A'..=b'Z' => c.checked_sub(b'A')?,
+        b'a'..=b'z' => c.checked_sub(b'a')?.checked_add(26)?,
+        b'0'..=b'9' => c.checked_sub(b'0')?.checked_add(52)?,
+        b'+' => 62,
+        b'/' => 63,
+        _ => return None,
+    };
+    Some(u32::from(v))
+}
+
+/// The bytes of standard base64 text with padding (RFC 4648 section 4),
+/// as the web page sends a file. No white space is allowed.
+fn base64(text: &[u8]) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(text.len());
+    let groups = text.chunks_exact(4);
+    let last = groups.len().checked_sub(1)?;
+    for (i, g) in groups.enumerate() {
+        let pad = g.iter().rev().take_while(|c| **c == b'=').count();
+        if pad > 2 || (pad > 0 && i != last) {
+            return None;
+        }
+        let mut n = 0u32;
+        for (j, c) in g.iter().enumerate() {
+            let v = if j.saturating_add(pad) >= 4 {
+                0
+            } else {
+                sextet(*c)?
+            };
+            n = n << 6 | v;
+        }
+        let [_, a, b, c] = n.to_be_bytes();
+        out.push(a);
+        if pad < 2 {
+            out.push(b);
+        }
+        if pad < 1 {
+            out.push(c);
+        }
+    }
+    Some(out)
+}
+
+/// The logo of an upload: standard base64 text of the file, checked by
+/// [`inspect`]. Text longer than the base64 of [`MAX_LOGO_BYTES`] is too
+/// large before it is decoded. Text that is not base64 is no image.
+///
+/// # Errors
+///
+/// A [`LogoRefusal`] as [`inspect`] gives, or [`LogoRefusal::WrongType`]
+/// for text that is not base64.
+pub fn from_base64(text: &str) -> R<Logo> {
+    if text.len() > MAX_BASE64_CHARS {
+        return Err(LogoRefusal::TooLarge);
+    }
+    let bytes = base64(text.as_bytes()).ok_or(LogoRefusal::WrongType)?;
+    inspect(&bytes)
+}
+
+/// A synthetic, valid, opaque grey PNG of `width` by `height` pixels for
+/// tests, the matrix harness and the demo. Its image data is a fixed
+/// zlib stream that no check here decodes.
+pub fn sample_png(width: u32, height: u32) -> Vec<u8> {
+    let chunk = |out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]| {
+        let len = u32::try_from(data.len()).unwrap_or(0);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&crc32(&[kind, data]).to_be_bytes());
+    };
+    let mut ihdr = width.to_be_bytes().to_vec();
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 0, 0, 0, 0]);
+    let mut out = PNG_SIGNATURE.to_vec();
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(
+        &mut out,
+        b"IDAT",
+        &[0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+    );
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
