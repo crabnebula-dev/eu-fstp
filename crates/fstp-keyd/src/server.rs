@@ -83,6 +83,11 @@ pub(crate) struct Server {
     windows: BTreeMap<u8, (Instant, u32, bool)>,
     log_max: u64,
     rate_max: u32,
+    /// Whether the volume is held after an import (ADR-004 record of
+    /// lane L16 rule 2).
+    held: bool,
+    /// The exclusive lock of the volume, held for the server's lifetime.
+    _lock: crate::export::VolumeLock,
 }
 
 impl Server {
@@ -128,6 +133,7 @@ impl Server {
     /// Opens the key volume under `passphrase`, creating an empty key
     /// table on first start.
     pub(crate) fn open(volume: &Path, passphrase: &Passphrase) -> Result<Server, KeydError> {
+        let lock = crate::export::lock_volume(volume, crate::export::LOCK_WAIT)?;
         let table = TableStore::open_or_create(volume, passphrase)?;
         Ok(Server {
             volume: volume.to_path_buf(),
@@ -137,6 +143,8 @@ impl Server {
             windows: BTreeMap::new(),
             log_max: usage::USAGE_LOG_MAX_BYTES,
             rate_max: usage::USAGE_RECORDS_PER_CLIENT_MINUTE,
+            held: crate::export::is_held(volume),
+            _lock: lock,
         })
     }
 
@@ -156,7 +164,8 @@ impl Server {
         if !self.admit(role.code(), op_and_root(request).0) {
             return Response::Refused(Refusal::LimitReached);
         }
-        if role.permits(request) {
+        let held_out = self.held && !crate::export::held_permits(request);
+        if role.permits(request) && !held_out {
             return self.serve_logged(role.code(), request);
         }
         let (op, root) = op_and_root(request);
@@ -484,6 +493,57 @@ fn wrap_aad(handle: RootHandle, aad: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Release of a held volume (ADR-004 record of lane L16 rule 3), under
+/// the volume's lock. Every erasable chain with a live epoch must be
+/// named in `current`. Every live epoch of a named chain below its
+/// current one is destroyed with the steps and receipt of a destroy, and
+/// logged. A named epoch that is not live gives [`KeydError::StaleCopy`]
+/// after those destroys.
+pub(crate) fn release(
+    volume: &Path,
+    passphrase: &Passphrase,
+    current: &[(Chain, Epoch)],
+) -> Result<(), KeydError> {
+    let mut server = Server::open(volume, passphrase)?;
+    let live = |s: &Server, chain: Chain| -> Vec<Epoch> {
+        s.table
+            .table
+            .entries
+            .iter()
+            .filter(|e| e.chain == chain && e.is_live())
+            .map(|e| e.epoch)
+            .collect()
+    };
+    for chain in crate::export::ERASABLE {
+        if !live(&server, chain).is_empty() && !current.iter().any(|(c, _)| *c == chain) {
+            return Err(KeydError::Malformed(
+                "release must name the current epoch of every erasable chain",
+            ));
+        }
+    }
+    let mut stale = false;
+    for (chain, now) in current {
+        for epoch in live(&server, *chain).into_iter().filter(|e| e < now) {
+            let id = RequestId(fstp_crypto::random_array().map_err(KeydError::Crypto)?);
+            let root = RootHandle {
+                chain: *chain,
+                epoch,
+            };
+            match server.serve_logged(ClientRole::Console.code(), &Request::Destroy { id, root }) {
+                Response::Destroyed(_) => {}
+                _ => return Err(KeydError::Io("destroy an epoch below the current one")),
+            }
+        }
+        if !live(&server, *chain).contains(now) {
+            stale = true;
+        }
+    }
+    if stale {
+        return Err(KeydError::StaleCopy);
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // The socket loop.
 
@@ -623,6 +683,15 @@ pub fn serve_sockets_from(
     crate::volume::check_private_volume(key_volume, choice.mode == DeploymentMode::Development)?;
     let server = Server::open(key_volume, &passphrase)?;
     drop(passphrase);
+    // ADR-004 record of lane L16 rule 4: a copy that holds a key since
+    // destroyed lowers a full assurance. A volume reason stays first.
+    let assurance = match (
+        assurance,
+        crate::export::register_reason(key_volume, &server.table.table),
+    ) {
+        (Assurance::Full, Some(reason)) => Assurance::Reduced(reason),
+        (a, _) => a,
+    };
     log(&LogEvent::KeyCustodyStarted {
         mode: choice.mode,
         assurance,

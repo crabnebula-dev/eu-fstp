@@ -1477,7 +1477,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             _ => OriginRefusal::WrongKind,
         })?;
         let mut next = vault.clone();
-        next.use_verification_ticket(c.nonce, now);
+        next.use_verification_ticket(c.ticket_id, now);
         let entries = next.take_journal();
         journal
             .commit(&entries, now)

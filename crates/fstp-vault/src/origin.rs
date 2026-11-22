@@ -952,18 +952,19 @@ impl Vault {
             return Err(OriginRefusal::NoNegotiationFact);
         }
         Ok(Some(CheckedVerification {
-            nonce: c.nonce,
+            ticket_id: c.nonce,
             verifier: c.account,
             account,
             write,
         }))
     }
 
-    /// Marks the ticket `nonce` used at `now`, once the verification it
+    /// Marks the ticket `ticket_id` used at `now`, once the verification it
     /// carried is recorded (ADR-004 record of lane L13b, row "Ticket
-    /// use").
-    pub fn use_verification_ticket(&mut self, nonce: [u8; 16], now: i64) {
-        self.use_ticket(nonce, now);
+    /// use"). The id is the ticket's single-use identifier (ADR-009
+    /// "Single use"), never a seal nonce: it seals nothing.
+    pub fn use_verification_ticket(&mut self, ticket_id: [u8; 16], now: i64) {
+        self.use_ticket(ticket_id, now);
     }
     /// `POST /w` with the request `bytes` at `now`.
     ///
@@ -1439,7 +1440,7 @@ fn escape(s: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CheckedVerification {
     /// The ticket id, used once the verification is recorded.
-    pub nonce: [u8; 16],
+    pub ticket_id: [u8; 16],
     /// The ticket's holder: the recorder, who becomes the verifier.
     pub verifier: WireAccount,
     /// The person the ticket names, whose identity was checked.

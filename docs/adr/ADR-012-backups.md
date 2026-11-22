@@ -40,7 +40,7 @@ body   = chunk(0) | chunk(1) | ... | chunk(n), and chunk(n) alone has final = 1
 ```
 
 - Integers are big-endian. `aead = 1` names AES-256-GCM, as in ADR-004.
-- `kind`: 1 base backup file, 2 WAL segment, 3 keystore snapshot.
+- `kind`: 1 base backup file, 2 WAL segment, 3 keystore snapshot, and 4 custodian escrow since the record of lane L16.
 - `chain`: the ADR-004 code for ClusterBackup (4) or CellBackup (3). `owner` is the `ClusterId` for ClusterBackup and the `CellId` for CellBackup, as in ADR-004.
 - `container` is a random id. It is also the id of the data key, so it is the `object` of the sealed key's context.
 - `part` numbers the parts of a split container from 0. A container that is not split has `part = 0`.
@@ -215,6 +215,29 @@ Written by lane L11 on 2026-11-21. Interim, pending Daniel. It departs from the 
 - On the single-host pilot, the vault keystore rows live in `v_<cell>` on the vault cluster. That cluster's base backups and WAL archive (record of lane L10) are the copies a restore reads.
 - Step 5 of a Vault chain rotation therefore reads the committed rows back from the database and opens them under `R(e+1)` through custody: every group secret, data key and identity tuple. No separate snapshot container is written, and no `VaultDestination::KeystoreSnapshots` connection is opened.
 - Option A or B still decides how a vault snapshot container is sealed, once one is written. ADR-004 records the rotation itself (record of lane L11).
+
+## Record of lane L16 `prod/backup-custody`
+
+Written by lane L16 on 2026-11-21, before its code, for the single-host pilot of ADR-026 (D1). It closes "a key held outside this host" in the record of lane L10. The custody side is recorded in ADR-004 (record of lane L16).
+
+Decided by Daniel on 2026-11-21: on the pilot, the key that opens every backup must survive the loss of the host, by both of the following. (1) An off-host sealed copy of the `fstp-keyd` state, with an operator command to make it, an import onto a fresh host and a runbook. It respects erasure: a destroyed root epoch never comes back from an old copy. (2) A second custodian: a second `fstp-keyd` on another machine holds its own custody of the ClusterBackup chain, with a key ceremony as an operator command and a runbook. (3) `zeroize` may be used in `fstp-backup` (ADR-001 record of 2026-11-21).
+
+Every row below is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Second custodian | A second `fstp-keyd` entry on another machine, reached through its own console socket. It never receives a root of the first host. It creates its own ClusterBackup root and holds its own hybrid KEM key pair, the custodian key. The first host seals the ClusterBackup group secret to that key's public half. So a root never leaves either custody (I-80), and the group secret travels only sealed through the hybrid KEM (R-CR-01) | Daniel 2026-11-21 (2); I-80 |
+| Custodian key file | `custodian.key` in the second host's credentials directory has the layout of `cluster-backup.key` with the magic `"fstp-backup-custodian1"` (22 bytes). Its group field is a random custodian id. Its root is `{cell: none, chain: ClusterBackup, epoch: 1}` in the second `fstp-keyd`. The two magics keep a custodian key from being read as a group key file, and the reverse. The decoder is fuzzed (`backup_key_file_decode`) | ADR-012 record of lane L10 "Key file" |
+| Custodian request | `custodian.pub` = `"FCP1"` \|\| version u8 = 1 \|\| cluster (16) \|\| custodian id (16) \|\| custodian public key (1216). It holds no secret. The operator compares its SHA-256 on both hosts before the escrow step. The decoder is fuzzed (`backup_custodian_decode`) | R-CR-01 |
+| Escrow container | `cluster-backup.escrow` is one ADR-012 container of the new kind 4, "custodian escrow", on the ClusterBackup chain. The owner is the cluster, the group is the custodian id, the generation is 1 and the part is 0. It is sealed to the custodian public key. Its plaintext is group (16) \|\| be32(generation) \|\| group public key (1216) \|\| group secret key (2432), exactly 3668 bytes. The plaintext decoder is fuzzed (`backup_custodian_decode`) | ADR-012 "Container format"; R-CR-01 |
+| Opening on the second host | When the credentials directory holds `cluster-backup.escrow`, the restore commands open `custodian.key` through the configured console socket, open the escrow with it, and check that its group, generation and public key are those of `cluster-backup.key`, and that the secret's public half is that public key. The second host keeps a copy of `cluster-backup.key`, which holds the public key and a secret sealed under the first host's root only | ADR-012 "Restore" |
+| Ceremony | `fstp-backup custodian-init` on the second host writes `custodian.key` and `custodian.pub`. `fstp-backup custodian-escrow <custodian.pub> <out file>` on the first host opens the group secret through its console socket and writes the escrow. Both run as root. Neither writes a line of its own (R-NF-02). The operator carries both files and `cluster-backup.key` by hand, then runs a restore drill on the second host | Daniel 2026-11-21 (2) |
+| Erasure and the second custodian | The second custodian holds only a ClusterBackup root and its custodian key. ClusterBackup is never rotated or destroyed by erasure (ADR-004 part 2 "Chains"). `custodian-init` creates only that chain, and the console role reaches no App or Vault chain. So no root epoch that an erasure destroys is ever held there, and none opens from it (I-81) | I-81; ADR-004 "Chains" |
+| What the second custodian restores | The cluster's base backups and WAL. The rows inside that are sealed under the App and Vault chains open only with those chains' roots. Those come from the off-host copy of their `fstp-keyd` entries (ADR-004 record of lane L16). After the loss of the host, a full restore needs both | Daniel 2026-11-21 (1), (2) |
+| Rotation of the ClusterBackup group | Not built. A new group generation needs a new escrow for each custodian | ADR-004 "Chains" |
+| Zeroize | `fstp-backup` wraps every plain copy of a group secret in `Zeroizing`: the escrow plaintext on both sides and the secret bytes before they are sealed. `HybridSecretKey`, `SealKey` and the KEM shared secret already wipe on drop in `fstp-crypto` and `fstp-custody` | Daniel 2026-11-21 (3); ADR-001 A1 |
+
+Tests: `i80_second_custodian_never_receives_a_root`, `i81_second_custodian_holds_no_erasable_root`, `i80_i81_host_loss_restore_from_the_second_custodian`, `i80_escrow_never_holds_the_group_secret_in_the_clear` and `adr012_custodian_files_round_trip` in `crates/fstp-backup/tests/second_custodian.rs`. The off-host copy has its tests in `crates/fstp-keyd` (ADR-004 record of lane L16).
 
 ## Consequences
 
