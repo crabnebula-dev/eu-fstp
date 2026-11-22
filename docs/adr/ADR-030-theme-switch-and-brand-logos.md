@@ -107,3 +107,6 @@ No MCP tool is added. `fstp_prepare_branding` stays for the colour tokens only. 
 4. Programme managers setting their programme's logo (section 2).
 5. Logos with soft transparency in PDFs (section 6).
 6. The EU emblem file, its alternative text and the usage rules. TODO(legal): the emblem usage rules and the acknowledgement wording (L-08).
+7. Interim, pending Daniel: only the contract PDF carries the letterhead. Funder reports and the Guide PDF are pinned and re-rendered from their records, so their letterhead must first be pinned in those records. That is left for a later lane.
+8. Interim, pending Daniel: the PostgreSQL matrix sample leaves the three ADR-030 operations out. With them, the sample reaches `me.set_display_name` in a production cell, whose text store keeps no display names yet and fails closed under SA-11. That is a gap of the cell for the lead. The matrices over fake ports cover the three operations.
+9. Interim, pending Daniel: no MCP prepare tool for logos (section 4).
