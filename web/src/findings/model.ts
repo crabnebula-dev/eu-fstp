@@ -129,7 +129,31 @@ export interface FindingsStatus {
   readonly refused: number;
   /** Whether the coordinator may run the assessment again now. */
   readonly rerun: "available" | "in_flight" | "used_up";
+  /** The integrity hold of the injection scan (ADR-035). */
+  readonly integrity: "clear" | "held" | "released";
+  /** The scan's reason codes, empty when clear. Closed codes, never text. */
+  readonly reasons: readonly string[];
 }
+
+/** The reason codes of the injection scan (ADR-035). */
+const INTEGRITY_REASONS: readonly string[] = [
+  "zero_width",
+  "bidi",
+  "tag",
+  "variation_run",
+  "format",
+  "hidden_markup",
+  "role_marker",
+  "override",
+  "addressed",
+  "score_request",
+  "tool_call",
+  "schema_payload",
+  "exfil_link",
+  "encoded_blob",
+  "confusable",
+  "truncated",
+];
 
 /** The `assess.findings_status` reply, or null. */
 export function decodeFindingsStatus(v: unknown): readonly FindingsStatus[] | null {
@@ -138,15 +162,39 @@ export function decodeFindingsStatus(v: unknown): readonly FindingsStatus[] | nu
   }
   const out: FindingsStatus[] = [];
   for (const x of v) {
-    if (!isObject(x) || !exactly(x, ["proposal", "status", "findings", "refused", "rerun"])) {
+    if (
+      !isObject(x) ||
+      !exactly(x, ["proposal", "status", "findings", "refused", "rerun", "integrity", "reasons"])
+    ) {
       return null;
     }
     const status = oneOf(x["status"], ["pending", "ready"] as const);
     const rerun = oneOf(x["rerun"], ["available", "in_flight", "used_up"] as const);
-    if (!isId(x["proposal"]) || status === null || !isCount(x["findings"]) || !isCount(x["refused"]) || rerun === null) {
+    const integrity = oneOf(x["integrity"], ["clear", "held", "released"] as const);
+    const reasons = x["reasons"];
+    if (
+      !isId(x["proposal"]) ||
+      status === null ||
+      !isCount(x["findings"]) ||
+      !isCount(x["refused"]) ||
+      rerun === null ||
+      integrity === null ||
+      !Array.isArray(reasons) ||
+      !reasons.every((r) => typeof r === "string" && INTEGRITY_REASONS.includes(r))
+    ) {
       return null;
     }
-    out.push(Object.freeze({ proposal: x["proposal"], status, findings: x["findings"], refused: x["refused"], rerun }));
+    out.push(
+      Object.freeze({
+        proposal: x["proposal"],
+        status,
+        findings: x["findings"],
+        refused: x["refused"],
+        rerun,
+        integrity,
+        reasons: Object.freeze([...(reasons as string[])]),
+      }),
+    );
   }
   return Object.freeze(out);
 }

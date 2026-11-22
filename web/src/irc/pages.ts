@@ -20,6 +20,7 @@ import {
   declarationBody,
   declarationForm,
   declarationViewSection,
+  flaggedPassages,
   formEl,
   frame,
   guarded,
@@ -102,6 +103,10 @@ function caseSection(t: I18n, c: IrcCase): HTMLElement {
   return h("section", { id: "irc-case", "aria-labelledby": "irc-case-heading" }, [
     h("h2", { id: "irc-case-heading" }, [t.label("irc.case.heading")]),
     h("p", { id: "irc-outcome", "data-outcome": c.outcome }, [t.label(`irc.case.outcome.${c.outcome}`)]),
+    ...flaggedPassages(t, [
+      { part: "title", text: c.title, flags: c.title_flags },
+      { part: "text", text: c.text, flags: c.text_flags },
+    ]),
     h("h3", {}, [c.title]),
     ...paragraphs(c.text),
   ]);

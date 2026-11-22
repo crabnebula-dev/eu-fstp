@@ -76,10 +76,10 @@ test("th29_no_check_left_offers_none", () => {
 
 /** I-10, M7 design section 7: the coordinator's status carries counts only. */
 test("i10_findings_status_refuses_a_statement", () => {
-  const ok = decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9, refused: 0, rerun: "available" }]);
+  const ok = decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9, refused: 0, rerun: "available", integrity: "clear", reasons: [] }]);
   eq(ok?.length, 1, "decodes");
   eq(
-    decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9, refused: 0, rerun: "available", statement: "x" }]),
+    decodeFindingsStatus([{ proposal: "1001", status: "ready", findings: 9, refused: 0, rerun: "available", integrity: "clear", reasons: [], statement: "x" }]),
     null,
     "statement refused",
   );
