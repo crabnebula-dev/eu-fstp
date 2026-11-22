@@ -14,6 +14,7 @@
 //    `token` creates the account and its session.
 
 import { ok, post } from '../api.js';
+import { claimPath, kept } from '../anondraft.js';
 import { isHex } from '../encoding.js';
 import { h } from '../dom.js';
 import {
@@ -41,7 +42,10 @@ async function register(token: string): Promise<void> {
   const c = await registration(publicKey);
   const r = await post('/auth/signup', { ...c, challenge_id: challengeId, token });
   if (!ok(r)) throw failureOf(r.status === 401 ? 403 : r.status);
-  go(signedInHome());
+  // ADR-032: a draft started without an account moves into the new
+  // account on the claim page.
+  const draft = kept();
+  go(draft === null ? signedInHome() : claimPath(draft.call));
 }
 
 function mountRegister(token: string | null): void {

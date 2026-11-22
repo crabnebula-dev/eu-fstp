@@ -8,6 +8,7 @@
 // through to other features when it returns false.
 
 import { mountCall } from "../calls/call.js";
+import { mountClaim } from "./claim.js";
 import { mountGuide } from "../calls/guide.js";
 import { mountCallList } from "../calls/list.js";
 import { h } from "../core/dom.js";
@@ -33,6 +34,8 @@ export const PAGES: readonly (RouteDef & { readonly mount: (params: Readonly<Rec
   { name: "calls.list", pattern: "/app/calls", segments: {}, mount: () => mountCallList() },
   { name: "calls.call", pattern: "/app/calls/{call}", segments: CALL, mount: (p) => mountCall(p["call"] ?? "") },
   { name: "calls.guide", pattern: "/app/calls/{call}/guide", segments: CALL, mount: (p) => mountGuide(p["call"] ?? "") },
+  // ADR-032: the claim of a draft started without an account.
+  { name: "calls.claim", pattern: "/app/calls/{call}/claim", segments: CALL, mount: (p) => mountClaim(p["call"] ?? "") },
   { name: "proposals.list", pattern: "/app/proposals", segments: {}, mount: () => mountProposals() },
   {
     name: "proposal.view",
