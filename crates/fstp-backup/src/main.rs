@@ -9,7 +9,11 @@
 //! - `base-backup`: one base backup, from a timer;
 //! - `wal-archive <path> <name>`: `archive_command`, `%p %f`;
 //! - `wal-restore <name> <path>`: `restore_command`, `%f %p`;
-//! - `restore <data dir> [<backup id> <size>]`: a restore, as root.
+//! - `restore <data dir> [<backup id> <size>]`: a restore, as root;
+//! - `custodian-init`: on a second custodian, as root, create its key
+//!   and request (ADR-012 record of lane L16);
+//! - `custodian-escrow <request> <out>`: on the first host, as root, seal
+//!   the group secret to a second custodian.
 //!
 //! It writes no line of its own (R-NF-02). A refused configuration or
 //! argument exits with status 2, any other failure with status 1, which

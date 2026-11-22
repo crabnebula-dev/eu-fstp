@@ -20,6 +20,7 @@ The pilot is one host in SaaS mode, with `fstp-keyd` custody and no control plan
 - **Edge.** The `fstp-edge` binary, which routes the tenant domain to the cell's tunnel listener by SNI. Section 5 sets it up.
 - **Mail.** An account on a submission relay for proof mail: sign-up proofs, magic links and recovery proofs (D3). A tenant's own relay replaces it once the tenant sets one (ADR-018).
 - **Backups.** Object storage under ADR-012, and `fstp-backup` per self-operated cluster. The section "Backups and restore (operator)" sets it up.
+- **Second custodian.** Another machine with its own `fstp-keyd` entry. It holds its own custody of the ClusterBackup chain and the off-host copies of the pilot's custody entries (section "Backups and restore (operator)").
 - **claude.ai.** A claude.ai plan that allows custom connectors, if staff use claude.ai. The claude.ai trace of D9 is still open, so claude.ai is not yet verified against a production cell.
 
 ## 2. Configure the cell
@@ -387,7 +388,7 @@ FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup init-keys
 
 It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` with mode 0600. It refuses to overwrite an existing key file.
 
-The root of that key lives in this host's `fstp-keyd`. If the host and its key volume are lost, no backup of this cluster opens again. Keep the key volume of that `fstp-keyd` entry, and `cluster-backup.key`, recoverable off the host by the procedure for custody volumes. Interim, pending Daniel: the pilot has no second custody for this root.
+The root of that key lives in this host's `fstp-keyd`. Decided by Daniel on 2026-11-21: a backup must still open after the loss of this host. Two measures carry that, and the pilot uses both. A second custodian on another machine holds its own custody of the ClusterBackup chain ("Second custodian" below). An off-host sealed copy of each `fstp-keyd` entry keeps the App and Vault roots ("Off-host copy of a custody entry" below). The rows inside a backup open only with those roots.
 
 ### Archive WAL continuously
 
@@ -431,13 +432,96 @@ For archive recovery driven by PostgreSQL itself, `restore_command = 'FSTP_BACKU
 
 Exit status: 0 on success, 2 for a refused configuration or argument, 1 for any other failure. No line names a secret.
 
+### Second custodian
+
+Written by lane L16 `prod/backup-custody` (ADR-012 record of lane L16). Every item waits for Daniel unless it says otherwise.
+
+The second custodian is another machine, outside the pilot host. It runs its own `fstp-keyd` entry with its own key volume, passphrase and console socket. It never receives a root of the pilot host. It creates its own ClusterBackup root, and the pilot host seals the group secret to a key that root protects.
+
+Set up the second host:
+
+- An `fstp-keyd` entry as on the pilot (section 1), on a Linux ext4 or XFS volume.
+- `fstp-backup` and a configuration file with the pilot's `cluster` and `object_store`, and `keyd_socket` set to this host's console socket.
+- The object store credentials. Give this host a read-only credential where the service allows it.
+- A copy of the pilot's `cluster-backup.key`. It holds the public key and a secret sealed under the pilot's root only, so it opens nothing here by itself.
+
+The key ceremony, as root on each host:
+
+1. On the second host, run `FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup custodian-init`. It creates this host's ClusterBackup root and writes `custodian.key` and `custodian.pub` into the credentials directory. It refuses to overwrite either.
+2. Carry `custodian.pub` to the pilot host. It holds no secret. Compare `sha256sum custodian.pub` on both hosts over a second channel, such as a phone call between the two operators.
+3. On the pilot host, run `FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup custodian-escrow /root/custodian.pub /root/cluster-backup.escrow`. It opens the group secret through the console socket and seals it to the second custodian's key. It refuses a request for another cluster.
+4. Carry `cluster-backup.escrow` to the second host's credentials directory, with mode 0600. It is sealed to that host's key, so only that host's `fstp-keyd` opens it.
+5. Run a restore drill on the second host into a scratch directory (section "Restore after the loss of the host", step 2). Delete the escrow copy from the pilot host once the drill passes.
+
+On a host whose credentials directory holds `cluster-backup.escrow`, `restore` and `wal-restore` open `custodian.key` through the console socket and then the escrow. They check that it names the group key of `cluster-backup.key`.
+
+The second custodian holds only a ClusterBackup root. ClusterBackup is never rotated or destroyed by an erasure, so no erased key is ever held there (I-81).
+
+### Off-host copy of a custody entry
+
+Written by lane L16 (ADR-004 record of lane L16). Every item waits for Daniel unless it says otherwise.
+
+Each `fstp-keyd` entry of the pilot gets an off-host sealed copy: the cell's entry, the cell key file's entry and the vault's entry. A copy holds the key table and the key files of live keys, as sealed as on the volume, inside one more seal under the entry's passphrase. It also carries the entry's usage log, so reconciliation after a restore covers the time before the loss. It never holds a root in the clear (I-80). Only `fstp-keyd` makes or opens it.
+
+Make a copy while the entry is stopped, as root:
+
+```sh
+systemctl stop fstp-keyd
+fstp-keyd export /var/lib/fstp-keyd /root/keyd-cell-2026-11-21.fkx
+systemctl start fstp-keyd
+```
+
+- The command reads the passphrase as the service does: the systemd credential, or else `systemd-ask-password`. It refuses while the entry serves.
+- It writes the copy with mode 0600 and refuses an existing file. Move it off the host at once, for example to the second custodian.
+- The copy's id stands in clear in bytes 26 to 41 of the file: `od -An -tx1 -j26 -N16 /root/keyd-cell-2026-11-21.fkx | tr -d ' \n'`. Note it beside the copy.
+- After each erasure, make a new copy, destroy every older copy, and retire each older id (below). Decided by Daniel on 2026-11-21. A copy made before an erasure still holds the erased key, and whoever holds it with the passphrase can open that key outside our tools.
+
+The entry records each copy in `exports.log` on its volume. While a copy that is not retired holds a key that has since been destroyed, the entry starts at reduced I-81 assurance with the reason "an off-host copy holds a destroyed key". Once every copy of an old id is destroyed, record it:
+
+```sh
+fstp-keyd retire-export /var/lib/fstp-keyd <copy id>
+```
+
+The entry reports full assurance again at its next start, if nothing else reduces it.
+
+### Restore after the loss of the host
+
+On a fresh host, as root, in this order:
+
+1. Install each `fstp-keyd` entry with the passphrase of the entry it replaces. Import its newest copy onto an empty key volume: `fstp-keyd import /root/keyd-cell-2026-11-21.fkx /var/lib/fstp-keyd`. A wrong passphrase, a changed byte and a volume that already holds a key table are refused, and nothing is written.
+2. Start the entries. An imported entry is held: it answers only unwraps on the backup chains, so `fstp-backup restore` runs and no cell or vault opens a key. Run `fstp-backup restore` for each cluster (section "Restore"). If the pilot host's ClusterBackup root is gone with its entry, run the restore on the second custodian instead, and carry the restored directory over.
+3. Start PostgreSQL on each restored directory, without the cell and the vault. Read the current epoch of each erasable chain as the PostgreSQL superuser over the local socket: `SELECT chain, max(epoch) FROM keystore.root WHERE state = 1 GROUP BY chain;` in `c_<cell>` gives the App chain (1), and in `v_<cell>` the Vault chain (2).
+4. Stop each entry and release it with those epochs, for example `fstp-keyd release /var/lib/fstp-keyd app=7` for the cell's entry and `fstp-keyd release /var/lib/fstp-keyd vault=3` for the vault's. Release destroys every older epoch of each named chain. The cell key file's entry holds no erasable chain, so release it with no epoch.
+5. If release refuses, the copy is older than the last erasure. It has destroyed the erased epochs and keeps the hold. The data under the current epoch does not open from this copy. Import a newer copy onto a fresh volume and release again.
+6. Start the entries, the cell and the vault. Then follow the restore rule of ADR-012: each verifies its chain against the witness, and lost receipted entries are reported, never hidden.
+
+### Copies of the cell key file and the witness receipt key file
+
+Decided by Daniel on 2026-11-21 (ADR-004 record of lane L16, Q-L16-3). The cell key file `cell-keys.sealed` and the witness receipt key file `receipt.key` live in credentials directories, outside the key volumes. A restore needs copies of them too. Make each copy with its owner's command, as root:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell copy-key-file /root/cell-keys-2026-11-21.sealed
+FSTP_WITNESS_CONFIG=/etc/fstp/witness.json fstp-witness copy-key-file /root/receipt-2026-11-21.key
+```
+
+- Each command opens the file through its owner's `fstp-keyd` entry, writes the sealed bytes with mode 0600, and records the copy in `cell-keys.copies` or `receipt.copies` beside the file. Copy that register off the host with the copy.
+- Each command also writes the copy's id as 32 hex digits to `<out>.id`, for example `/root/cell-keys-2026-11-21.sealed.id`. Keep it beside the copy.
+- At each start the owner compares the register with its live keys. While a copy that is not retired holds a key it has since replaced, it logs `key_file_assurance` at reduced assurance, with the reason "an off-host copy of a key file holds a replaced key".
+- Once every copy of an id is destroyed, record it with `fstp-cell retire-key-file-copy <id>` or `fstp-witness retire-key-file-copy <id>`.
+- On the fresh host, put each copy back under its file name in the owner's credentials directory before step 6.
+
 ### What is not built yet
 
 - A second provider (Q25). One `object_store` only.
 - Keystore snapshots written by `fstp-cell` and `fstp-vault` (ADR-012 "Keystore snapshots").
-- Rotation of the ClusterBackup root, and a key held outside this host.
+- Rotation of the ClusterBackup root and group. A new group generation needs a new escrow for each custodian.
+- A copy bound to a guard key that the second custodian destroys at each erasure. Decided by Daniel on 2026-11-21: a release item, built before a release (ADR-004 record of lane L16, Q-L16-1).
 - Declared restores at the witness and the monthly restore drill.
 
 ### Checked by
 
 `crates/fstp-backup/tests/s3_agent.rs` runs the S3 client and the agent against a fake S3 that verifies every SigV4 signature on its own. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` takes a base backup of a PostgreSQL world from a configuration file, archives its WAL, restores two copies and starts PostgreSQL on each. It checks the ledger head, that no stored object holds plaintext (R-CR-01), and that erased texts stay unreadable from the restored keystores (I-81).
+
+`crates/fstp-backup/tests/second_custodian.rs` runs the key ceremony between two custodies and a restore through the second custodian after the first is dropped (I-80, I-81). `crates/fstp-keyd/tests/offhost_copy.rs` runs `fstp-keyd` on a volume, copies it, loses the volume and imports the copy onto a fresh one. It checks the hold and the release, that an older copy is re-erased before anything serves, the register's reduced assurance, and that a wrong passphrase or a changed byte is refused.
+
+The copy test also checks that a restored entry answers the usage records made before the copy (Q-L16-2). `crates/fstp-custody/tests/copy_register.rs`, and the `key_copy` tests of `fstp-cell` and `fstp-witness`, check that a copy of a key file lowers the owner's assurance once the owner replaces a key the copy holds, until the copy is retired (Q-L16-3).

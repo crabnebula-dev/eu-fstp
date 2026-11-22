@@ -37,7 +37,7 @@ pub(crate) const HEADER_LEN: usize = 49 + SEALED_KEY_LEN;
 
 /// The fields of a container header that a reader needs.
 pub(crate) struct Header<'a> {
-    /// The kind code, 1 to 3.
+    /// The kind code, 1 to 4.
     pub(crate) kind: u8,
     /// The owner.
     pub(crate) owner: [u8; 16],
@@ -97,7 +97,7 @@ fn header<'a>(r: &mut Reader<'a>) -> Result<Header<'a>, BackupError> {
         return Err(BackupError::Malformed("aead"));
     }
     let kind = r.u8()?;
-    if !(1..=3).contains(&kind) {
+    if !(1..=4).contains(&kind) {
         return Err(BackupError::Malformed("kind"));
     }
     let chain = match Chain::from_code(r.u8()?) {
