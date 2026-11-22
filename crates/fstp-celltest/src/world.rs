@@ -4882,6 +4882,16 @@ impl fstp_cell::engine::VaultClient for SharedVault {
     {
         self.0.ack(epoch, seq, link)
     }
+
+    fn mask(
+        &self,
+        team: &[fstp_domain::id::AccountId],
+        texts: &[String],
+    ) -> impl std::future::Future<
+        Output = Result<Vec<Vec<fstp_vault_proto::WireSpan>>, fstp_cell_core::driver::VaultFault>,
+    > + Send {
+        self.0.mask_texts(team, texts)
+    }
 }
 
 /// One HTTP/1.1 exchange over `stream`: `req` with `Connection: close`,
