@@ -223,6 +223,11 @@ pub(crate) fn any_record(g: &mut Gen) -> FindingRecord {
                 prompt_set: digest(g),
                 input: digest(g),
                 trace: TraceRef::from_raw(u128_any(g)),
+                raw: if g.u8() % 2 == 0 {
+                    None
+                } else {
+                    Some(text_ref(g))
+                },
             },
         },
         5 => FindingRecord::RerunAbandoned {

@@ -35,6 +35,7 @@ fn assessed(by: AccountId, input: u8) -> FindingRecord {
             prompt_set: digest(0xaa),
             input: digest(input),
             trace: TraceRef::from_raw(77),
+            raw: None,
         },
     }
 }

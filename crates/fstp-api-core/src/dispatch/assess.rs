@@ -55,7 +55,7 @@ use crate::assess::{
     ClientModel, DroppedRow, InputView, PartRow, PromptSetRef, QueueRow, QueueView, Receipt,
     TaskRow,
 };
-use crate::port::{AsyncEngine, ExecMeta, OpName};
+use crate::port::{AsyncEngine, ExecMeta, OpName, TextClass, TextOwner, TextStore as _};
 use crate::{ApiError, ErrorCode, Op, OpResult, ReadModel};
 
 /// The most replies one submission may carry: completeness, one quality
@@ -466,6 +466,29 @@ struct Reply {
     output: String,
 }
 
+/// The raw trace of a submission (R-LA-07): the replies as the client
+/// sent them, each written back as canonical JSON, with the model, the
+/// prompt set digest and the input digest. Canonical JSON throughout.
+fn raw_trace(body: &Submission) -> String {
+    let replies: Array = body
+        .replies
+        .iter()
+        .map(|r| {
+            let mut o = Object::new();
+            o.insert("stage", Value::from(r.stage.as_str()));
+            o.insert("output", Value::from(r.output.as_str()));
+            Value::Object(o)
+        })
+        .collect();
+    let mut o = Object::new();
+    o.insert("v", Value::from("fstp-api-core/client-trace/v1"));
+    o.insert("model", Value::from(body.model.as_str()));
+    o.insert("prompt_set", Value::from(hex(&body.prompt_set).as_str()));
+    o.insert("input", Value::from(hex(&body.input.bytes()).as_str()));
+    o.insert("replies", Value::Array(replies));
+    fstp_json::to_canonical(&Value::Object(o)).unwrap_or_default()
+}
+
 /// The decoded body of a submission.
 struct Submission {
     input: ContentDigest,
@@ -580,23 +603,44 @@ pub(super) async fn submit<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpRe
         });
     }
     let recorded = u64::try_from(findings.len()).unwrap_or(u64::MAX);
-    let cmd = Command::Finding(FindingCommand::RecordClientAssessment {
-        call: input.call,
-        proposal: p,
-        run: ClientRun {
-            model: ModelRef(body.model),
-            prompt_set: ContentDigest::from_bytes(body.prompt_set),
-            input: body.input,
-            trace,
-        },
-        findings,
-        refused,
-    });
+    let trace_text = raw_trace(&body);
+    let mut run = ClientRun {
+        model: ModelRef(body.model),
+        prompt_set: ContentDigest::from_bytes(body.prompt_set),
+        input: body.input,
+        trace,
+        raw: None,
+    };
+    let command = |run: ClientRun, findings: Vec<Finding>, refused: Vec<RefusedStage>| {
+        Command::Finding(FindingCommand::RecordClientAssessment {
+            call: input.call,
+            proposal: p,
+            run,
+            findings,
+            refused,
+        })
+    };
+    let cmd = command(run.clone(), findings.clone(), refused.clone());
     let command_id = CommandId::from_bytes(call.draw().map_err(|e| call.refuse(e))?.to_be_bytes());
     let ctx = call.ctx(account, &cmd, call.caller.via(), command_id);
     dry_run(call, account, &cmd, ctx)
         .await
         .map_err(|e| call.refuse(e))?;
+    // R-LA-07, P-22 (ADR-033 record of lane L31): the raw replies, sealed
+    // at rest as a confidential text of the proposal, erased with its
+    // texts. No read serves it, and nothing remembers it in this process.
+    let stored = call
+        .ports
+        .texts()
+        .put(
+            TextClass::Confidential,
+            TextOwner::Proposal(p),
+            trace_text.as_bytes(),
+        )
+        .await
+        .map_err(|e| call.refuse(super::port_failed(e, "text")))?;
+    run.raw = Some(crate::forms::text_ref(stored.0, &trace_text));
+    let cmd = command(run, findings, refused);
     let seq = call
         .ports
         .engine()

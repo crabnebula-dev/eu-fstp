@@ -454,6 +454,25 @@ fn adr033_coordinator_agent_assesses_a_proposal_end_to_end() {
     let (by, run) = run.unwrap();
     assert_eq!(by, COORDINATOR);
     assert_eq!(run.model.0, MODEL);
+    // R-LA-07, P-22 (ADR-033 record of lane L31): the raw replies are one
+    // sealed confidential text of the proposal, with the prompt set and
+    // the input digests.
+    let raw = run.raw.expect("the sealed raw trace");
+    let held = inner
+        .ports
+        .texts
+        .peek(fstp_api_core::port::TextRef(raw.id().raw()))
+        .expect("the trace text");
+    let held = String::from_utf8(held).unwrap();
+    assert!(
+        held.contains(&s(&input, "input_digest")),
+        "the input digest"
+    );
+    assert!(held.contains("\"replies\""), "the replies");
+    assert_eq!(
+        raw.digest(),
+        fstp_domain::id::ContentDigest::from_bytes(fstp_crypto::sha256(held.as_bytes()))
+    );
     assert_eq!(run.trace, mine[0].trace);
     // The deterministic integrity scan found w's injection at submission.
     assert!(
