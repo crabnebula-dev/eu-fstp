@@ -257,11 +257,10 @@ impl Who {
         }
     }
 
-    /// Whether I-77 covers the account: it holds a Drafting, Judging or
-    /// Operations role or is a tenant admin. The suspended reviewer holds
-    /// none: its conflict-of-interest suspension "never counts as held"
-    /// (`roles-and-sod.md` Identity discovery), and a suspended binding
-    /// "is inactive for every action" (Enforcement points NOTE).
+    /// Whether the account acts in a Drafting, Judging or Operations role
+    /// or as a tenant admin. The suspended reviewer acts in none: a
+    /// suspended binding "is inactive for every action" (Enforcement
+    /// points NOTE). For I-77 it still counts as held ([`Who::i77`]).
     pub const fn management(self) -> bool {
         !matches!(
             self,
@@ -275,6 +274,16 @@ impl Who {
                 | Who::Guardian
                 | Who::VoidedLead
         )
+    }
+
+    /// Whether I-77 covers the account's login: [`Who::management`], and
+    /// the suspended reviewer. Reading: ADR-008, "Holdings", decided by
+    /// Daniel on 2026-11-21: a suspended Drafting, Judging or Operations
+    /// binding counts as held for I-77. The suspended binding still admits
+    /// no action, so every other rule keeps reading [`Who::management`]
+    /// (SA-14 in `docs/design/spec-amendments.md`).
+    pub const fn i77(self) -> bool {
+        self.management() || matches!(self, Who::SuspendedReviewer)
     }
 
     const fn tenant_admin(self) -> bool {
@@ -2499,7 +2508,7 @@ pub fn expected(
         }
     }
     let weak = session.login.is_some_and(|l| !l.strong());
-    if weak && (op.high_risk || who.management()) {
+    if weak && (op.high_risk || who.i77()) {
         return Expected::Deny(AuthClass::LoginStrength);
     }
     if let Channel::Mcp { scope } = session.channel {

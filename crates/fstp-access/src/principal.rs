@@ -341,14 +341,17 @@ fn roles_at(
 }
 
 /// Whether `account` holds a binding outside the Receiving group, active,
-/// suspended or not yet started, or is a tenant admin (I-77). A voided or
-/// conflict-of-interest binding is not held, and an ended one has left
-/// the roster.
+/// suspended or not yet started, or is a tenant admin (I-77). Every
+/// suspended binding counts here, a conflict-of-interest suspension
+/// included: Daniel decided on 2026-11-21 that a suspended Drafting,
+/// Judging or Operations binding counts as held for I-77 (ADR-008,
+/// "Holdings"; SA-14), as the cell gate counts it. A voided binding is
+/// not held, and an ended one has left the roster.
 fn holds_management(state: &EngineState, account: AccountId, tenant_admin: bool) -> bool {
     tenant_admin
         || state
             .core
             .roster()
             .bindings()
-            .any(|(_, b)| b.account == account && b.held() && b.group() != Group::Receiving)
+            .any(|(_, b)| b.account == account && !b.voided() && b.group() != Group::Receiving)
 }
