@@ -227,7 +227,7 @@ pub fn roles_of(db: CellDatabase) -> &'static [RoleName] {
 /// The tables of the application database (design section 4.2, and the
 /// journey read model of ADR-015 "Storage and roles", and the delivery
 /// log of the M6 design section 3.2), in the order of the migration set.
-pub const APP_TABLES: [&str; 38] = [
+pub const APP_TABLES: [&str; 39] = [
     "ledger.command",
     "ledger.entry",
     "audit.chain",
@@ -259,6 +259,8 @@ pub const APP_TABLES: [&str; 38] = [
     "api.pending_actions",
     "api.pending_confirmed",
     "workspace.drafts",
+    // Lane L25 (ADR-032): the anonymous drafts.
+    "workspace.anonymous_drafts",
     // Lane L2 (ADR-013 amendment of 2026-11-20): the authorisation
     // server's durable records.
     "mcp.client",

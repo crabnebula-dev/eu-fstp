@@ -70,6 +70,12 @@ pub const MIGRATIONS: &[Migration] = &[
         "keystore",
         include_str!("../migrations/app/0011_keystore.sql"),
     ),
+    // Lane L25 (ADR-032, Daniel 2026-11-22): anonymous drafts.
+    Migration::new(
+        12,
+        "anonymous_drafts",
+        include_str!("../migrations/app/0012_anonymous_drafts.sql"),
+    ),
 ];
 
 #[cfg(test)]

@@ -442,6 +442,22 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("updated_at", Time),
         ],
     ),
+    // Lane L25 (ADR-032): the anonymous drafts. The token is a 256-bit
+    // random secret, so its hash is a `SecretDigest`.
+    table(
+        "workspace",
+        "anonymous_drafts",
+        TableClass::SealedContent,
+        &[
+            col("token_hash", SecretDigest),
+            col("call", RandomId),
+            col("key_ix", Sequence),
+            col("sealed", Sealed),
+            col("started_at", Time),
+            col("updated_at", Time),
+            col("expires_at", Time),
+        ],
+    ),
     // Lane L2 (ADR-013 amendment of 2026-11-20): the durable records of
     // the OAuth 2.1 authorisation server. Interim readings, pending
     // Daniel: `metadata_ref` names a sealed text, so it is a `RandomId`
@@ -576,6 +592,7 @@ mod api_tests {
                 ("api", "pending_actions"),
                 ("api", "pending_confirmed"),
                 ("workspace", "drafts"),
+                ("workspace", "anonymous_drafts"),
             ]
         );
         for t in &tables {
@@ -600,7 +617,19 @@ mod api_tests {
                     .map(move |c| format!("{}.{}", t.name, c.name))
             })
             .collect();
-        assert_eq!(sealed, vec!["pending_actions.request", "drafts.sealed"]);
+        assert_eq!(
+            sealed,
+            vec![
+                "pending_actions.request",
+                "drafts.sealed",
+                "anonymous_drafts.sealed"
+            ]
+        );
+        // ADR-032: the token of a resume link rests as its hash only.
+        assert_eq!(
+            class("workspace", "anonymous_drafts", "token_hash"),
+            Some(SecretDigest)
+        );
         assert_eq!(
             class("api", "pending_actions", "digest"),
             Some(PublicDigest)
