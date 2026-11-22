@@ -30,6 +30,7 @@
 
 mod action;
 pub mod audit;
+pub mod brand;
 mod content;
 mod creator;
 pub mod decode;
@@ -486,6 +487,12 @@ pub fn page_without_session(path: &str) -> PageAdmission {
 /// The future that [`ApiCore::page`] returns.
 type PageFuture<'a> = Pin<Box<dyn Future<Output = PageAdmission> + Send + 'a>>;
 
+/// The future of a logo's bytes (ADR-030).
+type AssetFuture<'a> = Pin<Box<dyn Future<Output = Option<brand::LogoAsset>> + Send + 'a>>;
+
+/// The future of a session's theme (ADR-030).
+type ThemeFuture<'a> = Pin<Box<dyn Future<Output = brand::ThemeChoice> + Send + 'a>>;
+
 /// Whether the server may serve an `/app/` page (SA-09), as
 /// [`ApiCore::page`] judges it from the page table `fstp_access::PAGES`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -574,6 +581,25 @@ impl ApiCore {
     /// ledger's tenant part with no credential.
     pub fn brand(&self) -> Option<Brand> {
         self.inner.brand()
+    }
+
+    /// The paths of the tenant's logos in light and dark, dark falling
+    /// back to light (ADR-030). Public data, with no credential.
+    pub fn tenant_logos(&self) -> brand::LogoPaths {
+        self.inner.tenant_logos()
+    }
+
+    /// The bytes and format of the logo at `path`, when `path` has the
+    /// form of `fstp_brand::image::logo_path` and a current slot names
+    /// its digest (ADR-030, I-68). Public data, with no credential.
+    pub async fn brand_asset(&self, path: &str) -> Option<brand::LogoAsset> {
+        self.inner.brand_asset(path).await
+    }
+
+    /// The theme choice of the account `cred`'s session holds, or System
+    /// for no session (ADR-030 section 1). Nothing is recorded.
+    pub async fn theme(&self, cred: Credential, head: &RequestHead) -> brand::ThemeChoice {
+        self.inner.theme(cred, head).await
     }
 
     /// The rights of a bearer token at this instant, without dispatching

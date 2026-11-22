@@ -752,6 +752,18 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
             fstp_brand::BrandTokens::platform("Matrix Fund")
                 .map_or(Value::Null, |t| fstp_brand::to_value(&t)),
         )]),
+        // ADR-030: a synthetic PNG for the tenant's light slot, which
+        // passes the logo check (I-68).
+        "tenant.branding.set_logo" => obj(vec![
+            (
+                "image",
+                s(&fstp_brand::image::to_base64(
+                    &fstp_brand::image::sample_png(64, 32),
+                )),
+            ),
+            ("mode", s("light")),
+            ("programme", Value::Null),
+        ]),
         // M9 lane T1: one tenant label and the Voyage switch (I-72).
         "tenant.terminology.set" => obj(vec![
             ("labels", obj(vec![("vocab.call", s("Subgrant call"))])),
@@ -854,6 +866,8 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "roles.end" => obj(vec![]),
         // SA-11: a synthetic display name, valid in every cell.
         "me.set_display_name" => obj(vec![("display_name", s("Synthetic Matrix Name"))]),
+        // ADR-030: a theme choice, valid in every cell.
+        "me.set_theme" => obj(vec![("theme", s("dark"))]),
         "roles.reinstate" => obj(vec![("reason", s("SYNTHETIC REINSTATEMENT REASON"))]),
         "call.draft" | "call.edit" => obj(vec![
             ("opens", dec(u128::try_from(OPENS).unwrap_or(0))),

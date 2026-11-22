@@ -314,6 +314,7 @@ pub fn tenant_refusal(r: TenantRefusal) -> Refusal {
         // I-70 has no domain rule reference. The API core names I-70.
         TenantRefusal::BrandingContrast(_) => (RuleRef::Input, Why::InvalidValue),
         TenantRefusal::TerminologyInvalid => (RuleRef::Input, Why::InvalidValue),
+        TenantRefusal::LogoInvalid => (RuleRef::Input, Why::InvalidValue),
         TenantRefusal::FunderProfileInvalid => (RuleRef::Input, Why::InvalidValue),
         // ADR-018 and I-38 have no domain rule reference. The API core
         // names I-38.
@@ -391,6 +392,21 @@ fn tenant_answers(
             }
             TenantQuery::HoldsReceiving(a) => {
                 answers.holds_receiving(a, holds_receiving(&state.core, a));
+            }
+            // ADR-030: the active Programme manager bindings of the programme.
+            TenantQuery::ProgrammeManagers(p) => {
+                let managers = state
+                    .core
+                    .roster()
+                    .bindings()
+                    .filter(|(_, b)| {
+                        b.programme == p
+                            && b.role == fstp_domain::roles::Role::ProgrammeManager
+                            && b.held()
+                    })
+                    .map(|(_, b)| b.account)
+                    .collect();
+                answers.programme_managers(p, managers);
             }
         }
     }

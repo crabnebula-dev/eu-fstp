@@ -186,6 +186,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-creator",
  "fstp-json",
+ "fstp-png",
 ]
 
 [[package]]
@@ -375,6 +376,13 @@ dependencies = [
  "fstp-crypto",
  "spki",
  "x509-cert",
+]
+
+[[package]]
+name = "fstp-png"
+version = "0.1.0"
+dependencies = [
+ "fstp-creator",
 ]
 
 [[package]]

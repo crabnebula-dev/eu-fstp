@@ -624,8 +624,9 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 11] = [
 /// brand tokens (M9 lane B1, interim), the terminology (M9 lane T1,
 /// interim), the mail relay (M6 lane L6-EGR, ADR-018, interim), and an
 /// erasure request (ADR-007, P-41, Daniel 2026-11-15 late), and a tenant
-/// funder profile version (Daniel 2026-11-15 late, interim).
-const STRICT_EXTRA: [&str; 13] = [
+/// funder profile version (Daniel 2026-11-15 late, interim), and a logo
+/// slot (ADR-030, interim).
+const STRICT_EXTRA: [&str; 14] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
@@ -633,6 +634,7 @@ const STRICT_EXTRA: [&str; 13] = [
     "tenant.set_template_licence",
     "tenant.set_guide_notice",
     "tenant.branding.set",
+    "tenant.branding.set_logo",
     "tenant.terminology.set",
     "tenant.set_mail_relay",
     "tenant.clear_mail_relay",
@@ -689,6 +691,7 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
             matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70)
                 || o.kind == OpKind::Tenant(TenantKind::SetGuideNotice)
                 || o.kind == OpKind::Tenant(TenantKind::SetBranding)
+                || o.kind == OpKind::Tenant(TenantKind::SetLogo)
                 || o.kind == OpKind::Tenant(TenantKind::SetTerminology)
                 || o.kind == OpKind::Tenant(TenantKind::SetMailRelay)
                 || o.kind == OpKind::Tenant(TenantKind::SaveFunderProfile)
@@ -1146,7 +1149,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 79] = [
+const READ_NAMES: [&str; 81] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1216,6 +1219,8 @@ const READ_NAMES: [&str; 79] = [
     // Lane m5/retention (P-41, ADR-007): the erasure log.
     "ListErasures",
     "ListFunderProfiles",
+    "ListLogos",
+    "GetProgrammeLogos",
     // M5 reads follow-up: the caller's grants and contracts to sign.
     "ListMyGrants",
     "ListMyContractsToSign",

@@ -938,6 +938,7 @@ fn model_chrome() -> fstp_public::Chrome {
     fstp_public::Chrome {
         stylesheet: None,
         funder: None,
+        logos: Default::default(),
     }
 }
 

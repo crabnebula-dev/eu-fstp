@@ -111,6 +111,7 @@ fn config() -> MailConfig {
         from: Mailbox::new(SENDER).unwrap(),
         from_name: None,
         dkim: Vec::new(),
+        brand: None,
     }
 }
 

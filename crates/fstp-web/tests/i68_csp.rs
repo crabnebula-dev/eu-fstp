@@ -30,3 +30,28 @@ fn i68_csp_unchanged() {
     .unwrap();
     header_is(&r, "cache-control", "no-store").unwrap();
 }
+
+/// I-68, ADR-030: the logo routes are non-documents with the closed
+/// default CSP and `nosniff`. On the stub no logo exists, so each
+/// answers 404 and nothing is cached.
+#[test]
+fn i68_logo_routes_keep_the_closed_csp() {
+    for path in [
+        format!("/brand/{}.png", "ab".repeat(32)),
+        format!("/brand/{}.webp", "ab".repeat(32)),
+        "/brand/logo/light".to_owned(),
+        "/brand/logo/dark".to_owned(),
+        "/brand/eu-emblem.png".to_owned(),
+    ] {
+        let r = get(&path);
+        assert_eq!(r.status.as_u16(), 404, "{path}");
+        header_is(
+            &r,
+            "content-security-policy",
+            "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        )
+        .unwrap();
+        header_is(&r, "x-content-type-options", "nosniff").unwrap();
+        header_is(&r, "cache-control", "no-store").unwrap();
+    }
+}

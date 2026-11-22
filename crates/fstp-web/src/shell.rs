@@ -21,7 +21,30 @@ use fstp_web_assets::AssetSet;
 /// - `lang="en"` is the document default. The application sets the
 ///   language of the chosen locale (R-NF-04).
 pub(crate) fn render(assets: &AssetSet, brand: Option<&str>) -> Vec<u8> {
-    render_marked(assets, brand, None)
+    render_marked(assets, brand, None, &Look::default())
+}
+
+/// What the shell shows of the viewer and the tenant (ADR-030): the
+/// viewer's theme, written as `data-theme` on `<html>` so the first
+/// paint has it, and the paths of the tenant's logos, as `<meta>`
+/// values the application reads for its header. Each value is a
+/// constant or a path of the logo path grammar, so nothing needs
+/// escaping and no tenant text enters the document (I-68).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Look {
+    /// `light` or `dark`, or `None` to follow the device.
+    pub(crate) theme: Option<&'static str>,
+    /// The tenant's light logo path.
+    pub(crate) logo_light: Option<String>,
+    /// The tenant's dark logo path.
+    pub(crate) logo_dark: Option<String>,
+}
+
+impl Look {
+    /// Whether the look adds nothing to the shell.
+    pub(crate) fn is_plain(&self) -> bool {
+        *self == Look::default()
+    }
 }
 
 /// The marker of the "Page not found" answer (SA-09): the client mounts
@@ -35,12 +58,25 @@ pub(crate) fn render_marked(
     assets: &AssetSet,
     brand: Option<&str>,
     marker: Option<&str>,
+    look: &Look,
 ) -> Vec<u8> {
-    let mut html = String::from(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+    let theme = match look.theme {
+        Some(t @ ("light" | "dark")) => format!(" data-theme=\"{t}\""),
+        _ => String::new(),
+    };
+    let mut html = format!(
+        "<!doctype html>\n<html lang=\"en\"{theme}>\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>FSTP</title>\n",
     );
+    for (name, path) in [
+        ("fstp-logo-light", &look.logo_light),
+        ("fstp-logo-dark", &look.logo_dark),
+    ] {
+        if let Some(p) = path.as_deref().filter(|p| crate::brand::logo_digest_in(p)) {
+            html.push_str(&format!("<meta name=\"{name}\" content=\"{p}\">\n"));
+        }
+    }
     if let Some(m) = marker.filter(|m| *m == NOT_FOUND) {
         html.push_str(&format!("<meta name=\"fstp-page\" content=\"{m}\">\n"));
     }
@@ -131,6 +167,44 @@ mod tests {
         assert!(!bad.contains("/brand/"));
         let none = String::from_utf8(render(&assets, None)).unwrap_or_default();
         assert!(!none.contains("/brand/"));
+    }
+
+    /// ADR-030, I-68: the shell writes the viewer's theme on `<html>` and
+    /// the logo paths as meta values, and only a path of the logo grammar.
+    #[test]
+    fn adr030_shell_carries_theme_and_logo_paths() {
+        let Ok(assets) = fstp_web_assets::AssetSet::from_files(
+            "main.js",
+            &[("main.js", b"export {};" as &[u8])],
+        ) else {
+            panic!("assets");
+        };
+        let good = format!("/brand/{}.png", "ab".repeat(32));
+        let look = Look {
+            theme: Some("dark"),
+            logo_light: Some(good.clone()),
+            logo_dark: Some("/brand/x\"><script>.png".to_owned()),
+        };
+        let html = String::from_utf8(render_marked(&assets, None, None, &look)).unwrap_or_default();
+        assert!(
+            html.contains("<html lang=\"en\" data-theme=\"dark\">"),
+            "{html}"
+        );
+        assert!(html.contains(&format!(
+            "<meta name=\"fstp-logo-light\" content=\"{good}\">"
+        )));
+        assert!(!html.contains("fstp-logo-dark"));
+        assert!(!html.contains("<script>"));
+        let odd = Look {
+            theme: Some("sepia"),
+            ..Look::default()
+        };
+        let html = String::from_utf8(render_marked(&assets, None, None, &odd)).unwrap_or_default();
+        assert!(html.contains("<html lang=\"en\">"));
+        assert_eq!(
+            render(&assets, None),
+            render_marked(&assets, None, None, &Look::default())
+        );
     }
 
     /// ADR-021 decision 3, R-PB-04: the not-published page links the

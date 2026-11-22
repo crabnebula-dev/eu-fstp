@@ -146,12 +146,14 @@ fn body_object(body: &[u8]) -> Result<Object, ApiError> {
 }
 
 /// Parses the body of `spec`. An upload carries its document as one
-/// string, up to the body limit (Q24, lane m4wire). Every other string
+/// string, up to the body limit (Q24, lane m4wire). A logo upload
+/// carries its file the same way (ADR-030). Every other string
 /// is held to the text limit.
 fn body_object_for(spec: &OpSpec, body: &[u8]) -> Result<Object, ApiError> {
     if matches!(
         spec.kind,
         OpKind::Import(fstp_access::ImportKind::RegisterDocument)
+            | OpKind::Tenant(fstp_access::TenantKind::SetLogo)
     ) {
         return body_object_with(body, &limits_with(BODY_LIMIT));
     }

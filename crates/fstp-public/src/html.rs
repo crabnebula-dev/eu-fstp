@@ -101,6 +101,26 @@ pub struct Chrome {
     /// The funder visibility elements of the programme's pinned funder
     /// profile (P-53), if it pins a shipped one (I-69, M9 design 2.4).
     pub funder: Option<FunderFooter>,
+    /// The logos of the tenant and the programme, and the EU emblem slot
+    /// (ADR-030). Each is a same-origin path that names a digest.
+    pub logos: PublicLogos,
+}
+
+/// The logo paths a public page shows (ADR-030 section 2). Each is a
+/// same-origin `/brand/...` path, never tenant text, and each image is
+/// decorative beside the visible programme name, so its `alt` is empty.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PublicLogos {
+    /// The tenant's light logo.
+    pub tenant_light: Option<String>,
+    /// The tenant's dark logo, when it differs from the light one.
+    pub tenant_dark: Option<String>,
+    /// The programme's light logo.
+    pub programme_light: Option<String>,
+    /// The programme's dark logo, when it differs from the light one.
+    pub programme_dark: Option<String>,
+    /// The platform's EU emblem, once Daniel supplies the file.
+    pub emblem: Option<String>,
 }
 
 /// The footer data of a pinned funder profile: its id, its version and
@@ -233,6 +253,18 @@ const ENTRIES: &[EntrySource<'static>] = &[
         message: "Funder visibility element {element} of funder profile {profile} version {version}: the approved wording is pending.",
     },
     label("public.footer.attribution", "Runs on the FSTP platform."),
+    // TODO(legal): the EU funding acknowledgement beside the emblem slot
+    // and the emblem's alternative text (L-08, ADR-030). Daniel supplies
+    // the approved wording and the emblem file.
+    EntrySource {
+        id: "public.footer.eu_funding",
+        kind: MessageKind::Approved,
+        message: "EU funding acknowledgement: the approved wording is pending.",
+    },
+    label(
+        "public.footer.eu_emblem_alt",
+        "Emblem of the European Union",
+    ),
     // TODO(legal): the approved AI disclosure for applicants (R-LA-08, AI
     // Act Article 50). This placeholder states only what the platform
     // does, in the words of the shipped Guide template.
@@ -362,11 +394,60 @@ fn nav_item(href: SafeUrl, id: &str, current: bool) -> Element {
 
 /// The top bar: the programme, linking its page, and the public
 /// navigation.
-fn header(view: &PublicView, paths: &Paths, current: Current) -> Result<Element, PublicError> {
-    let brand = Element::new("a")
+/// The logo images of one owner (ADR-030): the light one, and the dark
+/// one when it differs, each marked by mode so the stylesheet shows the
+/// one of the device's theme. Decorative, so `alt` is empty.
+fn logo_images(
+    light: Option<&String>,
+    dark: Option<&String>,
+    owner: &str,
+) -> Result<Vec<Element>, PublicError> {
+    let img = |path: &String, mode: &str| -> Result<Element, PublicError> {
+        Ok(Element::new("img")
+            .attr(
+                "class",
+                &format!("brand-logo brand-logo--{owner} brand-logo--{mode}"),
+            )
+            .attr_url("src", url(path)?)
+            .attr("alt", ""))
+    };
+    let mut out = Vec::new();
+    match (light, dark) {
+        (Some(l), Some(d)) if l != d => {
+            out.push(img(l, "light")?);
+            out.push(img(d, "dark")?);
+        }
+        (Some(l), _) => out.push(img(l, "any")?),
+        (None, Some(d)) => out.push(img(d, "any")?),
+        (None, None) => {}
+    }
+    Ok(out)
+}
+
+fn header(
+    view: &PublicView,
+    paths: &Paths,
+    current: Current,
+    logos: &PublicLogos,
+) -> Result<Element, PublicError> {
+    let mut brand = Element::new("a")
         .attr("class", "brand")
-        .attr_url("href", paths.programme()?)
-        .child(Element::new("span").text(&view.programme.name));
+        .attr_url("href", paths.programme()?);
+    // ADR-030: the tenant's logo, then the programme's, before the name.
+    for e in logo_images(
+        logos.tenant_light.as_ref(),
+        logos.tenant_dark.as_ref(),
+        "tenant",
+    )?
+    .into_iter()
+    .chain(logo_images(
+        logos.programme_light.as_ref(),
+        logos.programme_dark.as_ref(),
+        "programme",
+    )?) {
+        brand = brand.child(e);
+    }
+    let brand = brand.child(Element::new("span").text(&view.programme.name));
     let nav = Element::new("nav")
         .attr("class", "main-nav")
         .attr_label("aria-label", &l("public.nav"), &[])
@@ -407,7 +488,7 @@ fn header(view: &PublicView, paths: &Paths, current: Current) -> Result<Element,
 /// (`data-mandatory="funder_visibility.<key>"`), each with placeholder wording until Daniel
 /// supplies the approved text (TODO(legal), L-08). A page whose programme
 /// pins no shipped profile keeps the platform element only.
-fn footer(funder: Option<&FunderFooter>) -> Element {
+fn footer(funder: Option<&FunderFooter>, emblem: Option<&String>) -> Result<Element, PublicError> {
     let item = |key: &'static str, id: &str, approved: bool| {
         let span = Element::new("span").attr("data-mandatory", key);
         let span = if approved {
@@ -439,25 +520,43 @@ fn footer(funder: Option<&FunderFooter>) -> Element {
             );
         }
     }
-    Element::new("footer").attr("class", "site-footer").child(
-        Element::new("div").attr("class", "inner").child(
-            Element::new("ul")
-                .child(visibility)
-                .child(item("ai_disclosure", "public.footer.ai", true))
-                .child(item("privacy_notice", "public.footer.privacy", true))
-                .child(item(
-                    "accessibility_statement",
-                    "public.footer.accessibility",
-                    true,
-                ))
-                .child(item("data_act_information", "public.footer.data_act", true))
-                .child(item(
-                    "platform_attribution",
-                    "public.footer.attribution",
-                    false,
-                )),
-        ),
-    )
+    // ADR-030: the fixed slot for the EU emblem and the funding
+    // acknowledgement, from platform data only. The emblem shows once
+    // Daniel supplies the file. TODO(legal): the acknowledgement wording
+    // and the emblem usage rules (L-08).
+    let mut funding = Element::new("div").attr("class", "eu-funding");
+    if let Some(path) = emblem {
+        funding = funding.child(
+            Element::new("img")
+                .attr("class", "eu-emblem")
+                .attr_url("src", url(path)?)
+                .attr_label("alt", &l("public.footer.eu_emblem_alt"), &[]),
+        );
+    }
+    let funding = funding
+        .child(Element::new("span").approved(&ApprovedText::new("public.footer.eu_funding"), &[]));
+    Ok(Element::new("footer").attr("class", "site-footer").child(
+        Element::new("div")
+            .attr("class", "inner")
+            .child(funding)
+            .child(
+                Element::new("ul")
+                    .child(visibility)
+                    .child(item("ai_disclosure", "public.footer.ai", true))
+                    .child(item("privacy_notice", "public.footer.privacy", true))
+                    .child(item(
+                        "accessibility_statement",
+                        "public.footer.accessibility",
+                        true,
+                    ))
+                    .child(item("data_act_information", "public.footer.data_act", true))
+                    .child(item(
+                        "platform_attribution",
+                        "public.footer.attribution",
+                        false,
+                    )),
+            ),
+    ))
 }
 
 /// A whole page around `main`.
@@ -476,13 +575,16 @@ fn page(
         doc = doc.stylesheet(url(css)?);
     }
     Ok(doc
-        .body(header(view, &paths, current)?)
+        .body(header(view, &paths, current, &chrome.logos)?)
         .body(
             Element::new("div")
                 .attr("class", "page-body page-body--public")
                 .child(main.attr("id", "main-content")),
         )
-        .body(footer(chrome.funder.as_ref())))
+        .body(footer(
+            chrome.funder.as_ref(),
+            chrome.logos.emblem.as_ref(),
+        )?))
 }
 
 /// A deadline or opening: the instant, then its zone.

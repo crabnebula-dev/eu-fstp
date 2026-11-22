@@ -669,6 +669,7 @@ pub async fn read(
     let chrome = Chrome {
         stylesheet: brand_sheet(state),
         funder: funder_footer(state, programme),
+        logos: fstp_api_core::brand::public_logos(state.tenant.state(), programme),
     };
     answer(&view, op, call, &chrome).map_err(refused)
 }

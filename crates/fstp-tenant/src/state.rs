@@ -210,6 +210,10 @@ pub struct TenantState {
     /// The activation of the organisation (SoD-18).
     activation: Activation,
     branding: Option<(fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)>,
+    /// The current logo of each set slot (ADR-030).
+    logos: BTreeMap<crate::types::LogoSlot, crate::types::LogoRef>,
+    /// The theme choice of each account that chose other than System.
+    themes: BTreeMap<AccountId, crate::types::Theme>,
     terminology: Option<crate::types::Terminology>,
     /// The tenant-owned funder profiles, by id and version (Daniel,
     /// 2026-11-15 late).
@@ -250,6 +254,8 @@ impl TenantState {
             signatories: BTreeSet::new(),
             activation: Activation::NotRequested,
             branding: None,
+            logos: BTreeMap::new(),
+            themes: BTreeMap::new(),
             terminology: None,
             profiles: std::collections::BTreeMap::new(),
             mail_relay: None,
@@ -501,6 +507,30 @@ impl TenantState {
                 self.need_admin(*by)?;
                 crate::decide::check_branding(tokens).map_err(FoldError)?;
                 self.branding = Some((tokens.clone(), *digest));
+            }
+            TenantRecord::LogoSet { slot, logo, by } => {
+                // ADR-030: a programme slot may be its managers', which
+                // `decide` judged from the roster. A tenant slot is the
+                // tenant admins'.
+                if slot.owner == crate::types::LogoOwner::Tenant {
+                    self.need_admin(*by)?;
+                }
+                crate::decide::check_logo(logo.as_ref()).map_err(FoldError)?;
+                match logo {
+                    Some(l) => {
+                        self.logos.insert(*slot, *l);
+                    }
+                    None => {
+                        self.logos.remove(slot);
+                    }
+                }
+            }
+            TenantRecord::ThemeSet { theme, by } => {
+                if *theme == crate::types::Theme::System {
+                    self.themes.remove(by);
+                } else {
+                    self.themes.insert(*by, *theme);
+                }
             }
             TenantRecord::TerminologySet { terminology, by } => {
                 self.need_admin(*by)?;
@@ -908,6 +938,22 @@ impl TenantState {
     /// tenant shows the platform brand (M9 design section 2.1).
     pub fn branding(&self) -> Option<(&fstp_brand::BrandTokens, fstp_domain::id::ContentDigest)> {
         self.branding.as_ref().map(|(t, d)| (t, *d))
+    }
+
+    /// The current logo of `slot`, if one is set (ADR-030).
+    pub fn logo(&self, slot: crate::types::LogoSlot) -> Option<&crate::types::LogoRef> {
+        self.logos.get(&slot)
+    }
+
+    /// Every set logo slot with its logo, in slot order (ADR-030).
+    pub fn logos(&self) -> impl Iterator<Item = (&crate::types::LogoSlot, &crate::types::LogoRef)> {
+        self.logos.iter()
+    }
+
+    /// The theme choice of `account` (ADR-030 section 1). System when it
+    /// chose none.
+    pub fn theme(&self, account: AccountId) -> crate::types::Theme {
+        self.themes.get(&account).copied().unwrap_or_default()
     }
 
     /// The latest terminology and Voyage switch, or `None` while the tenant

@@ -78,6 +78,7 @@ pub fn config() -> MailConfig {
         from: Mailbox::new("noreply@tenant-a.example").unwrap(),
         from_name: Some(DisplayName::new("Synthetic Fund Zürich").unwrap()),
         dkim: Vec::new(),
+        brand: None,
     }
 }
 

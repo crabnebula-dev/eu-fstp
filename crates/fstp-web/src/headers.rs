@@ -93,7 +93,8 @@ impl Surface {
 fn keeps_cache_control(surface: Surface, path: &str, status: StatusCode) -> bool {
     status == StatusCode::OK
         && ((surface == Surface::App && path.starts_with("/app/assets/"))
-            || (surface == Surface::Brand && crate::brand::digest_in(path).is_some()))
+            || (surface == Surface::Brand
+                && (crate::brand::digest_in(path).is_some() || crate::brand::logo_digest_in(path))))
 }
 
 /// Sets the security headers of `resp`, the answer to a request for the

@@ -209,9 +209,18 @@ async fn app_fallback(s: &Shared, req: &Request) -> Response {
     if req.method != Method::GET && req.method != Method::HEAD {
         return reply::get_only();
     }
+    // ADR-030: no session follows the device.
+    let mut theme = fstp_api_core::brand::ThemeChoice::System;
     let admission = match &s.backend {
         Backend::Core(core) => match api::credential(&req.headers) {
-            Ok(cred) => core.page(cred, &api::head(req), path).await,
+            Ok(cred) => {
+                let head = api::head(req);
+                let admission = core.page(cred.clone(), &head, path).await;
+                if admission == PageAdmission::Open {
+                    theme = core.theme(cred, &head).await;
+                }
+                admission
+            }
             // A tossed cookie or a bearer field opens no page. The
             // visitor signs in again, as with no session.
             Err(_) => match fstp_api_core::page_without_session(path) {
@@ -222,7 +231,26 @@ async fn app_fallback(s: &Shared, req: &Request) -> Response {
         },
         Backend::Refusing => fstp_api_core::page_without_session(path),
     };
-    page(s, path, admission)
+    page(s, path, admission, &look(s, theme))
+}
+
+/// The look of the shell for a viewer whose theme is `theme`: the
+/// `data-theme` value and the tenant's logo paths (ADR-030).
+fn look(s: &Shared, theme: fstp_api_core::brand::ThemeChoice) -> shell::Look {
+    use fstp_api_core::brand::ThemeChoice;
+    let logos = match &s.backend {
+        Backend::Core(core) => core.tenant_logos(),
+        Backend::Refusing => fstp_api_core::brand::LogoPaths::default(),
+    };
+    shell::Look {
+        theme: match theme {
+            ThemeChoice::System => None,
+            ThemeChoice::Light => Some("light"),
+            ThemeChoice::Dark => Some("dark"),
+        },
+        logo_light: logos.light,
+        logo_dark: logos.dark,
+    }
 }
 
 /// The answer to an `/app/` page request under the page gate of SA-09:
@@ -237,19 +265,19 @@ async fn app_fallback(s: &Shared, req: &Request) -> Response {
 ///   The answer is the same bytes in every case, so it never says that a
 ///   page exists or why it is closed. The shell's link check asks with
 ///   `redirect: "manual"` and reads a redirect as closed.
-fn page(s: &Shared, path: &str, admission: PageAdmission) -> Response {
+fn page(s: &Shared, path: &str, admission: PageAdmission, look: &shell::Look) -> Response {
     match admission {
         PageAdmission::Open => Response::with_body(
             StatusCode::OK,
             "text/html; charset=utf-8",
-            shell_now(s, None),
+            shell_now(s, None, look),
         ),
         PageAdmission::SignIn => see_other(&login_path(path, false)),
         PageAdmission::PasskeySignIn => see_other(&login_path(path, true)),
         // Home itself is open to every session, so it never answers
         // NotFound. Were it to, a redirect to itself would loop, so it
         // answers the not-found page instead.
-        PageAdmission::NotFound if path == HOME => not_found_page(s),
+        PageAdmission::NotFound if path == HOME => not_found_page(s, look),
         PageAdmission::NotFound => see_other(HOME),
         PageAdmission::Unavailable => reply::json(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -262,20 +290,20 @@ fn page(s: &Shared, path: &str, admission: PageAdmission) -> Response {
 /// [`shell::NOT_FOUND`], whose client renders the not-found page. Since
 /// the SA-09 amendment only home would answer it, which never happens
 /// ([`page`]).
-fn not_found_page(s: &Shared) -> Response {
+fn not_found_page(s: &Shared, look: &shell::Look) -> Response {
     Response::with_body(
         StatusCode::NOT_FOUND,
         "text/html; charset=utf-8",
-        shell_now(s, Some(shell::NOT_FOUND)),
+        shell_now(s, Some(shell::NOT_FOUND), look),
     )
 }
 
 /// The shell with the tenant's brand sheet, if it set one (M9 lane B2),
 /// and the page marker `marker`, if any.
-fn shell_now(s: &Shared, marker: Option<&str>) -> Vec<u8> {
+fn shell_now(s: &Shared, marker: Option<&str>, look: &shell::Look) -> Vec<u8> {
     match (s.backend.brand(), marker) {
-        (None, None) => s.shell.clone(),
-        (b, m) => shell::render_marked(&s.assets, b.as_ref().map(|b| b.digest.as_str()), m),
+        (None, None) if look.is_plain() => s.shell.clone(),
+        (b, m) => shell::render_marked(&s.assets, b.as_ref().map(|b| b.digest.as_str()), m, look),
     }
 }
 
@@ -464,7 +492,16 @@ impl WebRouter {
                 self.api.handle(req).await
             }
             Surface::Public => public(&self.shared.backend, &self.shared.assets, &req).await,
-            Surface::Brand => crate::brand::answer(self.shared.backend.brand(), &req),
+            Surface::Brand => {
+                let core = match &self.shared.backend {
+                    Backend::Core(c) => Some(c.as_ref()),
+                    Backend::Refusing => None,
+                };
+                match crate::brand::logo_answer(core, &req).await {
+                    Some(r) => r,
+                    None => crate::brand::answer(self.shared.backend.brand(), &req),
+                }
+            }
             Surface::Adr013 => match &self.shared.mcp {
                 Some(m) => m.answer(req).await,
                 None => reply::adr013(),

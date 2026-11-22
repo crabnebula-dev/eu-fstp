@@ -234,11 +234,41 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
         // M9 lane B1: the failing pairs are listed by `tenant.branding.check`.
         TenantRefusal::BrandingContrast(_) => "I-70",
         TenantRefusal::TerminologyInvalid => "I-72",
+        // ADR-030: a logo outside the bounds of the logo check.
+        TenantRefusal::LogoInvalid => "I-68",
         TenantRefusal::FunderProfileInvalid => "R-RP-01",
         // ADR-018: a relay is a host name and never a CrabNebula host.
         TenantRefusal::InvalidMailRelay => "I-38",
     };
     ApiError::refused(ErrorCode::Refused, rule)
+}
+
+/// The caller of `tenant.branding.set_logo` (ADR-030, lead reading of
+/// 2026-11-22): a tenant admin for any slot, or a programme manager for a
+/// slot of that programme. Anyone else is refused as an actor, as
+/// [`admin`] refuses.
+fn logo_caller<'a, P: Seams>(
+    call: &'a Call<'_, P>,
+    op: &Op,
+) -> Result<(AccountId, &'a TenantState), ApiError> {
+    let (Some(account), Some(ts)) = (call.account(), call.state.tenant.state()) else {
+        return admin(call);
+    };
+    if ts.is_admin(account) {
+        return Ok((account, ts));
+    }
+    let manages = crate::tenant::logo_request(&op.request)
+        .ok()
+        .and_then(|r| match r.slot.owner {
+            fstp_tenant::LogoOwner::Programme(p) => Some(p),
+            fstp_tenant::LogoOwner::Tenant => None,
+        })
+        .is_some_and(|p| super::brand::manages(&call.state, account, p));
+    if manages {
+        Ok((account, ts))
+    } else {
+        Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")))
+    }
 }
 
 /// The refusal of a tenant operation in a cell with no provisioning
@@ -370,11 +400,74 @@ fn build<P: Seams>(
                 .map_err(|e| call.refuse(e))?;
             Ok((TenantCommand::SaveFunderProfile { profile }, None))
         }
+        // ADR-030: one logo slot. The file is checked here and stored only
+        // after the step-up ([`stored_logo`]).
+        TenantKind::SetLogo => {
+            let r = crate::tenant::logo_request(&op.request)?;
+            if let fstp_tenant::LogoOwner::Programme(p) = r.slot.owner
+                && !super::creator_ops::programmes(&call.state).contains(&p)
+            {
+                return Err(ApiError::refused(ErrorCode::NotFound, "Input"));
+            }
+            let logo = match &r.image {
+                None => None,
+                Some(text) => Some(checked_logo(text, r.slot.mode)?.0),
+            };
+            Ok((TenantCommand::SetLogo { slot: r.slot, logo }, None))
+        }
         // Answered by [`command`] before any command is built.
         TenantKind::CheckBranding => Err(ApiError::refused(ErrorCode::NotFound, "route")),
         // Recorded with a validated Inference save (design 3.5), never
         // through a route of its own.
         TenantKind::RecordInferenceConfig => Err(ApiError::refused(ErrorCode::NotFound, "route")),
+    }
+}
+
+/// The logo of an upload's base64 `text` (ADR-030, I-68): the record's
+/// reference and the rewritten bytes. A file the logo check refuses is
+/// refused under I-68 and names no request content.
+fn checked_logo(
+    text: &str,
+    mode: fstp_brand::ThemeMode,
+) -> Result<(fstp_tenant::LogoRef, Vec<u8>), ApiError> {
+    // ADR-030 lead reading of 2026-11-22: PNG only, re-encoded by
+    // `fstp-png` (ADR-031). The branding page converts WebP to PNG first.
+    let logo = fstp_brand::image::from_base64(text)
+        .and_then(fstp_brand::image::reencode)
+        .map_err(|_| ApiError::refused(ErrorCode::Refused, "I-68"))?;
+    // I-70: advice on the header of the slot's mode, never a refusal.
+    let header = fstp_brand::Surface::Surface1.colour(mode);
+    let r = fstp_tenant::LogoRef {
+        digest: ContentDigest::from_bytes(fstp_crypto::sha256(&logo.bytes)),
+        format: logo.format,
+        width: logo.width,
+        height: logo.height,
+        pdf: fstp_brand::image::pdf_image(&logo.bytes).is_some(),
+        contrast_x100: fstp_brand::image::header_contrast(&logo.bytes, header),
+    };
+    Ok((r, logo.bytes))
+}
+
+/// Stores the logo of a `tenant.branding.set_logo` call in the blob
+/// store as a brand asset, once the call is admitted (ADR-030). Its
+/// address must be the digest the command names.
+async fn stored_logo<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<(), ApiError> {
+    let r = crate::tenant::logo_request(&op.request)?;
+    let Some(text) = r.image else {
+        return Ok(());
+    };
+    let (logo, bytes) = checked_logo(&text, r.slot.mode)?;
+    use crate::port::BlobStore as _;
+    let stored = call
+        .ports
+        .blobs()
+        .put(crate::port::BlobOwner::Brand, &bytes)
+        .await
+        .map_err(|e| port_failed(e, "blob"))?;
+    if stored.0 == logo.digest.bytes() {
+        Ok(())
+    } else {
+        Err(ApiError::refused(ErrorCode::Unavailable, "blob"))
     }
 }
 
@@ -521,7 +614,11 @@ pub(super) async fn command<P: Seams>(
     {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
-    let (account, ts) = admin(call)?;
+    let (account, ts) = if kind == TenantKind::SetLogo {
+        logo_caller(call, op)?
+    } else {
+        admin(call)?
+    };
     // A self-grant approval and the brand check are never prepared: the
     // one has no tool, and the other records nothing.
     if prepared
@@ -603,6 +700,10 @@ pub(super) async fn command<P: Seams>(
         (c, _) => c,
     };
     let cmd = match cmd {
+        Command::Tenant(r) if kind == TenantKind::SetLogo => {
+            stored_logo(call, op).await.map_err(|e| call.refuse(e))?;
+            Command::Tenant(r)
+        }
         Command::Tenant(mut r) if kind == TenantKind::SetGuideNotice => {
             r.command = stored_notice(call, op).await.map_err(|e| call.refuse(e))?;
             Command::Tenant(r)

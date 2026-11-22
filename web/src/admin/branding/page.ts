@@ -20,9 +20,11 @@ import { h, type Child } from "../../core/dom.js";
 import type { I18n, Label } from "../../core/i18n.js";
 import type { RouteDef } from "../../core/router.js";
 import { act, anyObject, buttonEl, formEl, link, onSubmit, section, textField } from "../../grant/kit.js";
-import { checkbox, frame, pageI18n, type Frame, type JudgingPage, type PageEnv } from "../../reviewer/kit.js";
+import { checkbox, frame, idRoute, pageI18n, type Frame, type JudgingPage, type PageEnv } from "../../reviewer/kit.js";
+import { createRouter } from "../../core/router.js";
 import { FIXED_LABEL_KEYS, PLAIN_LABELS } from "../../vocab/plain.js";
 import { ADMIN_BRANDING_LABELS } from "./messages.en.js";
+import { logosSection } from "./logopage.js";
 import {
   COLOUR_KEYS,
   MODES,
@@ -153,6 +155,9 @@ async function mountBranding(env: PageEnv): Promise<void> {
     f.status(t.label("admin.branding.saved"));
   });
   f.show([
+    // ADR-030: the logos come first, as the admin sees them on every page.
+    logosSection(env, t, f),
+    h("h2", {}, [t.label("admin.branding.colours.heading")]),
     h("p", {}, [t.label("admin.branding.intro")]),
     h("p", {}, [t.label("admin.branding.start")]),
     form,
@@ -222,21 +227,33 @@ async function mountTerminology(env: PageEnv): Promise<void> {
   ]);
 }
 
+/** A programme manager's logo page (ADR-030, lead reading of 2026-11-22). */
+async function mountProgrammeLogo(env: PageEnv, programme: string): Promise<void> {
+  const t = labels(env);
+  const f: Frame = frame(env, t, t.label("admin.branding.logos.programme_title"));
+  f.show([logosSection(env, t, f, programme)]);
+}
+
 const route = (name: string, pattern: string): RouteDef => ({ name, pattern, segments: {} });
 
 /** The two screens. */
 export const ADMIN_BRANDING_PAGES: readonly JudgingPage[] = [
   { route: route("admin.branding", ADMIN_BRAND_PATHS.branding), mount: (env) => mountBranding(env) },
   { route: route("admin.terminology", ADMIN_BRAND_PATHS.terminology), mount: (env) => mountTerminology(env) },
+  {
+    route: idRoute("programme.logo", "/app/programmes/{programme}/logo", ["programme"]),
+    mount: (env, params) => mountProgrammeLogo(env, params["programme"] ?? ""),
+  },
 ];
 
 /** Mounts the screen of `path`. False, and nothing rendered, when it is neither. */
 export async function mountAdminBranding(env: PageEnv, path: string): Promise<boolean> {
   const p = path.endsWith("/") && path.length > 1 ? path.slice(0, -1) : path;
-  const page = ADMIN_BRANDING_PAGES.find((x) => x.route.pattern === p);
-  if (page === undefined) {
+  const m = createRouter(ADMIN_BRANDING_PAGES.map((x) => x.route)).match(p);
+  const page = m === null ? undefined : ADMIN_BRANDING_PAGES.find((x) => x.route.name === m.name);
+  if (m === null || page === undefined) {
     return false;
   }
-  await page.mount(env, {});
+  await page.mount(env, m.params);
   return true;
 }
