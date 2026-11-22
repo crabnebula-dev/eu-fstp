@@ -36,6 +36,7 @@ pub use finding::{
     FindingKind, MAX_CLIENT_FINDINGS, MAX_REFUSED, MAX_RERUNS, Mark, RERUN_TIMEOUT_US, RefusalCode,
     RefusedStage, RerunEnd, Severity, TraceRef, client_run,
 };
+pub use fstp_injscan::Reason as IntegrityReason;
 pub use record::{FindingCommand, FindingRecord};
-pub use store::{FindingRefusal, FindingStore};
+pub use store::{FindingRefusal, FindingStore, Integrity};
 pub use text::UntrustedText;

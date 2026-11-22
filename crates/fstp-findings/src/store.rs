@@ -32,6 +32,7 @@ use crate::finding::{
     Finding, FindingId, MAX_REFUSED, MAX_RERUNS, Mark, RERUN_TIMEOUT_US, RefusedStage, RerunEnd,
 };
 use crate::record::FindingRecord;
+use fstp_injscan::Reason;
 
 /// Why the store refused an operation. A refusal names ids of findings,
 /// calls and configurations only, never an account or a statement.
@@ -134,6 +135,17 @@ pub enum FindingRefusal {
         /// The proposal.
         proposal: ProposalId,
     },
+    /// ADR-035: the proposal is held by its integrity flags, so no AI
+    /// assessment of it runs until the coordinator releases it.
+    IntegrityHeld {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// ADR-035: the proposal holds no integrity hold to release.
+    NotHeld {
+        /// The proposal.
+        proposal: ProposalId,
+    },
 }
 
 impl FindingRefusal {
@@ -151,7 +163,9 @@ impl FindingRefusal {
             | FindingRefusal::TooManyRefused { .. }
             | FindingRefusal::NoRerunInFlight { .. }
             | FindingRefusal::RerunNotStale { .. }
-            | FindingRefusal::ClientRunTaken { .. } => RuleRef::I10,
+            | FindingRefusal::ClientRunTaken { .. }
+            | FindingRefusal::IntegrityHeld { .. }
+            | FindingRefusal::NotHeld { .. } => RuleRef::I10,
             FindingRefusal::InputNotRead { .. } => RuleRef::Input,
             FindingRefusal::WrongCall { .. }
             | FindingRefusal::UnknownFinding { .. }
@@ -197,6 +211,20 @@ pub struct FindingStore {
     client_reads: BTreeMap<(ProposalId, AccountId), ContentDigest>,
     /// How many client assessments each proposal holds (ADR-033).
     client_runs: BTreeMap<ProposalId, u32>,
+    /// The integrity flags of each flagged proposal (ADR-035): the call,
+    /// the reasons, and the coordinator who released the hold, if one did.
+    integrity: BTreeMap<ProposalId, Integrity>,
+}
+
+/// The integrity flags of one proposal (ADR-035).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Integrity {
+    /// The call the proposal was submitted to.
+    pub call: CallId,
+    /// The reasons of the scan at submission.
+    pub reasons: Vec<Reason>,
+    /// The coordinator who released the hold, if one did.
+    pub released_by: Option<AccountId>,
 }
 
 impl FindingStore {
@@ -210,6 +238,30 @@ impl FindingStore {
             reruns: BTreeMap::new(),
             client_reads: BTreeMap::new(),
             client_runs: BTreeMap::new(),
+            integrity: BTreeMap::new(),
+        }
+    }
+
+    /// The integrity flags of `proposal`, if the scan at submission
+    /// flagged it (ADR-035).
+    pub fn integrity_of(&self, proposal: ProposalId) -> Option<&Integrity> {
+        self.integrity.get(&proposal)
+    }
+
+    /// Whether every AI assessment of `proposal` is held: it is flagged
+    /// and not released (ADR-035).
+    pub fn held(&self, proposal: ProposalId) -> bool {
+        self.integrity
+            .get(&proposal)
+            .is_some_and(|i| i.released_by.is_none())
+    }
+
+    /// Refuses an AI assessment of `proposal` while it is held (ADR-035).
+    pub fn check_not_held(&self, proposal: ProposalId) -> Result<(), FindingRefusal> {
+        if self.held(proposal) {
+            Err(FindingRefusal::IntegrityHeld { proposal })
+        } else {
+            Ok(())
         }
     }
 
@@ -588,6 +640,32 @@ impl FindingStore {
                 let n = self.client_runs_of(*proposal);
                 self.client_runs.insert(*proposal, n.saturating_add(1));
                 Ok(())
+            }
+            FindingRecord::IntegrityHeld {
+                call,
+                proposal,
+                reasons,
+            } => {
+                self.integrity.insert(
+                    *proposal,
+                    Integrity {
+                        call: *call,
+                        reasons: reasons.clone(),
+                        released_by: None,
+                    },
+                );
+                Ok(())
+            }
+            FindingRecord::IntegrityReleased { proposal, by, .. } => {
+                match self.integrity.get_mut(proposal) {
+                    Some(i) if i.released_by.is_none() => {
+                        i.released_by = Some(*by);
+                        Ok(())
+                    }
+                    _ => Err(FindingRefusal::NotHeld {
+                        proposal: *proposal,
+                    }),
+                }
             }
             FindingRecord::RefusalsRecorded {
                 call,

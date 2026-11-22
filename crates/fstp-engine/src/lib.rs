@@ -379,6 +379,65 @@ pub enum Command {
     /// second tenant admin's ledger approval (SoD-07), decided by
     /// `compose::decide_approved_self_grant` in one entry.
     ApprovedSelfGrant(ApprovedSelfGrant),
+    /// A submission that the injection scan flagged (ADR-035): the core
+    /// `Submit`, then the scan's integrity findings and `IntegrityHeld`,
+    /// decided in one entry by `findings::decide_scanned_submit`.
+    ScannedSubmit(ScannedSubmit),
+}
+
+/// A flagged submission (ADR-035): the core `Submit` and the records of
+/// the injection scan at intake. Only [`ScannedSubmit::new`] builds it, so
+/// the core command is always a `Submit`, every finding is an integrity
+/// finding of its proposal, and the reasons are a non-empty, ordered set.
+/// A clean submission stays a plain `Command::Core`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ScannedSubmit {
+    submit: fstp_domain::Command,
+    findings: Vec<Finding>,
+    reasons: Vec<fstp_findings::IntegrityReason>,
+}
+
+impl ScannedSubmit {
+    /// The flagged submission, or `None` unless `submit` is a `Submit`,
+    /// `reasons` is non-empty and ordered without repeats, and every
+    /// finding is an integrity finding of the submitted proposal.
+    pub fn new(
+        submit: fstp_domain::Command,
+        findings: Vec<Finding>,
+        reasons: Vec<fstp_findings::IntegrityReason>,
+    ) -> Option<ScannedSubmit> {
+        let fstp_domain::Command::Submit { proposal, .. } = &submit else {
+            return None;
+        };
+        let ordered = reasons.windows(2).all(|w| matches!(w, [a, b] if a < b));
+        let own = findings
+            .iter()
+            .all(|f| f.proposal == *proposal && f.kind == fstp_findings::FindingKind::Integrity);
+        (!reasons.is_empty()
+            && ordered
+            && own
+            && findings.len() <= fstp_findings::MAX_CLIENT_FINDINGS)
+            .then_some(ScannedSubmit {
+                submit,
+                findings,
+                reasons,
+            })
+    }
+
+    /// The core `Submit`.
+    pub fn submit(&self) -> &fstp_domain::Command {
+        &self.submit
+    }
+
+    /// The scan's integrity findings.
+    pub fn findings(&self) -> &[Finding] {
+        &self.findings
+    }
+
+    /// The scan's reasons.
+    pub fn reasons(&self) -> &[fstp_findings::IntegrityReason] {
+        &self.reasons
+    }
 }
 
 /// A self-grant with its SoD-07 approval (lane m3/cell-routes): the
@@ -506,6 +565,10 @@ impl core::hash::Hash for Command {
             Command::ApprovedSelfGrant(g) => {
                 9u8.hash(state);
                 g.hash(state);
+            }
+            Command::ScannedSubmit(s) => {
+                10u8.hash(state);
+                s.hash(state);
             }
         }
     }

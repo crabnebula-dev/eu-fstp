@@ -113,6 +113,7 @@ pub fn finding_queries(
         }
         FindingCommand::Record(_)
         | FindingCommand::Regenerate { .. }
+        | FindingCommand::ReleaseIntegrityHold { .. }
         | FindingCommand::RequestRerun { .. }
         | FindingCommand::AbandonRerun { .. }
         | FindingCommand::RecordRefusals { .. } => Ok(Vec::new()),
@@ -141,6 +142,8 @@ pub fn decide_finding(
             input,
         } => {
             let by = client_actor(state, *call, *proposal, ctx, answers)?;
+            // ADR-035: no AI assessment reads a held proposal.
+            store.check_not_held(*proposal).map_err(store_refusal)?;
             vec![FindingRecord::AssessmentInputRead {
                 call: *call,
                 proposal: *proposal,
@@ -156,6 +159,7 @@ pub fn decide_finding(
             refused,
         } => {
             let by = client_actor(state, *call, *proposal, ctx, answers)?;
+            store.check_not_held(*proposal).map_err(store_refusal)?;
             client_records(store, *call, *proposal, by, run, findings, refused)?
         }
         other => vec![decide_one(state, other, ctx, answers)?],
@@ -183,7 +187,30 @@ fn decide_one(
         | FindingCommand::RecordClientAssessment { .. } => {
             return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
         }
-        FindingCommand::Record(f) => decide_record(core, store, f, ctx)?,
+        FindingCommand::Record(f) => {
+            let record = decide_record(core, store, f, ctx)?;
+            // ADR-035: the assessor records nothing on a held proposal.
+            store.check_not_held(f.proposal).map_err(store_refusal)?;
+            record
+        }
+        FindingCommand::ReleaseIntegrityHold { call, proposal } => {
+            // ADR-035: the call's FSTP coordinator, as for a re-run. The
+            // store checks that a hold is there, in the trial fold below.
+            let Actor::Account(by) = ctx.actor else {
+                return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+            };
+            check_rerun_basis(core, by, *call, *proposal, ctx.now)?;
+            if !store.held(*proposal) {
+                return Err(store_refusal(FindingRefusal::NotHeld {
+                    proposal: *proposal,
+                }));
+            }
+            FindingRecord::IntegrityReleased {
+                call: *call,
+                proposal: *proposal,
+                by,
+            }
+        }
         FindingCommand::Mark { finding, mark } => {
             decide_mark(state, *finding, *mark, ctx, answers)?
         }
@@ -484,8 +511,22 @@ pub fn check_fold(
                 Err(FoldError::Inconsistent)
             }
         }
-        FindingRecord::RerunRequested { call, proposal, by } => {
+        FindingRecord::RerunRequested { call, proposal, by }
+        | FindingRecord::IntegrityReleased { call, proposal, by } => {
             check_rerun_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)
+        }
+        FindingRecord::IntegrityHeld {
+            call,
+            proposal,
+            reasons,
+        } => {
+            published(core, *call).map_err(|_| FoldError::Inconsistent)?;
+            let ordered = reasons.windows(2).all(|w| matches!(w, [a, b] if a < b));
+            if proposal_in_call(core, *proposal, *call) && !reasons.is_empty() && ordered {
+                Ok(())
+            } else {
+                Err(FoldError::Inconsistent)
+            }
         }
         FindingRecord::RefusalsRecorded { call, proposal, .. }
         | FindingRecord::RerunAbandoned { call, proposal, .. } => {
@@ -623,6 +664,11 @@ fn decide_record(
 
 /// Whether `proposal` has its latest binding scope in `call`.
 fn proposal_in_call(core: &State, proposal: ProposalId, call: CallId) -> bool {
+    current_call(core, proposal) == Some(call)
+}
+
+/// The call of `proposal`: the call of its latest proposal binding.
+fn current_call(core: &State, proposal: ProposalId) -> Option<CallId> {
     use fstp_domain::roles::BindingScope;
     let roster = core.roster();
     roster
@@ -636,7 +682,7 @@ fn proposal_in_call(core: &State, proposal: ProposalId, call: CallId) -> bool {
             _ => None,
         })
         .max()
-        .is_some_and(|(_, _, c)| c == call)
+        .map(|(_, _, c)| c)
 }
 
 /// What a re-run request needs from the core (issue 6 M3, I-10): the
@@ -833,6 +879,8 @@ fn store_refusal(r: FindingRefusal) -> Refusal {
         | FindingRefusal::NoRerunInFlight { .. }
         | FindingRefusal::RerunNotStale { .. }
         | FindingRefusal::ClientRunTaken { .. }
+        | FindingRefusal::IntegrityHeld { .. }
+        | FindingRefusal::NotHeld { .. }
         | FindingRefusal::InputNotRead { .. } => RefusalReason::GuardFailed,
         FindingRefusal::TooManyRefused { .. } => RefusalReason::InvalidValue,
         FindingRefusal::UnknownFinding { .. } => RefusalReason::UnknownEntity,
@@ -854,6 +902,8 @@ fn fold_error(r: FindingRefusal) -> FoldError {
         | FindingRefusal::NoRerunInFlight { .. }
         | FindingRefusal::RerunNotStale { .. }
         | FindingRefusal::ClientRunTaken { .. }
+        | FindingRefusal::IntegrityHeld { .. }
+        | FindingRefusal::NotHeld { .. }
         | FindingRefusal::InputNotRead { .. } => FoldError::Inconsistent,
         FindingRefusal::UnknownFinding { .. } => FoldError::UnknownEntity,
         FindingRefusal::ForeignConfig { .. }
@@ -863,4 +913,46 @@ fn fold_error(r: FindingRefusal) -> FoldError {
         | FindingRefusal::WrongCall { .. }
         | FindingRefusal::MalformedEvidence { .. } => FoldError::Inconsistent,
     }
+}
+
+/// The records of a flagged submission (ADR-035): the core records of its
+/// `Submit`, then one `Recorded` per integrity finding of the scan and
+/// the `IntegrityHeld`, all in one entry. Each finding names the
+/// submitted proposal and its call, and carries the call's pin (I-11),
+/// which the trial fold checks. A finding record never changes the core
+/// (I-10).
+pub fn decide_scanned_submit(
+    state: &EngineState,
+    s: &crate::ScannedSubmit,
+    core: Vec<crate::Record>,
+    ctx: &Ctx,
+) -> Result<Vec<crate::Record>, Refusal> {
+    let invalid = || Refusal::new(RuleRef::Input, RefusalReason::InvalidValue);
+    let fstp_domain::Command::Submit { proposal, .. } = s.submit() else {
+        return Err(invalid());
+    };
+    let call = current_call(&state.core, *proposal).ok_or_else(invalid)?;
+    if s.findings().iter().any(|f| f.call != call) {
+        return Err(invalid());
+    }
+    let mut records: Vec<FindingRecord> = s
+        .findings()
+        .iter()
+        .cloned()
+        .map(FindingRecord::Recorded)
+        .collect();
+    records.push(FindingRecord::IntegrityHeld {
+        call,
+        proposal: *proposal,
+        reasons: s.reasons().to_vec(),
+    });
+    let mut trial = state.findings.clone();
+    for record in &records {
+        check_fold(&state.core, &trial, record, ctx.now)
+            .map_err(|_| Refusal::new(RuleRef::I11, RefusalReason::GuardFailed))?;
+        trial.apply_at(record, ctx.now).map_err(store_refusal)?;
+    }
+    let mut out = core;
+    out.extend(records.into_iter().map(crate::Record::Finding));
+    Ok(out)
 }

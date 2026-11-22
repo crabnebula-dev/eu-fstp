@@ -184,12 +184,33 @@ pub(crate) fn any_finding(g: &mut Gen) -> Finding {
 
 /// A finding record of any variant.
 pub(crate) fn any_record(g: &mut Gen) -> FindingRecord {
-    match g.u8_in(0..=7) {
+    match g.u8_in(0..=9) {
         6 => FindingRecord::AssessmentInputRead {
             call: CallId::from_raw(u128_any(g)),
             proposal: ProposalId::from_raw(u128_any(g)),
             by: AccountId::from_raw(u128_any(g)),
             input: digest(g),
+        },
+        8 => {
+            // ADR-035: a non-empty, ordered set of distinct reasons.
+            let mut reasons: Vec<fstp_findings::IntegrityReason> =
+                fstp_findings::IntegrityReason::ALL
+                    .into_iter()
+                    .filter(|_| g.bool())
+                    .collect();
+            if reasons.is_empty() {
+                reasons.push(fstp_findings::IntegrityReason::Override);
+            }
+            FindingRecord::IntegrityHeld {
+                call: CallId::from_raw(u128_any(g)),
+                proposal: ProposalId::from_raw(u128_any(g)),
+                reasons,
+            }
+        }
+        9 => FindingRecord::IntegrityReleased {
+            call: CallId::from_raw(u128_any(g)),
+            proposal: ProposalId::from_raw(u128_any(g)),
+            by: AccountId::from_raw(u128_any(g)),
         },
         7 => FindingRecord::ClientAssessed {
             call: CallId::from_raw(u128_any(g)),
@@ -257,6 +278,8 @@ pub(crate) fn statements(record: &FindingRecord) -> Vec<String> {
         | FindingRecord::RerunAbandoned { .. }
         | FindingRecord::AssessmentInputRead { .. }
         | FindingRecord::ClientAssessed { .. }
+        | FindingRecord::IntegrityHeld { .. }
+        | FindingRecord::IntegrityReleased { .. }
         | FindingRecord::RefusalsRecorded { .. } => Vec::new(),
         FindingRecord::Regenerated { findings, .. } => findings
             .iter()

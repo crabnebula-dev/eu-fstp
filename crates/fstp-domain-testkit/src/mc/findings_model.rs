@@ -1214,6 +1214,7 @@ fn named_ids(cmd: &FindingCommand) -> Vec<u128> {
         // Issue 6 M3: none names a finding. The twin does not generate them.
         FindingCommand::RequestRerun { .. }
         | FindingCommand::AbandonRerun { .. }
+        | FindingCommand::ReleaseIntegrityHold { .. }
         | FindingCommand::RecordRefusals { .. } => Vec::new(),
         // ADR-033: the twin does not generate them.
         FindingCommand::ReadAssessmentInput { .. } => Vec::new(),
@@ -1339,6 +1340,7 @@ impl StateMachine for TwinMachine {
                     | FindingCommand::RequestRerun { .. }
                     | FindingCommand::AbandonRerun { .. }
                     | FindingCommand::RecordRefusals { .. }
+                    | FindingCommand::ReleaseIntegrityHold { .. }
                     | FindingCommand::ReadAssessmentInput { .. }
                     | FindingCommand::RecordClientAssessment { .. } => None,
                 };

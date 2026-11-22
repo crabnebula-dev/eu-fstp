@@ -8,6 +8,7 @@ use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
 use fstp_domain::policy::ModelRef;
 
 use fstp_domain::id::ContentDigest;
+use fstp_injscan::Reason;
 
 use crate::finding::{ClientRun, Finding, FindingId, Mark, RefusedStage, RerunEnd};
 
@@ -101,6 +102,15 @@ pub enum FindingCommand {
         /// The replies the validator dropped, possibly none.
         refused: Vec<RefusedStage>,
     },
+    /// The FSTP coordinator of the call releases the integrity hold of
+    /// `proposal` after looking at its flags (ADR-035). Its AI assessment
+    /// may then run.
+    ReleaseIntegrityHold {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+    },
 }
 
 /// A ledger record on findings, folded by
@@ -191,5 +201,27 @@ pub enum FindingRecord {
         by: AccountId,
         /// The provenance of the run.
         run: ClientRun,
+    },
+    /// The injection scan at submission flagged `proposal` (ADR-035). It
+    /// follows the scan's integrity findings in the entry of the
+    /// `Submit`. Every AI assessment of the proposal is held until an
+    /// `IntegrityReleased`.
+    IntegrityHeld {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The reasons the scan found, distinct and in order.
+        reasons: Vec<Reason>,
+    },
+    /// `by`, the FSTP coordinator of the call, released the integrity
+    /// hold of `proposal` (ADR-035). This is the release's audit record.
+    IntegrityReleased {
+        /// The call.
+        call: CallId,
+        /// The proposal.
+        proposal: ProposalId,
+        /// The coordinator's account.
+        by: AccountId,
     },
 }

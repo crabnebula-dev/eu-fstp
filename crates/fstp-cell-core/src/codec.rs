@@ -1048,6 +1048,12 @@ impl ToJson for CellCommand {
             }
             // M5 lane L-CON. The decoder does not read it back yet; the
             // L-API lane adds it with the contract routes.
+            // ADR-035: a flagged submission is its core `Submit`; the scan
+            // records it adds are the engine's, in the ledger. The decoder
+            // does not read it back, so no step-up admits it (fail closed).
+            CellCommand::Engine(fstp_engine::Command::ScannedSubmit(s)) => {
+                wrap("scanned_submit", s.submit().to_json())
+            }
             CellCommand::Engine(fstp_engine::Command::Contract(c)) => wrap("contract", c.to_json()),
             CellCommand::Engine(fstp_engine::Command::Report(r)) => wrap("report", r.to_json()),
             // Lane m3/cell-routes (SoD-07): the approval and the core grant
@@ -1112,6 +1118,14 @@ fn finding_command_json(c: &FindingCommand) -> Value {
         ),
         // Issue 6 M3: the re-run request and the refused stages, as stage
         // and code names from the two closed lists.
+        // ADR-035: the release of an integrity hold.
+        FindingCommand::ReleaseIntegrityHold { call, proposal } => tagged(
+            "ReleaseIntegrityHold",
+            vec![
+                ("call", dec_u128(call.raw())),
+                ("proposal", dec_u128(proposal.raw())),
+            ],
+        ),
         FindingCommand::RequestRerun { call, proposal } => tagged(
             "RequestRerun",
             vec![

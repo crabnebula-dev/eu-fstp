@@ -284,6 +284,27 @@ fn refused_from_json(v: &Value) -> Result<Vec<RefusedStage>, FromJsonError> {
     Ok(out)
 }
 
+/// The reasons of an `integrity_held` record (ADR-035): a non-empty
+/// list of distinct reason codes in declaration order. One spelling only.
+fn reasons_from_json(v: &Value) -> Result<Vec<fstp_injscan::Reason>, FromJsonError> {
+    let a = v
+        .as_array()
+        .ok_or_else(|| FromJsonError::wrong_type("a list of reasons", v))?;
+    if a.is_empty() || a.len() > fstp_injscan::Reason::ALL.len() {
+        return Err(FromJsonError::invalid("not a list of reasons"));
+    }
+    let mut out: Vec<fstp_injscan::Reason> = Vec::with_capacity(a.len());
+    for (i, x) in a.iter().enumerate() {
+        let r = name_from_json(x, fstp_injscan::Reason::parse, "a reason")
+            .map_err(|e| e.at_index(i))?;
+        if out.last().is_some_and(|l| *l >= r) {
+            return Err(FromJsonError::invalid("reasons out of order").at_index(i));
+        }
+        out.push(r);
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Objects.
 // ---------------------------------------------------------------------------
@@ -570,6 +591,30 @@ impl ToJson for FindingRecord {
                 o.insert("input", digest_to_json(run.input));
                 o.insert("trace_id", id_to_json(run.trace.raw()));
             }
+            FindingRecord::IntegrityHeld {
+                call,
+                proposal,
+                reasons,
+            } => {
+                o.insert("record", Value::String("integrity_held".to_owned()));
+                o.insert("call", id_to_json(call.raw()));
+                o.insert("proposal", id_to_json(proposal.raw()));
+                o.insert(
+                    "reasons",
+                    Value::Array(
+                        reasons
+                            .iter()
+                            .map(|r| name_to_json(r.code()))
+                            .collect::<Array>(),
+                    ),
+                );
+            }
+            FindingRecord::IntegrityReleased { call, proposal, by } => {
+                o.insert("record", Value::String("integrity_released".to_owned()));
+                o.insert("call", id_to_json(call.raw()));
+                o.insert("proposal", id_to_json(proposal.raw()));
+                o.insert("by", id_to_json(by.raw()));
+            }
         }
         Value::Object(o)
     }
@@ -704,6 +749,22 @@ impl FromJson for FindingRecord {
                         input: member(o, "input", digest_from_json)?,
                         trace: TraceRef::from_raw(member(o, "trace_id", id_from_json)?),
                     },
+                })
+            }
+            "integrity_held" => {
+                reject_unknown(o, &["record", "call", "proposal", "reasons"])?;
+                Ok(FindingRecord::IntegrityHeld {
+                    call: CallId::from_raw(member(o, "call", id_from_json)?),
+                    proposal: ProposalId::from_raw(member(o, "proposal", id_from_json)?),
+                    reasons: member(o, "reasons", reasons_from_json)?,
+                })
+            }
+            "integrity_released" => {
+                reject_unknown(o, &["record", "call", "proposal", "by"])?;
+                Ok(FindingRecord::IntegrityReleased {
+                    call: CallId::from_raw(member(o, "call", id_from_json)?),
+                    proposal: ProposalId::from_raw(member(o, "proposal", id_from_json)?),
+                    by: AccountId::from_raw(member(o, "by", id_from_json)?),
                 })
             }
             _ => Err(FromJsonError::invalid("not a known finding record").at_field("record")),
