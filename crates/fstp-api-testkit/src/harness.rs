@@ -818,6 +818,10 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
         "tenant.set_mcp" => obj(vec![("value", mcp_value(P74::AllRoles))]),
         "tenant.set_payment_mode" => obj(vec![("value", s("record_only"))]),
         "tenant.set_template_licence" => obj(vec![("value", s("MIT"))]),
+        "tenant.set_funding_defaults" => obj(vec![
+            ("contact", s("role@example.org")),
+            ("name", s("Synthetic coordinator org")),
+        ]),
         "tenant.set_guide_notice" => obj(vec![
             (
                 "privacy_statement_url",
@@ -2009,6 +2013,7 @@ fn pending_narratives(seed: &Seeder, p: ProgrammeId) -> Result<Vec<String>, Stri
         match v {
             V::ActionAcronym(_)
             | V::CoordinatorName(_)
+            | V::CoordinatorContact(_)
             | V::ProgrammeName(_)
             | V::ProgrammeNarrative(_)
             | V::ProgrammeScope(_)

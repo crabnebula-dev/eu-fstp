@@ -72,6 +72,7 @@ fn r_wl_03_letterhead_passes_images_through() {
                 },
             ],
             emblem: g.bool().then(|| image(ImageColours::Gray, 120, 80)),
+            funding: Vec::new(),
         };
         let pdf = write_with_letterhead(&doc, &head).map_err(|e| format!("{e}"))?;
         let again = write_with_letterhead(&doc, &head).map_err(|e| format!("{e}"))?;
@@ -121,23 +122,28 @@ fn adr030_letterhead_bounds() {
     let three = Letterhead {
         logos: vec![image(ImageColours::Rgb, 10, 10); 3],
         emblem: None,
+        funding: Vec::new(),
     };
     for head in [
         Letterhead {
             logos: vec![wide],
             emblem: None,
+            funding: Vec::new(),
         },
         Letterhead {
             logos: vec![sixteen],
             emblem: None,
+            funding: Vec::new(),
         },
         Letterhead {
             logos: Vec::new(),
             emblem: Some(rgb_four),
+            funding: Vec::new(),
         },
         Letterhead {
             logos: vec![empty_palette],
             emblem: None,
+            funding: Vec::new(),
         },
         three,
     ] {

@@ -325,6 +325,21 @@ svg a:focus-visible .node-shape { stroke: var(--color-focus); stroke-width: 4; }
 /* ADR-030: the EU emblem and funding acknowledgement slot of the footer. */
 .eu-funding { display: flex; align-items: center; gap: var(--space-2); flex-basis: 100%; }
 .eu-emblem { height: 2.5rem; width: auto; }
+/* ADR-034: the funding card, white with fixed text colours in both themes, so
+   the logo's official colours always show and no brand token reaches it
+   (I-69, I-70: fstp_brand::funding::CARD_*). Never redefined for dark mode. */
+:root { --funding-card-ground: #ffffff; --funding-card-text: #1f2328; --funding-card-label: #4b5563; }
+.funding-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); flex-basis: 100%; background: var(--funding-card-ground); color: var(--funding-card-text); border: 1px solid var(--funding-card-label); border-radius: 0.5rem; padding: var(--space-2) var(--space-4); }
+.funding-card .eu-emblem { height: 3rem; min-height: 32px; width: auto; margin: 8px 0; }
+.funding-card-name { margin: 0; font-weight: 600; }
+.funding-card dl { display: grid; grid-template-columns: auto 1fr; gap: 0 var(--space-2); margin: 0; }
+.funding-card dt { color: var(--funding-card-label); }
+.funding-card-label { color: var(--funding-card-label); }
+.funding-card dd { margin: 0; color: var(--funding-card-text); overflow-wrap: anywhere; }
+.funding-card p { margin: 0; }
+.funding-cards { display: flex; flex-wrap: wrap; gap: var(--space-2); flex-basis: 100%; list-style: none; padding: 0; margin: 0; }
+.funding-cards > li { flex: 1 1 18rem; display: flex; }
+.funding-cards .funding-card { flex-basis: auto; width: 100%; }
 /* ADR-030: a chosen theme also sets the native controls and scrollbars. */
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }

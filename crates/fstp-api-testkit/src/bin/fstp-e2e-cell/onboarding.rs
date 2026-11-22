@@ -86,6 +86,17 @@ pub(crate) fn provision_two_admins(
             account: second_admin,
             invitation,
         },
+        // ADR-034: the demo tenant's funding card defaults, the pilot's
+        // coordinator and its role address, as Daniel asked on 2026-11-22.
+        // An organisation and a role address, never a person.
+        fstp_tenant::TenantRecord::FundingDefaultsSet {
+            defaults: fstp_brand::funding::FundingDefaults::new(
+                "CrabNebula Ltd",
+                "privacy@crabnebula.dev",
+            )
+            .ok_or("the funding card defaults")?,
+            by: first_admin,
+        },
     ];
     for (n, r) in (2u8..).zip(records) {
         let mut command = *b"fstp:e2e:tenant\0";

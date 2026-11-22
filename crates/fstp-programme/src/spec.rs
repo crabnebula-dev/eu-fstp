@@ -138,13 +138,22 @@ fn missing(key: &'static str) -> FromJsonError {
     FromJsonError::new(FromJsonErrorKind::MissingField).at_field(key)
 }
 
-/// Decodes the step member `key` of a step object: `null` is a gap.
+/// The step members added after specs were first stored, as
+/// `(step, member)`. A spec or template text written before one existed
+/// lacks it, and it decodes as a gap (ADR-034 section 3). Every other
+/// member stays required.
+const ADDED_LATER: &[(&str, &str)] = &[("funder", "coordinator_contact")];
+
+/// Decodes the step member `key` of the step object `o` of step `step`:
+/// `null` is a gap, and so is a missing member of [`ADDED_LATER`].
 fn step_member<T: Codec>(
     o: &fstp_json::Object,
+    step: &'static str,
     key: &'static str,
     c: Currency,
 ) -> Result<Field<T>, FromJsonError> {
     match o.get(key) {
+        None if ADDED_LATER.contains(&(step, key)) => Ok(Field::Unset),
         None => Err(missing(key)),
         Some(Value::Null) => Ok(Field::Unset),
         Some(v) => T::decode(v, c).map(Field::Set).map_err(|e| e.at_field(key)),
@@ -273,7 +282,7 @@ macro_rules! programme_fields {
 
                 fn from_json(v: &Value, c: Currency) -> Result<$Step, FromJsonError> {
                     let o = object(v, &[$(stringify!($member)),+])?;
-                    Ok($Step { $( $member: step_member(o, stringify!($member), c)?, )+ })
+                    Ok($Step { $( $member: step_member(o, stringify!($step), stringify!($member), c)?, )+ })
                 }
 
                 fn to_json(&self) -> Value {
@@ -380,6 +389,8 @@ programme_fields! {
         action_acronym: ActionAcronym(Narrative), Artefact, [], importable true, bound [];
         #[doc = "The name of the coordinator who runs the calls (Guide `{{coordinator.name}}`). Interim, pending Daniel."]
         coordinator_name: CoordinatorName(Narrative), Artefact, [], importable true, bound [];
+        #[doc = "The coordinator's contact on the funding card in every footer (ADR-034, I-69)."]
+        coordinator_contact: CoordinatorContact(Narrative), Artefact, [], importable false, bound [];
         #[doc = "P-56: the action's FSTP budget."]
         p56_fstp_budget: P56(NonNegAmount), Policy, [P56], importable true, bound [];
         #[doc = "P-57: the action's start and end dates."]

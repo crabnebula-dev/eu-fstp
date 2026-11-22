@@ -1921,6 +1921,8 @@ pub(crate) trait Dispatch: Send + Sync {
     fn brand(&self) -> Option<crate::Brand>;
     /// The paths of the tenant's logos (ADR-030).
     fn tenant_logos(&self) -> crate::brand::LogoPaths;
+    /// The funding cards and the tenant defaults (ADR-034).
+    fn funding(&self) -> fstp_json::Value;
     /// The bytes of the current logo at `path` (ADR-030).
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a>;
     /// The theme of the session `cred` names (ADR-030).
@@ -1966,6 +1968,10 @@ impl<P: CellPorts> Dispatch for Core<P> {
     fn tenant_logos(&self) -> crate::brand::LogoPaths {
         let state = self.ports.engine().snapshot();
         crate::brand::paths_of(state.tenant.state(), fstp_tenant::LogoOwner::Tenant)
+    }
+
+    fn funding(&self) -> fstp_json::Value {
+        crate::funding::answer(&self.ports.engine().snapshot())
     }
 
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a> {
@@ -2071,6 +2077,24 @@ pub fn api_core_with_signing<P: CellPorts>(
     }
 }
 
+/// The funding card of `programme` with the tenant's defaults filling its
+/// gaps, for the cell's messages (ADR-034, I-69), or `None` when the
+/// creator holds no draft of it.
+pub fn funding_card(
+    state: &fstp_engine::EngineState,
+    programme: fstp_domain::id::ProgrammeId,
+) -> Option<fstp_brand::funding::FundingCard> {
+    crate::funding::card(state, programme)
+}
+
+/// The logos of a public page of `programme` with its funding card, for
+/// the cell's public pages (ADR-030, ADR-034, I-69).
+pub fn public_chrome_logos(
+    state: &fstp_engine::EngineState,
+    programme: fstp_domain::id::ProgrammeId,
+) -> fstp_public::PublicLogos {
+    crate::brand::public_chrome_logos(state, programme)
+}
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

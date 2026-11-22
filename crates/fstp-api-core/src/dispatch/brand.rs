@@ -150,6 +150,11 @@ pub(crate) async fn letterhead<P: Seams>(
     fstp_pdf::Letterhead {
         logos,
         emblem: fstp_brand::emblem::EU_EMBLEM_PNG.and_then(pdf_of),
+        // ADR-034: the funding card of the programme, as text lines.
+        funding: programme
+            .and_then(|p| crate::funding::card(state, p))
+            .map(|c| c.text_lines())
+            .unwrap_or_default(),
     }
 }
 
@@ -207,6 +212,7 @@ mod tests {
         let head = fstp_pdf::Letterhead {
             logos: vec![image],
             emblem: None,
+            funding: Vec::new(),
         };
         let pdf = fstp_pdf::write_with_letterhead(&doc, &head).expect("written");
         assert!(pdf.windows(7).any(|w| w == b"/SMask "));

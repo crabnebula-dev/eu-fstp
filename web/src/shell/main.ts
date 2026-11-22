@@ -64,6 +64,7 @@ import { decodeFunderProfile, type FunderProfileView } from "../operations/profi
 import { mountJudging } from "../reviewer/judging.js";
 import { mountSite } from "../site/pages.js";
 import { installFooterGuard } from "./brand.js";
+import { type FundingAnswer, FUNDING_PATH, decodeFunding } from "./funding.js";
 import { act, anyObject } from "../grant/kit.js";
 import { themeBody } from "./theme.js";
 import { setReadRefusalGuard } from "../core/api.js";
@@ -222,6 +223,16 @@ async function run(path: string): Promise<void> {
   mountNotFound();
 }
 
+/** ADR-034: the funding cards of the tenant's active programmes, for every footer. */
+async function readFundingCards(): Promise<FundingAnswer | null> {
+  try {
+    const r = await fetch(FUNDING_PATH, { credentials: "same-origin", cache: "no-store", redirect: "error" });
+    return r.ok ? decodeFunding(await r.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 installTrustedTypesPolicy();
 // ADR-030: the theme switch of every sidebar saves the choice for the
 // person's account, so it follows them to every device.
@@ -231,7 +242,7 @@ installThemeSwitch(async (t) => (await act(browserEnv(root()), "me.set_theme", {
 installFooterGuard(async (programme) => {
   const r = await readOp(browserEnv(root()), "programme.funder_profile.view", { programme }, (x): x is FunderProfileView => decodeFunderProfile(x) !== null);
   return r.ok ? decodeFunderProfile(r.data) : null;
-});
+}, readFundingCards);
 // SA-09 rule 7: a page whose own read is refused after it loaded, for
 // example because the session ended, loads from the server once the gate
 // says the page is closed now: its 303 leads to sign-in or home, never to

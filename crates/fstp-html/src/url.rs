@@ -28,6 +28,36 @@ pub(crate) fn is_safe_url(u: &str) -> bool {
     b.first() == Some(&b'/') && b.get(1).is_none_or(|&c| c != b'/')
 }
 
+/// Whether `u` is safe in the `href` of an `a` element: a URL of
+/// [`is_safe_url`], or a `mailto:` link to one address (ADR-034, lead
+/// decision of 2026-11-22: the funding card's contact can be clicked).
+/// No other element or attribute takes a `mailto:` link.
+pub(crate) fn is_safe_link(u: &str) -> bool {
+    is_safe_url(u) || u.strip_prefix("mailto:").is_some_and(mailto_ok)
+}
+
+/// One e-mail address of a `mailto:` link (ADR-034): a local part of 1 to
+/// 64 ASCII letters, digits and `. _ + -`, neither starting nor ending with
+/// `.`, then `@` and a host of at least two lower-case LDH labels whose last
+/// label is not numeric. Nothing else, so no header or body can ride along.
+pub(crate) fn mailto_ok(addr: &str) -> bool {
+    let Some((local, host)) = addr.split_once('@') else {
+        return false;
+    };
+    let local_ok = (1..=64).contains(&local.len())
+        && !local.starts_with('.')
+        && !local.ends_with('.')
+        && local
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._+-".contains(&c));
+    let last = host.rsplit('.').next().unwrap_or("");
+    local_ok
+        && host.len() <= 253
+        && host.contains('.')
+        && host.split('.').all(label_ok)
+        && !last.bytes().all(|c| c.is_ascii_digit())
+}
+
 /// Each `%` is followed by two hex digits.
 fn percent_ok(b: &[u8]) -> bool {
     let mut rest = b.iter();
@@ -85,6 +115,21 @@ fn authority_ok(a: &str) -> bool {
 pub struct SafeUrl(String);
 
 impl SafeUrl {
+    /// The `mailto:` link to `address`, for the `href` of an `a` element
+    /// only (ADR-034). The address must pass [`mailto_ok`]: one address,
+    /// no query, so no header or body can ride along.
+    ///
+    /// # Errors
+    ///
+    /// [`HtmlError::UnsafeUrl`] for any other address.
+    pub fn mailto(address: &str) -> Result<SafeUrl, HtmlError> {
+        if mailto_ok(address) {
+            Ok(SafeUrl(format!("mailto:{address}")))
+        } else {
+            Err(HtmlError::UnsafeUrl)
+        }
+    }
+
     /// Checks `url` and keeps it unchanged.
     pub fn new(url: &str) -> Result<SafeUrl, HtmlError> {
         if is_safe_url(url) {
@@ -102,7 +147,34 @@ impl SafeUrl {
 
 #[cfg(test)]
 mod tests {
-    use super::is_safe_url;
+    use super::{is_safe_link, is_safe_url};
+
+    /// ADR-034, I-68: a `mailto:` link names one address and nothing else.
+    #[test]
+    fn adr034_mailto_names_one_address_only_and_only_in_links() {
+        for good in [
+            "mailto:privacy@crabnebula.dev",
+            "mailto:a.b+c_d-e@sub.example.org",
+        ] {
+            assert!(is_safe_link(good) && !is_safe_url(good), "{good}");
+        }
+        for bad in [
+            "mailto:",
+            "mailto:a@b",
+            "mailto:@example.org",
+            "mailto:a@Example.org",
+            "mailto:.a@example.org",
+            "mailto:a@example.org?subject=x",
+            "mailto:a@example.org,b@example.org",
+            "mailto:a%40@example.org",
+            "mailto:a@1.2.3.4",
+            "mailto:a b@example.org",
+            "MAILTO:a@example.org",
+            "mailto:a@example.org\\",
+        ] {
+            assert!(!is_safe_link(bad), "{bad}");
+        }
+    }
 
     /// Issue 6 L21: cases the frontend `safeUrl` refuses and the writer
     /// used to accept, and cases both accept.

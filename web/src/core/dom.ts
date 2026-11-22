@@ -180,7 +180,8 @@ export function h(tag: string, attrs: Readonly<Record<string, AttrValue>> = {}, 
       }
       set.push([name, value]);
     } else if (URL_ATTRIBUTES.has(name)) {
-      const url = safeUrl(value);
+      // ADR-034 (lead decision): only the `href` of an `a` takes a `mailto:` link.
+      const url = safeUrl(value) ?? (tag === "a" && name === "href" ? mailtoHref(value) : null);
       if (url === null) {
         throw new DomRefusal("url", `${name} value ${describe(value)} is not a same-origin path or https: URL`);
       }
@@ -263,6 +264,34 @@ function authorityAllowed(authority: string): boolean {
   const labels = host.split(".");
   const last = labels[labels.length - 1] ?? "";
   return host !== "" && labels.every((label) => LABEL.test(label)) && !NUMERIC_LABEL.test(last);
+}
+
+/** The local part of a `mailto:` address: 1 to 64 letters, digits and `. _ + -`, not starting or ending with `.`. */
+const MAIL_LOCAL = /^(?!\.)[A-Za-z0-9._+-]{1,64}(?<!\.)$/;
+
+/**
+ * The input itself when it is a `mailto:` link to one address, else null
+ * (ADR-034, as `fstp_html` `mailto_ok`): the local part, `@`, and a host of
+ * at least two lower-case LDH labels whose last label is not numeric. No
+ * query, no `%`, so no header or body can ride along. Only the `href` of
+ * an `a` takes it.
+ */
+export function mailtoHref(input: unknown): string | null {
+  if (typeof input !== "string" || !input.startsWith("mailto:")) {
+    return null;
+  }
+  const addr = input.slice("mailto:".length);
+  const at = addr.indexOf("@");
+  if (at < 0 || addr.indexOf("@", at + 1) >= 0) {
+    return null;
+  }
+  const local = addr.slice(0, at);
+  const host = addr.slice(at + 1);
+  const labels = host.split(".");
+  const last = labels[labels.length - 1] ?? "";
+  const ok =
+    MAIL_LOCAL.test(local) && host.length <= 253 && labels.length >= 2 && labels.every((l) => LABEL.test(l)) && !/^[0-9]+$/.test(last);
+  return ok ? input : null;
 }
 
 const HTTPS = "https://";

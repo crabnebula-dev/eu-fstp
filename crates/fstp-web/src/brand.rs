@@ -32,6 +32,42 @@ pub(crate) const LOGO_DARK: &str = "/brand/logo/dark";
 /// The platform's EU emblem slot (ADR-030 section 2).
 pub(crate) const EMBLEM: &str = "/brand/eu-emblem.png";
 
+/// The funding card's logo, cleaned of editor metadata (ADR-034).
+pub(crate) const FUNDED_SVG: &str = fstp_api_core::brand::funding::SVG_PATH;
+/// The funding cards of the tenant's active programmes (ADR-034).
+pub(crate) const FUNDING: &str = fstp_api_core::brand::funding::CARDS_PATH;
+
+/// The `Cache-Control` of the funding card's logo: a day, since its
+/// path names no digest.
+const DAY: &str = "public, max-age=86400";
+
+/// The funding card's logo as SVG. A platform asset, never tenant data,
+/// shown only through `<img>` (ADR-034 section 1).
+fn svg() -> Response {
+    let mut r = Response::with_body(
+        StatusCode::OK,
+        "image/svg+xml",
+        fstp_api_core::brand::funding::FUNDED_BY_EU_SVG
+            .as_bytes()
+            .to_vec(),
+    );
+    // A valid constant, so the insert never fails.
+    let _ = r.headers.try_insert("cache-control", DAY);
+    r
+}
+
+/// The funding cards as JSON, never cached (ADR-034 section 4).
+fn funding(body: &fstp_json::Value) -> Response {
+    let mut r = Response::with_body(
+        StatusCode::OK,
+        "application/json",
+        fstp_json::to_compact(body).into_bytes(),
+    );
+    // A valid constant, so the insert never fails.
+    let _ = r.headers.try_insert("cache-control", "no-store");
+    r
+}
+
 /// Whether `path` names a logo by digest, so its answer is immutable.
 pub(crate) fn logo_digest_in(path: &str) -> bool {
     logo_path_digest(path).is_some()
@@ -55,6 +91,20 @@ pub(crate) async fn logo_answer(
     req: &Request,
 ) -> Option<Response> {
     let path = req.target.path();
+    // ADR-034: the funding card's logo for pages, and the cards.
+    if path == FUNDED_SVG || path == FUNDING {
+        if req.method != Method::GET && req.method != Method::HEAD {
+            return Some(reply::get_only());
+        }
+        if path == FUNDED_SVG {
+            return Some(svg());
+        }
+        let body = core.map_or_else(
+            || fstp_api_core::funding::cards_json(&[], None),
+            fstp_api_core::ApiCore::funding,
+        );
+        return Some(funding(&body));
+    }
     if path == EMBLEM {
         return Some(match EU_EMBLEM_PNG {
             Some(b) => image(LogoFormat::Png, b.to_vec(), false),
@@ -173,14 +223,39 @@ mod tests {
                 .all(|v| v.as_bytes() == b"image/png")
         );
         assert_eq!(r.headers.get_all("cache-control").count(), 0);
-        let emblem = fstp_rt::future::block_on(logo_answer(None, &get(EMBLEM)));
-        assert_eq!(emblem.map(|r| r.status), Some(StatusCode::NOT_FOUND));
+        // ADR-034: the slot holds the Funded by the EU logo.
+        let emblem = fstp_rt::future::block_on(logo_answer(None, &get(EMBLEM))).expect("answered");
+        assert_eq!(emblem.status, StatusCode::OK);
+        assert!(emblem.body.starts_with(b"\x89PNG"));
         let css = format!("/brand/{}.css", "ab".repeat(32));
         assert!(fstp_rt::future::block_on(logo_answer(None, &get(&css))).is_none());
         for p in [LOGO_LIGHT, LOGO_DARK] {
             let r = fstp_rt::future::block_on(logo_answer(None, &get(p)));
             assert_eq!(r.map(|r| r.status), Some(StatusCode::NOT_FOUND));
         }
+    }
+
+    /// ADR-034, R-NF-04: the funding card's logo is served as SVG with a
+    /// fixed type, and the cards as JSON that is never cached. A cell
+    /// with no backend answers no card.
+    #[test]
+    fn adr034_funding_logo_and_cards_are_served() {
+        let r = fstp_rt::future::block_on(logo_answer(None, &get(FUNDED_SVG))).expect("answered");
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(
+            r.headers
+                .get_all("content-type")
+                .all(|v| v.as_bytes() == b"image/svg+xml")
+        );
+        assert!(r.body.windows(4).any(|w| w == b"<svg"));
+        let r = fstp_rt::future::block_on(logo_answer(None, &get(FUNDING))).expect("answered");
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(
+            r.headers
+                .get_all("cache-control")
+                .all(|v| v.as_bytes() == b"no-store")
+        );
+        assert_eq!(r.body, br#"{"cards":[],"defaults":null}"#.to_vec());
     }
 
     /// I-68: only a 64-digit lower-case hex digest names a sheet.

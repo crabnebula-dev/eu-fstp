@@ -95,6 +95,13 @@ pub enum TenantCommand {
         /// The new value, which names its parameter.
         value: SettingValue,
     },
+    /// Set the tenant's default coordinator name and contact for the
+    /// funding card (`tenant.set_funding_defaults`, ADR-034). High-risk by
+    /// the strict reading of settings, so web only.
+    SetFundingDefaults {
+        /// The defaults.
+        defaults: fstp_brand::funding::FundingDefaults,
+    },
     /// Set or clear the tenant's override of the Guide's data protection
     /// texts (R-GA-01; section 15.0 of the M4 design, 2026-11-06). `None`
     /// brings back the platform default. High-risk by the strict reading
@@ -212,6 +219,8 @@ pub enum TenantKind {
     SetSetting(TenantParam),
     /// `tenant.set_guide_notice` (R-GA-01).
     SetGuideNotice,
+    /// `tenant.set_funding_defaults` (ADR-034).
+    SetFundingDefaults,
     /// `tenant.record_inference_config`.
     RecordInferenceConfig,
     /// `tenant.complete`.
@@ -240,7 +249,7 @@ pub enum TenantKind {
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 25] = [
+    pub const ALL: [TenantKind; 26] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -254,6 +263,7 @@ impl TenantKind {
         TenantKind::SetSetting(TenantParam::P72),
         TenantKind::SetSetting(TenantParam::P74),
         TenantKind::SetGuideNotice,
+        TenantKind::SetFundingDefaults,
         TenantKind::RecordInferenceConfig,
         TenantKind::Complete,
         TenantKind::GrantSignatory,
@@ -288,6 +298,7 @@ impl TenantKind {
         matches!(
             self,
             TenantKind::InviteAdmin
+                | TenantKind::SetFundingDefaults
                 | TenantKind::RequestSelfGrant
                 | TenantKind::ApproveSelfGrant
                 | TenantKind::SetSetting(_)
@@ -341,6 +352,7 @@ impl TenantCommand {
             TenantCommand::UseSelfGrantApproval { .. } => TenantKind::UseSelfGrantApproval,
             TenantCommand::SetSetting { value } => TenantKind::SetSetting(value.param()),
             TenantCommand::SetGuideNotice { .. } => TenantKind::SetGuideNotice,
+            TenantCommand::SetFundingDefaults { .. } => TenantKind::SetFundingDefaults,
             TenantCommand::RecordInferenceConfig { .. } => TenantKind::RecordInferenceConfig,
             TenantCommand::Complete => TenantKind::Complete,
             TenantCommand::GrantSignatory { .. } => TenantKind::GrantSignatory,
@@ -453,6 +465,13 @@ pub enum TenantRecord {
         /// The override, or `None` for the platform default.
         notice: Option<GuideNoticeOverride>,
         /// The admin who set it.
+        by: AccountId,
+    },
+    /// The tenant's funding card defaults were set (ADR-034).
+    FundingDefaultsSet {
+        /// The defaults.
+        defaults: fstp_brand::funding::FundingDefaults,
+        /// The admin who set them.
         by: AccountId,
     },
     /// An inference configuration was recorded.

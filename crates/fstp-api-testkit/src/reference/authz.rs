@@ -1448,6 +1448,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // R-GA-01 (2026-11-06): the tenant's override of the Guide's data
     // protection texts, high-risk by the strict reading of settings.
     RefOp::act("tenant.set_guide_notice", T::None, R::TenantAdmin).hr(),
+    // ADR-034: the funding card defaults, a tenant setting as well.
+    RefOp::act("tenant.set_funding_defaults", T::None, R::TenantAdmin).hr(),
     RefOp::read("admin.approvals", T::None, R::TenantAdmin),
     RefOp::act("admin.approve_self_grant", T::None, R::SecondAdmin).hr(),
     RefOp::act("admin.approve_recovery", T::None, R::TenantAdmin).hr(),
