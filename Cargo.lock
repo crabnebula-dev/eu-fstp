@@ -260,6 +260,7 @@ dependencies = [
  "fstp-domain",
  "fstp-findings",
  "fstp-infer",
+ "fstp-injscan",
  "fstp-json",
  "fstp-prop",
  "fstp-rt",

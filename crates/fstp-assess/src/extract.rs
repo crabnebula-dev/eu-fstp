@@ -1,7 +1,10 @@
 //! Stage 1: text extraction (M7 design section 3.2).
 //!
-//! Records and removes zero-width, bidi-control and tag characters with
-//! their spans in the original text. The marks feed the deterministic
+//! Records and removes every character of the hidden classes of
+//! `fstp_injscan` (ADR-035): zero-width, bidi-control, tag, variation
+//! selector and other invisible format characters, with their spans in
+//! the original text. So the stripped text that a model or an agent
+//! receives is the neutralised view. The marks feed the deterministic
 //! integrity scanner of stage 7 (TH-01). Fuzz target
 //! `extract_unicode_marks`.
 //!
@@ -19,6 +22,11 @@ pub enum MarkKind {
     Bidi,
     /// A tag character, U+E0000 to U+E007F.
     Tag,
+    /// A variation selector (ADR-035).
+    Selector,
+    /// Another invisible format character, such as an interlinear
+    /// annotation mark or a soft hyphen (ADR-035).
+    Format,
 }
 
 /// One removed character: its class and its span in the original text.
@@ -44,6 +52,11 @@ pub fn mark_kind(c: char) -> Option<MarkKind> {
         | '\u{202a}'..='\u{202e}'
         | '\u{2066}'..='\u{2069}' => Some(MarkKind::Bidi),
         '\u{e0000}'..='\u{e007f}' => Some(MarkKind::Tag),
+        '\u{fe00}'..='\u{fe0f}'
+        | '\u{e0100}'..='\u{e01ef}'
+        | '\u{180b}'..='\u{180d}'
+        | '\u{180f}' => Some(MarkKind::Selector),
+        c if fstp_injscan::is_removed(c) => Some(MarkKind::Format),
         _ => None,
     }
 }
