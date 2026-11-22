@@ -219,9 +219,10 @@ const LABELS: Readonly<Record<string, string>> = {
 
   // Fields, step 1.
   "creator.field.funder.p53_funder_profile": "Funder profile and version (P-53)",
-  "creator.field.funder.action_number": "Action number",
+  "creator.field.funder.action_number": "Grant agreement number (action number)",
   "creator.field.funder.action_acronym": "Action acronym",
   "creator.field.funder.coordinator_name": "Name of the coordinator who runs the calls",
+  "creator.field.funder.coordinator_contact": "Contact of the coordinator, shown on the funding card",
   "creator.field.funder.p56_fstp_budget": "FSTP budget of the action (P-56)",
   "creator.field.funder.p57_action_dates": "Action dates (P-57)",
   "creator.field.funder.p58_recipient_ceiling": "Per-recipient ceiling of the funder (P-58)",
@@ -405,6 +406,13 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.check.P04MaxAboveP05": "The largest grant (P-04) is above the per-recipient cap (P-05).",
   "creator.check.P39AboveP03": "More reviewer organisations are required (P-39) than reviewers per proposal (P-03).",
   "creator.check.FieldUnset": "A value is missing.",
+  // ADR-034, I-69: the funding card in every footer needs these three.
+  "creator.check.FieldUnset.funder.action_number":
+    "Fill in the grant agreement number in step 1, Funder and instrument. It appears on the funding card in every footer.",
+  "creator.check.FieldUnset.funder.coordinator_name":
+    "Fill in the coordinator's name in step 1, Funder and instrument. It appears on the funding card in every footer.",
+  "creator.check.FieldUnset.funder.coordinator_contact":
+    "Fill in the coordinator's contact in step 1, Funder and instrument. It appears on the funding card in every footer.",
   "creator.check.ActionDatesInconsistent": "The action dates or reporting periods do not hold together (P-57): the action starts after it ends, a period ends outside the action or not after the previous one, or a report deadline comes before its period ends.",
   "creator.check.CallPackageIncomplete": "The call package is incomplete (I-48).",
   "creator.check.GuideSectionMissing": "A required section of the Guide for Applicants is missing (I-52).",

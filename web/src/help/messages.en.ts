@@ -21,11 +21,13 @@ const LABELS: Readonly<Record<string, string>> = {
   "help.field.funder.p53_funder_profile":
     "The funder rules this programme follows, and their version (P-53). Typical value: Horizon Europe, version 1. The profile sets the bounds later steps are checked against, such as the per-recipient ceiling. It freezes when a call publishes.",
   "help.field.funder.action_number":
-    "The number the funder gave the action that pays for this programme. Copy it from the grant agreement. Documents the platform generates use it to name the action.",
+    "The number the funder gave the action that pays for this programme. Copy it from the grant agreement. Documents the platform generates use it to name the action, and the funding card in every footer shows it.",
   "help.field.funder.action_acronym":
     "The short name of the funded action, such as SuperSAFE. Documents the platform generates use it next to the action number.",
   "help.field.funder.coordinator_name":
     "The organisation that coordinates the action and runs its calls. Write the name as the grant agreement spells it.",
+  "help.field.funder.coordinator_contact":
+    "How people reach the coordinator about this funded action, such as a role address like privacy@example.org. It appears with the grant agreement number and the coordinator's name on the funding card in every footer. The organisation's default from the branding page fills an empty field.",
   "help.field.funder.p56_fstp_budget":
     "The total the action may give to third parties as financial support (P-56). Typical value: the FSTP line of the action's estimated budget, such as 2000000.00 euro. Unclaimed milestone balances can return to it at grant end (P-67).",
   "help.field.funder.p57_action_dates":

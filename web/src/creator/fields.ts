@@ -135,6 +135,7 @@ const ROWS: readonly (readonly [FieldStep, string, Shape])[] = [
   ["funder", "action_number", TEXT],
   ["funder", "action_acronym", TEXT],
   ["funder", "coordinator_name", TEXT],
+  ["funder", "coordinator_contact", TEXT],
   ["funder", "p56_fstp_budget", AMOUNT],
   ["funder", "p57_action_dates", obj(m("start", DATE), m("end", DATE), m("periods", list(obj(m("end", DATE), m("deadline", DATE)))))],
   ["funder", "p58_recipient_ceiling", AMOUNT],

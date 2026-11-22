@@ -50,6 +50,7 @@ import { checkText, loadDraft, loadReport, queue, stepNav, stepTitle } from "./c
 const NARRATIVE_KEYS: readonly string[] = [
   "funder.action_acronym",
   "funder.coordinator_name",
+  "funder.coordinator_contact",
   "identity.name",
   "identity.narrative",
   "identity.scope",
