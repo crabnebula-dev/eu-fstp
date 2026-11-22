@@ -12,6 +12,13 @@ libfuzzer-sys = "=0.4.13"
 fstp-cell = { path = ".." }
 
 [[bin]]
+name = "app_keystore_image_decode"
+path = "fuzz_targets/app_keystore_image_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "command_request_decode"
 path = "fuzz_targets/command_request_decode.rs"
 test = false

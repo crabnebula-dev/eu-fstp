@@ -234,6 +234,14 @@ pub fn encode_log(event: &LogEvent) -> Result<String, ObsError> {
                 None => line,
             }
         }
+        LogEvent::KeystoreSnapshot {
+            chain,
+            trigger,
+            verified,
+        } => Line::new("keystore_snapshot")
+            .text("chain", chain.as_str())
+            .text("trigger", trigger.as_str())
+            .text("outcome", if verified { "verified" } else { "failed" }),
     };
     Ok(line.finish())
 }
@@ -373,6 +381,11 @@ mod tests {
                     crate::assurance::ReducedReason::CopyHoldsReplacedKey,
                 ),
             },
+            LogEvent::KeystoreSnapshot {
+                chain: crate::SnapshotChain::Vault,
+                trigger: crate::SnapshotTrigger::Daily,
+                verified: false,
+            },
         ]
     }
 
@@ -386,6 +399,22 @@ mod tests {
             let v = fstp_json::parse_str(body).unwrap();
             assert!(matches!(v, fstp_json::Value::Object(_)), "{line:?}");
         }
+    }
+
+    /// R-NF-02, ADR-012 record of lane L27: a keystore snapshot event holds
+    /// three words of closed lists and no id, path or key.
+    #[test]
+    fn r_nf_02_keystore_snapshot_event_names_no_id() {
+        let line = encode_log(&LogEvent::KeystoreSnapshot {
+            chain: crate::SnapshotChain::App,
+            trigger: crate::SnapshotTrigger::Rotation,
+            verified: true,
+        })
+        .unwrap();
+        assert_eq!(
+            line,
+            "{\"event\":\"keystore_snapshot\",\"chain\":\"app\",\"trigger\":\"rotation\",\"outcome\":\"verified\"}\n"
+        );
     }
 
     /// R-NF-02: a request event logs the route template, not a path.

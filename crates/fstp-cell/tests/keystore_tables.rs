@@ -813,3 +813,52 @@ fn r_cr_01_keystore_rows_sealed_at_rest() {
         assert!(!state.windows(4).any(|w| w == b"FKC1"), "R-CR-01");
     });
 }
+
+/// ADR-012 record of lane L27, row "App restore": tables restored from
+/// before the last rotation open nothing, so the restore takes the newer
+/// snapshot whole. The changes make the restored tables that snapshot, and
+/// a restart over them opens the live text and refuses the erased one
+/// (I-81). At an equal epoch the restored tables are kept as they are.
+/// With no snapshot, tables under a destroyed epoch are refused.
+#[test]
+fn adr012_app_restore_takes_the_newest_copy_that_opens() {
+    use fstp_cell::tasks::erasure::restore::{Source, choose};
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        let before = c.sink.rows();
+        erase_and_complete(&mut c).await;
+        let after = c.sink.rows();
+        // The restored tables are from before the rotation.
+        let (source, changes) = choose(&c.sim, CELL, Some(&before), Some(&after))
+            .await
+            .unwrap();
+        assert_eq!(source, Source::Snapshot);
+        let mut restored = Tables::default();
+        restored.apply(&fstp_cell::tasks::erasure::restore::changes_to(
+            None, &before,
+        ));
+        restored.apply(&changes.unwrap());
+        assert_eq!(restored.rows(), after, "the restore mixed two copies");
+        // A restart over the restored tables.
+        let sink = Arc::new(MemSink::default());
+        lock(&sink.tables).apply(&fstp_cell::tasks::erasure::restore::changes_to(
+            None, &after,
+        ));
+        let runner = load(&c.sim, &c.engine, &sink).await.unwrap();
+        assert!(opens(&runner, &c.engine, T2).is_some());
+        assert!(
+            matches!(
+                runner.open_text(&c.engine.state(), T1),
+                Err(OpenRefusal::Erased)
+            ),
+            "I-81: the restore brought back an erased text"
+        );
+        // An equal epoch: the restored tables stay.
+        let (source, changes) = choose(&c.sim, CELL, Some(&after), Some(&after))
+            .await
+            .unwrap();
+        assert_eq!((source, changes), (Source::Backup, None));
+        // No snapshot: tables under a destroyed epoch open nothing.
+        assert!(choose(&c.sim, CELL, Some(&before), None).await.is_err());
+    });
+}

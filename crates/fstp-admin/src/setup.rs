@@ -654,6 +654,23 @@ pub fn write_configs(layout: &Layout, f: &Facts) -> Result<(), Fail> {
         }
         write_atomic(&path, text.as_bytes(), 0o644).map_err(io(step))
     };
+    // ADR-028 record of lane L27: with backups, the cell and the vault
+    // take keystore snapshots in the same bucket, with the same key files.
+    if let Some(b) = &layout.cfg.backup {
+        for (service, user) in [("cell", stack::CELL_USER), ("vault", stack::VAULT_USER)] {
+            let dir = layout.creds(service);
+            std::fs::create_dir_all(&dir).map_err(io(step))?;
+            for (from, to) in [
+                (&b.access_key_file, "s3-access-key-id"),
+                (&b.secret_key_file, "s3-secret-access-key"),
+            ] {
+                let bytes = std::fs::read(from).map_err(io(step))?;
+                let file = dir.join(to);
+                put(&file, &bytes, step)?;
+                own_path(layout, &file, user).map_err(step_err(step))?;
+            }
+        }
+    }
     write("cell", &render::cell(layout, f))?;
     if let Some(v) = render::vault(layout, f) {
         write("vault", &v)?;

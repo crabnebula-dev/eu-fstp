@@ -474,6 +474,7 @@ impl Setup {
             registrar: runner.into_registrar().unwrap(),
             keys_db: self.db.clone(),
             check_every,
+            daily: None,
         };
         let v = self.vault_with(true, sealer, Some(registrar)).unwrap();
         (v, identities)
