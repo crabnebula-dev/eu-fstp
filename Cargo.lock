@@ -171,6 +171,7 @@ dependencies = [
  "fstp-crypto",
  "fstp-json",
  "fstp-migrate",
+ "fstp-obs",
  "fstp-pgwire",
  "fstp-pki",
 ]

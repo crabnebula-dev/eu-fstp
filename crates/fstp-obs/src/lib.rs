@@ -19,10 +19,12 @@
 //! the raw `std::io::stdout` and `std::io::stderr` handles. A binary writes
 //! its events through [`log_to_stderr`] and [`metric_to_stdout`] instead.
 //!
-//! The crate has no parser, so it has no fuzz project (design section 15).
+//! The one decoder, [`snapshot_status::decode`], is fuzzed in the fuzz
+//! project of `fstp-admin`, its reader (ADR-012 record of lane L27).
 
 pub mod assurance;
 mod encode;
+pub mod snapshot_status;
 
 use crate::assurance::{Assurance, DeploymentMode, HostCheck};
 pub use crate::encode::{
@@ -183,6 +185,16 @@ pub enum LogEvent {
         /// The I-81 assurance its copy register gives.
         assurance: Assurance,
     },
+    /// A keystore snapshot was taken and checked (ADR-012 record of lane
+    /// L27). It names no snapshot id, path or key.
+    KeystoreSnapshot {
+        /// The chain of the keystore.
+        chain: SnapshotChain,
+        /// Why the snapshot was taken.
+        trigger: SnapshotTrigger,
+        /// Whether it verified.
+        verified: bool,
+    },
 }
 
 impl fmt::Debug for LogEvent {
@@ -245,6 +257,56 @@ impl fmt::Debug for LogEvent {
                 .field("file", &file)
                 .field("assurance", &assurance)
                 .finish(),
+            Self::KeystoreSnapshot {
+                chain,
+                trigger,
+                verified,
+            } => f
+                .debug_struct("KeystoreSnapshot")
+                .field("chain", &chain)
+                .field("trigger", &trigger)
+                .field("verified", &verified)
+                .finish(),
+        }
+    }
+}
+
+/// The keystore of a snapshot (ADR-012 record of lane L27).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SnapshotChain {
+    /// The App chain of `fstp-cell`.
+    App,
+    /// The Vault chain of `fstp-vault`.
+    Vault,
+}
+
+impl SnapshotChain {
+    /// The word in a log line.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::Vault => "vault",
+        }
+    }
+}
+
+/// Why a keystore snapshot was taken (ADR-012 record of lane L27).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SnapshotTrigger {
+    /// Step 5 of a rotation.
+    Rotation,
+    /// The daily snapshot.
+    Daily,
+}
+
+impl SnapshotTrigger {
+    /// The word in a log line.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rotation => "rotation",
+            Self::Daily => "daily",
         }
     }
 }
