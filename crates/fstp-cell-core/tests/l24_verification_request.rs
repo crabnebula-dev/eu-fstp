@@ -42,12 +42,11 @@ fn adr008_verification_request_records_one_open_request() {
     let batch = decide_system(&s, &request(), &ctx, cid(1), &Answers::new()).unwrap();
     let want = CellRecord::Release(ReleaseRecord::VerificationRequested { account: A });
     assert_eq!(batch, vec![want.clone()]);
-    assert_eq!(decode_cell_record(&encode_cell_record(&want)).unwrap(), want);
-    let entries = ledger(&[
-        (NOW, cid(1), batch.clone()),
-        (NOW, cid(2), batch),
-    ])
-    .unwrap();
+    assert_eq!(
+        decode_cell_record(&encode_cell_record(&want)).unwrap(),
+        want
+    );
+    let entries = ledger(&[(NOW, cid(1), batch.clone()), (NOW, cid(2), batch)]).unwrap();
     let s = state_of(&entries).unwrap();
     assert!(s.verification_requested(A));
     assert_eq!(s.verification_requests().count(), 1);
@@ -73,7 +72,14 @@ fn adr008_only_the_identity_port_records_a_request() {
     }
     let other = CellCommand::Release(ReleaseCommand::IssueWriteTicket { kind: 6 });
     assert_eq!(
-        gate::admit_system(&s, Action::Command(other), SystemTask::IdentityPort, cid(4), NOW).err(),
+        gate::admit_system(
+            &s,
+            Action::Command(other),
+            SystemTask::IdentityPort,
+            cid(4),
+            NOW
+        )
+        .err(),
         Some(Deny::NotPermitted)
     );
     let r = gate::admit_command(

@@ -299,7 +299,10 @@ pub(crate) fn record_in(g: &mut Gen, member: &str) -> Result<CellRecord, String>
                 receipt: id32(g),
             }
         }),
-        "release" => CellRecord::Release(match g.u8_in(0..=3) {
+        "release" => CellRecord::Release(match g.u8_in(0..=4) {
+            4 => ReleaseRecord::VerificationRequested {
+                account: account(g),
+            },
             3 => ReleaseRecord::VerificationTicketIssued {
                 id: id16(g),
                 holder: account(g),
@@ -419,7 +422,10 @@ pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, Strin
                 receipt: id32(g),
             }
         }),
-        "release" => CellCommand::Release(match g.u8_in(0..=5) {
+        "release" => CellCommand::Release(match g.u8_in(0..=6) {
+            6 => ReleaseCommand::RequestVerification {
+                account: account(g),
+            },
             0 => ReleaseCommand::IssueReleaseTicket {
                 proposal: u128::from(g.u64()),
             },

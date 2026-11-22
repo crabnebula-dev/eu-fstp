@@ -398,7 +398,8 @@ fn system_ctx(task: SystemTask, now: Timestamp, command: Option<[u8; 16]>) -> Ct
         SystemTask::ErasureRunner
         | SystemTask::Timeline
         | SystemTask::Provisioning
-        | SystemTask::LoginVerifier => SystemCause::Timeline,
+        | SystemTask::LoginVerifier
+        | SystemTask::IdentityPort => SystemCause::Timeline,
     };
     Ctx {
         now,
@@ -782,6 +783,12 @@ fn decide_system(
     answers: &Answers,
 ) -> Result<Vec<CellRecord>, CellRefusal> {
     match (task, c) {
+        (
+            SystemTask::IdentityPort,
+            CellCommand::Release(ReleaseCommand::RequestVerification { account }),
+        ) => Ok(vec![CellRecord::Release(
+            ReleaseRecord::VerificationRequested { account: *account },
+        )]),
         (_, CellCommand::Engine(cmd)) => {
             let cmd = due_engine_command(s, task, cmd, now)?;
             let records = fstp_engine::DomainDecider
@@ -2415,6 +2422,8 @@ fn decide_release(
         // No relationship form is defined yet, so every relationship is
         // refused (fail closed).
         ReleaseCommand::RecordRelationship { .. } => Err(invalid()),
+        // ADR-026 record of lane L24: the identity port's system task only.
+        ReleaseCommand::RequestVerification { .. } => Err(wrong_actor()),
     }
 }
 
