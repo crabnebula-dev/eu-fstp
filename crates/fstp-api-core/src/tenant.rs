@@ -182,6 +182,13 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
                     Err(bad())
                 }
             }
+            TenantKind::SetLegalDetails => {
+                if exactly(spec, request, &LEGAL_KEYS) {
+                    legal_details_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
             TenantKind::SetMailRelay => {
                 if exactly(spec, request, &["ca_pem", "credential", "host"]) {
                     mail_relay_request(request).map(|_| ())
@@ -494,6 +501,35 @@ pub(crate) fn notice_request(request: &Object) -> Result<NoticeRequest, ApiError
         summary: summary.clone(),
         privacy_statement_url: url.clone(),
     })
+}
+
+/// The members of a `tenant.set_legal_details` body: every field key.
+const LEGAL_KEYS: [&str; 12] = {
+    let mut keys = [""; 12];
+    let all = fstp_brand::legal::LegalField::ALL;
+    let mut i = 0;
+    while i < 12 {
+        keys[i] = all[i].key();
+        i += 1;
+    }
+    keys
+};
+
+/// Decodes a `tenant.set_legal_details` request (ADR-037): one string
+/// per field key, an empty string for an unset field, each set value
+/// plain text of at most 300 bytes (I-68). Surrounding white space is
+/// trimmed. The error names no request content.
+pub(crate) fn legal_details_request(
+    request: &Object,
+) -> Result<fstp_brand::legal::LegalDetails, ApiError> {
+    let mut pairs = Vec::with_capacity(LEGAL_KEYS.len());
+    for k in LEGAL_KEYS {
+        let Some(Value::String(v)) = request.get(k) else {
+            return Err(bad());
+        };
+        pairs.push((k, v.trim()));
+    }
+    fstp_brand::legal::LegalDetails::from_pairs(&pairs).ok_or_else(bad)
 }
 
 /// Decodes a `tenant.set_funding_defaults` request (ADR-034):
