@@ -266,6 +266,10 @@ const IRC_2: AccountId = model(34);
 /// ended: the binding `roles.reinstate` names, as the direct harness's
 /// `IRC_REINSTATABLE` (lane L26).
 const IRC_REINSTATABLE: AccountId = model(35);
+/// An account with an open recovery case whose email proof is given:
+/// the case `admin.approve_recovery` names, as the direct harness's
+/// recovery port stands for one (I-79, ADR-008).
+const RECOVERING: AccountId = model(36);
 const LEAD: AccountId = model(40);
 const TEAM: AccountId = model(41);
 const GUARDIAN: AccountId = model(42);
@@ -474,6 +478,9 @@ struct Targets {
     knock_outs: Vec<u128>,
     /// The finding on X that the coordinator's agent recorded (ADR-033).
     finding: Option<u128>,
+    /// The open recovery case of `RECOVERING`, its email proof given, as
+    /// the id `admin.approve_recovery` takes (I-79).
+    recovery: Option<u128>,
     criteria: usize,
     scale: u32,
     /// The head revision of the draft of P, as `creator.get_draft` shows it.
@@ -757,6 +764,7 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
         IRC_CONFLICTED,
         IRC_2,
         IRC_REINSTATABLE,
+        RECOVERING,
         LEAD,
         TEAM,
         GUARDIAN,
@@ -941,6 +949,23 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
     w.at(w.now() + 1_000_000);
     react(&w);
     w.t.binding_suspended = Some(reinstatable);
+    // The recovery case `admin.approve_recovery` names: RECOVERING asks for
+    // a recovery on the public route and gives the email proof from the
+    // world's mail capture, so a second tenant admin may approve it with a
+    // step-up (I-79, ADR-008). Test world only; production is unchanged.
+    {
+        let case = w
+            .client
+            .recovery(RECOVERING)
+            .unwrap()
+            .expect("the recovery case of RECOVERING");
+        assert!(
+            w.client.recovery_email(&case).unwrap(),
+            "the email proof of the recovery case"
+        );
+        let bytes: [u8; 16] = case.0.as_slice().try_into().expect("a 16-byte case");
+        w.t.recovery = Some(u128::from_be_bytes(bytes));
+    }
     {
         let st = w.state();
         let status = st
@@ -1547,6 +1572,7 @@ fn param(w: &Pg<'_>, name: &str, op: &str, who: Who, session: Option<&str>) -> S
         }
         ("round", _) => id(t.round.map(|r| r.raw())),
         ("finding", _) => id(t.finding),
+        ("recovery", _) => id(t.recovery),
         ("score", _) => id(t.plan.map(|p| p.raw())),
         ("step", _) => "agreements".to_owned(),
         ("binding", _) => id(t.binding_end.map(|b| b.raw())),
