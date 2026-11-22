@@ -9,7 +9,8 @@
 //! fstp-admin renew                      certificates near their end, and the route pins
 //! fstp-admin backup | restore           base backups of both databases
 //! fstp-admin backup-keys <dir>          the off-host copy of the custody entries
-//! fstp-admin verify <account> [<file>]  record the first admin's checked ID
+//! fstp-admin verify [<account> [<file>]] record the admins' checked IDs
+//! fstp-admin admins                   list the tenant admins' accounts
 //! fstp-admin erase-identity <account>   erase an identity in the vault
 //! fstp-admin route add <file> | remove <cell> | list
 //! ```
@@ -55,7 +56,8 @@ pub fn usage() {
         "  backup                     back up both databases now",
         "  restore                    restore both databases from their newest backups",
         "  backup-keys <dir>          copy the sealed keys off the host, for example to a USB stick",
-        "  verify <account> [<file>]  record that you checked the first admin's ID in person",
+        "  verify [<account> [<file>]] record that you checked an admin's ID in person",
+        "  admins                     list the tenant admins' account ids (stops the cell briefly)",
         "  erase-identity <account>   erase one person's identity in the vault",
         "  route add <file> | route remove <cell id> | route list",
         "",
@@ -100,29 +102,17 @@ fn ask_config(path: &Path) -> Result<(), Fail> {
     Ok(())
 }
 
-fn verify(layout: &Layout, account: &str, file: Option<&String>) -> Result<(), Fail> {
-    let id = match file {
-        Some(f) => cellcmd::read_identity(Path::new(f))?,
-        None => {
-            out(&[Part::T(
-                "Type the details exactly as on the ID document you checked in person.",
-            )]);
-            let q = |text: &'static str| say::ask(text).ok_or(Fail::Usage);
-            cellcmd::CheckedIdentity {
-                family_names: q("Family names: ")?,
-                given_names: q("Given names: ")?,
-                date_of_birth: q("Date of birth (YYYY-MM-DD): ")?,
-                issuing_state: q("Issuing state (two letters, for example DE): ")?
-                    .to_ascii_uppercase(),
-            }
-        }
-    };
-    cellcmd::verify_first_admin(layout, account, &id)?;
+fn verify(layout: &Layout, account: Option<&str>, file: Option<&str>) -> Result<(), Fail> {
     let mut st = state::State::load(&layout.admin_dir().join("state"))
         .map_err(|_| Fail::Step("verify", fail::Cause::Io))?;
-    st.mark("first-admin-verified")
-        .map_err(|_| Fail::Step("verify", fail::Cause::Io))?;
-    out(&[Part::T("Recorded: the first admin is verified.")]);
+    cellcmd::verify(layout, &mut st, account, file.map(Path::new))?;
+    if cellcmd::verified_count(&st) >= 2 {
+        st.mark("first-admin-verified")
+            .map_err(|_| Fail::Step("verify", fail::Cause::Io))?;
+        out(&[Part::T(
+            "Both admins are verified. Next, on the web: the admins finish the checklist on Onboarding summary.",
+        )]);
+    }
     Ok(())
 }
 
@@ -146,8 +136,18 @@ fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
                 .map_err(|_| Fail::Step("key copy", fail::Cause::Io))?;
             ops::backup_keys(&l, &mut st, &PathBuf::from(dest)).map(|()| OK)
         }
-        ["verify", account] => verify(&need()?, account, None).map(|()| OK),
-        ["verify", account, _] => verify(&need()?, account, args.get(2)).map(|()| OK),
+        ["verify"] => verify(&need()?, None, None).map(|()| OK),
+        ["verify", account] => verify(&need()?, Some(account), None).map(|()| OK),
+        ["verify", account, file] => verify(&need()?, Some(account), Some(file)).map(|()| OK),
+        ["admins"] => {
+            let l = need()?;
+            let mut st = state::State::load(&l.admin_dir().join("state"))
+                .map_err(|_| Fail::Step("admins", fail::Cause::Io))?;
+            for a in cellcmd::refresh_admins(&l, &mut st, true)? {
+                out(&[Part::Name(&a)]);
+            }
+            Ok(OK)
+        }
         ["erase-identity", account] => cellcmd::erase_identity(&need()?, account).map(|()| OK),
         ["route", "list"] => {
             let l = need()?;

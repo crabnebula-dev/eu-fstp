@@ -45,7 +45,7 @@ impl Entry {
             Entry::Cell => &["cell", "console"],
             Entry::CellKeys => &["cell"],
             Entry::Vault => &["vault", "console"],
-            Entry::Witness => &["control"],
+            Entry::Witness => &["witness"],
             Entry::Control => &["control"],
         }
     }

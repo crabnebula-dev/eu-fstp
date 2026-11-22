@@ -23,7 +23,7 @@ use crate::svc::{Manager, run_logged};
 
 /// Whether routes go through the route feed of lane L15. False until that
 /// lane is on `main`.
-pub const ROUTE_FEED: bool = false;
+pub const ROUTE_FEED: bool = true;
 
 /// The DER of the first certificate of a PEM text.
 #[must_use]

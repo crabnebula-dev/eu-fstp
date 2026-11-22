@@ -783,12 +783,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
     out(&[Part::T("  checked  cell databases, roles and migrations")]);
 
     // The witness's custody and its receipt key.
-    keyd(layout, &m, &[Entry::Witness]).map_err(|f| match f {
-        Fail::Step(_, Cause::Run(crate::svc::RunFail::NotReady(_))) if layout.cfg.services == Services::Systemd => {
-            Fail::Waits("fstp-keyd on main serves no ControlPlane socket for the witness (ADR-028 \"Witness custody\", a decision of Daniel)")
-        }
-        other => other,
-    })?;
+    keyd(layout, &m, &[Entry::Witness])?;
     let public = layout.public_dir();
     std::fs::create_dir_all(&public).map_err(io("witness keys"))?;
     write_atomic(
@@ -892,7 +887,35 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
             .map_err(|e| Fail::Step("vault", e.into()))?,
     );
 
-    // The first admin, then the cell.
+    // The tenant part, the first admin, then the cell (ADR-026 record of
+    // lane L18, "Setup order of a pilot", step 1).
+    if state.done("provision-tenant") {
+        say_done("tenant provisioning", false);
+    } else {
+        m.stop(&stack::cell(layout))
+            .map_err(|e| Fail::Step("tenant provisioning", e.into()))?;
+        host_command(
+            layout,
+            stack::CELL_USER,
+            "fstp-cell",
+            ("FSTP_CELL_CONFIG", layout.config_file("cell")),
+            &[
+                "provision-tenant".as_ref(),
+                "--agreements".as_ref(),
+                layout.cfg.agreements.as_ref(),
+            ],
+            "tenant provisioning",
+        )?;
+        state
+            .mark("provision-tenant")
+            .map_err(io("tenant provisioning"))?;
+        say_done("tenant provisioning", true);
+        out(&[
+            Part::T("  note     agreement versions recorded as accepted: "),
+            Part::Name(&layout.cfg.agreements),
+            Part::T(" (SaaS terms, DPA, sub-processors)"),
+        ]);
+    }
     if state.done("first-admin") {
         say_done("first admin invitation", false);
     } else {
@@ -916,6 +939,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         let _ = std::fs::remove_dir_all(&tmp);
         state.mark("first-admin").map_err(io("first admin"))?;
         say_done("first admin invitation", true);
+        crate::cellcmd::refresh_admins(layout, &mut state, false)?;
     }
     say_done(
         "cell running",
@@ -982,7 +1006,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         "fstp-admin-renew",
         &layout.bin("fstp-admin"),
         "renew",
-        "daily",
+        "*-*-* 03:30:00",
     )
     .map_err(|e| Fail::Step("timers", e.into()))?;
 
@@ -1010,7 +1034,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
     ]);
     if !state.done("first-admin-verified") {
         out(&[Part::T(
-            "Once the first admin has enrolled, check their ID in person and run fstp-admin verify <their account id>.",
+            "Next, on the web: the first admin enrols and invites the second admin by email. Then check both admins' IDs in person and run fstp-admin verify. fstp-admin status walks you through it.",
         )]);
     }
     out(&[Part::T(

@@ -146,6 +146,7 @@ version = "0.1.0"
 dependencies = [
  "fstp-crypto",
  "fstp-json",
+ "fstp-migrate",
  "fstp-pgwire",
  "fstp-pki",
 ]
@@ -170,6 +171,15 @@ dependencies = [
 [[package]]
 name = "fstp-json"
 version = "0.1.0"
+
+[[package]]
+name = "fstp-migrate"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-pgwire",
+ "fstp-rt",
+]
 
 [[package]]
 name = "fstp-pgwire"

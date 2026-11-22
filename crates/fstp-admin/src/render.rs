@@ -64,18 +64,13 @@ pub fn cell(l: &Layout, f: &Facts) -> String {
     } else {
         String::new()
     };
-    let org = if l.cfg.organisation_active {
-        "\"organisation_active\":true,"
-    } else {
-        ""
-    };
     format!(
         "{{{assets}\"cell\":\"{cell}\",\"credentials_dir\":{creds},\
          \"database\":{{\"dbname\":\"c_{cell}\",\"host\":\"127.0.0.1\",\"port\":{app_port}}},\
          \"host\":{host},\"key_file_keyd_socket\":{kf},\"keyd_socket\":{keyd},\
          \"listen\":{{\"health\":\"{health}\",\"internal\":\"{internal}\",\"tunnel\":\"{tunnel}\"}},\
          \"mail\":{{{address}\"relay\":{relay},\"sender\":{sender},\"username\":{user}}},\
-         \"mode\":\"saas\",{org}\"registered_servers\":{reg},\
+         \"mode\":\"saas\",\"registered_servers\":{reg},\
          \"vault\":{{\"address\":\"{vault}\"}},\"version\":{version},\
          \"witness\":{{\"address\":\"{waddr}\",\"ca_spki_sha256\":\"{wca}\",\"server_name\":\"{WITNESS_NAME}\"}}}}\n",
         cell = hex(&f.cell),
@@ -135,7 +130,7 @@ pub fn witness(l: &Layout) -> String {
     format!(
         "{{\"credentials_dir\":{},\"keyd_socket\":{},\"listen\":\"{}\",\"mode\":\"self_hosted\",\"store_dir\":{}}}\n",
         p(&l.creds("witness")),
-        p(&l.keyd_socket(Entry::Witness, "control")),
+        p(&l.keyd_socket(Entry::Witness, "witness")),
         l.witness(),
         p(&l.witness_store()),
     )

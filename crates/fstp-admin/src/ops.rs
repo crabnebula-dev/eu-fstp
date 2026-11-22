@@ -134,7 +134,7 @@ pub fn setup_backups(
         "fstp-admin-backup",
         &layout.bin("fstp-admin"),
         "backup",
-        "daily",
+        "*-*-* 02:30:00",
     )
     .map_err(|e| Fail::Step(step, e.into()))?;
     Ok(Some(did))

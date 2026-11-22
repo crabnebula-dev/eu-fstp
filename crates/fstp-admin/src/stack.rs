@@ -35,9 +35,8 @@ pub fn role_user(role: &str) -> Option<&'static str> {
     match role {
         "cell" => Some(CELL_USER),
         "vault" => Some(VAULT_USER),
-        // The witness entry's control socket; the feed entry's is
-        // handed to its user in `keyd`.
-        "control" => Some(WITNESS_USER),
+        "witness" => Some(WITNESS_USER),
+        "control" => Some(CONTROL_USER),
         _ => None,
     }
 }
@@ -91,11 +90,7 @@ pub fn keyd(layout: &Layout, e: Entry) -> Vec<Service> {
             let mut env: Vec<(String, std::ffi::OsString)> = Vec::new();
             let mut groups = Vec::new();
             for role in e.roles() {
-                let user = match (e, *role) {
-                    (Entry::Control, "control") => Some(CONTROL_USER),
-                    _ => role_user(role),
-                };
-                if let Some(user) = user {
+                if let Some(user) = role_user(role) {
                     if let Some(gid) = gid_of(user) {
                         env.push((
                             format!("FSTP_KEYD_GROUP_{}", role.to_ascii_uppercase()),

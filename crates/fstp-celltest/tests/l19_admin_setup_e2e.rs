@@ -190,6 +190,7 @@ fn host() -> Host {
         "fstp-witness",
         "fstp-edge",
         "fstp-pgagent",
+        "fstp-control",
     ] {
         link(&bin(name), &bins.join(name));
     }
@@ -266,6 +267,30 @@ fn adr028_l19_setup_status_and_route_add_on_a_fresh_host() {
         "{text}"
     );
     assert!(text.contains("route      current"), "{text}");
+    assert!(first.contains("done     tenant provisioning"), "{first}");
+
+    // ADR-028 "Verify the first admins", ADR-008: status names the first
+    // admin's account in the form the vault command takes, and `verify`
+    // records the in-person check through `fstp-vault verify-first-admin`.
+    let account = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("admin 1"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no admin account in status:\n{text}"))
+        .to_owned();
+    assert_eq!(account.len(), 36, "{account}");
+    let id = h.root.join("admin-1.json");
+    std::fs::write(
+        &id,
+        r#"{"method":"manual","document_type":"passport","checks":["document_authentic","document_valid","photo_match"],"identity":{"family_names":"Synthetic","given_names":"Ada","birth_date":"1990-01-31","issuing_state":"DEU"}}"#,
+    )
+    .unwrap();
+    h.expect_ok(&["verify", &account, id.to_str().unwrap()]);
+    let after = String::from_utf8_lossy(&h.admin(&["status"]).stdout).into_owned();
+    assert!(
+        after.contains(&format!("admin 1    {account}  verified")),
+        "{after}"
+    );
 
     // A second run skips what is done and changes nothing.
     let second = h.expect_ok(&["setup"]);

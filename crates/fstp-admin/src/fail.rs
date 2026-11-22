@@ -160,6 +160,10 @@ fn problem_text(p: Problem) -> (&'static str, &'static str) {
             "needs both cert and key",
             "name the certificate chain and its key, or remove tls",
         ),
+        Problem::BadAgreements => (
+            "is not three agreement versions",
+            "write the versions of the SaaS terms, the data processing agreement and the sub-processor list, like \"1,1,1\"",
+        ),
     }
 }
 

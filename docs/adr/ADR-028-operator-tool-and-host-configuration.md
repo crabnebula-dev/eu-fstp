@@ -1,6 +1,6 @@
 # ADR-028: Operator tool and host configuration
 
-Status: Proposed. Drafted 2026-11-21 by lane L19 `prod/fstp-admin`. Rows marked "Decided by Daniel on 2026-11-21" record his direction. Every other row is interim, pending Daniel. The rows were written before the code, as CLAUDE.md asks.
+Status: Proposed. Drafted 2026-11-21 by lane L19 `prod/fstp-admin`; lead readings recorded on 2026-11-22. Rows marked "Decided by Daniel on 2026-11-21" record his direction. Every other row is interim, pending Daniel. The rows were written before the code, as CLAUDE.md asks.
 
 ## Context
 
@@ -50,7 +50,29 @@ Daniel, 2026-11-21: "This all sounds very complicated to use, people shouldn't n
 | Backups | `fstp-admin backup` runs a base backup of both clusters now. `fstp-admin restore` stops the services, restores both clusters into new data directories, swaps them in, and starts the services. Backups need `backup.bucket`. Without it `status` names backups as the next thing to do | ADR-012 |
 | Routes before lane L15 | On `main` the edge reads a route file. Until lane L15 merges, `fstp-admin route` edits that file and restarts the edge. Afterwards it calls `fstp-control route add` and `remove`. The seam is `crates/fstp-admin/src/route.rs` (`ROUTE_FEED`). With it on, `setup` also creates a `control` custody entry, the feed key (`fstp-control init-route-feed`), the `fstp-control route-feed` service and the feed form of `edge.json`. That mode passed the end-to-end test against `origin/prod/route-feed` at `dbed9a03` in a local trial merge. When lane L15 lands, turn `ROUTE_FEED` on, add `fstp-control` to the binaries of `tests/l19_admin_setup_e2e.rs` and of the CI devstack build | ADR-009 L15 |
 
-## Open questions for Daniel
+## Record of 2026-11-22: the lead's readings
+
+The lead answered the open questions of the first draft. Each row below is a lead reading of 2026-11-22 unless it says otherwise. Where a row above says otherwise, this record wins.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Human output | Accepted: the R-NF-02 exception for the three writers of `say.rs` | Lead reading, 2026-11-22 |
+| CA keys | Accepted: the five host CA keys, the cell CA included, stay root-only files for now | Lead reading, 2026-11-22 |
+| Passphrases | Accepted: root-only `LoadCredential=` files, so the host boots unattended. `setup` tells the admin once to copy them off the host | Lead reading, 2026-11-22 |
+| One-host witness | Accepted: the self-hosted file-store witness on the pilot | Lead reading, 2026-11-22 |
+| Database provisioning | Accepted: `fstp-pgagent run-job`, non-destructive jobs only | Lead reading, 2026-11-22 |
+| Renewal | Accepted: a daily `renew` timer at 03:30 local time. The backup timer runs at 02:30 | Lead reading, 2026-11-22 |
+| Witness custody | `fstp-keyd` gains the role `witness`: socket `witness.sock`, group variable `FSTP_KEYD_GROUP_WITNESS`, usage code 6, the ControlPlane chain only, no CA sign key. The witness entry serves that socket, so `setup` completes under real `fstp-keyd`. The `control` role of lane L15 stays the route feed's | Lead reading, 2026-11-22; ADR-004 part 2 "Self-hosted witness receipt key"; R-NF-08 |
+| Migrations | Applied versions live in `fstp_migrate.schema_migrations`, in the runner's shape: version, name, SHA-256 of the file and statement count. Versions that ran before the set's ledger migration created the table are recorded once it exists. A recorded version whose file changed is refused. The admin state no longer tracks them | Lead reading, 2026-11-22; I-16 |
+| Setup order | ADR-026 record of lane L18: `init-keys`, `provision-tenant --agreements`, `first-admin --email`, then start. The configuration member `agreements` names the three versions, default `1,1,1`, and `setup` prints what it recorded. The agreement texts stay `TODO(legal)` | ADR-026 record of lane L18 |
+| `organisation_active` | Gone, as lane L18 removed it from the cell | ADR-026 record of lane L18 |
+| Admin accounts | `fstp-cell admins <file>` writes the tenant admins' accounts in the 8-4-4-4-12 form `verify-first-admin` takes, the first admin first. It opens the ledger as `first-admin` does, so it runs with the cell stopped, for a few seconds. `setup` reads the list after `first-admin`, `fstp-admin verify` and `fstp-admin admins` read it again, and `status` shows the last list with each admin's verification. Interim: a running cell offers no read path to a second process, since each ledger open draws a new key generation | Lead reading, 2026-11-22 (account ids in `status`); interim reading of the mechanism |
+| Verify the first admins | `fstp-admin verify` with no argument reads the admins and asks, for each one not verified, the document type, the names, the date of birth and the three-letter issuing state, and the confirmation of the three checks. It writes the file form of `fstp-vault verify-first-admin` (method `manual`, no document number) to a root-only file, stops the vault, runs the command, starts the vault and deletes the file. `verify <account> <file>` passes a file of that form through | ADR-008; lane L13b |
+| Who acts next | `status` names the actor of the next step: the host admin, or the web admins (enrolment, the second admin's invitation by mail, then after verification the signatory grants, the onboarding steps and the opening) | ADR-026 record of lane L18 |
+| Route feed | On, since lane L15 merged: `route::ROUTE_FEED` is true, and the CI devstack build and the end-to-end test include `fstp-control` | Lead reading, 2026-11-22 |
+| Key copies | `backup-keys` runs `fstp-keyd export` of lane L16, now on `main` | ADR-004 record of lane L16 |
+
+## Open questions for Daniel (first draft, answered by the record above)
 
 1. The R-NF-02 exception for `fstp-admin`'s human output (row "Human output").
 2. The witness's ControlPlane custody entry (row "Witness custody"). Without a decision, a real host cannot run its witness under `fstp-keyd`.

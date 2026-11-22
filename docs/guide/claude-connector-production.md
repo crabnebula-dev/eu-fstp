@@ -37,18 +37,29 @@ Setup creates the databases, keys, certificates and services, starts everything,
 
 At the end it tells you two things:
 
-- **The invitation.** `/root/fstp-first-admin.token` holds two lines. Give each line to the first admin through a different channel, for example one by phone and one by chat. They open `https://<domain>/auth/invite#<line 1><line 2>` and enrol a passkey. Then delete the file.
+- **The invitation.** `/root/fstp-first-admin.token` holds two lines. Give each line to the first admin through a different channel, for example one by phone and one by chat. They open `https://<domain>/auth/invite#<line 1><line 2>`. Then delete the file.
 - **The passphrases.** Copy the four files in `/etc/fstp/keyd` into a password manager, off the host, once.
 
-## 3. Every day: `fstp-admin status`
+## 3. Open the organisation
 
-`status` shows every service, the route, the certificates and the backups on one screen, and ends with one line `Next:`, the single most urgent thing to do. Do that, then run `status` again. Exit status 0 means healthy, 3 means a problem.
+`fstp-admin status` walks both of you through this and names who acts next. The steps (ADR-026 record of lane L18):
 
-## 4. Other commands
+1. **Web, first admin.** Open the invitation link, enrol a passkey, and invite the second admin by email on "Onboarding summary".
+2. **Web, second admin.** Open the mailed link within 72 hours and enrol a passkey.
+3. **Host admin.** Check both admins' ID documents in person, then run `sudo fstp-admin verify`. It lists both accounts and asks for each one's document type, names, date of birth and issuing state. It never asks for the document number.
+4. **Web, both admins.** Grant each other Financial and Legal signatory, save each onboarding step, then one asks to open the organisation and the other approves. The checklist on "Onboarding summary" shows what is left.
+
+`setup` recorded the agreement versions `1,1,1` (SaaS terms, data processing agreement, sub-processor list). If the tenant accepted others, set `"agreements"` in `fstp.json` before the first `setup`.
+
+## 4. Every day: `fstp-admin status`
+
+`status` shows every service, the route, the certificates, the backups and the admins on one screen, and ends with one line `Next:`, the single most urgent thing to do and who does it. Do that, then run `status` again. Exit status 0 means healthy, 3 means a problem.
+
+## 5. Other commands
 
 | Command | When |
 | --- | --- |
-| `fstp-admin verify <account>` | After the first admin enrolled and you checked their ID in person. It asks for the names, date of birth and issuing state |
+| `fstp-admin verify` | Step 3 of part 3. `fstp-admin admins` only lists the accounts |
 | `fstp-admin backup-keys /media/usb/fstp-keys` | Once after setup, and after each erasure. Keep the stick apart from the passphrases |
 | `fstp-admin backup` | A backup now. A timer runs it daily |
 | `fstp-admin restore` | After data loss. It restores both databases from their newest backups |
@@ -59,9 +70,7 @@ At the end it tells you two things:
 
 Exit status: 0 done, 1 failed (the message says what to fix), 2 a wrong configuration or argument, 4 waits on a part not built yet. A second custodian of the backup keys is optional: `docs/guide/production-reference.md` describes it.
 
-**Known limits, pending Daniel (ADR-028).** On a host with real `fstp-keyd`, setup stops at the witness step with status 4, since no `fstp-keyd` socket serves the witness's ControlPlane chain yet. `verify` and `backup-keys` need the `fstp-vault` and `fstp-keyd` commands of lanes L13b and L16.
-
-## 5. Connect Claude (programme manager)
+## 6. Connect Claude (programme manager)
 
 You need an account with a programme staff or tenant admin role, and a passkey. The MCP URL is `https://<domain>/mcp`.
 
@@ -73,4 +82,4 @@ To end Claude's access, run `claude mcp logout fstp` or remove the connector. Re
 
 ## Checked by
 
-`crates/fstp-celltest/tests/l19_admin_setup_e2e.rs` runs `fstp-admin setup` on a fresh host over local PostgreSQL and the real binaries, then `status`, a second `setup` and `route add`. The tests listed in `docs/guide/production-reference.md` cover each service.
+`crates/fstp-celltest/tests/l19_admin_setup_e2e.rs` runs `fstp-admin setup` on a fresh host over local PostgreSQL and the real binaries, then `status`, `verify` of the first admin, a second `setup` and `route add`. The tests listed in `docs/guide/production-reference.md` cover each service.

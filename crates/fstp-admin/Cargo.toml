@@ -21,6 +21,9 @@ fstp-crypto.workspace = true
 fstp-pki.workspace = true
 # Its base64 decoder, for certificate pins.
 fstp-pgwire.workspace = true
+# The statement splitter, for the migration ledger rows (ADR-028
+# "Migrations").
+fstp-migrate.workspace = true
 
 [lints]
 workspace = true

@@ -435,7 +435,7 @@ impl Manager {
             admin.display()
         );
         let timer = format!(
-            "# Written by fstp-admin.\n[Unit]\nDescription=fstp-admin {args}\n\n[Timer]\nOnCalendar={calendar}\nPersistent=true\nRandomizedDelaySec=600\n\n[Install]\nWantedBy=timers.target\n"
+            "# Written by fstp-admin.\n[Unit]\nDescription=fstp-admin {args}\n\n[Timer]\nOnCalendar={calendar}\nPersistent=true\nRandomizedDelaySec=300\n\n[Install]\nWantedBy=timers.target\n"
         );
         write_atomic(
             &self.unit_dir.join(format!("{name}.service")),

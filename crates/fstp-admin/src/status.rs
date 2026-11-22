@@ -25,8 +25,10 @@ pub enum Next {
     ConfigureBackups,
     /// The newest base backup is old or missing.
     Backup,
-    /// The first admin is not verified yet.
-    VerifyFirstAdmin,
+    /// The web admins must enrol and invite the second admin first.
+    WebAdmins,
+    /// The host admin verifies the admins in person.
+    VerifyAdmins,
     /// The keys were never copied off the host.
     CopyKeys,
     /// Nothing.
@@ -50,8 +52,10 @@ pub struct Findings {
     pub backups: bool,
     /// Age in hours of the oldest newest-backup over both clusters.
     pub backup_age_hours: Option<i64>,
-    /// The first admin is verified.
-    pub verified: bool,
+    /// The tenant admins `fstp-admin` last read.
+    pub admins: Vec<String>,
+    /// How many of them are verified.
+    pub verified: usize,
     /// The keys were copied off the host.
     pub keys_copied: bool,
 }
@@ -67,14 +71,16 @@ pub fn next(f: &Findings) -> Next {
         Next::RenewRoute
     } else if f.min_days.is_some_and(|d| d < 3) {
         Next::Renew
+    } else if f.verified < 2 && f.admins.len() < 2 {
+        Next::WebAdmins
+    } else if f.verified < 2 {
+        Next::VerifyAdmins
     } else if f.self_signed {
         Next::PublicCertificate
     } else if !f.backups {
         Next::ConfigureBackups
     } else if f.backup_age_hours.is_none_or(|h| h > 36) {
         Next::Backup
-    } else if !f.verified {
-        Next::VerifyFirstAdmin
     } else if !f.keys_copied {
         Next::CopyKeys
     } else {
@@ -99,8 +105,11 @@ fn next_text(n: Next) -> &'static str {
             "add \"backup\" with your object store to fstp.json, put its two key files in place, then run fstp-admin setup."
         }
         Next::Backup => "run fstp-admin backup. The newest backup is older than a day and a half.",
-        Next::VerifyFirstAdmin => {
-            "once the first admin has enrolled, check their ID in person and run fstp-admin verify <their account id>."
+        Next::WebAdmins => {
+            "web admins: the first admin opens the invitation and enrols a passkey, then invites the second admin by email on Onboarding summary; the second admin opens the mailed link within 72 hours. Then the host admin runs fstp-admin verify."
+        }
+        Next::VerifyAdmins => {
+            "host admin: check each admin's ID document in person, then run fstp-admin verify. It asks for the details of each admin listed above."
         }
         Next::CopyKeys => {
             "copy the keys off this host: fstp-admin backup-keys /media/usb/fstp-keys, and keep the passphrases apart."
@@ -179,7 +188,8 @@ pub fn run(layout: &Layout) -> u8 {
         self_signed: layout.cfg.tls.is_none(),
         backups: layout.cfg.backup.is_some(),
         backup_age_hours,
-        verified: state.done("first-admin-verified"),
+        admins: crate::cellcmd::cached_admins(&state),
+        verified: crate::cellcmd::verified_count(&state),
         keys_copied: state.done("keys-copied"),
     };
     out(&[Part::T("")]);
@@ -206,6 +216,32 @@ pub fn run(layout: &Layout) -> u8 {
         None if f.backups => out(&[Part::T("  backups    none yet")]),
         None => out(&[Part::T("  backups    not configured")]),
     }
+    for (i, a) in f.admins.iter().enumerate() {
+        let done = state.done(&format!("verified.{a}"));
+        out(&[
+            Part::T(if i == 0 {
+                "  admin 1    "
+            } else {
+                "  admin 2    "
+            }),
+            Part::Name(a),
+            Part::T(if done {
+                "  verified"
+            } else {
+                "  not verified yet"
+            }),
+        ]);
+    }
+    if f.admins.len() < 2 && f.setup_done {
+        out(&[Part::T(
+            "  admins     fstp-admin verify reads the current admins when the second one has enrolled",
+        )]);
+    }
+    if f.verified >= 2 {
+        out(&[Part::T(
+            "  web        the admins grant each other Financial and Legal signatory, save each onboarding step, then one asks to open the organisation and the other approves. Onboarding summary shows who acts next.",
+        )]);
+    }
     out(&[Part::T("")]);
     out(&[Part::T("Next: "), Part::T(next_text(next(&f)))]);
     let unhealthy =
@@ -230,7 +266,8 @@ mod tests {
             self_signed: false,
             backups: true,
             backup_age_hours: Some(2),
-            verified: true,
+            admins: vec!["a".into(), "b".into()],
+            verified: 2,
             keys_copied: true,
         }
     }
@@ -242,8 +279,10 @@ mod tests {
         let mut f = healthy();
         f.keys_copied = false;
         assert_eq!(next(&f), Next::CopyKeys);
-        f.verified = false;
-        assert_eq!(next(&f), Next::VerifyFirstAdmin);
+        f.verified = 1;
+        assert_eq!(next(&f), Next::VerifyAdmins);
+        f.admins.pop();
+        assert_eq!(next(&f), Next::WebAdmins);
         f.route_current = Some(false);
         assert_eq!(next(&f), Next::RenewRoute);
         f.all_running = false;

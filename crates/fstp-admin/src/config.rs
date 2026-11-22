@@ -22,7 +22,7 @@
 //!   "ports": {"public": 443, "base": 7440},
 //!   "services": "systemd",
 //!   "custody_simulator": "/path/to/fstp-custody-sim",    direct only
-//!   "organisation_active": true,
+//!   "agreements": "1,1,1",
 //!   "version": "0.3.0"
 //! }
 //! ```
@@ -43,6 +43,9 @@ pub const MAX_PATH_LEN: usize = 512;
 
 /// The cell version the cell configuration names by default.
 pub const DEFAULT_VERSION: &str = "0.3.0";
+
+/// The agreement versions `provision-tenant` records by default.
+pub const DEFAULT_AGREEMENTS: &str = "1,1,1";
 
 /// How many ports above `ports.base` the host uses.
 pub const PORT_SPAN: u16 = 10;
@@ -140,8 +143,10 @@ pub struct HostConfig {
     pub services: Services,
     /// The custody simulator, in direct mode only.
     pub custody_simulator: Option<PathBuf>,
-    /// Whether the cell configuration names `organisation_active`.
-    pub organisation_active: bool,
+    /// The versions of the SaaS terms, the data processing agreement and
+    /// the sub-processor list the tenant accepted, for
+    /// `fstp-cell provision-tenant --agreements` (ADR-026). Default `1,1,1`.
+    pub agreements: String,
     /// The cell version.
     pub version: String,
 }
@@ -183,6 +188,8 @@ pub enum Problem {
     BadVersion,
     /// `tls` without both `cert` and `key`.
     TlsNeedsBoth,
+    /// Not three agreement versions like `1,1,1`.
+    BadAgreements,
 }
 
 /// A refused configuration: the member, as a dotted path, and what is
@@ -325,6 +332,19 @@ pub fn is_email(addr: &str) -> bool {
         && is_host_name(&host.to_ascii_lowercase())
 }
 
+/// Whether `a` is three agreement versions: whole numbers from 1, with
+/// commas and no spaces.
+fn is_agreements(a: &str) -> bool {
+    let parts: Vec<&str> = a.split(',').collect();
+    parts.len() == 3
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.len() <= 5
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && !p.starts_with('0')
+        })
+}
+
 fn is_version(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
     parts.len() == 3
@@ -338,8 +358,8 @@ const TOP: [&str; 12] = [
     "custody_simulator",
     "domain",
     "mail",
+    "agreements",
     "operator_email",
-    "organisation_active",
     "paths",
     "ports",
     "services",
@@ -549,12 +569,10 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
     if custody_simulator.is_some() && services != Services::Direct {
         return err("custody_simulator", Problem::SimulatorNeedsDirect);
     }
-    let organisation_active = match top.get("organisation_active") {
-        None => true,
-        Some(v) => match v.as_bool() {
-            Some(b) => b,
-            None => return err("organisation_active", Problem::NotBool),
-        },
+    let agreements = match text(top, "agreements", "agreements")? {
+        None => DEFAULT_AGREEMENTS.to_owned(),
+        Some(a) if is_agreements(a) => a.to_owned(),
+        Some(_) => return err("agreements", Problem::BadAgreements),
     };
     let version = match text(top, "version", "version")? {
         None => DEFAULT_VERSION.to_owned(),
@@ -572,7 +590,7 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
         base_port,
         services,
         custody_simulator,
-        organisation_active,
+        agreements,
         version,
     })
 }
@@ -633,7 +651,7 @@ mod tests {
         assert_eq!(c.public_port, 443);
         assert_eq!(c.services, Services::Systemd);
         assert!(c.tls.is_none() && c.backup.is_none());
-        assert!(c.organisation_active);
+        assert_eq!(c.agreements, "1,1,1");
     }
 
     /// ADR-028: each refusal names the member that is wrong.

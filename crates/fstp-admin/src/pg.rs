@@ -506,7 +506,7 @@ pub fn provision(
         state.mark(&format!("jobs-{}", c.name()))?;
     }
     let migrator = role(c, cell, "migrator");
-    let applied = migrate(layout, state, c, &name, &migrator)?;
+    let applied = migrate(layout, c, &name, &migrator)?;
     if !state.done(&format!("placement-{}", c.name())) {
         let cluster_id = match state.get(&format!("cluster.{}", c.name())) {
             Some(id) => id.to_owned(),
@@ -560,7 +560,12 @@ pub fn migration_files(dir: &Path) -> Result<Vec<(u32, PathBuf)>, PgFail> {
             continue;
         };
         let (num, rest) = stem.split_once('_').ok_or_else(bad)?;
-        if num.len() != 4 || rest.is_empty() {
+        if num.len() != 4
+            || rest.is_empty()
+            || !rest
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        {
             return Err(bad());
         }
         let v: u32 = num.parse().map_err(|_| bad())?;
@@ -578,28 +583,78 @@ pub fn migration_files(dir: &Path) -> Result<Vec<(u32, PathBuf)>, PgFail> {
     Ok(out)
 }
 
-/// Runs the migration files after the version the state records, each in
-/// a session of its own as `migrator`, and records each. Returns how many
-/// ran.
+/// The migration ledger of a cell database, `fstp_migrate.schema_migrations`
+/// in the runner's own shape: each applied version with its SHA-256.
+/// Empty before the set's ledger migration created the table.
 ///
 /// # Errors
 ///
-/// [`PgFail::Migration`] naming the version that failed.
-pub fn migrate(
-    layout: &Layout,
-    state: &mut State,
-    c: Cluster,
-    db: &str,
-    migrator: &str,
-) -> Result<u32, PgFail> {
-    let key = format!("migrated.{}", c.name());
-    let done: u32 = state.get(&key).and_then(|v| v.parse().ok()).unwrap_or(0);
+/// [`PgFail::Sql`] when the query fails.
+pub fn applied(layout: &Layout, c: Cluster, db: &str) -> Result<Vec<(u32, String)>, PgFail> {
+    let exists = psql(
+        layout,
+        c,
+        db,
+        "SELECT to_regclass('fstp_migrate.schema_migrations') IS NOT NULL;",
+        "the migration ledger",
+    )? == "t";
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let out = psql(
+        layout,
+        c,
+        db,
+        "SELECT coalesce(string_agg(version || ' ' || encode(checksum, 'hex'), ',' ORDER BY version), '') \
+         FROM fstp_migrate.schema_migrations;",
+        "the migration ledger",
+    )?;
+    Ok(out
+        .split(',')
+        .filter_map(|p| {
+            let (v, sum) = p.split_once(' ')?;
+            Some((v.parse().ok()?, sum.to_owned()))
+        })
+        .collect())
+}
+
+/// The ledger row values of a migration file: its SHA-256, in hex, and
+/// its statement count, as `fstp_migrate` computes them.
+///
+/// # Errors
+///
+/// [`PgFail::Migration`] when the file does not split.
+fn ledger_values(c: Cluster, v: u32, sql: &str) -> Result<(String, usize), PgFail> {
+    let n = fstp_migrate::split_statements(sql, &fstp_migrate::SplitLimits::default())
+        .map_err(|_| PgFail::Migration(c.name(), v))?
+        .len();
+    Ok((crate::pki::hex(&fstp_crypto::sha256(sql.as_bytes())), n))
+}
+
+/// Runs the migration files that `fstp_migrate.schema_migrations` does not
+/// list, each in a session of its own as `migrator`, and records each in
+/// that table, as `fstp_migrate`'s runner does (ADR-028 "Migrations",
+/// lead reading of 2026-11-22). Versions that ran before the set's ledger
+/// migration created the table are recorded once it exists. A recorded
+/// version whose file changed is refused. Returns how many ran.
+///
+/// # Errors
+///
+/// [`PgFail::Migration`] naming the version that failed or changed.
+pub fn migrate(layout: &Layout, c: Cluster, db: &str, migrator: &str) -> Result<u32, PgFail> {
+    let files = migration_files(&layout.migrations(c))?;
+    let recorded = applied(layout, c, db)?;
     let mut ran = 0u32;
-    for (v, path) in migration_files(&layout.migrations(c))? {
-        if v <= done {
+    let mut unrecorded: Vec<(u32, String, String, usize)> = Vec::new();
+    for (v, path) in &files {
+        let sql = std::fs::read_to_string(path)?;
+        let (sum, count) = ledger_values(c, *v, &sql)?;
+        if let Some((_, have)) = recorded.iter().find(|(rv, _)| rv == v) {
+            if *have != sum {
+                return Err(PgFail::Migration(c.name(), *v));
+            }
             continue;
         }
-        let sql = std::fs::read_to_string(&path)?;
         psql(
             layout,
             c,
@@ -607,9 +662,32 @@ pub fn migrate(
             &format!("SET ROLE \"{migrator}\";\n{sql}"),
             "a migration",
         )
-        .map_err(|_| PgFail::Migration(c.name(), v))?;
-        state.set(&key, &v.to_string())?;
+        .map_err(|_| PgFail::Migration(c.name(), *v))?;
         ran = ran.saturating_add(1);
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.split_once('_'))
+            .map(|(_, n)| n.to_owned())
+            .unwrap_or_default();
+        unrecorded.push((*v, name, sum, count));
+        let has_table = psql(
+            layout,
+            c,
+            db,
+            "SELECT to_regclass('fstp_migrate.schema_migrations') IS NOT NULL;",
+            "the migration ledger",
+        )? == "t";
+        if has_table {
+            let mut sql = format!("SET ROLE \"{migrator}\";\n");
+            for (v, name, sum, count) in unrecorded.drain(..) {
+                sql.push_str(&format!(
+                    "INSERT INTO fstp_migrate.schema_migrations (version, name, checksum, statement_count) \
+                     VALUES ({v}, '{name}', '\\x{sum}'::bytea, {count}) ON CONFLICT (version) DO NOTHING;\n"
+                ));
+            }
+            psql(layout, c, db, &sql, "the migration ledger")?;
+        }
     }
     Ok(ran)
 }
