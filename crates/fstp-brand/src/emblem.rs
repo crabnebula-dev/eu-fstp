@@ -1,19 +1,18 @@
 //! The fixed platform slot for the EU emblem and the funding
-//! acknowledgement (ADR-030 section 2).
+//! acknowledgement (ADR-030 section 2, ADR-034).
 //!
-//! The emblem is a platform asset, never tenant data. Daniel supplies the
-//! file. Until then the slot holds nothing, and every page, email and PDF
-//! renders nothing in its place.
+//! The emblem is a platform asset, never tenant data. Since 2026-11-22
+//! the slot holds the "Funded by the European Union" logo Daniel
+//! supplied ([`crate::funding`]).
 //!
 //! TODO(legal): the emblem usage rules (size, clear space, colour
 //! versions and placement) and the funding acknowledgement wording that
 //! goes beside it (L-08). Nothing here states either.
 
-/// The EU emblem as a PNG for PDFs and pages, once Daniel supplies it.
-/// To fill the slot, set it to `Some(include_bytes!("<file>.png"))`. The
-/// file must pass [`crate::image::inspect`], and a PDF shows it only when
-/// [`crate::image::pdf_image`] accepts it (opaque, not interlaced).
-pub const EU_EMBLEM_PNG: Option<&[u8]> = None;
+/// The EU emblem as a PNG for PDFs, emails and pages: the "Funded by the
+/// European Union" logo (ADR-034 section 1). It passes
+/// [`crate::image::inspect`], and [`crate::image::pdf_image`] accepts it.
+pub const EU_EMBLEM_PNG: Option<&[u8]> = Some(crate::funding::FUNDED_BY_EU_PNG);
 
 /// The approved funding acknowledgement beside the emblem, once Daniel
 /// supplies it. TODO(legal) (L-08): `None` until then, so documents show
