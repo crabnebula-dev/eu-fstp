@@ -16,6 +16,15 @@
 //!   regeneration, because the store cannot see a pin it never held.
 //! - `Mark` records a reviewer's mark on a current finding. Marks feed
 //!   calibration and never a decision (I-10).
+//! - `ReadAssessmentInput` and `RecordClientAssessment` (ADR-033) are the
+//!   FSTP coordinator's, through the connected agent that runs the
+//!   assessment when the call's frozen P-21 names the client path. They
+//!   are judged by the coordinator binding, the path, the state and P-10,
+//!   the declaration, the absence of an assignment on the proposal, and a
+//!   fresh vault answer (I-03). The run records its provenance, its
+//!   findings under the call's pin (I-11) and its refusal list, all finding
+//!   records only (I-10). The model the run reports must be the call's
+//!   pinned model, and the input it names the one its account read last.
 //! - Findings stay with the call that produced them, also after the
 //!   proposal is deferred into a later call (state-machine NOTE 8). The
 //!   store is keyed by call, and nothing here moves a finding.
@@ -91,6 +100,31 @@ pub fn finding_queries(
             .map(|(by, f)| conflict_query(&state.core, by, f.proposal))
             .into_iter()
             .collect()),
+        FindingCommand::ReadAssessmentInput { call, proposal, .. }
+        | FindingCommand::RecordClientAssessment { call, proposal, .. } => {
+            let Actor::Account(by) = ctx.actor else {
+                return Ok(Vec::new());
+            };
+            Ok(client_basis(&state.core, by, *call, *proposal, ctx.now)
+                .ok()
+                .map(|()| conflict_query(&state.core, by, *proposal))
+                .into_iter()
+                .collect())
+        }
+        // ADR-035: the release asks the vault for a conflict, as every
+        // read of content does (I-03).
+        FindingCommand::ReleaseIntegrityHold { call, proposal } => {
+            let Actor::Account(by) = ctx.actor else {
+                return Ok(Vec::new());
+            };
+            Ok(
+                check_release_basis(&state.core, by, *call, *proposal, ctx.now)
+                    .ok()
+                    .map(|()| conflict_query(&state.core, by, *proposal))
+                    .into_iter()
+                    .collect(),
+            )
+        }
         FindingCommand::Record(_)
         | FindingCommand::Regenerate { .. }
         | FindingCommand::RequestRerun { .. }
@@ -114,8 +148,100 @@ pub fn decide_finding(
     shared_checks(state, ctx)?;
     let core = &state.core;
     let store = &state.findings;
+    let records = match cmd {
+        FindingCommand::ReadAssessmentInput {
+            call,
+            proposal,
+            input,
+        } => {
+            let by = client_actor(state, *call, *proposal, ctx, answers)?;
+            // ADR-035: no AI assessment reads a held proposal.
+            store.check_not_held(*proposal).map_err(store_refusal)?;
+            vec![FindingRecord::AssessmentInputRead {
+                call: *call,
+                proposal: *proposal,
+                by,
+                input: *input,
+            }]
+        }
+        FindingCommand::RecordClientAssessment {
+            call,
+            proposal,
+            run,
+            findings,
+            refused,
+        } => {
+            let by = client_actor(state, *call, *proposal, ctx, answers)?;
+            store.check_not_held(*proposal).map_err(store_refusal)?;
+            client_records(store, *call, *proposal, by, run, findings, refused)?
+        }
+        other => vec![decide_one(state, other, ctx, answers)?],
+    };
+    let mut trial = store.clone();
+    for record in &records {
+        check_fold(core, &trial, record, ctx.now)
+            .map_err(|_| Refusal::new(RuleRef::I11, RefusalReason::GuardFailed))?;
+        trial.apply_at(record, ctx.now).map_err(store_refusal)?;
+    }
+    Ok(records)
+}
+
+/// The one record of every finding command but the two of ADR-033.
+fn decide_one(
+    state: &EngineState,
+    cmd: &FindingCommand,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<FindingRecord, Refusal> {
+    let core = &state.core;
+    let store = &state.findings;
     let record = match cmd {
-        FindingCommand::Record(f) => decide_record(core, store, f, ctx)?,
+        FindingCommand::ReadAssessmentInput { .. }
+        | FindingCommand::RecordClientAssessment { .. } => {
+            return Err(Refusal::new(RuleRef::Input, RefusalReason::InvalidValue));
+        }
+        FindingCommand::Record(f) => {
+            let record = decide_record(core, store, f, ctx)?;
+            // ADR-035: the assessor records nothing on a held proposal.
+            store.check_not_held(f.proposal).map_err(store_refusal)?;
+            record
+        }
+        FindingCommand::ReleaseIntegrityHold { call, proposal } => {
+            // ADR-035: the call's FSTP coordinator, as for a re-run, with
+            // no conflict on the proposal (I-03, lead reading 2026-11-22).
+            let Actor::Account(by) = ctx.actor else {
+                return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+            };
+            check_release_basis(core, by, *call, *proposal, ctx.now)?;
+            match answers.get(&conflict_query(core, by, *proposal)) {
+                None => {
+                    return Err(Refusal::new(
+                        RuleRef::FactsIncomplete,
+                        RefusalReason::AnswerMissing,
+                    ));
+                }
+                Some(a) if a.epoch != core.epoch() => {
+                    return Err(Refusal::new(
+                        RuleRef::StaleFacts,
+                        RefusalReason::AnswerStale,
+                    ));
+                }
+                Some(a) if a.holds => {
+                    return Err(Refusal::new(RuleRef::I03, RefusalReason::VaultRefused));
+                }
+                Some(_) => {}
+            }
+            if !store.held(*proposal) {
+                return Err(store_refusal(FindingRefusal::NotHeld {
+                    proposal: *proposal,
+                }));
+            }
+            FindingRecord::IntegrityReleased {
+                call: *call,
+                proposal: *proposal,
+                by,
+            }
+        }
         FindingCommand::Mark { finding, mark } => {
             decide_mark(state, *finding, *mark, ctx, answers)?
         }
@@ -201,11 +327,163 @@ pub fn decide_finding(
             }
         }
     };
-    check_fold(core, store, &record, ctx.now)
-        .map_err(|_| Refusal::new(RuleRef::I11, RefusalReason::GuardFailed))?;
-    let mut trial = store.clone();
-    trial.apply_at(&record, ctx.now).map_err(store_refusal)?;
-    Ok(vec![record])
+    Ok(record)
+}
+
+/// The coordinator of an ADR-033 command, after [`client_basis`] and a
+/// fresh `HasConflict` answer of false at the state's epoch (I-03), as
+/// every read of content asks.
+fn client_actor(
+    state: &EngineState,
+    call: CallId,
+    proposal: ProposalId,
+    ctx: &Ctx,
+    answers: &Answers,
+) -> Result<AccountId, Refusal> {
+    let Actor::Account(by) = ctx.actor else {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+    };
+    client_basis(&state.core, by, call, proposal, ctx.now)?;
+    match answers.get(&conflict_query(&state.core, by, proposal)) {
+        None => Err(Refusal::new(
+            RuleRef::FactsIncomplete,
+            RefusalReason::AnswerMissing,
+        )),
+        Some(a) if a.epoch != state.core.epoch() => Err(Refusal::new(
+            RuleRef::StaleFacts,
+            RefusalReason::AnswerStale,
+        )),
+        Some(a) if a.holds => Err(Refusal::new(RuleRef::I03, RefusalReason::VaultRefused)),
+        Some(_) => Ok(by),
+    }
+}
+
+/// The records of one client assessment (ADR-033): the provenance, one
+/// `Recorded` per finding and the refusal list, which also ends a re-run
+/// in flight. Each finding names the run's call, proposal and trace, and
+/// the call's pin, which the trial fold checks (I-11).
+fn client_records(
+    store: &FindingStore,
+    call: CallId,
+    proposal: ProposalId,
+    by: AccountId,
+    run: &fstp_findings::ClientRun,
+    findings: &[Finding],
+    refused: &[fstp_findings::RefusedStage],
+) -> Result<Vec<FindingRecord>, Refusal> {
+    let invalid = || Refusal::new(RuleRef::Input, RefusalReason::InvalidValue);
+    if findings.len() > fstp_findings::MAX_CLIENT_FINDINGS
+        || refused.len() > fstp_findings::MAX_REFUSED
+    {
+        return Err(invalid());
+    }
+    if findings
+        .iter()
+        .any(|f| f.call != call || f.proposal != proposal || f.trace != run.trace)
+    {
+        return Err(invalid());
+    }
+    store.check_client_run(proposal).map_err(store_refusal)?;
+    let mut out = Vec::with_capacity(findings.len().saturating_add(2));
+    out.push(FindingRecord::ClientAssessed {
+        call,
+        proposal,
+        by,
+        run: run.clone(),
+    });
+    out.extend(findings.iter().cloned().map(FindingRecord::Recorded));
+    out.push(FindingRecord::RefusalsRecorded {
+        call,
+        proposal,
+        refused: refused.to_vec(),
+    });
+    Ok(out)
+}
+
+/// What an ADR-033 command needs from the core, also when its record is
+/// folded (without the vault answer):
+///
+/// - `by` holds an active FSTP coordinator binding in its programme, and
+///   the call is published;
+/// - the proposal is a proposal of the call in a state where the
+///   coordinator reads its content: SUBMITTED, or STAGE1 and STAGE2 under
+///   P-10 "operator staff only" (R-AC-01);
+/// - `by` declared no conflict on it and holds no conflict fact (I-03,
+///   R-CF-02);
+/// - the call's frozen P-21 names the client path;
+/// - `by` holds no reviewer or IRC assignment on it, in any status, so no
+///   scorer of the proposal produces its findings (ADR-033).
+fn client_basis(
+    core: &State,
+    by: AccountId,
+    call: CallId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> Result<(), Refusal> {
+    use fstp_domain::policy::ReadAccess;
+    use fstp_domain::roles::Role;
+    use fstp_domain::rules::ParamId;
+    // The actor, the state and the declaration first, as for every read of
+    // content, then the path: the authorisation classes do not depend on
+    // P-21, and a call off the path ends in the `P-21` guard.
+    let Some(programme) = core.calls().get(call).map(CallView::programme) else {
+        return Err(Refusal::new(RuleRef::I11, RefusalReason::UnknownEntity));
+    };
+    if !core.roster().bindings().any(|(_, b)| {
+        b.account == by
+            && b.role == Role::FstpCoordinator
+            && b.programme == programme
+            && b.active_at(now)
+    }) {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::BindingInactive));
+    }
+    let (_, frozen) = published(core, call)?;
+    if !proposal_in_call(core, proposal, call) {
+        return Err(Refusal::new(RuleRef::Input, RefusalReason::UnknownEntity));
+    }
+    let open = match fstp_domain::view::proposal_state(core, proposal) {
+        Some(fstp_domain::StateTag::Submitted) => true,
+        Some(fstp_domain::StateTag::Stage1 | fstp_domain::StateTag::Stage2) => {
+            frozen.values().p10 == ReadAccess::OperatorStaffOnly
+        }
+        _ => false,
+    };
+    if !open {
+        return Err(Refusal::new(RuleRef::Rac01, RefusalReason::WrongState));
+    }
+    let review = core.review();
+    if review.conflict_fact(by, proposal) {
+        return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    if !review.cleared(by, proposal) {
+        return Err(Refusal::new(RuleRef::Rcf02, RefusalReason::GuardFailed));
+    }
+    if !fstp_findings::client_run(&frozen.values().p21) {
+        return Err(Refusal::new(
+            RuleRef::Param(ParamId::P21),
+            RefusalReason::GuardFailed,
+        ));
+    }
+    if review
+        .assignments()
+        .any(|(_, a)| a.reviewer == by && a.proposal == proposal)
+    {
+        return Err(Refusal::new(RuleRef::Actor, RefusalReason::WrongActor));
+    }
+    Ok(())
+}
+
+/// The model a client run must report (ADR-033, I-11): the frozen P-21
+/// primary, or the fallback at the call's current position.
+fn client_model<'a>(
+    frozen: &'a FrozenPolicy,
+    store: &FindingStore,
+    call: CallId,
+) -> Option<&'a fstp_domain::policy::ModelRef> {
+    match store.fallback_of(call) {
+        None => Some(&frozen.values().p21.primary),
+        Some(k) => fallback_model(frozen, k),
+    }
 }
 
 /// The checks of a stored finding record that need the core (I-11, I-12).
@@ -246,8 +524,43 @@ pub fn check_fold(
             }
             Ok(())
         }
+        FindingRecord::AssessmentInputRead {
+            call, proposal, by, ..
+        } => client_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent),
+        FindingRecord::ClientAssessed {
+            call,
+            proposal,
+            by,
+            run,
+        } => {
+            client_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)?;
+            let (_, frozen) = published(core, *call).map_err(|_| FoldError::Inconsistent)?;
+            // I-11: the run reports the model the call pins.
+            if client_model(frozen, store, *call) == Some(&run.model) {
+                Ok(())
+            } else {
+                Err(FoldError::Inconsistent)
+            }
+        }
         FindingRecord::RerunRequested { call, proposal, by } => {
             check_rerun_basis(core, *by, *call, *proposal, at).map_err(|_| FoldError::Inconsistent)
+        }
+        FindingRecord::IntegrityReleased { call, proposal, by } => {
+            check_release_basis(core, *by, *call, *proposal, at)
+                .map_err(|_| FoldError::Inconsistent)
+        }
+        FindingRecord::IntegrityHeld {
+            call,
+            proposal,
+            reasons,
+        } => {
+            published(core, *call).map_err(|_| FoldError::Inconsistent)?;
+            let ordered = reasons.windows(2).all(|w| matches!(w, [a, b] if a < b));
+            if proposal_in_call(core, *proposal, *call) && !reasons.is_empty() && ordered {
+                Ok(())
+            } else {
+                Err(FoldError::Inconsistent)
+            }
         }
         FindingRecord::RefusalsRecorded { call, proposal, .. }
         | FindingRecord::RerunAbandoned { call, proposal, .. } => {
@@ -385,6 +698,11 @@ fn decide_record(
 
 /// Whether `proposal` has its latest binding scope in `call`.
 fn proposal_in_call(core: &State, proposal: ProposalId, call: CallId) -> bool {
+    current_call(core, proposal) == Some(call)
+}
+
+/// The call of `proposal`: the call of its latest proposal binding.
+fn current_call(core: &State, proposal: ProposalId) -> Option<CallId> {
     use fstp_domain::roles::BindingScope;
     let roster = core.roster();
     roster
@@ -398,7 +716,7 @@ fn proposal_in_call(core: &State, proposal: ProposalId, call: CallId) -> bool {
             _ => None,
         })
         .max()
-        .is_some_and(|(_, _, c)| c == call)
+        .map(|(_, _, c)| c)
 }
 
 /// What a re-run request needs from the core (issue 6 M3, I-10): the
@@ -406,6 +724,24 @@ fn proposal_in_call(core: &State, proposal: ProposalId, call: CallId) -> bool {
 /// and `by` holds an active FSTP coordinator binding in the call's
 /// programme, as `review.assign` requires. The store's bounds are
 /// checked by the fold.
+/// What a release of an integrity hold needs from the core (ADR-035):
+/// the basis of a re-run, and no conflict of `by` on the proposal, as
+/// for every content read (I-03). Another coordinator releases a proposal
+/// its own coordinator is conflicted on. Lead reading, 2026-11-22.
+fn check_release_basis(
+    core: &State,
+    by: AccountId,
+    call: CallId,
+    proposal: ProposalId,
+    now: Timestamp,
+) -> Result<(), Refusal> {
+    check_rerun_basis(core, by, call, proposal, now)?;
+    if core.review().conflict_fact(by, proposal) {
+        return Err(Refusal::new(RuleRef::I03, RefusalReason::GuardFailed));
+    }
+    Ok(())
+}
+
 fn check_rerun_basis(
     core: &State,
     by: AccountId,
@@ -593,7 +929,11 @@ fn store_refusal(r: FindingRefusal) -> Refusal {
         FindingRefusal::RerunInFlight { .. }
         | FindingRefusal::RerunLimit { .. }
         | FindingRefusal::NoRerunInFlight { .. }
-        | FindingRefusal::RerunNotStale { .. } => RefusalReason::GuardFailed,
+        | FindingRefusal::RerunNotStale { .. }
+        | FindingRefusal::ClientRunTaken { .. }
+        | FindingRefusal::IntegrityHeld { .. }
+        | FindingRefusal::NotHeld { .. }
+        | FindingRefusal::InputNotRead { .. } => RefusalReason::GuardFailed,
         FindingRefusal::TooManyRefused { .. } => RefusalReason::InvalidValue,
         FindingRefusal::UnknownFinding { .. } => RefusalReason::UnknownEntity,
         FindingRefusal::WrongCall { .. } | FindingRefusal::MalformedEvidence { .. } => {
@@ -612,7 +952,11 @@ fn fold_error(r: FindingRefusal) -> FoldError {
         | FindingRefusal::RerunLimit { .. }
         | FindingRefusal::TooManyRefused { .. }
         | FindingRefusal::NoRerunInFlight { .. }
-        | FindingRefusal::RerunNotStale { .. } => FoldError::Inconsistent,
+        | FindingRefusal::RerunNotStale { .. }
+        | FindingRefusal::ClientRunTaken { .. }
+        | FindingRefusal::IntegrityHeld { .. }
+        | FindingRefusal::NotHeld { .. }
+        | FindingRefusal::InputNotRead { .. } => FoldError::Inconsistent,
         FindingRefusal::UnknownFinding { .. } => FoldError::UnknownEntity,
         FindingRefusal::ForeignConfig { .. }
         | FindingRefusal::RetiredConfig { .. }
@@ -621,4 +965,46 @@ fn fold_error(r: FindingRefusal) -> FoldError {
         | FindingRefusal::WrongCall { .. }
         | FindingRefusal::MalformedEvidence { .. } => FoldError::Inconsistent,
     }
+}
+
+/// The records of a flagged submission (ADR-035): the core records of its
+/// `Submit`, then one `Recorded` per integrity finding of the scan and
+/// the `IntegrityHeld`, all in one entry. Each finding names the
+/// submitted proposal and its call, and carries the call's pin (I-11),
+/// which the trial fold checks. A finding record never changes the core
+/// (I-10).
+pub fn decide_scanned_submit(
+    state: &EngineState,
+    s: &crate::ScannedSubmit,
+    core: Vec<crate::Record>,
+    ctx: &Ctx,
+) -> Result<Vec<crate::Record>, Refusal> {
+    let invalid = || Refusal::new(RuleRef::Input, RefusalReason::InvalidValue);
+    let fstp_domain::Command::Submit { proposal, .. } = s.submit() else {
+        return Err(invalid());
+    };
+    let call = current_call(&state.core, *proposal).ok_or_else(invalid)?;
+    if s.findings().iter().any(|f| f.call != call) {
+        return Err(invalid());
+    }
+    let mut records: Vec<FindingRecord> = s
+        .findings()
+        .iter()
+        .cloned()
+        .map(FindingRecord::Recorded)
+        .collect();
+    records.push(FindingRecord::IntegrityHeld {
+        call,
+        proposal: *proposal,
+        reasons: s.reasons().to_vec(),
+    });
+    let mut trial = state.findings.clone();
+    for record in &records {
+        check_fold(&state.core, &trial, record, ctx.now)
+            .map_err(|_| Refusal::new(RuleRef::I11, RefusalReason::GuardFailed))?;
+        trial.apply_at(record, ctx.now).map_err(store_refusal)?;
+    }
+    let mut out = core;
+    out.extend(records.into_iter().map(crate::Record::Finding));
+    Ok(out)
 }

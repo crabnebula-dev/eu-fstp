@@ -17,6 +17,7 @@
 
 mod config;
 mod extract;
+mod integrity;
 mod pipeline;
 mod rubric;
 mod span;
@@ -26,6 +27,7 @@ mod validate;
 pub use config::{ConfigError, ConfigInput, Provider, config_id};
 pub use extract::{Extracted, Mark, MarkKind, extract_text, is_hidden, mark_kind};
 pub use fstp_findings::UntrustedText;
+pub use integrity::{integrity_severity, integrity_statement, scan_findings};
 pub use pipeline::{
     AssessError, AssessedFinding, Assessment, Job, PartialAssessment, Pipeline, Prepared,
     PreparedPart, SubmissionPart, prepare,

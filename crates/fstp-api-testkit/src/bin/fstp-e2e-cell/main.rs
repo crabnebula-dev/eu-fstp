@@ -74,6 +74,10 @@ mod scenario;
 mod wire;
 
 #[cfg(test)]
+mod assess_client_tests;
+#[cfg(test)]
+mod assign_batch_tests;
+#[cfg(test)]
 mod mcpdemo_tests;
 
 use std::io::Write;

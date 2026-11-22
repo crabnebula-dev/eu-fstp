@@ -51,7 +51,8 @@ export type Scope =
   | "creator:draft"
   | "calls:draft"
   | "audit:read"
-  | "tenant:draft";
+  | "tenant:draft"
+  | "assess:run";
 
 /** The name of an operation of the registry. */
 export type OpName =
@@ -184,6 +185,7 @@ export type OpName =
   | "review.assignments"
   | "review.assign"
   | "review.unassign"
+  | "review.assign_batch"
   | "review.admit"
   | "review.close_stage1"
   | "review.notifiable_conflicts"
@@ -202,6 +204,10 @@ export type OpName =
   | "assess.findings_status"
   | "review.mark_finding"
   | "assess.rerun"
+  | "assess.release_integrity"
+  | "assess.client_queue"
+  | "assess.client_input"
+  | "assess.client_submit"
   | "committee.ranking"
   | "committee.open_round"
   | "committee.round"
@@ -441,6 +447,7 @@ export interface OpParams {
   readonly "review.assignments": { readonly "proposal": string };
   readonly "review.assign": { readonly "proposal": string };
   readonly "review.unassign": { readonly "assignment": string };
+  readonly "review.assign_batch": { readonly "proposal": string };
   readonly "review.admit": { readonly "proposal": string };
   readonly "review.close_stage1": { readonly "proposal": string };
   readonly "review.notifiable_conflicts": { readonly "call": string };
@@ -459,6 +466,10 @@ export interface OpParams {
   readonly "assess.findings_status": { readonly "call": string };
   readonly "review.mark_finding": { readonly "finding": string };
   readonly "assess.rerun": { readonly "proposal": string };
+  readonly "assess.release_integrity": { readonly "proposal": string };
+  readonly "assess.client_queue": { readonly "call": string };
+  readonly "assess.client_input": { readonly "proposal": string };
+  readonly "assess.client_submit": { readonly "proposal": string };
   readonly "committee.ranking": { readonly "call": string };
   readonly "committee.open_round": { readonly "call": string };
   readonly "committee.round": { readonly "round": string };
@@ -671,6 +682,7 @@ export const OP_NAMES: readonly OpName[] = [
   "review.assignments",
   "review.assign",
   "review.unassign",
+  "review.assign_batch",
   "review.admit",
   "review.close_stage1",
   "review.notifiable_conflicts",
@@ -689,6 +701,10 @@ export const OP_NAMES: readonly OpName[] = [
   "assess.findings_status",
   "review.mark_finding",
   "assess.rerun",
+  "assess.release_integrity",
+  "assess.client_queue",
+  "assess.client_input",
+  "assess.client_submit",
   "committee.ranking",
   "committee.open_round",
   "committee.round",
@@ -2558,9 +2574,9 @@ export const OPERATIONS: readonly Operation[] = [
     segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "assignments" }],
     params: ["proposal"],
     body: true,
-    highRisk: false,
+    highRisk: true,
     binding: true,
-    session: "any",
+    session: "phishing_resistant",
     classification: "confidential",
     tool: null,
   },
@@ -2572,9 +2588,23 @@ export const OPERATIONS: readonly Operation[] = [
     segments: [{ kind: "literal", text: "assignments" }, { kind: "param", name: "assignment" }],
     params: ["assignment"],
     body: true,
-    highRisk: false,
+    highRisk: true,
     binding: true,
-    session: "any",
+    session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "review.assign_batch",
+    method: "POST",
+    path: "/proposals/{proposal}/assignment-batch",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "assignment-batch" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: true,
+    binding: true,
+    session: "phishing_resistant",
     classification: "confidential",
     tool: null,
   },
@@ -2829,6 +2859,62 @@ export const OPERATIONS: readonly Operation[] = [
     session: "any",
     classification: "confidential",
     tool: null,
+  },
+  {
+    name: "assess.release_integrity",
+    method: "POST",
+    path: "/proposals/{proposal}/integrity-release",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "integrity-release" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "assess.client_queue",
+    method: "GET",
+    path: "/calls/{call}/client-assessment",
+    base: "api",
+    segments: [{ kind: "literal", text: "calls" }, { kind: "param", name: "call" }, { kind: "literal", text: "client-assessment" }],
+    params: ["call"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_assessment_list_proposals", scope: "assess:run", prepareOnly: false },
+  },
+  {
+    name: "assess.client_input",
+    method: "GET",
+    path: "/proposals/{proposal}/client-assessment/input",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "client-assessment" }, { kind: "literal", text: "input" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_assessment_get_input", scope: "assess:run", prepareOnly: false },
+  },
+  {
+    name: "assess.client_submit",
+    method: "POST",
+    path: "/proposals/{proposal}/client-assessment",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "client-assessment" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: { name: "fstp_assessment_submit", scope: "assess:run", prepareOnly: false },
   },
   {
     name: "committee.ranking",
@@ -4623,6 +4709,16 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           } }, optional: false },
         },
       } }, optional: false },
+      "scan": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "section": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+          "quote": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
     },
   },
   "proposal.precheck_runs": {
@@ -4661,6 +4757,16 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
               } }, optional: false },
             },
           } }, optional: false },
+        },
+      } }, optional: false },
+      "scan": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "section": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+          "quote": { schema: { kind: "string" }, optional: false },
         },
       } }, optional: false },
     },
@@ -4786,6 +4892,22 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
       "title": { schema: { kind: "string" }, optional: false },
       "text": { schema: { kind: "string" }, optional: false },
+      "title_flags": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+        },
+      } }, optional: false },
+      "text_flags": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+        },
+      } }, optional: false },
       "call": { schema: { kind: "id" }, optional: false },
     },
   },
@@ -4796,6 +4918,22 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
       "title": { schema: { kind: "string" }, optional: false },
       "text": { schema: { kind: "string" }, optional: false },
+      "title_flags": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+        },
+      } }, optional: false },
+      "text_flags": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+          "start": { schema: { kind: "int" }, optional: false },
+          "end": { schema: { kind: "int" }, optional: false },
+        },
+      } }, optional: false },
       "outcome": { schema: { kind: "enum", values: ["nominated"] }, optional: false },
     },
   },
@@ -4854,8 +4992,86 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "findings": { schema: { kind: "int" }, optional: false },
       "refused": { schema: { kind: "int" }, optional: false },
       "rerun": { schema: { kind: "enum", values: ["available", "in_flight", "used_up"] }, optional: false },
+      "integrity": { schema: { kind: "enum", values: ["clear", "held", "released"] }, optional: false },
+      "reasons": { schema: { kind: "array", items: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] } }, optional: false },
     },
   } },
+  "assess.client_queue": {
+    kind: "object",
+    fields: {
+      "call": { schema: { kind: "id" }, optional: false },
+      "open": { schema: { kind: "bool" }, optional: false },
+      "model": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+      "prompt_set": { schema: {
+        kind: "object",
+        fields: {
+          "version": { schema: { kind: "string" }, optional: false },
+          "digest": { schema: { kind: "string" }, optional: false },
+        },
+      }, optional: false },
+      "proposals": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "proposal": { schema: { kind: "id" }, optional: false },
+          "state": { schema: { kind: "enum", values: ["DRAFT", "SUBMITTED", "INELIGIBLE", "STAGE1", "NOT_SELECTED", "STAGE2", "RANKED", "IRC_REVIEW", "DEFERRED", "DECLINED", "NEGOTIATION", "WITHDRAWN", "GRANTED", "IN_EXECUTION", "COMPLETED", "TERMINATED", "UNKNOWN"] }, optional: false },
+          "status": { schema: { kind: "enum", values: ["awaiting", "assessed", "rerun", "held"] }, optional: false },
+          "declared": { schema: { kind: "bool" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "assess.client_input": {
+    kind: "object",
+    fields: {
+      "proposal": { schema: { kind: "id" }, optional: false },
+      "call": { schema: { kind: "id" }, optional: false },
+      "input_digest": { schema: { kind: "string" }, optional: false },
+      "model": { schema: { kind: "string" }, optional: false },
+      "prompt_set": { schema: {
+        kind: "object",
+        fields: {
+          "version": { schema: { kind: "string" }, optional: false },
+          "digest": { schema: { kind: "string" }, optional: false },
+        },
+      }, optional: false },
+      "tasks": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "stage": { schema: { kind: "enum", values: ["completeness", "quality", "claims", "integrity"] }, optional: false },
+          "criterion": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
+          "elements": { schema: { kind: "array", items: { kind: "string" } }, optional: false },
+        },
+      } }, optional: false },
+      "parts": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "label": { schema: { kind: "enum", values: ["title", "summary", "narrative"] }, optional: false },
+          "text": { schema: { kind: "string" }, optional: false },
+          "flags": { schema: { kind: "array", items: {
+            kind: "object",
+            fields: {
+              "reason": { schema: { kind: "enum", values: ["zero_width", "bidi", "tag", "variation_run", "format", "hidden_markup", "role_marker", "override", "addressed", "score_request", "tool_call", "schema_payload", "exfil_link", "encoded_blob", "confusable", "truncated"] }, optional: false },
+              "start": { schema: { kind: "int" }, optional: false },
+              "end": { schema: { kind: "int" }, optional: false },
+            },
+          } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "assess.client_submit": {
+    kind: "object",
+    fields: {
+      "recorded": { schema: { kind: "int" }, optional: false },
+      "refused": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "stage": { schema: { kind: "enum", values: ["completeness", "quality", "claims", "verify", "integrity"] }, optional: false },
+          "code": { schema: { kind: "enum", values: ["json", "unknown_member", "shape", "score_like", "criterion", "element", "kind", "too_long"] }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "review.stage2_thread": {
     kind: "object",
     fields: {
@@ -4906,7 +5122,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
     fields: {
       "client": { schema: { kind: "id" }, optional: false },
       "name": { schema: { kind: "string" }, optional: true },
-      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft"] } }, optional: false },
+      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft", "assess:run"] } }, optional: false },
       "method": { schema: { kind: "enum", values: ["passkey", "magic_link", "opaque", "eudi_wallet"] }, optional: false },
       "since": { schema: { kind: "string" }, optional: true },
       "until": { schema: { kind: "string" }, optional: true },
@@ -4919,7 +5135,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "name": { schema: { kind: "string" }, optional: true },
       "redirect_host": { schema: { kind: "string" }, optional: false },
       "loopback": { schema: { kind: "bool" }, optional: false },
-      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft"] } }, optional: false },
+      "scopes": { schema: { kind: "array", items: { kind: "enum", values: ["calls:read", "proposals:read", "proposals:draft", "proposals:binding", "stage2:draft", "review:read", "review:draft", "ranking:read", "findings:read", "creator:draft", "calls:draft", "audit:read", "tenant:draft", "assess:run"] } }, optional: false },
       "expires": { schema: { kind: "string" }, optional: false },
     },
   },

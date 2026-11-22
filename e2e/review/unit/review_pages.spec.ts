@@ -160,6 +160,8 @@ test.describe('W4c review reproducers', () => {
           state: 'STAGE1',
           title: 'Synthetic title',
           text: 'Synthetic content.',
+          title_flags: [],
+          text_flags: [],
         },
         'GET /api/v1/assignments/21/score-sheet': {
           stage: 'One',
@@ -201,6 +203,8 @@ test.describe('W4c review reproducers', () => {
           state: 'IRC_REVIEW',
           title: 'Synthetic title',
           text: 'Synthetic content.',
+          title_flags: [],
+          text_flags: [],
           outcome: 'nominated',
         },
       },

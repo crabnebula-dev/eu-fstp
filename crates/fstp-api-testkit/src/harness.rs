@@ -761,6 +761,7 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
         | "guardian.begin_consent"
         | "review.admit"
         | "assess.rerun"
+        | "assess.release_integrity"
         | "review.close_stage1"
         | "review.unassign"
         | "stage2.no_questions"
@@ -1002,6 +1003,17 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
             ("reviewer", dec(ids.member)),
             ("kind", obj(vec![("type", s("Reviewer"))])),
         ]),
+        // Q38: one assignment in a batch, as `review.assign` names it.
+        "review.assign_batch" => obj(vec![
+            (
+                "assign",
+                Value::Array(Array::from(vec![obj(vec![
+                    ("reviewer", dec(ids.member)),
+                    ("kind", obj(vec![("type", s("Reviewer"))])),
+                ])])),
+            ),
+            ("unassign", Value::Array(Array::new())),
+        ]),
         "review.score" => obj(vec![
             ("plan", dec(ids.plan.unwrap_or(1))),
             ("stage", s(stage_of(state))),
@@ -1028,6 +1040,14 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
         }
         "committee.cast" => obj(vec![("vote", s("For"))]),
         "review.mark_finding" => obj(vec![("mark", s("Agreed"))]),
+        // ADR-033: a well-formed submission with no reply. The engine judges
+        // the caller and the P-21 path before the body is read.
+        "assess.client_submit" => obj(vec![
+            ("input_digest", s(&"0".repeat(64))),
+            ("model", s("synthetic-model")),
+            ("prompt_set", s(&"0".repeat(64))),
+            ("replies", Value::Array(Array::new())),
+        ]),
         "committee.delegate" => obj(vec![("to", dec(ids.member))]),
         "irc.review" => obj(vec![("verdict", obj(vec![("type", s("Validate"))]))]),
         "agents.consent" => obj(vec![]),

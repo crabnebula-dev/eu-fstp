@@ -69,6 +69,7 @@ members = [
     "crates/fstp-smtp",
     # M7, docs/handoff/m7-design.md section 10, lane L-WIRE.
     "crates/fstp-infer",
+    "crates/fstp-injscan",
     # M5 lane L-CON.
     "crates/fstp-sigval",
     "crates/fstp-contract-core",
@@ -201,6 +202,7 @@ fstp-report-core = { path = "crates/fstp-report-core" }
 fstp-smtp = { path = "crates/fstp-smtp" }
 # M7, docs/handoff/m7-design.md section 10.
 fstp-infer = { path = "crates/fstp-infer" }
+fstp-injscan = { path = "crates/fstp-injscan" }
 fstp-sigval = { path = "crates/fstp-sigval" }
 fstp-contract-core = { path = "crates/fstp-contract-core" }
 fstp-contract = { path = "crates/fstp-contract" }

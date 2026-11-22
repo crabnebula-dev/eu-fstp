@@ -127,6 +127,9 @@ use crate::port::{
 use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
+// ADR-033: the assessment run by the FSTP coordinator's connected agent.
+mod assess;
+mod assign_batch;
 mod audit;
 // ADR-030: logos and themes.
 pub(crate) mod brand;
@@ -136,6 +139,7 @@ mod creator_ops;
 pub(crate) mod grant;
 /// The M5 reads follow-up: the caller's grants and contracts to sign.
 mod grant_lists;
+mod integrity;
 /// `proposal.journey` and `proposal.diary` (lane j2, ADR-015), and
 /// `proposal.route_map` (lane j4).
 pub(crate) mod journey;
@@ -834,6 +838,10 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         OpKind::Tenant(kind) => tenant::command(call, op, kind, verdict, None).await,
         OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(call, op).await,
         OpKind::Finding(fstp_access::FindingKind::RequestRerun) => finding_rerun(call, op).await,
+        OpKind::Finding(fstp_access::FindingKind::RecordClient) => assess::submit(call, op).await,
+        OpKind::Finding(fstp_access::FindingKind::ReleaseIntegrity) => {
+            integrity::release(call, op).await
+        }
         // `Record`, `Regenerate` and `RecordRefusals` are the assessor's,
         // through no route.
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
@@ -841,6 +849,9 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         ))),
         OpKind::Public(kind) => public::read(call, op, kind).await,
         OpKind::Grant(kind) => grant::command(call, op, kind).await,
+        OpKind::Batch(fstp_access::BatchKind::Assignments) => {
+            assign_batch::command(call, op, verdict).await
+        }
     }
 }
 
@@ -1427,6 +1438,8 @@ async fn command<P: Seams>(
     texts.extend(preset);
     let cmd = build(call, &form, op, &texts, &mut ids).map_err(|e| call.refuse(e))?;
     let cmd = tenant::with_approval(cmd, ledger).map_err(|e| call.refuse(e))?;
+    // ADR-035: a flagged submission carries its scan records.
+    let cmd = integrity::scanned(call, cmd).await;
     let meta = ExecMeta {
         via: call.caller.via(),
         session: call.caller.session,
@@ -1461,6 +1474,15 @@ async fn command<P: Seams>(
 /// frozen at submission.
 async fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
     use fstp_domain::command::Command as Core;
+    // ADR-035: a flagged submission folds as its core `Submit`.
+    let unwrapped;
+    let cmd = match cmd {
+        Command::ScannedSubmit(s) => {
+            unwrapped = Command::Core(s.submit().clone());
+            &unwrapped
+        }
+        other => other,
+    };
     {
         let mut journal = journal(call);
         journal.fold(cmd, &call.state, call.now);
@@ -1745,6 +1767,8 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
         texts.insert("confidentiality", terms);
     }
     let cmd = build(call, &form, &stored, &texts, &mut ids).map_err(|e| call.refuse(e))?;
+    // ADR-035: a flagged submission carries its scan records.
+    let cmd = integrity::scanned(call, cmd).await;
     let meta = ExecMeta {
         via: Via::Web,
         session: call.caller.session,
@@ -2130,6 +2154,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
             })
         }
         ReadKind::GetPrecheckRuns => precheck::runs(call, op, account).await?,
+        ReadKind::GetAssessmentQueue => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            assess::queue(call, op, a)?
+        }
+        ReadKind::GetAssessmentInput => return assess::input(call, op, &clearance).await,
         ReadKind::GetFindingsStatus => {
             let c = call_param(call, op)?;
             ReadModel::FindingsStatus(precheck::findings_status(call, c))
@@ -3499,12 +3530,25 @@ async fn content_read<P: Seams>(
         submitted_content(call, p, clearance).await?
     };
     let seq = append_content_read(call, p).await?;
+    // ADR-035, TH-60: an agent receives the neutralised view, and every
+    // reader the flagged spans beside the text. A person in the web reads
+    // the text as submitted.
+    let (title, text) = if call.caller.via() == Via::Mcp {
+        (
+            integrity::for_agent(content.title),
+            integrity::for_agent(content.narrative),
+        )
+    } else {
+        (content.title, content.narrative)
+    };
     let view = crate::views::ContentView {
         proposal: p.raw(),
         call: call_of(&call.state, p).map_or(0, CallId::raw),
         state: state_name(&call.state, p),
-        title: content.title,
-        text: content.narrative,
+        title_flags: integrity::flags(&title),
+        text_flags: integrity::flags(&text),
+        title,
+        text,
         outcome,
     };
     Ok(OpResult::Done {
@@ -4610,19 +4654,35 @@ async fn own_plan<P: Seams>(
 /// None)` while it is stored, or `(None, Some(day))` once the erasure log
 /// names it, from the day its erasure was requested. The log is read
 /// first, so no copy held in this process outlives an erasure. A store
-/// that keeps no log, or a text it cannot give, fails the read closed.
+/// that keeps no log is asked for the text itself, never a copy held in
+/// this process, and a text it cannot give fails the read closed.
 async fn plan_text<P: Seams>(
     call: &Call<'_, P>,
     r: TextRef,
     clearance: &fstp_access::ReadClearance,
 ) -> Result<(Option<String>, Option<String>), ApiError> {
     use crate::port::TextStore as _;
-    let log = call
-        .ports
-        .texts()
-        .erasures()
-        .await
-        .map_err(|e| call.refuse(port_failed(e, "ADR-007")))?;
+    let log = match call.ports.texts().erasures().await {
+        Ok(log) => log,
+        // A store that keeps no erasure log (the production cell's text
+        // store today): the store itself is asked, never a copy held in
+        // this process, and it refuses an erased text. So no copy outlives
+        // an erasure, and the team still reads its own plan (Daniel,
+        // 2026-11-15: "if i wrote it i should be able to read it").
+        Err(PortError::Unavailable) => {
+            let text = call
+                .ports
+                .texts()
+                .get(crate::port::TextRef(r.id().raw()), clearance)
+                .await
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .filter(|t| forms::text_digest(t) == r.digest())
+                .ok_or_else(|| call.refuse(text_unknown()))?;
+            return Ok((Some(text), None));
+        }
+        Err(e) => return Err(call.refuse(port_failed(e, "ADR-007"))),
+    };
     if let Some(row) = log.iter().find(|row| row.text.0 == r.id().raw()) {
         return Ok((None, Some(utc_day(row.requested_at))));
     }

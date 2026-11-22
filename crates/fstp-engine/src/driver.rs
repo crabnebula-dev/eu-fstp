@@ -249,6 +249,25 @@ fn route_queries(
             crate::ledger_clock(state, ctx)?;
             crate::compose::approved_self_grant_queries(state, g, ctx)
         }
+        // Q38: the questions of every command of the batch, on the state
+        // before it. An `Assign` asks about its own reviewer only.
+        Command::AssignmentBatch(b) => {
+            crate::ledger_clock(state, ctx)?;
+            let mut out: Vec<Query> = Vec::new();
+            for c in b.commands() {
+                outside_activation(c, ctx)?;
+                for q in fstp_domain::queries(&state.core, c, ctx)? {
+                    if !out.contains(&q) {
+                        out.push(q);
+                    }
+                }
+            }
+            Ok(out)
+        }
+        // ADR-035: the scan records ask nothing of the vault.
+        Command::ScannedSubmit(s) => {
+            route_queries(state, &Command::Core(s.submit().clone()), ctx, env)
+        }
     }
 }
 
@@ -295,6 +314,21 @@ fn route_decide(
         }
         Command::Contract(c) => crate::contract::decide_contract(state, c, ctx, answers),
         Command::Report(r) => crate::report::decide_report(state, r, ctx),
+        Command::AssignmentBatch(b) => {
+            crate::ledger_clock(state, ctx)?;
+            let mut scratch = state.core.clone();
+            let mut out = Vec::new();
+            for c in b.commands() {
+                outside_activation(c, ctx)?;
+                let records = crate::compose::decide_core(&mut scratch, c, ctx, answers)?;
+                out.extend(records.into_iter().map(Record::Core));
+            }
+            Ok(out)
+        }
+        Command::ScannedSubmit(s) => {
+            let core = route_decide(state, &Command::Core(s.submit().clone()), ctx, answers, env)?;
+            crate::findings::decide_scanned_submit(state, s, core, ctx)
+        }
         Command::ApprovedSelfGrant(g) => {
             crate::ledger_clock(state, ctx)?;
             crate::compose::decide_approved_self_grant(state, g, ctx, answers)

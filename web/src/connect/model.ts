@@ -43,6 +43,7 @@ export const SCOPES: readonly string[] = [
   "calls:draft",
   "audit:read",
   "tenant:draft",
+  "assess:run",
 ];
 
 const HANDLE = /^[A-Za-z0-9_-]{43}$/;

@@ -129,7 +129,31 @@ export interface FindingsStatus {
   readonly refused: number;
   /** Whether the coordinator may run the assessment again now. */
   readonly rerun: "available" | "in_flight" | "used_up";
+  /** The integrity hold of the injection scan (ADR-035). */
+  readonly integrity: "clear" | "held" | "released";
+  /** The scan's reason codes, empty when clear. Closed codes, never text. */
+  readonly reasons: readonly string[];
 }
+
+/** The reason codes of the injection scan (ADR-035). */
+const INTEGRITY_REASONS: readonly string[] = [
+  "zero_width",
+  "bidi",
+  "tag",
+  "variation_run",
+  "format",
+  "hidden_markup",
+  "role_marker",
+  "override",
+  "addressed",
+  "score_request",
+  "tool_call",
+  "schema_payload",
+  "exfil_link",
+  "encoded_blob",
+  "confusable",
+  "truncated",
+];
 
 /** The `assess.findings_status` reply, or null. */
 export function decodeFindingsStatus(v: unknown): readonly FindingsStatus[] | null {
@@ -138,15 +162,39 @@ export function decodeFindingsStatus(v: unknown): readonly FindingsStatus[] | nu
   }
   const out: FindingsStatus[] = [];
   for (const x of v) {
-    if (!isObject(x) || !exactly(x, ["proposal", "status", "findings", "refused", "rerun"])) {
+    if (
+      !isObject(x) ||
+      !exactly(x, ["proposal", "status", "findings", "refused", "rerun", "integrity", "reasons"])
+    ) {
       return null;
     }
     const status = oneOf(x["status"], ["pending", "ready"] as const);
     const rerun = oneOf(x["rerun"], ["available", "in_flight", "used_up"] as const);
-    if (!isId(x["proposal"]) || status === null || !isCount(x["findings"]) || !isCount(x["refused"]) || rerun === null) {
+    const integrity = oneOf(x["integrity"], ["clear", "held", "released"] as const);
+    const reasons = x["reasons"];
+    if (
+      !isId(x["proposal"]) ||
+      status === null ||
+      !isCount(x["findings"]) ||
+      !isCount(x["refused"]) ||
+      rerun === null ||
+      integrity === null ||
+      !Array.isArray(reasons) ||
+      !reasons.every((r) => typeof r === "string" && INTEGRITY_REASONS.includes(r))
+    ) {
       return null;
     }
-    out.push(Object.freeze({ proposal: x["proposal"], status, findings: x["findings"], refused: x["refused"], rerun }));
+    out.push(
+      Object.freeze({
+        proposal: x["proposal"],
+        status,
+        findings: x["findings"],
+        refused: x["refused"],
+        rerun,
+        integrity,
+        reasons: Object.freeze([...(reasons as string[])]),
+      }),
+    );
   }
   return Object.freeze(out);
 }
@@ -189,6 +237,37 @@ export interface PrecheckView {
     readonly next: string | null;
   };
   readonly runs: readonly PrecheckRun[];
+  /** The platform's injection check of the draft (ADR-035): no AI, never counted. */
+  readonly scan: readonly PrecheckScan[];
+}
+
+/** One span the platform's injection check flagged in the draft (ADR-035, TH-02). */
+export interface PrecheckScan {
+  readonly section: "title" | "summary" | "narrative";
+  readonly reason: string;
+  readonly start: number;
+  readonly end: number;
+  /** A short quote of the team's own visible text; empty for hidden characters. */
+  readonly quote: string;
+}
+
+function decodeScan(v: unknown): PrecheckScan | null {
+  if (!isObject(v) || !exactly(v, ["section", "reason", "start", "end", "quote"])) {
+    return null;
+  }
+  const section = oneOf(v["section"], ["title", "summary", "narrative"] as const);
+  const reason = v["reason"];
+  if (
+    section === null ||
+    typeof reason !== "string" ||
+    !INTEGRITY_REASONS.includes(reason) ||
+    !isCount(v["start"]) ||
+    !isCount(v["end"]) ||
+    typeof v["quote"] !== "string"
+  ) {
+    return null;
+  }
+  return Object.freeze({ section, reason, start: v["start"], end: v["end"], quote: v["quote"] });
 }
 
 function decodeEvidence(v: unknown): PrecheckEvidence | null {
@@ -265,12 +344,24 @@ function decodeRun(v: unknown): PrecheckRun | null {
 
 /** The `proposal.precheck` and `proposal.precheck_runs` reply, or null. */
 export function decodePrecheckView(v: unknown): PrecheckView | null {
-  if (!isObject(v) || !exactly(v, ["assessor", "remaining", "runs"])) {
+  if (!isObject(v) || !exactly(v, ["assessor", "remaining", "runs", "scan"])) {
     return null;
   }
   const assessor = oneOf(v["assessor"], ASSESSORS);
   const r = v["remaining"];
   const runs = v["runs"];
+  const scanned = v["scan"];
+  if (!Array.isArray(scanned)) {
+    return null;
+  }
+  const scan: PrecheckScan[] = [];
+  for (const x of scanned) {
+    const d = decodeScan(x);
+    if (d === null) {
+      return null;
+    }
+    scan.push(d);
+  }
   if (assessor === null || !isObject(r) || !exactly(r, ["proposal_today", "proposal_call", "account_call", "next"])) {
     return null;
   }
@@ -301,6 +392,7 @@ export function decodePrecheckView(v: unknown): PrecheckView | null {
       next: next === null ? null : (next as string),
     }),
     runs: Object.freeze(out),
+    scan: Object.freeze(scan),
   });
 }
 

@@ -185,8 +185,23 @@ export function statusCell(
   t: I18n,
   s: FindingsStatus,
   rerun: (proposal: string, b: HTMLButtonElement) => void,
+  release?: (proposal: string, b: HTMLButtonElement) => void,
 ): Child[] {
   const parts: Child[] = [statusText(t, s)];
+  // ADR-035: a proposal the platform's check flagged waits for the
+  // coordinator before any AI assessment. The submission itself stands.
+  if (s.integrity === "held") {
+    const what = s.reasons.map((r) => t.label(`coord.integrity.reason.${r}`)).join("; ");
+    parts.push(" ", h("span", { class: "integrity-held" }, [t.label("coord.integrity.held", { what })]));
+    if (release !== undefined) {
+      const b = buttonEl(`findings-release-${s.proposal}`, "button", t.label("coord.integrity.release"));
+      b.setAttribute("aria-label", t.label("coord.integrity.release_named", { id: s.proposal }));
+      b.addEventListener("click", () => release(s.proposal, b));
+      parts.push(" ", b);
+    }
+  } else if (s.integrity === "released") {
+    parts.push(" ", t.label("coord.integrity.released"));
+  }
   if (s.refused === 0) {
     return parts;
   }
@@ -247,6 +262,23 @@ export async function findingsStatusSection(env: PageEnv, call: string, f?: Fram
       }),
     );
   };
+  const release = (proposal: string, b: HTMLButtonElement): void => {
+    if (f === undefined) {
+      return;
+    }
+    void guarded(f, () =>
+      whileBusy(b, async () => {
+        f.clearAlert();
+        const done = await writeOp(env, "assess.release_integrity", { proposal }, {});
+        if (!done.ok) {
+          f.problem(done.problem);
+          return;
+        }
+        f.status(t.label("coord.integrity.released_now"));
+        await render();
+      }),
+    );
+  };
   const children: Child[] = [
     h("h2", { id: "findings-status-heading" }, [t.label("coord.findings.heading")]),
     disclosure(t, null),
@@ -272,7 +304,7 @@ export async function findingsStatusSection(env: PageEnv, call: string, f?: Fram
           rows.map((r) =>
             h("tr", { "data-findings-proposal": r.proposal, "data-findings-status": r.status }, [
               h("th", { scope: "row" }, [t.label("coord.findings.proposal", { id: r.proposal })]),
-              h("td", {}, statusCell(t, r, rerun)),
+              h("td", {}, statusCell(t, r, rerun, release)),
             ]),
           ),
         ),

@@ -291,6 +291,21 @@ async fn view<P: Seams>(
             .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-LA-06")))?,
         None => Vec::new(),
     };
+    // ADR-035: the platform's injection check of the draft as it stands,
+    // read as the team's own workspace read reads it (I-21). It is
+    // deterministic and cheap, so it never counts under P-23 (lead
+    // reading, 2026-11-22). A draft that cannot be read shows none.
+    let own = fstp_access::ReadOp {
+        kind: fstp_access::ReadKind::GetOwnWorkspace,
+        target: fstp_access::ReadTarget::Proposal(p),
+    };
+    let scan = match fstp_access::authorize_read(&own, &call.caller.p, &call.state, call.now) {
+        Ok(clearance) => match super::workspace_of(call, p, &clearance).await {
+            Ok(w) => super::integrity::scan_rows(&w),
+            Err(_) => Vec::new(),
+        },
+        Err(_) => Vec::new(),
+    };
     Ok(PrecheckView {
         assessor: assessor_name(call),
         proposal_today: left.today,
@@ -298,6 +313,7 @@ async fn view<P: Seams>(
         account_call: left.account_call,
         next: left.next.map(Timestamp::micros),
         runs: runs.iter().map(run_row).collect(),
+        scan,
     })
 }
 
@@ -347,11 +363,14 @@ pub(crate) async fn request<P: Seams>(
         // Anyone outside the drafting team is the wrong actor (I-21).
         return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")));
     }
-    let Some(port) = call.ports.precheck() else {
-        // Q38: a cell without a provider has no pre-check.
-        return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "R-LA-06")));
-    };
     let (pin, l) = pin_of(call, p)?;
+    let Some(port) = call.ports.precheck() else {
+        // Q38: a cell without a provider has no AI pre-check. ADR-035
+        // (lead reading, 2026-11-22): it still offers the platform's
+        // injection check of the draft, which is not counted (P-23).
+        let v = view(call, p, account).await?;
+        return call.accept(ReadModel::Precheck(v));
+    };
     // The draft is read as the team's own workspace read would read it.
     let own = fstp_access::ReadOp {
         kind: fstp_access::ReadKind::GetOwnWorkspace,
@@ -476,6 +495,18 @@ pub(crate) fn findings_status<P: Seams>(call: &Call<'_, P>, c: CallId) -> Vec<Fi
                     Err(fstp_findings::FindingRefusal::RerunInFlight { .. }) => "in_flight",
                     Err(_) => "used_up",
                 },
+                // ADR-035: the integrity hold and the scan's reasons.
+                integrity: match call.state.findings.integrity_of(p) {
+                    None => "clear",
+                    Some(i) if i.released_by.is_none() => "held",
+                    Some(_) => "released",
+                },
+                reasons: call
+                    .state
+                    .findings
+                    .integrity_of(p)
+                    .map(|i| i.reasons.iter().map(|r| r.code()).collect())
+                    .unwrap_or_default(),
             }
         })
         .collect()

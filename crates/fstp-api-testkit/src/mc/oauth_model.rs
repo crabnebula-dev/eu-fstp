@@ -79,7 +79,7 @@ pub const PRM_PATH: &str = "/.well-known/oauth-protected-resource";
 
 /// The scopes issued in M4 (design section 3.8), and `tenant:draft` of the
 /// ADR-013 amendment of 2026-11-20, spelt as on the wire.
-pub const SCOPES: [&str; 13] = [
+pub const SCOPES: [&str; 14] = [
     "calls:read",
     "proposals:read",
     "proposals:draft",
@@ -93,6 +93,7 @@ pub const SCOPES: [&str; 13] = [
     "calls:draft",
     "audit:read",
     "tenant:draft",
+    "assess:run",
 ];
 
 /// The redirect URI of the model's client.

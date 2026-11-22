@@ -1068,6 +1068,19 @@ impl ToJson for CellCommand {
             }
             // M5 lane L-CON. The decoder does not read it back yet; the
             // L-API lane adds it with the contract routes.
+            // ADR-035: a flagged submission is its core `Submit`; the scan
+            // records it adds are the engine's, in the ledger. The decoder
+            // does not read it back, so no step-up admits it (fail closed).
+            CellCommand::Engine(fstp_engine::Command::ScannedSubmit(s)) => {
+                wrap("scanned_submit", s.submit().to_json())
+            }
+            // Q38: the core commands of an assignment batch, in order. The
+            // decoder does not read it back, so no step-up admits it through
+            // this codec (fail closed); the API names the request digest.
+            CellCommand::Engine(fstp_engine::Command::AssignmentBatch(b)) => wrap(
+                "assignment_batch",
+                Value::Array(b.commands().iter().map(|c| c.to_json()).collect::<Array>()),
+            ),
             CellCommand::Engine(fstp_engine::Command::Contract(c)) => wrap("contract", c.to_json()),
             CellCommand::Engine(fstp_engine::Command::Report(r)) => wrap("report", r.to_json()),
             // Lane m3/cell-routes (SoD-07): the approval and the core grant
@@ -1132,6 +1145,14 @@ fn finding_command_json(c: &FindingCommand) -> Value {
         ),
         // Issue 6 M3: the re-run request and the refused stages, as stage
         // and code names from the two closed lists.
+        // ADR-035: the release of an integrity hold.
+        FindingCommand::ReleaseIntegrityHold { call, proposal } => tagged(
+            "ReleaseIntegrityHold",
+            vec![
+                ("call", dec_u128(call.raw())),
+                ("proposal", dec_u128(proposal.raw())),
+            ],
+        ),
         FindingCommand::RequestRerun { call, proposal } => tagged(
             "RequestRerun",
             vec![
@@ -1160,23 +1181,96 @@ fn finding_command_json(c: &FindingCommand) -> Value {
             vec![
                 ("call", dec_u128(call.raw())),
                 ("proposal", dec_u128(proposal.raw())),
+                ("refused", refused_json(refused)),
+            ],
+        ),
+        // ADR-033: the coordinator's agent reads the input and records its
+        // assessment. Digests travel as hex, the model as its string.
+        FindingCommand::ReadAssessmentInput {
+            call,
+            proposal,
+            input,
+        } => tagged(
+            "ReadAssessmentInput",
+            vec![
+                ("call", dec_u128(call.raw())),
+                ("proposal", dec_u128(proposal.raw())),
+                ("input", hex(&input.bytes())),
+            ],
+        ),
+        FindingCommand::RecordClientAssessment {
+            call,
+            proposal,
+            run,
+            findings,
+            refused,
+        } => tagged(
+            "RecordClientAssessment",
+            vec![
+                ("call", dec_u128(call.raw())),
+                ("proposal", dec_u128(proposal.raw())),
+                ("model", Value::String(run.model.0.clone())),
+                ("prompt_set", hex(&run.prompt_set.bytes())),
+                ("input", hex(&run.input.bytes())),
+                ("trace", dec_u128(run.trace.raw())),
                 (
-                    "refused",
-                    Value::Array(
-                        refused
-                            .iter()
-                            .map(|r| {
-                                let mut o = Object::with_capacity(2);
-                                o.insert("stage", Value::String(r.stage.as_str().to_owned()));
-                                o.insert("code", Value::String(r.code.as_str().to_owned()));
-                                Value::Object(o)
-                            })
-                            .collect::<Array>(),
-                    ),
+                    "findings",
+                    Value::Array(findings.iter().map(ToJson::to_json).collect::<Array>()),
                 ),
+                ("refused", refused_json(refused)),
             ],
         ),
     }
+}
+
+/// A refusal list as stage and code names from the two closed lists.
+fn refused_json(refused: &[fstp_findings::RefusedStage]) -> Value {
+    Value::Array(
+        refused
+            .iter()
+            .map(|r| {
+                let mut o = Object::with_capacity(2);
+                o.insert("stage", Value::String(r.stage.as_str().to_owned()));
+                o.insert("code", Value::String(r.code.as_str().to_owned()));
+                Value::Object(o)
+            })
+            .collect::<Array>(),
+    )
+}
+
+/// The refusal list of member `refused` of `o`, at most `MAX_REFUSED`.
+fn refused_from(o: &Object) -> Result<Vec<fstp_findings::RefusedStage>, FromJsonError> {
+    let list = member(o, "refused")?
+        .as_array()
+        .ok_or_else(|| FromJsonError::invalid("not a list").at_field("refused"))?;
+    if list.len() > fstp_findings::MAX_REFUSED {
+        return Err(FromJsonError::invalid("too many").at_field("refused"));
+    }
+    let mut refused = Vec::with_capacity(list.len());
+    for (i, r) in list.iter().enumerate() {
+        let bad = |e: FromJsonError| e.at_index(i).at_field("refused");
+        let ro = r
+            .as_object()
+            .ok_or_else(|| bad(FromJsonError::invalid("not an object")))?;
+        fields(ro, &["stage", "code"]).map_err(bad)?;
+        let stage = member(ro, "stage").map_err(bad)?.as_str();
+        let code = member(ro, "code").map_err(bad)?.as_str();
+        refused.push(
+            stage
+                .zip(code)
+                .and_then(|(s, c)| fstp_findings::RefusedStage::parse(s, c))
+                .ok_or_else(|| bad(FromJsonError::invalid("not a refused stage")))?,
+        );
+    }
+    Ok(refused)
+}
+
+/// The 32-byte digest of member `key` of `o`, as 64 hex digits.
+fn digest_from(
+    o: &Object,
+    key: &'static str,
+) -> Result<fstp_domain::id::ContentDigest, FromJsonError> {
+    array_from(o, key).map(fstp_domain::id::ContentDigest::from_bytes)
 }
 
 fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
@@ -1242,32 +1336,62 @@ fn finding_command(v: &Value) -> Result<FindingCommand, FromJsonError> {
         }
         "RecordRefusals" => {
             fields(o, &["call", "proposal", "refused"])?;
-            let list = member(o, "refused")?
-                .as_array()
-                .ok_or_else(|| FromJsonError::invalid("not a list").at_field("refused"))?;
-            if list.len() > fstp_findings::MAX_REFUSED {
-                return Err(FromJsonError::invalid("too many").at_field("refused"));
-            }
-            let mut refused = Vec::with_capacity(list.len());
-            for (i, r) in list.iter().enumerate() {
-                let bad = |e: FromJsonError| e.at_index(i).at_field("refused");
-                let ro = r
-                    .as_object()
-                    .ok_or_else(|| bad(FromJsonError::invalid("not an object")))?;
-                fields(ro, &["stage", "code"]).map_err(bad)?;
-                let stage = member(ro, "stage").map_err(bad)?.as_str();
-                let code = member(ro, "code").map_err(bad)?.as_str();
-                refused.push(
-                    stage
-                        .zip(code)
-                        .and_then(|(s, c)| fstp_findings::RefusedStage::parse(s, c))
-                        .ok_or_else(|| bad(FromJsonError::invalid("not a refused stage")))?,
-                );
-            }
+            let refused = refused_from(o)?;
             Ok(FindingCommand::RecordRefusals {
                 call: CallId::from_raw(u128_from(o, "call")?),
                 proposal: fstp_domain::id::ProposalId::from_raw(u128_from(o, "proposal")?),
                 refused,
+            })
+        }
+        "ReadAssessmentInput" => {
+            fields(o, &["call", "proposal", "input"])?;
+            Ok(FindingCommand::ReadAssessmentInput {
+                call: CallId::from_raw(u128_from(o, "call")?),
+                proposal: fstp_domain::id::ProposalId::from_raw(u128_from(o, "proposal")?),
+                input: digest_from(o, "input")?,
+            })
+        }
+        "RecordClientAssessment" => {
+            fields(
+                o,
+                &[
+                    "call",
+                    "proposal",
+                    "model",
+                    "prompt_set",
+                    "input",
+                    "trace",
+                    "findings",
+                    "refused",
+                ],
+            )?;
+            let model = member(o, "model")?
+                .as_str()
+                .filter(|s| fstp_findings::codec::model_name_ok(s))
+                .ok_or_else(|| FromJsonError::invalid("not a model name").at_field("model"))?
+                .to_owned();
+            let list = member(o, "findings")?
+                .as_array()
+                .ok_or_else(|| FromJsonError::invalid("not a list").at_field("findings"))?;
+            if list.len() > fstp_findings::MAX_CLIENT_FINDINGS {
+                return Err(FromJsonError::invalid("too many").at_field("findings"));
+            }
+            let mut findings = Vec::with_capacity(list.len());
+            for (i, f) in list.iter().enumerate() {
+                findings
+                    .push(Finding::from_json(f).map_err(|e| e.at_index(i).at_field("findings"))?);
+            }
+            Ok(FindingCommand::RecordClientAssessment {
+                call: CallId::from_raw(u128_from(o, "call")?),
+                proposal: fstp_domain::id::ProposalId::from_raw(u128_from(o, "proposal")?),
+                run: fstp_findings::ClientRun {
+                    model: ModelRef(model),
+                    prompt_set: digest_from(o, "prompt_set")?,
+                    input: digest_from(o, "input")?,
+                    trace: fstp_findings::TraceRef::from_raw(u128_from(o, "trace")?),
+                },
+                findings,
+                refused: refused_from(o)?,
             })
         }
         _ => Err(unknown_variant()),

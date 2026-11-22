@@ -46,6 +46,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "connect.scope.audit:read": "Read audit views you may see.",
   "connect.scope.tenant:draft":
     "Read your organisation's funder profiles and check brand colours. Prepare changes to funder profiles, brand tokens and interface labels. Nothing changes until you confirm each change in the platform.",
+  "connect.scope.assess:run":
+    "Run the AI assessment of proposals you may read: read their text with personal data replaced, and record advisory findings. Nothing else.",
 };
 
 /** The English catalogue of the consent page. */

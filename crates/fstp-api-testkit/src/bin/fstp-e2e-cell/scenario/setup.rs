@@ -337,7 +337,7 @@ fn fresh(info: &SiteInfo) -> Result<(Inner, String), String> {
     let (a2_key, a2, _) = SECOND_ADMIN;
     auth.person(&email(a2_key)?, a2);
     let _ = auth.invite(a2)?;
-    let inner = Inner::new(info, &world, auth, PRIMARY_MODEL)?;
+    let inner = Inner::new(info, &world, auth, &super::primary_model())?;
     inner.ports.accounts.name(pm, label);
     Ok((inner, url))
 }

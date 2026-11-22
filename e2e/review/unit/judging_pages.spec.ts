@@ -57,6 +57,8 @@ function reviewerAnswers(awaiting: boolean): Record<string, unknown> {
       state: 'STAGE1',
       title: 'Synthetic title',
       text: 'Synthetic content.',
+      title_flags: [],
+      text_flags: [],
     },
     'GET /api/v1/assignments/21/score-sheet': {
       stage: 'One',
@@ -177,6 +179,8 @@ test.describe('W4c Judging page behaviour', () => {
           state: 'IRC_REVIEW',
           title: 'Synthetic title',
           text: 'Synthetic content.',
+          title_flags: [],
+          text_flags: [],
           outcome: 'nominated',
         },
         'POST /api/v1/irc-assignments/31/declaration': { accepted: true },

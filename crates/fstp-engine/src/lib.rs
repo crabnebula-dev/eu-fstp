@@ -379,6 +379,103 @@ pub enum Command {
     /// second tenant admin's ledger approval (SoD-07), decided by
     /// `compose::decide_approved_self_grant` in one entry.
     ApprovedSelfGrant(ApprovedSelfGrant),
+    /// A submission that the injection scan flagged (ADR-035): the core
+    /// `Submit`, then the scan's integrity findings and `IntegrityHeld`,
+    /// decided in one entry by `findings::decide_scanned_submit`.
+    ScannedSubmit(ScannedSubmit),
+    /// A coordinator's batch of assignments and unassignments on one
+    /// proposal, decided in order in one entry under one step-up (Q38,
+    /// decided by Daniel on 2026-11-22: "Step-up, batched").
+    AssignmentBatch(AssignmentBatch),
+}
+
+/// The most commands one assignment batch holds (Q38).
+pub const MAX_ASSIGNMENT_BATCH: usize = 64;
+
+/// A batch of core `Assign` and `Unassign` commands (Q38, ADR-008). Only
+/// [`AssignmentBatch::new`] builds it, so it holds 1 to
+/// [`MAX_ASSIGNMENT_BATCH`] commands, each an `Assign` or an `Unassign`.
+/// The engine decides them in order in one entry: one bad command refuses
+/// the whole batch with its own refusal, and nothing is recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AssignmentBatch {
+    commands: Vec<fstp_domain::Command>,
+}
+
+impl AssignmentBatch {
+    /// The batch of `commands`, or `None` unless it holds 1 to
+    /// [`MAX_ASSIGNMENT_BATCH`] commands, each an `Assign` or an `Unassign`.
+    pub fn new(commands: Vec<fstp_domain::Command>) -> Option<AssignmentBatch> {
+        let ok = !commands.is_empty()
+            && commands.len() <= MAX_ASSIGNMENT_BATCH
+            && commands.iter().all(|c| {
+                matches!(
+                    c,
+                    fstp_domain::Command::Assign { .. } | fstp_domain::Command::Unassign { .. }
+                )
+            });
+        ok.then_some(AssignmentBatch { commands })
+    }
+
+    /// The core commands, in the order they are decided.
+    pub fn commands(&self) -> &[fstp_domain::Command] {
+        &self.commands
+    }
+}
+
+/// A flagged submission (ADR-035): the core `Submit` and the records of
+/// the injection scan at intake. Only [`ScannedSubmit::new`] builds it, so
+/// the core command is always a `Submit`, every finding is an integrity
+/// finding of its proposal, and the reasons are a non-empty, ordered set.
+/// A clean submission stays a plain `Command::Core`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ScannedSubmit {
+    submit: fstp_domain::Command,
+    findings: Vec<Finding>,
+    reasons: Vec<fstp_findings::IntegrityReason>,
+}
+
+impl ScannedSubmit {
+    /// The flagged submission, or `None` unless `submit` is a `Submit`,
+    /// `reasons` is non-empty and ordered without repeats, and every
+    /// finding is an integrity finding of the submitted proposal.
+    pub fn new(
+        submit: fstp_domain::Command,
+        findings: Vec<Finding>,
+        reasons: Vec<fstp_findings::IntegrityReason>,
+    ) -> Option<ScannedSubmit> {
+        let fstp_domain::Command::Submit { proposal, .. } = &submit else {
+            return None;
+        };
+        let ordered = reasons.windows(2).all(|w| matches!(w, [a, b] if a < b));
+        let own = findings
+            .iter()
+            .all(|f| f.proposal == *proposal && f.kind == fstp_findings::FindingKind::Integrity);
+        (!reasons.is_empty()
+            && ordered
+            && own
+            && findings.len() <= fstp_findings::MAX_CLIENT_FINDINGS)
+            .then_some(ScannedSubmit {
+                submit,
+                findings,
+                reasons,
+            })
+    }
+
+    /// The core `Submit`.
+    pub fn submit(&self) -> &fstp_domain::Command {
+        &self.submit
+    }
+
+    /// The scan's integrity findings.
+    pub fn findings(&self) -> &[Finding] {
+        &self.findings
+    }
+
+    /// The scan's reasons.
+    pub fn reasons(&self) -> &[fstp_findings::IntegrityReason] {
+        &self.reasons
+    }
 }
 
 /// A self-grant with its SoD-07 approval (lane m3/cell-routes): the
@@ -506,6 +603,14 @@ impl core::hash::Hash for Command {
             Command::ApprovedSelfGrant(g) => {
                 9u8.hash(state);
                 g.hash(state);
+            }
+            Command::ScannedSubmit(s) => {
+                10u8.hash(state);
+                s.hash(state);
+            }
+            Command::AssignmentBatch(b) => {
+                11u8.hash(state);
+                b.hash(state);
             }
         }
     }

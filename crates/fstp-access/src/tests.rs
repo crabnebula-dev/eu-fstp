@@ -79,8 +79,9 @@ fn i84_tool_input_schema_matches_its_route() {
     }
     // M5 design 12.1: the read-only contract, payment status and
     // payment queue tools, and the signing list tool (2026-11-13). The
-    // ADR-013 amendment of 2026-11-20 adds 28 setup tools.
-    assert_eq!(tools, 67);
+    // ADR-013 amendment of 2026-11-20 adds 28 setup tools, and ADR-033 the
+    // three assessment tools of the coordinator's agent.
+    assert_eq!(tools, 70);
 }
 
 /// I-84: no two operations share a method and a route.
@@ -797,6 +798,8 @@ fn p75_p77_sets_agent_policy_by_the_decoded_command() {
     assert!(sets(save(vec![p28(), p77()], vec![])), "mixed save");
     assert!(sets(save(vec![p28()], vec![FieldId::P75])), "P-75 clear");
     assert!(sets(save(vec![], vec![FieldId::P77])), "P-77 clear");
+    // ADR-033: P-21 names the provider, and so the coordinator's client path.
+    assert!(sets(save(vec![], vec![FieldId::P21])), "P-21 clear");
     assert!(!sets(save(vec![p28()], vec![])), "P-28 save");
     assert!(!sets(save(vec![], vec![FieldId::P28])), "P-28 clear");
     assert!(sets(start(template())), "template start");
@@ -852,5 +855,65 @@ fn i85_p75_p77_creator_channel_policy_prepares_only_mcp_calls_that_set_them() {
                 "{c:?}"
             );
         }
+    }
+}
+
+/// The assessment tools of the coordinator's agent (ADR-033).
+const ASSESS_TOOLS: [(&str, &str); 3] = [
+    ("fstp_assessment_list_proposals", "assess.client_queue"),
+    ("fstp_assessment_get_input", "assess.client_input"),
+    ("fstp_assessment_submit", "assess.client_submit"),
+];
+
+/// ADR-033, I-84, I-85, TH-01: the three assessment tools need
+/// `assess:run`, act for the FSTP coordinator only, execute through MCP
+/// under either P-77 value since none is high-risk or binding, and each
+/// has a web route. A token that holds `assess:run` alone reaches no other
+/// tool, so a submission that talks the agent into another call is
+/// refused for its scope.
+#[test]
+fn adr033_th01_assessment_tools_need_their_own_scope_and_nothing_more() {
+    let s = EngineState::genesis();
+    let only = mcp(L1, &[Scope::AssessRun], &s);
+    let others: Vec<Scope> = Scope::ALL
+        .into_iter()
+        .filter(|x| *x != Scope::AssessRun)
+        .collect();
+    let without = mcp(L1, &others, &s);
+    let all = McpSettings::all_roles();
+    for (tool, name) in ASSESS_TOOLS {
+        let o = spec(name);
+        let t = o.tool.unwrap_or_else(|| panic!("{name} has no tool"));
+        assert_eq!(t.name, tool);
+        assert_eq!(t.scope, Scope::AssessRun, "{name}");
+        assert!(!t.prepare_only && !o.high_risk && !o.binding, "{name}");
+        assert_eq!(o.acting, &[RoleOrApplicant::Role(Role::FstpCoordinator)]);
+        assert!(o.route.is_some(), "I-84: {name}");
+        assert_ne!(o.classification, Classification::Personal, "I-86: {name}");
+        for p77 in [DRAFT_ONLY, ALLOWED] {
+            assert_eq!(
+                channel_policy(o, &only, p77, &all),
+                ChannelVerdict::Execute,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            channel_policy(o, &without, ALLOWED, &all),
+            ChannelVerdict::Deny(ChannelDenial::Scope),
+            "{name} without assess:run"
+        );
+    }
+    for o in OPS {
+        let Some(t) = o.tool else { continue };
+        if ASSESS_TOOLS.iter().any(|(_, n)| *n == o.name) || matches!(o.kind, OpKind::Public(_)) {
+            continue;
+        }
+        assert_ne!(t.scope, Scope::AssessRun, "{} uses assess:run", o.name);
+        assert_eq!(
+            channel_policy(o, &only, ALLOWED, &all),
+            ChannelVerdict::Deny(ChannelDenial::Scope),
+            "{} through an assess:run token",
+            o.name
+        );
     }
 }

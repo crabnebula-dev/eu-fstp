@@ -181,6 +181,7 @@ name = "fstp-api-core"
 version = "0.1.0"
 dependencies = [
  "fstp-access",
+ "fstp-assess",
  "fstp-brand",
  "fstp-contract",
  "fstp-creator",
@@ -191,6 +192,8 @@ dependencies = [
  "fstp-guide",
  "fstp-html",
  "fstp-import",
+ "fstp-infer",
+ "fstp-injscan",
  "fstp-journey",
  "fstp-json",
  "fstp-ledger",
@@ -230,6 +233,7 @@ dependencies = [
  "fstp-http",
  "fstp-import",
  "fstp-infer",
+ "fstp-injscan",
  "fstp-json",
  "fstp-ledger",
  "fstp-mail",
@@ -259,6 +263,7 @@ dependencies = [
  "fstp-domain",
  "fstp-findings",
  "fstp-infer",
+ "fstp-injscan",
  "fstp-json",
  "fstp-prop",
  "fstp-rt",
@@ -653,6 +658,7 @@ name = "fstp-findings"
 version = "0.1.0"
 dependencies = [
  "fstp-domain",
+ "fstp-injscan",
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
@@ -710,6 +716,15 @@ dependencies = [
  "fstp-json",
  "fstp-prop",
  "fstp-rt",
+]
+
+[[package]]
+name = "fstp-injscan"
+version = "0.1.0"
+dependencies = [
+ "fstp-json",
+ "fstp-prop",
+ "fstp-unorm",
 ]
 
 [[package]]

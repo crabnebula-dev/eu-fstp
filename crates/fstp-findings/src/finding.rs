@@ -332,3 +332,43 @@ impl RerunEnd {
         RerunEnd::ALL.into_iter().find(|k| k.as_str() == s)
     }
 }
+
+/// The P-21 provider token of the client path (ADR-033): the call is
+/// assessed by its FSTP coordinator's connected agent through MCP, never
+/// by a cell assessor. P-21 is frozen at publication (I-12), so a call
+/// keeps one path (I-11).
+pub const CLIENT_PROVIDER: &str = "coordinator_agent";
+
+/// Whether the frozen P-21 value names the client path (ADR-033). The
+/// provider is held as the canonical JSON of its token, so the token is
+/// compared with its quotes. Every other value leaves the path closed.
+pub fn client_run(p21: &fstp_domain::policy::InferenceBinding) -> bool {
+    let s = p21.provider.as_str();
+    s.len() == CLIENT_PROVIDER.len().saturating_add(2)
+        && s.starts_with('"')
+        && s.ends_with('"')
+        && s.get(1..s.len().saturating_sub(1)) == Some(CLIENT_PROVIDER)
+}
+
+/// The most findings one client assessment may record (ADR-033): one
+/// completeness reply, one quality reply per P-01 criterion (at most 16),
+/// claims, integrity and the cell's own scan, bounded well below the
+/// replies' own limits.
+pub const MAX_CLIENT_FINDINGS: usize = 256;
+
+/// The provenance of one client assessment (ADR-033, `assessment.md`
+/// Traces): what the coordinator's agent reported and what the cell
+/// computed. The account, the time and the agent client are in the ledger
+/// entry and its audit row.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ClientRun {
+    /// The model as the client reported it. It equals the call's frozen
+    /// P-21 model; the cell cannot verify the report.
+    pub model: fstp_domain::policy::ModelRef,
+    /// The prompt set digest the client used, equal to the cell's.
+    pub prompt_set: fstp_domain::id::ContentDigest,
+    /// The digest of the input the cell served (`assess.client_input`).
+    pub input: fstp_domain::id::ContentDigest,
+    /// The trace every finding of the run carries.
+    pub trace: TraceRef,
+}

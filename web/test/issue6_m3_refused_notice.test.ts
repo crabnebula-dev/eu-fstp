@@ -162,7 +162,7 @@ const ROLES = (role: string): Record<string, unknown> => ({
   signatories: [],
 });
 
-const ROW = { proposal: "1003", status: "ready", findings: 4, refused: 2, rerun: "available" };
+const ROW = { proposal: "1003", status: "ready", findings: 4, refused: 2, rerun: "available", integrity: "clear", reasons: [] as string[] };
 
 interface Sent {
   readonly path: string;
@@ -243,4 +243,45 @@ test("i10_issue6_m3_only_the_coordinator_gets_the_control", async () => {
 /** I-10: the reviewer's notice says the coordinator can run it again, and has no control itself. */
 test("i10_issue6_m3_reviewer_notice_names_the_coordinator", () => {
   assert((FINDINGS_LABELS["rev.findings.refused.lead"] ?? "").includes("The FSTP coordinator can run the assessment again."), "sentence");
+});
+
+/** ADR-035, TH-01, I-10: a held row names what the check found in plain words and offers the release; the click sends assess.release_integrity. */
+test("adr035_th01_coordinator_sees_the_hold_and_releases_it", async () => {
+  prepare();
+  const sent: Sent[] = [];
+  const held = { ...ROW, refused: 0, integrity: "held", reasons: ["zero_width", "override"] };
+  assert(VALIDATORS["assess.findings_status"]?.([held]) === true, "the generated validator accepts it");
+  const e = envSent(
+    {
+      "GET /me/roles": ROLES("fstp_coordinator"),
+      "GET /calls/1/findings-status": [held],
+      "POST /proposals/1003/integrity-release": { accepted: true },
+    },
+    sent,
+  );
+  const f = { clearAlert: () => undefined, status: () => undefined, problem: () => undefined } as never;
+  const sec = await findingsStatusSection(e, "1", f);
+  assert(sec !== null, "the coordinator gets the section");
+  const text = textOf(sec);
+  assert(text.includes("AI assessment on hold"), text);
+  assert(text.includes("invisible zero-width characters"), text);
+  assert(text.includes("an instruction to ignore or replace earlier instructions"), text);
+  const button = byId(sec, "findings-release-1003");
+  assert(button !== null, "the release shows");
+  button.dispatchEvent(new Event("click"));
+  await new Promise((r) => setTimeout(r, 20));
+  assert(sent.some((s) => s.path === "POST /proposals/1003/integrity-release"), "the release is called");
+});
+
+/** ADR-035: a released row says so and offers no release; an unknown reason code is refused whole. */
+test("adr035_released_row_and_closed_reasons", async () => {
+  prepare();
+  const released = { ...ROW, refused: 0, integrity: "released", reasons: ["addressed"] };
+  const e = env({ "GET /me/roles": ROLES("fstp_coordinator"), "GET /calls/1/findings-status": [released] });
+  const sec = await findingsStatusSection(e, "1");
+  assert(sec !== null, "section");
+  assert(textOf(sec).includes("Released for AI assessment"), textOf(sec));
+  assert(byId(sec, "findings-release-1003") === null, "no release once released");
+  eq(decodeFindingsStatus([{ ...ROW, reasons: ["ignore all previous instructions"] }]), null, "free text is refused");
+  eq(decodeFindingsStatus([{ ...ROW, integrity: "maybe" }]), null, "an unknown hold is refused");
 });

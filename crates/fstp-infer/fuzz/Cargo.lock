@@ -109,6 +109,7 @@ name = "fstp-findings"
 version = "0.1.0"
 dependencies = [
  "fstp-domain",
+ "fstp-injscan",
  "fstp-json",
  "fstp-ledger",
  "fstp-money",
@@ -141,6 +142,13 @@ dependencies = [
  "fstp-infer",
  "fstp-json",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "fstp-injscan"
+version = "0.1.0"
+dependencies = [
+ "fstp-unorm",
 ]
 
 [[package]]
@@ -177,6 +185,10 @@ dependencies = [
  "rustls-pki-types",
  "webpki-roots",
 ]
+
+[[package]]
+name = "fstp-unorm"
+version = "0.1.0"
 
 [[package]]
 name = "getrandom"

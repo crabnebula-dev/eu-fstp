@@ -270,23 +270,45 @@ fn finding_kind_of(c: &FindingCommand) -> FindingKind {
         FindingCommand::RequestRerun { .. } => FindingKind::RequestRerun,
         FindingCommand::RecordRefusals { .. } => FindingKind::RecordRefusals,
         FindingCommand::AbandonRerun { .. } => FindingKind::AbandonRerun,
+        FindingCommand::ReadAssessmentInput { .. } => FindingKind::ReadInput,
+        FindingCommand::RecordClientAssessment { .. } => FindingKind::RecordClient,
+        FindingCommand::ReleaseIntegrityHold { .. } => FindingKind::ReleaseIntegrity,
     }
 }
 
 /// Every finding kind. The match in `finding_kind_of` ties this list to
 /// `FindingCommand`, and the one below ties it to `FindingKind`.
-const FINDING_KINDS: [FindingKind; 6] = [
+const FINDING_KINDS: [FindingKind; 9] = [
     FindingKind::Record,
     FindingKind::Mark,
     FindingKind::Regenerate,
     FindingKind::RequestRerun,
     FindingKind::RecordRefusals,
     FindingKind::AbandonRerun,
+    FindingKind::ReadInput,
+    FindingKind::RecordClient,
+    FindingKind::ReleaseIntegrity,
 ];
+
+/// The operation kind that carries a finding kind which is neither routed
+/// nor system-only: ADR-033's `ReadAssessmentInput`, appended by the
+/// coordinator's input read, as the content reads carry `ReadContent`.
+fn finding_carried(k: FindingKind) -> Option<OpKind> {
+    match k {
+        FindingKind::ReadInput => Some(OpKind::Read(ReadKind::GetAssessmentInput)),
+        _ => None,
+    }
+}
 
 fn finding_routed(k: FindingKind) -> bool {
     match k {
-        FindingKind::Mark | FindingKind::RequestRerun => true,
+        FindingKind::Mark
+        | FindingKind::RequestRerun
+        | FindingKind::RecordClient
+        | FindingKind::ReleaseIntegrity => true,
+        // ADR-033: carried by the read `assess.client_input`
+        // ([`finding_carried`]), as `ReadContent` is by the content reads.
+        FindingKind::ReadInput => false,
         FindingKind::Record
         | FindingKind::Regenerate
         | FindingKind::RecordRefusals
@@ -321,6 +343,17 @@ fn ops_cover_every_finding_and_import_kind_once() {
     for kind in kinds {
         let routed = OPS.iter().filter(|o| o.kind == kind).count();
         let system = SYSTEM_ONLY_OTHER.iter().filter(|k| **k == kind).count();
+        if let OpKind::Finding(k) = kind
+            && let Some(carrier) = finding_carried(k)
+        {
+            let carriers = OPS.iter().filter(|o| o.kind == carrier).count();
+            assert_eq!(
+                (routed, system, carriers),
+                (0, 0, 1),
+                "{kind:?} is carried by exactly one operation"
+            );
+            continue;
+        }
         let want_routed = match kind {
             OpKind::Finding(k) => finding_routed(k),
             OpKind::Import(k) => import_routed(k),
@@ -525,7 +558,12 @@ fn ops_high_risk_and_binding_follow_the_domain() {
     let mut kinds: BTreeSet<String> = BTreeSet::new();
     for o in OPS {
         if let OpKind::Command(k) = o.kind {
-            assert_eq!(o.high_risk, k.high_risk(), "{} high_risk", o.name);
+            // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"):
+            // `Assign` and `Unassign` grant or end a Judging role, so their
+            // operations are high-risk as the cell gate's strict additions
+            // are (ADR-008), although the M2 domain kind is not.
+            let strict = matches!(k, CommandKind::Assign | CommandKind::Unassign);
+            assert_eq!(o.high_risk, k.high_risk() || strict, "{} high_risk", o.name);
             assert_eq!(o.binding, k.binding_action(), "{} binding", o.name);
             checked += 1;
             kinds.insert(kind_name(k));
@@ -558,6 +596,11 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 11] = [
             "admin.approve_self_grant",
             "tenant.grant_signatory",
             "tenant.end_signatory",
+            // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"):
+            // assigning a reviewer grants a Judging role.
+            "review.assign",
+            "review.unassign",
+            "review.assign_batch",
         ],
         "",
     ),
@@ -806,10 +849,11 @@ const PREPARED_NOT_HIGH_RISK: [&str; 7] = [
 /// design section 3.8 holds 35 tools, and M5 design 12.1 adds three
 /// read-only ones. Daniel added `fstp_list_contracts_to_sign` on 2026-11-13,
 /// and the ADR-013 amendment of 2026-11-20 adds 28 setup tools.
+/// ADR-033 adds the three assessment tools of the FSTP coordinator.
 #[test]
 fn i84_every_tool_has_a_web_route() {
     let tools: Vec<&OpSpec> = OPS.iter().filter(|o| o.tool.is_some()).collect();
-    assert_eq!(tools.len(), 67, "operations with a tool");
+    assert_eq!(tools.len(), 70, "operations with a tool");
     let routeless: Vec<&str> = tools
         .iter()
         .filter(|o| o.route.is_none())
@@ -837,7 +881,7 @@ fn i84_every_tool_maps_to_one_op() {
             }
         }
     }
-    assert_eq!(by_tool.len(), 67, "distinct tool names");
+    assert_eq!(by_tool.len(), 70, "distinct tool names");
     let shared: Vec<(&str, Vec<&str>)> = by_tool
         .into_iter()
         .filter(|(_, ops)| ops.len() != 1)
@@ -871,7 +915,7 @@ fn i84_op_names_are_unique() {
 /// The capability table of `mcp-server.md`, row by row, mapped to the M4
 /// tools of design section 3.8. An empty row names the milestone that
 /// brings its tools.
-const CAPABILITY_ROWS: [(&str, &[&str], &str); 8] = [
+const CAPABILITY_ROWS: [(&str, &[&str], &str); 9] = [
     (
         "Applicant",
         &[
@@ -961,6 +1005,17 @@ const CAPABILITY_ROWS: [(&str, &[&str], &str); 8] = [
             "fstp_tenant_check_branding",
             "fstp_prepare_branding",
             "fstp_prepare_terminology",
+        ],
+        "",
+    ),
+    // ADR-033 (Daniel, 2026-11-22): the assessment run by the
+    // coordinator's connected agent.
+    (
+        "FSTP coordinator",
+        &[
+            "fstp_assessment_list_proposals",
+            "fstp_assessment_get_input",
+            "fstp_assessment_submit",
         ],
         "",
     ),
@@ -1152,7 +1207,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 82] = [
+const READ_NAMES: [&str; 84] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1252,6 +1307,9 @@ const READ_NAMES: [&str; 82] = [
     "GetMyDisplayName",
     // Lane m4/author-reads: the plan the team recorded, read back.
     "GetOwnPlan",
+    // ADR-033: the coordinator's client assessment queue and input.
+    "GetAssessmentQueue",
+    "GetAssessmentInput",
     // Lane L20 (ADR-028): the System page.
     "GetSystemStatus",
 ];
