@@ -37,12 +37,12 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 | Topic | Decision | Basis |
 | --- | --- | --- |
 | What an anonymous draft is | The three form sections of a workspace (`title`, `summary`, `narrative`) and the call it is for. No account, email, name, address, peer address or other identity data | R-SB-01, I-17 |
-| Where it lives | One row of `workspace.anonymous_drafts` in the cell's application database. The sections are sealed under the cell's ledger key generation with the AAD `"fstp-anondraft-v1" \|\| cell \|\| draft id`. Clear columns are the draft id, the token digest, the call id, times and the key generation | R-NF-08, I-21 |
+| Where it lives | One row of `workspace.anonymous_drafts` in the cell's application database. The sections are sealed under the cell's ledger key generation with the AAD `"fstp-anondraft-v1" \|\| cell \|\| token digest`. Clear columns are the token digest (the primary key), the call id, times and the key generation | R-NF-08, I-21 |
 | The resume link | A 32-byte random token, written as 64 lowercase hex characters in the URL fragment: `https://<cell>/auth/draft#<token>`. The fragment never reaches the server. The browser also keeps it in local storage | R-NF-02 |
 | Token at rest | Only the SHA-256 digest of the token is stored. A database reader cannot open a draft by its row | Bearer secret |
 | Token on the wire | Only in a JSON request body, never in a path or query. So no access log, route log or proxy log holds it | R-NF-02 |
-| Routes | Four cell routes, each `POST`, JSON, no session, `Origin` checked: `/auth/drafts` `{call}` starts a draft and answers `{token, expires}`; `/auth/drafts/open` `{token}` answers the call, the sections and the expiry; `/auth/drafts/save` `{token, title, summary, narrative}` replaces the sections; `/auth/drafts/discard` `{token}` deletes the draft. An unknown, expired or claimed token answers 404 with one body for every cause | ADR-008 shared checks |
-| Size | The workspace limits: title 300 bytes, summary 1 200 bytes, narrative as `forms::TEXT_LIMIT`. Control and format characters are refused as in every free text | As for normal drafts |
+| Routes | Four cell routes, each `POST`, JSON, no session, `Origin` checked: `/auth/drafts` `{call}` starts a draft and answers `{token, expires}`; `/auth/drafts/open` `{token}` answers the call, the sections and the expiry; `/auth/drafts/save` `{token, title, summary, narrative}` replaces the sections; `/auth/drafts/discard` `{token}` deletes the draft. A start for a call that is not open answers 409. An unknown, expired or claimed token answers 404 with one body for every cause | ADR-008 shared checks |
+| Size | The workspace limits: title 300 bytes, summary 1 200 bytes, narrative as `forms::TEXT_LIMIT`. A control character other than tab and line breaks, and a Unicode line or paragraph separator, is refused | As for normal drafts |
 | Rate limits | Per peer: 10 starts per hour, and 120 opens, saves and discards per minute. Per cell: 600 starts per hour and at most 20 000 live anonymous drafts. Over any limit the route answers 429, and nothing is stored. Interim, pending Daniel (values) | ADR-024 |
 | Call | A draft starts only for a published call that is open now. Open and save refuse once the call has closed. The claim runs `CreateDraft`, which checks the call again | `CreateDraft` guard |
 | Lifetime | An unclaimed draft expires 30 days after it was started, or at the call's deadline if that is earlier. An expired draft is never served, and the cell's draft sweep deletes it within one hour | Daniel 2026-11-22, `pre-check.md` |
@@ -84,7 +84,8 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 3. **Lifetime at call close.** Interim: an anonymous draft also ends at its call's deadline, as `pre-check.md` deletes unsubmitted drafts when the call closes. Daniel named 30 days only.
 4. **Self-registration without a passkey (ADR-008 open point).** Daniel's words "simple registration" and "email, then the code or link from the email" may answer the ADR-008 question "May self-registration end without a passkey where the tenant enables magic links?" with yes. This lane does not change the signup ceremony: it still enrols a passkey after the email link. The change touches the ledger records of `fstp-cell-core`, so it waits for Daniel's explicit answer.
 5. **An emailed code instead of a link.** The signup proof is a link today. A short typed code needs its own attempt limit. Interim: the link only.
-6. **SPEC wording.** Proposed additions, not edited until Daniel accepts them:
+6. **Claim in two calls.** The claim page runs `proposal.create` and then `proposal.claim_draft`. If the second call fails, a retry reuses the proposal the first call started (kept in the browser). Interim: two calls, so every guard of `CreateDraft` runs through its own operation unchanged. A single server-side operation is possible if Daniel prefers it.
+7. **SPEC wording.** Proposed additions, not edited until Daniel accepts them:
    - `SPEC/01-requirements/functional.md`, after R-SB-04: "**R-SB-06** A person can start a draft for an open call without an account. The draft is kept under a secret resume link, holds no identity data, and is deleted after 30 days or at the call's deadline unless it is claimed. Submitting needs a registered account with a verified email. AC: an anonymous draft cannot be submitted; after a claim the resume link no longer opens the draft."
    - `SPEC/04-llm-assessment/pre-check.md`, Rules: "The pre-check runs only on drafts of an account. An anonymous draft gets no pre-check until it is claimed (TH-29)."
 
@@ -95,4 +96,7 @@ No invariant forbids the decision, once the anonymous draft is not a proposal.
 | Third-party crates added by this ADR | None | 2026-11-22 |
 | New table | `workspace.anonymous_drafts`, app migration `0012_anonymous_drafts.sql` | 2026-11-22 |
 | New operation | `proposal.claim_draft`, web only | 2026-11-22 |
-| New fuzz target | `anon_draft_body_decode` in `crates/fstp-api-core/fuzz` | 2026-11-22 |
+| New fuzz targets | `anon_draft_body_decode` in `crates/fstp-cell/fuzz` (the route bodies) and `anon_draft_decode` in `crates/fstp-api-core/fuzz` (the sealed text and the token) | 2026-11-22 |
+| New pages | `/auth/draft` (cell auth pages), `/app/calls/{call}/claim` (page table: a signed-in account), and the link "Start writing now, no account needed" on the public call page | 2026-11-22 |
+| Sweep | `fstp_cell::tasks::drafts`, hourly, started with the cell | 2026-11-22 |
+| Demo cell | `fstp-e2e-cell` emulates the four routes over the fake cell's store, so the claim works in the demo | 2026-11-22 |

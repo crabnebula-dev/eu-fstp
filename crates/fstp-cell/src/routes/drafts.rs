@@ -333,6 +333,6 @@ mod tests {
     fn adr032_save_limit_holds_a_full_draft() {
         let need = 2 * (anon::MAX_TITLE + anon::MAX_SUMMARY + anon::MAX_NARRATIVE) + 200;
         assert!(DRAFT_BODY_LIMIT >= need);
-        assert!(DRAFT_BODY_LIMIT <= 1 << 20);
+        const { assert!(DRAFT_BODY_LIMIT <= 1 << 20) };
     }
 }

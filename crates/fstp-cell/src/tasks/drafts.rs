@@ -177,6 +177,6 @@ mod tests {
             2
         );
         assert_eq!(s.len(), 1);
-        assert!(INTERVAL_US <= 3_600 * crate::tasks::SECOND_US);
+        const { assert!(INTERVAL_US <= 3_600 * crate::tasks::SECOND_US) };
     }
 }
