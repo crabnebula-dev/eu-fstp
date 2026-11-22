@@ -221,7 +221,7 @@ pub const MAX_RECEIPT_KEYS: usize = 8;
 /// The longest encoded witness receipt key, in bytes.
 pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 
-const FILE_MEMBERS: [&str; 18] = [
+const FILE_MEMBERS: [&str; 19] = [
     "assets_dir",
     "cell",
     "credentials_dir",
