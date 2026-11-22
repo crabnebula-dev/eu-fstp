@@ -390,6 +390,12 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
         }
     }
     state.mark("keys-copied").map_err(io(step))?;
+    state
+        .set(
+            crate::status::KEYS_COPIED_AT,
+            &crate::pki::now().to_string(),
+        )
+        .map_err(io(step))?;
     out(&[
         Part::T("The copy is in "),
         Part::P(dest),

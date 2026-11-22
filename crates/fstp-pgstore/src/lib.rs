@@ -82,9 +82,9 @@ pub use delivery::{
 pub use error::{AppendFault, DbFault, DecodeError, StoreFault};
 pub use fault::FaultPoint;
 pub use keystore::{
-    APP_CHAIN, ChainRow, Change, DataKeyRow, GroupKeyRow, KeystoreChanges, KeystoreRows,
-    KeystoreTables, LoginDigestRow, LoginTextRow, ROOT_DESTROYED, ROOT_LIVE, ROOT_PENDING, RootRow,
-    RootStatus, SignerRow, TextRow as KeystoreTextRow,
+    APP_CHAIN, ChainRow, Change, DataKeyRow, DisplayNameRow, GroupKeyRow, KeystoreChanges,
+    KeystoreRows, KeystoreTables, LoginDigestRow, LoginTextRow, ROOT_DESTROYED, ROOT_LIVE,
+    ROOT_PENDING, RootRow, RootStatus, SignerRow, TextRow as KeystoreTextRow,
 };
 pub use migrations::MIGRATIONS;
 pub use outbox::{KeyFuture, MAX_OUTBOX_BODY, MAX_OUTBOX_ROWS, OutboxKey, OutboxKeys, OutboxRow};

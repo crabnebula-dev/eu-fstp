@@ -187,6 +187,9 @@ pub enum ReadModel {
     /// ADR-033: the queue, the input and the receipt of the assessment
     /// run by the FSTP coordinator's connected agent.
     ClientAssessment(crate::assess::ClientModel),
+    /// `tenant.system`: the facts of the System page (ADR-028 record of
+    /// lane L20). Instants, counts, flags and closed words only.
+    System(crate::system::SystemView),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -345,6 +348,7 @@ impl ToJson for ReadModel {
             ReadModel::Unmask(v) => v.to_json(),
             ReadModel::Audit(v) => v.to_json(),
             ReadModel::Erasures(v) => v.to_json(),
+            ReadModel::System(v) => v.to_json(),
             ReadModel::FunderProfiles(rows) => crate::views::profiles_json(rows),
             ReadModel::Logos(v) => v.to_json(),
             ReadModel::ClientAssessment(m) => m.to_json(),
@@ -1808,6 +1812,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Invitation(_) => &["people.get_invitation"],
             ReadModel::Deliveries(_) => &["tenant.deliveries"],
             ReadModel::Erasures(_) => &["admin.erasures"],
+            ReadModel::System(_) => &["tenant.system"],
             ReadModel::FunderProfiles(_) => &["tenant.funder_profiles"],
             ReadModel::Logos(_) => &["tenant.branding.logos", "programme.logos"],
             ReadModel::ClientAssessment(m) => match m {
@@ -2495,6 +2500,56 @@ pub(crate) mod reply_shape_tests {
                 due: 1_794_050_000_000_000,
                 state: crate::views::EventState::Fired,
             }]),
+            // ADR-028 record of lane L20: a cell with no host file, and
+            // one with a full report.
+            ReadModel::System(crate::system::SystemView {
+                now: fstp_domain::time::Timestamp::from_micros(1_795_000_000_000_000),
+                last_cell_erasure: None,
+                facts: crate::system::SystemFacts::default(),
+            }),
+            ReadModel::System(crate::system::SystemView {
+                now: fstp_domain::time::Timestamp::from_micros(1_795_000_000_000_000),
+                last_cell_erasure: Some(fstp_domain::time::Timestamp::from_micros(
+                    1_794_960_000_000_000,
+                )),
+                facts: crate::system::SystemFacts {
+                    vault_answers: true,
+                    mail: crate::system::MailState::Fails,
+                    host: crate::system::HostFile::Present(crate::system::HostReport {
+                        written_at: fstp_domain::time::Timestamp::from_micros(
+                            1_794_999_000_000_000,
+                        ),
+                        setup_done: true,
+                        parts: crate::system::HostParts {
+                            cell: crate::system::PartState::Running,
+                            vault: crate::system::PartState::Running,
+                            witness: crate::system::PartState::Unhealthy,
+                            edge: crate::system::PartState::Running,
+                            databases: crate::system::PartState::Running,
+                            keys: crate::system::PartState::Stopped,
+                        },
+                        backups_configured: true,
+                        last_backup: Some(fstp_domain::time::Timestamp::from_micros(
+                            1_794_900_000_000_000,
+                        )),
+                        last_key_copy: None,
+                        last_vault_erasure: Some(fstp_domain::time::Timestamp::from_micros(
+                            1_794_950_000_000_000,
+                        )),
+                        last_app_snapshot: Some(fstp_domain::time::Timestamp::from_micros(
+                            1_794_960_000_000_000,
+                        )),
+                        app_snapshot_failed: false,
+                        last_vault_snapshot: None,
+                        vault_snapshot_failed: true,
+                        certificate_days: Some(-2),
+                        self_signed: false,
+                        route: crate::system::RouteState::Mismatch,
+                        next: crate::system::HostNext::of("renew_route")
+                            .unwrap_or_else(|| panic!("a host next word")),
+                    }),
+                },
+            }),
             ReadModel::MailRelay(crate::views::MailRelayView { relay: None }),
             ReadModel::MailRelay(crate::views::MailRelayView {
                 relay: Some(("relay.fund.test".to_owned(), true)),
@@ -2651,7 +2706,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 60;
+    const VARIANTS: usize = 61;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2718,6 +2773,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::ConsentRequest(_) => 57,
             ReadModel::Logos(_) => 58,
             ReadModel::ClientAssessment(_) => 59,
+            ReadModel::System(_) => 60,
         }
     }
 

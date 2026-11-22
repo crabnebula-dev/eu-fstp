@@ -2326,6 +2326,24 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,
         // P-41, ADR-007 (lane m5/retention): the erasure page.
         ReadKind::ListErasures => erasure::read(call).await?,
+        // ADR-028 record of lane L20: the System page. The read rule
+        // admitted a tenant admin. The facts hold no personal data.
+        ReadKind::GetSystemStatus => {
+            use crate::port::{TenantConfig as _, TextStore as _};
+            let facts = call.ports.tenant().system().await;
+            // The newest erasure of the cell's log, so the page asks for a
+            // new key copy after it. A log that cannot be read names none.
+            let last_cell_erasure = call.ports.texts().erasures().await.ok().and_then(|rows| {
+                rows.iter()
+                    .map(|r| r.completed_at.unwrap_or(r.requested_at))
+                    .max()
+            });
+            ReadModel::System(crate::system::SystemView {
+                now: call.now,
+                facts,
+                last_cell_erasure,
+            })
+        }
         // SA-11 (Daniel, 2026-11-15, night): the team and member pages and
         // the caller's own display name. The read rule admitted the caller.
         ReadKind::ListTeam | ReadKind::ListMembers | ReadKind::GetMyDisplayName => {
@@ -4179,8 +4197,11 @@ async fn own_verification<P: Seams>(
     use crate::model::{VerificationState, VerificationStatus};
     let answer = ask_vault(call, &Query::IsVerified { account }).await?;
     let begun = lock(&call.st.begun).pending(account, call.now);
+    // ADR-026 record of lane L24: an open request in the ledger reads
+    // "pending" until the vault confirms the check.
+    let requested = call.ports.vault().verification_requested(account).await;
     Ok(VerificationState {
-        status: VerificationStatus::of(answer.holds, begun),
+        status: VerificationStatus::of(answer.holds, begun || requested),
     })
 }
 

@@ -243,11 +243,14 @@ pub enum ReadKind {
     // assessment, ids and states only, and the assessable input of one.
     GetAssessmentQueue,
     GetAssessmentInput,
+    // ADR-028 record of lane L20: the facts of the System page, for the
+    // tenant admins. No personal data.
+    GetSystemStatus,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 83] = [
+    pub const ALL: [ReadKind; 84] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -331,6 +334,7 @@ impl ReadKind {
         ReadKind::GetOwnPlan,
         ReadKind::GetAssessmentQueue,
         ReadKind::GetAssessmentInput,
+        ReadKind::GetSystemStatus,
     ];
 }
 
@@ -728,6 +732,12 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     // ADR-007: tenant admins read every erasure-log entry (P-41, lane
     // m5/retention).
     (ReadKind::ListErasures, ReadRule::TenantAdmin, OPEN_ALWAYS),
+    // ADR-028 record of lane L20: the System page is the tenant admins'.
+    (
+        ReadKind::GetSystemStatus,
+        ReadRule::TenantAdmin,
+        OPEN_ALWAYS,
+    ),
     // Daniel, 2026-11-15 (late): the tenant admins read the shipped and
     // tenant-owned funder profiles they copy and edit.
     (

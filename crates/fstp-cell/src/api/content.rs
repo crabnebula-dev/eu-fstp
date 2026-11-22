@@ -25,9 +25,9 @@ use fstp_api_core::pending::{
     OPEN_PER_ACCOUNT, PENDING_RETENTION_MICROS, PendingAction, PendingStatus,
 };
 use fstp_api_core::port::{
-    AgentClientId, BlobOwner, BlobRef, BlobStore, PendingActions, PendingFuture, PendingId,
-    PendingInsertError, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass, TextOwner,
-    TextRef, TextStore, WorkspaceSlot, Workspaces,
+    AgentClientId, BlobOwner, BlobRef, BlobStore, DisplayNameSet, PendingActions, PendingFuture,
+    PendingId, PendingInsertError, PortError, PublicTextRef, SealOwner, Sealed, Sealer, TextClass,
+    TextOwner, TextRef, TextStore, WorkspaceSlot, Workspaces,
 };
 use fstp_domain::id::{AccountId, ProgrammeId, ProposalId};
 use fstp_domain::time::Timestamp;
@@ -150,18 +150,45 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
         }
     }
 
-    /// SA-11 (lane L7): this store keeps no display name yet, since
-    /// `set_display_name` fails closed (the trait default). So no account
-    /// has one, and the team and member pages show none. Interim, pending
-    /// Daniel: the sealed, unique display names of the SA-11 amendment on
-    /// the production cell.
+    /// SA-11, SA-11 amendment (lane L26, ADR-004 section "Written by lane
+    /// L26"): the erasure task seals the name as a text of its own, checks
+    /// its fingerprint under the key derived from `Lookup` and writes it,
+    /// in one request. A replaced or cleared name is erased at once.
+    async fn set_display_name(
+        &self,
+        a: AccountId,
+        name: Option<String>,
+        at: Timestamp,
+    ) -> Result<DisplayNameSet, PortError> {
+        let _ = at;
+        self.0
+            .erasure
+            .set_display_name(a, name)
+            .await
+            .map_err(|_| PortError::Unavailable)
+    }
+
+    /// SA-11 (lane L26): the names under `clearance`, which must open each
+    /// account's texts, as the test kit's store asks ([`clears`]). Only
+    /// the team read, the member read and the account's own read pass,
+    /// so no applicant or Judging read shows a name (I-17, P-11, R-AN-01).
+    /// Otherwise the whole read is refused.
     async fn display_names(
         &self,
         accounts: Vec<AccountId>,
         clearance: &ReadClearance,
     ) -> Result<std::collections::BTreeMap<AccountId, String>, PortError> {
-        let _ = (accounts, clearance);
-        Ok(std::collections::BTreeMap::new())
+        if !accounts
+            .iter()
+            .all(|a| clears(TextClass::Confidential, TextOwner::Account(*a), clearance))
+        {
+            return Err(PortError::Refused);
+        }
+        self.0
+            .erasure
+            .display_names(accounts)
+            .await
+            .map_err(|_| PortError::Unavailable)
     }
 }
 

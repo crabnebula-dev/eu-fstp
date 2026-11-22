@@ -1446,6 +1446,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // P-41, ADR-007 (lane m5/retention): the erasure page. A request is
     // high-risk (Daniel, 2026-11-15 late), and its grant guard names P-41.
     RefOp::read("admin.erasures", T::None, R::TenantAdmin),
+    // ADR-028 record of lane L20: the System page.
+    RefOp::read("tenant.system", T::None, R::TenantAdmin),
     RefOp::act("admin.request_erasure", T::None, R::TenantAdmin).hr(),
     // Lane m4reg, the Administrators step: the tenant's admins and whether
     // each verified identity, since onboarding finishes only with two

@@ -55,6 +55,8 @@ At the end it tells you two things:
 
 `status` shows every service, the route, the certificates, the backups, the daily key snapshots and the admins on one screen, and ends with one line `Next:`, the single most urgent thing to do and who does it. Do that, then run `status` again. Exit status 0 means healthy, 3 means a problem.
 
+The web admin sees the same on the page **System** (`https://<domain>/app/admin/system`, linked from the home page): one green, amber or red line per part, and for each problem who acts and what to tell the host admin. The host writes the facts behind it to `/var/lib/fstp/status/host.json` every 15 minutes (timer `fstp-admin-report`), and after `status`, `backup`, `renew` and `backup-keys`. The file holds no secret and no personal data. If the page says the host report is old, run `fstp-admin report` and check the timer (ADR-028 record of lane L20).
+
 ## 5. Other commands
 
 | Command | When |
@@ -64,6 +66,7 @@ At the end it tells you two things:
 | `fstp-admin backup` | A backup now. A timer runs it daily |
 | `fstp-admin restore` | After data loss. It restores both databases from their newest backups, then the cell's and the vault's keys |
 | `fstp-admin renew` | Only when `status` asks. A daily timer renews certificates and updates the route |
+| `fstp-admin report` | Rarely. It writes the status file of the page System. A timer runs it every 15 minutes |
 | `fstp-admin erase-identity <account>` | When a person's identity must be erased from the vault |
 | `fstp-admin stop` and `start` | Around host maintenance |
 | `fstp-admin route add <file>`, `remove <cell>`, `list` | Rarely. Setup and renew keep the cell's own route current |

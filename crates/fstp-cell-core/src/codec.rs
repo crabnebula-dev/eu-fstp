@@ -525,6 +525,14 @@ fn key_record(v: &Value) -> Result<KeyRecord, FromJsonError> {
 
 fn release_record_json(r: &ReleaseRecord) -> Value {
     match r {
+        ReleaseRecord::VerificationRequestClosed { account } => tagged(
+            "VerificationRequestClosed",
+            vec![("account", account_json(*account))],
+        ),
+        ReleaseRecord::VerificationRequested { account } => tagged(
+            "VerificationRequested",
+            vec![("account", account_json(*account))],
+        ),
         ReleaseRecord::VerificationTicketIssued {
             id,
             holder,
@@ -575,6 +583,18 @@ fn release_record_json(r: &ReleaseRecord) -> Value {
 fn release_record(v: &Value) -> Result<ReleaseRecord, FromJsonError> {
     let (tag, o) = variant(v)?;
     match tag {
+        "VerificationRequestClosed" => {
+            fields(o, &["account"])?;
+            Ok(ReleaseRecord::VerificationRequestClosed {
+                account: account_from(o, "account")?,
+            })
+        }
+        "VerificationRequested" => {
+            fields(o, &["account"])?;
+            Ok(ReleaseRecord::VerificationRequested {
+                account: account_from(o, "account")?,
+            })
+        }
         "VerificationTicketIssued" => {
             fields(o, &["holder", "id", "proposal", "subject"])?;
             Ok(ReleaseRecord::VerificationTicketIssued {
@@ -1699,6 +1719,14 @@ fn release_command_json(c: &ReleaseCommand) -> Value {
                 ("proposal", opt_u128_json(*proposal)),
             ],
         ),
+        ReleaseCommand::RequestVerification { account } => tagged(
+            "RequestVerification",
+            vec![("account", account_json(*account))],
+        ),
+        ReleaseCommand::CloseVerificationRequest { account } => tagged(
+            "CloseVerificationRequest",
+            vec![("account", account_json(*account))],
+        ),
         ReleaseCommand::RecordRelationship { relationship } => tagged(
             "RecordRelationship",
             vec![("relationship", opaque_json(relationship))],
@@ -1738,6 +1766,18 @@ fn release_command(v: &Value) -> Result<ReleaseCommand, FromJsonError> {
             Ok(ReleaseCommand::IssueVerificationTicket {
                 account: account_from(o, "account")?,
                 proposal: opt_u128_from(o, "proposal")?,
+            })
+        }
+        "CloseVerificationRequest" => {
+            fields(o, &["account"])?;
+            Ok(ReleaseCommand::CloseVerificationRequest {
+                account: account_from(o, "account")?,
+            })
+        }
+        "RequestVerification" => {
+            fields(o, &["account"])?;
+            Ok(ReleaseCommand::RequestVerification {
+                account: account_from(o, "account")?,
             })
         }
         "RecordRelationship" => {

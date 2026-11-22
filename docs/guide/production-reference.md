@@ -206,6 +206,8 @@ shred -u /root/admin.json
 
 ### Record a verification on the web
 
+People ask for their ID check themselves: "Start verification" on their identity page records a request, with no identity data, and tells them "We will contact you to check your ID, in person or by video call" (ADR-026 record of lane L24). A tenant admin then sees "ID checks waiting (n)" in the navigation, and the person on "Members" marked "asked for an ID check". When the cell has a mail relay, each tenant admin who may record also gets one email, "A person is waiting for an ID check", with a link to Members and no name. A staff request shows at once; an applicant's only once the proposal is in negotiation. Check the ID in person or by video call, then record it as below. The request closes once the vault confirms the check; an unused form link leaves it open. Until then the person's identity page reads that the request is pending.
+
 A verified tenant admin records everyone else. On "Members" (`/app/admin/members`), choose "Record verification" next to the person. People of proposals in negotiation or later are listed in a section of their own on the same page, each with the button. The vault's form opens for that person. Type only the identity details from their document, and save. The vault registers the person's identity and records the verification in one step. The cell never sees these details. A failed save keeps the link valid, and saving again completes it.
 
 The cell offers the form only to a verified tenant admin with no Judging role, never for themselves or a person who shares their identity. An applicant is verified only once their proposal is in NEGOTIATION, under a ticket for that proposal (ADR-004 record of lane L13b, row "Ticket").
@@ -593,7 +595,7 @@ The cell and the vault each keep a sealed copy of their keys in the backup bucke
 - Each process creates its own snapshot key file at its next start: `cell-snapshot.key` and `vault-snapshot.key` in its credentials directory. `backup-keys` copies these with the other key files.
 - The bucket must be versioned, which object lock needs anyway. Each process writes the pointer `latest-app` or `latest-vault` again after each verified snapshot, and a versioned bucket keeps every version (lead reading, 2026-11-22).
 - Each process takes a snapshot when an erasure rotates its keys, and once a day: a minute after its start, then every 24 hours, and an hour after a failure. Each snapshot is fetched back and opened before it counts. An erasure destroys the old keys only after its snapshot opens.
-- Each process writes `keystore-snapshot.status` in its credentials directory and logs `keystore_snapshot` with `verified` or `failed`. `fstp-admin status` shows the last verified snapshot of each, and names a failure as the next thing to do.
+- Each process writes `keystore-snapshot.status` in its credentials directory and logs `keystore_snapshot` with `verified` or `failed`. `fstp-admin status` shows the last verified snapshot of each, and names a failure as the next thing to do. The page System shows the same to the web admins, in the row "Key store snapshots": amber when a snapshot is over 36 hours old, red when the last one failed.
 
 `fstp-admin restore` runs, after the two database restores and with both services stopped:
 

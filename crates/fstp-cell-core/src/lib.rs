@@ -208,6 +208,11 @@ pub enum SystemTask {
     /// route that saw the regression refuses the login or step-up as
     /// before, and the mark is a ledger record of the cell's own.
     LoginVerifier,
+    /// The vault port of the cell (ADR-026 record of lane L24, decided by
+    /// Daniel on 2026-11-22): `RequestVerification` only, after the API
+    /// core admitted the person's own `me.begin_verification` or
+    /// `people.begin_verification`.
+    IdentityPort,
 }
 
 /// The context a system task's command runs in.

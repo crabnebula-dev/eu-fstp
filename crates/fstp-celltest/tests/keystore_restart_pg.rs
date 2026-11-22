@@ -68,3 +68,37 @@ fn i23_i79_i81_keystore_survives_a_pg_process_restart() {
     }
     assert_eq!(cell.login_account(&email).unwrap(), account, "I-79");
 }
+
+/// The stack a cell's start-up may take on the thread that runs it: one
+/// MiB, half of a Rust test thread's default (lane L26). A world starts
+/// its cells on the test thread, so a start-up over this bound left too
+/// little headroom, and a debug build on CI overflowed the 2 MiB stack
+/// (run 45020942229).
+const START_UP_STACK: usize = 1 << 20;
+
+/// ADR-026, ADR-004 (lane L26), the guard of a stack overflow: a cell's
+/// start-up over PostgreSQL, the keystore genesis, the API composition and
+/// a restart that loads the keystore from its tables all fit a thread of
+/// [`START_UP_STACK`] bytes. The start-up awaits each large step through
+/// a boxed future (`fstp_cell::process::step`, the keystore statements of
+/// `fstp_pgstore::keystore`), so no step's future lies in a caller's
+/// frame.
+#[test]
+fn adr026_l26_cell_start_up_fits_a_one_mib_thread() {
+    let run = std::thread::Builder::new()
+        .name("one-mib-start-up".to_owned())
+        .stack_size(START_UP_STACK)
+        .spawn(|| {
+            let world = World::start_with_api(WorldSpec {
+                cells: 1,
+                mode: DbMode::Shared,
+                vault_layout: VaultLayout::SeparateCluster,
+                self_hosted: false,
+                process_mode: false,
+            })
+            .unwrap_or_else(|e| panic!("{e}"));
+            world.cell(0).unwrap().restart().unwrap();
+        })
+        .unwrap();
+    assert!(run.join().is_ok(), "the start-up overflowed or failed");
+}

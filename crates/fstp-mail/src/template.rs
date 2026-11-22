@@ -49,11 +49,14 @@ pub enum TemplateId {
     /// An invitation of a second tenant admin (J0, ADR-026 record of lane
     /// L18).
     AdminInvitation,
+    /// A person is waiting for an ID check that the recipient may record
+    /// (ADR-026 record of lane L24).
+    IdCheckWaiting,
 }
 
 impl TemplateId {
     /// Every template id.
-    pub const ALL: [TemplateId; 11] = [
+    pub const ALL: [TemplateId; 12] = [
         TemplateId::ProposalOutcome,
         TemplateId::IrcConcern,
         TemplateId::NotifiableConflict,
@@ -65,6 +68,7 @@ impl TemplateId {
         TemplateId::PasskeyDisabled,
         TemplateId::RoleInvitation,
         TemplateId::AdminInvitation,
+        TemplateId::IdCheckWaiting,
     ];
 
     /// The stable code, as `X-FSTP-Template` and the ledger record carry it.
@@ -81,6 +85,7 @@ impl TemplateId {
             TemplateId::PasskeyDisabled => "passkey-disabled",
             TemplateId::RoleInvitation => "role-invitation",
             TemplateId::AdminInvitation => "admin-invitation",
+            TemplateId::IdCheckWaiting => "id-check-waiting",
         }
     }
 }
@@ -547,6 +552,24 @@ pub static TEMPLATES: &[Template] = &[
         body: &[
             T(
                 "You are invited to become an administrator of an organisation on the platform.\n\nOpen this link to create your passkey. Creating it accepts the invitation. The link works once, only for you, and for 72 hours:\n",
+            ),
+            S(Slot::Link),
+        ],
+    },
+    // TODO(legal): draft wording for the email that tells the people who
+    // may record an identity check that a person is waiting for one (ADR-026
+    // record of lane L24, lead reading of 2026-11-22). It names no person,
+    // no account, no proposal and no identity data (I-27). It points to the
+    // member page only.
+    Template {
+        id: TemplateId::IdCheckWaiting,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[T("A person is waiting for an ID check")],
+        body: &[
+            T(
+                "A person on the platform is waiting for an ID check.\n\nCheck their ID in person or by video call, then record it. Open the member page to see who is waiting:\n",
             ),
             S(Slot::Link),
         ],
