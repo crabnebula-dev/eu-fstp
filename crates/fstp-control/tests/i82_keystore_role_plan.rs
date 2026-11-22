@@ -1,7 +1,8 @@
 //! I-82, ADR-004 (decided by Daniel on 2026-11-20): the keystore of the
 //! App chain is written through `c_<cell>_keys` only. Lane L3.
 //!
-//! Every table of migration `0011_keystore.sql` is in the role plan of the
+//! Every table of migrations `0011_keystore.sql` and
+//! `0012_display_name.sql` is in the role plan of the
 //! application database, the keys role holds full rights on it, and no
 //! other role holds any right on any `keystore` table.
 
@@ -20,11 +21,15 @@ const KEYSTORE_0011: [&str; 6] = [
     "keystore.erasure_request",
 ];
 
+/// The table of migration `0012_display_name.sql` (lane L26, SA-11
+/// amendment).
+const KEYSTORE_0012: [&str; 1] = ["keystore.display_name"];
+
 /// I-82, ADR-004 (2026-11-20): only the keys role holds a right on a
 /// keystore table of the application database, and it holds all four.
 #[test]
 fn i82_keystore_written_by_keys_role_only() {
-    for t in KEYSTORE_0011 {
+    for t in KEYSTORE_0011.into_iter().chain(KEYSTORE_0012) {
         assert!(APP_TABLES.contains(&t), "APP_TABLES lacks {t}");
     }
     let plan = cell_role_plan(CellId([0x5a; 16])).unwrap();

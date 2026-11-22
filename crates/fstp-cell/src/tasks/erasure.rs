@@ -67,6 +67,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use fstp_api_core::port::DisplayNameSet;
 use fstp_cell_core::gate::{self, Action};
 use fstp_cell_core::{CellCommand, CellState, KeyCommand, SystemTask, system_command_id};
 use fstp_crypto::aead;
@@ -242,6 +243,55 @@ struct LoginIndex {
     digests: BTreeMap<[u8; 32], u128>,
 }
 
+/// One account's display name in the index (SA-11 amendment, ADR-004
+/// section "Written by lane L26"): the text that holds it and its keyed
+/// fingerprint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DisplayRow {
+    text: [u8; 16],
+    fingerprint: [u8; 32],
+}
+
+/// The display name index (SA-11 amendment, lane L26): each account's
+/// name text and fingerprint, and the account of each fingerprint. The
+/// fingerprint key is derived from the `Lookup` key ([`display_key`]), and
+/// each name's text is a subject of the `Lookup` group, so a batch that
+/// erases a name replaces the key and recomputes every live fingerprint.
+/// It lives in `keystore.display_name`, written with the rest of the
+/// keystore.
+#[derive(Clone, Default)]
+struct DisplayIndex {
+    names: BTreeMap<u128, DisplayRow>,
+    owners: BTreeMap<[u8; 32], u128>,
+}
+
+impl DisplayIndex {
+    /// The index of `names`, with its owners derived from them.
+    fn of(names: BTreeMap<u128, DisplayRow>) -> DisplayIndex {
+        let owners = names.iter().map(|(a, r)| (r.fingerprint, *a)).collect();
+        DisplayIndex { names, owners }
+    }
+}
+
+/// The display name fingerprint key of the `Lookup` key `lookup`:
+/// HKDF-SHA256 with an empty salt and
+/// `fstp_api_core::display_name::FINGERPRINT_KEY_LABEL` (ADR-004 "Chains",
+/// decided by Daniel on 2026-11-21), as
+/// `fstp_api_core::display_name::fingerprint_key` derives it. The key is
+/// derived straight into its heap allocation, so no copy of it is left on
+/// the stack (I-80).
+pub fn display_key(lookup: &SealKey) -> Result<SealKey, CellError> {
+    let mut out = fstp_custody::zeroed_key_box();
+    fstp_crypto::kdf::hkdf_sha256(
+        &[],
+        lookup.expose(),
+        fstp_api_core::display_name::FINGERPRINT_KEY_LABEL,
+        &mut out[..],
+    )
+    .map_err(|_| keys_err("display name key"))?;
+    Ok(SealKey::from_box(out))
+}
+
 /// What [`ErasureRunner::set_login_email`] did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoginEmailSet {
@@ -290,6 +340,8 @@ pub struct Keystore {
     requested: BTreeSet<[u8; 16]>,
     /// The keyed login email index.
     logins: LoginIndex,
+    /// The display name index (SA-11 amendment, lane L26).
+    displays: DisplayIndex,
     /// The request id of the start-up `unwrap` of `S(e)`, kept before
     /// the call until its deferred `RecordKeyOp` is written (ADR-004
     /// "Reconciliation", the start-up exception).
@@ -345,6 +397,28 @@ impl Keystore {
     /// account erasure names it in its `EraseTexts` (ADR-007).
     pub fn login_text(&self, account: fstp_domain::id::AccountId) -> Option<[u8; 16]> {
         self.logins.texts.get(&account.raw()).copied()
+    }
+
+    /// The text that holds the display name of `account`, if any (SA-11,
+    /// lane L26). An account erasure names it in its `EraseTexts`
+    /// (ADR-007).
+    pub fn display_text(&self, account: fstp_domain::id::AccountId) -> Option<[u8; 16]> {
+        self.displays.names.get(&account.raw()).map(|r| r.text)
+    }
+
+    /// The keyed fingerprint of the display name of `account`, if any
+    /// (SA-11 amendment, lane L26).
+    pub fn display_fingerprint(&self, account: fstp_domain::id::AccountId) -> Option<[u8; 32]> {
+        self.displays
+            .names
+            .get(&account.raw())
+            .map(|r| r.fingerprint)
+    }
+
+    /// Every display name fingerprint, in order: what
+    /// `keystore.display_name` holds (SA-11 amendment, lane L26).
+    pub fn display_fingerprints(&self) -> Vec<[u8; 32]> {
+        self.displays.owners.keys().copied().collect()
     }
 
     /// The epochs whose root this keystore still references.
@@ -674,6 +748,9 @@ struct Work {
     /// Step 2: the login email index under the new `Lookup` key, when
     /// the batch erases a login email.
     new_logins: Option<BTreeMap<[u8; 32], u128>>,
+    /// Step 2: the display name fingerprints under the new `Lookup` key,
+    /// by account, when the batch replaces `Lookup` (lane L26).
+    new_displays: Option<BTreeMap<u128, [u8; 32]>>,
 }
 
 /// The erasure runner of one cell's App chain.
@@ -735,6 +812,7 @@ impl<C: Custody> ErasureRunner<C> {
                 pending_root: None,
                 requested: BTreeSet::new(),
                 logins: LoginIndex::default(),
+                displays: DisplayIndex::default(),
                 startup_unwrap: None,
                 persist: tables::Persist::default(),
                 snapshots: None,
@@ -1481,6 +1559,219 @@ impl<C: Custody> ErasureRunner<C> {
         Ok(out)
     }
 
+    /// Opens the live text `id` with no ledger check, for a recompute of
+    /// step 2: its data key under its committed group generation.
+    fn open_stored(
+        &self,
+        id: &[u8; 16],
+    ) -> Result<impl std::ops::Deref<Target = Vec<u8>> + use<C>, CellError> {
+        let row = self.store.texts.get(id).ok_or(keys_err("indexed text"))?;
+        let (g, generation, sealed) = self
+            .store
+            .keys
+            .get(&row.dek)
+            .ok_or(keys_err("indexed text key"))?;
+        let gsk = self
+            .work
+            .secrets
+            .get(&(*g, *generation))
+            .ok_or(keys_err("group secret not open"))?;
+        let ctx = ctx_for(self.store.cell, *g, *generation, *id);
+        let dk = envelope::open_key(gsk, sealed, &ctx).map_err(|_| keys_err("indexed key"))?;
+        let body = ctx_for(self.store.cell, *g, row.generation, *id);
+        envelope::open_blob(&dk, &body, &row.blob).map_err(|_| keys_err("indexed text"))
+    }
+
+    /// Step 2 of a batch that replaces `Lookup` (SA-11 amendment, ADR-004
+    /// section "Written by lane L26"): the fingerprint of every live
+    /// display name under the fingerprint key of the new `Lookup`
+    /// generation `sk`, by account. Names the batch erases get none.
+    fn recompute_displays(
+        &self,
+        batch: &BTreeSet<DekId>,
+        sk: &HybridSecretKey,
+    ) -> Result<BTreeMap<u128, [u8; 32]>, CellError> {
+        let key = display_key(&digest_key(sk, Purpose::Lookup)?)?;
+        let mut out = BTreeMap::new();
+        for (account, row) in &self.store.displays.names {
+            let dek = self
+                .store
+                .texts
+                .get(&row.text)
+                .map(|t| t.dek)
+                .ok_or(keys_err("display name text"))?;
+            if batch.contains(&dek) {
+                continue;
+            }
+            let plain = self.open_stored(&row.text)?;
+            let name = std::str::from_utf8(&plain).map_err(|_| keys_err("display name text"))?;
+            out.insert(
+                *account,
+                fstp_api_core::display_name::fingerprint(key.expose(), name),
+            );
+        }
+        Ok(out)
+    }
+
+    /// Whether a batch is before its commit, so no group, key or `Lookup`
+    /// subject may be added.
+    fn resealing(&self) -> bool {
+        matches!(
+            self.chain.phase(),
+            plan::Phase::Planned | plan::Phase::Resealed
+        )
+    }
+
+    /// Sets the display name of `account` to `name`, or clears it with
+    /// `None` (SA-11, SA-11 amendment, ADR-004 section "Written by lane
+    /// L26"). The API core checked the name first.
+    ///
+    /// - A batch before its commit is first run to its commit, so the
+    ///   person is not refused for a batch in flight.
+    /// - A name whose fingerprint another account holds is
+    ///   [`DisplayNameSet::Taken`], and nothing changes. The account's own
+    ///   name again, byte for byte, changes nothing either.
+    /// - Otherwise the name is sealed as a text of its own in a group of
+    ///   its own, its data key joins the `Lookup` group's subjects, and its
+    ///   fingerprint maps to the account. The replaced or cleared name's
+    ///   fingerprint leaves the index at once, and its text gets an
+    ///   erasure request in the chain state, which starts its batch.
+    ///
+    /// The caller writes the rows before it answers (`durable`).
+    ///
+    /// # Errors
+    ///
+    /// A step of the batch in flight that fails, a planner refusal, or a
+    /// failed seal.
+    pub async fn set_display_name(
+        &mut self,
+        account: fstp_domain::id::AccountId,
+        name: Option<&str>,
+    ) -> Result<DisplayNameSet, CellError> {
+        while self.resealing() {
+            if self.step().await?.is_none() {
+                break;
+            }
+        }
+        if self.resealing() {
+            return Err(keys_err("a batch is resealing the keystore"));
+        }
+        let a = account.raw();
+        let current = self.store.displays.names.get(&a).copied();
+        let new = match name {
+            None => None,
+            Some(name) => {
+                let lookup = match self.store.logins.lookup {
+                    Some(g) => g,
+                    None => self.add_lookup_group()?,
+                };
+                let key = display_key(&self.lookup_key()?.ok_or(keys_err("no lookup key"))?)?;
+                let fingerprint = fstp_api_core::display_name::fingerprint(key.expose(), name);
+                if self
+                    .store
+                    .displays
+                    .owners
+                    .get(&fingerprint)
+                    .is_some_and(|owner| *owner != a)
+                {
+                    return Ok(DisplayNameSet::Taken);
+                }
+                if let Some(row) = current
+                    && row.fingerprint == fingerprint
+                    && self.open_stored(&row.text)?.as_slice() == name.as_bytes()
+                {
+                    return Ok(DisplayNameSet::Set);
+                }
+                Some((name, lookup, fingerprint))
+            }
+        };
+        if current.is_none() && new.is_none() {
+            return Ok(DisplayNameSet::Set);
+        }
+        let mut added = None;
+        if let Some((name, lookup, fingerprint)) = new {
+            let group = fstp_crypto::random_array::<16>().map_err(|_| keys_err("group id"))?;
+            let id = fstp_crypto::random_array::<16>().map_err(|_| keys_err("text id"))?;
+            self.add_group(group)?;
+            self.put_text(group, id, name.as_bytes())?;
+            let mut chain = self.chain.clone();
+            chain
+                .add_digest_subject(lookup, DekId(id))
+                .map_err(|_| keys_err("lookup subject"))?;
+            self.store
+                .chain_state
+                .add_digest_subject(lookup, DekId(id))
+                .map_err(|_| keys_err("lookup subject"))?;
+            self.chain = chain;
+            added = Some(DisplayRow {
+                text: id,
+                fingerprint,
+            });
+        }
+        if let Some(old) = current {
+            // The replaced or cleared name is erased at once (ADR-007,
+            // SA-11): its request joins the chain state directly, since no
+            // ledger record names a display name text.
+            let dek = self
+                .store
+                .texts
+                .get(&old.text)
+                .map(|t| t.dek)
+                .ok_or(keys_err("display name text"))?;
+            let seq = self.engine.state().head().raw();
+            let mut durable = self.store.chain_state.clone();
+            durable
+                .request(dek, seq)
+                .map_err(|_| keys_err("erasure request"))?;
+            let mut chain = self.chain.clone();
+            chain
+                .request(dek, seq)
+                .map_err(|_| keys_err("erasure request"))?;
+            self.store.chain_state = durable;
+            self.chain = chain;
+            self.store.requested.insert(old.text);
+            self.store.persist.dirty.requested.insert(old.text);
+            self.store.displays.owners.remove(&old.fingerprint);
+            self.store.displays.names.remove(&a);
+        }
+        if let Some(row) = added {
+            self.store.displays.names.insert(a, row);
+            self.store.displays.owners.insert(row.fingerprint, a);
+        }
+        self.store.persist.dirty.displays.insert(a);
+        Ok(DisplayNameSet::Set)
+    }
+
+    /// The display names of those of `accounts` that have one, opened
+    /// from their texts (SA-11). A name whose text is under erasure is
+    /// left out. The caller checked the read's clearance first.
+    ///
+    /// # Errors
+    ///
+    /// A key chain that does not open.
+    pub fn display_names(
+        &self,
+        state: &CellState,
+        accounts: &[fstp_domain::id::AccountId],
+    ) -> Result<BTreeMap<fstp_domain::id::AccountId, String>, CellError> {
+        let mut out = BTreeMap::new();
+        for account in accounts {
+            let Some(row) = self.store.displays.names.get(&account.raw()) else {
+                continue;
+            };
+            match self.open_text(state, row.text) {
+                Ok(t) => {
+                    let name =
+                        String::from_utf8(t.to_vec()).map_err(|_| keys_err("display name text"))?;
+                    out.insert(*account, name);
+                }
+                Err(OpenRefusal::Erased | OpenRefusal::Unknown) => {}
+                Err(OpenRefusal::Keys) => return Err(keys_err("display name open")),
+            }
+        }
+        Ok(out)
+    }
+
     /// Whether the runner has work: a request not yet joined, or a batch
     /// in flight.
     pub fn busy(&self) -> Result<bool, CellError> {
@@ -1638,15 +1929,24 @@ impl<C: Custody> ErasureRunner<C> {
         // G24, decision 27: a batch that erases a login email affects the
         // `Lookup` group, which takes a new generation and so a new key.
         // Every live login email is digested again under it.
-        let new_logins = match self.store.logins.lookup {
+        // SA-11 amendment, ADR-004 (lane L26): every live display name takes
+        // its fingerprint under the new key too.
+        let (new_logins, new_displays) = match self.store.logins.lookup {
             Some(lookup) => match new_groups.iter().find(|((g, _), _)| *g == lookup) {
-                Some((_, sk)) => Some(self.recompute_logins(&self.chain.running_batch(), sk)?),
-                None => None,
+                Some((_, sk)) => {
+                    let batch = self.chain.running_batch();
+                    (
+                        Some(self.recompute_logins(&batch, sk)?),
+                        Some(self.recompute_displays(&batch, sk)?),
+                    )
+                }
+                None => (None, None),
             },
-            None => None,
+            None => (None, None),
         };
         self.chain = chain;
         self.work.new_logins = new_logins;
+        self.work.new_displays = new_displays;
         self.work.new_groups = new_groups;
         self.work.resealed = resealed;
         Ok(ErasureEvent::GroupsRotated)
@@ -1790,6 +2090,34 @@ impl<C: Custody> ErasureRunner<C> {
                 .extend(store.logins.digests.keys().chain(digests.keys()).copied());
             store.logins.digests = digests;
         }
+        // SA-11 amendment, ADR-004 (lane L26): an erased display name leaves
+        // the index, and every live one takes its fingerprint under the new
+        // `Lookup` key.
+        let erased: Vec<u128> = store
+            .displays
+            .names
+            .iter()
+            .filter(|(_, r)| {
+                store
+                    .texts
+                    .get(&r.text)
+                    .is_some_and(|t| batch.contains(&t.dek))
+            })
+            .map(|(a, _)| *a)
+            .collect();
+        for a in &erased {
+            store.displays.names.remove(a);
+            store.persist.dirty.displays.insert(*a);
+        }
+        if let Some(fingerprints) = self.work.new_displays.take() {
+            for (a, fingerprint) in fingerprints {
+                if let Some(r) = store.displays.names.get_mut(&a) {
+                    r.fingerprint = fingerprint;
+                    store.persist.dirty.displays.insert(a);
+                }
+            }
+        }
+        store.displays = DisplayIndex::of(std::mem::take(&mut store.displays.names));
         store.pending_root = None;
         store.chain_state = chain.clone();
         self.store = store;
@@ -2019,6 +2347,7 @@ impl Work {
             signers: BTreeMap::new(),
             signer_rows: BTreeMap::new(),
             new_logins: None,
+            new_displays: None,
         }
     }
 }
@@ -2093,7 +2422,19 @@ enum Request {
     DeliveryDigestKey {
         reply: ReplyTx<Result<Option<fstp_dispatch::DigestKey>, CellError>>,
     },
+    SetDisplayName {
+        account: fstp_domain::id::AccountId,
+        name: Option<String>,
+        reply: ReplyTx<Result<DisplayNameSet, CellError>>,
+    },
+    DisplayNames {
+        accounts: Vec<fstp_domain::id::AccountId>,
+        reply: ReplyTx<DisplayNamesReply>,
+    },
 }
+
+/// The reply of [`ErasureHandle::display_names`].
+type DisplayNamesReply = Result<BTreeMap<fstp_domain::id::AccountId, String>, CellError>;
 
 impl Request {
     /// Answers a request the task can no longer serve.
@@ -2114,6 +2455,12 @@ impl Request {
             Request::LoginAccount { reply, .. } => reply.send(Err(gone)),
             Request::LoginEmail { reply, .. } => reply.send(Err(gone)),
             Request::DeliveryDigestKey { reply } => reply.send(Err(gone)),
+            Request::SetDisplayName { reply, .. } => {
+                reply.send(Err(keys_err("the erasure task is not running")))
+            }
+            Request::DisplayNames { reply, .. } => {
+                reply.send(Err(keys_err("the erasure task is not running")))
+            }
             // Dropping the slot answers `None`.
             Request::Keystore { reply } => drop(reply),
         }
@@ -2334,6 +2681,42 @@ impl ErasureHandle {
             .unwrap_or(Err(keys_err("the erasure task is not running")))
     }
 
+    /// Sets or clears the display name of `account`
+    /// ([`ErasureRunner::set_display_name`], SA-11, lane L26).
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn set_display_name(
+        &self,
+        account: fstp_domain::id::AccountId,
+        name: Option<String>,
+    ) -> Result<DisplayNameSet, CellError> {
+        self.ask(|reply| Request::SetDisplayName {
+            account,
+            name,
+            reply,
+        })
+        .await
+        .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// The display names of those of `accounts` that have one
+    /// ([`ErasureRunner::display_names`], SA-11, lane L26). The caller
+    /// checks the read's clearance first.
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn display_names(
+        &self,
+        accounts: Vec<fstp_domain::id::AccountId>,
+    ) -> Result<BTreeMap<fstp_domain::id::AccountId, String>, CellError> {
+        self.ask(|reply| Request::DisplayNames { accounts, reply })
+            .await
+            .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
     /// Every event of the task so far, in order.
     pub fn events(&self) -> Vec<ErasureEvent> {
         self.progress().events.clone()
@@ -2507,6 +2890,18 @@ async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
             reply.send(runner.login_email(&state, account));
         }
         Request::DeliveryDigestKey { reply } => reply.send(runner.delivery_digest_key()),
+        Request::SetDisplayName {
+            account,
+            name,
+            reply,
+        } => {
+            let done = runner.set_display_name(account, name.as_deref()).await;
+            reply.send(durable(runner, done).await);
+        }
+        Request::DisplayNames { accounts, reply } => {
+            let state = runner.engine.state();
+            reply.send(runner.display_names(&state, &accounts));
+        }
     }
 }
 

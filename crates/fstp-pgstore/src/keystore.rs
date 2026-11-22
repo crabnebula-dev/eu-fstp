@@ -153,6 +153,17 @@ pub struct LoginTextRow {
     pub text: [u8; 16],
 }
 
+/// One `keystore.display_name` row (SA-11 amendment, lane L26).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DisplayNameRow {
+    /// The account.
+    pub account: [u8; 16],
+    /// The text that holds its display name.
+    pub text: [u8; 16],
+    /// The keyed fingerprint of the normalised name.
+    pub fingerprint: [u8; 32],
+}
+
 /// Every row of one keystore, each table in key order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KeystoreRows {
@@ -172,6 +183,8 @@ pub struct KeystoreRows {
     pub digests: Vec<LoginDigestRow>,
     /// The login texts, by account.
     pub logins: Vec<LoginTextRow>,
+    /// The display names, by account (lane L26).
+    pub displays: Vec<DisplayNameRow>,
     /// The texts whose erasure request joined the chain state, by id.
     pub requested: Vec<[u8; 16]>,
 }
@@ -204,6 +217,8 @@ pub struct KeystoreChanges {
     pub digests: Vec<Change<[u8; 32], LoginDigestRow>>,
     /// Login text rows by account.
     pub logins: Vec<Change<[u8; 16], LoginTextRow>>,
+    /// Display name rows by account (lane L26).
+    pub displays: Vec<Change<[u8; 16], DisplayNameRow>>,
     /// Erasure request rows by text.
     pub requested: Vec<Change<[u8; 16], [u8; 16]>>,
 }
@@ -219,6 +234,7 @@ impl KeystoreChanges {
             && self.signers.is_empty()
             && self.digests.is_empty()
             && self.logins.is_empty()
+            && self.displays.is_empty()
             && self.requested.is_empty()
     }
 }
@@ -280,6 +296,13 @@ const LOGIN_PUT: &str = "INSERT INTO keystore.login_text (account, text_id) VALU
      ON CONFLICT (account) DO UPDATE SET text_id = EXCLUDED.text_id";
 const LOGIN_DEL: &str = "DELETE FROM keystore.login_text WHERE account = $1";
 const LOGIN_ALL: &str = "SELECT account, text_id FROM keystore.login_text ORDER BY account";
+
+const DISPLAY_PUT: &str = "INSERT INTO keystore.display_name (account, text_id, fingerprint) \
+     VALUES ($1, $2, $3) ON CONFLICT (account) DO UPDATE SET text_id = EXCLUDED.text_id, \
+     fingerprint = EXCLUDED.fingerprint";
+const DISPLAY_DEL: &str = "DELETE FROM keystore.display_name WHERE account = $1";
+const DISPLAY_ALL: &str =
+    "SELECT account, text_id, fingerprint FROM keystore.display_name ORDER BY account";
 
 const REQUEST_PUT: &str =
     "INSERT INTO keystore.erasure_request (text_id) VALUES ($1) ON CONFLICT DO NOTHING";
@@ -388,7 +411,8 @@ impl<R: Runtime> KeystoreTables<R> {
             && rows.signers.is_empty()
             && rows.digests.is_empty()
             && rows.logins.is_empty()
-            && rows.requested.is_empty());
+            && rows.requested.is_empty()
+            && rows.displays.is_empty());
         if rows.chain.is_none() && other {
             return Err(StoreFault::Corrupt("keystore rows without a chain row"));
         }
@@ -508,6 +532,14 @@ async fn load_rows<R: Runtime>(
     }
     for r in client.query(REQUEST_ALL, &[]).await? {
         out.requested.push(id(&r, 0)?);
+    }
+    for r in client.query(DISPLAY_ALL, &[]).await? {
+        let fingerprint: Vec<u8> = r.get(2)?;
+        out.displays.push(DisplayNameRow {
+            account: id(&r, 0)?,
+            text: id(&r, 1)?,
+            fingerprint: bytes32(&fingerprint)?,
+        });
     }
     Ok(out)
 }
@@ -670,6 +702,22 @@ async fn write_changes<R: Runtime>(
             Change::Delete(a) => {
                 tx.execute(LOGIN_DEL, &[&uuid(*a)]).await?;
             }
+        }
+    }
+    // Deletes first, so a fingerprint a deleted row held is free for a
+    // row put in the same batch (the UNIQUE constraint, lane L26).
+    for change in &c.displays {
+        if let Change::Delete(a) = change {
+            tx.execute(DISPLAY_DEL, &[&uuid(*a)]).await?;
+        }
+    }
+    for change in &c.displays {
+        if let Change::Put(d) = change {
+            tx.execute(
+                DISPLAY_PUT,
+                &[&uuid(d.account), &uuid(d.text), &d.fingerprint.to_vec()],
+            )
+            .await?;
         }
     }
     for change in &c.requested {
