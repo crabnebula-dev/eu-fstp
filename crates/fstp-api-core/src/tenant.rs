@@ -206,6 +206,15 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
                     Err(bad())
                 }
             }
+            // ADR-030: one slot and the image, or `null` to clear. The
+            // image itself is judged in dispatch, under I-68.
+            TenantKind::SetLogo => {
+                if exactly(spec, request, &["image", "mode", "programme"]) {
+                    logo_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
             // No operation of the registry has this kind: the inference
             // record has no route (design 3.5).
             TenantKind::RecordInferenceConfig => Err(bad()),
@@ -332,6 +341,44 @@ pub(crate) fn signatory_request(request: &Object) -> Result<(SignatoryRole, Acco
 pub(crate) fn branding_request(request: &Object) -> Result<fstp_brand::BrandTokens, ApiError> {
     let tokens = request.get("tokens").ok_or_else(bad)?;
     fstp_brand::from_value(tokens).map_err(|_| bad())
+}
+
+/// A decoded `tenant.branding.set_logo` request (ADR-030).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LogoRequest {
+    /// The slot.
+    pub(crate) slot: fstp_tenant::LogoSlot,
+    /// The base64 text of the file, or `None` to clear the slot.
+    pub(crate) image: Option<String>,
+}
+
+/// The slot and image of a `tenant.branding.set_logo` body:
+/// `{image, mode, programme}`. `mode` is `light` or `dark`, `programme`
+/// is `null` for the tenant or a programme id, and `image` is `null` or
+/// a string no longer than the base64 of the largest logo. The file is
+/// not read here. Errors name no request content.
+pub(crate) fn logo_request(request: &Object) -> Result<LogoRequest, ApiError> {
+    let mode = match request.get("mode").and_then(Value::as_str) {
+        Some("light") => fstp_brand::ThemeMode::Light,
+        Some("dark") => fstp_brand::ThemeMode::Dark,
+        _ => return Err(bad()),
+    };
+    let owner = match request.get("programme") {
+        Some(Value::Null) => fstp_tenant::LogoOwner::Tenant,
+        Some(_) => fstp_tenant::LogoOwner::Programme(fstp_domain::id::ProgrammeId::from_raw(
+            crate::forms::id_param(request, "programme").ok_or_else(bad)?,
+        )),
+        None => return Err(bad()),
+    };
+    let image = match request.get("image") {
+        Some(Value::Null) => None,
+        Some(Value::String(s)) if s.len() <= fstp_brand::image::MAX_BASE64_CHARS => Some(s.clone()),
+        _ => return Err(bad()),
+    };
+    Ok(LogoRequest {
+        slot: fstp_tenant::LogoSlot { owner, mode },
+        image,
+    })
 }
 
 /// The terminology of a `tenant.terminology.set` body: `{labels, voyage_on}`.

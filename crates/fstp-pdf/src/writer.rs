@@ -96,7 +96,7 @@ pub struct Document {
 }
 
 /// The colour space of a letterhead image (ADR-030 section 6).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ImageColours {
     /// `/DeviceGray`.
     Gray,
@@ -110,7 +110,7 @@ pub enum ImageColours {
 /// An opaque PNG passed through by its zlib stream (ADR-030 section 6):
 /// the writer decodes nothing. The caller read these values from the
 /// PNG header (`fstp_brand::image::pdf_image`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Image {
     /// The width in pixels, 1 to 2048.
     pub width: u32,
@@ -130,7 +130,7 @@ pub struct Image {
 /// tenant's and the programme's logos from the left, and the EU emblem
 /// slot on the right. Each is marked as an artifact. An empty letterhead
 /// writes exactly what [`write`] writes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Letterhead {
     /// The logos, left to right. At most [`MAX_LOGOS`].
     pub logos: Vec<Image>,

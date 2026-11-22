@@ -595,6 +595,9 @@ use fstp_access::ReadClearance;
 pub enum BlobOwner {
     /// A programme, for its import documents.
     Programme(ProgrammeId),
+    /// The tenant's brand assets: the checked logos of ADR-030. They are
+    /// public data, shown on public pages.
+    Brand,
 }
 
 /// A content address of a stored blob: the SHA-256 of its bytes.
@@ -1307,6 +1310,13 @@ pub trait BlobStore: Send + Sync {
         r: BlobRef,
         clearance: &ReadClearance,
     ) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send;
+    /// Reads a brand asset of owner [`BlobOwner::Brand`], with no
+    /// clearance: a logo is public data (ADR-030). A blob of any other
+    /// owner is refused. The default fails closed.
+    fn get_brand(&self, r: BlobRef) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send {
+        let _ = r;
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// One section of a pre-check snapshot (M7 design section 4).
@@ -1791,6 +1801,12 @@ pub(crate) trait Dispatch: Send + Sync {
     ) -> crate::PageFuture<'a>;
     /// The tenant's current branding (M9 lane B2).
     fn brand(&self) -> Option<crate::Brand>;
+    /// The paths of the tenant's logos (ADR-030).
+    fn tenant_logos(&self) -> crate::brand::LogoPaths;
+    /// The bytes of the current logo at `path` (ADR-030).
+    fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a>;
+    /// The theme of the session `cred` names (ADR-030).
+    fn theme<'a>(&'a self, cred: Credential, head: &'a RequestHead) -> crate::ThemeFuture<'a>;
 }
 
 /// The ports of one cell inside an [`ApiCore`], with the dispatch state
@@ -1827,6 +1843,19 @@ impl<P: CellPorts> Dispatch for Core<P> {
 
     fn brand(&self) -> Option<crate::Brand> {
         crate::dispatch::brand_of(&self.ports.engine().snapshot())
+    }
+
+    fn tenant_logos(&self) -> crate::brand::LogoPaths {
+        let state = self.ports.engine().snapshot();
+        crate::brand::paths_of(state.tenant.state(), fstp_tenant::LogoOwner::Tenant)
+    }
+
+    fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a> {
+        Box::pin(async move { crate::dispatch::brand::asset(&self.ports, path).await })
+    }
+
+    fn theme<'a>(&'a self, cred: Credential, head: &'a RequestHead) -> crate::ThemeFuture<'a> {
+        Box::pin(async move { crate::dispatch::brand::theme(&self.ports, &cred, head).await })
     }
 
     fn page<'a>(

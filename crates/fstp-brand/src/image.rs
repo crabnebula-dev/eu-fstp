@@ -766,3 +766,25 @@ pub fn logo_path_digest(path: &str) -> Option<([u8; 32], LogoFormat)> {
     }
     Some((out, format))
 }
+
+/// Standard base64 with padding of `bytes`, the form [`from_base64`]
+/// reads: for tests, the matrix harness and the demo.
+pub fn to_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3).saturating_mul(4));
+    for c in bytes.chunks(3) {
+        let b = |i: usize| u32::from(c.get(i).copied().unwrap_or(0));
+        let n = b(0) << 16 | b(1) << 8 | b(2);
+        for i in 0..4usize {
+            if i <= c.len() {
+                let shift =
+                    18u32.saturating_sub(6u32.saturating_mul(u32::try_from(i).unwrap_or(0)));
+                let k = usize::try_from(n >> shift & 63).unwrap_or(0);
+                out.push(char::from(ALPHABET.get(k).copied().unwrap_or(b'A')));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}

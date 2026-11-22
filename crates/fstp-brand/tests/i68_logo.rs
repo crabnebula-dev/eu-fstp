@@ -378,6 +378,7 @@ fn i68_logo_upload_is_base64_of_a_checked_file() {
             "{bad:?}"
         );
     }
+    assert_eq!(fstp_brand::image::to_base64(&png), text);
     let svg = b64(b"<svg/>");
     assert_eq!(from_base64(&svg).err(), Some(LogoRefusal::WrongType));
     let long = "A".repeat(MAX_BASE64_CHARS + 4);

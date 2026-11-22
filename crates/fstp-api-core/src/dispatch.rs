@@ -128,6 +128,8 @@ use crate::rate::{self, Key, Rates};
 use crate::{ActionDigest, ApiError, Credential, ErrorCode, Op, OpResult, ReadModel, RequestHead};
 
 mod audit;
+// ADR-030: logos and themes.
+pub(crate) mod brand;
 mod creator_ops;
 /// The M5 contract, report and vault ticket operations and the M5 reads
 /// (lane L-API).
@@ -2317,6 +2319,8 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         // Daniel, 2026-11-15 (late): the shipped and tenant funder profiles.
         ReadKind::ListFunderProfiles => tenant::funder_profiles(call)?,
+        // ADR-030: the logos of the tenant and of each programme.
+        ReadKind::ListLogos => brand::logos(call),
         // M6 lane L6-API: the programme manager's timeline of a programme.
         ReadKind::GetProgrammeTimeline => {
             use crate::port::Outbox as _;
@@ -2688,6 +2692,8 @@ enum PortCall {
     RequestErasure(crate::port::ErasureCause, ProposalId),
     /// The caller sets or clears its own display name (SA-11).
     SetDisplayName(Option<String>),
+    /// The caller sets its own theme (ADR-030).
+    SetTheme(fstp_tenant::Theme),
 }
 
 /// An operation an M3 port serves.
@@ -2781,6 +2787,10 @@ async fn m3_port<P: Seams>(
         PortKind::SetDisplayName => {
             PortCall::SetDisplayName(team::checked_name(&op.request).map_err(|e| call.refuse(e))?)
         }
+        PortKind::SetTheme => PortCall::SetTheme(
+            forms::theme_param(&op.request)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?,
+        ),
         PortKind::MarkMailboxRead => {
             let message = op
                 .request
@@ -3008,6 +3018,10 @@ async fn m3_port<P: Seams>(
             ))),
             Err(e) => done(Err(e), "SA-11"),
         },
+        // ADR-030: a `ThemeSet` record of the tenant ledger.
+        PortCall::SetTheme(theme) => brand::set_theme(call, account, theme)
+            .await
+            .map_err(|e| call.refuse(e)),
         PortCall::EndSession(s) => {
             done(call.ports.sessions_admin().end(account, s).await, "R-LG-04")
         }

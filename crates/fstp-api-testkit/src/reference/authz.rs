@@ -1463,6 +1463,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("tenant.branding.set", T::None, R::TenantAdmin)
         .hr()
         .prepare_tool("fstp_prepare_branding"),
+    // ADR-030: a tenant admin reads and sets the logo slots. The set is
+    // high-risk by the strict reading, as the brand tokens are, and web
+    // only.
+    RefOp::read("tenant.branding.logos", T::None, R::TenantAdmin),
+    RefOp::act("tenant.branding.set_logo", T::None, R::TenantAdmin).hr(),
     // M9 lane T1: interface labels and the Voyage switch (I-72, interim).
     RefOp::act("tenant.terminology.set", T::None, R::TenantAdmin)
         .hr()
@@ -1784,6 +1789,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // with no step-up, since the amendment names none, and web only.
     RefOp::read("me.display_name", T::None, R::AnyAccount),
     RefOp::act("me.set_display_name", T::None, R::AnyAccount),
+    // ADR-030: any account sets its own theme, with no step-up, web only.
+    RefOp::act("me.set_theme", T::None, R::AnyAccount),
     // MB-Q1, ADR-020 (Proposed): the caller marks its own notice read.
     RefOp::act("me.mailbox.mark_read", T::None, R::AnyAccount),
     RefOp::act("me.add_passkey", T::None, R::AnyAccount).hr(),
