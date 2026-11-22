@@ -11,7 +11,7 @@ export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
   "admin.branding.logos.loading": "Loading the logos in force.",
   "admin.branding.logos.unavailable": "The logos could not be loaded. Reload the page to try again.",
   "admin.branding.logos.intro":
-    "Your logo shows in the top bar, on the sign-in pages, on public pages, in emails and on PDFs. Use a PNG or WebP image of up to 256 KB.",
+    "Your logo shows in the top bar, on the sign-in pages, on public pages, in emails and on PDFs. Choose a PNG or WebP image. A WebP image is turned into a PNG before it is sent, and the PNG may be up to 256 KB.",
   "admin.branding.logos.tenant": "Organisation logo",
   "admin.branding.logos.programme": "Logo of {name}",
   "admin.branding.logos.light": "For light mode",
@@ -30,10 +30,10 @@ export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
   "admin.branding.logos.low_contrast_light": "This logo may be hard to see on the light top bar.",
   "admin.branding.logos.low_contrast_dark":
     "This logo may be hard to see on the dark top bar. You can add a separate logo for dark mode.",
-  "admin.branding.logos.no_pdf":
-    "PDFs show this logo only as a PNG without see-through areas. Until then, PDFs leave it out.",
+  "admin.branding.logos.no_pdf": "PDFs cannot show this logo. Upload it again as a PNG to show it in PDFs.",
   "admin.branding.logos.no_email": "Emails show PNG logos only. A WebP logo is left out of emails.",
-  "admin.branding.logos.refused": "This image was not accepted. Check that it is a PNG or WebP of up to 256 KB.",
+  "admin.branding.logos.refused": "Please upload a PNG; WebP files are converted automatically on the branding page.",
+  "admin.branding.logos.contrast": "Measured contrast on this top bar: about {ratio} to 1.",
   "admin.branding.logos.emblem_note":
     "The EU emblem and the funding statement have their own fixed place on public pages and PDFs. No logo can replace them.",
   "admin.branding.intro":

@@ -634,6 +634,7 @@ fn record_value(rec: &TenantRecord) -> Value {
 fn slot_members(slot: &LogoSlot, logo: &Option<LogoRef>) -> Vec<(&'static str, Value)> {
     let logo = logo.map_or(Value::Null, |l| {
         object(vec![
+            ("contrast", l.contrast_x100.map_or(Value::Null, dec)),
             ("digest", s(&hex(&l.digest.bytes()))),
             ("format", s(l.format.name())),
             ("height", dec(l.height)),
@@ -669,13 +670,22 @@ fn take_slot(f: &Fields<'_>) -> R<(LogoSlot, Option<LogoRef>)> {
     let logo = if l.is_null() {
         None
     } else {
-        let g = Fields::of(l, &["digest", "format", "height", "pdf", "width"])?;
+        let g = Fields::of(
+            l,
+            &["contrast", "digest", "format", "height", "pdf", "width"],
+        )?;
+        let contrast = g.get("contrast")?;
         Some(LogoRef {
             digest: ContentDigest::from_bytes(take_digest(g.get("digest")?)?),
             format: fstp_brand::image::LogoFormat::from_name(str_of(g.get("format")?)?)
                 .ok_or(err("unknown logo format"))?,
             height: take_u32(g.get("height")?)?,
             pdf: bool_of(g.get("pdf")?)?,
+            contrast_x100: if contrast.is_null() {
+                None
+            } else {
+                Some(take_u32(contrast)?)
+            },
             width: take_u32(g.get("width")?)?,
         })
     };

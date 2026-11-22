@@ -121,6 +121,20 @@ impl ToJson for LogoInfo {
         let _ = o.insert("height", Value::String(l.height.to_string()));
         let _ = o.insert("pdf", Value::Bool(l.pdf));
         let _ = o.insert("email", Value::Bool(l.format.in_email()));
+        // I-70, ADR-030 lead reading of 2026-11-22: the contrast advice of
+        // the slot, never a refusal.
+        let _ = o.insert(
+            "contrast",
+            l.contrast_x100
+                .map_or(Value::Null, |c| Value::String(c.to_string())),
+        );
+        let _ = o.insert(
+            "advice",
+            Value::Bool(
+                l.contrast_x100
+                    .is_some_and(|c| c < fstp_brand::image::ADVICE_BELOW_X100),
+            ),
+        );
         Value::Object(o)
     }
 }

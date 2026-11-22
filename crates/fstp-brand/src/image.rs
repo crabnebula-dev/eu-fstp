@@ -6,9 +6,11 @@
 //! are dropped. Every other format, SVG included, is refused. Fuzz target
 //! `logo_inspect`.
 //!
-//! [`pdf_image`] reads the parameters a PDF needs to show a PNG without
-//! decoding it (ADR-030 section 6): the `IDAT` bytes pass through as one
-//! `/FlateDecode` stream with the PNG predictor.
+//! An upload then passes [`reencode`]: `fstp-png` decodes the PNG and
+//! writes it again in one canonical shape (ADR-031). The cell takes PNG
+//! uploads only. [`pdf_image`] gives a PDF the flattened pixels and the
+//! alpha plane for an `/SMask`, and [`header_contrast`] the contrast
+//! advice (ADR-030 lead reading of 2026-11-22).
 
 /// The largest logo file, in bytes (256 KiB).
 pub const MAX_LOGO_BYTES: usize = 256 * 1024;
@@ -519,117 +521,42 @@ fn webp(bytes: &[u8]) -> R<Logo> {
 
 // ------------------------------------------------------------------ PDF
 
-/// The colour space of a PDF image.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PdfColours {
-    /// `/DeviceGray`, one component.
-    Gray,
-    /// `/DeviceRGB`, three components.
-    Rgb,
-    /// `/Indexed` over `/DeviceRGB` with this palette, three bytes per
-    /// entry.
-    Indexed(Vec<u8>),
-}
-
-impl PdfColours {
-    /// The components per sample in the stream.
-    pub const fn components(&self) -> u8 {
-        match self {
-            PdfColours::Rgb => 3,
-            PdfColours::Gray | PdfColours::Indexed(_) => 1,
-        }
-    }
-}
-
-/// What a PDF needs to show a PNG without decoding it (ADR-030 section 6).
+/// What a PDF needs to show a PNG logo (ADR-030 section 6, ADR-031): the
+/// pixels flattened over white as one `/DeviceRGB` stream and, for a logo
+/// with transparency, its alpha plane as a `/DeviceGray` stream for an
+/// `/SMask`. Both are zlib data of rows led by PNG filter bytes, for
+/// `/FlateDecode` with `/Predictor 15` and 8 bits a component.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PdfImage {
-    /// The width in pixels: `/Columns` and `/Width`.
+    /// The width in pixels: `/Width` and `/Columns`.
     pub width: u32,
     /// The height in pixels.
     pub height: u32,
-    /// The colour space.
-    pub colours: PdfColours,
-    /// Bits per component: 1, 2, 4 or 8.
-    pub bits: u8,
-    /// A colour-key `/Mask`: a min and max per component.
-    pub mask: Option<Vec<u16>>,
-    /// The zlib stream of the `IDAT` chunks, unchanged.
-    pub data: Vec<u8>,
+    /// The RGB stream, three components a pixel.
+    pub rgb: Vec<u8>,
+    /// The alpha stream, one component a pixel, when any pixel is not
+    /// opaque.
+    pub alpha: Option<Vec<u8>>,
 }
 
-/// The PDF image of `bytes`, or `None` when it cannot be shown without
-/// a decoder: any WebP, a PNG with an alpha channel, partial palette
-/// transparency, interlacing or 16-bit samples.
+/// The white page a PDF logo is flattened over.
+const PAGE_WHITE: fstp_creator::Rgb = fstp_creator::Rgb::hex(0xFF_FF_FF);
+
+/// The PDF image of a PNG logo, decoded by `fstp-png` under the logo
+/// limits: every colour type, bit depth, interlace and transparency
+/// (lead reading of 2026-11-22). `None` for a WebP file or a PNG the
+/// decoder refuses.
 pub fn pdf_image(bytes: &[u8]) -> Option<PdfImage> {
-    if bytes.len() > MAX_LOGO_BYTES || !bytes.starts_with(&PNG_SIGNATURE) {
+    if !bytes.starts_with(&PNG_SIGNATURE) {
         return None;
     }
-    let w = walk_png(bytes).ok()?;
-    let h = w.header;
-    if h.interlace != 0 || h.depth > 8 {
-        return None;
-    }
-    let max = (1u16 << h.depth).checked_sub(1)?;
-    let key = |d: &[u8], at: usize| -> Option<u16> {
-        let v = u16::from_be_bytes([*d.get(at)?, *d.get(at.checked_add(1)?)?]);
-        (v <= max).then_some(v)
-    };
-    let (colours, mask) = match h.colour {
-        0 => {
-            let mask = match w.transparency {
-                Some(t) => {
-                    let g = key(t, 0)?;
-                    Some(vec![g, g])
-                }
-                None => None,
-            };
-            (PdfColours::Gray, mask)
-        }
-        2 => {
-            let mask = match w.transparency {
-                Some(t) => {
-                    let (r, g, b) = (key(t, 0)?, key(t, 2)?, key(t, 4)?);
-                    Some(vec![r, r, g, g, b, b])
-                }
-                None => None,
-            };
-            (PdfColours::Rgb, mask)
-        }
-        3 => {
-            let palette = w.palette?.to_vec();
-            let mask = match w.transparency {
-                Some(t) => {
-                    let clear: Vec<usize> = t
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, a)| **a == 0)
-                        .map(|(i, _)| i)
-                        .collect();
-                    if t.iter().any(|a| *a != 0 && *a != 255) || clear.len() > 1 {
-                        return None;
-                    }
-                    match clear.first() {
-                        Some(i) => {
-                            let i = u16::try_from(*i).ok()?;
-                            Some(vec![i, i])
-                        }
-                        None => None,
-                    }
-                }
-                None => None,
-            };
-            (PdfColours::Indexed(palette), mask)
-        }
-        _ => return None,
-    };
+    let img = fstp_png::decode(bytes, &fstp_png::Limits::LOGO).ok()?;
+    let rgb = fstp_png::pdf_rgb(&img, PAGE_WHITE);
     Some(PdfImage {
-        width: h.width,
-        height: h.height,
-        colours,
-        bits: h.depth,
-        mask,
-        data: w.data,
+        width: rgb.width,
+        height: rgb.height,
+        rgb: rgb.data,
+        alpha: fstp_png::pdf_alpha(&img).map(|a| a.data),
     })
 }
 
@@ -702,29 +629,15 @@ pub fn from_base64(text: &str) -> R<Logo> {
     inspect(&bytes)
 }
 
-/// A synthetic, valid, opaque grey PNG of `width` by `height` pixels for
-/// tests, the matrix harness and the demo. Its image data is a fixed
-/// zlib stream that no check here decodes.
+/// A synthetic, valid, opaque mid-grey PNG of `width` by `height` pixels
+/// for tests, the matrix harness and the demo, in the canonical shape of
+/// `fstp-png`, so it passes [`reencode`] unchanged.
 pub fn sample_png(width: u32, height: u32) -> Vec<u8> {
-    let chunk = |out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]| {
-        let len = u32::try_from(data.len()).unwrap_or(0);
-        out.extend_from_slice(&len.to_be_bytes());
-        out.extend_from_slice(kind);
-        out.extend_from_slice(data);
-        out.extend_from_slice(&crc32(&[kind, data]).to_be_bytes());
-    };
-    let mut ihdr = width.to_be_bytes().to_vec();
-    ihdr.extend_from_slice(&height.to_be_bytes());
-    ihdr.extend_from_slice(&[8, 0, 0, 0, 0]);
-    let mut out = PNG_SIGNATURE.to_vec();
-    chunk(&mut out, b"IHDR", &ihdr);
-    chunk(
-        &mut out,
-        b"IDAT",
-        &[0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
-    );
-    chunk(&mut out, b"IEND", &[]);
-    out
+    let n = usize::try_from(width)
+        .unwrap_or(0)
+        .saturating_mul(usize::try_from(height).unwrap_or(0));
+    let rgba: Vec<u8> = (0..n).flat_map(|_| [0x80, 0x80, 0x80, 0xFF]).collect();
+    png_of(width, height, rgba).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------- paths
@@ -789,28 +702,55 @@ pub fn to_base64(bytes: &[u8]) -> String {
     out
 }
 
-// ----------------------------------------------------------------- seam
+// ------------------------------------------------------------ re-encode
 
-/// The re-encoding seam of ADR-030 (lead reading of 2026-11-22). A
-/// follow-up lane writes an in-house inflate and a PNG decoder and
-/// encoder, with no new crate. It then fills these three steps, and the
-/// callers stay as they are:
+/// Re-encodes an accepted logo with `fstp-png` (ADR-030 lead reading of
+/// 2026-11-22, ADR-031; I-68): the file is decoded to pixels and written
+/// again in one canonical shape, so no ancillary chunk and no encoded
+/// byte of the uploader's file is stored. The cell accepts PNG uploads
+/// only: the branding page converts a WebP file to PNG in the browser
+/// before it sends it, so a WebP upload is refused as the wrong type.
 ///
-/// - [`reencode`]: every upload is decoded and written again, so no
-///   encoded byte of the uploader's file is stored;
-/// - [`pdf_image`]: a logo with an alpha channel is flattened onto white,
-///   so every PNG logo shows in PDFs;
-/// - [`header_contrast`]: the cell judges the contrast of a logo against
-///   the header colours, so a refusal needs no browser.
+/// # Errors
 ///
-/// Until then `reencode` returns the chunk rewrite of [`inspect`]
-/// unchanged and `header_contrast` knows nothing.
-pub fn reencode(logo: Logo) -> Logo {
-    logo
+/// [`LogoRefusal::WrongType`] for WebP, [`LogoRefusal::TooLarge`] when
+/// the re-encoded file passes the size bound, and the refusal of the
+/// decoder as [`LogoRefusal::Malformed`] or [`LogoRefusal::Dimensions`].
+pub fn reencode(logo: Logo) -> R<Logo> {
+    if logo.format != LogoFormat::Png {
+        return Err(LogoRefusal::WrongType);
+    }
+    let bytes = fstp_png::reencode(&logo.bytes, &fstp_png::Limits::LOGO).map_err(|e| match e {
+        fstp_png::PngError::ReencodedTooLarge | fstp_png::PngError::FileTooLarge => {
+            LogoRefusal::TooLarge
+        }
+        fstp_png::PngError::Dimensions => LogoRefusal::Dimensions,
+        _ => LogoRefusal::Malformed,
+    })?;
+    Ok(Logo { bytes, ..logo })
 }
 
-/// The contrast of a logo against a header colour, once a decoder exists
-/// ([`reencode`]). `None` until then: the cell does not judge it.
-pub fn header_contrast(_logo: &Logo, _header: fstp_creator::Rgb) -> Option<u32> {
-    None
+/// The contrast advice of a PNG logo on a header colour (ADR-030 lead
+/// reading of 2026-11-22; I-70): the WCAG ratio, in hundredths, that at
+/// least half of the logo's ink reaches, from `fstp_png::contrast`. It is
+/// advice only and never refuses a logo. `None` for WebP, a fully
+/// transparent logo, or a file the decoder refuses.
+pub fn header_contrast(bytes: &[u8], header: fstp_creator::Rgb) -> Option<u32> {
+    if !bytes.starts_with(&PNG_SIGNATURE) {
+        return None;
+    }
+    let img = fstp_png::decode(bytes, &fstp_png::Limits::LOGO).ok()?;
+    fstp_png::contrast(&img, header).map(|c| c.median_x100)
+}
+
+/// The ratio, in hundredths, under which a logo gets the advice that it
+/// may be hard to see: 3:1, the bound of non-text content (WCAG 2.2 SC
+/// 1.4.11).
+pub const ADVICE_BELOW_X100: u32 = 300;
+
+/// A PNG of `width` by `height` pixels of 8-bit RGBA `rgba`, in the
+/// canonical shape of `fstp-png`, or `None` when the sizes do not match:
+/// for tests, the matrix harness and the demo. Synthetic only.
+pub fn png_of(width: u32, height: u32, rgba: Vec<u8>) -> Option<Vec<u8>> {
+    fstp_png::Image::new(width, height, rgba).map(|i| fstp_png::encode(&i))
 }

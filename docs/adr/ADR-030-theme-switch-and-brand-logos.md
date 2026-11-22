@@ -120,3 +120,14 @@ Under the usability rule, the lead decided these for the lane. Each replaces the
 3. A follow-up lane writes an in-house inflate and a PNG decoder and encoder, with no new crate. Uploads are then re-encoded, alpha is flattened for PDFs, and the cell checks logo contrast. The seam is `fstp_brand::image::reencode`, which every upload already passes, `pdf_image` and `header_contrast` (open questions 2, 3 and 5).
 4. The exclusion of the ADR-030 operations from the PostgreSQL matrix sample is temporary. A follow-up lane fixes production display names (SA-11), then adds the three operations and `programme.logos` back to the sample (open question 8).
 5. Reports and the Guide PDF, MCP prepare tools for logos, and the theme on signed-in `/auth` pages come later (open questions 7 and 9, section 1). Daniel supplies the EU emblem file (open question 6).
+
+## Lead reading, 2026-11-22, with the codec of ADR-031
+
+These replace the rows of section 3 on the rewrite, on WebP and on contrast, and the rows of section 6 on what PDFs can show.
+
+| Topic | Decision |
+| --- | --- |
+| Re-encode | Every PNG upload passes `fstp_brand::image::reencode`, which calls `fstp_png::reencode(bytes, &fstp_png::Limits::LOGO)`. The stored file is the canonical PNG of the pixels, so no ancillary chunk and no encoded byte of the upload is kept (I-68). A re-encoded file over 256 KiB is refused as too large |
+| WebP | The cell accepts PNG uploads only. The branding page decodes a WebP file in the browser and sends it as PNG (`canvas.toBlob('image/png')`). Any other upload is refused under I-68, and the page says: "Please upload a PNG; WebP files are converted automatically on the branding page." The WebP check of section 3 stays, fuzzed, for the files a page might still send |
+| PDFs | Every stored PNG logo reaches PDFs: its pixels flattened over white (`fstp_png::pdf_rgb`) and, for a logo with transparency, its alpha plane as the image's `/SMask` (`fstp_png::pdf_alpha`). Transparent, interlaced and 16-bit PNGs all show |
+| Contrast | `header_contrast` gives `fstp_png::contrast(...).median_x100` on the top bar colour of the slot's mode (`--color-surface-1`). The cell records it with the logo, and the branding page shows it after a save with the advice under 3:1. It is advice only and never refuses a logo (I-70 binds text colour pairs). The browser preview keeps its own estimate before a save |

@@ -49,6 +49,7 @@ fn logo(g: &mut Gen) -> LogoRef {
         width: g.u32_in(16..=2048),
         height: g.u32_in(16..=2048),
         pdf: g.bool(),
+        contrast_x100: g.option(|g| g.u32_in(100..=2100)),
     }
 }
 
@@ -108,6 +109,7 @@ fn i68_logo_outside_bounds_is_refused() {
         width: 4096,
         height: 100,
         pdf: true,
+        contrast_x100: None,
     };
     let cmd = TenantCommand::SetLogo {
         slot: light_tenant(),
@@ -171,6 +173,7 @@ fn adr030_programme_manager_sets_only_their_programme_logo() {
         width: 64,
         height: 32,
         pdf: true,
+        contrast_x100: None,
     };
     let cmd = TenantCommand::SetLogo {
         slot,

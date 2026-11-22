@@ -23,6 +23,7 @@ import {
   fileProblem,
   logoBody,
   logoContrast,
+  ratioText,
   lowContrast,
   sizeOk,
   sniff,
@@ -42,8 +43,8 @@ interface Chosen {
   readonly bitmap: ImageBitmap;
 }
 
-/** The logo in force, on the light and the dark header. */
-function current(t: I18n, logo: StoredLogo | null): Child[] {
+/** The logo in force, on the light and the dark header, with the cell's contrast advice for the slot's `mode`. */
+function current(t: I18n, logo: StoredLogo | null, mode: LogoMode): Child[] {
   if (logo === null) {
     return [h("p", { class: "logo-none" }, [t.label("admin.branding.logos.none")])];
   }
@@ -56,6 +57,13 @@ function current(t: I18n, logo: StoredLogo | null): Child[] {
       ),
     ),
   ];
+  // I-70: the cell's advice, never a refusal (ADR-030 lead reading of 2026-11-22).
+  if (logo.contrast !== null) {
+    out.push(h("p", { class: "text-sm", "data-contrast": logo.contrast }, [t.label("admin.branding.logos.contrast", { ratio: ratioText(logo.contrast) })]));
+  }
+  if (logo.advice) {
+    out.push(h("p", { class: "text-sm", "data-advice": "low" }, [t.label(`admin.branding.logos.low_contrast_${mode}`)]));
+  }
   if (!logo.pdf) {
     out.push(h("p", { class: "text-sm" }, [t.label("admin.branding.logos.no_pdf")]));
   }
@@ -87,21 +95,49 @@ function draw(bitmap: ImageBitmap, mode: LogoMode): { readonly canvas: HTMLEleme
   return { canvas, contrast };
 }
 
-/** Reads and checks `file`, or names its problem. */
+/** The PNG of a decoded `bitmap`, drawn on a canvas and written by the browser. */
+async function asPng(bitmap: ImageBitmap): Promise<Uint8Array | null> {
+  const canvas = h("canvas", { width: String(bitmap.width), height: String(bitmap.height) });
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    return null;
+  }
+  const ctx = canvas.getContext("2d");
+  if (ctx === null) {
+    return null;
+  }
+  ctx.drawImage(bitmap, 0, 0);
+  const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/png"));
+  return blob === null ? null : new Uint8Array(await blob.arrayBuffer());
+}
+
+/**
+ * Reads and checks `file`, or names its problem. A WebP file is decoded
+ * by the browser and written again as PNG here, since the cell takes PNG
+ * only (ADR-030 lead reading of 2026-11-22). The size bound applies to
+ * the PNG that is sent.
+ */
 async function choose(file: File): Promise<Chosen | LogoProblem> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const problem = fileProblem(bytes.length, sniff(bytes));
-  if (problem !== null) {
-    return problem;
+  const original = new Uint8Array(await file.arrayBuffer());
+  const format = sniff(original);
+  if (format === null) {
+    return "wrong_type";
   }
   let bitmap: ImageBitmap;
   try {
-    bitmap = await createImageBitmap(new Blob([bytes]));
+    bitmap = await createImageBitmap(new Blob([original]));
   } catch {
     return "unreadable";
   }
   if (!sizeOk(bitmap.width, bitmap.height)) {
     return "dimensions";
+  }
+  const bytes = format === "png" ? original : await asPng(bitmap);
+  if (bytes === null) {
+    return "unreadable";
+  }
+  const problem = fileProblem(bytes.length, sniff(bytes));
+  if (problem !== null) {
+    return problem;
   }
   return { bytes, bitmap };
 }
@@ -144,9 +180,6 @@ function slot(
         if (lowContrast(d.contrast)) {
           notes.push(h("p", { class: "text-sm" }, [t.label(`admin.branding.logos.low_contrast_${d.m}`)]));
         }
-      }
-      if (sniff(c.bytes) === "webp") {
-        notes.push(h("p", { class: "text-sm" }, [t.label("admin.branding.logos.no_email")]));
       }
       preview.replaceChildren(
         h("p", {}, [t.label("admin.branding.logos.preview")]),
@@ -200,7 +233,7 @@ function slot(
   }
   return h("div", { class: "logo-slot", "data-slot": id }, [
     h("h4", {}, [t.label(`admin.branding.logos.${mode}`)]),
-    ...current(t, logo),
+    ...current(t, logo, mode),
     ...controls,
   ]);
 }

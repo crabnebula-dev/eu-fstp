@@ -7,7 +7,7 @@
 //! - [`letterhead`]: the logos a PDF of a programme shows.
 
 use fstp_brand::ThemeMode;
-use fstp_brand::image::{LogoFormat, PdfColours, logo_path_digest, pdf_image};
+use fstp_brand::image::{LogoFormat, logo_path_digest, pdf_image};
 use fstp_domain::command::Via;
 use fstp_domain::id::{AccountId, ProgrammeId};
 use fstp_engine::{Command, EngineState, TenantRequest};
@@ -114,20 +114,19 @@ async fn pdf_logo<P: Seams>(
     pdf_of(&bytes)
 }
 
-/// The `fstp-pdf` image of a checked PNG, by IDAT pass-through.
+/// The `fstp-pdf` image of a stored PNG logo: its pixels flattened over
+/// white and its alpha plane as an `/SMask` (ADR-030 lead reading of
+/// 2026-11-22).
 pub(crate) fn pdf_of(png: &[u8]) -> Option<fstp_pdf::Image> {
     let img = pdf_image(png)?;
     Some(fstp_pdf::Image {
         width: img.width,
         height: img.height,
-        colours: match img.colours {
-            PdfColours::Gray => fstp_pdf::ImageColours::Gray,
-            PdfColours::Rgb => fstp_pdf::ImageColours::Rgb,
-            PdfColours::Indexed(p) => fstp_pdf::ImageColours::Indexed(p),
-        },
-        bits: img.bits,
-        mask: img.mask,
-        data: img.data,
+        colours: fstp_pdf::ImageColours::Rgb,
+        bits: 8,
+        mask: None,
+        data: img.rgb,
+        smask: img.alpha,
     })
 }
 
@@ -174,4 +173,42 @@ pub(super) fn programme_logos<P: Seams>(call: &Call<'_, P>, programme: Programme
         call.state.tenant.state(),
         [(programme, crate::creator::programme_name(programme))],
     ))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
+mod tests {
+    use super::*;
+
+    /// I-68, R-WL-03, ADR-030 lead reading of 2026-11-22: a transparent
+    /// PNG logo reaches the contract PDF as an image with an `/SMask`.
+    #[test]
+    fn r_wl_03_transparent_logo_reaches_the_pdf_with_an_smask() {
+        let mut rgba = Vec::new();
+        for i in 0..(64 * 32) {
+            rgba.extend_from_slice(if i % 3 == 0 {
+                &[0x10, 0x20, 0x40, 0xFF]
+            } else {
+                &[0, 0, 0, 0]
+            });
+        }
+        let png = fstp_brand::image::png_of(64, 32, rgba).expect("sizes");
+        let image = pdf_of(&png).expect("a PNG reaches the PDF");
+        assert!(image.smask.is_some());
+        let doc = fstp_pdf::Document {
+            title: "Synthetic agreement".into(),
+            lang: "en".into(),
+            blocks: vec![fstp_pdf::Block {
+                kind: fstp_pdf::BlockKind::Paragraph,
+                text: "Synthetic clause.".into(),
+            }],
+            signature_fields: Vec::new(),
+        };
+        let head = fstp_pdf::Letterhead {
+            logos: vec![image],
+            emblem: None,
+        };
+        let pdf = fstp_pdf::write_with_letterhead(&doc, &head).expect("written");
+        assert!(pdf.windows(7).any(|w| w == b"/SMask "));
+    }
 }

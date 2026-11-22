@@ -257,3 +257,49 @@ fn adr030_programme_logo_is_closed_to_outsiders() {
     let read = decode_route(Method::Get, "/programmes/7/logos", b"");
     assert!(c.web(&o, read).is_err());
 }
+
+/// I-70, ADR-030 lead reading of 2026-11-22: a white logo in the light
+/// slot is saved, and the read gives its contrast on the light top bar
+/// with the advice that it may be hard to see. Advice never refuses.
+#[test]
+fn i70_contrast_advice_appears_on_save() {
+    let c = cell(false);
+    let white = fstp_brand::image::png_of(64, 32, vec![0xFF; 64 * 32 * 4]).expect("sizes");
+    set_with_step_up(&c, "light", Some(&white));
+    let l = c.login(A1, LoginMethod::Passkey);
+    let view = match c.web(&l, logos()) {
+        Ok(OpResult::Done { body, .. }) => body.to_json(),
+        other => panic!("logos: {other:?}"),
+    };
+    let light = view
+        .get("tenant")
+        .and_then(|t| t.get("light"))
+        .expect("light slot");
+    assert_eq!(light.get("advice"), Some(&Value::Bool(true)));
+    let c100: u32 = light
+        .get("contrast")
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse().ok())
+        .expect("a contrast");
+    assert!(c100 < fstp_brand::image::ADVICE_BELOW_X100, "{c100}");
+}
+
+/// ADR-030 lead reading of 2026-11-22: the cell takes PNG uploads only. A
+/// WebP file is refused in plain terms under I-68, before any step-up.
+#[test]
+fn adr030_webp_upload_is_refused() {
+    let c = cell(false);
+    let l = c.login(A1, LoginMethod::Passkey);
+    let mut webp = b"RIFF".to_vec();
+    let mut body = b"WEBPVP8 ".to_vec();
+    let frame = [0x10, 0, 0, 0x9D, 0x01, 0x2A, 64, 0, 32, 0, 1, 2, 3, 4];
+    body.extend_from_slice(&u32::try_from(frame.len()).unwrap().to_le_bytes());
+    body.extend_from_slice(&frame);
+    webp.extend_from_slice(&u32::try_from(body.len()).unwrap().to_le_bytes());
+    webp.extend_from_slice(&body);
+    match c.web(&l, set_logo("light", Some(&webp))) {
+        Err(ApiError::Refused { rule, .. }) => assert_eq!(rule, "I-68"),
+        other => panic!("I-68: {other:?}"),
+    }
+    assert!(c.ports.engine.appended().is_empty());
+}

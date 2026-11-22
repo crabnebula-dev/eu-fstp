@@ -2207,6 +2207,7 @@ pub(crate) mod reply_shape_tests {
             width: 320,
             height: 80,
             pdf: true,
+            contrast_x100: Some(250),
         }
     }
 

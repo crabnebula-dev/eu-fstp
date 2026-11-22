@@ -122,8 +122,12 @@ pub struct Image {
     pub bits: u8,
     /// A colour-key mask, two values per component.
     pub mask: Option<Vec<u16>>,
-    /// The concatenated `IDAT` data.
+    /// The zlib stream of the image rows, each led by its PNG filter byte.
     pub data: Vec<u8>,
+    /// The alpha plane as the same kind of stream, one 8-bit component a
+    /// pixel, written as the image's `/SMask` (ADR-030 lead reading of
+    /// 2026-11-22), or `None` for an opaque image.
+    pub smask: Option<Vec<u8>>,
 }
 
 /// What the first page shows above the text (ADR-030 section 6): the
@@ -439,8 +443,20 @@ fn place(head: &Letterhead) -> Result<Vec<Placed<'_>>, WriteError> {
     Ok(out)
 }
 
-/// The image XObject of `i`: its zlib stream with the PNG predictor.
-fn image_object(i: &Image) -> Vec<u8> {
+/// The `/SMask` XObject of an alpha plane of `w` by `h` pixels.
+fn smask_object(w: u32, h: u32, data: &[u8]) -> Vec<u8> {
+    stream(
+        &format!(
+            "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns {w} >> /Length {} >>",
+            data.len()
+        ),
+        data,
+    )
+}
+
+/// The image XObject of `i`: its zlib stream with the PNG predictor, and
+/// its `/SMask` reference when it has an alpha plane.
+fn image_object(i: &Image, smask: Option<u32>) -> Vec<u8> {
     let (space, colours) = match &i.colours {
         ImageColours::Gray => ("/DeviceGray".to_owned(), 1),
         ImageColours::Rgb => ("/DeviceRGB".to_owned(), 3),
@@ -461,6 +477,10 @@ fn image_object(i: &Image) -> Vec<u8> {
         let v: Vec<String> = m.iter().map(u16::to_string).collect();
         format!(" /Mask [{}]", v.join(" "))
     });
+    let mask = match smask {
+        Some(n) => format!("{mask} /SMask {n} 0 R"),
+        None => mask,
+    };
     stream(
         &format!(
             "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {space} /BitsPerComponent {b} /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors {colours} /BitsPerComponent {b} /Columns {w} >>{mask} /Length {len} >>",
@@ -573,6 +593,10 @@ pub fn write_with_letterhead(doc: &Document, head: &Letterhead) -> Result<Vec<u8
         .map(|_| (alloc(), alloc(), alloc()))
         .collect();
     let image_nums: Vec<u32> = placed.iter().map(|_| alloc()).collect();
+    let smask_nums: Vec<Option<u32>> = placed
+        .iter()
+        .map(|p| p.image.smask.as_ref().map(|_| alloc()))
+        .collect();
     let size = next;
     if size >= crate::file::MAX_OBJECT_NUMBER {
         return Err(WriteError::Overflow);
@@ -843,8 +867,11 @@ pub fn write_with_letterhead(doc: &Document, head: &Letterhead) -> Result<Vec<u8
             EMBEDDED_FONT,
         ),
     );
-    for (p, num) in placed.iter().zip(&image_nums) {
-        objs.insert(*num, image_object(p.image));
+    for ((p, num), smask) in placed.iter().zip(&image_nums).zip(&smask_nums) {
+        objs.insert(*num, image_object(p.image, *smask));
+        if let (Some(n), Some(data)) = (smask, &p.image.smask) {
+            objs.insert(*n, smask_object(p.image.width, p.image.height, data));
+        }
     }
     let cmap = to_unicode(&shaper.used);
     objs.insert(

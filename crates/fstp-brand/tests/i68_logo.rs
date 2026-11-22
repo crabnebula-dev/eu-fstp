@@ -14,8 +14,8 @@
 )]
 
 use fstp_brand::image::{
-    LogoFormat, LogoRefusal, MAX_DIMENSION, MAX_LOGO_BYTES, MIN_DIMENSION, PdfColours, inspect,
-    pdf_image,
+    ADVICE_BELOW_X100, LogoFormat, LogoRefusal, MAX_DIMENSION, MAX_LOGO_BYTES, MIN_DIMENSION,
+    header_contrast, inspect, pdf_image, png_of, reencode,
 };
 use fstp_prop::{check, prop_assert, prop_assert_eq};
 
@@ -285,43 +285,109 @@ fn i68_animated_or_inconsistent_webp_is_refused() {
     assert_eq!(inspect(&not_key).err(), Some(LogoRefusal::Malformed));
 }
 
-// ------------------------------------------------------------------ PDF
+// ------------------------------------------------------- re-encode, PDF
 
-/// ADR-030 section 6: an opaque RGB PNG passes into a PDF as its IDAT
-/// bytes, unchanged.
-#[test]
-fn adr030_opaque_png_passes_into_pdf() {
-    let png = inspect(&rgb_png(120, 40)).expect("ok").bytes;
-    let img = pdf_image(&png).expect("embeddable");
-    assert_eq!((img.width, img.height, img.bits), (120, 40, 8));
-    assert_eq!(img.colours, PdfColours::Rgb);
-    assert_eq!(img.data, vec![0x78, 0x9C, 0x01, 0x02, 0x03, 0x04]);
-    assert_eq!(img.mask, None);
+/// An RGBA image of `w` by `h`: a dark square on a transparent field when
+/// `clear`, else white everywhere.
+fn pixels(w: u32, h: u32, clear: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let ink = x >= w / 4 && x < 3 * w / 4 && y >= h / 4 && y < 3 * h / 4;
+            out.extend_from_slice(&match (clear, ink) {
+                (true, true) => [0x10, 0x20, 0x40, 0xFF],
+                (true, false) => [0, 0, 0, 0],
+                (false, _) => [0xFF, 0xFF, 0xFF, 0xFF],
+            });
+        }
+    }
+    out
 }
 
-/// ADR-030 section 6: a palette PNG with one fully transparent entry gets
-/// a colour-key mask. Partial transparency, alpha channels, interlacing
-/// and WebP are not embeddable.
+fn real_png(w: u32, h: u32, clear: bool) -> Vec<u8> {
+    png_of(w, h, pixels(w, h, clear)).expect("sizes match")
+}
+
+/// Inserts `extra` chunks after `IHDR` of a canonical PNG.
+fn with_chunks(png: &[u8], extra: &[Vec<u8>]) -> Vec<u8> {
+    let at = 8 + 25;
+    let mut out = png[..at].to_vec();
+    for c in extra {
+        out.extend_from_slice(c);
+    }
+    out.extend_from_slice(&png[at..]);
+    out
+}
+
+/// I-68, R-WL-03, ADR-031: an upload is re-encoded. Text, EXIF, colour
+/// and unknown ancillary chunks are gone, the pixels stay, and the stored
+/// file is the canonical PNG of those pixels.
 #[test]
-fn adr030_pdf_embedding_rules() {
-    let plte = chunk(b"PLTE", &[0, 0, 0, 255, 255, 255, 200, 0, 0]);
-    let one_clear = chunk(b"tRNS", &[255, 0]);
-    let png = png_with(64, 64, 8, 3, 0, &[plte.clone(), one_clear, idat()]);
-    let img = pdf_image(&png).expect("embeddable");
-    assert_eq!(
-        img.colours,
-        PdfColours::Indexed(vec![0, 0, 0, 255, 255, 255, 200, 0, 0])
+fn i68_reencode_drops_ancillary_chunks() {
+    let canonical = real_png(64, 32, true);
+    let upload = with_chunks(
+        &canonical,
+        &[
+            chunk(b"tEXt", b"Comment\0<script>alert(1)</script>"),
+            chunk(b"gAMA", &45_455u32.to_be_bytes()),
+            chunk(b"zzZz", b"hidden payload"),
+        ],
     );
-    assert_eq!(img.mask, Some(vec![1, 1]));
-    let partial = png_with(64, 64, 8, 3, 0, &[plte, chunk(b"tRNS", &[128]), idat()]);
-    assert!(pdf_image(&partial).is_none());
-    assert!(pdf_image(&png_with(64, 64, 8, 6, 0, &[idat()])).is_none());
-    assert!(pdf_image(&png_with(64, 64, 8, 2, 1, &[idat()])).is_none());
-    assert!(pdf_image(&png_with(64, 64, 16, 2, 0, &[idat()])).is_none());
+    let logo = inspect(&upload).expect("accepted");
+    assert!(has(&logo.bytes, b"gAMA"), "the chunk walk alone keeps gAMA");
+    let stored = reencode(logo).expect("re-encoded");
+    assert!(!has(&stored.bytes, b"tEXt"));
+    assert!(!has(&stored.bytes, b"gAMA"));
+    assert!(!has(&stored.bytes, b"zzZz"));
+    assert!(!has(&stored.bytes, b"<script>"));
+    assert_eq!(stored.bytes, canonical);
+    assert_eq!((stored.width, stored.height), (64, 32));
+}
+
+/// ADR-030 lead reading of 2026-11-22: the cell takes PNG uploads only.
+/// A WebP file is refused as the wrong type, so the branding page sends
+/// it converted to PNG.
+#[test]
+fn adr030_webp_upload_is_refused_after_the_check() {
+    let logo = inspect(&riff(&[vp8(400, 100)])).expect("a WebP passes the check");
+    assert_eq!(reencode(logo).err(), Some(LogoRefusal::WrongType));
+}
+
+/// I-68, R-WL-03, ADR-030: a transparent PNG reaches a PDF as flattened
+/// RGB with its alpha plane for an `/SMask`. An opaque one has no alpha
+/// plane. WebP and a refused PNG have no PDF image.
+#[test]
+fn r_wl_03_transparent_png_reaches_pdf_with_alpha() {
+    let clear = pdf_image(&real_png(64, 32, true)).expect("embeddable");
+    assert_eq!((clear.width, clear.height), (64, 32));
+    assert!(!clear.rgb.is_empty());
+    assert!(
+        clear.alpha.is_some(),
+        "a transparent logo has an alpha plane"
+    );
+    let opaque = pdf_image(&real_png(64, 32, false)).expect("embeddable");
+    assert_eq!(opaque.alpha, None);
     assert!(pdf_image(&riff(&[vp8(400, 100)])).is_none());
-    let grey = png_with(64, 64, 8, 0, 0, &[chunk(b"tRNS", &[0, 7]), idat()]);
-    let g = pdf_image(&grey).expect("grey");
-    assert_eq!((g.colours, g.mask), (PdfColours::Gray, Some(vec![7, 7])));
+    assert!(
+        pdf_image(&rgb_png(64, 32)).is_none(),
+        "the fake IDAT is no image data"
+    );
+}
+
+/// I-70, ADR-030 lead reading of 2026-11-22: the contrast advice of a
+/// logo on each header colour. White on the light header is under the
+/// 3:1 advice bound, and the same logo on the dark header is above it.
+#[test]
+fn i70_contrast_advice_on_each_header() {
+    let white = real_png(64, 32, false);
+    let light = fstp_creator::Rgb::hex(0xF8_FA_FC);
+    let dark = fstp_creator::Rgb::hex(0x1E_29_3B);
+    let on_light = header_contrast(&white, light).expect("ink");
+    let on_dark = header_contrast(&white, dark).expect("ink");
+    assert!(on_light < ADVICE_BELOW_X100, "{on_light}");
+    assert!(on_dark >= ADVICE_BELOW_X100, "{on_dark}");
+    let empty = png_of(16, 16, vec![0; 16 * 16 * 4]).expect("sizes");
+    assert_eq!(header_contrast(&empty, light), None);
 }
 
 // ------------------------------------------------------------- property

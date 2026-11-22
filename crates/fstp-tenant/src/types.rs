@@ -1003,8 +1003,13 @@ pub struct LogoRef {
     pub width: u32,
     /// The height in pixels.
     pub height: u32,
-    /// Whether a PDF can show it without a decoder (ADR-030 section 6).
+    /// Whether a PDF can show it (ADR-030 section 6).
     pub pdf: bool,
+    /// The contrast advice on the header of the slot's mode, in
+    /// hundredths of the WCAG ratio that half of the logo's ink reaches
+    /// (ADR-030 lead reading of 2026-11-22; I-70). Advice only: no logo
+    /// is refused for it. `None` for a logo with no ink or no estimate.
+    pub contrast_x100: Option<u32>,
 }
 
 impl LogoRef {

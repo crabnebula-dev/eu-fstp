@@ -29,6 +29,7 @@ fn image(colours: ImageColours, width: u32, height: u32) -> Image {
         bits: 8,
         mask: None,
         data: vec![0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+        smask: None,
     }
 }
 
@@ -49,7 +50,8 @@ fn r_ct_01_empty_letterhead_changes_nothing() {
     });
 }
 
-/// R-WL-03, ADR-016, ADR-030: with logos and the emblem slot filled, the
+/// R-WL-03, I-68, ADR-016, ADR-030: with logos, one of them transparent
+/// with an `/SMask`, and the emblem slot filled, the
 /// file is deterministic, parses with the verifier's parser, holds each
 /// image as one artifact-marked XObject with the PNG predictor, and every
 /// field accepts the canonical increment. The only filtered streams are
@@ -60,7 +62,10 @@ fn r_wl_03_letterhead_passes_images_through() {
         let doc = common::random_document(g);
         let head = Letterhead {
             logos: vec![
-                image(ImageColours::Rgb, 320, 80),
+                Image {
+                    smask: Some(vec![0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]),
+                    ..image(ImageColours::Rgb, 320, 80)
+                },
                 Image {
                     mask: Some(vec![1, 1]),
                     ..image(ImageColours::Indexed(vec![0, 0, 0, 255, 255, 255]), 64, 64)
@@ -74,6 +79,7 @@ fn r_wl_03_letterhead_passes_images_through() {
         prop_assert!(has(&pdf, b"/Artifact BMC"), "no artifact mark");
         prop_assert!(has(&pdf, b"/Predictor 15"), "no predictor");
         prop_assert!(has(&pdf, b"/Mask [1 1]"), "no colour key");
+        prop_assert!(has(&pdf, b"/SMask "), "no soft mask");
         let file = PdfFile::open(&pdf).map_err(|e| format!("{e}"))?;
         let objects = file.parse_all().map_err(|e| format!("{e}"))?;
         let mut images = 0usize;
@@ -85,9 +91,10 @@ fn r_wl_03_letterhead_passes_images_through() {
                 images += 1;
             }
         }
+        // Each image, and the soft mask of the transparent one.
         prop_assert_eq!(
             images,
-            head.logos.len() + usize::from(head.emblem.is_some())
+            head.logos.len() + usize::from(head.emblem.is_some()) + 1
         );
         for f in &doc.signature_fields {
             let inc = prepare_increment(&pdf, &f.name, 2048).map_err(|e| format!("{e}"))?;

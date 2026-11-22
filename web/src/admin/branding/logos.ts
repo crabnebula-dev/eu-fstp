@@ -128,6 +128,12 @@ export function logoContrast(rgba: Uint8ClampedArray | Uint8Array, bg: Rgb): num
   return ratio(sum / count, back);
 }
 
+/** A contrast in hundredths as the ratio people read, such as "2.4". */
+export function ratioText(x100: string): string {
+  const n = Number.parseInt(x100, 10);
+  return Number.isFinite(n) ? (Math.floor(n / 10) / 10).toFixed(1) : "";
+}
+
 /** Whether a logo of contrast `r` may be hard to see: under the 3:1 bound of non-text content. */
 export function lowContrast(r: number): boolean {
   return r < 3;
@@ -141,6 +147,10 @@ export interface StoredLogo {
   readonly height: string;
   readonly pdf: boolean;
   readonly email: boolean;
+  /** The contrast advice on the slot's top bar, in hundredths of the ratio, or null. */
+  readonly contrast: string | null;
+  /** Whether the cell advises that the logo may be hard to see (I-70, never a refusal). */
+  readonly advice: boolean;
 }
 
 /** One owner's slots. */
@@ -175,7 +185,7 @@ function stored(v: unknown): StoredLogo | null | undefined {
   if (o === null) {
     return undefined;
   }
-  const { path, format, width, height, pdf, email } = o;
+  const { path, format, width, height, pdf, email, contrast, advice } = o;
   if (
     typeof path !== "string" ||
     !LOGO_PATH.test(path) ||
@@ -183,11 +193,13 @@ function stored(v: unknown): StoredLogo | null | undefined {
     typeof width !== "string" ||
     typeof height !== "string" ||
     typeof pdf !== "boolean" ||
-    typeof email !== "boolean"
+    typeof email !== "boolean" ||
+    (contrast !== null && (typeof contrast !== "string" || !/^[0-9]{1,5}$/.test(contrast))) ||
+    typeof advice !== "boolean"
   ) {
     return undefined;
   }
-  return { path, format, width, height, pdf, email };
+  return { path, format, width, height, pdf, email, contrast, advice };
 }
 
 function slots(v: unknown): LogoSlots | null {

@@ -2,7 +2,7 @@
 # line is <verdict><TAB><JSON string>. The verdict is `accepted` when the
 # decoder takes the value and `refused` when it does not.
 accepted	"{\"tenant\":{\"light\":null,\"dark\":null},\"programmes\":[]}"
-accepted	"{\"tenant\":{\"light\":{\"path\":\"/brand/abababababababababababababababababababababababababababababababab.png\",\"format\":\"png\",\"width\":\"320\",\"height\":\"80\",\"pdf\":true,\"email\":true},\"dark\":null},\"programmes\":[{\"programme\":\"7\",\"name\":\"Programme 7\",\"light\":null,\"dark\":{\"path\":\"/brand/abababababababababababababababababababababababababababababababab.png\",\"format\":\"png\",\"width\":\"320\",\"height\":\"80\",\"pdf\":true,\"email\":true}}]}"
-refused	"{\"tenant\":{\"light\":{\"path\":\"javascript:alert(1)\",\"format\":\"png\",\"width\":\"1\",\"height\":\"1\",\"pdf\":true,\"email\":true},\"dark\":null},\"programmes\":[]}"
+accepted	"{\"tenant\":{\"light\":{\"path\":\"/brand/abababababababababababababababababababababababababababababababab.png\",\"format\":\"png\",\"width\":\"320\",\"height\":\"80\",\"pdf\":true,\"email\":true,\"contrast\":\"250\",\"advice\":true},\"dark\":null},\"programmes\":[{\"programme\":\"7\",\"name\":\"Programme 7\",\"light\":null,\"dark\":{\"path\":\"/brand/abababababababababababababababababababababababababababababababab.png\",\"format\":\"png\",\"width\":\"320\",\"height\":\"80\",\"pdf\":true,\"email\":true,\"contrast\":\"250\",\"advice\":true}}]}"
+refused	"{\"tenant\":{\"light\":{\"path\":\"javascript:alert(1)\",\"format\":\"png\",\"width\":\"1\",\"height\":\"1\",\"pdf\":true,\"email\":true,\"contrast\":\"250\",\"advice\":true},\"dark\":null},\"programmes\":[]}"
 refused	"{\"tenant\":{\"light\":null},\"programmes\":[]}"
 refused	"<svg/>"

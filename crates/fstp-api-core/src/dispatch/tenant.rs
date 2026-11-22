@@ -411,7 +411,7 @@ fn build<P: Seams>(
             }
             let logo = match &r.image {
                 None => None,
-                Some(text) => Some(checked_logo(text)?.0),
+                Some(text) => Some(checked_logo(text, r.slot.mode)?.0),
             };
             Ok((TenantCommand::SetLogo { slot: r.slot, logo }, None))
         }
@@ -426,16 +426,24 @@ fn build<P: Seams>(
 /// The logo of an upload's base64 `text` (ADR-030, I-68): the record's
 /// reference and the rewritten bytes. A file the logo check refuses is
 /// refused under I-68 and names no request content.
-fn checked_logo(text: &str) -> Result<(fstp_tenant::LogoRef, Vec<u8>), ApiError> {
+fn checked_logo(
+    text: &str,
+    mode: fstp_brand::ThemeMode,
+) -> Result<(fstp_tenant::LogoRef, Vec<u8>), ApiError> {
+    // ADR-030 lead reading of 2026-11-22: PNG only, re-encoded by
+    // `fstp-png` (ADR-031). The branding page converts WebP to PNG first.
     let logo = fstp_brand::image::from_base64(text)
-        .map(fstp_brand::image::reencode)
+        .and_then(fstp_brand::image::reencode)
         .map_err(|_| ApiError::refused(ErrorCode::Refused, "I-68"))?;
+    // I-70: advice on the header of the slot's mode, never a refusal.
+    let header = fstp_brand::Surface::Surface1.colour(mode);
     let r = fstp_tenant::LogoRef {
         digest: ContentDigest::from_bytes(fstp_crypto::sha256(&logo.bytes)),
         format: logo.format,
         width: logo.width,
         height: logo.height,
         pdf: fstp_brand::image::pdf_image(&logo.bytes).is_some(),
+        contrast_x100: fstp_brand::image::header_contrast(&logo.bytes, header),
     };
     Ok((r, logo.bytes))
 }
@@ -448,7 +456,7 @@ async fn stored_logo<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<(), ApiErr
     let Some(text) = r.image else {
         return Ok(());
     };
-    let (logo, bytes) = checked_logo(&text)?;
+    let (logo, bytes) = checked_logo(&text, r.slot.mode)?;
     use crate::port::BlobStore as _;
     let stored = call
         .ports

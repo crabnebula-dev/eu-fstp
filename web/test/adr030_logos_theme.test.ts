@@ -54,7 +54,7 @@ test("adr030_logo_contrast_advises_on_each_header", () => {
 });
 
 test("r_wl_03_logos_read_decodes_and_fits_the_schema", () => {
-  const logo = { path: `/brand/${"ab".repeat(32)}.png`, format: "png", width: "320", height: "80", pdf: true, email: true };
+  const logo = { path: `/brand/${"ab".repeat(32)}.png`, format: "png", width: "320", height: "80", pdf: true, email: true, contrast: "250", advice: true };
   const reply = { tenant: { light: logo, dark: null }, programmes: [{ programme: "7", name: "Programme 7", light: null, dark: logo }] };
   const v = decodeLogos(reply);
   assert(v !== null, "decodes");
@@ -94,4 +94,12 @@ test("adr030_sidebar_holds_the_theme_switch_once_the_shell_installs_it", async (
   const text = parts.map((p) => p.textContent ?? "").join(" ");
   assert(text.includes("Theme"), "the switch is in the shell");
   assert(text.includes("System") && text.includes("Light") && text.includes("Dark"), "three choices");
+});
+
+test("i70_contrast_advice_reads_as_a_plain_ratio", async () => {
+  const { ratioText, decodeLogos: decode } = await import("../src/admin/branding/logos.js");
+  eq(ratioText("250"), "2.5", "hundredths to a ratio");
+  eq(ratioText("1349"), "13.4", "rounded down");
+  const logo = { path: `/brand/${"ab".repeat(32)}.png`, format: "png", width: "64", height: "32", pdf: true, email: true, contrast: "x", advice: false };
+  eq(decode({ tenant: { light: logo, dark: null }, programmes: [] }), null, "a contrast is digits or null");
 });

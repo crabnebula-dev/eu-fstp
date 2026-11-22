@@ -560,13 +560,9 @@ const PROPOSAL_ROW: Shape = Shape::Object(&[
     m("title", Shape::String),
 ]);
 
-/// One onboarding step as `tenant.get_step` answers it and a step save
-/// replies (R-TN-01, lane m4tenant). `values` holds the members of
-/// whichever step was saved, so each member is optional. `accepted` holds
-/// the agreement versions the control plane recorded.
 /// One logo slot of `tenant.branding.logos` (ADR-030): `null`, or the
-/// logo's same-origin path, format, size, and whether PDFs and emails
-/// show it.
+/// logo's same-origin path, format, size, whether PDFs and emails show
+/// it, and its contrast advice (I-70, never a refusal).
 const LOGO: Shape = Shape::Nullable(&Shape::Object(&[
     m("path", Shape::String),
     m("format", Shape::Enum(&["png", "webp"])),
@@ -574,6 +570,8 @@ const LOGO: Shape = Shape::Nullable(&Shape::Object(&[
     m("height", Shape::String),
     m("pdf", Shape::Bool),
     m("email", Shape::Bool),
+    m("contrast", Shape::Nullable(&Shape::String)),
+    m("advice", Shape::Bool),
 ]));
 
 /// The reply of `tenant.branding.logos` and `programme.logos` (ADR-030).
@@ -593,6 +591,10 @@ const LOGOS: Shape = Shape::Object(&[
     ),
 ]);
 
+/// One onboarding step as `tenant.get_step` answers it and a step save
+/// replies (R-TN-01, lane m4tenant). `values` holds the members of
+/// whichever step was saved, so each member is optional. `accepted` holds
+/// the agreement versions the control plane recorded.
 const ONBOARDING_STEP: Shape = Shape::Object(&[
     m(
         "step",
