@@ -899,7 +899,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                         .map_err(out_of_order)?;
                 }
                 Next::SendAbort { head } => {
-                    match self.withdraw_locked(head, Withdraw::Abort).await? {
+                    match boxed(|| self.withdraw_locked(head, Withdraw::Abort)).await? {
                         Ok(()) => self.anchorer.abort_recorded().map_err(out_of_order)?,
                         Err(WitnessFault::UnknownPrepare) => self
                             .anchorer
@@ -909,23 +909,18 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                     }
                 }
                 Next::ReadChain { head } => {
-                    resolution = Some(self.read_chain(head).await?);
+                    resolution = Some(boxed(|| self.read_chain(head)).await?);
                 }
                 Next::RaisePossibleDeletion { head } => {
                     resolution = Some(Resolution::AbsentRaisePossibleDeletion);
-                    let mut client = self.pool.get().await?;
-                    let mut tx = client.transaction().await?;
-                    tx.execute(LOCK_SQL, &[]).await?;
-                    self.insert_alert(&mut tx, head).await?;
-                    tx.commit().await?;
-                    client.release();
+                    boxed(|| self.raise_one(head)).await?;
                     self.anchorer
                         .possible_deletion_raised()
                         .map_err(out_of_order)?;
                 }
                 Next::SendInDoubtAbsent { head } => {
                     resolution = Some(Resolution::AbsentRaisePossibleDeletion);
-                    match self.withdraw_locked(head, Withdraw::InDoubtAbsent).await? {
+                    match boxed(|| self.withdraw_locked(head, Withdraw::InDoubtAbsent)).await? {
                         Ok(()) => self.anchorer.in_doubt_recorded().map_err(out_of_order)?,
                         Err(WitnessFault::UnknownPrepare) => self
                             .anchorer
@@ -936,6 +931,19 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
                 }
             }
         }
+    }
+
+    /// Raises `PossibleDeletion` for `head` under the advisory lock, in a
+    /// transaction of its own (lane L26: a function of its own, so its
+    /// futures stay out of [`PgRecordStore::settle`]'s frame).
+    async fn raise_one(&self, head: (u64, Link)) -> Result<(), StoreFault> {
+        let mut client = self.pool.get().await?;
+        let mut tx = client.transaction().await?;
+        tx.execute(LOCK_SQL, &[]).await?;
+        self.insert_alert(&mut tx, head).await?;
+        tx.commit().await?;
+        client.release();
+        Ok(())
     }
 
     /// Sends the withdrawal of `head` to the witness while this session
@@ -1838,4 +1846,12 @@ where
             .await
             .map_err(StoreError::from)
     }
+}
+
+/// Builds the future of `make` in this function's own frame and keeps it on
+/// the heap (lane L26). The ledger's settle runs at a cell's start-up on the
+/// thread that starts it, so its steps take no slot in its frame.
+#[inline(never)]
+fn boxed<F: std::future::Future>(make: impl FnOnce() -> F) -> std::pin::Pin<Box<F>> {
+    Box::pin(make())
 }

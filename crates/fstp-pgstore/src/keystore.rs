@@ -13,7 +13,10 @@
 //! all (design section 3.5 step 4). [`KeystoreTables::load`] reads every
 //! row back.
 
-use fstp_pgwire::Uuid;
+use std::future::Future;
+use std::pin::Pin;
+
+use fstp_pgwire::{Client, Row, ToSql, Transaction, Uuid};
 use fstp_rt::Runtime;
 
 use crate::error::StoreFault;
@@ -309,6 +312,47 @@ const REQUEST_PUT: &str =
 const REQUEST_DEL: &str = "DELETE FROM keystore.erasure_request WHERE text_id = $1";
 const REQUEST_ALL: &str = "SELECT text_id FROM keystore.erasure_request ORDER BY text_id";
 
+/// The future of one statement, built in a frame of its own and kept on the
+/// heap (lane L26). The batch write and the load run one statement per
+/// row kind, so each statement's future would otherwise take its own slot
+/// in their frames: half a megabyte in a debug build, on the thread that
+/// runs a cell's start-up. Each statement goes through [`exec`], [`rows`]
+/// or [`row_opt`] instead.
+type Stmt<'a, T> = Pin<Box<dyn Future<Output = Result<T, fstp_pgwire::Error>> + Send + 'a>>;
+
+/// The parameters of one statement.
+type Params<'a> = &'a [&'a (dyn ToSql + Sync)];
+
+/// `Transaction::execute` as a [`Stmt`].
+#[inline(never)]
+fn exec<'a, 'b: 'a, R: Runtime>(
+    tx: &'a mut Transaction<'b, R>,
+    sql: &'static str,
+    params: Params<'a>,
+) -> Stmt<'a, u64> {
+    Box::pin(tx.execute(sql, params))
+}
+
+/// `Client::query` as a [`Stmt`].
+#[inline(never)]
+fn rows<'a, R: Runtime>(
+    client: &'a mut Client<R>,
+    sql: &'static str,
+    params: Params<'a>,
+) -> Stmt<'a, Vec<Row>> {
+    Box::pin(client.query(sql, params))
+}
+
+/// `Client::query_opt` as a [`Stmt`].
+#[inline(never)]
+fn row_opt<'a, R: Runtime>(
+    client: &'a mut Client<R>,
+    sql: &'static str,
+    params: Params<'a>,
+) -> Stmt<'a, Option<Row>> {
+    Box::pin(client.query_opt(sql, params))
+}
+
 fn corrupt() -> StoreFault {
     StoreFault::Corrupt("a keystore row outside its constraints")
 }
@@ -440,7 +484,7 @@ async fn load_rows<R: Runtime>(
     client: &mut crate::pool::Pooled<R>,
 ) -> Result<KeystoreRows, StoreFault> {
     let mut out = KeystoreRows::default();
-    if let Some(r) = client.query_opt(CHAIN_GET, &[&APP_CHAIN]).await? {
+    if let Some(r) = row_opt(client, CHAIN_GET, &[&APP_CHAIN]).await? {
         let epoch: i64 = r.get(0)?;
         out.chain = Some(ChainRow {
             epoch: u64_of(epoch)?,
@@ -450,7 +494,7 @@ async fn load_rows<R: Runtime>(
             startup_unwrap: opt_id(&r, 4)?,
         });
     }
-    for r in client.query(ROOT_ALL, &[&APP_CHAIN]).await? {
+    for r in rows(client, ROOT_ALL, &[&APP_CHAIN]).await? {
         let epoch: i64 = r.get(0)?;
         let state: i16 = r.get(4)?;
         let digest: Option<Vec<u8>> = r.get(5)?;
@@ -468,7 +512,7 @@ async fn load_rows<R: Runtime>(
             status,
         });
     }
-    for r in client.query(GROUP_ALL, &[&APP_CHAIN]).await? {
+    for r in rows(client, GROUP_ALL, &[&APP_CHAIN]).await? {
         let generation: i32 = r.get(1)?;
         let purpose: i16 = r.get(2)?;
         let epoch: i64 = r.get(5)?;
@@ -481,7 +525,7 @@ async fn load_rows<R: Runtime>(
             epoch: u64_of(epoch)?,
         });
     }
-    for r in client.query(KEY_ALL, &[]).await? {
+    for r in rows(client, KEY_ALL, &[]).await? {
         let generation: i32 = r.get(2)?;
         out.keys.push(DataKeyRow {
             id: id(&r, 0)?,
@@ -490,7 +534,7 @@ async fn load_rows<R: Runtime>(
             sealed: r.get(3)?,
         });
     }
-    for r in client.query(TEXT_ALL, &[]).await? {
+    for r in rows(client, TEXT_ALL, &[]).await? {
         let generation: i32 = r.get(2)?;
         out.texts.push(TextRow {
             id: id(&r, 0)?,
@@ -499,7 +543,7 @@ async fn load_rows<R: Runtime>(
             envelope: r.get(3)?,
         });
     }
-    for r in client.query(SIGNER_ALL, &[]).await? {
+    for r in rows(client, SIGNER_ALL, &[]).await? {
         let purpose: i16 = r.get(0)?;
         let generation: i32 = r.get(1)?;
         let epoch: Option<i64> = r.get(4)?;
@@ -517,23 +561,23 @@ async fn load_rows<R: Runtime>(
             sealed,
         });
     }
-    for r in client.query(DIGEST_ALL, &[]).await? {
+    for r in rows(client, DIGEST_ALL, &[]).await? {
         let digest: Vec<u8> = r.get(0)?;
         out.digests.push(LoginDigestRow {
             digest: bytes32(&digest)?,
             account: id(&r, 1)?,
         });
     }
-    for r in client.query(LOGIN_ALL, &[]).await? {
+    for r in rows(client, LOGIN_ALL, &[]).await? {
         out.logins.push(LoginTextRow {
             account: id(&r, 0)?,
             text: id(&r, 1)?,
         });
     }
-    for r in client.query(REQUEST_ALL, &[]).await? {
+    for r in rows(client, REQUEST_ALL, &[]).await? {
         out.requested.push(id(&r, 0)?);
     }
-    for r in client.query(DISPLAY_ALL, &[]).await? {
+    for r in rows(client, DISPLAY_ALL, &[]).await? {
         let fingerprint: Vec<u8> = r.get(2)?;
         out.displays.push(DisplayNameRow {
             account: id(&r, 0)?,
@@ -551,7 +595,8 @@ async fn write_changes<R: Runtime>(
 ) -> Result<(), StoreFault> {
     let mut tx = client.transaction().await?;
     if let Some(ch) = &c.chain {
-        tx.execute(
+        exec(
+            &mut tx,
             CHAIN_PUT,
             &[
                 &APP_CHAIN,
@@ -572,7 +617,8 @@ async fn write_changes<R: Runtime>(
                     RootStatus::Pending => (ROOT_PENDING, None, None),
                     RootStatus::Destroyed(d) => (ROOT_DESTROYED, Some(now), Some(d.to_vec())),
                 };
-                tx.execute(
+                exec(
+                    &mut tx,
                     ROOT_PUT,
                     &[
                         &APP_CHAIN,
@@ -589,14 +635,15 @@ async fn write_changes<R: Runtime>(
                 .await?;
             }
             Change::Delete(e) => {
-                tx.execute(ROOT_DEL, &[&APP_CHAIN, &i64_of(*e)?]).await?;
+                exec(&mut tx, ROOT_DEL, &[&APP_CHAIN, &i64_of(*e)?]).await?;
             }
         }
     }
     for change in &c.groups {
         match change {
             Change::Put(g) => {
-                tx.execute(
+                exec(
+                    &mut tx,
                     GROUP_PUT,
                     &[
                         &APP_CHAIN,
@@ -612,15 +659,15 @@ async fn write_changes<R: Runtime>(
                 .await?;
             }
             Change::Delete((g, generation)) => {
-                tx.execute(GROUP_DEL, &[&uuid(*g), &i32_of(*generation)?])
-                    .await?;
+                exec(&mut tx, GROUP_DEL, &[&uuid(*g), &i32_of(*generation)?]).await?;
             }
         }
     }
     for change in &c.keys {
         match change {
             Change::Put(k) => {
-                tx.execute(
+                exec(
+                    &mut tx,
                     KEY_PUT,
                     &[
                         &uuid(k.id),
@@ -633,14 +680,15 @@ async fn write_changes<R: Runtime>(
                 .await?;
             }
             Change::Delete(k) => {
-                tx.execute(KEY_DEL, &[&uuid(*k)]).await?;
+                exec(&mut tx, KEY_DEL, &[&uuid(*k)]).await?;
             }
         }
     }
     for change in &c.texts {
         match change {
             Change::Put(t) => {
-                tx.execute(
+                exec(
+                    &mut tx,
                     TEXT_PUT,
                     &[
                         &uuid(t.id),
@@ -652,7 +700,7 @@ async fn write_changes<R: Runtime>(
                 .await?;
             }
             Change::Delete(t) => {
-                tx.execute(TEXT_DEL, &[&uuid(*t)]).await?;
+                exec(&mut tx, TEXT_DEL, &[&uuid(*t)]).await?;
             }
         }
     }
@@ -663,7 +711,8 @@ async fn write_changes<R: Runtime>(
                     Some((e, b)) => (Some(i64_of(*e)?), Some(b.clone())),
                     None => (None, None),
                 };
-                tx.execute(
+                exec(
+                    &mut tx,
                     SIGNER_PUT,
                     &[
                         &i16::from(s.purpose),
@@ -677,30 +726,32 @@ async fn write_changes<R: Runtime>(
                 .await?;
             }
             Change::Delete((p, generation)) => {
-                tx.execute(SIGNER_DEL, &[&i16::from(*p), &i32_of(*generation)?])
-                    .await?;
+                exec(
+                    &mut tx,
+                    SIGNER_DEL,
+                    &[&i16::from(*p), &i32_of(*generation)?],
+                )
+                .await?;
             }
         }
     }
     for change in &c.digests {
         match change {
             Change::Put(d) => {
-                tx.execute(DIGEST_PUT, &[&d.digest.to_vec(), &uuid(d.account)])
-                    .await?;
+                exec(&mut tx, DIGEST_PUT, &[&d.digest.to_vec(), &uuid(d.account)]).await?;
             }
             Change::Delete(d) => {
-                tx.execute(DIGEST_DEL, &[&d.to_vec()]).await?;
+                exec(&mut tx, DIGEST_DEL, &[&d.to_vec()]).await?;
             }
         }
     }
     for change in &c.logins {
         match change {
             Change::Put(l) => {
-                tx.execute(LOGIN_PUT, &[&uuid(l.account), &uuid(l.text)])
-                    .await?;
+                exec(&mut tx, LOGIN_PUT, &[&uuid(l.account), &uuid(l.text)]).await?;
             }
             Change::Delete(a) => {
-                tx.execute(LOGIN_DEL, &[&uuid(*a)]).await?;
+                exec(&mut tx, LOGIN_DEL, &[&uuid(*a)]).await?;
             }
         }
     }
@@ -708,12 +759,13 @@ async fn write_changes<R: Runtime>(
     // row put in the same batch (the UNIQUE constraint, lane L26).
     for change in &c.displays {
         if let Change::Delete(a) = change {
-            tx.execute(DISPLAY_DEL, &[&uuid(*a)]).await?;
+            exec(&mut tx, DISPLAY_DEL, &[&uuid(*a)]).await?;
         }
     }
     for change in &c.displays {
         if let Change::Put(d) = change {
-            tx.execute(
+            exec(
+                &mut tx,
                 DISPLAY_PUT,
                 &[&uuid(d.account), &uuid(d.text), &d.fingerprint.to_vec()],
             )
@@ -723,10 +775,10 @@ async fn write_changes<R: Runtime>(
     for change in &c.requested {
         match change {
             Change::Put(t) => {
-                tx.execute(REQUEST_PUT, &[&uuid(*t)]).await?;
+                exec(&mut tx, REQUEST_PUT, &[&uuid(*t)]).await?;
             }
             Change::Delete(t) => {
-                tx.execute(REQUEST_DEL, &[&uuid(*t)]).await?;
+                exec(&mut tx, REQUEST_DEL, &[&uuid(*t)]).await?;
             }
         }
     }
