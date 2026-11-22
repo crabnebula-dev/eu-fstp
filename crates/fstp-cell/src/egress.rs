@@ -233,7 +233,7 @@ pub fn check_port(to: &Destination, port: u16) -> Result<(), EgressRefusal> {
         Destination::MailSubmission { .. } if port != SUBMISSION_PORT => {
             Err(EgressRefusal::MailPort)
         }
-        // ADR-026 record of lane L18 (interim, pending Daniel): a
+        // ADR-026 record of lane L18 (lead reading, 2026-11-22): a
         // loopback resolver may listen on any port.
         Destination::DnsResolver { addr }
             if addr.port() != port
@@ -1356,7 +1356,7 @@ mod tests {
 mod l18_resolver_tests {
     use super::*;
 
-    /// ADR-027, ADR-026 record of lane L18 (interim, pending Daniel): a
+    /// ADR-027, ADR-026 record of lane L18 (lead reading, 2026-11-22): a
     /// resolver off loopback is reached on port 53 only. A loopback
     /// resolver, as the devstack and the binary test run, may use any
     /// port. The port must always be the address's own.
