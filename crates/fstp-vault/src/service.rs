@@ -1158,6 +1158,56 @@ impl Sealer for AeadSealer {
     }
 }
 
+/// How often the daily snapshot task wakes to see whether a snapshot is
+/// due (ADR-012 record of lane L27).
+const DAILY_WAKE: Duration = Duration::from_secs(60);
+
+/// The daily keystore snapshot of a serving vault (ADR-012 record of lane
+/// L27, rows "Daily snapshot" and "Where it runs"). It reads the rows
+/// through the registrar's keys connection under the registrar's lock,
+/// then takes and checks the snapshot without the lock. It ends with the
+/// vault, since it holds the shared state weakly.
+fn spawn_daily<R: Runtime>(
+    rt: &R,
+    weak: std::sync::Weak<Shared<R>>,
+    daily: Arc<dyn crate::snapshot::DailySnapshot>,
+) {
+    use fstp_obs::snapshot_status::{due, now};
+    let timer = rt.clone();
+    let started = now();
+    drop(rt.spawn(async move {
+        let mut last: Option<(u64, bool)> = None;
+        loop {
+            timer.sleep(DAILY_WAKE).await;
+            let Some(shared) = weak.upgrade() else {
+                break;
+            };
+            if shared.is_stopped() {
+                break;
+            }
+            if !due(started, last, now()) {
+                continue;
+            }
+            let rows = {
+                let mut registrar = shared.registrar.lock().await;
+                match registrar.as_mut() {
+                    Some(r) => r.keystore_rows().await.ok(),
+                    None => None,
+                }
+            };
+            drop(shared);
+            let ok = match rows {
+                Some(rows) => daily.run(rows).await,
+                None => {
+                    daily.failed();
+                    false
+                }
+            };
+            last = Some((now(), ok));
+        }
+    }));
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -1266,54 +1316,4 @@ mod tests {
             "a complete tunnel connection waited {waited:?} behind a silent one"
         );
     }
-}
-
-/// How often the daily snapshot task wakes to see whether a snapshot is
-/// due (ADR-012 record of lane L27).
-const DAILY_WAKE: Duration = Duration::from_secs(60);
-
-/// The daily keystore snapshot of a serving vault (ADR-012 record of lane
-/// L27, rows "Daily snapshot" and "Where it runs"). It reads the rows
-/// through the registrar's keys connection under the registrar's lock,
-/// then takes and checks the snapshot without the lock. It ends with the
-/// vault, since it holds the shared state weakly.
-fn spawn_daily<R: Runtime>(
-    rt: &R,
-    weak: std::sync::Weak<Shared<R>>,
-    daily: Arc<dyn crate::snapshot::DailySnapshot>,
-) {
-    use fstp_obs::snapshot_status::{due, now};
-    let timer = rt.clone();
-    let started = now();
-    drop(rt.spawn(async move {
-        let mut last: Option<(u64, bool)> = None;
-        loop {
-            timer.sleep(DAILY_WAKE).await;
-            let Some(shared) = weak.upgrade() else {
-                break;
-            };
-            if shared.is_stopped() {
-                break;
-            }
-            if !due(started, last, now()) {
-                continue;
-            }
-            let rows = {
-                let mut registrar = shared.registrar.lock().await;
-                match registrar.as_mut() {
-                    Some(r) => r.keystore_rows().await.ok(),
-                    None => None,
-                }
-            };
-            drop(shared);
-            let ok = match rows {
-                Some(rows) => daily.run(rows).await,
-                None => {
-                    daily.failed();
-                    false
-                }
-            };
-            last = Some((now(), ok));
-        }
-    }));
 }
