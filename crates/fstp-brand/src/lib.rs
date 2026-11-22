@@ -29,6 +29,7 @@ mod css;
 pub mod emblem;
 pub mod funding;
 pub mod image;
+pub mod legal;
 pub use css::css;
 
 use fstp_json::{Object, ParseLimits, Value, parse_with, to_canonical};

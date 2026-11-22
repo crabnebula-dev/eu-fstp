@@ -210,12 +210,16 @@ fn i69_cell_public_page_footer_carries_the_pinned_profile_elements() {
         let body = String::from_utf8_lossy(&r.body);
         assert_eq!(r.status, 200, "{path}: {body}");
         let footer = body.split("<footer").nth(1).unwrap_or("");
-        for key in ["acknowledgement", "emblem"] {
-            assert!(
-                footer.contains(&format!("data-mandatory=\"funder_visibility.{key}\"")),
-                "{path}: no {key} element in {footer}"
-            );
-        }
+        // The funding card carries the acknowledgement (lane L35, lead
+        // note of 2026-11-22), so the emblem is the one profile element.
+        assert!(
+            footer.contains("data-mandatory=\"funder_visibility.emblem\""),
+            "{path}: no emblem element in {footer}"
+        );
+        assert!(
+            !footer.contains("data-mandatory=\"funder_visibility.acknowledgement\""),
+            "{path}: a placeholder beside the card in {footer}"
+        );
         assert!(footer.contains("horizon-europe"), "{path}: {footer}");
         let r = get(&plain, path, false);
         let body = String::from_utf8_lossy(&r.body);

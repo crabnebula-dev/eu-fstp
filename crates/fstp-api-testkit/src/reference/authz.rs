@@ -1450,6 +1450,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("tenant.set_guide_notice", T::None, R::TenantAdmin).hr(),
     // ADR-034: the funding card defaults, a tenant setting as well.
     RefOp::act("tenant.set_funding_defaults", T::None, R::TenantAdmin).hr(),
+    // ADR-037: the legal details, a tenant setting as well.
+    RefOp::act("tenant.set_legal_details", T::None, R::TenantAdmin).hr(),
     RefOp::read("admin.approvals", T::None, R::TenantAdmin),
     RefOp::act("admin.approve_self_grant", T::None, R::SecondAdmin).hr(),
     RefOp::act("admin.approve_recovery", T::None, R::TenantAdmin).hr(),

@@ -35,6 +35,9 @@ pub(crate) enum Surface {
     Public,
     /// `/brand` and below: the tenant brand stylesheet (M9 lane B2).
     Brand,
+    /// `/legal` and below: the legal pages behind the footer and the
+    /// tenant's legal details (ADR-037).
+    Legal,
     /// `/mcp`, `/oauth` and the OAuth `/.well-known` documents (ADR-013).
     Adr013,
     /// Any other path.
@@ -58,6 +61,8 @@ impl Surface {
             Surface::Public
         } else if under(path, "/brand") {
             Surface::Brand
+        } else if under(path, "/legal") {
+            Surface::Legal
         } else if under(path, "/mcp")
             || under(path, "/oauth")
             || under(path, "/.well-known/oauth-protected-resource")
@@ -74,7 +79,7 @@ impl Surface {
     pub(crate) fn serves_pages(self) -> bool {
         matches!(
             self,
-            Surface::App | Surface::Public | Surface::Brand | Surface::Other
+            Surface::App | Surface::Public | Surface::Brand | Surface::Legal | Surface::Other
         )
     }
 
@@ -82,7 +87,8 @@ impl Surface {
     pub(crate) fn csp(self) -> &'static str {
         match self {
             Surface::App => APP_CSP,
-            Surface::Public => PUBLIC_CSP,
+            // ADR-037: a legal page is a public page with no script.
+            Surface::Public | Surface::Legal => PUBLIC_CSP,
             Surface::Api | Surface::Adr013 | Surface::Brand | Surface::Other => OTHER_CSP,
         }
     }
@@ -153,6 +159,9 @@ mod tests {
         assert_eq!(Surface::of("/p/x/"), Surface::Public);
         assert_eq!(Surface::of("/brand/x.css"), Surface::Brand);
         assert_eq!(Surface::of("/brands"), Surface::Other);
+        assert_eq!(Surface::of("/legal/privacy"), Surface::Legal);
+        assert_eq!(Surface::of("/legally"), Surface::Other);
+        assert_eq!(Surface::Legal.csp(), PUBLIC_CSP);
         assert_eq!(Surface::of("/mcp/public"), Surface::Adr013);
         assert_eq!(Surface::of("/.well-known/other"), Surface::Other);
         assert_eq!(Surface::of("*"), Surface::Other);

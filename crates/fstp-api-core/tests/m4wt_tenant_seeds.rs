@@ -32,6 +32,7 @@ fn th26_tenant_fuzz_seeds_decode_to_their_operations() {
         ("tenant_approve_activation", "tenant.approve_activation"),
         ("tenant_set_guide_notice", "tenant.set_guide_notice"),
         ("tenant_set_funding_defaults", "tenant.set_funding_defaults"),
+        ("tenant_set_legal_details", "tenant.set_legal_details"),
         ("tenant_set_mail_relay", "tenant.set_mail_relay"),
     ];
     for (file, op) in want {

@@ -53,6 +53,9 @@ pub struct TenantSettings {
     /// The funding card defaults (ADR-034), or `None` until an admin sets
     /// them. Shared code holds no value.
     pub funding_defaults: Option<fstp_brand::funding::FundingDefaults>,
+    /// The legal details (ADR-037), or `None` until an admin sets them.
+    /// Shared code holds no value.
+    pub legal_details: Option<fstp_brand::legal::LegalDetails>,
 }
 
 impl TenantSettings {
@@ -68,6 +71,7 @@ impl TenantSettings {
             p74: p74_default(),
             guide_notice: None,
             funding_defaults: None,
+            legal_details: None,
         }
     }
 
@@ -422,6 +426,10 @@ impl TenantState {
                 if let Some(a) = self.approvals.get_mut(approval) {
                     a.used = true;
                 }
+            }
+            TenantRecord::LegalDetailsSet { details, by } => {
+                self.need_admin(*by)?;
+                self.settings.legal_details = Some(details.clone());
             }
             TenantRecord::FundingDefaultsSet { defaults, by } => {
                 self.need_admin(*by)?;
@@ -1079,6 +1087,11 @@ impl TenantState {
     /// The tenant settings.
     pub fn settings(&self) -> &TenantSettings {
         &self.settings
+    }
+
+    /// The legal details (ADR-037), if an admin set them.
+    pub fn legal_details(&self) -> Option<&fstp_brand::legal::LegalDetails> {
+        self.settings.legal_details.as_ref()
     }
 
     /// The funding card defaults (ADR-034), if an admin set them.

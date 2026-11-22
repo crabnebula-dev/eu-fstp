@@ -23,7 +23,7 @@
 import { type Reply, get, ok, record } from './api.js';
 import { h } from './dom.js';
 import { fillFunding } from './funding.js';
-import { PATHS, t } from './layout.js';
+import { PATHS, legalFooterParts, t } from './layout.js';
 import { AUTH_EN, type AuthMessageId } from './messages.en.js';
 import { type NavRoles, type SiteLink, navRolesOf, siteLinks } from './sitenav.js';
 
@@ -144,9 +144,8 @@ function topBar(mailbox: HTMLElement): HTMLElement {
 function footer(): HTMLElement {
   const f = h('footer', { class: 'site-footer' }, [
     h('div', { class: 'inner' }, [
-      h('p', {}, [t('footer.privacy')]),
-      h('p', {}, [t('footer.accessibility')]),
-      h('p', {}, [t('footer.attribution')]),
+      // ADR-037: links to the legal pages.
+      ...legalFooterParts(),
     ]),
   ]);
   // ADR-034: the funding card of each active programme (I-69).

@@ -26,6 +26,7 @@ import { FIXED_LABEL_KEYS, PLAIN_LABELS } from "../../vocab/plain.js";
 import { ADMIN_BRANDING_LABELS } from "./messages.en.js";
 import { logosSection } from "./logopage.js";
 import { fundingSection } from "./fundingpage.js";
+import { legalSection } from "./legalpage.js";
 import {
   COLOUR_KEYS,
   MODES,
@@ -160,6 +161,8 @@ async function mountBranding(env: PageEnv): Promise<void> {
     logosSection(env, t, f),
     // ADR-034: the funding card defaults.
     fundingSection(env, t, f),
+    // ADR-037: the legal details that fill the legal pages.
+    legalSection(env, t, f),
     h("h2", {}, [t.label("admin.branding.colours.heading")]),
     h("p", {}, [t.label("admin.branding.intro")]),
     h("p", {}, [t.label("admin.branding.start")]),

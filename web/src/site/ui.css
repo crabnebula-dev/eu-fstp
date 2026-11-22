@@ -282,3 +282,40 @@ main h1:focus-visible { outline: var(--focus-outline); outline-offset: var(--foc
 .status-table td { vertical-align: top; white-space: normal; }
 .table-wrap { overflow-x: auto; }
 .team-table td, .status-table td { overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ */
+/* The legal pages behind the footer (ADR-037). Tokens only, so both   */
+/* themes follow the device (I-70). Each marker is text, not colour    */
+/* alone, so it reads without colour too.                              */
+/* ------------------------------------------------------------------ */
+
+.legal-page { max-width: 52rem; margin: 0 auto; padding: var(--space-6) var(--space-4); }
+.legal-banner {
+  background: var(--color-state-warning-bg);
+  border: 2px solid var(--color-state-warning-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-1);
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-6);
+}
+.legal-banner p { margin: 0 0 var(--space-2); }
+.legal-banner p:last-child { margin-bottom: 0; }
+.legal-banner-title { font-size: var(--text-lg); }
+.legal-pending {
+  background: var(--color-state-warning-bg);
+  border: 1px solid var(--color-state-warning-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-1);
+  padding: 0 var(--space-1);
+}
+.legal-unset {
+  background: var(--color-state-neutral-bg);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-state-neutral-text);
+  padding: 0 var(--space-1);
+}
+.legal-text table { width: 100%; }
+.legal-text td, .legal-text th { overflow-wrap: anywhere; vertical-align: top; }
+.site-footer nav ul { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); list-style: none; padding: 0; margin: 0; }
+.fstp-footer a, .site-footer a { color: var(--color-brand-text); }

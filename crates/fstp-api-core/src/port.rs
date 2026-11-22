@@ -1931,6 +1931,10 @@ pub(crate) trait Dispatch: Send + Sync {
     fn tenant_logos(&self) -> crate::brand::LogoPaths;
     /// The funding cards and the tenant defaults (ADR-034).
     fn funding(&self) -> fstp_json::Value;
+    /// The legal details as JSON (ADR-037).
+    fn legal_details(&self) -> fstp_json::Value;
+    /// The legal page at `path` (ADR-037).
+    fn legal_page(&self, path: &str) -> Option<String>;
     /// The bytes of the current logo at `path` (ADR-030).
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a>;
     /// The theme of the session `cred` names (ADR-030).
@@ -1980,6 +1984,16 @@ impl<P: CellPorts> Dispatch for Core<P> {
 
     fn funding(&self) -> fstp_json::Value {
         crate::funding::answer(&self.ports.engine().snapshot())
+    }
+
+    fn legal_details(&self) -> fstp_json::Value {
+        crate::legal::details_json(crate::legal::details(&self.ports.engine().snapshot()))
+    }
+
+    fn legal_page(&self, path: &str) -> Option<String> {
+        let state = self.ports.engine().snapshot();
+        let sheet = crate::dispatch::brand_of(&state).map(|b| format!("/brand/{}.css", b.digest));
+        crate::legal::page_html(path, crate::legal::details(&state), sheet.as_deref())
     }
 
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a> {

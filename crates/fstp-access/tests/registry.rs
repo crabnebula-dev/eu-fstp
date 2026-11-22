@@ -669,8 +669,8 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 11] = [
 /// erasure request (ADR-007, P-41, Daniel 2026-11-15 late), and a tenant
 /// funder profile version (Daniel 2026-11-15 late, interim), and a logo
 /// slot (ADR-030, interim), and the funding card defaults (ADR-034,
-/// interim).
-const STRICT_EXTRA: [&str; 15] = [
+/// interim), and the legal details (ADR-037, interim).
+const STRICT_EXTRA: [&str; 16] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
@@ -678,6 +678,7 @@ const STRICT_EXTRA: [&str; 15] = [
     "tenant.set_template_licence",
     "tenant.set_guide_notice",
     "tenant.set_funding_defaults",
+    "tenant.set_legal_details",
     "tenant.branding.set",
     "tenant.branding.set_logo",
     "tenant.terminology.set",
@@ -736,6 +737,7 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
             matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70)
                 || o.kind == OpKind::Tenant(TenantKind::SetGuideNotice)
                 || o.kind == OpKind::Tenant(TenantKind::SetFundingDefaults)
+                || o.kind == OpKind::Tenant(TenantKind::SetLegalDetails)
                 || o.kind == OpKind::Tenant(TenantKind::SetBranding)
                 || o.kind == OpKind::Tenant(TenantKind::SetLogo)
                 || o.kind == OpKind::Tenant(TenantKind::SetTerminology)

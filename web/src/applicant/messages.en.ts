@@ -306,14 +306,17 @@ export const APPLICANT_APPROVED: Readonly<Record<string, string>> = Object.freez
  * The footer's mandatory elements on every applicant and call page (M4
  * design section 3.9 "Footer"; P-68, R-WL-04, I-69 seam).
  *
- * TODO(legal): Daniel supplies the approved wording of the privacy
- * notice and the accessibility statement. Until then each says that its
- * wording is pending. Interim, pending Daniel: the platform attribution
+ * ADR-037 (Daniel, 2026-11-22, Q6): the privacy notice, the
+ * accessibility statement, the imprint and the terms of use are links to
+ * their pages under `/legal/`, which carry the draft banner until Daniel
+ * approves each text. Interim, pending Daniel: the platform attribution
  * names the platform only, since P-68 fixes no wording.
  */
 export const FOOTER_APPROVED: Readonly<Record<string, string>> = Object.freeze({
-  "footer.privacy": "Privacy notice: wording pending legal review.",
-  "footer.accessibility": "Accessibility statement: wording pending legal review.",
+  "footer.privacy": "Privacy notice",
+  "footer.accessibility": "Accessibility statement",
+  "footer.imprint": "Imprint",
+  "footer.terms": "Terms of use",
   // ADR-032: the claim of a draft started without an account.
   "claim.title": "Moving your draft",
   "claim.working": "Moving your draft into your account.",

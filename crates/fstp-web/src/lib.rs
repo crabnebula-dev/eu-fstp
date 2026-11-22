@@ -60,6 +60,7 @@
 mod api;
 mod brand;
 mod headers;
+mod legal;
 mod mcp;
 mod origin;
 mod reply;

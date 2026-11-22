@@ -572,6 +572,7 @@ fn record_view(r: &TenantRecord) -> RecordView {
         },
         TenantRecord::GuideNoticeSet { by, .. } => RecordView::GuideNoticeSet { by: *by },
         TenantRecord::FundingDefaultsSet { by, .. } => RecordView::FundingDefaultsSet { by: *by },
+        TenantRecord::LegalDetailsSet { by, .. } => RecordView::LegalDetailsSet { by: *by },
         TenantRecord::InferenceConfigRecorded { config, by, .. } => {
             RecordView::InferenceConfigRecorded {
                 config: *config,

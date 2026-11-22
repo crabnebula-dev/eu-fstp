@@ -15,6 +15,7 @@ import { h } from "../core/dom.js";
 import { navigate } from "../core/router.js";
 import type { ApprovedText, Label } from "../core/i18n.js";
 import { appShell } from "../home/nav.js";
+import { footerItem } from "../shell/legal.js";
 import { t } from "./i18n.js";
 
 /**
@@ -24,6 +25,10 @@ import { t } from "./i18n.js";
 export interface MandatoryElements {
   readonly privacyNotice: ApprovedText;
   readonly accessibilityStatement: ApprovedText;
+  /** The imprint (ADR-037). */
+  readonly imprint: ApprovedText;
+  /** The terms of use (ADR-037). */
+  readonly termsOfUse: ApprovedText;
   readonly platformAttribution: ApprovedText;
   /**
    * The Data Act information for tenants. Interim strict reading, pending
@@ -37,15 +42,17 @@ export interface MandatoryElements {
 /**
  * The mandatory elements of the default package in M4.
  *
- * TODO(legal): the privacy notice, accessibility statement and Data Act
- * information carry placeholder wording until Daniel supplies approved
- * text. The funder visibility elements that the Horizon Europe profile
+ * ADR-037: the privacy notice, accessibility statement, imprint, terms of
+ * use and Data Act information link to their pages under `/legal/`, which
+ * carry the draft banner until Daniel approves each text. The funder visibility elements that the Horizon Europe profile
  * requires are not quoted here from memory, so no page shows them yet.
  */
 export function defaultMandatoryElements(): MandatoryElements {
   return {
     privacyNotice: t.approved("footer.privacy_notice"),
     accessibilityStatement: t.approved("footer.accessibility_statement"),
+    imprint: t.approved("footer.imprint"),
+    termsOfUse: t.approved("footer.terms_of_use"),
     platformAttribution: t.approved("footer.platform_attribution"),
     dataActInformation: t.approved("footer.data_act_information"),
   };
@@ -53,12 +60,13 @@ export function defaultMandatoryElements(): MandatoryElements {
 
 /** The built footer, with one element per mandatory element. */
 export function footer(m: MandatoryElements): HTMLElement {
-  const item = (key: string, text: ApprovedText): HTMLElement =>
-    h("li", {}, [h("span", { "data-mandatory": key }, [text])]);
+  const item = footerItem;
   return h("footer", { class: "fstp-footer" }, [
     h("ul", {}, [
       item("privacy_notice", m.privacyNotice),
       item("accessibility_statement", m.accessibilityStatement),
+      item("imprint", m.imprint),
+      item("terms_of_use", m.termsOfUse),
       item("data_act_information", m.dataActInformation),
       item("platform_attribution", m.platformAttribution),
     ]),

@@ -543,6 +543,11 @@ pub enum RecordView {
         /// The admin who set them.
         by: AccountId,
     },
+    /// `LegalDetailsSet` (ADR-037). The machine issues no such command.
+    LegalDetailsSet {
+        /// The admin who set them.
+        by: AccountId,
+    },
     /// `InferenceConfigRecorded`.
     InferenceConfigRecorded {
         /// The configuration.
