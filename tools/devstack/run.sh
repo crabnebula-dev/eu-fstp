@@ -13,6 +13,10 @@
 # packs the journey UI (web/dist/app and its asset manifest) and builds
 # fstp-cell. The stack prints "config <path>", the file the binary reads,
 # before the other lines.
+# It also runs a mail relay and a fake resolver of its own (lane L20,
+# the fstp-devstack-relay binary of fstp-api-testkit), so onboarding runs
+# end to end: mail lands in the directory printed as "mail-dir <path>",
+# and any sending domain passes the Domains and email step.
 # With --route-feed (lane L15) it also runs the pilot route feed: the
 # fstp-control route-feed and fstp-edge binaries in front of the cell. It
 # prints "route-feed-edge <address>", "control-config <path>" and
@@ -92,7 +96,8 @@ if [ "${1:-}" = "external-cell" ]; then
   shift
   "$tsc" -p "$root/web/build"
   node "$root/web/dist/build/pack.js" "$root/web/dist" "$root/web/src" "$root/web/dist/app" shell/main.js
-  cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-control --bin fstp-control -p fstp-edge --bin fstp-edge
+  cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-control --bin fstp-control -p fstp-edge --bin fstp-edge \
+    -p fstp-api-testkit --bin fstp-devstack-relay
   exec "$target/debug/fstp-devstack" external-cell "$@"
 fi
 
