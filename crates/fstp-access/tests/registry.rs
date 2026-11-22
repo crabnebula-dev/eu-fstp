@@ -1146,7 +1146,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 79] = [
+const READ_NAMES: [&str; 80] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1244,6 +1244,8 @@ const READ_NAMES: [&str; 79] = [
     "GetMyDisplayName",
     // Lane m4/author-reads: the plan the team recorded, read back.
     "GetOwnPlan",
+    // Lane L20 (ADR-028): the System page.
+    "GetSystemStatus",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

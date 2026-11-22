@@ -206,6 +206,8 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/admin/terminology", TENANT_ADMIN),
     // P-41, ADR-007 (lane m5/retention): the erasure page reads the log.
     PageRow::read("/app/admin/erasures", &["admin.erasures"]),
+    // ADR-028 record of lane L20: the System page, tenant admins only.
+    PageRow::read("/app/admin/system", &["tenant.system"]),
     // Daniel, 2026-11-15 (late): tenant copies of funder profiles.
     PageRow::read("/app/admin/funder-profiles", &["tenant.funder_profiles"]),
     // SA-11 (Daniel, 2026-11-15, night): the member page, tenant admins only.

@@ -2297,6 +2297,16 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,
         // P-41, ADR-007 (lane m5/retention): the erasure page.
         ReadKind::ListErasures => erasure::read(call).await?,
+        // ADR-028 record of lane L20: the System page. The read rule
+        // admitted a tenant admin. The facts hold no personal data.
+        ReadKind::GetSystemStatus => {
+            use crate::port::TenantConfig as _;
+            let facts = call.ports.tenant().system().await;
+            ReadModel::System(crate::system::SystemView {
+                now: call.now,
+                facts,
+            })
+        }
         // SA-11 (Daniel, 2026-11-15, night): the team and member pages and
         // the caller's own display name. The read rule admitted the caller.
         ReadKind::ListTeam | ReadKind::ListMembers | ReadKind::GetMyDisplayName => {

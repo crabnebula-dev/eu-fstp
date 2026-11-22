@@ -1646,6 +1646,13 @@ pub trait TenantConfig: Send + Sync {
         &self,
         id: ApprovalId,
     ) -> impl Future<Output = Result<SecondAdminApproval, PortError>> + Send;
+    /// The facts of the tenant admins' System page (ADR-028 record of
+    /// lane L20): whether the vault answers, whether outgoing mail works,
+    /// and the host status file. The default is a cell that knows nothing
+    /// of itself, which the page shows as problems.
+    fn system(&self) -> impl Future<Output = crate::system::SystemFacts> + Send {
+        std::future::ready(crate::system::SystemFacts::default())
+    }
 }
 
 /// The in-app notice list, read from outbox records.
