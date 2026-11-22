@@ -97,7 +97,9 @@ test("r_rp_01_profile_page_is_read_only", async () => {
   assert(mounted, "the page has a route");
   assert(fakeDocument.getElementById("ops-profile-read-only") !== null, "the read-only note");
   assert(fakeDocument.getElementById("ops-profile-pinned") !== null, "the pinned profile");
-  eq(fakeDocument.body.descendants().filter((e) => e.tagName === "BUTTON" || e.tagName === "FORM").length, 0, "nothing that changes it");
+  // The sidebar theme toggle is a display preference (ADR-030), not an action on the profile.
+  const actions = fakeDocument.body.descendants().filter((e) => (e.tagName === "BUTTON" && e.getAttribute("data-slot") !== "theme") || e.tagName === "FORM");
+  eq(actions.length, 0, "nothing that changes it");
 });
 
 /** R-RP-01 (Daniel, 2026-11-15 late): every programme staff role, and a tenant admin, is linked to the profile page; a Receiving role is not. */

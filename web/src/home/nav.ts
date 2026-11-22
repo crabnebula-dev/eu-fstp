@@ -44,7 +44,7 @@ import { h } from "../core/dom.js";
 import { type I18n, type Label, createI18n } from "../core/i18n.js";
 import { HOME_LABELS } from "./messages.en.js";
 import { type MyRoles, type NavLink, WORK_PATHS, chipRoles, navOf } from "./model.js";
-import { THEMES, type Theme, applyTheme, currentTheme, shellLogos } from "../shell/theme.js";
+import { type Theme, applyTheme, currentTheme, deviceIsDark, effectiveTheme, shellLogos, toggledTheme } from "../shell/theme.js";
 
 let catalogue: I18n | null = null;
 
@@ -139,28 +139,34 @@ export function installThemeSwitch(save: (t: Theme) => Promise<boolean>): void {
 }
 
 /**
- * The theme switch of the sidebar foot (ADR-030): System, Light and Dark
- * as one radio group. A choice shows at once and is then saved for the
- * person's account, so it follows them to every device.
+ * The theme toggle of the sidebar foot (ADR-030): one button that shows a
+ * moon on a light page and a sun on a dark one, and switches to the other.
+ * With the choice still System, the device decides what shows, and the
+ * first click saves an explicit choice. The icon is drawn in CSS, since
+ * the DOM allowlist holds no SVG. The label names the action, which is
+ * the button's state for a screen reader.
  */
 function themeSwitch(save: (t: Theme) => Promise<boolean>): HTMLElement {
-  const now = currentTheme();
-  const options = THEMES.map((t) => {
-    const attrs: Record<string, string | boolean> = { type: "radio", name: "theme", value: t, id: `theme-${t}` };
-    if (t === now) {
-      attrs["checked"] = true;
-    }
-    const input = h("input", attrs);
-    input.addEventListener("change", () => {
-      applyTheme(t);
-      void save(t);
-    });
-    return h("label", { class: "theme-option", for: `theme-${t}` }, [input, homeLabel(`nav.theme.${t}`)]);
+  const button = h("button", { type: "button", class: "theme-toggle", "data-slot": "theme" });
+  const icon = h("span", { class: "theme-toggle-icon", "aria-hidden": "true" });
+  button.appendChild(icon);
+  const show = (): void => {
+    const showing = effectiveTheme(currentTheme(), deviceIsDark());
+    const next = showing === "dark" ? "light" : "dark";
+    const name = homeLabel(`nav.theme.to_${next}`);
+    button.setAttribute("aria-label", name);
+    button.setAttribute("title", name);
+    button.setAttribute("data-icon", showing === "dark" ? "sun" : "moon");
+    button.setAttribute("data-theme-showing", showing);
+  };
+  button.addEventListener("click", () => {
+    const next = toggledTheme(currentTheme(), deviceIsDark());
+    applyTheme(next);
+    show();
+    void save(next);
   });
-  return h("fieldset", { class: "theme-switch", "data-slot": "theme" }, [
-    h("legend", {}, [homeLabel("nav.theme")]),
-    ...options,
-  ]);
+  show();
+  return button;
 }
 
 /** The Account link of the sidebar foot: the profile page. */
