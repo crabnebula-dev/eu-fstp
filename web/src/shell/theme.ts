@@ -69,3 +69,23 @@ export function applyTheme(t: Theme): void {
     document.documentElement.setAttribute("data-theme", a);
   }
 }
+
+/** Whether the device asks for a dark page (`prefers-color-scheme: dark`). */
+export function deviceIsDark(): boolean {
+  const mm = (globalThis as { readonly matchMedia?: unknown }).matchMedia;
+  if (typeof mm !== "function") {
+    return false;
+  }
+  const q: unknown = (mm as (query: string) => unknown).call(globalThis, "(prefers-color-scheme: dark)");
+  return typeof q === "object" && q !== null && (q as { readonly matches?: unknown }).matches === true;
+}
+
+/** The theme on screen: the saved choice, or the device's when the choice is System. */
+export function effectiveTheme(choice: Theme, deviceDark: boolean): "light" | "dark" {
+  return choice === "system" ? (deviceDark ? "dark" : "light") : choice;
+}
+
+/** The explicit choice a click on the sun/moon toggle makes: the opposite of what shows. */
+export function toggledTheme(choice: Theme, deviceDark: boolean): "light" | "dark" {
+  return effectiveTheme(choice, deviceDark) === "dark" ? "light" : "dark";
+}

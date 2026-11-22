@@ -328,10 +328,14 @@ svg a:focus-visible .node-shape { stroke: var(--color-focus); stroke-width: 4; }
 /* ADR-030: a chosen theme also sets the native controls and scrollbars. */
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
-/* ADR-030: the theme switch of the sidebar foot. */
-.theme-switch { border: 0; margin: 0; padding: var(--space-2) var(--space-3) 0; display: flex; flex-wrap: wrap; gap: 0 var(--space-3); font-size: var(--text-sm); color: var(--color-text-2); }
-.theme-switch legend { padding: 0; font-weight: var(--weight-bold); }
-.theme-option { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--target-min); }
+/* ADR-030: the theme toggle of the sidebar foot, one button with a CSS-drawn sun or moon. */
+.theme-toggle { display: inline-flex; align-items: center; justify-content: center; min-width: var(--target-min); min-height: var(--target-min); margin: var(--space-2) var(--space-3) 0; padding: 0; border: 1px solid var(--color-border-strong); border-radius: var(--radius-pill); background: var(--color-surface-1); color: var(--color-text-1); cursor: pointer; }
+.theme-toggle:hover { background: var(--color-surface-2); }
+.theme-toggle-icon { position: relative; display: block; width: 20px; height: 20px; }
+.theme-toggle[data-icon="moon"] .theme-toggle-icon { width: 16px; height: 16px; margin: 2px; border-radius: 50%; box-shadow: inset -6px -3px 0 0 currentColor; transform: rotate(-20deg); }
+.theme-toggle[data-icon="sun"] .theme-toggle-icon::before { content: ""; position: absolute; inset: 0; background: repeating-conic-gradient(currentColor 0 14deg, transparent 14deg 45deg); -webkit-mask: radial-gradient(circle, transparent 6.5px, #000 7px, #000 10px, transparent 10.5px); mask: radial-gradient(circle, transparent 6.5px, #000 7px, #000 10px, transparent 10.5px); }
+.theme-toggle[data-icon="sun"] .theme-toggle-icon::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: currentColor; }
+@media (forced-colors: active) { .theme-toggle-icon, .theme-toggle-icon::before, .theme-toggle-icon::after { forced-color-adjust: none; } }
 /* ADR-030: the logo previews of the branding page, on the fixed light and
    dark top bar colours (--color-surface-1), whatever the page's theme. */
 .logo-previews { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0; }
