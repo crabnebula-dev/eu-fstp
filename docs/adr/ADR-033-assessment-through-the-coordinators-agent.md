@@ -126,3 +126,23 @@ Daniel decided six points on 2026-11-22. This record states each decision and ho
 | Spec | `03-architecture/overview.md` "Operations other than queries" gains a fifth kind, masks, with this decision | Decided by Daniel on 2026-11-22 |
 | Sealed raw traces | Each submission's raw replies, as the client sent them, with the prompt set digest, the input digest and the model, are stored as one confidential text of the proposal in the cell's text store, sealed at rest (R-NF-08). The `ClientAssessed` record names it. The proposal's texts are erased with the proposal's retention, which runs to the end of P-41, so P-22 holds. No read operation serves it. It is reached only through the audit path: the audit entries name its reference, and the appeal and calibration reads of `assessment.md` Traces are not built. Interim, pending Daniel: the trace read for appeals | Decided by Daniel on 2026-11-22; R-LA-07; P-22; ADR-007 |
 | Dependency tree | `fstp-infer` puts its HTTP transport behind the feature `http`. `fstp-assessor` and the test kit enable it. `fstp-api-core` does not, so its tree and the fuzz lockfiles return to the reviewed ones | Decided by Daniel on 2026-11-22; CLAUDE.md dependency policy |
+
+### Built by lane L31
+
+| ID | Test | Where |
+| --- | --- | --- |
+| M7 Q4, I-17, ADR-029 | `m7_q4_names_match_by_name_key_and_join`, `m7_q4_person_index_and_dates`, `r_nf_02_mask_person_debug_names_nothing` | `crates/fstp-unorm/src/mask.rs` |
+| M7 Q4, I-17 | `m7_q4_i17_spans_are_sound_and_mask_every_name_word` (property), fuzz target `mask_spans` | `crates/fstp-unorm` |
+| M7 Q4, TH-26 | `m7_q4_mask_request_and_answer_round_trip`, `m7_q4_mask_request_bounds`, `m7_q4_mask_answer_bounds` | `crates/fstp-vault-proto/tests/m7_q4_mask_codec.rs` |
+| M7 Q4, I-17, R-NF-08 | `m7_q4_i17_vault_masks_names_from_the_sealed_tuple`, on PostgreSQL with the real keystore; fuzz target `identity_tuple_decode` | `crates/fstp-vault` |
+| M7 Q4, I-17, TH-60 | `m7_q4_i17_vault_masks_team_names_before_text_leaves_for_an_agent`, `m7_q4_a_vault_that_cannot_mask_lets_no_text_leave` | `crates/fstp-api-testkit/src/bin/fstp-e2e-cell/assess_client_tests.rs` |
+| I-03 | `adr033_l31_store_names_the_runners_of_a_proposal`, `adr033_l31_i03_the_runner_is_never_assigned_to_review_it` | `crates/fstp-findings/tests/adr033_client_runs.rs`, the test cell |
+| R-LA-07, P-22 | the sealed trace in `adr033_coordinator_agent_assesses_a_proposal_end_to_end`; the `raw` member in the codecs, generator and fuzz seed `record_client_assessed_raw` | the test cell, `crates/fstp-findings` |
+
+Readings of lane L31, each interim, pending Daniel:
+
+- The mask lives in `fstp-unorm`, beside `name_key`, and `fstp-vault-core` re-exports it. The M3 layering rule keeps the test kit away from `fstp-vault-core`, and the synthetic vault must mask as the vault does.
+- A production tuple that is not one of `TUPLE_LABEL` refuses the mask as unavailable, so assessment of that team fails closed. The seeded vault of `fstp-celltest` reads such a tuple as holding no name.
+- The agent's content view records the content read before the vault masks it. A vault that cannot mask then refuses the call, with no text and no second audit entry.
+- A text over 64 KiB after the cell's pattern stripping cannot be sent to the vault, so its input fails closed.
+- `fstp-infer`'s `http` feature is on by default for the crate itself, and the workspace dependency turns default features off. `fstp-assessor` and the test kit ask for it.
