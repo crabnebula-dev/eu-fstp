@@ -174,7 +174,7 @@ pub const SIGNUP_SEAM: &str = "fstp_celltest::cycle signup: POST /auth/signup fa
 /// issues (lane m3/cell-routes), but `decide` has a writer rule for the
 /// guardian consent write only, so a verification or a country write is
 /// refused before any ticket exists.
-pub const VERIFY_IDENTITY_SEAM: &str = "fstp_celltest::cycle verify-identity: POST /api/v1/verifications is refused, since fstp_cell_core::decide has no writer rule for VerificationRecorded tickets yet, and a CountryStated ticket goes only to the lead of a draft through the state-country step (design section 6.5)";
+pub const VERIFY_IDENTITY_SEAM: &str = "fstp_celltest::cycle verify-identity: POST /api/v1/verifications issues a ticket only to a verified tenant admin for a proposal in NEGOTIATION or later (ADR-004 record of lane L13b), and no account is verified before the operator path of ADR-008, so the world seeds the verification; a CountryStated ticket goes only to the lead of a draft through the state-country step (design section 6.5)";
 
 /// The former seam of `submit-proposal` and the evaluation steps, closed
 /// by lane F-CYCLE3.

@@ -310,6 +310,19 @@ pub fn country_scope(programme: crate::WireProgramme) -> String {
     format!("programme:{}", programme.0)
 }
 
+/// The scope a `verification_recorded` ticket carries for the person it
+/// names: `person:<id>` (ADR-004 record of lane L13b, row "Ticket").
+pub fn person_scope(account: crate::WireAccount) -> String {
+    format!("person:{}", account.0)
+}
+
+/// The person a scope names, if it is the one spelling `person:<id>` of
+/// [`person_scope`].
+pub fn scope_person(scope: &str) -> Option<crate::WireAccount> {
+    let id = scope.strip_prefix("person:")?;
+    json::parse_id(id, CLAIMS).ok().map(crate::WireAccount)
+}
+
 /// The programme a scope names, if it is the one spelling
 /// `programme:<id>` of [`country_scope`]. A release ticket names the
 /// proposal's programme this way, and the vault shows only that

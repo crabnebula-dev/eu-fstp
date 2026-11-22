@@ -568,6 +568,10 @@ pub struct StartOptions {
     /// configuration names an object store (ADR-012 record of lane L17).
     /// `None` keeps step 5's in-memory copy.
     pub keystore_snapshots: Option<fstp_backup::Snapshots>,
+    /// The onboarding probes of the API core's `Prober` port (ADR-026
+    /// record of lane L18): the relay's greeting and a saved sending
+    /// domain. `None` fails every probe (Q5).
+    pub tenant_prober: Option<Arc<dyn crate::shell::probe::TenantProbe>>,
 }
 
 impl Default for StartOptions {
@@ -588,6 +592,7 @@ impl Default for StartOptions {
             web_assets: None,
             api_relay: None,
             keystore_snapshots: None,
+            tenant_prober: None,
         }
     }
 }
@@ -647,6 +652,7 @@ where
         web_assets,
         api_relay,
         keystore_snapshots,
+        tenant_prober,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -850,6 +856,7 @@ where
                 host: host.clone(),
                 app: app_pool.clone(),
                 relay: api_relay,
+                prober: tenant_prober,
                 // Lane L6's shell facts, fresh in the request, as the
                 // cell's command route reads them (ADR-027, wave 2 merge).
                 facts: Some(Arc::new(crate::api::facts::FreshFacts(Arc::clone(

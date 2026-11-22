@@ -1933,6 +1933,79 @@ impl World {
 
 // ---- END lane L9 prod/edgerun ----
 
+// ---- BEGIN lane L15 prod/route-feed: the parts of a pilot route feed ----
+
+/// The name the pilot `fstp-control` presents to the edges' feed polls
+/// (lane L15, ADR-009 "Pilot route feed").
+pub const FEED_SERVER_NAME: &str = "control.tunnel.test";
+
+/// What a pilot `fstp-control route-feed` and a stand-alone `fstp-edge`
+/// need in front of this world's cells (lane L15): the tunnel parts, with
+/// an edge client certificate whose CN `edge_<32 hex>` names `edge_id`,
+/// and the feed listener's certificate for [`FEED_SERVER_NAME`]. One CA,
+/// the world's control-plane CA, issues all of them, as the operator's
+/// tunnel CA does on a pilot. Test only. Every value is synthetic.
+pub struct EdgeFeedParts {
+    /// The tunnel parts. The client certificate names `edge_id`.
+    pub tunnel: EdgeTunnelParts,
+    /// The edge id.
+    pub edge_id: [u8; 16],
+    /// The feed listener's certificate, PEM.
+    pub feed_cert_pem: Vec<u8>,
+    /// The key of that certificate, PEM.
+    pub feed_key_pem: Vec<u8>,
+}
+
+impl fmt::Debug for EdgeFeedParts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EdgeFeedParts")
+            .field("tunnel", &self.tunnel)
+            .finish_non_exhaustive()
+    }
+}
+
+impl World {
+    /// The parts of a pilot route feed in front of this world's cells
+    /// ([`EdgeFeedParts`]), for a fresh random edge id.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the world runs no cell or a certificate is not issued.
+    pub fn edge_feed_parts(&self) -> Result<EdgeFeedParts, WorldError> {
+        let s = self.services()?;
+        let edge_id =
+            fstp_crypto::random_array::<16>().map_err(|e| WorldError::Store(e.to_string()))?;
+        let cn = format!(
+            "edge_{}",
+            edge_id
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+        let client = s
+            .control
+            .issue(fstp_pki::cert::CertKind::Client, &cn, None, &[], &[])?;
+        let feed = s.control.issue(
+            fstp_pki::cert::CertKind::Server,
+            FEED_SERVER_NAME,
+            None,
+            &[FEED_SERVER_NAME],
+            &[],
+        )?;
+        let mut tunnel = self.edge_tunnel_parts()?;
+        tunnel.client_cert_pem = client.cert_pem;
+        tunnel.client_key_pem = client.key_pem;
+        Ok(EdgeFeedParts {
+            tunnel,
+            edge_id,
+            feed_cert_pem: feed.cert_pem,
+            feed_key_pem: feed.key_pem,
+        })
+    }
+}
+
+// ---- END lane L15 prod/route-feed ----
+
 /// A world ends with its handle: each cell stops (its listeners, its
 /// engine and its vault drain, [`CellHandle`]), and its databases, roles
 /// and `pg_hba` lines go at the next world start, as those of a failed
@@ -4158,7 +4231,8 @@ fn start_cell(
     let vault_pages = match pages {
         Some(_) => crate::vault_pages::VaultPages::load(
             &crate::mc::place_model::db::workspace_root().join("web"),
-        )?
+        )
+        .map_err(|e| WorldError::Store(format!("the vault loader pages: {e}")))?
         .map(std::sync::Arc::new),
         None => None,
     };
@@ -4577,6 +4651,9 @@ fn start_cell(
         // keeps each message in the world's mail capture.
         api_relay: Some(std::sync::Arc::new(mail.relay().clone())),
         keystore_snapshots: None,
+        // ADR-026 record of lane L18: a world cell runs no probes, so every
+        // onboarding probe fails, as before (Q5).
+        tenant_prober: None,
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,
@@ -4604,10 +4681,14 @@ fn start_cell(
         Some(ext) => {
             drop((parts, options));
             // ADR-026 "First admin email": the binary records the first
-            // admin's synthetic login email itself.
+            // admin's synthetic login email itself. ADR-026 record of lane
+            // L18: the cell is provisioned first, as a pilot is, so its
+            // ledger holds the tenant part and no organisation is active
+            // before onboarding.
             let email = login_email_of(&host, fstp_domain_testkit::r#gen::roster::ADMIN);
             let token = ext
-                .first_admin(&email)
+                .provision_tenant(!spec.self_hosted)
+                .and_then(|()| ext.first_admin(&email))
                 .and_then(|t| ext.start().map(|()| t));
             match token {
                 Ok(t) => (

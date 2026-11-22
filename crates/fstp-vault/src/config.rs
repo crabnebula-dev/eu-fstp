@@ -37,10 +37,11 @@ pub const CONFIG_MEMBERS: [&str; 10] = [
     "witness",
 ];
 
-/// The optional members of a configuration. `object_store` names the
+/// The optional members of a configuration. `assets_dir` names the
+/// static pages (ADR-004 record of lane L13b). `object_store` names the
 /// bucket of the keystore snapshots (ADR-012 record of lane L17), in the
 /// shape `fstp-backup` uses.
-pub const OPTIONAL_MEMBERS: [&str; 1] = ["object_store"];
+pub const OPTIONAL_MEMBERS: [&str; 2] = ["assets_dir", "object_store"];
 
 /// The members of the database part, in key order.
 pub const DATABASE_MEMBERS: [&str; 3] = ["dbname", "host", "port"];
@@ -117,6 +118,9 @@ pub struct WitnessConfig {
 /// The vault process configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VaultConfig {
+    /// The installed static pages of the vault origin, if any (ADR-004
+    /// record of lane L13b, row "Static pages"). Optional.
+    pub assets_dir: Option<PathBuf>,
     /// The cell this vault belongs to.
     pub cell: [u8; 16],
     /// The directory of the role certificates and keys, readable only by
@@ -263,6 +267,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
         names.extend(OPTIONAL_MEMBERS.iter().filter(|n| o.contains_key(n)));
     }
     let o = obj(&v, &names, "members")?;
+    let has_assets = o.get("assets_dir").is_some();
     let object_store = match o.get("object_store") {
         None => None,
         Some(os) => Some(
@@ -289,7 +294,13 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
     }
     let internal_listen = addr(o, "internal_listen")?;
     let origin_listen = addr(o, "origin_listen")?;
+    let assets_dir = if has_assets {
+        Some(path(o, "assets_dir")?)
+    } else {
+        None
+    };
     Ok(VaultConfig {
+        assets_dir,
         cell,
         credentials_dir: path(o, "credentials_dir")?,
         database: DatabaseConfig {
@@ -368,6 +379,32 @@ pub(crate) mod tests {
                 "{bad_os}"
             );
         }
+    }
+
+    /// ADR-004 record of lane L13b, row "Static pages": `assets_dir` is
+    /// optional, absent by default, and an absolute path when present.
+    #[test]
+    fn adr009_vault_config_takes_an_optional_assets_dir() {
+        assert_eq!(
+            decode_config(text(|s| s).as_bytes()).unwrap().assets_dir,
+            None
+        );
+        let with = |p: &str| {
+            text(|s| {
+                s.replacen(
+                    "{\"cell\"",
+                    &format!("{{\"assets_dir\":\"{p}\",\"cell\""),
+                    1,
+                )
+            })
+        };
+        assert_eq!(
+            decode_config(with("/opt/fstp/web").as_bytes())
+                .unwrap()
+                .assets_dir,
+            Some(PathBuf::from("/opt/fstp/web"))
+        );
+        assert!(decode_config(with("opt/fstp/web").as_bytes()).is_err());
     }
 
     /// G12, ADR-026 record of lane L8: a valid configuration decodes into

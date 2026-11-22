@@ -137,6 +137,8 @@ pub enum Endpoint {
     VaultTickets,
     /// `POST /api/v1/verifications`.
     Verifications,
+    /// `GET /api/v1/verification-people`.
+    VerificationPeople,
     /// `GET /api/v1/audit/anchors`.
     AuditAnchors,
     /// `GET /api/v1/erasures`.
@@ -255,7 +257,7 @@ use HighRiskAction as H;
 use RiskClass::{HighRisk, Normal};
 
 /// Every route of design section 8.7.
-static TABLE: [Route; 27] = [
+static TABLE: [Route; 28] = [
     Route::served(
         "POST",
         "/auth/invitations/{token}/register/options",
@@ -426,6 +428,14 @@ static TABLE: [Route; 27] = [
         A::VerificationTicket,
         E::Verifications,
         AUTH_BODY_LIMIT,
+    ),
+    Route::served(
+        "GET",
+        "/api/v1/verification-people",
+        Normal,
+        A::VerificationTicket,
+        E::VerificationPeople,
+        0,
     ),
     Route::served(
         "GET",

@@ -136,13 +136,6 @@ fn login(cfg: &FileConfig, role: fstp_pgstore::Role) -> Result<fstp_pgwire::Conf
     .connect_timeout(Some(DB_CONNECT)))
 }
 
-/// The ADR-021 organisation port of the file.
-fn organisation(cfg: &FileConfig) -> crate::public::OrganisationPort {
-    crate::public::OrganisationPort {
-        active: cfg.organisation_active,
-    }
-}
-
 /// The parts and options of the cell of `cfg` on `rt`, with `keys` from
 /// the opened key file and the listeners at `listen`.
 fn parts(
@@ -275,12 +268,15 @@ fn parts(
     // ADR-027: the creator shell over the configured probes. The relay
     // probe checks the relay the cell submits to.
     let shell = cfg.shell.clone().unwrap_or_default();
-    let creator_shell = crate::shell::facts::production_shell(
+    // ADR-026 record of lane L18: the same probes serve onboarding's
+    // Domains and email and Channels steps through the API core.
+    let (creator_shell, tenant_prober) = crate::shell::facts::production_probes(
         rt.clone(),
         crate::shell::facts::ShellSettings {
             resolver: shell.resolver,
             probes: crate::shell::probe::ProbeSettings {
                 mail_relay: cfg.mail.as_ref().map(|m| m.relay.clone()),
+                mail_address: cfg.mail.as_ref().and_then(|m| m.address),
                 mail_ca_pem: mail_ca,
                 sending_domain: shell.sending_domain,
                 dkim_selector: shell.dkim_selector,
@@ -310,7 +306,9 @@ fn parts(
         proof_mail,
         api_relay,
         creator_shell,
-        organisation: organisation(cfg),
+        // ADR-021, ADR-026 record of lane L18: the organisation port keeps
+        // its default, "not active". Only the ledger activates.
+        tenant_prober: Some(tenant_prober),
         web_assets: Some(web_assets),
         ..StartOptions::default()
     };

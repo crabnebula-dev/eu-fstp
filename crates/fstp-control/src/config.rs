@@ -391,6 +391,88 @@ pub fn decode_control_config(bytes: &[u8]) -> Result<ControlConfig, ControlError
     })
 }
 
+/// The members of a route feed configuration, in key order (ADR-009
+/// "Pilot route feed", row "Feed configuration", lane L15).
+pub const FEED_MEMBERS: [&str; 6] = [
+    "credentials_dir",
+    "edges",
+    "feed_listen",
+    "keyd_socket",
+    "operator_socket",
+    "state_dir",
+];
+
+/// The longest route feed configuration, in bytes.
+pub const MAX_FEED_CONFIG_LEN: usize = 4096;
+
+/// The most edges a route feed configuration lists.
+pub const MAX_FEED_EDGES: usize = 16;
+
+/// The files `fstp-control route-feed` reads from its `credentials_dir`:
+/// the CA of the edges' client certificates, its feed listener
+/// certificate and key, and the sealed feed signing key.
+pub const FEED_FILES: [&str; 4] = [
+    "control-ca.pem",
+    "control.pem",
+    "control-key.pem",
+    "route-feed.key",
+];
+
+/// A decoded route feed configuration: the pilot `fstp-control`, which
+/// serves the signed route feed and nothing else (lane L15).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeedConfig {
+    /// The directory of [`FEED_FILES`].
+    pub credentials_dir: String,
+    /// The edges that may poll, by the id in their certificate's CN.
+    pub edges: Vec<crate::routes::EdgeId>,
+    /// The address the feed listener binds.
+    pub feed_listen: SocketAddr,
+    /// The `fstp-keyd` socket of the `control` role.
+    pub keyd_socket: String,
+    /// The Unix socket of the operator command.
+    pub operator_socket: String,
+    /// The directory of the table state.
+    pub state_dir: String,
+}
+
+/// Decodes a route feed configuration (ADR-009 "Pilot route feed").
+/// Fuzzed (`route_feed_decode`).
+///
+/// # Errors
+///
+/// [`ControlError::Config`] naming the rule broken.
+pub fn decode_feed_config(bytes: &[u8]) -> Result<FeedConfig, ControlError> {
+    if bytes.len() > MAX_FEED_CONFIG_LEN {
+        return Err(bad("too long"));
+    }
+    let value = parse(bytes)?;
+    let obj = closed_object(&value, &FEED_MEMBERS, "members")?;
+    let list = obj
+        .get("edges")
+        .and_then(Value::as_array)
+        .ok_or(bad("edges"))?;
+    if list.is_empty() || list.len() > MAX_FEED_EDGES {
+        return Err(bad("edges"));
+    }
+    let mut edges = Vec::new();
+    for e in list.iter() {
+        let id = crate::routes::EdgeId(id16(e.as_str().ok_or(bad("edges"))?, "edges")?);
+        if edges.contains(&id) {
+            return Err(bad("edges"));
+        }
+        edges.push(id);
+    }
+    Ok(FeedConfig {
+        credentials_dir: path(obj, "credentials_dir", "credentials_dir")?,
+        edges,
+        feed_listen: socket_addr(obj, "feed_listen", "feed_listen")?,
+        keyd_socket: path(obj, "keyd_socket", "keyd_socket")?,
+        operator_socket: path(obj, "operator_socket", "operator_socket")?,
+        state_dir: path(obj, "state_dir", "state_dir")?,
+    })
+}
+
 /// The longest credential file, in bytes.
 pub const MAX_FILE_LEN: usize = 64 * 1024;
 
