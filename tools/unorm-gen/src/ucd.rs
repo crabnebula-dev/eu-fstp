@@ -36,7 +36,18 @@ pub struct UnicodeData {
     /// The one-level canonical decompositions, by code point: one code
     /// point, or two.
     pub canonical: BTreeMap<u32, Vec<u32>>,
+    /// The one-level compatibility decompositions (those with a `<tag>`),
+    /// by code point: one to [`MAX_COMPAT_LEN`] code points.
+    pub compat: BTreeMap<u32, Vec<u32>>,
 }
+
+/// The longest one-level compatibility decomposition the parser takes.
+/// Unicode 18.0.0 has 18 (U+FDFA).
+pub const MAX_COMPAT_LEN: usize = 31;
+
+/// The `NFKC_CF` mappings of `DerivedNormalizationProps.txt`, by code
+/// point. An empty mapping removes the code point.
+pub type NfkcCf = BTreeMap<u32, Vec<u32>>;
 
 /// The status C and F mappings of `CaseFolding.txt`, by code point. Each
 /// mapping has one to three code points.
@@ -85,7 +96,7 @@ fn data(line: &str) -> &str {
 /// Parses `UnicodeData.txt`: fifteen fields per line. Field 0 is the code
 /// point, field 3 the canonical combining class, and field 5 the
 /// decomposition. A decomposition with a `<tag>` is a compatibility one,
-/// which NFC and NFD do not use. A canonical decomposition has one or two
+/// which only NFKC and NFKD use. A canonical decomposition has one or two
 /// code points (the database guarantees it, and the tables rely on it).
 pub fn parse_unicode_data(text: &str) -> Result<UnicodeData, ParseError> {
     const FILE: &str = "UnicodeData.txt";
@@ -115,11 +126,21 @@ pub fn parse_unicode_data(text: &str) -> Result<UnicodeData, ParseError> {
         if ccc != 0 {
             out.ccc.insert(cp, ccc);
         }
-        if decomp.is_empty() || decomp.starts_with('<') {
+        if decomp.is_empty() {
             continue;
         }
         if char::from_u32(cp).is_none() {
             return Err(err("a surrogate with a decomposition"));
+        }
+        if let Some(rest) = decomp.strip_prefix('<') {
+            let (tag, mapping) = rest.split_once('>').ok_or_else(|| err("bad tag"))?;
+            if tag.is_empty() || !tag.bytes().all(|b| b.is_ascii_alphabetic()) {
+                return Err(err("bad tag"));
+            }
+            let d = scalars(mapping, 1, MAX_COMPAT_LEN)
+                .ok_or_else(|| err("bad compatibility decomposition"))?;
+            out.compat.insert(cp, d);
+            continue;
         }
         let d = scalars(decomp, 1, 2).ok_or_else(|| err("bad canonical decomposition"))?;
         out.canonical.insert(cp, d);
@@ -226,6 +247,65 @@ pub fn parse_normalization_test(text: &str) -> Result<Vec<NormCase>, ParseError>
     Ok(out)
 }
 
+/// Parses `DerivedNormalizationProps.txt` and keeps the `NFKC_CF`
+/// mappings. Every data line is `<code point or range> ; <property>`,
+/// with an optional third field. Other properties are checked for that
+/// shape and skipped. An `NFKC_CF` line has a third field, which may be
+/// empty: the code points of the range are then removed.
+pub fn parse_nfkc_cf(text: &str) -> Result<NfkcCf, ParseError> {
+    const FILE: &str = "DerivedNormalizationProps.txt";
+    let mut out = NfkcCf::new();
+    for (i, line) in text.lines().enumerate() {
+        let err = |reason| ParseError {
+            file: FILE,
+            line: i.saturating_add(1),
+            reason,
+        };
+        let d = data(line);
+        if d.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = d.split(';').map(str::trim).collect();
+        let (range, property, value) = match fields.as_slice() {
+            [r, p] => (*r, *p, None),
+            [r, p, v] => (*r, *p, Some(*v)),
+            _ => return Err(err("not two or three fields")),
+        };
+        let (lo, hi) = match range.split_once("..") {
+            Some((a, b)) => (code_point(a), code_point(b)),
+            None => (code_point(range), code_point(range)),
+        };
+        let (Some(lo), Some(hi)) = (lo, hi) else {
+            return Err(err("bad code point"));
+        };
+        if lo > hi || hi.saturating_sub(lo) > 0x1_0000 {
+            return Err(err("bad range"));
+        }
+        if property.is_empty()
+            || !property
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            return Err(err("bad property"));
+        }
+        if property != "NFKC_CF" {
+            continue;
+        }
+        let value = value.ok_or_else(|| err("NFKC_CF without a mapping"))?;
+        let mapping = if value.is_empty() {
+            Vec::new()
+        } else {
+            scalars(value, 1, MAX_COMPAT_LEN).ok_or_else(|| err("bad mapping"))?
+        };
+        for cp in (lo..=hi).filter(|&c| char::from_u32(c).is_some()) {
+            if out.insert(cp, mapping.clone()).is_some() {
+                return Err(err("two NFKC_CF mappings for one code point"));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// The version that the first line of a UCD file names, as in
 /// `# CaseFolding-18.0.0.txt`. `None` when the line has another shape.
 pub fn header_version<'a>(text: &'a str, file_stem: &str) -> Option<&'a str> {
@@ -251,6 +331,21 @@ mod tests {
         assert_eq!(ud.canonical.get(&0xC0), Some(&vec![0x41, 0x300]));
         assert_eq!(ud.ccc.get(&0x300), Some(&230));
         assert!(!ud.canonical.contains_key(&0xA0));
+        assert_eq!(ud.compat.get(&0xA0), Some(&vec![0x20]));
+        assert!(parse_unicode_data("00A0;N;Zs;0;CS;<> 0020;;;;N;;;;;\n").is_err());
+        assert!(parse_unicode_data("00A0;N;Zs;0;CS;<noBreak 0020;;;;N;;;;;\n").is_err());
+
+        let cf = parse_nfkc_cf(
+            "00AD ; NFKC_CF;  # x\n0041..0042 ; NFKC_CF; 0061 # y\n0300 ; NFD_QC; N\n00C0 ; Full_Composition_Exclusion\n",
+        )
+        .unwrap();
+        assert_eq!(cf.get(&0xAD), Some(&vec![]));
+        assert_eq!(cf.get(&0x42), Some(&vec![0x61]));
+        assert_eq!(cf.len(), 3);
+        assert!(parse_nfkc_cf("00AD ; NFKC_CF\n").is_err());
+        assert!(parse_nfkc_cf("00AD ; NFKC_CF; 0061\n00AD ; NFKC_CF; 0062\n").is_err());
+        assert!(parse_nfkc_cf("0042..0041 ; NFKC_CF; 0061\n").is_err());
+        assert!(parse_nfkc_cf("00AD ; NFKC CF; 0061\n").is_err());
 
         let bad = parse_unicode_data("0041;A;Lu;0;L;;;;;N;;;;\n").unwrap_err();
         assert_eq!(bad.line, 1);

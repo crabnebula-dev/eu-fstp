@@ -15,6 +15,9 @@
 //! | `COMP` | `a << 42 \| b << 21 \| c`: the primary composite `c` of the pair `a b` |
 //! | `FOLD` | `cp << 21 \| f`: a full case folding to one code point |
 //! | `FOLD_MULTI` | `(cp, [f1, f2, f3])`: a full case folding to two or three code points, padded with 0 |
+//! | `COMPAT` | `cp << 21 \| start << 5 \| len`: the one-level compatibility decomposition `COMPAT_POOL[start..start + len]` |
+//! | `COMPAT_POOL` | the code points of the compatibility decompositions, as `u32` |
+//! | `IGNORABLE` | `lo << 21 \| hi`: a range of code points that `NFKC_CF` removes (its mapping is empty) |
 
 pub mod ucd;
 
@@ -22,7 +25,7 @@ use std::collections::BTreeSet;
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 
-use ucd::{CaseFolding, ParseError, UnicodeData};
+use ucd::{CaseFolding, NfkcCf, ParseError, UnicodeData};
 
 /// The Unicode version of the vendored files (ADR-029).
 pub const UCD_VERSION: &str = "18.0.0";
@@ -76,16 +79,24 @@ pub struct Tables {
     pub fold: Vec<u64>,
     /// Case foldings to two or three code points.
     pub fold_multi: Vec<(u32, [u32; 3])>,
+    /// One-level compatibility decompositions, as index entries.
+    pub compat: Vec<u64>,
+    /// The code points of the compatibility decompositions.
+    pub compat_pool: Vec<u32>,
+    /// Ranges of code points that `NFKC_CF` removes.
+    pub ignorable: Vec<u64>,
 }
 
 /// Builds the tables from the parsed files. The full composition
 /// exclusion is derived here (UAX #15): the listed exclusions, every
 /// singleton decomposition, and every decomposition of a non-starter or
-/// one that starts with a non-starter.
+/// one that starts with a non-starter. The removed code points are those
+/// whose `NFKC_CF` mapping is empty.
 pub fn build(
     ud: &UnicodeData,
     exclusions: &BTreeSet<u32>,
     folding: &CaseFolding,
+    nfkc_cf: &NfkcCf,
 ) -> Result<Tables, GenError> {
     let mut t = Tables::default();
     let class = |cp: u32| ud.ccc.get(&cp).copied().unwrap_or(0);
@@ -138,6 +149,33 @@ pub fn build(
             _ => return Err(GenError::Build("a case folding of no or many code points")),
         }
     }
+    for (&cp, d) in &ud.compat {
+        let start = u64::try_from(t.compat_pool.len()).unwrap_or(u64::MAX);
+        let len = u64::try_from(d.len()).unwrap_or(u64::MAX);
+        if start >= 1 << 16 || len == 0 || len >= 1 << 5 {
+            return Err(GenError::Build(
+                "the compatibility pool outgrows its packing",
+            ));
+        }
+        t.compat.push((u64::from(cp) << 21) | (start << 5) | len);
+        t.compat_pool.extend_from_slice(d);
+    }
+
+    let mut run: Option<(u32, u32)> = None;
+    for (&cp, _) in nfkc_cf.iter().filter(|(_, m)| m.is_empty()) {
+        run = match run {
+            Some((lo, hi)) if hi.checked_add(1) == Some(cp) => Some((lo, cp)),
+            Some((lo, hi)) => {
+                t.ignorable.push((u64::from(lo) << 21) | u64::from(hi));
+                Some((cp, cp))
+            }
+            None => Some((cp, cp)),
+        };
+    }
+    if let Some((lo, hi)) = run {
+        t.ignorable.push((u64::from(lo) << 21) | u64::from(hi));
+    }
+
     let packed_ok = t.decomp.iter().chain(&t.comp).all(|&e| e >> 63 == 0);
     if !packed_ok || t.fold.iter().any(|&e| e >> 42 != 0) {
         return Err(GenError::Build("a code point beyond 21 bits"));
@@ -209,6 +247,46 @@ pub fn render(version: (u8, u8, u8), t: &Tables) -> String {
     for (cp, [a, b, c]) in &t.fold_multi {
         let _ = writeln!(out, "    ({cp:#07x}, [{a:#07x}, {b:#07x}, {c:#07x}]),");
     }
+    out.push_str("];\n\n");
+    render_u64(
+        &mut out,
+        "COMPAT",
+        "One-level compatibility decompositions, as index entries into `COMPAT_POOL`.",
+        &t.compat,
+    );
+    let _ = writeln!(
+        out,
+        "/// The code points of the compatibility decompositions."
+    );
+    let _ = writeln!(out, "#[rustfmt::skip]");
+    let _ = writeln!(
+        out,
+        "pub(crate) static COMPAT_POOL: [u32; {}] = [",
+        t.compat_pool.len()
+    );
+    for row in t.compat_pool.chunks(8) {
+        out.push_str("   ");
+        for v in row {
+            let _ = write!(out, " {v:#07x},");
+        }
+        out.push('\n');
+    }
+    out.push_str("];\n\n");
+    let ignorable_doc = "Ranges of code points that `NFKC_CF` removes.";
+    let _ = writeln!(out, "/// {ignorable_doc}");
+    let _ = writeln!(out, "#[rustfmt::skip]");
+    let _ = writeln!(
+        out,
+        "pub(crate) static IGNORABLE: [u64; {}] = [",
+        t.ignorable.len()
+    );
+    for row in t.ignorable.chunks(4) {
+        out.push_str("   ");
+        for v in row {
+            let _ = write!(out, " {v:#018x},");
+        }
+        out.push('\n');
+    }
     out.push_str("];\n");
     out
 }
@@ -226,12 +304,26 @@ fn read(dir: &Path, name: &str) -> Result<String, GenError> {
     std::fs::read_to_string(&p).map_err(|e| GenError::Io(p, e.kind()))
 }
 
-/// Reads the vendored files from `ucd_dir` and returns the Rust source of
-/// `tables.rs`. Each file with a version header must name [`UCD_VERSION`].
-pub fn generate(ucd_dir: &Path) -> Result<String, GenError> {
+/// The parsed vendored files that the tables come from.
+#[derive(Debug, Clone)]
+pub struct Ucd {
+    /// `UnicodeData.txt`.
+    pub unicode_data: UnicodeData,
+    /// `CompositionExclusions.txt`.
+    pub exclusions: BTreeSet<u32>,
+    /// `CaseFolding.txt`, status C and F.
+    pub folding: CaseFolding,
+    /// The `NFKC_CF` mappings of `DerivedNormalizationProps.txt`.
+    pub nfkc_cf: NfkcCf,
+}
+
+/// Reads and parses the vendored files from `ucd_dir`. Each file with a
+/// version header must name [`UCD_VERSION`].
+pub fn load(ucd_dir: &Path) -> Result<Ucd, GenError> {
     let unicode_data = read(ucd_dir, "UnicodeData.txt")?;
     let exclusions = read(ucd_dir, "CompositionExclusions.txt")?;
     let folding = read(ucd_dir, "CaseFolding.txt")?;
+    let derived = read(ucd_dir, "DerivedNormalizationProps.txt")?;
     for (text, stem, file) in [
         (
             &exclusions,
@@ -239,18 +331,31 @@ pub fn generate(ucd_dir: &Path) -> Result<String, GenError> {
             "CompositionExclusions.txt",
         ),
         (&folding, "CaseFolding", "CaseFolding.txt"),
+        (
+            &derived,
+            "DerivedNormalizationProps",
+            "DerivedNormalizationProps.txt",
+        ),
     ] {
         if ucd::header_version(text, stem) != Some(UCD_VERSION) {
             return Err(GenError::Version(file));
         }
     }
+    Ok(Ucd {
+        unicode_data: ucd::parse_unicode_data(&unicode_data)?,
+        exclusions: ucd::parse_composition_exclusions(&exclusions)?,
+        folding: ucd::parse_case_folding(&folding)?,
+        nfkc_cf: ucd::parse_nfkc_cf(&derived)?,
+    })
+}
+
+/// Reads the vendored files from `ucd_dir` and returns the Rust source of
+/// `tables.rs`.
+pub fn generate(ucd_dir: &Path) -> Result<String, GenError> {
+    let u = load(ucd_dir)?;
     let version =
         version_numbers(UCD_VERSION).ok_or(GenError::Build("UCD_VERSION is not a version"))?;
-    let tables = build(
-        &ucd::parse_unicode_data(&unicode_data)?,
-        &ucd::parse_composition_exclusions(&exclusions)?,
-        &ucd::parse_case_folding(&folding)?,
-    )?;
+    let tables = build(&u.unicode_data, &u.exclusions, &u.folding, &u.nfkc_cf)?;
     Ok(render(version, &tables))
 }
 

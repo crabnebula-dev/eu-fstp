@@ -1,5 +1,5 @@
 //! ADR-029 "Conformance": every line of the vendored
-//! `NormalizationTest.txt` for NFC and NFD (UAX #15, section "Conformance
+//! `NormalizationTest.txt` for NFC, NFD, NFKC and NFKD (UAX #15, section "Conformance
 //! Testing").
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -10,13 +10,14 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::text;
-use fstp_unorm::{nfc, nfd};
+use fstp_unorm::{nfc, nfd, nfkc, nfkd};
 
 /// ADR-029: for every line, `c2 == NFC(c1) == NFC(c2) == NFC(c3)`,
 /// `c4 == NFC(c4) == NFC(c5)`, `c3 == NFD(c1) == NFD(c2) == NFD(c3)` and
-/// `c5 == NFD(c4) == NFD(c5)`.
+/// `c5 == NFD(c4) == NFD(c5)`, `c4 == NFKC(c1) == ... == NFKC(c5)` and
+/// `c5 == NFKD(c1) == ... == NFKD(c5)`.
 #[test]
-fn adr029_normalization_test_nfc_and_nfd() {
+fn adr029_normalization_test_nfc_nfd_nfkc_nfkd() {
     let cases = unorm_gen::normalization_test(&common::ucd_dir()).unwrap();
     assert!(cases.len() > 19_000, "only {} cases", cases.len());
     let mut failures = Vec::new();
@@ -33,6 +34,16 @@ fn adr029_normalization_test_nfc_and_nfd() {
             (nfd(&c3) == c3, "NFD(c3)"),
             (nfd(&c4) == c5, "NFD(c4)"),
             (nfd(&c5) == c5, "NFD(c5)"),
+            (nfkc(&c1) == c4, "NFKC(c1)"),
+            (nfkc(&c2) == c4, "NFKC(c2)"),
+            (nfkc(&c3) == c4, "NFKC(c3)"),
+            (nfkc(&c4) == c4, "NFKC(c4)"),
+            (nfkc(&c5) == c4, "NFKC(c5)"),
+            (nfkd(&c1) == c5, "NFKD(c1)"),
+            (nfkd(&c2) == c5, "NFKD(c2)"),
+            (nfkd(&c3) == c5, "NFKD(c3)"),
+            (nfkd(&c4) == c5, "NFKD(c4)"),
+            (nfkd(&c5) == c5, "NFKD(c5)"),
         ];
         for (ok, what) in checks {
             if !ok {
@@ -51,8 +62,8 @@ fn adr029_normalization_test_nfc_and_nfd() {
     );
 }
 
-/// ADR-029: every code point that Part 1 does not list is its own NFC and
-/// NFD.
+/// ADR-029: every code point that Part 1 does not list is its own NFC, NFD,
+/// NFKC and NFKD.
 #[test]
 fn adr029_code_points_outside_part1_are_invariant() {
     let cases = unorm_gen::normalization_test(&common::ucd_dir()).unwrap();
@@ -68,7 +79,7 @@ fn adr029_code_points_outside_part1_are_invariant() {
             continue;
         }
         let s = c.to_string();
-        if nfc(&s) != s || nfd(&s) != s {
+        if nfc(&s) != s || nfd(&s) != s || nfkc(&s) != s || nfkd(&s) != s {
             bad.push(u32::from(c));
         }
     }

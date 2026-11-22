@@ -33,13 +33,9 @@ fn adr029_committed_tables_equal_a_fresh_generation() {
 /// and no decomposition chain is deeper than the normaliser follows.
 #[test]
 fn adr029_tables_are_sound() {
-    let dir = common::ucd_dir();
-    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
-    let ud = unorm_gen::ucd::parse_unicode_data(&read("UnicodeData.txt")).unwrap();
-    let ex =
-        unorm_gen::ucd::parse_composition_exclusions(&read("CompositionExclusions.txt")).unwrap();
-    let cf = unorm_gen::ucd::parse_case_folding(&read("CaseFolding.txt")).unwrap();
-    let t = unorm_gen::build(&ud, &ex, &cf).unwrap();
+    let u = unorm_gen::load(&common::ucd_dir()).unwrap();
+    let ud = &u.unicode_data;
+    let t = unorm_gen::build(ud, &u.exclusions, &u.folding, &u.nfkc_cf).unwrap();
     let len = |cp: u64| {
         char::from_u32(u32::try_from(cp).unwrap())
             .unwrap()
@@ -52,16 +48,26 @@ fn adr029_tables_are_sound() {
             "U+{c:04X} is longer than its pair"
         );
     }
-    // Depth of each decomposition chain, through the one-level table.
+    // Depth of each decomposition chain, canonical and compatibility,
+    // through the one-level tables.
     fn depth(ud: &unorm_gen::ucd::UnicodeData, cp: u32) -> usize {
-        ud.canonical.get(&cp).map_or(0, |d| {
-            1 + d.iter().map(|&x| depth(ud, x)).max().unwrap_or(0)
-        })
+        ud.canonical
+            .get(&cp)
+            .or_else(|| ud.compat.get(&cp))
+            .map_or(0, |d| {
+                1 + d.iter().map(|&x| depth(ud, x)).max().unwrap_or(0)
+            })
     }
-    let deepest = ud.canonical.keys().map(|&cp| depth(&ud, cp)).max().unwrap();
+    let deepest = ud
+        .canonical
+        .keys()
+        .chain(ud.compat.keys())
+        .map(|&cp| depth(ud, cp))
+        .max()
+        .unwrap();
     assert!(deepest < 8, "a decomposition chain of depth {deepest}");
     // The tables are sorted, so binary search finds every entry.
-    for v in [&t.ccc, &t.decomp, &t.comp, &t.fold] {
+    for v in [&t.ccc, &t.decomp, &t.comp, &t.fold, &t.compat, &t.ignorable] {
         assert!(v.windows(2).all(|w| w[0] < w[1]), "a table is not sorted");
     }
     // The packed class ranges give every code point its class.

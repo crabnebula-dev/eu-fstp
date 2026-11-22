@@ -21,11 +21,13 @@ fuzz_target!(|data: &[u8]| {
     let ex = ucd::parse_composition_exclusions(text);
     let cf = ucd::parse_case_folding(text);
     let nt = ucd::parse_normalization_test(text);
+    let kf = ucd::parse_nfkc_cf(text);
     for e in [
         ud.as_ref().err(),
         ex.as_ref().err(),
         cf.as_ref().err(),
         nt.as_ref().err(),
+        kf.as_ref().err(),
     ]
     .into_iter()
     .flatten()
@@ -36,7 +38,8 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(ud) = ud {
         let ex = ex.unwrap_or_default();
         let cf = cf.unwrap_or_default();
-        if let Ok(t) = unorm_gen::build(&ud, &ex, &cf) {
+        let kf = kf.unwrap_or_default();
+        if let Ok(t) = unorm_gen::build(&ud, &ex, &cf, &kf) {
             let _ = unorm_gen::render((18, 0, 0), &t);
         }
     }
