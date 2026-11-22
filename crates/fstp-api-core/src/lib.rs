@@ -45,6 +45,7 @@ pub mod grant;
 pub mod grant_lists;
 pub mod ids;
 mod journal;
+pub mod legal;
 pub mod mailbox;
 pub mod meta;
 pub mod model;
@@ -598,6 +599,19 @@ impl ApiCore {
     /// Public data, with no credential.
     pub fn funding(&self) -> fstp_json::Value {
         self.inner.funding()
+    }
+
+    /// The tenant's legal details as `GET /legal/details` answers them
+    /// (ADR-037). Public data, with no credential.
+    pub fn legal_details(&self) -> fstp_json::Value {
+        self.inner.legal_details()
+    }
+
+    /// The legal page at `path` with the tenant's legal details, or
+    /// `None` for any other path (ADR-037). Public data, with no
+    /// credential.
+    pub fn legal_page(&self, path: &str) -> Option<String> {
+        self.inner.legal_page(path)
     }
 
     /// The bytes and format of the logo at `path`, when `path` has the

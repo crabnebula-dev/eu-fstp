@@ -504,16 +504,7 @@ pub(crate) fn notice_request(request: &Object) -> Result<NoticeRequest, ApiError
 }
 
 /// The members of a `tenant.set_legal_details` body: every field key.
-const LEGAL_KEYS: [&str; 12] = {
-    let mut keys = [""; 12];
-    let all = fstp_brand::legal::LegalField::ALL;
-    let mut i = 0;
-    while i < 12 {
-        keys[i] = all[i].key();
-        i += 1;
-    }
-    keys
-};
+const LEGAL_KEYS: [&str; 12] = fstp_brand::legal::LegalField::KEYS;
 
 /// Decodes a `tenant.set_legal_details` request (ADR-037): one string
 /// per field key, an empty string for an unset field, each set value

@@ -62,6 +62,7 @@ fn adr037_field_keys_and_placeholders() {
         assert_eq!(LegalField::from_key(f.key()), Some(f));
     }
     assert_eq!(LegalField::ALL.len(), 12);
+    assert_eq!(LegalField::ALL.map(LegalField::key), LegalField::KEYS);
     let d = LegalDetails::from_pairs(&[
         ("legal_name", "Synthetic Org Ltd"),
         ("dpo_name", "Synthetic DPO"),

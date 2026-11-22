@@ -67,6 +67,22 @@ impl LegalField {
         LegalField::GoverningLaw,
     ];
 
+    /// The key of every field, in the order of [`LegalField::ALL`].
+    pub const KEYS: [&'static str; 12] = [
+        "legal_name",
+        "address",
+        "registered_address",
+        "privacy_contact",
+        "dpo_name",
+        "dpo_contact",
+        "supervisory_authority",
+        "accessibility_contact",
+        "company_number",
+        "vat_number",
+        "transparency_register",
+        "governing_law",
+    ];
+
     /// The field's key in requests, records and placeholders.
     pub const fn key(self) -> &'static str {
         match self {

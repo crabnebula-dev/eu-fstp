@@ -88,12 +88,14 @@ const WEB: &str = "x-fstp-internal-web";
 /// table does not serve (ADR-026 "Composition"): the journey UI under
 /// `/app`, the API core's `/api/` routes, `/mcp`, `/oauth`, the
 /// two OAuth metadata documents, and `/brand`: the brand stylesheet, the
-/// logos and the emblem slot (M9 lane B2, ADR-030). `/p/` stays the
+/// logos and the emblem slot (M9 lane B2, ADR-030), and `/legal/`: the legal
+/// pages behind the footer (ADR-037). `/p/` stays the
 /// cell's own.
 fn web_path(path: &str) -> bool {
     path == "/app"
         || path.starts_with("/app/")
         || path.starts_with("/brand/")
+        || path.starts_with("/legal/")
         || path.starts_with("/api/")
         || path == "/mcp"
         || path.starts_with("/mcp/")
@@ -636,5 +638,22 @@ fn strip_cors(resp: &mut Response) {
         .collect();
     for n in cors {
         resp.headers.remove(&n);
+    }
+}
+
+#[cfg(test)]
+mod web_path_tests {
+    use super::web_path;
+
+    /// ADR-037, ADR-026: the legal pages and the legal details go to the
+    /// web adapter, as the brand surface does; `/p/` stays the cell's.
+    #[test]
+    fn adr037_legal_paths_go_to_the_web_adapter() {
+        for p in ["/legal/privacy", "/legal/data-act", "/legal/details"] {
+            assert!(web_path(p), "{p}");
+        }
+        for p in ["/legally", "/p/x/", "/auth/login"] {
+            assert!(!web_path(p), "{p}");
+        }
     }
 }

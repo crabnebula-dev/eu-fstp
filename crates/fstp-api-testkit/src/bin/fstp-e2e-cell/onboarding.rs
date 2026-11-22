@@ -62,6 +62,29 @@ pub(crate) fn provision(
         .map_err(|e| format!("the provisioning record: {e:?}"))
 }
 
+/// The demo tenant's legal details (ADR-037 section 5): CrabNebula Ltd's
+/// values, supplied by Daniel on 2026-11-22 for the demo cell. Shared code
+/// holds no value.
+pub(crate) const DEMO_LEGAL_DETAILS: &[(&str, &str)] = &[
+    ("legal_name", "CrabNebula Ltd"),
+    ("address", "27 Triq it-Tramuntana, Birgu BRG1160, Malta"),
+    (
+        "registered_address",
+        "27 Triq it-Tramuntana, Birgu BRG1160, Malta",
+    ),
+    ("privacy_contact", "privacy@crabnebula.dev"),
+    ("dpo_name", "Daniel Thompson-Yvetot"),
+    ("dpo_contact", "privacy@crabnebula.dev"),
+    (
+        "supervisory_authority",
+        "Information and Data Protection Commissioner (IDPC), Malta",
+    ),
+    ("company_number", "C 103590"),
+    ("vat_number", "MT29710913"),
+    ("transparency_register", "3419964101239-38"),
+    ("governing_law", "Maltese law"),
+];
+
 /// Appends the provisioning record of a SaaS cell whose first tenant
 /// admin is `first_admin`, then the invitation of `second_admin` and its
 /// acceptance, as `tenant.invite_admin` and M3's enrolment append them
@@ -95,6 +118,14 @@ pub(crate) fn provision_two_admins(
                 "privacy@crabnebula.dev",
             )
             .ok_or("the funding card defaults")?,
+            by: first_admin,
+        },
+        // ADR-037: the demo tenant's legal details, CrabNebula Ltd's
+        // values as Daniel supplied them on 2026-11-22. No accessibility
+        // contact was supplied, so the pages show it as not set.
+        fstp_tenant::TenantRecord::LegalDetailsSet {
+            details: fstp_brand::legal::LegalDetails::from_pairs(DEMO_LEGAL_DETAILS)
+                .ok_or("the legal details")?,
             by: first_admin,
         },
     ];
@@ -225,4 +256,31 @@ pub(crate) fn take(
         .environment(cmd, ctx)
         .map(|_| ())
         .map_err(|e| format!("the admin invitation: {e}"))
+}
+
+#[cfg(test)]
+mod legal_tests {
+    use super::DEMO_LEGAL_DETAILS;
+    use fstp_api_core::legal::{LegalText, page_html};
+    use fstp_brand::legal::LegalDetails;
+
+    /// ADR-037 section 5: the demo values are valid legal details and
+    /// fill the imprint; the accessibility contact, which Daniel did not
+    /// supply, shows as not set.
+    #[test]
+    fn adr037_demo_legal_details_fill_the_imprint() {
+        let d = LegalDetails::from_pairs(DEMO_LEGAL_DETAILS);
+        assert!(d.is_some(), "the demo values are plain text");
+        let html = page_html(LegalText::Imprint, d.as_ref(), None).unwrap_or_default();
+        for v in [
+            "CrabNebula Ltd",
+            "C 103590",
+            "MT29710913",
+            "3419964101239-38",
+        ] {
+            assert!(html.contains(v), "{v}");
+        }
+        let html = page_html(LegalText::Accessibility, d.as_ref(), None).unwrap_or_default();
+        assert!(html.contains("[not set: tenant.accessibility_contact]"));
+    }
 }
