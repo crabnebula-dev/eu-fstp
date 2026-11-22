@@ -209,14 +209,14 @@ impl FakeEngine {
     /// replay holds no value. Returns how many values it held.
     pub fn rehold(&self, before: &fstp_creator::CreatorState) -> usize {
         let mut inner = lock(&self.inner);
-        let mut n = 0;
+        let mut n: usize = 0;
         for (p, d) in before.drafts() {
             for (field, (digest, _)) in d.fields() {
                 if let Some(v) = before.held(p, *field, *digest)
                     && !inner.engine.state().creator.is_held(p, *field)
                     && inner.engine.hold_value(p, *field, *digest, v.clone())
                 {
-                    n += 1;
+                    n = n.saturating_add(1);
                 }
             }
         }
