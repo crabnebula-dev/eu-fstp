@@ -67,7 +67,7 @@ fn two_tenants() -> String {
     ])
 }
 
-const CONFIG: &str = r#"{"credentials_dir":"/etc/fstp/edge","listen":{"public":"0.0.0.0:443"},"routes":"/etc/fstp/edge-routes.json"}"#;
+const CONFIG: &str = r#"{"credentials_dir":"/etc/fstp/edge","feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"listen":{"public":"0.0.0.0:443"},"state_dir":"/var/lib/fstp-edge"}"#;
 
 /// A ClientHello record naming `host`, built by hand.
 fn hello(host: &[u8]) -> Vec<u8> {
@@ -103,7 +103,7 @@ fn adr009_l9_edge_config_refuses_bad_input() {
     let cfg = decode_config(CONFIG.as_bytes()).unwrap();
     assert_eq!(cfg.listen, SocketAddr::from(([0, 0, 0, 0], 443)));
     assert_eq!(cfg.limits, Limits::default());
-    let full = r#"{"credentials_dir":"/e","limits":{"connections":10,"hello_seconds":5,"lifetime_seconds":600,"open_seconds":3,"per_client":2},"listen":{"public":"[::1]:8443"},"routes":"/r.json"}"#;
+    let full = r#"{"credentials_dir":"/e","limits":{"connections":10,"hello_seconds":5,"lifetime_seconds":600,"open_seconds":3,"per_client":2},"listen":{"public":"[::1]:8443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#;
     let cfg = decode_config(full.as_bytes()).unwrap();
     assert_eq!(cfg.limits.connections, 10);
     assert_eq!(cfg.limits.per_client, 2);
@@ -114,59 +114,59 @@ fn adr009_l9_edge_config_refuses_bad_input() {
         ("", ConfigError::NotAnObject),
         ("[]", ConfigError::NotAnObject),
         (
-            r#"{"credentials_dir":"/e","credentials_dir":"/e","listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","credentials_dir":"/e","listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::NotAnObject,
         ),
         (
-            r#"{"credentials_dir":"/e","listen":{"public":"0.0.0.0:443"},"routes":"/r","route":"/r"}"#,
+            r#"{"credentials_dir":"/e","feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"listen":{"public":"0.0.0.0:443"},"routes":"/r","state_dir":"/s"}"#,
             ConfigError::UnknownMember("config"),
         ),
         (
-            r#"{"listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::MissingMember("credentials_dir"),
         ),
         (
-            r#"{"credentials_dir":"e","listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"e","listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::Invalid("credentials_dir"),
         ),
         (
-            r#"{"credentials_dir":"/e","listen":{"public":"0.0.0.0:443"},"routes":"r"}"#,
-            ConfigError::Invalid("routes"),
+            r#"{"credentials_dir":"/e","listen":{"public":"0.0.0.0:443"}}"#,
+            ConfigError::MissingMember("feed"),
         ),
         (
-            r#"{"credentials_dir":"/e","routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::MissingMember("listen"),
         ),
         (
-            r#"{"credentials_dir":"/e","listen":{"public":"0.0.0.0:443","health":"127.0.0.1:1"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","listen":{"public":"0.0.0.0:443","health":"127.0.0.1:1"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::UnknownMember("listen"),
         ),
         (
-            r#"{"credentials_dir":"/e","listen":{"public":"localhost:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","listen":{"public":"localhost:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::Invalid("listen.public"),
         ),
         (
-            r#"{"credentials_dir":"/e","listen":{"public":"000.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","listen":{"public":"000.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::Invalid("listen.public"),
         ),
         (
-            r#"{"credentials_dir":"/e","limits":{"connections":0},"listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","limits":{"connections":0},"listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::Invalid("limits.connections"),
         ),
         (
-            r#"{"credentials_dir":"/e","limits":{"connections":4,"per_client":5},"listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","limits":{"connections":4,"per_client":5},"listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::Invalid("limits.per_client"),
         ),
         (
-            r#"{"credentials_dir":"/e","limits":{"hello_seconds":61},"listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","limits":{"hello_seconds":61},"listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::Invalid("limits.hello_seconds"),
         ),
         (
-            r#"{"credentials_dir":"/e","limits":{"lifetime_seconds":59},"listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","limits":{"lifetime_seconds":59},"listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::Invalid("limits.lifetime_seconds"),
         ),
         (
-            r#"{"credentials_dir":"/e","limits":{"idle_seconds":5},"listen":{"public":"0.0.0.0:443"},"routes":"/r"}"#,
+            r#"{"credentials_dir":"/e","limits":{"idle_seconds":5},"listen":{"public":"0.0.0.0:443"},"feed":{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"},"state_dir":"/s"}"#,
             ConfigError::UnknownMember("limits"),
         ),
     ];
@@ -321,9 +321,11 @@ fn r_nf_02_edge_config_refusals_never_quote_input() {
     const MARK: &str = "zqsecretzq";
     let configs = [
         format!(
-            r#"{{"credentials_dir":"{MARK}","listen":{{"public":"0.0.0.0:443"}},"routes":"/r"}}"#
+            r#"{{"credentials_dir":"{MARK}","listen":{{"public":"0.0.0.0:443"}},"feed":{{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"}},"state_dir":"/s"}}"#
         ),
-        format!(r#"{{"credentials_dir":"/e","listen":{{"public":"{MARK}"}},"routes":"/r"}}"#),
+        format!(
+            r#"{{"credentials_dir":"/e","listen":{{"public":"{MARK}"}},"feed":{{"address":"10.0.0.2:7350","cert_sha256":["5555555555555555555555555555555555555555555555555555555555555555"],"server_name":"control.tunnel.test"}},"state_dir":"/s"}}"#
+        ),
         format!(r#"{{"{MARK}":1}}"#),
         format!(r#"{{"credentials_dir":"/e","limits":{{"{MARK}":1}}}}"#),
         format!("{MARK}{{"),
@@ -641,4 +643,174 @@ fn i19_tunnel_pin_mismatch_opens_no_tunnel() {
     assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(received.lock().unwrap().len(), 3);
+}
+
+/// ADR-009 "Pilot route feed", rows "Edge configuration", "Poll
+/// interval" and "How the edge pins the control plane" (lane L15): the
+/// edge configuration names its feed source with the pin of the control
+/// plane's certificate. A missing pin, a pin out of grammar, an unknown
+/// feed member, a server name in upper case and a poll interval out of
+/// range are refused. The member `routes` of lane L9 is gone. The feed
+/// keys file holds one or two composite public keys as hex lines, and
+/// anything else is refused without quoting it (R-NF-02).
+#[test]
+fn adr009_l15_edge_feed_config_and_keys_refuse_bad_input() {
+    use fstp_edge::config::{DEFAULT_POLL, decode_feed_keys};
+    let cfg = decode_config(CONFIG.as_bytes()).unwrap();
+    assert_eq!(cfg.feed.address, SocketAddr::from(([10, 0, 0, 2], 7350)));
+    assert_eq!(cfg.feed.server_name, "control.tunnel.test");
+    assert_eq!(cfg.feed.cert_sha256, vec![[0x55; 32]]);
+    assert_eq!(
+        cfg.state_dir,
+        std::path::PathBuf::from("/var/lib/fstp-edge")
+    );
+    assert_eq!(cfg.feed.poll, DEFAULT_POLL);
+    let with_feed = |feed: &str| {
+        format!(
+            r#"{{"credentials_dir":"/e","feed":{feed},"listen":{{"public":"0.0.0.0:443"}},"state_dir":"/s"}}"#
+        )
+    };
+    let pin = pin(0xab);
+    let ok = with_feed(&format!(
+        r#"{{"address":"[fd00::2]:7350","cert_sha256":["{pin}"],"poll_seconds":1,"server_name":"c.test"}}"#
+    ));
+    assert_eq!(
+        decode_config(ok.as_bytes()).unwrap().feed.poll,
+        Duration::from_secs(1)
+    );
+    let bad = [
+        (
+            r#"{"address":"10.0.0.2:7350","server_name":"c.test"}"#.to_owned(),
+            ConfigError::MissingMember("feed.cert_sha256"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{}"],"server_name":"c.test"}}"#,
+                pin.to_uppercase()
+            ),
+            ConfigError::Invalid("feed.cert_sha256"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{}"],"server_name":"c.test"}}"#,
+                &pin[2..]
+            ),
+            ConfigError::Invalid("feed.cert_sha256"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}"],"server_name":"c.test","spki_sha256":"{pin}"}}"#
+            ),
+            ConfigError::UnknownMember("feed"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}"],"server_name":"C.test"}}"#
+            ),
+            ConfigError::Invalid("feed.server_name"),
+        ),
+        (
+            format!(
+                r#"{{"address":"control:7350","cert_sha256":["{pin}"],"server_name":"c.test"}}"#
+            ),
+            ConfigError::Invalid("feed.address"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}"],"poll_seconds":0,"server_name":"c.test"}}"#
+            ),
+            ConfigError::Invalid("feed.poll_seconds"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}"],"poll_seconds":61,"server_name":"c.test"}}"#
+            ),
+            ConfigError::Invalid("feed.poll_seconds"),
+        ),
+        ("\"/r\"".to_owned(), ConfigError::Invalid("feed")),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":"{pin}","server_name":"c.test"}}"#
+            ),
+            ConfigError::Invalid("feed.cert_sha256"),
+        ),
+        (
+            r#"{"address":"10.0.0.2:7350","cert_sha256":[],"server_name":"c.test"}"#.to_owned(),
+            ConfigError::Invalid("feed.cert_sha256"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}","{pin}"],"server_name":"c.test"}}"#
+            ),
+            ConfigError::Invalid("feed.cert_sha256"),
+        ),
+        (
+            format!(
+                r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}","{}","{}"],"server_name":"c.test"}}"#,
+                "1".repeat(64),
+                "2".repeat(64)
+            ),
+            ConfigError::Invalid("feed.cert_sha256"),
+        ),
+    ];
+    for (feed, want) in bad {
+        let input = with_feed(&feed);
+        assert_eq!(decode_config(input.as_bytes()), Err(want), "{input}");
+    }
+    // Two pins, the current and the next (Daniel, 2026-11-21).
+    let two = with_feed(&format!(
+        r#"{{"address":"10.0.0.2:7350","cert_sha256":["{pin}","{}"],"server_name":"c.test"}}"#,
+        "1".repeat(64)
+    ));
+    assert_eq!(
+        decode_config(two.as_bytes()).unwrap().feed.cert_sha256,
+        vec![[0xab; 32], [0x11; 32]]
+    );
+    // The cache directory is required and absolute.
+    for (input, want) in [
+        (
+            two.replace(r#","state_dir":"/s""#, ""),
+            ConfigError::MissingMember("state_dir"),
+        ),
+        (
+            two.replace(r#""state_dir":"/s""#, r#""state_dir":"s""#),
+            ConfigError::Invalid("state_dir"),
+        ),
+    ] {
+        assert_eq!(decode_config(input.as_bytes()), Err(want), "{input}");
+    }
+
+    let k1 = fstp_crypto::composite::generate()
+        .unwrap()
+        .public_key()
+        .to_bytes();
+    let k2 = fstp_crypto::composite::generate()
+        .unwrap()
+        .public_key()
+        .to_bytes();
+    let line = |k: &[u8]| format!("{}\n", hex(k));
+    assert_eq!(
+        decode_feed_keys(line(&k1).as_bytes()),
+        Ok(vec![k1.to_vec()])
+    );
+    assert_eq!(
+        decode_feed_keys(format!("{}{}", line(&k1), line(&k2)).as_bytes()),
+        Ok(vec![k1.to_vec(), k2.to_vec()])
+    );
+    const MARK: &str = "zqsecretzq";
+    for bad in [
+        String::new(),
+        "\n".to_owned(),
+        hex(&k1),
+        line(&k1).to_uppercase(),
+        format!("{}{}", line(&k1), line(&k1)),
+        format!("{}{}{}", line(&k1), line(&k2), line(&k1)),
+        format!("{}\n", &hex(&k1)[2..]),
+        format!("{}{MARK}\n", line(&k1)),
+        format!("{}\n\n", hex(&k1)),
+    ] {
+        let e = decode_feed_keys(bad.as_bytes()).unwrap_err();
+        assert_eq!(e, ConfigError::Invalid("route-feed.pub"));
+        assert!(!format!("{e:?}").contains(MARK));
+    }
 }

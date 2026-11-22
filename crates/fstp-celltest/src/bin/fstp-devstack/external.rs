@@ -1,4 +1,4 @@
-//! `fstp-devstack external-cell [--resolver-rules]` (lane L4,
+//! `fstp-devstack external-cell [--resolver-rules] [--route-feed]` (lane L4,
 //! `docs/handoff/production-mcp-design.md` section 4): the stack of the
 //! default mode, with its cell run by the production `fstp-cell` binary
 //! from a configuration file instead of in this process.
@@ -27,8 +27,18 @@
 //! Channels checks fail. `tests/prod_mcp_e2e.rs` runs the whole
 //! onboarding with a relay and a fake resolver.
 //!
-//! The binary must be built first: `tools/devstack/run.sh external-cell`
-//! builds it.
+//! With `--route-feed` (lane L15, ADR-009 "Pilot route feed") it also starts
+//! the `fstp-control route-feed` and `fstp-edge` binaries in front of the
+//! cell, from a third custody process, and adds the cell's route through
+//! `fstp-control route add`. It then prints `route-feed-edge <address>`,
+//! where the edge binary listens, `control-config <path>`, the file that
+//! `FSTP_CONTROL_CONFIG` names for `fstp-control route add` and `route
+//! remove`, and `route-file <path>`, the cell's route file. A developer can
+//! then remove and add the route by hand and watch the edge follow without
+//! a restart. The URLs of the other lines still name the world's own edge.
+//!
+//! The binaries must be built first: `tools/devstack/run.sh external-cell`
+//! builds them.
 
 #![allow(
     clippy::disallowed_macros,
@@ -40,6 +50,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use fstp_celltest::external_cell::ExternalSpec;
+use fstp_celltest::external_edge::PilotFeed;
 use fstp_celltest::world::{DbMode, VaultLayout, World, WorldError, WorldSpec};
 use fstp_celltest::world_host::{SimProcess, bin_path};
 use fstp_rt::signal::{Signals as _, TerminationListener as _};
@@ -121,14 +132,18 @@ fn run_dir() -> Result<PathBuf, WorldError> {
 
 /// Runs the mode (module documentation).
 pub(crate) fn run(args: &[String]) -> ExitCode {
-    let resolver = match args {
-        [] => false,
-        [flag] if flag == "--resolver-rules" => true,
-        _ => {
-            eprintln!("usage: fstp-devstack external-cell [--resolver-rules]");
-            return ExitCode::from(2);
+    let mut resolver = false;
+    let mut route_feed = false;
+    for flag in args {
+        match flag.as_str() {
+            "--resolver-rules" => resolver = true,
+            "--route-feed" => route_feed = true,
+            _ => {
+                eprintln!("usage: fstp-devstack external-cell [--resolver-rules] [--route-feed]");
+                return ExitCode::from(2);
+            }
         }
-    };
+    }
     let rt = match TokioRuntime::new_multi_thread(2) {
         Ok(rt) => rt,
         Err(e) => {
@@ -160,9 +175,14 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             shell: None,
         };
         let world = World::start_external(SPEC, custody.socket().to_path_buf(), &spec)?;
-        Ok((world, custody, key_file_custody, dir))
+        let feed = if route_feed {
+            Some(start_route_feed(&world, &dir)?)
+        } else {
+            None
+        };
+        Ok((world, custody, key_file_custody, dir, feed))
     })();
-    let (world, custody, key_file_custody, dir) = match started {
+    let (world, custody, key_file_custody, dir, feed) = match started {
         Ok(s) => s,
         Err(e) => {
             eprintln!("fstp-devstack external-cell: the stack did not start: {e}");
@@ -182,7 +202,19 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         }
     };
     let mut out = std::io::stdout().lock();
+    let feed_lines = feed
+        .as_ref()
+        .map(|(f, _, file)| {
+            format!(
+                "route-feed-edge {}\ncontrol-config {}\nroute-file {}\n",
+                f.edge_addr(),
+                f.control_config().display(),
+                file.display()
+            )
+        })
+        .unwrap_or_default();
     let printed = writeln!(out, "config {config}")
+        .and_then(|()| write!(out, "{feed_lines}"))
         .and_then(|()| {
             lines
                 .iter()
@@ -198,9 +230,33 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     let which = rt.block_on(term.recv());
     eprintln!("fstp-devstack external-cell: {which:?} received, stopping");
     // The binary drains first, then the world, then custody.
+    // The edge and the route feed stop before the cell.
+    drop(feed);
     drop(world);
     drop(key_file_custody);
     drop(custody);
     let _ = std::fs::remove_dir_all(&dir);
     ExitCode::SUCCESS
+}
+
+/// Starts the pilot route feed and edge binaries in front of `world`'s
+/// cell from a third custody process, and adds the cell's route through
+/// `fstp-control route add` (lane L15). Returns the feed, its custody
+/// process and the route file.
+fn start_route_feed(
+    world: &World,
+    dir: &Path,
+) -> Result<(PilotFeed, SimProcess, PathBuf), WorldError> {
+    let custody = SimProcess::spawn(2, dir)?;
+    let feed = PilotFeed::start(world, dir, custody.socket(), 1)?;
+    let routes = feed.pinned_routes()?;
+    let route = routes
+        .first()
+        .ok_or_else(|| fail("the route feed", &"the world has no route"))?;
+    let file = feed.route_file(route, "cell-route")?;
+    let added = feed.add(&file)?;
+    if !added.success() {
+        return Err(fail("fstp-control route add", &added));
+    }
+    Ok((feed, custody, file))
 }
