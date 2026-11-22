@@ -596,9 +596,12 @@ pub(crate) async fn erasures<B: Backend>(ctx: &Ctx<B>, caller: &Caller) -> Reply
 
 /// `GET /api/v1/verification-people` (ADR-004 record of lane L13b, row
 /// "Staff app"): the people a tenant admin may record a verification for
-/// on the vault origin, as `{people: [{account, proposal, role}]}`. They
-/// are the accounts bound to a proposal in NEGOTIATION or later
-/// (R-NG-01), by id and role only, never a name or attribute (I-17). The
+/// on the vault origin, as `{people: [{account, proposal, requested,
+/// role}]}`. They are the accounts bound to a proposal in NEGOTIATION or
+/// later (R-NG-01), and the accounts with no Receiving binding that asked
+/// for an identity check, with no proposal and the role `staff` (ADR-026
+/// record of lane L24). `requested` marks an open request. Ids and roles
+/// only, never a name or attribute (I-17). The
 /// reader is a tenant admin with no Judging binding, as for the ticket
 /// itself, and never sees their own account. The cell decides each
 /// ticket again (`IssueVerificationTicket`).
@@ -628,10 +631,22 @@ pub(crate) async fn verification_people<B: Backend>(ctx: &Ctx<B>, caller: &Calle
             .is_some_and(|st| fstp_cell_core::RELEASE_STATES.contains(&st));
         if open {
             rows.push((
-                p.raw(),
+                Some(p.raw()),
                 b.account.raw(),
                 fstp_access::role_wire_name(b.role),
             ));
+        }
+    }
+    // ADR-026 record of lane L24: an open request of a person who holds no
+    // Receiving binding, such as a tenant admin or an invited staff member.
+    // An applicant's request is listed with the proposal, once it is in
+    // NEGOTIATION or later (R-NG-01).
+    for account in s.verification_requests() {
+        let receiving = core.roster().bindings().any(|(_, b)| {
+            b.account == account && b.group() == fstp_domain::roles::Group::Receiving
+        });
+        if account != actor && !receiving {
+            rows.push((None, account.raw(), "staff"));
         }
     }
     rows.sort_unstable();
@@ -639,9 +654,16 @@ pub(crate) async fn verification_people<B: Backend>(ctx: &Ctx<B>, caller: &Calle
     let list: Array = rows
         .into_iter()
         .map(|(p, a, role)| {
-            let mut o = Object::with_capacity(3);
+            let mut o = Object::with_capacity(4);
             o.insert("account", Value::String(a.to_string()));
-            o.insert("proposal", Value::String(p.to_string()));
+            o.insert(
+                "proposal",
+                p.map_or(Value::Null, |p| Value::String(p.to_string())),
+            );
+            o.insert(
+                "requested",
+                Value::Bool(s.verification_requested(AccountId::from_raw(a))),
+            );
             o.insert("role", Value::String(role.to_owned()));
             Value::Object(o)
         })

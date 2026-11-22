@@ -867,6 +867,10 @@ pub(crate) fn fold(
         }
         CellRecord::Release(r) => {
             fold_release(&mut s.tickets, r)?;
+            // ADR-026 record of lane L24: a staff member took the request.
+            if let ReleaseRecord::VerificationTicketIssued { subject, .. } = r {
+                s.verification_requests.remove(subject);
+            }
             if let Some(t) = crate::release::IssuedTicket::of(r) {
                 s.issued.insert(command, t);
             }

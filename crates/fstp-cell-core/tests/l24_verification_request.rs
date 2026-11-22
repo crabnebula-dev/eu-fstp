@@ -93,3 +93,42 @@ fn adr008_only_the_identity_port_records_a_request() {
     );
     assert_eq!(r.err(), Some(Deny::NotPermitted));
 }
+
+/// ADR-026 record of lane L24, row "Open request": a verification ticket
+/// issued for the person closes the request, and a new request opens
+/// again.
+#[test]
+fn adr008_verification_ticket_closes_the_request() {
+    let asked = CellRecord::Release(ReleaseRecord::VerificationRequested { account: A });
+    let ticket = CellRecord::Release(ReleaseRecord::VerificationTicketIssued {
+        id: [9; 16],
+        holder: fstp_domain_testkit::r#gen::roster::ADMIN,
+        subject: A,
+        proposal: None,
+    });
+    let s = state_of(
+        &ledger(&[
+            (NOW, cid(1), vec![asked.clone()]),
+            (NOW, cid(2), vec![ticket]),
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(!s.verification_requested(A));
+    let ticket = CellRecord::Release(ReleaseRecord::VerificationTicketIssued {
+        id: [9; 16],
+        holder: fstp_domain_testkit::r#gen::roster::ADMIN,
+        subject: A,
+        proposal: None,
+    });
+    let s = state_of(
+        &ledger(&[
+            (NOW, cid(1), vec![asked.clone()]),
+            (NOW, cid(2), vec![ticket]),
+            (NOW, cid(3), vec![asked]),
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(s.verification_requested(A));
+}
