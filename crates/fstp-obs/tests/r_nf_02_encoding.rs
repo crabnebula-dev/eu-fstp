@@ -53,3 +53,13 @@ fn r_nf_02_metric_sample_encodes_with_its_cell_id() {
         Ok(())
     });
 }
+
+/// R-NF-02, ADR-004 record of lane L13b "Fail closed": the vault that
+/// lost its keystore lock writes one line naming its rule, and a rule
+/// outside the SPEC alphabet is refused.
+#[test]
+fn r_nf_02_serving_stopped_is_one_json_line() {
+    let line = encode_log(&LogEvent::ServingStopped { rule: "I-81" }).unwrap();
+    assert_eq!(line, "{\"event\":\"serving_stopped\",\"rule\":\"I-81\"}\n");
+    assert!(encode_log(&LogEvent::ServingStopped { rule: "lost lock" }).is_err());
+}

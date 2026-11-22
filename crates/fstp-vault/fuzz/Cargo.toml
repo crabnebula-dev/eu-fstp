@@ -43,3 +43,10 @@ bench = false
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[[bin]]
+name = "verification_write_decode"
+path = "fuzz_targets/verification_write_decode.rs"
+test = false
+doc = false
+bench = false

@@ -473,6 +473,7 @@ async fn dispatch<B: Backend>(
         (Endpoint::Commands, Some(c)) => api::commands(ctx, req, &c).await,
         (Endpoint::VaultTickets, Some(c)) => api::vault_tickets(ctx, req, &c).await,
         (Endpoint::Verifications, Some(c)) => api::verifications(ctx, req, &c).await,
+        (Endpoint::VerificationPeople, Some(c)) => api::verification_people(ctx, &c).await,
         (Endpoint::AuditAnchors, Some(c)) => api::anchors(ctx, &c).await,
         (Endpoint::Erasures, Some(c)) => api::erasures(ctx, &c).await,
         (Endpoint::Public(op), _) => public(ctx, req, op).await,
