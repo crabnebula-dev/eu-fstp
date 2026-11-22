@@ -172,7 +172,11 @@ fn adr032_draft_outside_the_rules_is_refused() {
         br#"[]"#,
         b"",
     ] {
-        assert!(Draft::decode(bad).is_none(), "{:?}", String::from_utf8_lossy(bad));
+        assert!(
+            Draft::decode(bad).is_none(),
+            "{:?}",
+            String::from_utf8_lossy(bad)
+        );
     }
 }
 
@@ -184,7 +188,10 @@ fn adr032_lifetime_is_30_days_or_the_deadline() {
     check("adr032_lifetime_is_30_days_or_the_deadline", |g| {
         let start = g.i64_in(0..=4_000_000_000_000_000);
         let deadline = g.i64_in(0..=4_100_000_000_000_000);
-        let e = expires_at(Timestamp::from_micros(start), Timestamp::from_micros(deadline));
+        let e = expires_at(
+            Timestamp::from_micros(start),
+            Timestamp::from_micros(deadline),
+        );
         let want = (start + LIFETIME_US).min(deadline);
         if e.micros() != want {
             return Err(format!("expires {} want {want}", e.micros()));
@@ -215,49 +222,52 @@ fn row(call: u128, started: i64, expires: i64) -> Row {
 /// deletes exactly the expired drafts.
 #[test]
 fn adr032_i21_memory_store_serves_live_drafts_by_digest_only() {
-    check("adr032_i21_memory_store_serves_live_drafts_by_digest_only", |g| {
-        let s = MemoryAnonymousDrafts::new();
-        let now = 1_000_000_000_i64;
-        let n = g.usize_in(1..=12);
-        let mut live = 0u64;
-        let mut tokens = Vec::new();
-        for i in 0..n {
-            let t = token(g);
-            let expires = now + g.i64_in(-5..=5);
-            if expires > now {
-                live += 1;
+    check(
+        "adr032_i21_memory_store_serves_live_drafts_by_digest_only",
+        |g| {
+            let s = MemoryAnonymousDrafts::new();
+            let now = 1_000_000_000_i64;
+            let n = g.usize_in(1..=12);
+            let mut live = 0u64;
+            let mut tokens = Vec::new();
+            for i in 0..n {
+                let t = token(g);
+                let expires = now + g.i64_in(-5..=5);
+                if expires > now {
+                    live += 1;
+                }
+                block(s.start(t.digest(), row(7, 0, expires)))
+                    .map_err(|e| format!("start {i}: {e:?}"))?;
+                if block(s.start(t.digest(), row(7, 0, expires))).is_ok() {
+                    return Err("a digest in use was taken again".to_owned());
+                }
+                tokens.push((t, expires));
             }
-            block(s.start(t.digest(), row(7, 0, expires)))
-                .map_err(|e| format!("start {i}: {e:?}"))?;
-            if block(s.start(t.digest(), row(7, 0, expires))).is_ok() {
-                return Err("a digest in use was taken again".to_owned());
+            let at = Timestamp::from_micros(now);
+            if block(s.live(at)).unwrap() != live {
+                return Err("live count".to_owned());
             }
-            tokens.push((t, expires));
-        }
-        let at = Timestamp::from_micros(now);
-        if block(s.live(at)).unwrap() != live {
-            return Err("live count".to_owned());
-        }
-        for (t, expires) in &tokens {
-            let got = block(s.open(t.digest(), at)).unwrap();
-            if got.is_some() != (*expires > now) {
-                return Err(format!("open at expiry {expires}"));
+            for (t, expires) in &tokens {
+                let got = block(s.open(t.digest(), at)).unwrap();
+                if got.is_some() != (*expires > now) {
+                    return Err(format!("open at expiry {expires}"));
+                }
+                let saved = block(s.save(t.digest(), Draft::default(), at)).unwrap();
+                if saved != (*expires > now) {
+                    return Err("save of an expired draft".to_owned());
+                }
             }
-            let saved = block(s.save(t.digest(), Draft::default(), at)).unwrap();
-            if saved != (*expires > now) {
-                return Err("save of an expired draft".to_owned());
+            let other = token(g);
+            if block(s.open(other.digest(), at)).unwrap().is_some() {
+                return Err("an unknown digest opened a draft".to_owned());
             }
-        }
-        let other = token(g);
-        if block(s.open(other.digest(), at)).unwrap().is_some() {
-            return Err("an unknown digest opened a draft".to_owned());
-        }
-        let swept = block(s.sweep(at)).unwrap();
-        if swept != n as u64 - live || s.len() as u64 != live {
-            return Err(format!("swept {swept}, left {}", s.len()));
-        }
-        Ok(())
-    });
+            let swept = block(s.sweep(at)).unwrap();
+            if swept != n as u64 - live || s.len() as u64 != live {
+                return Err(format!("swept {swept}, left {}", s.len()));
+            }
+            Ok(())
+        },
+    );
 }
 
 /// ADR-032: after a removal the token opens nothing, so a claimed or

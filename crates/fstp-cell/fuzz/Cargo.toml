@@ -19,6 +19,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "anon_draft_body_decode"
+path = "fuzz_targets/anon_draft_body_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "cell_config_decode"
 path = "fuzz_targets/cell_config_decode.rs"
 test = false

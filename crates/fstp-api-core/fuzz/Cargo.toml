@@ -47,6 +47,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "anon_draft_decode"
+path = "fuzz_targets/anon_draft_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "birth_date_parse"
 path = "fuzz_targets/birth_date_parse.rs"
 test = false

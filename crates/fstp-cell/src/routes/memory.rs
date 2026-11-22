@@ -112,6 +112,8 @@ pub struct MemoryBackend {
     /// The vault ticket key, drawn at start. `None` when no key could be
     /// drawn, and then the ticket routes answer 501.
     ticket: Option<Arc<Ed25519SigningKey>>,
+    /// The anonymous drafts (ADR-032), in memory.
+    anon: Arc<fstp_api_core::anon::MemoryAnonymousDrafts>,
 }
 
 impl std::fmt::Debug for MemoryBackend {
@@ -133,7 +135,13 @@ impl MemoryBackend {
             mem: Mutex::new(Mem::default()),
             now: AtomicI64::new(DEFAULT_NOW_US),
             ticket: Ed25519SigningKey::generate().ok().map(Arc::new),
+            anon: Arc::default(),
         }
+    }
+
+    /// The anonymous draft store (ADR-032), for a test to inspect.
+    pub fn anon_store(&self) -> Arc<fstp_api_core::anon::MemoryAnonymousDrafts> {
+        Arc::clone(&self.anon)
     }
 
     /// The public key of the vault ticket key, which a vault would pin.
@@ -294,6 +302,10 @@ fn answer(store: &mut MemStore<CellRecord>, need: Need) -> Event {
 }
 
 impl Backend for MemoryBackend {
+    fn anonymous_drafts(&self) -> Option<Arc<dyn fstp_api_core::anon::AnonymousDrafts>> {
+        Some(Arc::clone(&self.anon) as Arc<dyn fstp_api_core::anon::AnonymousDrafts>)
+    }
+
     fn ticket_key(&self) -> Option<Arc<Ed25519SigningKey>> {
         self.ticket.clone()
     }

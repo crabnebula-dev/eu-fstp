@@ -6150,5 +6150,8 @@ fn world_auth_limits() -> fstp_cell::routes::AuthLimits {
         mail_per_target: wide,
         put_text_per_account: wide,
         public_per_peer: wide,
+        draft_start_per_peer: wide,
+        draft_start_per_cell: wide,
+        draft_write_per_peer: wide,
     }
 }

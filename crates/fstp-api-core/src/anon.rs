@@ -78,7 +78,10 @@ impl Token {
     /// Any other spelling is `None`.
     pub fn parse(s: &str) -> Option<Token> {
         crate::action::from_hex::<TOKEN_BYTES>(s)
-            .filter(|_| s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+            .filter(|_| {
+                s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
             .map(Token)
     }
 
@@ -112,7 +115,8 @@ pub struct Draft {
 /// carriage return, and no Unicode line or paragraph separator.
 fn clean(s: &str) -> bool {
     s.chars().all(|c| {
-        (!c.is_control() || matches!(c, '\t' | '\n' | '\r')) && !matches!(c, '\u{2028}' | '\u{2029}')
+        (!c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+            && !matches!(c, '\u{2028}' | '\u{2029}')
     })
 }
 

@@ -87,7 +87,11 @@ fn claim(
     let body = format!("{{\"token\":\"{token}\"}}");
     c.web(
         &login,
-        decode_route(Method::Post, &format!("/proposals/{p}/claim"), body.as_bytes()),
+        decode_route(
+            Method::Post,
+            &format!("/proposals/{p}/claim"),
+            body.as_bytes(),
+        ),
     )
 }
 

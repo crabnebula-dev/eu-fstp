@@ -68,6 +68,27 @@ pub(crate) const PUBLIC_PER_PEER: Limit = Limit {
     window_us: MINUTE_US,
 };
 
+/// Starts of an anonymous draft, per peer (ADR-032: 10 per hour).
+/// Interim, pending Daniel.
+pub(crate) const DRAFT_START_PER_PEER: Limit = Limit {
+    count: 10,
+    window_us: HOUR_US,
+};
+
+/// Starts of an anonymous draft, per cell (ADR-032: 600 per hour).
+/// Interim, pending Daniel.
+pub(crate) const DRAFT_START_PER_CELL: Limit = Limit {
+    count: 600,
+    window_us: HOUR_US,
+};
+
+/// Opens, saves and discards of anonymous drafts, per peer (ADR-032: 120
+/// per minute, as the public routes). Interim, pending Daniel.
+pub(crate) const DRAFT_WRITE_PER_PEER: Limit = Limit {
+    count: 120,
+    window_us: MINUTE_US,
+};
+
 /// The limit values of one cell front (ADR-024). The default holds the
 /// ADR-024 values above, and the production cell starts with it. A test
 /// world whose clients all share the loopback address passes its own
@@ -84,6 +105,12 @@ pub struct AuthLimits {
     pub put_text_per_account: Limit,
     /// The public routes, per peer.
     pub public_per_peer: Limit,
+    /// Starts of an anonymous draft, per peer (ADR-032).
+    pub draft_start_per_peer: Limit,
+    /// Starts of an anonymous draft, per cell (ADR-032).
+    pub draft_start_per_cell: Limit,
+    /// Opens, saves and discards of anonymous drafts, per peer (ADR-032).
+    pub draft_write_per_peer: Limit,
 }
 
 impl Default for AuthLimits {
@@ -94,6 +121,9 @@ impl Default for AuthLimits {
             mail_per_target: MAIL_PER_TARGET,
             put_text_per_account: PUT_TEXT_PER_ACCOUNT,
             public_per_peer: PUBLIC_PER_PEER,
+            draft_start_per_peer: DRAFT_START_PER_PEER,
+            draft_start_per_cell: DRAFT_START_PER_CELL,
+            draft_write_per_peer: DRAFT_WRITE_PER_PEER,
         }
     }
 }
@@ -145,6 +175,9 @@ enum Key {
     Target([u8; 32]),
     PutText(AccountId),
     Public(Peer),
+    DraftStart(Peer),
+    DraftStartCell,
+    DraftWrite(Peer),
 }
 
 #[derive(Default)]
@@ -214,6 +247,31 @@ impl Limits {
     /// Charges a request of a public route to `peer`.
     pub(crate) fn public(&self, peer: Peer, now_us: i64) -> bool {
         self.charge(Key::Public(peer), self.values.public_per_peer, now_us)
+    }
+
+    /// Charges the start of an anonymous draft to `peer` and to the cell
+    /// (ADR-032). The cell is charged only when the peer is within its
+    /// limit, so one peer cannot spend the cell's budget past its own.
+    pub(crate) fn draft_start(&self, peer: Peer, now_us: i64) -> bool {
+        self.charge(
+            Key::DraftStart(peer),
+            self.values.draft_start_per_peer,
+            now_us,
+        ) && self.charge(
+            Key::DraftStartCell,
+            self.values.draft_start_per_cell,
+            now_us,
+        )
+    }
+
+    /// Charges an open, save or discard of an anonymous draft to `peer`
+    /// (ADR-032).
+    pub(crate) fn draft_write(&self, peer: Peer, now_us: i64) -> bool {
+        self.charge(
+            Key::DraftWrite(peer),
+            self.values.draft_write_per_peer,
+            now_us,
+        )
     }
 
     /// Charges a `PutText` to `account`.
