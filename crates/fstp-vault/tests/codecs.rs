@@ -243,3 +243,79 @@ fn note2_fact_body_refuses_unknown_kinds_and_foreign_fields() {
         },
     );
 }
+
+/// The canonical body of a verification write (ADR-004 record of lane
+/// L13b, row "Origin body"), with synthetic attributes.
+fn verification_body(family: &str, date: &str, state: &str) -> String {
+    format!(
+        "{{\"checks\":[\"document_authentic\",\"photo_match\"],\"document_type\":\"passport\",\"identity\":{{\"birth_date\":\"{date}\",\"family_names\":\"{family}\",\"given_names\":\"Synthetic\",\"issuing_state\":\"{state}\"}},\"method\":\"manual\"}}"
+    )
+}
+
+/// R-ID-02, ADR-004 record of lane L13b "Origin body": the recorder's
+/// body decodes to the account, the R-ID-02 record and the four identity
+/// fields, and re-encodes byte for byte. A wrong date, state, name,
+/// label, member or spelling is refused. Each refusal has a valid twin.
+#[test]
+fn adr008_verification_write_body_decodes_and_refuses() {
+    use fstp_vault::codec::{decode_verification_write, encode_verification_write, identity_tuple};
+    let good = verification_body("Alpha", "1990-02-28", "DEU");
+    let w = decode_verification_write(good.as_bytes()).unwrap();
+    assert_eq!(w.identity.family_names, "Alpha");
+    assert_eq!(w.identity.birth_date, "1990-02-28");
+    assert_eq!(encode_verification_write(&w).unwrap(), good.as_bytes());
+    // The tuple: label, then four length-prefixed fields; spaces trimmed
+    // and collapsed.
+    let spaced =
+        decode_verification_write(verification_body("  Alpha  ", "1990-02-28", "DEU").as_bytes());
+    let t = identity_tuple(&w.identity);
+    assert!(t.starts_with(b"fstp-identity-tuple-v1"));
+    if let Ok(s) = spaced {
+        assert_eq!(identity_tuple(&s.identity), t, "spaces changed the tuple");
+    }
+    let other =
+        decode_verification_write(verification_body("Bravo", "1990-02-28", "DEU").as_bytes())
+            .unwrap();
+    assert_ne!(identity_tuple(&other.identity), t);
+    // Refusals, each beside a valid twin above.
+    for bad in [
+        verification_body("Alpha", "1990-02-30", "DEU"),
+        verification_body("Alpha", "1899-12-31", "DEU"),
+        verification_body("Alpha", "1990-2-28", "DEU"),
+        verification_body("Alpha", "1990-02-28", "deu"),
+        verification_body("Alpha", "1990-02-28", "DE"),
+        verification_body("", "1990-02-28", "DEU"),
+        verification_body("Al\\u0007pha", "1990-02-28", "DEU"),
+        good.replace("{\"checks\"", "{\"account\":\"501\",\"checks\""),
+        verification_body(&"A".repeat(201), "1990-02-28", "DEU"),
+        good.replace("\"manual\"", "\"eudi\""),
+        good.replace("\"passport\"", "\"library_card\""),
+        good.replace("[\"document_authentic\",\"photo_match\"]", "[]"),
+        good.replace(
+            "[\"document_authentic\",\"photo_match\"]",
+            "[\"photo_match\",\"document_authentic\"]",
+        ),
+        good.replace(
+            "\"method\":\"manual\"",
+            "\"method\":\"manual\",\"verifier\":\"9\"",
+        ),
+        good.replace(
+            "\"issuing_state\":\"DEU\"",
+            "\"issuing_state\":\"DEU\",\"number\":\"X1\"",
+        ),
+        good.replace(',', ", "),
+    ] {
+        assert!(
+            decode_verification_write(bad.as_bytes()).is_err(),
+            "accepted {bad}"
+        );
+    }
+    assert!(
+        decode_verification_write(verification_body("Alpha", "2000-02-29", "DEU").as_bytes())
+            .is_ok()
+    );
+    assert!(
+        decode_verification_write(verification_body("Alpha", "1900-02-29", "DEU").as_bytes())
+            .is_err()
+    );
+}

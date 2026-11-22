@@ -220,6 +220,9 @@ pub fn encode_log(event: &LogEvent) -> Result<String, ObsError> {
         LogEvent::HostCheckWarned { check } => {
             Line::new("host_check_warned").text("check", check.as_str())
         }
+        LogEvent::ServingStopped { rule } => {
+            Line::new("serving_stopped").text("rule", check_rule(rule)?)
+        }
         LogEvent::KeyFileAssurance { file, assurance } => {
             let line = Line::new("key_file_assurance")
                 .text("file", file)
@@ -363,6 +366,7 @@ mod tests {
             LogEvent::HostCheckWarned {
                 check: crate::assurance::HostCheck::PassphraseEphemeral,
             },
+            LogEvent::ServingStopped { rule: "I-81" },
             LogEvent::KeyFileAssurance {
                 file: "cell-keys.sealed",
                 assurance: crate::assurance::Assurance::Reduced(

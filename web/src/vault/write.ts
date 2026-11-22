@@ -23,10 +23,16 @@
 //   `write:proximity_list_declared` and `write:reviewer_declaration`: they
 //   name organisation and person ids, which no M3 directory offers.
 // - `write:document_upload`: no fact body exists for it yet.
-// - `write:verification_recorded`: never decoded from a browser body
-//   (design section 6.4, Q17).
 //
 // For these the page says so, and posts nothing.
+//
+// The recorder's verification (R-ID-02, I-17, ADR-008, ADR-004 record of
+// lane L13b, `./verification.ts`):
+//
+// - `write:verification_recorded`: for the person the ticket names (its
+//   scope `person:<id>`), the method, the document type, the checks, and
+//   the four identity fields. The vault sets the time and the verifier, and resolves the
+//   identity from the fields. The cell never sees them.
 //
 // The M5 bank and hardship kinds (I-33, I-86, R-PR-04, `./bank.ts`):
 //
@@ -56,6 +62,16 @@ import {
   statementOk,
 } from './bank.js';
 import { claimsView, frame, isId, t, takeTicket, type ClaimsView, type Frame } from './page.js';
+import {
+  DOCUMENT_TYPES,
+  VERIFICATION_CHECKS,
+  VERIFICATION_METHODS,
+  birthDateOk,
+  identityNameOk,
+  issuingStateOk,
+  personOf,
+  verificationBody,
+} from './verification.js';
 import type { VaultMessageId } from './messages.en.js';
 
 /** One form of a write kind: its fields and the fact body they give. */
@@ -285,6 +301,69 @@ function hardshipVerifyForm(c: ClaimsView, grant: string): KindForm {
   };
 }
 
+function verificationForm(person: string): KindForm {
+  const method = h(
+    'select',
+    { id: 'verify-method', required: true },
+    VERIFICATION_METHODS.map((m) => h('option', { value: m }, [t(`verify.method.${m}`)])),
+  ) as HTMLSelectElement;
+  const documentType = h(
+    'select',
+    { id: 'verify-document', required: true },
+    DOCUMENT_TYPES.map((d) => h('option', { value: d }, [t(`verify.document.${d}`)])),
+  ) as HTMLSelectElement;
+  const checks = VERIFICATION_CHECKS.map((k) => ({ key: k, box: checkbox(`verify-check-${k}`, `verify.check.${k}`) }));
+  for (const k of checks) k.box.input.required = false;
+  const family = textField('verify-family', 'verify.family', { type: 'text', autocomplete: 'off', maxlength: '200' });
+  const given = textField('verify-given', 'verify.given', { type: 'text', autocomplete: 'off', maxlength: '200' });
+  const birth = textField('verify-birth', 'verify.birth', { type: 'date', min: '1900-01-01', max: today() });
+  const state = textField('verify-state', 'verify.state', { type: 'text', autocomplete: 'off', maxlength: '3' });
+  const first = checks[0];
+  return {
+    fields: h('fieldset', {}, [
+      h('legend', {}, [t('verify.legend')]),
+      h('p', {}, [t('verify.intro')]),
+      h('p', { id: 'verify-person' }, [t('verify.person', { person })]),
+      h('div', { class: 'field' }, [h('label', { for: 'verify-method' }, [t('verify.method')]), method]),
+      h('div', { class: 'field' }, [h('label', { for: 'verify-document' }, [t('verify.document')]), documentType]),
+      ...checks.map((k) => k.box.row),
+      family.row,
+      given.row,
+      birth.row,
+      state.row,
+    ]),
+    body(): Json | null {
+      const picked = checks.filter((k) => k.box.input.checked).map((k) => k.key);
+      const m = VERIFICATION_METHODS.find((x) => x === method.value) ?? 'manual';
+      const d = DOCUMENT_TYPES.find((x) => x === documentType.value) ?? 'passport';
+      const entry = {
+        familyNames: family.input.value,
+        givenNames: given.input.value,
+        birthDate: birth.input.value,
+        issuingState: state.input.value,
+      };
+      const pieces: readonly [HTMLInputElement, HTMLElement, boolean, VaultMessageId][] = [
+        [family.input, family.error, identityNameOk(entry.familyNames), 'verify.name.missing'],
+        [given.input, given.error, identityNameOk(entry.givenNames), 'verify.name.missing'],
+        [birth.input, birth.error, birthDateOk(entry.birthDate), 'verify.birth.missing'],
+        [state.input, state.error, issuingStateOk(entry.issuingState.trim().toUpperCase()), 'verify.state.missing'],
+      ];
+      let focus: HTMLInputElement | null = null;
+      for (const [input, error, ok, message] of pieces) {
+        if (!fieldError(input, error, ok ? null : message) && focus === null) focus = input;
+      }
+      if (first !== undefined && !fieldError(first.box.input, first.box.error, picked.length > 0 ? null : 'verify.check.missing') && focus === null) {
+        focus = first.box.input;
+      }
+      if (focus !== null) {
+        focus.focus();
+        return null;
+      }
+      return verificationBody(m, d, picked, entry);
+    },
+  };
+}
+
 function formOf(c: ClaimsView): KindForm | null {
   if (!isId(c.account)) return null;
   const grant = c.proposal;
@@ -303,6 +382,10 @@ function formOf(c: ClaimsView): KindForm | null {
       return grant === null ? null : hardshipForm(c, grant);
     case 'write:hardship_verification':
       return grant === null ? null : hardshipVerifyForm(c, grant);
+    case 'write:verification_recorded': {
+      const person = personOf(c.scope);
+      return person === null ? null : verificationForm(person);
+    }
     default:
       return null;
   }

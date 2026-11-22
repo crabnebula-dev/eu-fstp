@@ -299,7 +299,13 @@ pub(crate) fn record_in(g: &mut Gen, member: &str) -> Result<CellRecord, String>
                 receipt: id32(g),
             }
         }),
-        "release" => CellRecord::Release(match g.u8_in(0..=2) {
+        "release" => CellRecord::Release(match g.u8_in(0..=3) {
+            3 => ReleaseRecord::VerificationTicketIssued {
+                id: id16(g),
+                holder: account(g),
+                subject: account(g),
+                proposal: g.option(|g| u128::from(g.u64())),
+            },
             0 => ReleaseRecord::TicketIssued {
                 id: id16(g),
                 kind: g.u16(),
@@ -413,7 +419,7 @@ pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, Strin
                 receipt: id32(g),
             }
         }),
-        "release" => CellCommand::Release(match g.u8_in(0..=4) {
+        "release" => CellCommand::Release(match g.u8_in(0..=5) {
             0 => ReleaseCommand::IssueReleaseTicket {
                 proposal: u128::from(g.u64()),
             },
@@ -423,6 +429,10 @@ pub(crate) fn command_in(g: &mut Gen, member: &str) -> Result<CellCommand, Strin
             },
             3 => ReleaseCommand::IssueCountryTicket {
                 proposal: u128::from(g.u64()),
+            },
+            4 => ReleaseCommand::IssueVerificationTicket {
+                account: account(g),
+                proposal: g.option(|g| u128::from(g.u64())),
             },
             _ => ReleaseCommand::RecordRelationship {
                 relationship: canonical_bytes(g),

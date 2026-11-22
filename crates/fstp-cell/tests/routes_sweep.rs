@@ -561,3 +561,19 @@ fn adr009_health_listener_serves_no_other_route() {
         assert_eq!(status(&resp), 404, "{}", label(s));
     }
 }
+
+/// R-NG-01, ADR-004 record of lane L13b, row "Staff app": the list of
+/// people a tenant admin may record a verification for is refused to a
+/// Receiving account's session, and served to a tenant admin. It names
+/// only accounts of proposals in NEGOTIATION or later.
+#[test]
+fn adr008_verification_people_serve_a_tenant_admin_only() {
+    let cell = cell_a();
+    let path = "/api/v1/verification-people";
+    let cookie = session(&cell, Who::Applicant);
+    let req = with_cookie(through_front("GET", path, HOST_A), &cookie);
+    assert_eq!(status(&serve(&cell, req)), 403);
+    let cookie = session(&cell, Who::Admin);
+    let req = with_cookie(through_front("GET", path, HOST_A), &cookie);
+    assert_eq!(status(&serve(&cell, req)), 200);
+}

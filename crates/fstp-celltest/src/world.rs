@@ -4158,7 +4158,8 @@ fn start_cell(
     let vault_pages = match pages {
         Some(_) => crate::vault_pages::VaultPages::load(
             &crate::mc::place_model::db::workspace_root().join("web"),
-        )?
+        )
+        .map_err(|e| WorldError::Store(format!("the vault loader pages: {e}")))?
         .map(std::sync::Arc::new),
         None => None,
     };

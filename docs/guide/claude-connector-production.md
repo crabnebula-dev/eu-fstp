@@ -171,15 +171,52 @@ FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault
 
 Each start runs the database check, opens the keystore through its custody entry, and verifies the vault chain at the witness before it listens. A start never creates a keystore. A start also refuses a vault database that holds bank details or hardship evidence sealed under the shared `Fact` data key, since no erasure could make them unreadable (ADR-004 record of lane L13, row "Existing facts"). Only a pilot vault from before lane L13 can hold them, and only synthetic ones. Recreate such a vault: a fresh vault database, then `init-keys`. SIGTERM drains the vault within 20 seconds. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
 
-### Erase an identity
+The running vault holds a lock on its keystore through its `<dbname>_keys` connection. It checks that connection every 5 seconds. If the connection drops, the vault takes the lock again on a new one and keeps serving. If another process took the lock meanwhile, such as an `erase-identity` run, the vault stops serving at once. Every request then answers 503, the log shows `{"event":"serving_stopped","rule":"I-81"}`, and the process drains and exits with status 1. Start it again once the other process is done (ADR-004 record of lane L13b).
+
+### Verify the first admins
+
+The technical admin verifies the first admins on the host (ADR-008, decided by Daniel on 2026-11-21). Check the person's identity document yourself. Then write the details into a file, as root, with no document number:
+
+```json
+{
+  "method": "manual",
+  "document_type": "passport",
+  "checks": ["document_authentic", "document_valid", "photo_match"],
+  "identity": {
+    "family_names": "Example",
+    "given_names": "Alex",
+    "birth_date": "1990-01-31",
+    "issuing_state": "DEU"
+  }
+}
+```
+
+`document_type` is `passport`, `identity_card` or `residence_permit`. `checks` names one or more of `data_match`, `document_authentic`, `document_valid` and `photo_match`. `issuing_state` is the three-letter code of the state that issued the document. Then, with the vault stopped:
+
+```sh
+systemctl stop fstp-vault
+FSTP_VAULT_CONFIG=/etc/fstp/vault.json fstp-vault verify-first-admin 01234567-89ab-cdef-0123-456789abcdef /root/admin.json
+systemctl start fstp-vault
+shred -u /root/admin.json
+```
+
+- The command asks nothing and prints nothing. Exit status 0 means the verification is recorded. Running it again for the same person changes nothing. Status 2 means a refused argument or file. Status 1 means another failure, such as a vault that still runs.
+- It verifies at most two accounts per vault, the first admins. The verifier of record is the operator.
+- The cell learns of the verification when the vault serves again.
+
+### Record a verification on the web
+
+A verified tenant admin records everyone else. On "Members" (`/app/admin/members`), choose "Record verification" next to the person. People of proposals in negotiation or later are listed in a section of their own on the same page, each with the button. The vault's form opens for that person. Type only the identity details from their document, and save. The vault registers the person's identity and records the verification in one step. The cell never sees these details. A failed save keeps the link valid, and saving again completes it.
+
+The cell offers the form only to a verified tenant admin with no Judging role, never for themselves or a person who shares their identity. An applicant is verified only once their proposal is in NEGOTIATION, under a ticket for that proposal (ADR-004 record of lane L13b, row "Ticket").
+
+The vault serves its form pages when its configuration names `assets_dir`, such as `"assets_dir":"/opt/fstp/web"`. That directory holds `vault/` (the compiled `web/dist/vault/*.js` and `web/src/vault/shell.html`) and `auth/` (`dom.js`, `encoding.js`, `i18n.js`, `tokens.css` and `auth.css`), as the cell's `auth/` does. A missing file refuses the start.
 
 ### Register an identity
 
-The vault seals an account's bank details and hardship evidence under its identity's own fact key, so an erasure of that identity reaches them (ADR-004 record of lane L13). The vault therefore refuses those writes, with 403 on the vault origin, until the account is registered.
+The vault seals an account's bank details and hardship evidence under its identity's own fact key, so an erasure of that identity reaches them (ADR-004 record of lane L13). The vault therefore refuses those writes, with 403 on the vault origin, until the account is registered. A verification registers the account. So bank details work once the person is verified.
 
-The cell registers an account on the vault's internal listener, `POST /v1/identity`, with its `cell-app` certificate. The request names the account and its attribute tuple. The vault resolves the identity from the tuple, stores the sealed tuple in its keystore, and binds the account. The reply is `acked` and names no identity. A repeat changes nothing. Two accounts with the same tuple share one identity. An account bound to one identity is never moved to another: such a request is refused as malformed.
-
-No cell command sends this request yet (ADR-004 record of lane L13, row "Cell side"). The vault intake of ADR-026 is still refused, so a pilot vault takes no bank details from a browser until a cell flow registers the account.
+The cell can also register an account on the vault's internal listener, `POST /v1/identity`, with its `cell-app` certificate. The request names the account and its attribute tuple. The reply is `acked` and names no identity. A repeat changes nothing. An account bound to one identity is never moved to another.
 
 ### Erase an identity
 

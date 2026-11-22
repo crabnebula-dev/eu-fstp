@@ -254,6 +254,9 @@ pub struct VaultParts {
     /// call that would write is refused with 503 and reads are served
     /// (ADR-010 "Witness unavailable").
     pub chain: Option<VaultChainParts>,
+    /// The static pages of the vault origin, if any (ADR-009 third route
+    /// group, ADR-004 record of lane L13b, row "Static pages").
+    pub pages: Option<Arc<crate::pages::VaultPages>>,
 }
 
 impl std::fmt::Debug for VaultParts {
@@ -324,6 +327,15 @@ struct Answer {
 
 struct Shared<R: Runtime> {
     held: AsyncMutex<Held<R>>,
+    /// The static pages of the vault origin, if any.
+    pages: Option<Arc<crate::pages::VaultPages>>,
+    /// Set once the vault lost its keystore lock to another process, or
+    /// its rows changed while the lock was free (ADR-004 record of lane
+    /// L13b, row "Fail closed"). Every request then answers 503.
+    stopped: Arc<std::sync::atomic::AtomicBool>,
+    /// The keys login the registrar reconnects with, if it runs.
+    keys_db: Option<fstp_pgwire::Config>,
+    rt: R,
     /// The keystore that registers identities (ADR-004 record of lane
     /// L13). `None` refuses every registration as unavailable.
     registrar: AsyncMutex<Option<Registrar<R>>>,
@@ -343,6 +355,18 @@ impl<R: Runtime> Journal for Persist<R> {
     }
 }
 
+fn origin_answer(r: crate::origin::Reply) -> Answer {
+    Answer {
+        status: r.status,
+        headers: r.headers,
+        body: r.body,
+    }
+}
+
+fn stopped_answer() -> fstp_http::Response {
+    fstp_http::Response::new(fstp_http::StatusCode::SERVICE_UNAVAILABLE)
+}
+
 fn internal_answer(r: &VaultResponse) -> Answer {
     Answer {
         status: 200,
@@ -352,6 +376,82 @@ fn internal_answer(r: &VaultResponse) -> Answer {
 }
 
 impl<R: Runtime> Shared<R> {
+    /// Whether the vault stopped serving (ADR-004 record of lane L13b).
+    fn is_stopped(&self) -> bool {
+        self.stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Stops serving and says so (ADR-004 record of lane L13b, row "Fail
+    /// closed").
+    fn stop_serving(&self) {
+        if !self.stopped.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::ServingStopped { rule: "I-81" });
+        }
+    }
+
+    /// Probes the registrar's keys connection and, when it is gone, takes
+    /// the keystore lock again on a new one (ADR-004 record of lane L13b,
+    /// rows "Watch" and "Reconnect"). A lock another process holds, or rows
+    /// that changed meanwhile, stop the vault. An unreachable database is
+    /// tried again at the next probe.
+    async fn check_keys(&self, registrar: &mut Registrar<R>) {
+        if self.is_stopped() || registrar.keys_alive().await {
+            return;
+        }
+        let Some(db) = self.keys_db.as_ref() else {
+            return;
+        };
+        let Ok(client) = Client::connect(&self.rt, db).await else {
+            return;
+        };
+        match registrar.reconnect(client).await {
+            Ok(()) => {}
+            Err(VaultError::Conflict(_) | VaultError::Malformed(_)) => self.stop_serving(),
+            Err(_) => {}
+        }
+    }
+
+    /// A recorder's verification write of `POST /w` (ADR-004 record of
+    /// lane L13b), taken through the registrar under the vault's lock.
+    /// `None` for any other write, and for a vault with no registrar,
+    /// whose sans-IO path answers 503.
+    async fn verification(&self, bytes: &[u8], now: i64) -> Option<Answer> {
+        let mut held = self.held.lock().await;
+        let mut registrar = self.registrar.lock().await;
+        let registrar = registrar.as_mut()?;
+        match held.vault.check_verification_write(bytes, now) {
+            Ok(None) => return None,
+            Err(r) => return Some(origin_answer(crate::origin::refusal_reply(r))),
+            Ok(Some(_)) => {}
+        }
+        let Held { vault, store } = &mut *held;
+        let Some(store) = store.as_mut() else {
+            return Some(origin_answer(crate::origin::refusal_reply(
+                crate::OriginRefusal::Unavailable,
+            )));
+        };
+        let reply = match registrar
+            .take_verification_write(vault, store, bytes, now)
+            .await
+        {
+            Ok(_) => crate::origin::Reply {
+                status: 204,
+                headers: crate::origin::origin_headers("text/plain; charset=utf-8"),
+                body: Vec::new(),
+            },
+            Err(r) => crate::origin::refusal_reply(r),
+        };
+        Some(origin_answer(reply))
+    }
+
+    /// One probe of the watch, under the registrar's lock.
+    async fn watch_once(&self) {
+        let mut registrar = self.registrar.lock().await;
+        if let Some(r) = registrar.as_mut() {
+            self.check_keys(r).await;
+        }
+    }
+
     /// Registers `account` with the identity of `tuple` through the
     /// registrar, under the vault's lock (ADR-004 record of lane L13).
     /// The vault and its journal change only once the registration
@@ -375,6 +475,11 @@ impl<R: Runtime> Shared<R> {
         let done = registrar
             .register_account(vault, store, account, tuple, now)
             .await;
+        if done.is_err() {
+            // The keys connection may be the cause: check it at once.
+            drop(held);
+            self.check_keys(registrar).await;
+        }
         internal_answer(&match done {
             Ok(_) => VaultResponse::Acked,
             Err(VaultError::Malformed(_)) => VaultResponse::Refused(VaultRefusal::Malformed),
@@ -429,6 +534,9 @@ struct Internal<R: Runtime>(Arc<Shared<R>>);
 
 impl<R: Runtime> fstp_http::Handler for Internal<R> {
     async fn handle(&self, req: fstp_http::Request) -> fstp_http::Response {
+        if self.0.is_stopped() {
+            return stopped_answer();
+        }
         let path = req.target.path().to_owned();
         let known = INTERNAL_ROUTES.iter().any(|r| r.path == path);
         if !known {
@@ -471,10 +579,29 @@ struct Origin<R: Runtime>(Arc<Shared<R>>);
 
 impl<R: Runtime> fstp_http::Handler for Origin<R> {
     async fn handle(&self, req: fstp_http::Request) -> fstp_http::Response {
+        if self.0.is_stopped() {
+            return stopped_answer();
+        }
         let now = now_us();
         let method = req.method.as_str().to_owned();
         let path = req.target.path().to_owned();
+        // ADR-009 third route group (Daniel, 2026-11-21): the static pages.
+        if let Some((status, headers, body)) =
+            self.0.pages.as_ref().and_then(|p| p.serve(&method, &path))
+        {
+            return response(Answer {
+                status,
+                headers,
+                body,
+            });
+        }
         let body = req.body;
+        if method == "POST"
+            && path == "/w"
+            && let Some(a) = self.0.verification(&body, now).await
+        {
+            return response(a);
+        }
         let a = self
             .0
             .run(now, |v| {
@@ -666,6 +793,8 @@ pub struct VaultHandle<R: Runtime> {
     /// What the vault holds for its lifetime, such as the keys
     /// connection that holds the keystore lock (`crate::run`).
     leases: Mutex<Vec<Box<dyn std::any::Any + Send>>>,
+    /// Set once the vault stopped serving (ADR-004 record of lane L13b).
+    stopped: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl<R: Runtime> std::fmt::Debug for VaultHandle<R> {
@@ -678,6 +807,14 @@ impl<R: Runtime> std::fmt::Debug for VaultHandle<R> {
 }
 
 impl<R: Runtime> VaultHandle<R> {
+    /// Whether the vault stopped serving because it lost its keystore lock
+    /// (ADR-004 record of lane L13b, row "Fail closed"). Every request
+    /// answers 503 from then on, and the process should drain and exit.
+    #[must_use]
+    pub fn stopped(&self) -> bool {
+        self.stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// Keeps `lease` until the handle is dropped, such as the keys
     /// connection that holds the keystore lock while the vault serves
     /// (ADR-004 record of lane L11, row "Entry point").
@@ -740,6 +877,30 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
     serve_with_registrar(rt, parts, None).await
 }
 
+/// The registrar of a serving vault (ADR-004 records of lanes L13 and
+/// L13b): the idle keystore, the keys login it reconnects with, and how
+/// often its keys connection is probed.
+pub struct RegistrarParts<R: Runtime> {
+    /// The registrar, whose keys connection holds the keystore lock.
+    pub registrar: Registrar<R>,
+    /// The `<dbname>_keys` login.
+    pub keys_db: fstp_pgwire::Config,
+    /// The interval of the watch, [`KEYSTORE_CHECK`] in production.
+    pub check_every: Duration,
+}
+
+impl<R: Runtime> std::fmt::Debug for RegistrarParts<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistrarParts")
+            .field("check_every", &self.check_every)
+            .finish_non_exhaustive()
+    }
+}
+
+/// How often the serving vault probes its keys connection (ADR-004
+/// record of lane L13b, row "Watch"). Interim, no P- id.
+pub const KEYSTORE_CHECK: Duration = Duration::from_secs(5);
+
 /// [`serve`], with the registrar that takes identity registrations on
 /// `POST /v1/identity` (ADR-004 record of lane L13). The sealer of
 /// `parts` holds the registrar's identity fact keys
@@ -752,7 +913,7 @@ pub async fn serve<R: Runtime>(rt: R, parts: VaultParts) -> Result<VaultHandle<R
 pub async fn serve_with_registrar<R: Runtime>(
     rt: R,
     parts: VaultParts,
-    registrar: Option<Registrar<R>>,
+    registrar: Option<RegistrarParts<R>>,
 ) -> Result<VaultHandle<R>, VaultError> {
     let VaultParts {
         cell,
@@ -767,6 +928,7 @@ pub async fn serve_with_registrar<R: Runtime>(
         internal_listen,
         origin_listen,
         chain,
+        pages,
     } = parts;
     // The server check runs on this connection and on any cancel
     // connection before anything passes the TLS handshake (I-83).
@@ -794,8 +956,33 @@ pub async fn serve_with_registrar<R: Runtime>(
     };
     let shared = Arc::new(Shared {
         held: AsyncMutex::new(Held { vault, store }),
-        registrar: AsyncMutex::new(registrar),
+        keys_db: registrar.as_ref().map(|r| r.keys_db.clone()),
+        stopped: Arc::default(),
+        rt: rt.clone(),
+        pages,
+        registrar: AsyncMutex::new(None),
     });
+    if let Some(parts) = registrar {
+        *shared.registrar.lock().await = Some(parts.registrar);
+        // The watch of ADR-004 record of lane L13b, row "Watch". It ends
+        // with the vault, since it holds the shared state weakly.
+        let weak = Arc::downgrade(&shared);
+        let timer = rt.clone();
+        let every = parts.check_every;
+        drop(rt.spawn(async move {
+            loop {
+                timer.sleep(every).await;
+                let Some(shared) = weak.upgrade() else {
+                    break;
+                };
+                if shared.is_stopped() {
+                    break;
+                }
+                shared.watch_once().await;
+            }
+        }));
+    }
+    let stopped = Arc::clone(&shared.stopped);
     let internal_tcp = rt
         .bind_tcp(internal_listen)
         .await
@@ -830,6 +1017,7 @@ pub async fn serve_with_registrar<R: Runtime>(
         origin,
         tunnel: tunnel_shutdown,
         leases: Mutex::new(Vec::new()),
+        stopped,
     })
 }
 

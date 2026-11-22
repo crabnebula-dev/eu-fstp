@@ -980,6 +980,11 @@ pub const ROUTES: &[RefRoute] = &[
         RefRisk::SessionOrIdentityDownload,
     ),
     route("POST", "/api/v1/verifications", RefRisk::VerificationTicket),
+    route(
+        "GET",
+        "/api/v1/verification-people",
+        RefRisk::VerificationTicket,
+    ),
     route("GET", "/api/v1/audit/anchors", RefRisk::AuditorOrAdmin),
     route("GET", "/api/v1/erasures", RefRisk::AuditorOrAdmin),
     route("GET", "/healthz", RefRisk::Loopback),
