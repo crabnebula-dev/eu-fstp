@@ -4650,6 +4650,7 @@ fn start_cell(
         // ADR-026 record of lane L5: the relay of the API core's ports
         // keeps each message in the world's mail capture.
         api_relay: Some(std::sync::Arc::new(mail.relay().clone())),
+        keystore_snapshots: None,
         // ADR-026 record of lane L18: a world cell runs no probes, so every
         // onboarding probe fails, as before (Q5).
         tenant_prober: None,

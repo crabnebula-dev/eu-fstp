@@ -190,7 +190,7 @@ pub async fn escrow<C: Custody>(
     request: &[u8],
 ) -> Result<Vec<u8>, BackupError> {
     let req = decode_request(request)?;
-    if req.cluster != key.cluster || key.custodian {
+    if req.cluster != key.cluster || key.kind != keyfile::FileKind::ClusterBackup {
         return Err(bad("another cluster"));
     }
     let to = HybridPublicKey::from_bytes(&req.public).map_err(|_| bad("request public key"))?;
@@ -224,7 +224,7 @@ pub async fn open<C: Custody>(
     key: &KeyFile,
 ) -> Result<HybridSecretKey, BackupError> {
     let ck = keyfile::decode_custodian(custodian_key)?;
-    if ck.cluster != key.cluster || key.custodian {
+    if ck.cluster != key.cluster || key.kind != keyfile::FileKind::ClusterBackup {
         return Err(bad("another cluster"));
     }
     if escrow.len() > MAX_ESCROW_LEN {

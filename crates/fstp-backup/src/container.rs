@@ -37,7 +37,7 @@ pub(crate) const HEADER_LEN: usize = 49 + SEALED_KEY_LEN;
 
 /// The fields of a container header that a reader needs.
 pub(crate) struct Header<'a> {
-    /// The kind code, 1 to 4.
+    /// The kind code, 1 to 5.
     pub(crate) kind: u8,
     /// The owner.
     pub(crate) owner: [u8; 16],
@@ -97,11 +97,12 @@ fn header<'a>(r: &mut Reader<'a>) -> Result<Header<'a>, BackupError> {
         return Err(BackupError::Malformed("aead"));
     }
     let kind = r.u8()?;
-    if !(1..=4).contains(&kind) {
+    let Some(k) = crate::ContainerKind::from_code(kind) else {
         return Err(BackupError::Malformed("kind"));
-    }
+    };
+    // Each kind has one chain (ADR-012 record of lane L17).
     let chain = match Chain::from_code(r.u8()?) {
-        Some(c @ (Chain::CellBackup | Chain::ClusterBackup)) => c,
+        Some(c) if c == k.chain() => c,
         _ => return Err(BackupError::Malformed("chain")),
     };
     let owner = r.array::<16>()?;
@@ -200,6 +201,11 @@ mod tests {
     /// A container of `full` full chunks, then a final chunk of `tail`
     /// bytes. The chunks are sealed under a fresh data key.
     fn container(chain: Chain, full: usize, tail: usize) -> Vec<u8> {
+        let kind = match chain {
+            Chain::CellBackup => 3,
+            Chain::VaultBackup => 5,
+            _ => 1,
+        };
         let sk = hybrid_kem::generate().unwrap();
         let ctx = SealContext {
             cell: CellId([1; 16]),
@@ -214,7 +220,7 @@ mod tests {
         let mut out = CONTAINER_MAGIC.to_vec();
         out.push(FORMAT_VERSION);
         out.extend_from_slice(&AEAD_AES_256_GCM.to_be_bytes());
-        out.push(1);
+        out.push(kind);
         out.push(chain.code());
         out.extend_from_slice(&[1; 16]);
         out.extend_from_slice(&[3; 16]);
@@ -268,8 +274,14 @@ mod tests {
             Err(BackupError::Malformed(_))
         ));
         let mut moved = container(Chain::ClusterBackup, 0, 1);
+        moved[7] = 3;
         moved[8] = Chain::CellBackup.code();
         assert_eq!(decode(&moved), Err(BackupError::KeyNotHybrid));
+        // ADR-012 record of lane L17: a chain that is not the kind's chain.
+        let mut relabelled = container(Chain::CellBackup, 0, 1);
+        relabelled[7] = 5;
+        assert_eq!(decode(&relabelled), Err(BackupError::Malformed("chain")));
+        assert!(decode(&container(Chain::VaultBackup, 0, 1)).is_ok());
         assert!(matches!(
             decode(&container(Chain::App, 0, 1)),
             Err(BackupError::Malformed("chain"))

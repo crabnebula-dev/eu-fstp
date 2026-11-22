@@ -292,6 +292,7 @@ impl Keystore {
             requested: rows.requested.into_iter().collect(),
             logins,
             startup_unwrap: chain.startup_unwrap.map(RequestId),
+            snapshots: None,
             persist: Persist {
                 sink: Some(sink),
                 dirty: Dirty::default(),

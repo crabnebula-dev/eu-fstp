@@ -22,12 +22,14 @@ pub mod keyfile;
 pub mod s3;
 mod seal;
 pub mod sigv4;
+pub mod snapshot;
 mod wal;
 pub mod xml;
 
 use std::path::PathBuf;
 
 pub use seal::{ContainerKind, GroupRef, Opened, open_container, seal_container};
+pub use snapshot::{ObjectStore, SnapshotKey, SnapshotOwner, Snapshots};
 pub use wal::ArchiveName;
 
 /// Why a backup operation failed. Every variant names a rule, a part or
