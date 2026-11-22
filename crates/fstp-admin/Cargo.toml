@@ -1,0 +1,29 @@
+[package]
+name = "fstp-admin"
+description = "The one operator command of a host: setup, status, backups, key copies, routes (ADR-028)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fstp-admin"
+path = "src/main.rs"
+
+[dependencies]
+# All in-house (ADR-028 "One operator command"): no new third-party crate.
+# No service, custody or control crate: every key operation and every
+# provisioning job runs in the service's own binary (ADR-028 "No service
+# library in fstp-admin").
+fstp-json.workspace = true
+fstp-crypto.workspace = true
+fstp-pki.workspace = true
+# Its base64 decoder, for certificate pins.
+fstp-pgwire.workspace = true
+# The statement splitter, for the migration ledger rows (ADR-028
+# "Migrations").
+fstp-migrate.workspace = true
+
+[lints]
+workspace = true

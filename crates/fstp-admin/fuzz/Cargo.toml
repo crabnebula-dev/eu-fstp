@@ -1,0 +1,24 @@
+[package]
+name = "fstp-admin-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fstp-admin = { path = ".." }
+
+[[bin]]
+name = "admin_config_decode"
+path = "fuzz_targets/admin_config_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"

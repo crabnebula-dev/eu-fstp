@@ -1397,6 +1397,44 @@ mod tests {
         );
     }
 
+    /// R-NF-08, ADR-028 "Witness custody": the witness role has its own
+    /// socket name and usage code, reaches the ControlPlane chain only, and
+    /// signs and creates no CA key.
+    #[test]
+    fn r_nf_08_witness_role_reaches_control_plane_only() {
+        let w = ClientRole::Witness;
+        assert_eq!(w.chains(), &[Chain::ControlPlane]);
+        assert!(w.sign_keys().is_empty() && w.creates_sign_keys().is_empty());
+        let names: Vec<&str> = ClientRole::ALL.iter().map(|r| r.name()).collect();
+        let codes: Vec<u8> = ClientRole::ALL.iter().map(|r| r.code()).collect();
+        for (i, r) in ClientRole::ALL.iter().enumerate() {
+            assert_eq!(names.iter().filter(|n| **n == r.name()).count(), 1, "{i}");
+            assert_eq!(codes.iter().filter(|c| **c == r.code()).count(), 1, "{i}");
+        }
+        let dir = scratch("witness-role");
+        let mut s = Server::open(&dir, &pass()).unwrap();
+        let r = s.handle_as(
+            w,
+            &Request::CreateRoot {
+                id: ID,
+                cell: None,
+                chain: Chain::ControlPlane,
+                epoch: Epoch(1),
+            },
+        );
+        assert!(matches!(r, Response::Root(_)), "{r:?}");
+        let r = s.handle_as(
+            w,
+            &Request::CreateRoot {
+                id: ID,
+                cell: None,
+                chain: Chain::Vault,
+                epoch: Epoch(1),
+            },
+        );
+        assert_eq!(r, Response::Refused(Refusal::NotPermitted));
+    }
+
     /// R-NF-08, ADR-004 part 2 "Access to `fstp-keyd`": each socket role
     /// reaches only its own chains and keys. Every other request is
     /// refused with `NotPermitted` and logged with the client's role.

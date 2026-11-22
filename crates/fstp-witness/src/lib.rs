@@ -49,6 +49,8 @@ pub mod file_store;
 pub mod key_copy;
 pub mod lock;
 pub mod message;
+// ADR-028, lane L19: the install commands of a self-hosted witness.
+pub mod install;
 pub mod peer;
 pub mod receipt;
 pub mod service;

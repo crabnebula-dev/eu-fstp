@@ -784,6 +784,51 @@ pub async fn serve_listener_until_terminated<R: Runtime, T: TerminationListener>
         .map_err(|_| ControlError::Io(std::io::ErrorKind::Other))?
 }
 
+/// The job of a [`run_local`] command line: one non-destructive
+/// provisioning job. A destructive job has no word here, so it still needs
+/// two approvals (ADR-011).
+///
+/// # Errors
+///
+/// [`ControlError::Config`] for any other arguments, and
+/// [`ControlError::Identifier`] for a database name outside ADR-011.
+pub fn parse_local_job(args: &[&str]) -> Result<PgagentJob, ControlError> {
+    match args {
+        ["harden"] => Ok(PgagentJob::HardenCluster),
+        ["write-hba"] => Ok(PgagentJob::WriteHba),
+        ["create-database", d] => Ok(PgagentJob::CreateCellDatabase(DbIdent::parse(d)?)),
+        ["create-roles", d] => Ok(PgagentJob::CreateRoles(DbIdent::parse(d)?)),
+        ["revocations", d] => Ok(PgagentJob::ApplyRevocations(DbIdent::parse(d)?)),
+        ["grants", d] => Ok(PgagentJob::ApplyGrants(DbIdent::parse(d)?)),
+        _ => Err(ControlError::Config("run-job arguments")),
+    }
+}
+
+/// The host command `fstp-pgagent run-job <job> [<database>]` (ADR-028
+/// "Database provisioning"). It runs one non-destructive provisioning job
+/// on the local cluster through the same executor as a job from
+/// `fstp-control`, for a single host with no control plane. The jobs are
+/// `harden`, `write-hba`, and `create-database`, `create-roles`,
+/// `revocations` and `grants` of one cell database.
+///
+/// # Errors
+///
+/// [`ControlError::Config`] for refused arguments, configuration or job,
+/// and [`ControlError::Database`] when the job fails.
+pub fn run_local(args: &[&str]) -> Result<(), ControlError> {
+    let job = parse_local_job(args)?;
+    let bytes = crate::config::read_config_file(CONFIG_ENV)?;
+    let cfg = decode_pgagent_config(&bytes)?;
+    let parts = AgentParts::load(&cfg)?;
+    let rt = TokioRuntime::new_multi_thread(1).map_err(|e| ControlError::Io(e.kind()))?;
+    let agent = Agent::new(rt.clone(), &parts)?;
+    match rt.block_on(async { agent.run_job(&job).await }) {
+        JobOutcome::Done => Ok(()),
+        JobOutcome::Refused(_) => Err(ControlError::Config("job refused")),
+        JobOutcome::Failed => Err(ControlError::Database("job failed")),
+    }
+}
+
 /// Runs the agent named by [`CONFIG_ENV`] until SIGTERM. The binary's one
 /// runtime is tokio behind `fstp_rt` (ADR-002).
 ///
@@ -807,6 +852,36 @@ pub fn run() -> Result<(), ControlError> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// ADR-028 "Database provisioning", ADR-011: the host command takes
+    /// the non-destructive jobs only, each with a database of the ADR-011
+    /// grammar where it names one. No word names a destructive job.
+    #[test]
+    fn adr028_local_jobs_are_non_destructive_and_typed() {
+        let d = format!("c_{}", "ab".repeat(16));
+        for args in [
+            vec!["harden"],
+            vec!["write-hba"],
+            vec!["create-database", d.as_str()],
+            vec!["create-roles", d.as_str()],
+            vec!["revocations", d.as_str()],
+            vec!["grants", d.as_str()],
+        ] {
+            let job = parse_local_job(&args).unwrap();
+            assert!(!job.is_destructive(), "{args:?}");
+        }
+        for bad in [
+            vec![],
+            vec!["drop-database", d.as_str()],
+            vec!["drop-roles", d.as_str()],
+            vec!["set-nologin", d.as_str()],
+            vec!["grants", "c_X"],
+            vec!["grants", "postgres; DROP"],
+            vec!["harden", "extra"],
+        ] {
+            assert!(parse_local_job(&bad).is_err(), "{bad:?}");
+        }
+    }
 
     /// ADR-011, TH-26: every outcome round-trips, and every other frame is
     /// refused.
