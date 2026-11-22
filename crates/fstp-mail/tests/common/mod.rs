@@ -79,6 +79,7 @@ pub fn config() -> MailConfig {
         from_name: Some(DisplayName::new("Synthetic Fund Zürich").unwrap()),
         dkim: Vec::new(),
         brand: None,
+        funding: None,
     }
 }
 

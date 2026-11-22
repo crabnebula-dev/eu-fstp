@@ -94,6 +94,21 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
         Some(fstp_mail::MailBrand { colour, logos })
     }
 
+    /// The funding card of a message about `programme` (ADR-034, I-69):
+    /// the platform's Funded by the European Union logo and the card's
+    /// lines, or `None` for a message about no programme.
+    fn mail_funding(&self, programme: Option<ProgrammeId>) -> Option<fstp_mail::MailFunding> {
+        let card = {
+            let st = self.0.engine.state();
+            fstp_api_core::funding::card(st.engine(), programme?)?
+        };
+        Some(fstp_mail::MailFunding {
+            png: fstp_api_core::brand::funding::FUNDED_BY_EU_PNG.to_vec(),
+            alt: fstp_api_core::brand::funding::FUNDED_BY_EU_ALT.to_owned(),
+            lines: card.text_lines(),
+        })
+    }
+
     /// Admits `command` for the system task `task` under `id` and runs it,
     /// with the outbox bodies of a firing. A duplicate of a committed id is
     /// success.
@@ -260,6 +275,8 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
             dkim: Vec::new(),
             // ADR-030: the tenant's and the programme's logos and colour.
             brand: self.mail_brand(programme).await,
+            // ADR-034: the funding card of the message's programme.
+            funding: self.mail_funding(programme),
         };
         let bindings = Bindings::new().with(Slot::Link, Value::Link(link));
         let body = fstp_mail::compose(
