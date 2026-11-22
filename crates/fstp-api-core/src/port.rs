@@ -910,6 +910,35 @@ pub trait Vault: AsyncIdentityOracle {
         programme: ProgrammeId,
         orgs: &BTreeSet<OrganisationId>,
     ) -> impl Future<Output = Result<Answer, OracleDown>> + Send;
+    /// The name mask (M7 Q4, ADR-033 record of lane L31, `overview.md`
+    /// "Masks"): for each of `texts`, the spans that hold a verified name
+    /// or date of birth of one of `team`, a proposal's team from the
+    /// cell's own bindings in ascending order. The vault answers spans
+    /// only, into the texts the cell sent. The default fails closed.
+    fn mask_names(
+        &self,
+        team: &[AccountId],
+        texts: &[String],
+    ) -> impl Future<Output = Result<Vec<Vec<NameMaskSpan>>, OracleDown>> + Send {
+        let _ = (team, texts);
+        std::future::ready(Err(OracleDown))
+    }
+}
+
+/// One span of the vault name mask (M7 Q4, ADR-033 record of lane L31):
+/// byte offsets into the text the cell sent, the person by its index in
+/// the team the cell named, and whether it is a date of birth rather than
+/// a name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NameMaskSpan {
+    /// The first byte offset.
+    pub start: u32,
+    /// The byte offset just after the span.
+    pub end: u32,
+    /// The person, by its index in the team the cell named.
+    pub person: u32,
+    /// Whether the span holds a date of birth.
+    pub birth_date: bool,
 }
 
 /// The asynchronous driver over the M2 pure functions, with a dry run.

@@ -3499,6 +3499,79 @@ fn proposals_of_call(state: &EngineState, c: CallId) -> Vec<ProposalId> {
         .collect()
 }
 
+/// The team of `p` from the cell's own bindings, ascending: every account
+/// with a held Receiving binding on it, as `HasConflict` names it (M7 Q4,
+/// ADR-033 record of lane L31).
+fn team_of(state: &EngineState, p: ProposalId) -> Vec<AccountId> {
+    let team: BTreeSet<AccountId> = state
+        .core
+        .roster()
+        .bindings()
+        .filter(|(_, b)| b.held() && b.proposal() == Some(p))
+        .map(|(_, b)| b.account)
+        .collect();
+    team.into_iter().collect()
+}
+
+/// The vault name mask of `texts` for `team` (M7 Q4, ADR-033 record of
+/// lane L31). A team with no account has no name to mask. `Err` when the
+/// vault cannot answer, so the caller fails closed.
+async fn mask_spans<P: Seams>(
+    ports: &P,
+    team: &[AccountId],
+    texts: &[String],
+) -> Result<Vec<Vec<crate::port::NameMaskSpan>>, ()> {
+    if team.is_empty() {
+        return Ok(texts.iter().map(|_| Vec::new()).collect());
+    }
+    let spans = ports
+        .vault()
+        .mask_names(team, texts)
+        .await
+        .map_err(|_| ())?;
+    if spans.len() == texts.len() {
+        Ok(spans)
+    } else {
+        Err(())
+    }
+}
+
+/// `texts` with the team's verified names and dates of birth replaced by
+/// `[PERSON-n]` and `[BIRTHDATE-n]`, `n` the person's place in the team
+/// counted from one, the same in every text (M7 Q4, ADR-033 record of lane
+/// L31). It runs before any text leaves the cell for an agent. A vault
+/// that cannot mask refuses the call, so no text leaves the cell. The
+/// refusal is not audited again: the content read that precedes it
+/// carries the call's one audit entry.
+async fn mask_for_agent<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    texts: Vec<String>,
+) -> Result<Vec<String>, ApiError> {
+    let team = team_of(&call.state, p);
+    let spans = mask_spans(call.ports, &team, &texts)
+        .await
+        .map_err(|()| ApiError::refused(ErrorCode::Unavailable, "I-17"))?;
+    let mut out = Vec::with_capacity(texts.len());
+    for (t, spans) in texts.iter().zip(spans) {
+        let mut masked = String::with_capacity(t.len());
+        let mut at = 0usize;
+        for s in spans {
+            let (a, b) = (s.start as usize, s.end as usize);
+            let (Some(before), true) = (t.get(at..a), a < b && t.get(a..b).is_some()) else {
+                return Err(ApiError::refused(ErrorCode::Unavailable, "I-17"));
+            };
+            masked.push_str(before);
+            let label = if s.birth_date { "BIRTHDATE" } else { "PERSON" };
+            masked.push_str(&format!("[{label}-{}]", s.person.saturating_add(1)));
+            at = b;
+        }
+        masked.push_str(t.get(at..).unwrap_or_default());
+        out.push(masked);
+    }
+    Ok(out)
+}
+
 /// The state tag of `p` as the pages spell it.
 fn state_name(state: &EngineState, p: ProposalId) -> &'static str {
     fstp_domain::view::proposal_state(&state.core, p).map_or("UNKNOWN", |t| t.spec_name())
@@ -3529,15 +3602,26 @@ async fn content_read<P: Seams>(
     } else {
         submitted_content(call, p, clearance).await?
     };
-    let seq = append_content_read(call, p).await?;
     // ADR-035, TH-60: an agent receives the neutralised view, and every
     // reader the flagged spans beside the text. A person in the web reads
-    // the text as submitted.
+    // the text as submitted. M7 Q4 (ADR-033 record of lane L31): the
+    // agent's view also has the team's verified names and dates of birth
+    // masked by the vault. The read is recorded first, under every guard
+    // of the domain, so the vault is asked only for a read that happens. A
+    // vault that cannot mask then refuses the call, and no text leaves.
+    let seq = append_content_read(call, p).await?;
     let (title, text) = if call.caller.via() == Via::Mcp {
-        (
-            integrity::for_agent(content.title),
-            integrity::for_agent(content.narrative),
+        let masked = mask_for_agent(
+            call,
+            p,
+            vec![
+                integrity::for_agent(content.title),
+                integrity::for_agent(content.narrative),
+            ],
         )
+        .await?;
+        let mut it = masked.into_iter();
+        (it.next().unwrap_or_default(), it.next().unwrap_or_default())
     } else {
         (content.title, content.narrative)
     };

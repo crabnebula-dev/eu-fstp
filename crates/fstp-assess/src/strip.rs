@@ -32,6 +32,9 @@ pub enum PiiClass {
     Address,
     /// A team member's handle.
     Handle,
+    /// A team member's verified date of birth, found by the name-mask
+    /// port (ADR-033 record of lane L31).
+    BirthDate,
 }
 
 impl PiiClass {
@@ -44,6 +47,7 @@ impl PiiClass {
             PiiClass::Iban => "IBAN",
             PiiClass::Address => "ADDRESS",
             PiiClass::Handle => "HANDLE",
+            PiiClass::BirthDate => "BIRTHDATE",
         }
     }
 }
@@ -58,6 +62,9 @@ pub struct NameSpan {
     pub end: usize,
     /// The person within the team, stable for one proposal.
     pub person: u32,
+    /// `Person` for a name, `BirthDate` for a date of birth. The port
+    /// gives no other class.
+    pub class: PiiClass,
 }
 
 /// The name-mask port could not answer. The assessment stays pending and
@@ -115,7 +122,12 @@ impl SyntheticNameMask {
             for (start, end) in whole_words(&lower, &needle) {
                 if !taken.overlaps(start, end) {
                     taken.insert(start, end);
-                    found.push(NameSpan { start, end, person });
+                    found.push(NameSpan {
+                        start,
+                        end,
+                        person,
+                        class: PiiClass::Person,
+                    });
                 }
             }
         }
@@ -483,7 +495,10 @@ pub(crate) fn name_hits(text: &str, spans: &[NameSpan]) -> Option<Vec<Hit>> {
     let mut sorted = spans.to_vec();
     sorted.sort();
     for n in sorted {
-        if n.start >= n.end || text.get(n.start..n.end).is_none() {
+        if n.start >= n.end
+            || text.get(n.start..n.end).is_none()
+            || !matches!(n.class, PiiClass::Person | PiiClass::BirthDate)
+        {
             return None;
         }
         if taken.overlaps(n.start, n.end) {
@@ -491,7 +506,7 @@ pub(crate) fn name_hits(text: &str, spans: &[NameSpan]) -> Option<Vec<Hit>> {
         }
         taken.insert(n.start, n.end);
         hits.push(Hit {
-            class: PiiClass::Person,
+            class: n.class,
             start: n.start,
             end: n.end,
             key: n.person.to_string(),

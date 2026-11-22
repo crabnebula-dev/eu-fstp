@@ -1128,3 +1128,112 @@ fn adr033_l31_i03_the_runner_is_never_assigned_to_review_it() {
         "{other:?}"
     );
 }
+
+/// The lead of proposal `p`: its held Applicant binding.
+fn lead_of(inner: &Inner, p: u128) -> AccountId {
+    inner
+        .ports
+        .engine
+        .state()
+        .core
+        .roster()
+        .bindings()
+        .find(|(_, b)| {
+            b.held()
+                && b.proposal() == Some(ProposalId::from_raw(p))
+                && b.role == fstp_domain::roles::Role::Applicant
+        })
+        .map(|(_, b)| b.account)
+        .expect("the lead")
+}
+
+/// M7 Q4, I-17, TH-60 (ADR-033 record of lane L31, Daniel 2026-11-22):
+/// the team's verified names and date of birth, which the vault holds, are
+/// masked in the assessment input and in the agent's content view, with
+/// the same placeholders, while the coordinator reads the text as
+/// submitted in the web. The synthetic legal name is chosen from words of
+/// the corpus narrative, so the text holds it.
+#[test]
+fn m7_q4_i17_vault_masks_team_names_before_text_leaves_for_an_agent() {
+    crate::assess::set_test_p75(true);
+    let (inner, _) = scene();
+    crate::assess::set_test_p75(false);
+    let x: u128 = 1001;
+    inner
+        .ports
+        .vault
+        .set_legal_name(lead_of(&inner, x), "Vynaezor", "Oskvy", Some("1990-04-07"));
+    declare(&inner, x);
+    let web_view = web(
+        &inner,
+        COORDINATOR,
+        fstp_api_core::decode::Method::Get,
+        &format!("/proposals/{x}/content"),
+        "",
+    )
+    .unwrap();
+    assert!(
+        s(&web_view, "text").contains("Vynaezor"),
+        "the web shows the text as submitted"
+    );
+
+    let t = token(&inner, COORDINATOR, &[Scope::AssessRun]);
+    let input = tool(
+        &inner,
+        &t,
+        "fstp_assessment_get_input",
+        &format!(r#"{{"proposal":"{x}"}}"#),
+    )
+    .unwrap();
+    let n = narrative(&input);
+    assert!(
+        !n.to_lowercase().contains("vynaezor"),
+        "the input masks the name"
+    );
+    assert!(n.contains("[PERSON-1]"), "{n}");
+
+    let r = token(&inner, COORDINATOR, &[Scope::ReviewRead]);
+    let agent_view = tool(
+        &inner,
+        &r,
+        "fstp_get_proposal_content",
+        &format!(r#"{{"proposal":"{x}"}}"#),
+    )
+    .unwrap();
+    let text = s(&agent_view, "text");
+    assert!(
+        !text.to_lowercase().contains("vynaezor"),
+        "the agent view masks the name"
+    );
+    assert!(text.contains("[PERSON-1]"), "{text}");
+}
+
+/// M7 Q4, NOTE 2 of `overview.md`: a vault that cannot mask fails the
+/// assessment input and the agent's content view closed. No text leaves.
+#[test]
+fn m7_q4_a_vault_that_cannot_mask_lets_no_text_leave() {
+    crate::assess::set_test_p75(true);
+    let (inner, _) = scene();
+    crate::assess::set_test_p75(false);
+    let x: u128 = 1001;
+    declare(&inner, x);
+    inner.ports.vault.set_mask_down(true);
+    let t = token(&inner, COORDINATOR, &[Scope::AssessRun, Scope::ReviewRead]);
+    for (tool_name, arg) in [
+        (
+            "fstp_assessment_get_input",
+            format!(r#"{{"proposal":"{x}"}}"#),
+        ),
+        (
+            "fstp_get_proposal_content",
+            format!(r#"{{"proposal":"{x}"}}"#),
+        ),
+    ] {
+        let e = tool(&inner, &t, tool_name, &arg).unwrap_err();
+        assert!(
+            e.contains("unavailable") || e.contains("Unavailable"),
+            "{tool_name}: {e}"
+        );
+        assert!(!e.contains("Problem"), "{tool_name}: {e}");
+    }
+}

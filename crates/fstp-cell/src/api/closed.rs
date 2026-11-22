@@ -144,6 +144,35 @@ impl<R: Runtime, V: VaultClient> Vault for CellVault<R, V> {
         let _ = (programme, orgs);
         Err(OracleDown)
     }
+
+    /// The vault name mask (M7 Q4, ADR-033 record of lane L31). A vault
+    /// that cannot mask fails the read closed.
+    async fn mask_names(
+        &self,
+        team: &[AccountId],
+        texts: &[String],
+    ) -> Result<Vec<Vec<fstp_api_core::port::NameMaskSpan>>, OracleDown> {
+        let masks = self
+            .0
+            .vault
+            .mask(team, texts)
+            .await
+            .map_err(|_| OracleDown)?;
+        Ok(masks
+            .into_iter()
+            .map(|spans| {
+                spans
+                    .into_iter()
+                    .map(|s| fstp_api_core::port::NameMaskSpan {
+                        start: s.start,
+                        end: s.end,
+                        person: s.person,
+                        birth_date: s.class == fstp_vault_proto::WireMaskClass::BirthDate,
+                    })
+                    .collect()
+            })
+            .collect())
+    }
 }
 
 /// No pre-check provider (Q38).

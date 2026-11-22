@@ -108,6 +108,10 @@ struct Shared {
     match_key: [u8; 32],
     /// The loader pages of the origin, if any.
     pages: Option<Arc<crate::vault_pages::VaultPages>>,
+    /// The attribute tuple of each seeded verification, by account, for the
+    /// name mask (ADR-033 record of lane L31). The production vault opens
+    /// the sealed tuple of the keystore instead.
+    tuples: Mutex<std::collections::BTreeMap<u128, Vec<u8>>>,
 }
 
 impl Shared {
@@ -135,6 +139,61 @@ impl Shared {
         }
         held.vault = next;
         Ok(out)
+    }
+
+    /// The name mask over the seeded tuples (M7 Q4, ADR-033 record of lane
+    /// L31). A tuple of `fstp_vault::codec::TUPLE_LABEL` gives its names and
+    /// date of birth. Any other seeded tuple, such as a test's bare string,
+    /// gives none: the reading of this double.
+    fn mask(&self, accounts: &[fstp_vault_proto::WireAccount], texts: &[String]) -> Answer {
+        let tuples = self.tuples.lock().unwrap_or_else(PoisonError::into_inner);
+        let people: Vec<fstp_vault_core::mask::MaskPerson> = accounts
+            .iter()
+            .map(|a| {
+                match tuples
+                    .get(&a.0)
+                    .and_then(|t| fstp_vault::codec::parse_identity_tuple(t))
+                {
+                    Some(id) => fstp_vault_core::mask::MaskPerson::new(
+                        &id.family_names,
+                        &id.given_names,
+                        Some(&id.birth_date),
+                    ),
+                    None => fstp_vault_core::mask::MaskPerson::new("", "", None),
+                }
+            })
+            .collect();
+        drop(tuples);
+        let masks = texts
+            .iter()
+            .map(|t| {
+                fstp_vault_core::mask::mask_spans(t, &people)
+                    .into_iter()
+                    .map(|s| fstp_vault_proto::WireSpan {
+                        start: s.start,
+                        end: s.end,
+                        person: s.person,
+                        class: match s.class {
+                            fstp_vault_core::mask::MaskClass::Name => {
+                                fstp_vault_proto::WireMaskClass::Name
+                            }
+                            fstp_vault_core::mask::MaskClass::BirthDate => {
+                                fstp_vault_proto::WireMaskClass::BirthDate
+                            }
+                        },
+                    })
+                    .collect()
+            })
+            .collect();
+        let reply = fstp_vault_proto::VaultResponse::Masks(masks);
+        match fstp_vault_proto::encode_response(&reply) {
+            Ok(body) => Answer {
+                status: 200,
+                headers: vec![("content-type", "application/json".to_owned())],
+                body,
+            },
+            Err(_) => unavailable(),
+        }
     }
 
     fn log(&self) -> MutexGuard<'_, SeedLog> {
@@ -182,6 +241,11 @@ impl fstp_http::Handler for Internal {
             return fstp_http::Response::new(fstp_http::StatusCode::FORBIDDEN);
         }
         let body = req.body;
+        if let Ok(fstp_vault_proto::VaultRequest::Mask { accounts, texts }) =
+            fstp_vault_proto::decode_request(&body)
+        {
+            return response(self.0.mask(&accounts, &texts));
+        }
         let a = self
             .0
             .run(|v, now| Answer {
@@ -314,6 +378,7 @@ impl SeededVault {
             match_key: fstp_crypto::random_array::<32>()
                 .map_err(|_| VaultError::Unavailable("randomness"))?,
             pages,
+            tuples: Mutex::new(std::collections::BTreeMap::new()),
         });
         let loopback = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
         let internal = fstp_http::Server::new(
@@ -410,6 +475,11 @@ impl SeededVault {
         use fstp_vault_core::fact::{Check, DocumentType, VerificationMethod, VerificationRecord};
         use fstp_vault_proto::WireAccount;
         let mk = fstp_vault::match_key(&self.shared.match_key, attributes);
+        self.shared
+            .tuples
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(account, attributes.to_vec());
         let (events, at) = self
             .shared
             .run(|v, now| {

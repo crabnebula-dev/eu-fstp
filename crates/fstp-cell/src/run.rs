@@ -106,6 +106,16 @@ impl<R: Runtime> crate::engine::VaultClient for SharedVault<R> {
     {
         self.0.ack(epoch, seq, link)
     }
+
+    fn mask(
+        &self,
+        team: &[fstp_domain::id::AccountId],
+        texts: &[String],
+    ) -> impl std::future::Future<
+        Output = Result<Vec<Vec<fstp_vault_proto::WireSpan>>, fstp_cell_core::driver::VaultFault>,
+    > + Send {
+        self.0.mask_texts(team, texts)
+    }
 }
 
 /// The login of `role` on the cell database, with its client certificate,

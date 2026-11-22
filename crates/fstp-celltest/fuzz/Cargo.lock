@@ -893,6 +893,7 @@ dependencies = [
  "fstp-crypto",
  "fstp-json",
  "fstp-money",
+ "fstp-unorm",
  "fstp-vault-proto",
 ]
 

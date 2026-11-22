@@ -20,9 +20,9 @@
 //!
 //! Interim readings, pending Daniel (ADR-033 "Known gaps"):
 //!
-//! - Names are not stripped: the vault mask query (M7 Q4) is not built,
-//!   so the name mask finds none. Emails, phone numbers and IBAN-shaped
-//!   strings are stripped.
+//! - The cell strips emails, phone numbers and IBAN-shaped strings, then
+//!   the vault masks the team's verified names and dates of birth (M7 Q4,
+//!   ADR-033 record of lane L31).
 //! - The evidence text references are derived from the proposal, the
 //!   section and the section's digest, as the e2e cell derives them.
 //! - The model reports no confidence, so each finding carries 0 permille,
@@ -71,13 +71,33 @@ const CLIENT_STAGES: [Stage; 4] = [
     Stage::Integrity,
 ];
 
-/// The name mask of the client path: none, until the vault mask query of
-/// M7 Q4 exists (module documentation).
-struct NoNames;
+/// The name mask of the client path: the vault's (M7 Q4, ADR-033 record of
+/// lane L31), over the proposal's team from the cell's own bindings. A
+/// vault that cannot mask stops the input, so no text leaves the cell.
+struct VaultMask<'a, P: Seams> {
+    ports: &'a P,
+    team: Vec<AccountId>,
+}
 
-impl NameMask for NoNames {
-    async fn names(&self, _: ProposalId, _: &str) -> Result<Vec<NameSpan>, MaskUnavailable> {
-        Ok(Vec::new())
+impl<P: Seams> NameMask for VaultMask<'_, P> {
+    async fn names(&self, _: ProposalId, text: &str) -> Result<Vec<NameSpan>, MaskUnavailable> {
+        let spans = super::mask_spans(self.ports, &self.team, &[text.to_owned()])
+            .await
+            .map_err(|()| MaskUnavailable)?;
+        let spans = spans.into_iter().next().ok_or(MaskUnavailable)?;
+        Ok(spans
+            .into_iter()
+            .map(|s| NameSpan {
+                start: s.start as usize,
+                end: s.end as usize,
+                person: s.person,
+                class: if s.birth_date {
+                    fstp_assess::PiiClass::BirthDate
+                } else {
+                    fstp_assess::PiiClass::Person
+                },
+            })
+            .collect())
     }
 }
 
@@ -269,7 +289,11 @@ async fn input_of<P: Seams>(
             .collect(),
         handles: Vec::new(),
     };
-    let prepared = fstp_assess::prepare(&NoNames, &job)
+    let mask = VaultMask {
+        ports: call.ports,
+        team: super::team_of(&call.state, p),
+    };
+    let prepared = fstp_assess::prepare(&mask, &job)
         .await
         .map_err(|_| call.refuse(ApiError::refused(ErrorCode::Unavailable, "content")))?;
     let parts: Vec<PartRow> = prepared

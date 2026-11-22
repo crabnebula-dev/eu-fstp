@@ -56,6 +56,9 @@ fstp-assess.workspace = true
 fstp-assessor.workspace = true
 fstp-findings.workspace = true
 fstp-infer = { workspace = true, features = ["http"] }
+# M7 Q4 (ADR-033 record of lane L31): the synthetic vault masks names as
+# the vault does.
+fstp-vault-core.workspace = true
 fstp-injscan.workspace = true
 
 

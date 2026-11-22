@@ -170,6 +170,18 @@ pub trait VaultClient: Send + Sync + 'static {
         seq: Seq,
         link: Link,
     ) -> impl Future<Output = Result<(), VaultFault>> + Send;
+
+    /// The name mask (M7 Q4, ADR-033 record of lane L31): for each of
+    /// `texts`, the spans that hold a verified name or date of birth of one
+    /// of `team`, ascending. The default fails closed.
+    fn mask(
+        &self,
+        team: &[fstp_domain::id::AccountId],
+        texts: &[String],
+    ) -> impl Future<Output = Result<Vec<Vec<fstp_vault_proto::WireSpan>>, VaultFault>> + Send {
+        let _ = (team, texts);
+        std::future::ready(Err(VaultFault::Unavailable))
+    }
 }
 
 /// One append the driver asks for (design section 5.3).
