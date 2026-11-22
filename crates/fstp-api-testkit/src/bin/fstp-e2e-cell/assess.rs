@@ -9,6 +9,12 @@
 //! recording all run offline. No real model is called. A `live:` value is
 //! refused: the demo never calls a model API (Q1, Q2).
 //!
+//! ADR-033: `--assessor client` (or `client:<model>`) puts no assessor in
+//! the cell. The programme's P-21 names the FSTP coordinator's connected
+//! agent, and the coordinator runs the assessment through MCP with the
+//! plugin's `run-assessment` skill. A call on that path is never assessed
+//! at submission, so its findings come from one path (I-11).
+//!
 //! When a seed submits a proposal, [`on_submit`] assesses it at once:
 //! stages 1 and 2 in the cell, one job line to the child, intake of the
 //! result line, and one `FindingCommand::Record` per finding under a
@@ -47,6 +53,10 @@ pub(crate) enum Mode {
     Synthetic,
     /// Saved responses only, from this directory.
     Replay(PathBuf),
+    /// ADR-033: no assessor in the cell. The programme's P-21 names the
+    /// FSTP coordinator's connected agent with this model, and the
+    /// coordinator runs the assessment through MCP.
+    Client(String),
 }
 
 impl Mode {
@@ -57,6 +67,17 @@ impl Mode {
         }
         if let Some(dir) = s.strip_prefix("replay:").filter(|d| !d.is_empty()) {
             return Ok(Mode::Replay(PathBuf::from(dir)));
+        }
+        // ADR-033: `client` pins the suggested model of ADR-019, and
+        // `client:<model>` the model the coordinator's agent runs.
+        if s == "client" {
+            return Ok(Mode::Client(CLIENT_MODEL.to_owned()));
+        }
+        if let Some(m) = s
+            .strip_prefix("client:")
+            .filter(|m| fstp_findings::codec::model_name_ok(m))
+        {
+            return Ok(Mode::Client(m.to_owned()));
         }
         if s.starts_with("live:") {
             return Err(
@@ -75,9 +96,35 @@ pub(crate) fn set_mode(m: Mode) {
     let _ = MODE.set(m);
 }
 
+/// The model the coordinator's agent runs under `--assessor client`: the
+/// suggested model of ADR-019.
+const CLIENT_MODEL: &str = "claude-opus-5-5";
+
+thread_local! {
+    /// A test's own mode, for the scenes it builds on its thread.
+    static TEST_MODE: std::cell::RefCell<Option<Mode>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Sets the mode of the calling thread's scenes, for a test only.
+#[cfg(test)]
+pub(crate) fn set_test_mode(m: Option<Mode>) {
+    TEST_MODE.with(|t| *t.borrow_mut() = m);
+}
+
 /// The mode, synthetic unless `--assessor` said otherwise.
 pub(crate) fn mode() -> Mode {
-    MODE.get().cloned().unwrap_or(Mode::Synthetic)
+    TEST_MODE
+        .with(|t| t.borrow().clone())
+        .or_else(|| MODE.get().cloned())
+        .unwrap_or(Mode::Synthetic)
+}
+
+/// The model of the coordinator's agent under ADR-033, or `None`.
+pub(crate) fn client_model() -> Option<String> {
+    match mode() {
+        Mode::Client(m) => Some(m),
+        Mode::Synthetic | Mode::Replay(_) => None,
+    }
 }
 
 /// The child link of the mode: the `fstp-assessor` binary beside this
@@ -89,7 +136,7 @@ pub(crate) fn link() -> Link {
         .and_then(|p| p.parent().map(|d| d.join("fstp-assessor")))
         .unwrap_or_else(|| PathBuf::from("fstp-assessor-not-found"));
     let inference = match mode() {
-        Mode::Synthetic => "synthetic".to_owned(),
+        Mode::Synthetic | Mode::Client(_) => "synthetic".to_owned(),
         Mode::Replay(dir) => format!("replay:{}", dir.display()),
     };
     Link::Child {
@@ -105,7 +152,7 @@ pub(crate) fn endpoint() -> fstp_api_core::port::InferenceEndpoint {
     fstp_api_core::port::InferenceEndpoint {
         provider: match mode() {
             Mode::Synthetic => fstp_api_core::port::InferenceProvider::Synthetic,
-            Mode::Replay(_) => fstp_api_core::port::InferenceProvider::Anthropic,
+            Mode::Replay(_) | Mode::Client(_) => fstp_api_core::port::InferenceProvider::Anthropic,
         },
         url: None,
         max_tokens: 2048,
@@ -207,6 +254,11 @@ pub(crate) async fn assess(
         return Err("the call has no assessor pin".to_owned());
     };
     let values = frozen.values();
+    // ADR-033: a call on the coordinator's client path has no assessor in
+    // the cell, so its findings come from one path only (I-11).
+    if fstp_findings::client_run(&values.p21) {
+        return Ok(Assessed::Pending);
+    }
     let criteria = values.p01.items().iter().map(|c| c.id).collect();
     let Ok(model) = ModelName::new(&values.p21.primary.0) else {
         return Ok(Assessed::Pending);

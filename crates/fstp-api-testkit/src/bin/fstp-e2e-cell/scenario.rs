@@ -542,7 +542,24 @@ async fn supersafe(seed: &mut Seeder<'_>) -> Result<fstp_domain::policy::PolicyV
             .ok_or("a P-09 criterion has no wording")?;
         k.text = seed.public_text(&text).await?;
     }
+    // ADR-033: under `--assessor client` the programme names the
+    // coordinator's connected agent as its P-21 provider.
+    if let Some(model) = crate::assess::client_model() {
+        let token = fstp_json::Value::from(fstp_findings::CLIENT_PROVIDER);
+        policy.frozen.p21 = fstp_domain::policy::InferenceBinding {
+            provider: fstp_domain::policy::OpaqueValue::from_value(&token)
+                .map_err(|_| "the client provider token")?,
+            primary: ModelRef(model),
+            fallbacks: Vec::new(),
+        };
+    }
     Ok(policy)
+}
+
+/// The P-21 primary model of the scenes: the client's model under
+/// `--assessor client` (ADR-033), else [`PRIMARY_MODEL`].
+pub(crate) fn primary_model() -> String {
+    crate::assess::client_model().unwrap_or_else(|| PRIMARY_MODEL.to_owned())
 }
 
 /// The vault of the review seeds: staff, personas and leads with their
@@ -739,7 +756,7 @@ fn publish(c: CallId) -> Core {
     Core::PublishCall {
         call: c,
         config: LlmConfigId::from_raw(1),
-        config_model: ModelRef(PRIMARY_MODEL.to_owned()),
+        config_model: ModelRef(primary_model()),
     }
 }
 
@@ -1194,7 +1211,7 @@ fn fresh_review(info: &SiteInfo) -> Result<FreshSeed, String> {
         canaries.push(mail);
         leads.push(s.lead);
     }
-    let inner = Inner::new(info, &world, auth, PRIMARY_MODEL)?;
+    let inner = Inner::new(info, &world, auth, &primary_model())?;
     for p in &PERSONAS {
         inner.ports.accounts.name(p.account, p.label);
     }
