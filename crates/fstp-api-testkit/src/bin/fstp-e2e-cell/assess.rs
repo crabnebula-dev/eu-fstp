@@ -105,6 +105,23 @@ thread_local! {
     static TEST_MODE: std::cell::RefCell<Option<Mode>> = const { std::cell::RefCell::new(None) };
 }
 
+thread_local! {
+    /// ADR-035: whether a test's scenes open P-75, so a reviewer's or
+    /// coordinator's agent reads content through MCP.
+    static TEST_P75: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Opens P-75 in the calling thread's scenes, for a test only.
+#[cfg(test)]
+pub(crate) fn set_test_p75(on: bool) {
+    TEST_P75.with(|t| t.set(on));
+}
+
+/// Whether the calling thread's scenes open P-75 (tests only).
+pub(crate) fn test_p75() -> bool {
+    TEST_P75.with(std::cell::Cell::get)
+}
+
 /// Sets the mode of the calling thread's scenes, for a test only.
 #[cfg(test)]
 pub(crate) fn set_test_mode(m: Option<Mode>) {
@@ -257,6 +274,11 @@ pub(crate) async fn assess(
     // ADR-033: a call on the coordinator's client path has no assessor in
     // the cell, so its findings come from one path only (I-11).
     if fstp_findings::client_run(&values.p21) {
+        return Ok(Assessed::Pending);
+    }
+    // ADR-035: a proposal the injection scan flagged at submission waits
+    // for the coordinator's release. Then "Re-run assessment" runs it.
+    if state.findings.held(proposal) {
         return Ok(Assessed::Pending);
     }
     let criteria = values.p01.items().iter().map(|c| c.id).collect();
@@ -470,6 +492,9 @@ mod tests {
             fstp_rt::future::block_on(crate::scenario::build_review(&info(), stage)).unwrap();
         let call = CallId::from_raw(1);
         let w = ProposalId::from_raw(1003);
+        // ADR-035: w's injection holds it until the coordinator's release.
+        assert!(inner.ports.engine.state().findings.held(w));
+        release(&inner, 1003);
         let before = inner.ports.engine.state().findings.findings_of(call).len();
         let n = corpus_narrative("w").unwrap();
         let done = fstp_rt::future::block_on(assess(
@@ -537,6 +562,17 @@ mod tests {
             Ok(_) => Err("not done".to_owned()),
             Err(e) => Err(fstp_json::ToJson::to_json(&e).to_compact()),
         }
+    }
+
+    /// The coordinator releases the integrity hold of `p` (ADR-035).
+    fn release(inner: &Inner, p: u128) {
+        api(
+            inner,
+            fstp_domain_testkit::r#gen::review::COORDINATOR,
+            fstp_api_core::decode::Method::Post,
+            &format!("/proposals/{p}/integrity-release"),
+        )
+        .unwrap();
     }
 
     fn rerun(inner: &Inner, who: fstp_domain::id::AccountId, p: u128) -> Result<Value, String> {
@@ -648,6 +684,7 @@ mod tests {
         inner.ports.precheck.set_link(Link::InProcess);
         let call = CallId::from_raw(1);
         let w = ProposalId::from_raw(1003);
+        release(&inner, 1003);
         let now = Timestamp::from_micros(inner.ports.clock.now().micros().saturating_add(500_000));
         let dropped = vec![RefusedStage {
             stage: AssessStage::Quality,

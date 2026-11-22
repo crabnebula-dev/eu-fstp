@@ -542,6 +542,10 @@ async fn supersafe(seed: &mut Seeder<'_>) -> Result<fstp_domain::policy::PolicyV
             .ok_or("a P-09 criterion has no wording")?;
         k.text = seed.public_text(&text).await?;
     }
+    // ADR-035: a test that reads content through MCP opens P-75.
+    if crate::assess::test_p75() {
+        policy.frozen.p75 = fstp_domain::policy::AgentContentAccess::On;
+    }
     // ADR-033: under `--assessor client` the programme names the
     // coordinator's connected agent as its P-21 provider.
     if let Some(model) = crate::assess::client_model() {

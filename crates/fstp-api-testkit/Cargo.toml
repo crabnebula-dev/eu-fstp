@@ -56,6 +56,7 @@ fstp-assess.workspace = true
 fstp-assessor.workspace = true
 fstp-findings.workspace = true
 fstp-infer.workspace = true
+fstp-injscan.workspace = true
 
 
 [lints]

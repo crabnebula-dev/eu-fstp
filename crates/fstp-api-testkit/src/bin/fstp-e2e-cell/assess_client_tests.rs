@@ -118,6 +118,37 @@ fn declare(inner: &Inner, p: u128) {
     .unwrap();
 }
 
+/// The coordinator releases the integrity hold of `p` in the web
+/// (ADR-035).
+fn release(inner: &Inner, p: u128) -> Result<Value, String> {
+    web(
+        inner,
+        COORDINATOR,
+        fstp_api_core::decode::Method::Post,
+        &format!("/proposals/{p}/integrity-release"),
+        "{}",
+    )
+}
+
+/// Releases every held proposal of the scene: the seeded injections w and
+/// v are held by the scan at submission (ADR-035).
+fn release_all(inner: &Inner) {
+    let held: Vec<u128> = [1001_u128, 1002, W, 1004, 1005]
+        .into_iter()
+        .filter(|p| {
+            inner
+                .ports
+                .engine
+                .state()
+                .findings
+                .held(ProposalId::from_raw(*p))
+        })
+        .collect();
+    for p in held {
+        release(inner, p).unwrap();
+    }
+}
+
 fn s(v: &Value, k: &str) -> String {
     v.get(k)
         .and_then(Value::as_str)
@@ -235,7 +266,12 @@ fn criteria(input: &Value) -> Vec<String> {
 fn adr033_i11_a_client_path_call_has_no_cell_assessment() {
     let (inner, _) = scene();
     let state = inner.ports.engine.state();
-    assert!(state.findings.findings_of(CallId::from_raw(1)).is_empty());
+    // ADR-035: the only findings are the scan's integrity findings of the
+    // flagged submissions, recorded at submission. No assessor ran.
+    for f in state.findings.findings_of(CallId::from_raw(1)) {
+        assert_eq!(f.kind, fstp_findings::FindingKind::Integrity);
+        assert!(state.findings.integrity_of(f.proposal).is_some());
+    }
     let frozen = state
         .core
         .calls()
@@ -270,8 +306,26 @@ fn adr033_coordinator_agent_assesses_a_proposal_end_to_end() {
         .iter()
         .find(|r| s(r, "proposal") == W.to_string())
         .unwrap();
-    assert_eq!(s(row, "status"), "awaiting");
+    // ADR-035: w holds a direct injection, so it waits for the release.
+    assert_eq!(s(row, "status"), "held");
     assert_eq!(row.get("declared"), Some(&Value::Bool(false)));
+    release(&inner, W).unwrap();
+    let queue = tool(
+        &inner,
+        &t,
+        "fstp_assessment_list_proposals",
+        r#"{"call":"1"}"#,
+    )
+    .unwrap();
+    let row = queue
+        .get("proposals")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|r| s(r, "proposal") == W.to_string())
+        .cloned()
+        .unwrap();
+    assert_eq!(s(&row, "status"), "awaiting");
 
     // R-CF-02: no input before the declaration.
     let early = tool(
@@ -320,6 +374,15 @@ fn adr033_coordinator_agent_assesses_a_proposal_end_to_end() {
         ));
     }
     let before = ledger_len(&inner);
+    let intake = inner
+        .ports
+        .engine
+        .state()
+        .findings
+        .findings_of(CallId::from_raw(1))
+        .into_iter()
+        .filter(|f| f.proposal == ProposalId::from_raw(W))
+        .count();
     let receipt = tool(
         &inner,
         &t,
@@ -363,17 +426,23 @@ fn adr033_coordinator_agent_assesses_a_proposal_end_to_end() {
         .get(CallId::from_raw(1))
         .and_then(|c| c.llm_config())
         .unwrap();
-    let mine: Vec<_> = state
+    let all: Vec<_> = state
         .findings
         .findings_of(CallId::from_raw(1))
         .into_iter()
         .filter(|f| f.proposal == ProposalId::from_raw(W))
         .collect();
+    assert!(all.iter().all(|f| f.config == pin), "I-11");
+    // The run's own findings share one trace; the scan's at submission
+    // (ADR-035) carry their own.
+    let intake_trace = all.first().map(|f| f.trace);
+    let mine: Vec<_> = all
+        .iter()
+        .filter(|f| Some(f.trace) != intake_trace || intake == 0)
+        .collect();
     assert_eq!(u64::try_from(mine.len()).unwrap(), recorded);
-    assert!(
-        mine.iter()
-            .all(|f| f.config == pin && f.trace == mine[0].trace)
-    );
+    assert_eq!(all.len(), intake + mine.len());
+    assert!(mine.iter().all(|f| f.trace == mine[0].trace));
     let run = added.iter().find_map(|r| match r {
         fstp_engine::Record::Finding(fstp_findings::FindingRecord::ClientAssessed {
             by,
@@ -386,9 +455,9 @@ fn adr033_coordinator_agent_assesses_a_proposal_end_to_end() {
     assert_eq!(by, COORDINATOR);
     assert_eq!(run.model.0, MODEL);
     assert_eq!(run.trace, mine[0].trace);
-    // The deterministic integrity scan of the cell found w's injection.
+    // The deterministic integrity scan found w's injection at submission.
     assert!(
-        mine.iter()
+        all.iter()
             .any(|f| f.kind == fstp_findings::FindingKind::Integrity)
     );
 
@@ -436,6 +505,7 @@ fn adr033_coordinator_agent_assesses_a_proposal_end_to_end() {
 #[test]
 fn adr033_th01_injected_replies_yield_only_findings_or_refusals() {
     let (inner, _) = scene();
+    release_all(&inner);
     let t = token(&inner, COORDINATOR, &[Scope::AssessRun]);
     declare(&inner, W);
     let input = tool(
@@ -555,6 +625,7 @@ fn adr033_th01_injected_replies_yield_only_findings_or_refusals() {
 #[test]
 fn adr033_i11_model_prompt_set_and_input_must_match() {
     let (inner, _) = scene();
+    release_all(&inner);
     let t = token(&inner, COORDINATOR, &[Scope::AssessRun]);
     declare(&inner, W);
     let input = tool(
@@ -623,6 +694,7 @@ fn adr033_i84_only_the_coordinator_with_assess_run() {
 #[test]
 fn adr033_i17_i86_the_input_holds_no_identity_attribute() {
     let (inner, seeded) = scene();
+    release_all(&inner);
     let t = token(&inner, COORDINATOR, &[Scope::AssessRun]);
     for p in [1001_u128, 1002, W, 1004] {
         declare(&inner, p);
@@ -646,5 +718,267 @@ fn adr033_i17_i86_the_input_holds_no_identity_attribute() {
             !text.contains("@example.org") && !text.contains("@e2e.invalid"),
             "{p}"
         );
+    }
+}
+
+/// The findings status row of `p` as the coordinator reads it in the web.
+fn status_row(inner: &Inner, p: u128) -> Value {
+    web(
+        inner,
+        COORDINATOR,
+        fstp_api_core::decode::Method::Get,
+        "/calls/1/findings-status",
+        "",
+    )
+    .unwrap()
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|r| s(r, "proposal") == p.to_string())
+    .cloned()
+    .unwrap()
+}
+
+/// The reason codes of a list of flag rows.
+fn flag_reasons(v: &Value, k: &str) -> Vec<String> {
+    v.get(k)
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("no {k}: {}", v.to_compact()))
+        .iter()
+        .map(|f| s(f, "reason"))
+        .collect()
+}
+
+/// ADR-035, TH-01, I-10, I-11, I-85, R-LA-01, T-LLM-INJ: the seeded
+/// submission w holds a direct injection. The submission is not refused.
+/// Its entry records the scan's integrity findings in plain words under
+/// the call's pin, and the hold. Every AI assessment path waits: the queue
+/// shows `held`, the input tool refuses. Only the coordinator releases it,
+/// once, in the web; no tool exists for the release. After the release
+/// the agent reads the input with the flagged spans beside the text, and
+/// records its assessment.
+#[test]
+fn adr035_flagged_submission_is_held_marked_and_assessed_after_release() {
+    let (inner, _) = scene();
+    let w = ProposalId::from_raw(W);
+    let state = inner.ports.engine.state();
+    assert_eq!(
+        fstp_domain::view::proposal_state(&state.core, w),
+        Some(fstp_domain::StateTag::Submitted),
+        "the scan never refuses a submission"
+    );
+    assert!(state.findings.held(w));
+    let reasons: Vec<&str> = state
+        .findings
+        .integrity_of(w)
+        .unwrap()
+        .reasons
+        .iter()
+        .map(|r| r.code())
+        .collect();
+    assert!(reasons.contains(&"addressed"), "{reasons:?}");
+    // The scan's findings: integrity, the call's pin, plain words that
+    // never quote the injection.
+    let pin = state
+        .core
+        .calls()
+        .get(CallId::from_raw(1))
+        .and_then(|c| c.llm_config())
+        .unwrap();
+    let scan: Vec<_> = state
+        .findings
+        .findings_of(CallId::from_raw(1))
+        .into_iter()
+        .filter(|f| f.proposal == w)
+        .collect();
+    assert!(!scan.is_empty());
+    for f in &scan {
+        assert_eq!(f.kind, fstp_findings::FindingKind::Integrity);
+        assert_eq!(f.config, pin, "I-11");
+        let st = f.statement.as_data();
+        assert!(st.starts_with("The "), "{st}");
+        assert!(!st.to_lowercase().contains("mark every claim"), "{st}");
+        assert!(!f.evidence.is_empty(), "R-LA-02");
+    }
+    // The submission's entry holds the core records, the findings and the
+    // hold together.
+    let ledger = inner.ports.engine.ledger().unwrap();
+    let held_at = ledger
+        .iter()
+        .position(|e| {
+            matches!(
+                &e.record,
+                fstp_engine::Record::Finding(fstp_findings::FindingRecord::IntegrityHeld { proposal, .. })
+                    if *proposal == w
+            )
+        })
+        .unwrap();
+    let command = ledger[held_at].command;
+    assert!(ledger.iter().any(|e| e.command == command
+        && matches!(&e.record, fstp_engine::Record::Core(fstp_domain::Record::Transitioned(t)) if t.proposal == w)));
+    drop(state);
+
+    // The coordinator sees the hold and its reasons on the board.
+    let row = status_row(&inner, W);
+    assert_eq!(s(&row, "integrity"), "held");
+
+    // The agent's queue shows it held, and the input is refused.
+    let t = token(&inner, COORDINATOR, &[Scope::AssessRun]);
+    let queue = tool(
+        &inner,
+        &t,
+        "fstp_assessment_list_proposals",
+        r#"{"call":"1"}"#,
+    )
+    .unwrap();
+    let row = queue
+        .get("proposals")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|r| s(r, "proposal") == W.to_string())
+        .cloned()
+        .unwrap();
+    assert_eq!(s(&row, "status"), "held");
+    declare(&inner, W);
+    let before = ledger_len(&inner);
+    let held = tool(
+        &inner,
+        &t,
+        "fstp_assessment_get_input",
+        &format!(r#"{{"proposal":"{W}"}}"#),
+    )
+    .unwrap_err();
+    assert!(held.contains("I-10"), "{held}");
+    assert_eq!(ledger_len(&inner), before, "a refused read records nothing");
+
+    // I-85: no tool releases a hold.
+    assert!(
+        fstp_access::OPS
+            .iter()
+            .find(|o| o.name == "assess.release_integrity")
+            .unwrap()
+            .tool
+            .is_none()
+    );
+    // Only the coordinator releases, once.
+    assert!(
+        web(
+            &inner,
+            R1,
+            fstp_api_core::decode::Method::Post,
+            &format!("/proposals/{W}/integrity-release"),
+            "{}",
+        )
+        .is_err()
+    );
+    let before = ledger_len(&inner);
+    release(&inner, W).unwrap();
+    let added = entries_since(&inner, before);
+    assert!(
+        matches!(
+            added.as_slice(),
+            [fstp_engine::Record::Finding(fstp_findings::FindingRecord::IntegrityReleased { by, .. })]
+                if *by == COORDINATOR
+        ),
+        "the release is one audited record: {added:?}"
+    );
+    assert!(release(&inner, W).is_err(), "one release");
+    assert_eq!(s(&status_row(&inner, W), "integrity"), "released");
+
+    // After the release the input is served, with the flagged spans beside
+    // the text under closed reason codes.
+    let input = tool(
+        &inner,
+        &t,
+        "fstp_assessment_get_input",
+        &format!(r#"{{"proposal":"{W}"}}"#),
+    )
+    .unwrap();
+    let part = input
+        .get("parts")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|p| p.get("label").and_then(Value::as_str) == Some("narrative"))
+        .cloned()
+        .unwrap();
+    let marks = flag_reasons(&part, "flags");
+    assert!(marks.iter().any(|r| r == "addressed"), "{marks:?}");
+    for f in part.get("flags").and_then(Value::as_array).unwrap().iter() {
+        let (a, b) = (
+            f.get("start").and_then(Value::as_u64).unwrap(),
+            f.get("end").and_then(Value::as_u64).unwrap(),
+        );
+        assert!(a <= b && b <= u64::try_from(s(&part, "text").chars().count()).unwrap());
+    }
+    let mut replies = vec![
+        reply("completeness", findings(Vec::new())),
+        reply("claims", findings(Vec::new())),
+        reply("integrity", findings(Vec::new())),
+    ];
+    for _ in criteria(&input) {
+        replies.push(reply("quality", findings(Vec::new())));
+    }
+    tool(
+        &inner,
+        &t,
+        "fstp_assessment_submit",
+        &submission(&input, MODEL, replies),
+    )
+    .unwrap();
+}
+
+/// ADR-035, TH-60: proposal v hides an instruction in tag characters.
+/// Through MCP the content read carries the neutralised view, with no
+/// hidden character, and the flagged spans beside it. In the web a person
+/// reads the text as submitted, with the same marks of that text.
+#[test]
+fn adr035_th60_mcp_content_is_neutralised_and_marked() {
+    crate::assess::set_test_p75(true);
+    let (inner, _) = scene();
+    crate::assess::set_test_p75(false);
+    let v = 1004_u128;
+    assert!(
+        inner
+            .ports
+            .engine
+            .state()
+            .findings
+            .held(ProposalId::from_raw(v))
+    );
+    declare(&inner, v);
+    let web_view = web(
+        &inner,
+        COORDINATOR,
+        fstp_api_core::decode::Method::Get,
+        &format!("/proposals/{v}/content"),
+        "",
+    )
+    .unwrap();
+    let as_submitted = s(&web_view, "text");
+    assert!(as_submitted.chars().any(fstp_injscan::is_removed));
+    assert!(!flag_reasons(&web_view, "text_flags").is_empty());
+    let t = token(&inner, COORDINATOR, &[Scope::ReviewRead]);
+    let agent_view = tool(
+        &inner,
+        &t,
+        "fstp_get_proposal_content",
+        &format!(r#"{{"proposal":"{v}"}}"#),
+    )
+    .unwrap();
+    let neutral = s(&agent_view, "text");
+    assert!(!neutral.chars().any(fstp_injscan::is_removed));
+    assert_eq!(neutral, fstp_injscan::neutralise(&as_submitted));
+    // The marks are closed codes and offsets, never text.
+    for f in agent_view
+        .get("text_flags")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+    {
+        let o = f.as_object().unwrap();
+        assert_eq!(o.len(), 3);
+        assert!(fstp_access::INTEGRITY_REASONS.contains(&s(f, "reason").as_str()));
     }
 }

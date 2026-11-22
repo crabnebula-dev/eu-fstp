@@ -232,6 +232,7 @@ dependencies = [
  "fstp-http",
  "fstp-import",
  "fstp-infer",
+ "fstp-injscan",
  "fstp-json",
  "fstp-ledger",
  "fstp-mail",

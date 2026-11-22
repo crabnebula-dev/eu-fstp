@@ -148,7 +148,9 @@ impl Reason {
             Reason::RoleMarker => "chat role markers aimed at an AI system",
             Reason::Override => "an instruction to ignore or replace earlier instructions",
             Reason::Addressed => "text addressed to an AI reader",
-            Reason::ScoreRequest => "a request to set a score or the findings",
+            Reason::ScoreRequest => {
+                "a request to set the outcome or the findings of the assessment"
+            }
             Reason::ToolCall => "a request to call a tool, or a tool call",
             Reason::SchemaPayload => "a structured payload shaped like assessment output",
             Reason::ExfilLink => "a link that could carry data out",

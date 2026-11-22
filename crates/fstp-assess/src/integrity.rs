@@ -107,6 +107,10 @@ mod tests {
             let s = integrity_statement(DataLabel::Narrative, r);
             assert!(s.starts_with("The narrative holds "));
             assert!(s.len() < 200);
+            // Stage 8 and the assessor's intake refuse a score-like
+            // statement, so the platform's own must never read as one.
+            assert!(!crate::validate::score_like(&s), "{s}");
+            assert!(s.len() <= crate::validate::MAX_STATEMENT_BYTES);
         }
     }
 }
