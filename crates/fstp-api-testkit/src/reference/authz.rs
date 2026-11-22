@@ -1673,6 +1673,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("proposal.add_member", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.add_guardian", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.state_country", T::Proposal, R::Lead),
+    // ADR-032 (Daniel, 2026-11-22): web only, the lead claims an
+    // anonymous draft into its own draft.
+    RefOp::act("proposal.claim_draft", T::Proposal, R::Lead),
     RefOp::act("proposal.declare_affiliations", T::Proposal, R::Lead),
     RefOp::act("proposal.state_birth_date", T::Proposal, R::Lead),
     RefOp::act("proposal.submit", T::Proposal, R::Lead)

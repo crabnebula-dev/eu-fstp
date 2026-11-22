@@ -152,6 +152,7 @@ export type OpName =
   | "proposal.view"
   | "proposal.get_workspace"
   | "proposal.save_workspace"
+  | "proposal.claim_draft"
   | "proposal.precheck"
   | "proposal.precheck_runs"
   | "proposal.record_plan"
@@ -407,6 +408,7 @@ export interface OpParams {
   readonly "proposal.view": { readonly "proposal": string };
   readonly "proposal.get_workspace": { readonly "proposal": string };
   readonly "proposal.save_workspace": { readonly "proposal": string };
+  readonly "proposal.claim_draft": { readonly "proposal": string };
   readonly "proposal.precheck": { readonly "proposal": string };
   readonly "proposal.precheck_runs": { readonly "proposal": string };
   readonly "proposal.record_plan": { readonly "proposal": string };
@@ -635,6 +637,7 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.view",
   "proposal.get_workspace",
   "proposal.save_workspace",
+  "proposal.claim_draft",
   "proposal.precheck",
   "proposal.precheck_runs",
   "proposal.record_plan",
@@ -2123,6 +2126,20 @@ export const OPERATIONS: readonly Operation[] = [
     session: "any",
     classification: "confidential",
     tool: { name: "fstp_save_workspace", scope: "proposals:draft", prepareOnly: false },
+  },
+  {
+    name: "proposal.claim_draft",
+    method: "POST",
+    path: "/proposals/{proposal}/claim",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "claim" }],
+    params: ["proposal"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
   },
   {
     name: "proposal.precheck",
@@ -5831,6 +5848,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/calls", need: { kind: "reads", reads: ["calls.list_open"] }, values: {}, listed: null },
   { pattern: "/app/calls/{call}", need: { kind: "reads", reads: ["calls.get"] }, values: {}, listed: null },
   { pattern: "/app/calls/{call}/guide", need: { kind: "reads", reads: ["calls.guide"] }, values: {}, listed: null },
+  { pattern: "/app/calls/{call}/claim", need: { kind: "account" }, values: {}, listed: null },
   { pattern: "/app/proposals", need: { kind: "reads", reads: ["proposal.list_own"] }, values: {}, listed: null },
   { pattern: "/app/proposals/{proposal}", need: { kind: "reads", reads: ["proposal.view"] }, values: {}, listed: null },
   { pattern: "/app/proposals/{proposal}/workspace", need: { kind: "reads", reads: ["proposal.get_workspace"] }, values: {}, listed: null },

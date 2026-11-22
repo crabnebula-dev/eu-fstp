@@ -856,10 +856,11 @@ pub(crate) async fn invitation_register<B: Backend>(ctx: &Ctx<B>, req: &Request)
 //    becomes the login email through the keyed index (lane
 //    m3/login-m2http). It opens a passkey session for the new account.
 //
-// Interim, pending Daniel (ADR-008 open point "Self-registration without
-// a passkey"): the passkey members are optional at the API, so it neither
-// requires nor excludes a passkey. A body with the token alone still
-// fails closed with 501 until Daniel answers that point.
+// Decided by Daniel on 2026-11-22, "Email only, passkey optional"
+// (ADR-032, ADR-008): the passkey members are optional. A body with the
+// token alone creates the account with no passkey where the tenant offers
+// magic links, and opens a magic-link session (`signup_email_only`).
+// I-77 is unchanged: such an account holds Receiving roles only.
 
 /// The one reply of `POST /auth/signup/options {email}`.
 fn signup_sent() -> Reply {
@@ -994,7 +995,7 @@ fn decode_signup(bytes: &[u8]) -> Result<SignupBody, BodyRefusal> {
 /// first passkey, and opens a passkey session.
 ///
 /// In order: the body decodes (400). Without passkey members the route
-/// fails closed with 501 (section comment above). The challenge is a
+/// registers by email only (`signup_email_only`). The challenge is a
 /// signup challenge bound to the token's digest, and the route takes it
 /// once (401, the same reply for every cause). The registration must
 /// answer it on the cell origin for the cell's relying party (401). Only
@@ -1009,7 +1010,7 @@ pub(crate) async fn signup<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
         Err(r) => return bad_body(r),
     };
     let Some(reg) = b.registration else {
-        return Reply::not_built();
+        return signup_email_only(ctx, b.token).await;
     };
     let digest = fstp_crypto::sha256(&b.token);
     let bound = |row: &ChallengeRow| {
@@ -1082,6 +1083,68 @@ pub(crate) async fn signup<B: Backend>(ctx: &Ctx<B>, req: &Request) -> Reply {
             // this one signs in by passkey only. Interim, pending Daniel.
             let _ = ctx.backend.bind_signup_email(proof.account).await;
             open_session(ctx, proof.account, Method::Passkey, Some(credential)).await
+        }
+    }
+}
+
+/// `POST /auth/signup {token}` with no passkey members (Daniel,
+/// 2026-11-22: "Email only, passkey optional", ADR-032, ADR-008): creates
+/// the Receiving account the email proof names, with no passkey, and opens
+/// a magic-link session. The account submits with it (R-LG-01,
+/// `authentication.md`: magic-link sessions draft and submit) and is
+/// offered a passkey later.
+///
+/// In order: the tenant must offer magic links (P-70), checked before the
+/// proof is spent, else 403 `passkey` under ADR-008, so the person can
+/// still finish with a passkey. Then the proof token is taken, once and
+/// within its lifetime (401). The gate admits `RegisterBySelfRegistration`
+/// only for a new account holding no role outside Receiving (I-77).
+async fn signup_email_only<B: Backend>(ctx: &Ctx<B>, token: [u8; 32]) -> Reply {
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let enabled = s.tenant().policy().enabled_methods(&ctx.cfg.enabled);
+    if !enabled.offers(Method::MagicLink) {
+        return Reply::refuse(StatusCode::FORBIDDEN, Some(Rule::Adr008), "passkey");
+    }
+    let digest = fstp_crypto::sha256(&token);
+    let proof = match ctx.backend.take_token(digest, TokenKind::SignupProof).await {
+        Err(f) => return unavailable(f),
+        Ok(None) => return login_refused(Rule::Adr008),
+        Ok(Some(p)) => p,
+    };
+    let now = ctx.backend.now();
+    if !fresh(
+        proof.issued_at,
+        now,
+        fstp_cell_core::lifetimes::SIGNUP_PROOF_US,
+    ) {
+        return login_refused(Rule::Adr008);
+    }
+    let command_id = match random::<16>() {
+        Ok(id) => id,
+        Err(r) => return r,
+    };
+    let admitted = match fstp_cell_core::gate::admit_email_registration(
+        &s,
+        proof.account,
+        &enabled,
+        command_id,
+        now,
+    ) {
+        Ok(a) => a,
+        Err(RouteDeny::Gate(d)) => return denied(d),
+        Err(_) => return login_refused(Rule::Adr008),
+    };
+    match ctx.backend.execute(admitted).await {
+        Err(f) => unavailable(f),
+        Ok(Err(e)) => exec_failed(&e),
+        Ok(Ok(_)) => {
+            // The proven address becomes the login email, so magic links
+            // reach the account (design section 4.2).
+            let _ = ctx.backend.bind_signup_email(proof.account).await;
+            open_session(ctx, proof.account, Method::MagicLink, None).await
         }
     }
 }

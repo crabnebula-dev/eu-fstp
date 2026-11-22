@@ -169,6 +169,8 @@ pub(crate) struct Ports<R: Runtime, V: VaultClient, T> {
     clock: tenant::CellClock<R, V>,
     ids: tenant::CellIds,
     tokens: Arc<T>,
+    /// The anonymous draft store of the route backend (ADR-032).
+    anon: Option<Arc<dyn fstp_api_core::anon::AnonymousDrafts>>,
 }
 
 /// Builds the cell's `ApiCore` over `parts`, with the token store
@@ -197,6 +199,7 @@ where
         host_status,
     } = parts;
     let facts = facts.unwrap_or_else(|| Arc::new(facts::BackendFacts(Arc::clone(&backend))));
+    let anon = crate::routes::Backend::anonymous_drafts(backend.as_ref());
     let inner = Arc::new(Inner {
         cell,
         audit: audit::Buffer::new(engine.clone()),
@@ -239,6 +242,7 @@ where
         clock: tenant::CellClock(Arc::clone(&inner)),
         ids: tenant::CellIds,
         tokens,
+        anon,
     };
     port::api_core(ports)
 }
@@ -334,6 +338,10 @@ where
     }
     fn tokens(&self) -> &Self::Tokens {
         &self.tokens
+    }
+    /// ADR-032: the claim reads the draft routes' own store.
+    fn anonymous_drafts(&self) -> Option<&dyn fstp_api_core::anon::AnonymousDrafts> {
+        self.anon.as_deref()
     }
     /// ADR-026: pending actions live in `api.pending_actions`.
     fn pending_actions(&self) -> Option<&dyn port::PendingActions> {

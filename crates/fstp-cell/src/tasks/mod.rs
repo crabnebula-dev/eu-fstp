@@ -12,6 +12,7 @@
 //! waits for one (I-39).
 
 pub mod dispatch;
+pub mod drafts;
 pub mod erasure;
 pub mod release;
 pub mod timeline;

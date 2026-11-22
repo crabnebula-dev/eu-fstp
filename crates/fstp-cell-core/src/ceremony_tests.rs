@@ -1169,3 +1169,144 @@ fn sod07_admin_invitation_needs_an_open_tenant_invitation() {
     let back = crate::decode_cell_command(&crate::encode_cell_command(&c)).unwrap();
     assert_eq!(back, c);
 }
+
+// ---------------------------------------------------------------------------
+// Email only, passkey optional (Daniel, 2026-11-22; ADR-032, ADR-008).
+// ---------------------------------------------------------------------------
+
+/// The applicant of the email-only registration tests.
+const APPLICANT: AccountId = AccountId::from_raw(0xAB01);
+
+fn methods(magic: bool) -> fstp_auth::EnabledMethods {
+    fstp_auth::EnabledMethods {
+        methods: if magic {
+            vec![Method::Passkey, Method::MagicLink]
+        } else {
+            vec![Method::Passkey]
+        },
+    }
+}
+
+/// Admits and decides the email-only registration of `APPLICANT`.
+fn register_email_only(
+    s: &CellState,
+    enabled: &fstp_auth::EnabledMethods,
+    at: Timestamp,
+) -> Result<Vec<CellRecord>, String> {
+    let admitted = gate::admit_email_registration(s, APPLICANT, enabled, [0x88; 16], at)
+        .map_err(|e| format!("{e:?}"))?;
+    let Action::Command(c) = admitted.action() else {
+        return Err("not a command".to_owned());
+    };
+    crate::decide_with_inputs(
+        s,
+        c,
+        &crate::CellCtx {
+            actor: APPLICANT,
+            at: at.micros(),
+        },
+        [0x88; 16],
+        admitted.inputs(),
+        &Answers::new(),
+    )
+    .map_err(|e| format!("{e:?}"))
+}
+
+fn magic_session(account: AccountId) -> SessionView {
+    SessionView {
+        id: [0x4D; 16],
+        account,
+        method: Method::MagicLink,
+        started: NOW,
+        last_used: NOW,
+    }
+}
+
+fn policy() -> gate::LoginPolicy {
+    gate::LoginPolicy {
+        stepup_freshness_us: crate::tenant::P71_DEFAULT_US,
+    }
+}
+
+/// R-LG-01, ADR-032, ADR-008 (Daniel, 2026-11-22: "Email only, passkey
+/// optional"): with magic links on, the email proof alone creates the
+/// Receiving account. The one record is `AccountSelfRegistered`, no
+/// passkey is registered, the account is known from then on, it may get a
+/// magic link, and its magic-link session is admitted to work on its
+/// proposal (`authentication.md`: magic-link sessions draft and submit).
+/// The same account never registers twice.
+#[test]
+fn r_lg_01_adr032_email_only_registration_creates_a_magic_link_account() {
+    let batch = register_email_only(&state_of(&[]), &methods(true), NOW).unwrap();
+    assert_eq!(
+        batch,
+        vec![CellRecord::Auth(AuthRecord::AccountSelfRegistered {
+            account: APPLICANT
+        })]
+    );
+    let s = state_of(&[(NOW, [0x88; 16], batch)]);
+    assert!(s.auth().names_account(APPLICANT));
+    assert!(s.auth().self_registered_email_only(APPLICANT));
+    assert!(fstp_auth::ceremony::may_issue_magic_link(false, &methods(true)).is_ok());
+    let read = gate::admit(
+        &s,
+        &magic_session(APPLICANT),
+        Action::Read(gate::ReadAction::ReadContent),
+        None,
+        NOW,
+        &policy(),
+    );
+    assert!(read.is_ok(), "{read:?}");
+    assert!(register_email_only(&s, &methods(true), NOW).is_err());
+}
+
+/// ADR-032, ADR-008: where the tenant does not offer magic links (P-70),
+/// an account without a passkey could not sign in, so the email-only
+/// registration is refused before anything is decided.
+#[test]
+fn adr032_email_only_registration_needs_magic_links() {
+    let r =
+        gate::admit_email_registration(&state_of(&[]), APPLICANT, &methods(false), [1; 16], NOW);
+    assert!(matches!(r, Err(RouteDeny::MagicLinksDisabled)), "{r:?}");
+}
+
+/// I-77, ADR-032 (Daniel, 2026-11-22, I-77 unchanged): an account that
+/// registered by email only cannot act in an Operations role without a
+/// phishing-resistant method. Once it holds the tenant admin role, its
+/// magic-link session is refused, no magic link is issued to it, and a
+/// second email-only registration of it is refused. It must enrol a
+/// passkey first.
+#[test]
+fn i77_adr032_email_only_account_cannot_hold_a_management_role_weakly() {
+    let batch = register_email_only(&state_of(&[]), &methods(true), NOW).unwrap();
+    let granted = (
+        NOW,
+        [0x89; 16],
+        vec![CellRecord::Tenant(TenantRecord::TenantAdminGranted {
+            account: APPLICANT,
+        })],
+    );
+    let s = state_of(&[(NOW, [0x88; 16], batch), granted]);
+    let later = Timestamp::from_micros(NOW.micros() + 1);
+    let r = gate::admit(
+        &s,
+        &magic_session(APPLICANT),
+        Action::Read(gate::ReadAction::ReadContent),
+        None,
+        later,
+        &policy(),
+    );
+    assert!(
+        matches!(r, Err(Deny::WeakSessionForRole | Deny::EnrolPasskeyFirst)),
+        "{r:?}"
+    );
+    assert!(
+        fstp_auth::ceremony::may_issue_magic_link(
+            crate::gate::holds_management(&s, APPLICANT, later).unwrap(),
+            &methods(true)
+        )
+        .is_err(),
+        "I-77: no magic link for a management holder"
+    );
+    assert!(register_email_only(&s, &methods(true), later).is_err());
+}

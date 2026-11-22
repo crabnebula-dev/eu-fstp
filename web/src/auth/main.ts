@@ -21,6 +21,7 @@
 import { installTrustedTypesPolicy } from './dom.js';
 import { PATHS } from './layout.js';
 import { mount as account } from './pages/account.js';
+import { mount as draft } from './pages/draft.js';
 import { mount as invite } from './pages/invite.js';
 import { mount as login } from './pages/login.js';
 import { mount as magic } from './pages/magic.js';
@@ -30,6 +31,7 @@ import { mount as signup } from './pages/signup.js';
 const PAGES: Readonly<Record<string, () => void>> = {
   [PATHS.login]: login,
   [PATHS.signup]: signup,
+  [PATHS.draft]: draft,
   [PATHS.invite]: invite,
   [PATHS.magic]: magic,
   [PATHS.recovery]: recovery,

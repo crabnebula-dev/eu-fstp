@@ -165,6 +165,8 @@ pub struct PgBackend<R: Runtime> {
     /// Lane L2 hook: the authorisation server, for the recovery route
     /// (H-21).
     agents: std::sync::OnceLock<Arc<dyn crate::oauth::AgentGrants>>,
+    /// The anonymous draft store (ADR-032), set once at start.
+    drafts: std::sync::OnceLock<Arc<dyn fstp_api_core::anon::AnonymousDrafts>>,
 }
 
 /// What the routes keep between two steps of a ceremony, in process
@@ -237,6 +239,7 @@ impl<R: Runtime> PgBackend<R> {
             public: Arc::new(crate::public::PublicClass::default()),
             pending: Mutex::new(Pending::default()),
             agents: std::sync::OnceLock::new(),
+            drafts: std::sync::OnceLock::new(),
         })
     }
 
@@ -258,6 +261,15 @@ impl<R: Runtime> PgBackend<R> {
     /// recovery route ends. `false` when one is set already.
     pub fn set_agent_grants(&self, agents: Arc<dyn crate::oauth::AgentGrants>) -> bool {
         self.agents.set(agents).is_ok()
+    }
+
+    /// Sets the anonymous draft store of the draft routes (ADR-032).
+    /// `false` when one is set already.
+    pub fn set_anonymous_drafts(
+        &self,
+        drafts: Arc<dyn fstp_api_core::anon::AnonymousDrafts>,
+    ) -> bool {
+        self.drafts.set(drafts).is_ok()
     }
 
     /// The same backend on the cell clock `clock` (`crate::process::StartOptions`).
@@ -387,6 +399,10 @@ impl<R: Runtime> PgBackend<R> {
 }
 
 impl<R: Runtime> Backend for PgBackend<R> {
+    fn anonymous_drafts(&self) -> Option<Arc<dyn fstp_api_core::anon::AnonymousDrafts>> {
+        self.drafts.get().cloned()
+    }
+
     async fn revoke_all_agents(&self, account: AccountId) {
         if let Some(a) = self.agents.get() {
             a.revoke_all_agents(account).await;
