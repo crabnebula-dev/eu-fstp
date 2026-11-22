@@ -103,6 +103,7 @@ pub(crate) fn is_narrative(field: FieldId) -> bool {
         field,
         FieldId::ActionAcronym
             | FieldId::CoordinatorName
+            | FieldId::CoordinatorContact
             | FieldId::ProgrammeName
             | FieldId::ProgrammeNarrative
             | FieldId::ProgrammeScope

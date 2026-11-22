@@ -1908,6 +1908,7 @@ fn pending_narratives(seed: &Seeder, p: ProgrammeId) -> Result<Vec<String>, Stri
         match v {
             V::ActionAcronym(_)
             | V::CoordinatorName(_)
+            | V::CoordinatorContact(_)
             | V::ProgrammeName(_)
             | V::ProgrammeNarrative(_)
             | V::ProgrammeScope(_)

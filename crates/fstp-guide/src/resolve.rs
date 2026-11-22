@@ -669,6 +669,7 @@ impl<'a> Ctx<'a> {
                 | FieldValue::Faq(n)
                 | FieldValue::ActionAcronym(n)
                 | FieldValue::CoordinatorName(n)
+                | FieldValue::CoordinatorContact(n)
                 | FieldValue::PersonsSupported(n)
                 | FieldValue::AmountCriteria(n),
             ) => self.narrative(&n),
