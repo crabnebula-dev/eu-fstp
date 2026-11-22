@@ -74,15 +74,15 @@ fn labelled_command_id(label: &[u8], cell: [u8; 16], invitation: u128) -> [u8; 1
 }
 
 impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
-    /// The tenant's look for a message about `programme` (ADR-030 section
+    /// The tenant's look for a message about `programme`, if any (ADR-030 section
     /// 5): the brand colour and the logos an email shows, their bytes
     /// read from the blob store. A logo that does not read is left out,
     /// so the message still goes with the tenant's name as text.
-    async fn mail_brand(&self, programme: ProgrammeId) -> Option<fstp_mail::MailBrand> {
+    async fn mail_brand(&self, programme: Option<ProgrammeId>) -> Option<fstp_mail::MailBrand> {
         use fstp_api_core::port::{BlobRef, BlobStore as _};
         let (colour, plan) = {
             let st = self.0.engine.state();
-            fstp_api_core::brand::mail_plan(st.engine().tenant.state()?, Some(programme))?
+            fstp_api_core::brand::mail_plan(st.engine().tenant.state()?, programme)?
         };
         let blobs = super::content::CellBlobs(Arc::clone(&self.0));
         let mut logos = Vec::new();
@@ -209,14 +209,17 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
     }
 
     /// Step 3: the invitation event `derived`, scheduled and fired with the
-    /// composed message, whose one link is `link`. Returns the row and body
-    /// to deliver, or `None` when the event fired before.
+    /// composed message, whose one link is `link`. The message carries the
+    /// tenant's look and, for a programme role, the programme's logo.
+    /// Returns the row and body to deliver, or `None` when the event fired
+    /// before.
     async fn fire(
         &self,
         relay: &SharedRelay,
         derived: fstp_timeline::Derived,
         link: LinkTarget,
         to: &Mailbox,
+        programme: Option<ProgrammeId>,
         now: Timestamp,
     ) -> Result<Option<([u8; 16], Vec<u8>)>, PortError> {
         let event = derived.id();
@@ -295,7 +298,7 @@ impl<R: Runtime, V: VaultClient> Accounts for CellAccounts<R, V> {
         // Step 1: no relay, no invitation.
         let relay = self.0.relay.clone().ok_or(PortError::Unavailable)?;
         let now = self.0.now();
-        let (to, derived, link, path) = match kind {
+        let (to, derived, link, path, programme) = match kind {
             InviteKind::ProgrammeRole {
                 programme,
                 invitation,
@@ -313,7 +316,7 @@ impl<R: Runtime, V: VaultClient> Accounts for CellAccounts<R, V> {
                 let derived = fstp_timeline::role_invitation_event(programme, invitation, now);
                 let link = LinkTarget::RoleInvitation(InvitationToken(*token.bytes()));
                 let path = format!("/app/invitation#{}", token.hex());
-                (to, derived, link, path)
+                (to, derived, link, path, Some(programme))
             }
             // SoD-07, ADR-026 record of lane L18: the second tenant admin.
             InviteKind::TenantAdmin {
@@ -332,10 +335,10 @@ impl<R: Runtime, V: VaultClient> Accounts for CellAccounts<R, V> {
                 let derived = fstp_timeline::admin_invitation_event(invitation, now);
                 let link = LinkTarget::AdminInvitation(InvitationToken(*token.bytes()));
                 let path = format!("/auth/invite#{}", token.hex());
-                (to, derived, link, path)
+                (to, derived, link, path, None)
             }
         };
-        let fired = self.fire(&relay, derived, link, &to, now).await?;
+        let fired = self.fire(&relay, derived, link, &to, programme, now).await?;
         // Step 4. Without the digest key the row waits for the dispatcher.
         if let Some((outbox, body)) = fired
             && let Ok(Some(key)) = self.0.erasure.delivery_digest_key().await
