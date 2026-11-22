@@ -38,6 +38,7 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
     now: NOW.toString(),
     vault: "answers",
     mail: "works",
+    last_cell_erasure: null,
     host_file: "present",
     host: {
       written_at: (NOW - 5n * MIN).toString(),
@@ -46,6 +47,7 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
       backups_configured: true,
       last_backup: (NOW - 3n * HOUR).toString(),
       last_key_copy: "1794000000000000",
+      last_vault_erasure: null,
       certificate_days: 5,
       self_signed: false,
       route: "current",
@@ -178,6 +180,7 @@ test("adr028_l20_every_label_exists", () => {
     decoded({}, { route: "mismatch", last_key_copy: null, certificate_days: 0, backups_configured: false }),
     decoded({}, { route: "unknown", last_backup: null, certificate_days: null, self_signed: true }),
     decoded({}, { written_at: "1" }),
+    decoded({ last_cell_erasure: "1794500000000000" }),
     ...["not_configured", "missing", "unreadable"].map((f) => decoded({ host_file: f, host: null })),
     ...HOST_NEXT.map((n) => decoded({}, { next: n })),
   ];
@@ -279,4 +282,23 @@ test("adr028_l20_page_survives_an_unavailable_admin_list", async () => {
   await SYSTEM_PAGES[0]?.mount(env({ "GET /admin/system": wire() }), {});
   eq(byId("system-overall").getAttribute("data-light"), "green", "all green");
   byId("system-admins-unavailable");
+});
+
+/** ADR-028 record of lane L20: a key copy older than the last erasure of the cell or the vault turns amber, and asks the host admin for a new copy. */
+test("adr028_l20_key_copy_older_than_an_erasure_is_amber", () => {
+  const copy = 1_794_000_000_000_000n;
+  eq(rowOf(decoded({ last_cell_erasure: (copy - 1n).toString() }), "keys").light, "green", "an erasure before the copy");
+  for (const [over, hostOver] of [
+    [{ last_cell_erasure: (copy + 1n).toString() }, {}],
+    [{}, { last_vault_erasure: (copy + 1n).toString() }],
+  ] as const) {
+    const r = decoded(over, hostOver);
+    const keys = rowOf(r, "keys");
+    eq(keys.light, "amber", JSON.stringify([over, hostOver]));
+    eq(keys.text, "system.row.keys.before_erasure", "the sentence");
+    eq(keys.tell, "system.tell.copy_keys_again", "what to tell");
+    eq(keys.actor, "host", "the host admin acts");
+  }
+  eq(decodeSystem(wire({ last_cell_erasure: 5 })), null, "an erasure instant is a decimal string");
+  eq(decodeSystem(wire({}, { last_vault_erasure: "x" })), null, "so is the vault's");
 });

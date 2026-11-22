@@ -155,6 +155,11 @@ Written by lane L20 before its code. It closes point 3 of the record of lane L18
 
 Test: `l20_devstack_relay_accepts_mail_and_answers_txt` in `fstp-api-testkit`, over the built relay binary.
 
+Open points found by `t_authz_matrix_pg_sample` in CI run 44977026057, once `tenant.system` reshuffled the sample (lane L20). Each waits for Daniel; lane L20 changed neither the cell nor the sample for them:
+
+1. `me.begin_verification`, an unbound account on the web with a passkey: the reference expects Allow, the production cell refuses with `oracle`. The row "Vault intake" of the record of lane L5 keeps `Vault::begin_verification` refused as `OracleDown`, and no production verification method exists to redirect to: EUDI verification is not built, and the pilot verifies admins on the host only (lane L13b). Allowing it needs a decision on what a production verification begins, and where it redirects.
+2. `tenant.save_step`, the programme manager of another programme on the web: the reference expects an actor refusal, the cell answers `bad_request` with rule `request`. The sample sends an empty body for `tenant.save_step` (its `body_of` has no arm for it), while the direct harness sends `{base, values}`. M4 design section 3.7 runs the strict decoder (step 1) before every authorisation step, for every operation. Moving the actor check of one operation before its decoder departs from that order. Proposed: the sample sends the harness's well-formed body, as it does for the other tenant operations.
+
 ## Record of lane L8 `prod/vault-run`: the vault process
 
 Written by lane L8 before its code (gap G12, Wave 3 of `docs/handoff/production-mcp-design.md`). Every row is interim, pending Daniel, unless it says otherwise. The vault keystore is ADR-004, record of lane L8.

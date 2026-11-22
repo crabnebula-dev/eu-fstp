@@ -5133,6 +5133,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "now": { schema: { kind: "id" }, optional: false },
       "vault": { schema: { kind: "enum", values: ["answers", "silent"] }, optional: false },
       "mail": { schema: { kind: "enum", values: ["works", "fails", "not_configured"] }, optional: false },
+      "last_cell_erasure": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
       "host_file": { schema: { kind: "enum", values: ["present", "not_configured", "missing", "unreadable"] }, optional: false },
       "host": { schema: { kind: "nullable", inner: {
         kind: "object",
@@ -5153,6 +5154,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "backups_configured": { schema: { kind: "bool" }, optional: false },
           "last_backup": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
           "last_key_copy": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_vault_erasure": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
           "certificate_days": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
           "self_signed": { schema: { kind: "bool" }, optional: false },
           "route": { schema: { kind: "enum", values: ["current", "mismatch", "unknown"] }, optional: false },

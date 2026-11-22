@@ -163,7 +163,17 @@ pub fn erase_identity(layout: &Layout, account: &str) -> Result<(), Fail> {
         layout,
         "fstp-vault erase-identity",
         &["erase-identity".as_ref(), account.as_ref()],
+    )?;
+    // ADR-028 record of lane L20: a key copy older than this erasure
+    // holds the erased key, so `status` and the System page ask for a new
+    // copy.
+    let mut st = crate::state::State::load(&layout.admin_dir().join("state"))
+        .map_err(|_| Fail::Step("erase identity", crate::fail::Cause::Io))?;
+    st.set(
+        crate::status::VAULT_ERASED_AT,
+        &crate::pki::now().to_string(),
     )
+    .map_err(|_| Fail::Step("erase identity", crate::fail::Cause::Io))
 }
 
 /// The kinds of identity document `fstp-vault verify-first-admin` takes.

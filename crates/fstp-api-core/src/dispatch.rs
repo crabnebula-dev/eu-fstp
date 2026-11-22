@@ -2300,11 +2300,19 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         // ADR-028 record of lane L20: the System page. The read rule
         // admitted a tenant admin. The facts hold no personal data.
         ReadKind::GetSystemStatus => {
-            use crate::port::TenantConfig as _;
+            use crate::port::{TenantConfig as _, TextStore as _};
             let facts = call.ports.tenant().system().await;
+            // The newest erasure of the cell's log, so the page asks for a
+            // new key copy after it. A log that cannot be read names none.
+            let last_cell_erasure = call.ports.texts().erasures().await.ok().and_then(|rows| {
+                rows.iter()
+                    .map(|r| r.completed_at.unwrap_or(r.requested_at))
+                    .max()
+            });
             ReadModel::System(crate::system::SystemView {
                 now: call.now,
                 facts,
+                last_cell_erasure,
             })
         }
         // SA-11 (Daniel, 2026-11-15, night): the team and member pages and

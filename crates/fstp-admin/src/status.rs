@@ -60,6 +60,20 @@ pub struct Findings {
     pub verified: usize,
     /// The keys were copied off the host.
     pub keys_copied: bool,
+    /// When the newest key copy ran, Unix seconds, if recorded.
+    pub keys_copied_at: Option<i64>,
+    /// When `fstp-admin erase-identity` last erased an identity in the
+    /// vault, Unix seconds (ADR-028 record of lane L20).
+    pub vault_erased_at: Option<i64>,
+}
+
+/// Whether the newest key copy is older than the last vault erasure, so
+/// it still holds the erased key and the runbook asks for a new copy
+/// (ADR-028 record of lane L20).
+#[must_use]
+pub fn key_copy_stale(f: &Findings) -> bool {
+    f.vault_erased_at
+        .is_some_and(|e| f.keys_copied_at.is_none_or(|c| c < e))
 }
 
 /// The single next thing to do.
@@ -83,7 +97,7 @@ pub fn next(f: &Findings) -> Next {
         Next::ConfigureBackups
     } else if f.backup_age_hours.is_none_or(|h| h > 36) {
         Next::Backup
-    } else if !f.keys_copied {
+    } else if !f.keys_copied || key_copy_stale(f) {
         Next::CopyKeys
     } else {
         Next::Nothing
@@ -114,7 +128,7 @@ fn next_text(n: Next) -> &'static str {
             "host admin: check each admin's ID document in person, then run fstp-admin verify. It asks for the details of each admin listed above."
         }
         Next::CopyKeys => {
-            "copy the keys off this host: fstp-admin backup-keys /media/usb/fstp-keys, and keep the passphrases apart."
+            "copy the keys off this host: fstp-admin backup-keys /media/usb/fstp-keys, and keep the passphrases apart. After an erasure, a new copy replaces the old one."
         }
         Next::Nothing => "nothing. Everything is in order.",
     }
@@ -221,11 +235,10 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         admins: crate::cellcmd::cached_admins(state),
         verified: crate::cellcmd::verified_count(state),
         keys_copied: state.done("keys-copied"),
+        keys_copied_at: instant_of(state, KEYS_COPIED_AT),
+        vault_erased_at: instant_of(state, VAULT_ERASED_AT),
     };
-    let last_key_copy = state
-        .get(KEYS_COPIED_AT)
-        .and_then(|t| t.parse::<i64>().ok())
-        .filter(|t| *t >= 0);
+    let last_key_copy = findings.keys_copied_at;
     Survey {
         seen,
         parts,
@@ -237,6 +250,17 @@ fn survey(layout: &Layout, state: &State) -> Survey {
 
 /// The state key of the newest key copy's time, Unix seconds.
 pub const KEYS_COPIED_AT: &str = "keys-copied-at";
+
+/// The state key of the last vault erasure's time, Unix seconds (ADR-028
+/// record of lane L20).
+pub const VAULT_ERASED_AT: &str = "vault-erased-at";
+
+fn instant_of(state: &State, key: &str) -> Option<i64> {
+    state
+        .get(key)
+        .and_then(|t| t.parse::<i64>().ok())
+        .filter(|t| *t >= 0)
+}
 
 /// The word of the file for `n`.
 #[must_use]
@@ -273,6 +297,9 @@ pub fn host_status(
         backups_configured: f.backups,
         last_backup: last_backup.map(|t| t.clamp(0, host_status::MAX_INSTANT)),
         last_key_copy: last_key_copy.map(|t| t.clamp(0, host_status::MAX_INSTANT)),
+        last_vault_erasure: f
+            .vault_erased_at
+            .map(|t| t.clamp(0, host_status::MAX_INSTANT)),
         certificate_days: f
             .min_days
             .map(|d| d.clamp(-host_status::MAX_DAYS, host_status::MAX_DAYS)),
@@ -371,6 +398,13 @@ pub fn run(layout: &Layout) -> u8 {
         None if f.backups => out(&[Part::T("  backups    none yet")]),
         None => out(&[Part::T("  backups    not configured")]),
     }
+    out(&[Part::T(if key_copy_stale(f) {
+        "  key copy   OLDER THAN THE LAST ERASURE: make a new copy"
+    } else if f.keys_copied {
+        "  key copy   made"
+    } else {
+        "  key copy   never made"
+    })]);
     for (i, a) in f.admins.iter().enumerate() {
         let done = state.done(&format!("verified.{a}"));
         out(&[
@@ -432,6 +466,8 @@ mod tests {
             admins: vec!["a".into(), "b".into()],
             verified: 2,
             keys_copied: true,
+            keys_copied_at: Some(1_700_000_000),
+            vault_erased_at: None,
         }
     }
 
@@ -536,5 +572,25 @@ mod tests {
         let mode = std::fs::metadata(&path).expect("meta").permissions().mode();
         assert_eq!(mode & 0o777, 0o644);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ADR-028 record of lane L20: the runbook asks for a new key copy
+    /// after each erasure, so a copy older than the last vault erasure
+    /// makes the key copy the next thing, and the file carries the
+    /// erasure's time.
+    #[test]
+    fn adr028_l20_key_copy_older_than_an_erasure_is_due() {
+        let mut f = healthy();
+        f.vault_erased_at = Some(1_699_999_999);
+        assert!(!key_copy_stale(&f), "a copy after the erasure");
+        assert_eq!(next(&f), Next::Nothing);
+        f.vault_erased_at = Some(1_700_000_001);
+        assert!(key_copy_stale(&f), "a copy before the erasure");
+        assert_eq!(next(&f), Next::CopyKeys);
+        f.keys_copied_at = None;
+        assert!(key_copy_stale(&f), "a copy of unknown time");
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, 1_700_000_100);
+        assert_eq!(s.last_vault_erasure, Some(1_700_000_001));
+        assert_eq!(s.next, HostNext::CopyKeys);
     }
 }

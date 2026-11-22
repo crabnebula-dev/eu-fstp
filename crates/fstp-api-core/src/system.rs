@@ -123,6 +123,8 @@ pub struct HostReport {
     pub last_backup: Option<Timestamp>,
     /// The newest key copy off the host.
     pub last_key_copy: Option<Timestamp>,
+    /// The newest identity erasure the host ran in the vault.
+    pub last_vault_erasure: Option<Timestamp>,
     /// Whole days until the first host certificate ends. The reply
     /// shows an ended one as 0.
     pub certificate_days: Option<i64>,
@@ -199,6 +201,11 @@ pub struct SystemView {
     pub now: Timestamp,
     /// The facts.
     pub facts: SystemFacts,
+    /// The newest entry of the cell's erasure log: its completion, or its
+    /// request while it runs. `None` when the log is empty or cannot be
+    /// read. A key copy older than it holds an erased key (ADR-028 record
+    /// of lane L20).
+    pub last_cell_erasure: Option<Timestamp>,
 }
 
 fn instant(t: Timestamp) -> Value {
@@ -242,6 +249,11 @@ fn report_json(r: &HostReport) -> Value {
     );
     put(
         &mut o,
+        "last_vault_erasure",
+        r.last_vault_erasure.map_or(Value::Null, instant),
+    );
+    put(
+        &mut o,
         "certificate_days",
         // An ended certificate shows as 0 days: the wire int is never
         // negative.
@@ -273,6 +285,11 @@ impl ToJson for SystemView {
         put(&mut o, "mail", Value::from(f.mail.wire()));
         put(&mut o, "host_file", Value::from(file));
         put(&mut o, "host", host);
+        put(
+            &mut o,
+            "last_cell_erasure",
+            self.last_cell_erasure.map_or(Value::Null, instant),
+        );
         Value::Object(o)
     }
 }

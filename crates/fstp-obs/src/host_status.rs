@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! {"backups_configured":true,"certificate_days":5,"last_backup":1795000000,
-//!  "last_key_copy":null,"next":"nothing",
+//!  "last_key_copy":null,"last_vault_erasure":null,"next":"nothing",
 //!  "parts":{"cell":"running","databases":"running","edge":"running",
 //!           "keys":"running","vault":"running","witness":"running"},
 //!  "route":"current","self_signed":false,"setup_done":true,"version":1,
@@ -204,6 +204,10 @@ pub struct HostStatus {
     pub last_backup: Option<i64>,
     /// The newest copy of the keys off the host, in Unix seconds.
     pub last_key_copy: Option<i64>,
+    /// The newest identity erasure `fstp-admin erase-identity` ran in the
+    /// vault, in Unix seconds. A key copy older than it holds the erased
+    /// key, so the runbook asks for a new copy.
+    pub last_vault_erasure: Option<i64>,
     /// Whole days until the first host certificate ends.
     pub certificate_days: Option<i64>,
     /// The public origin certificate is self-signed.
@@ -249,11 +253,12 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 11] = [
+const MEMBERS: [&str; 12] = [
     "backups_configured",
     "certificate_days",
     "last_backup",
     "last_key_copy",
+    "last_vault_erasure",
     "next",
     "parts",
     "route",
@@ -276,7 +281,7 @@ pub fn encode(s: &HostStatus) -> String {
     let p = &s.parts;
     format!(
         "{{\"backups_configured\":{},\"certificate_days\":{},\"last_backup\":{},\
-         \"last_key_copy\":{},\"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
+         \"last_key_copy\":{},\"last_vault_erasure\":{},\"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
          \"witness\":\"{}\"}},\"route\":\"{}\",\"self_signed\":{},\"setup_done\":{},\
          \"version\":{VERSION},\"written_at\":{}}}\n",
@@ -284,6 +289,7 @@ pub fn encode(s: &HostStatus) -> String {
         opt(s.certificate_days),
         opt(s.last_backup),
         opt(s.last_key_copy),
+        opt(s.last_vault_erasure),
         s.next.word(),
         p.cell.word(),
         p.databases.word(),
@@ -393,6 +399,7 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
         backups_configured: flag(o, "backups_configured")?,
         last_backup: opt_int(o, "last_backup", 0, MAX_INSTANT)?,
         last_key_copy: opt_int(o, "last_key_copy", 0, MAX_INSTANT)?,
+        last_vault_erasure: opt_int(o, "last_vault_erasure", 0, MAX_INSTANT)?,
         certificate_days: opt_int(o, "certificate_days", -MAX_DAYS, MAX_DAYS)?,
         self_signed: flag(o, "self_signed")?,
         route: word(

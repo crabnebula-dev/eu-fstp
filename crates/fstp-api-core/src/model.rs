@@ -2462,10 +2462,14 @@ pub(crate) mod reply_shape_tests {
             // one with a full report.
             ReadModel::System(crate::system::SystemView {
                 now: fstp_domain::time::Timestamp::from_micros(1_795_000_000_000_000),
+                last_cell_erasure: None,
                 facts: crate::system::SystemFacts::default(),
             }),
             ReadModel::System(crate::system::SystemView {
                 now: fstp_domain::time::Timestamp::from_micros(1_795_000_000_000_000),
+                last_cell_erasure: Some(fstp_domain::time::Timestamp::from_micros(
+                    1_794_960_000_000_000,
+                )),
                 facts: crate::system::SystemFacts {
                     vault_answers: true,
                     mail: crate::system::MailState::Fails,
@@ -2487,6 +2491,9 @@ pub(crate) mod reply_shape_tests {
                             1_794_900_000_000_000,
                         )),
                         last_key_copy: None,
+                        last_vault_erasure: Some(fstp_domain::time::Timestamp::from_micros(
+                            1_794_950_000_000_000,
+                        )),
                         certificate_days: Some(-2),
                         self_signed: false,
                         route: crate::system::RouteState::Mismatch,

@@ -51,6 +51,7 @@ fn report(s: &HostStatus) -> Option<HostReport> {
         backups_configured: s.backups_configured,
         last_backup: s.last_backup.map(instant),
         last_key_copy: s.last_key_copy.map(instant),
+        last_vault_erasure: s.last_vault_erasure.map(instant),
         certificate_days: s.certificate_days,
         self_signed: s.self_signed,
         route: match s.route {
@@ -106,6 +107,7 @@ mod tests {
             backups_configured: true,
             last_backup: Some(1_794_990_000),
             last_key_copy: None,
+            last_vault_erasure: Some(1_794_995_000),
             certificate_days: Some(4),
             self_signed: true,
             route: host_status::RouteState::Current,

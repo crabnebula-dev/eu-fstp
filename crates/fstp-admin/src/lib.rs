@@ -161,7 +161,12 @@ fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
             }
             Ok(OK)
         }
-        ["erase-identity", account] => cellcmd::erase_identity(&need()?, account).map(|()| OK),
+        ["erase-identity", account] => {
+            let l = need()?;
+            let r = cellcmd::erase_identity(&l, account);
+            status::report_quietly(&l);
+            r.map(|()| OK)
+        }
         ["route", "list"] => {
             let l = need()?;
             for r in route::list(&l)? {

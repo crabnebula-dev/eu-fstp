@@ -69,6 +69,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.keys.copied": "The keys were last copied off the host on {date}.",
   "system.row.keys.never":
     "The keys have never been copied off the host. Without a copy, the backups cannot be opened after a lost server.",
+  "system.row.keys.before_erasure":
+    "The keys were last copied off the host on {date}, before the erasure of {erased}. That copy still holds the erased data's key.",
   "system.row.keys.unknown": "Not known until the host reports.",
   "system.row.certificates.fine":
     "Certificates renew by themselves at night. The next renewal is due in {due} days.",
@@ -94,6 +96,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.tell.backup": "Please run fstp-admin backup, and check that its nightly timer runs.",
   "system.tell.copy_keys":
     "Please run fstp-admin backup-keys to a USB stick, and keep the passphrases apart from it.",
+  "system.tell.copy_keys_again":
+    "Please run fstp-admin backup-keys to a USB stick again, then destroy the older copy. An erasure took place since the last copy.",
   "system.tell.public_certificate":
     "Please get a certificate for the domain, name it under tls in /etc/fstp/fstp.json, then run fstp-admin renew.",
 

@@ -1801,6 +1801,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("now", Shape::Id),
             m("vault", Shape::Enum(&["answers", "silent"])),
             m("mail", Shape::Enum(&["works", "fails", "not_configured"])),
+            m("last_cell_erasure", Shape::Nullable(&Shape::Id)),
             m(
                 "host_file",
                 Shape::Enum(&["present", "not_configured", "missing", "unreadable"]),
@@ -1824,6 +1825,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("backups_configured", Shape::Bool),
                     m("last_backup", Shape::Nullable(&Shape::Id)),
                     m("last_key_copy", Shape::Nullable(&Shape::Id)),
+                    m("last_vault_erasure", Shape::Nullable(&Shape::Id)),
                     m("certificate_days", Shape::Nullable(&Shape::Int)),
                     m("self_signed", Shape::Bool),
                     m("route", Shape::Enum(&["current", "mismatch", "unknown"])),

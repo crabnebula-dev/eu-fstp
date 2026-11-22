@@ -49,6 +49,7 @@ export interface HostReport {
   readonly backupsConfigured: boolean;
   readonly lastBackup: bigint | null;
   readonly lastKeyCopy: bigint | null;
+  readonly lastVaultErasure: bigint | null;
   readonly certificateDays: number | null;
   readonly selfSigned: boolean;
   readonly route: "current" | "mismatch" | "unknown";
@@ -60,6 +61,8 @@ export interface SystemReply {
   readonly now: bigint;
   readonly vault: "answers" | "silent";
   readonly mail: "works" | "fails" | "not_configured";
+  /** The newest entry of the cell's erasure log, or null. */
+  readonly lastCellErasure: bigint | null;
   readonly hostFile: "present" | "not_configured" | "missing" | "unreadable";
   readonly host: HostReport | null;
 }
@@ -91,6 +94,7 @@ function host(v: unknown): HostReport | null {
     "backups_configured",
     "last_backup",
     "last_key_copy",
+    "last_vault_erasure",
     "certificate_days",
     "self_signed",
     "route",
@@ -108,11 +112,13 @@ function host(v: unknown): HostReport | null {
   const writtenAt = instant(o["written_at"]);
   const lastBackup = o["last_backup"] === null ? null : instant(o["last_backup"]);
   const lastKeyCopy = o["last_key_copy"] === null ? null : instant(o["last_key_copy"]);
+  const lastVaultErasure = o["last_vault_erasure"] === null ? null : instant(o["last_vault_erasure"]);
   const days = o["certificate_days"];
   const { setup_done: setupDone, backups_configured: backupsConfigured, self_signed: selfSigned, route, next } = o;
   if (writtenAt === null) return null;
   if (o["last_backup"] !== null && lastBackup === null) return null;
   if (o["last_key_copy"] !== null && lastKeyCopy === null) return null;
+  if (o["last_vault_erasure"] !== null && lastVaultErasure === null) return null;
   if (days !== null && !(typeof days === "number" && Number.isSafeInteger(days) && days >= 0)) return null;
   if (typeof setupDone !== "boolean" || typeof backupsConfigured !== "boolean" || typeof selfSigned !== "boolean") return null;
   if (!oneOf(route, ["current", "mismatch", "unknown"] as const) || !oneOf(next, HOST_NEXT)) return null;
@@ -123,6 +129,7 @@ function host(v: unknown): HostReport | null {
     backupsConfigured,
     lastBackup,
     lastKeyCopy,
+    lastVaultErasure,
     certificateDays: days,
     selfSigned,
     route,
@@ -133,8 +140,10 @@ function host(v: unknown): HostReport | null {
 /** The `tenant.system` reply, or null when it has another shape. */
 export function decodeSystem(v: unknown): SystemReply | null {
   const o = record(v);
-  if (o === null || !closed(o, ["now", "vault", "mail", "host_file", "host"])) return null;
+  if (o === null || !closed(o, ["now", "vault", "mail", "last_cell_erasure", "host_file", "host"])) return null;
   const now = instant(o["now"]);
+  const lastCellErasure = o["last_cell_erasure"] === null ? null : instant(o["last_cell_erasure"]);
+  if (o["last_cell_erasure"] !== null && lastCellErasure === null) return null;
   const { vault, mail, host_file: hostFile } = o;
   if (now === null) return null;
   if (!oneOf(vault, ["answers", "silent"] as const)) return null;
@@ -143,7 +152,7 @@ export function decodeSystem(v: unknown): SystemReply | null {
   const report = o["host"] === null ? null : host(o["host"]);
   if (o["host"] !== null && report === null) return null;
   if ((hostFile === "present") !== (report !== null)) return null;
-  return Object.freeze({ now, vault, mail, hostFile, host: report });
+  return Object.freeze({ now, vault, mail, lastCellErasure, hostFile, host: report });
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +227,15 @@ function reportRow(r: SystemReply): Row {
     : row("report", "amber", "old", params, "host", "system.tell.report_timer");
 }
 
+/** The newest erasure of the cell or of the vault, or null when neither erased anything. */
+export function lastErasure(r: SystemReply): bigint | null {
+  const v = r.host?.lastVaultErasure ?? null;
+  const c = r.lastCellErasure;
+  if (v === null) return c;
+  if (c === null) return v;
+  return v > c ? v : c;
+}
+
 function hostRows(r: SystemReply): Row[] {
   const h = r.host;
   if (h === null) {
@@ -245,11 +263,15 @@ function hostRows(r: SystemReply): Row[] {
     else if (a > BACKUP_LATE) out.push(row("backups", "amber", "late", params, "host", "system.tell.backup"));
     else out.push(row("backups", "green", "fresh", params));
   }
-  out.push(
-    h.lastKeyCopy === null
-      ? row("keys", "amber", "never", {}, "host", "system.tell.copy_keys")
-      : row("keys", "green", "copied", { date: dayOf(h.lastKeyCopy) }),
-  );
+  // The runbook asks for a new key copy after each erasure: an older copy
+  // still holds the erased key (ADR-028 record of lane L20).
+  const erased = lastErasure(r);
+  if (h.lastKeyCopy === null) out.push(row("keys", "amber", "never", {}, "host", "system.tell.copy_keys"));
+  else if (erased !== null && erased > h.lastKeyCopy) {
+    out.push(
+      row("keys", "amber", "before_erasure", { date: dayOf(h.lastKeyCopy), erased: dayOf(erased) }, "host", "system.tell.copy_keys_again"),
+    );
+  } else out.push(row("keys", "green", "copied", { date: dayOf(h.lastKeyCopy) }));
   const days = h.certificateDays;
   if (days === null) out.push(row("certificates", "unknown", "unknown"));
   else if (days < 1) out.push(row("certificates", "red", "ending", { days: String(days) }, "host", "system.tell.renew"));

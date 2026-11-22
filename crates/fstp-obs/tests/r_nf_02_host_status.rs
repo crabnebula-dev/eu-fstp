@@ -27,6 +27,7 @@ fn sample() -> HostStatus {
         backups_configured: true,
         last_backup: Some(1_794_990_000),
         last_key_copy: None,
+        last_vault_erasure: Some(1_794_980_000),
         certificate_days: Some(5),
         self_signed: false,
         route: RouteState::Mismatch,
@@ -68,6 +69,7 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         backups_configured: g.bool(),
         last_backup: opt_time(g),
         last_key_copy: opt_time(g),
+        last_vault_erasure: opt_time(g),
         certificate_days: if g.bool() {
             None
         } else {
