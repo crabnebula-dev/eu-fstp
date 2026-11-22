@@ -347,3 +347,9 @@ Readings, pending Daniel:
 - The refusal rule id `SA-11-unique` is a new rule name, not a SPEC id. The authorisation matrix never meets it, since each matrix cell runs on a fresh world.
 - The stored name keeps its own spacing and case. Only the comparison uses the normalised form, so an account may change "anna berg" to "Anna Berg".
 - An erasure that removes a display name does not yet replace `Lookup` in the fake. The real store follows the ADR-004 rule for keyed digests.
+
+#### Built by lane L26 `prod/display-names`, 2026-11-22: the production cell
+
+- The production cell's text store sets and reads display names. ADR-004, section "Written by lane L26", holds the readings: the sealed text, the `Lookup` subject, the index table of migration `0012_display_name.sql`, and the recompute at step 2.
+- Normalisation, interim, pending Daniel: `fstp_api_core::display_name::normalised` is `fstp_unorm::name_key` now (ADR-029). It replaces the "Simpler comparison" above, since an in-house NFC and case folding exists. Two encodings of one accented name, "Straße" and "STRASSE", and a name with a zero width joiner inside are each one name. A name whose key is empty is refused under SA-11.
+- A replaced or cleared name is erased through the erasure runner at once. No ledger record names it, so it has no erasure-log row in the ledger yet. Open for Daniel.

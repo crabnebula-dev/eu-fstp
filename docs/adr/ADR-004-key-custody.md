@@ -941,3 +941,41 @@ Decided by Daniel on 2026-11-21: NFKC + case fold (ADR-029). Every other reading
 | Pilot vaults | A pilot vault that verified anyone before lane L21 is recreated: a fresh vault database, then `init-keys` (the operator guide says so) |
 
 Tests: `i81_adr004_name_variants_register_as_one_identity` and `i81_start_refuses_identity_tuples_of_an_earlier_label` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `adr004_name_variants_give_one_tuple` (`crates/fstp-vault/tests/codecs.rs`).
+
+## Written by lane L26 `prod/display-names`, 2026-11-22: display names on the production cell
+
+Written before the code. Decided by Daniel on 2026-11-21: the fingerprint key and the recompute at step 2 (section "Chains", row on the display name fingerprint key). Every other row is interim, pending Daniel, unless it says otherwise.
+
+Until this lane, `TextStore::set_display_name` failed closed on the production cell, so no pilot could set a display name (SA-11).
+
+| Topic | Reading |
+| --- | --- |
+| Owner | The App chain's keystore owner, `fstp_cell::tasks::erasure`, keeps the display names beside the login email index. `CellTexts` (`fstp_cell::api::content`) reaches them through `ErasureHandle`. The `Lookup` key and the fingerprint key never leave the erasure task |
+| Text | Each display name is sealed as a text of its own, under a data key of its own, in a group of its own (purpose `Text`), as `CellTexts::put` stores a text. The text holds the name as the person typed it after the API core's trim |
+| Subject of `Lookup` | The text's data key is a subject of the `Lookup` keyed digest group, as a login email text is. The erasure task creates the `Lookup` group at the first display name when no login email created it first |
+| Fingerprint | `fstp_api_core::display_name::fingerprint` under the key HKDF-SHA256(`Lookup` key, empty salt, `fstp display name fingerprint v1`). The task derives the key into a zeroed heap box, as it derives the `Lookup` key, and drops it after each use |
+| Normalisation | `fstp_api_core::display_name::normalised` becomes `fstp_unorm::name_key`: compatibility caseless folding (`NFKC_CF`), default ignorables removed, white space trimmed and collapsed. It replaces the "Simpler comparison" of the SA-11 amendment. The reasons are in "Why `name_key`" below |
+| Index table | Migration `0012_display_name.sql`: `keystore.display_name (account, text_id, fingerprint)`, one row per account that has a name. The fingerprint column is `UNIQUE`, so PostgreSQL refuses one fingerprint for two accounts as a second guard. Only the keys role holds a right on it (I-82) |
+| Atomic check | The erasure task serves one request at a time. The check, the seal and the index write are one request, and its reply follows the durable write of every row it changed |
+| Same name again | The account's own name again, byte for byte, changes nothing. Its own name in another case or spacing is `Set`, and replaces the text |
+| Replace and clear | The old fingerprint leaves the index at once, so the name is free at once. The old text's data key gets an erasure request in the chain state directly, at the sequence of the ledger head, and its batch starts at once. The batch gives the `Lookup` group a new generation (G24) |
+| Step 2 | A batch that gives `Lookup` a new generation recomputes the fingerprint of every live display name from its sealed text under the new key, beside the login email digests. Step 4 commits both. A name whose text the batch erases leaves the index |
+| A batch in flight | A set that arrives while a batch is before its commit first runs that batch to its commit, then is served. So a person who changes the name twice in a row is not refused. A step that fails answers `Unavailable`, and the person tries again |
+| Erasure log | No ledger record names a display name text (SA-11 reading "A display name changes no domain fact"). So the erasure of a replaced or cleared name writes no `ErasureRequested` record. The batch's `KeyEpochDestroyed` records the key destruction. Open for Daniel: whether such an erasure needs an erasure-log row of its own |
+| Account erasure | The production cell has no account erasure path yet. `Keystore::display_text` names the text, as `Keystore::login_text` does, for that path. When a batch erases that text, the name leaves the index at the commit |
+| Reads | `TextStore::display_names` releases names only to the team read, the member read and the account's own read, as the test kit's store does (`clears`). No other read shows a name, so no Judging read model and no applicant read carries one (I-17, P-11, R-AN-01). No message carries one (I-27) |
+| Snapshot image | The keystore image of ADR-012 holds the display name texts among its text rows, but not the index rows, as it holds no signing key rows yet. The index rows are in the keystore tables, which the cell's backups hold |
+
+### Why `name_key`
+
+- The SA-11 amendment first asked for NFC and case folding. Daniel chose the simpler comparison on 2026-11-15 because no workspace code did either. `fstp-unorm` does both now (ADR-029).
+- Daniel decided on 2026-11-21 that compatibility forms match in the identity tuple. The same key for display names gives the platform one rule for names.
+- `name_key` removes default ignorables, such as U+200D ZERO WIDTH JOINER. Under the simpler comparison, "Anna Berg" and the same name with a zero width joiner inside are two names that look alike on the team page. Under `name_key` they are one.
+- A name whose key is empty, such as one made only of default ignorables, is refused under SA-11, as the tuple refuses one (row "Field check" of lane L21).
+- Stability: no fingerprint was stored before this lane. The production cell refused every set, and the test kit's store lives in memory only. So no stored fingerprint needs a migration, and the key label stays `v1`. A later change of the key form, such as a new Unicode version, needs a new label and a recompute of every fingerprint from its sealed name.
+
+### Open points, pending Daniel
+
+- The normaliser choice above, which replaces the "Simpler comparison" of 2026-11-15.
+- An erasure-log row for a replaced or cleared display name (row "Erasure log").
+- The index rows in the keystore image (row "Snapshot image").
