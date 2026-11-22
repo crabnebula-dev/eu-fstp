@@ -168,7 +168,8 @@ fn i25_outcome_record_fires_one_message_to_the_lead_once() {
     assert_eq!(c.bodies.len(), 1);
     let spec = MessageSpec::decode(&c.bodies[0].body).unwrap();
     assert_eq!(spec.to, Recipient::Account(L1));
-    assert_eq!(spec.template, fstp_mail::TemplateId::ProposalOutcome);
+    // Q5 (ADR-036 section 7): a NOT_SELECTED outcome takes its own template.
+    assert_eq!(spec.template, fstp_mail::TemplateId::OutcomeNotSelected);
     assert!(spec.template().is_some());
     assert!(
         c.tick(Timestamp::from_micros(at + MINUTE))

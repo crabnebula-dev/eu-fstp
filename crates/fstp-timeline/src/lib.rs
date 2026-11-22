@@ -65,6 +65,7 @@ use fstp_cell_core::timeline::{
 use fstp_domain::id::{AccountId, CallId, ProgrammeId, ProposalId};
 use fstp_domain::record::OutboxEvent;
 use fstp_domain::roles::{BindingScope, Role};
+use fstp_domain::rules::StateTag;
 use fstp_domain::time::Timestamp;
 use fstp_engine::sweep::{self, SweepKind};
 use fstp_mail::{Bindings, LinkTarget, Locale, Moment, Slot, Template, TemplateId, Value};
@@ -908,7 +909,7 @@ pub fn event_template(s: &CellState, event: &EventId) -> Option<TemplateId> {
             let seq = immediate_seq(&e.source)?;
             let (_, _, ev) = s.timeline().enqueued().find(|(q, _, _)| *q == seq)?;
             match ev {
-                OutboxEvent::ProposalOutcome { .. } => Some(TemplateId::ProposalOutcome),
+                OutboxEvent::ProposalOutcome { state, .. } => Some(outcome_template(*state)),
                 OutboxEvent::IrcConcern { .. } => Some(TemplateId::IrcConcern),
                 OutboxEvent::NotifiableConflict { .. } => Some(TemplateId::NotifiableConflict),
                 OutboxEvent::CopyRequested { .. } => Some(TemplateId::SubmissionCopy),
@@ -921,6 +922,20 @@ pub fn event_template(s: &CellState, event: &EventId) -> Option<TemplateId> {
         kind::ADMIN_INVITATION => Some(TemplateId::AdminInvitation),
         kind::VERIFICATION_REQUEST => Some(TemplateId::IdCheckWaiting),
         _ => None,
+    }
+}
+
+/// The email template of a proposal outcome in `state` (`legal/README.md`
+/// Q5, Daniel, 2026-11-22; ADR-036 section 7): NEGOTIATION is selected
+/// (A1), NOT_SELECTED A2, INELIGIBLE A3 and DECLINED A4. Any other state
+/// keeps the neutral `proposal-outcome`, which names the state.
+pub fn outcome_template(state: StateTag) -> TemplateId {
+    match state {
+        StateTag::Negotiation => TemplateId::OutcomeSelected,
+        StateTag::NotSelected => TemplateId::OutcomeNotSelected,
+        StateTag::Ineligible => TemplateId::OutcomeIneligible,
+        StateTag::Declined => TemplateId::OutcomeDeclined,
+        _ => TemplateId::ProposalOutcome,
     }
 }
 
@@ -961,15 +976,23 @@ fn immediate_seq(source: &[u8]) -> Option<u64> {
 fn immediate(s: &CellState, ev: &OutboxEvent, when: Value, now: Timestamp) -> Vec<Draft> {
     let lead = |p: ProposalId| s.proposal(p).map(|(_, lead)| lead);
     match *ev {
+        // Q5 (ADR-036 section 7): the template of the outcome. Only the
+        // neutral template names the state.
         OutboxEvent::ProposalOutcome { proposal, state } => lead(proposal)
-            .map(|to| Draft {
-                to: Recipient::Account(to),
-                template: TemplateId::ProposalOutcome,
-                bindings: Bindings::new()
+            .map(|to| {
+                let template = outcome_template(state);
+                let mut bindings = Bindings::new()
                     .with(Slot::Proposal, Value::Proposal(proposal))
-                    .with(Slot::State, Value::State(state))
                     .with(Slot::When, when)
-                    .with(Slot::Link, Value::Link(LinkTarget::Proposal(proposal))),
+                    .with(Slot::Link, Value::Link(LinkTarget::Proposal(proposal)));
+                if template == TemplateId::ProposalOutcome {
+                    bindings = bindings.with(Slot::State, Value::State(state));
+                }
+                Draft {
+                    to: Recipient::Account(to),
+                    template,
+                    bindings,
+                }
             })
             .into_iter()
             .collect(),
