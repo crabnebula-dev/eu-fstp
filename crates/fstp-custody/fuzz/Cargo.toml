@@ -32,6 +32,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "copy_register_decode"
+path = "fuzz_targets/copy_register_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

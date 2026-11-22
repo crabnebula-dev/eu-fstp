@@ -17,6 +17,8 @@ fstp-tls.workspace = true
 # fstp-rt (ADR-002), and the configuration file's JSON decoder.
 fstp-rt.workspace = true
 fstp-json.workspace = true
+# ADR-001 record of 2026-11-21 (lane L16): wipes plain group secrets.
+zeroize.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

@@ -327,6 +327,7 @@ async fn open_keys(cfg: &FileConfig) -> Result<process::CellKeys, CellError> {
         .await
         .map_err(|e| CellError::Keys(e.0))?;
     keyfile::write_atomic(&path, &file).map_err(|e| CellError::Keys(e.0))?;
+    crate::key_copy::report(&cfg.credentials_dir, &body);
     body.cell_keys().map_err(|e| CellError::Keys(e.0))
 }
 
@@ -508,6 +509,24 @@ pub fn init_keys(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
     write_new(&out.join("ticket.pub"), line(&ticket).as_bytes())
 }
 
+/// `copy-key-file <out>` (ADR-004 record of lane L16, Q-L16-3): copies
+/// the sealed cell key file to the new file `out` and records it.
+///
+/// # Errors
+///
+/// [`CellError::Keys`] naming the step that failed.
+pub fn copy_key_file(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
+    let rt = runtime()?;
+    rt.block_on(async {
+        let custody = fstp_custody::KeydCustody::new(&cfg.key_file_keyd_socket)
+            .map_err(|_| cfg_err("key_file_keyd_socket"))?;
+        crate::key_copy::copy_key_file(&custody, cfg.core.cell.0, &cfg.credentials_dir, out)
+            .await
+            .map(|_| ())
+            .map_err(|e| CellError::Keys(e.0))
+    })
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -523,6 +542,11 @@ pub enum Command {
     },
     /// `init-keys <out dir>`.
     InitKeys(PathBuf),
+    /// `copy-key-file <out>`: an off-host copy of the cell key file,
+    /// recorded in its copy register (ADR-004 record of lane L16).
+    CopyKeyFile(PathBuf),
+    /// `retire-key-file-copy <id>`: every copy of `id` is destroyed.
+    RetireKeyFileCopy(fstp_custody::copies::CopyId),
     /// `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
     /// (ADR-026 "Tenant provisioning").
     ProvisionTenant {
@@ -593,6 +617,10 @@ pub fn parse_args(args: &[String]) -> Result<Command, CellError> {
         ["provision-tenant", "--agreements", v] => Ok(Command::ProvisionTenant {
             agreements: Some(agreements_arg(v)?),
         }),
+        ["copy-key-file", out] => Ok(Command::CopyKeyFile(PathBuf::from(out))),
+        ["retire-key-file-copy", id] => fstp_custody::copies::CopyId::parse(id)
+            .map(Command::RetireKeyFileCopy)
+            .ok_or_else(|| cfg_err("arguments")),
         _ => Err(cfg_err("arguments")),
     }
 }
@@ -609,6 +637,10 @@ pub fn run_command(command: &Command) -> Result<(), CellError> {
         Command::FirstAdmin { out, email } => first_admin(&cfg, out, email.as_deref()),
         Command::InitKeys(out) => init_keys(&cfg, out),
         Command::ProvisionTenant { agreements } => provision_tenant(&cfg, *agreements),
+        Command::CopyKeyFile(out) => copy_key_file(&cfg, out),
+        Command::RetireKeyFileCopy(id) => {
+            crate::key_copy::retire(&cfg.credentials_dir, *id).map_err(|e| CellError::Keys(e.0))
+        }
     }
 }
 
