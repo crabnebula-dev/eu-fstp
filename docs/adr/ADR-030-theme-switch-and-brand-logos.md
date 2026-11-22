@@ -20,11 +20,11 @@ The number is the next free one: ADR-028 and ADR-029 are taken by lanes L19 and 
 | --- | --- |
 | Values | `system`, `light`, `dark`. The default is `system` |
 | Where it is kept | A tenant record `ThemeSet { account, theme }` in the tenant ledger. The tenant state keeps the latest value per account. So it follows the person across devices, and backups carry it with the ledger |
-| Operation | `me.set_theme`, an action open to any signed-in account for its own preference. Class `Personal`, not high-risk, web only, no MCP tool. Setting the current value again records nothing |
+| Operation | `me.set_theme`, an action open to any signed-in account for its own preference. Class `Personal`, not high-risk, web only, no MCP tool. The switch sends it only on a change. Before the organisation is activated, the setup gate of ADR-021 refuses it as it refuses every operation outside onboarding |
 | No flash | The `/app/` shell is written with `data-theme="light"` or `data-theme="dark"` on `<html>` when the session's account chose one. `system` writes no attribute, so the CSS media query decides. No inline script, no cookie and no browser storage are used |
 | Where the switch is | The sidebar foot of every `/app/` page, beside Account: a group of three radio buttons named "Theme". A change applies at once and is then saved |
 | Public pages `/p` | System. They read no cookie and run no script (`script-src 'none'`) |
-| Sign-in pages `/auth` | System. The auth shell is a static file. Interim, pending Daniel: a signed-in auth page could read the preference later |
+| Sign-in pages `/auth` | System. The auth shell is a static file. Interim, pending Daniel: a signed-in auth page could read the preference later. The tenant logo shows there from the stable paths `/brand/logo/light` and `/brand/logo/dark`, which answer the current logo uncached, or 404 |
 | Vault origin pages | System. They run on another origin, which never sees the app session |
 | Emails and PDFs | Light only. A message or a document has no viewer preference |
 
@@ -40,7 +40,7 @@ Interim, pending Daniel: a ledger record for a display preference. The alternati
 | EU emblem | A fixed platform slot on public pages and in PDFs. The image is a platform asset Daniel supplies. Until then the slot renders nothing |
 | EU funding acknowledgement | A fixed platform slot beside the emblem. TODO(legal) (L-08): the wording is a placeholder on pages and nothing in PDFs until Daniel supplies approved text |
 
-Interim, pending Daniel: only a tenant admin sets a programme logo, from the tenant admin branding page. The programme pages link there. Programme managers may get the right later.
+Interim, pending Daniel: only a tenant admin sets a programme logo, from the tenant admin branding page. The programme set-up progress page links there, and the page gate shows the link only to a viewer it admits. Programme managers may get the right later.
 
 ### 3. Image rules (I-68)
 
@@ -54,6 +54,8 @@ Interim, pending Daniel: only a tenant admin sets a programme logo, from the ten
 | Rewrite on upload | The stored file keeps only the chunks that draw the image: PNG `IHDR`, `PLTE`, `tRNS`, `gAMA`, `sRGB`, `IDAT`, `IEND`; WebP `VP8X` (flags reduced to alpha), `ALPH`, and the image chunk. Text, EXIF, XMP, ICC and animation chunks are dropped. Pixel data is never decoded |
 | Parser | In-house in `fstp-brand::image`, a header and chunk walk only. Fuzz target `logo_inspect` from the first commit |
 | Serving | `GET /brand/{sha256}.png` or `.webp`, only for a digest a current logo names. The content type comes from the checked format, never from the request. The `/brand` surface keeps `nosniff` and its CSP. Immutable caching. Tenant bytes never enter HTML or CSS text |
+| Routing | The cell front sends every `/brand/` path to the web adapter. Before this lane it sent none, so the brand stylesheet of M9 lane B2 answered 404 in a production cell |
+| Preview | The admin page draws the chosen file on a `canvas` from an `ImageBitmap`. `canvas` joins the tag allowlist of `web/src/core/dom.ts`. The CSP stays as it is, with no `blob:` or `data:` image |
 | Storage | The rewritten bytes go to the blob store under a new owner `Brand`, sealed like every other blob in `doc.blob` (kind 6). The ledger record holds the digest, format and size only. Base backups and WAL archives carry both. Tenant export (B-07) is deferred and will carry them when it returns |
 
 Interim, pending Daniel: `white-labelling.md` asks for re-encoding. The chunk rewrite removes metadata and hidden payload chunks, but it keeps the encoded pixel data as uploaded. A full re-encode needs a decoder this lane may not add.
