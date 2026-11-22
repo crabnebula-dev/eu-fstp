@@ -1731,6 +1731,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"): assigning
     // grants a Judging role, so assigning and unassigning are high-risk
     // (authentication.md, I-78), one at a time or in one batch.
+    // ADR-033 record of lane L31 (Daniel, 2026-11-22): the assignee who
+    // recorded the AI assessment of X is refused under I-03, alone or in a
+    // batch. The rule judges the assignee, not the actor. The assignee of
+    // every matrix cell is a committee member who ran no assessment, so the
+    // reference expects no such refusal; `adr033_l31_i03_*` tests it.
     RefOp::act("review.assign", T::Proposal, R::Coordinator)
         .binding()
         .hr(),

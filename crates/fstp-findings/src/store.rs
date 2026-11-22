@@ -211,6 +211,10 @@ pub struct FindingStore {
     client_reads: BTreeMap<(ProposalId, AccountId), ContentDigest>,
     /// How many client assessments each proposal holds (ADR-033).
     client_runs: BTreeMap<ProposalId, u32>,
+    /// The accounts that recorded a client assessment of each proposal
+    /// (ADR-033 record of lane L31). None of them is ever assigned to
+    /// review it.
+    client_runners: BTreeMap<ProposalId, BTreeSet<AccountId>>,
     /// The integrity flags of each flagged proposal (ADR-035): the call,
     /// the reasons, and the coordinator who released the hold, if one did.
     integrity: BTreeMap<ProposalId, Integrity>,
@@ -238,6 +242,7 @@ impl FindingStore {
             reruns: BTreeMap::new(),
             client_reads: BTreeMap::new(),
             client_runs: BTreeMap::new(),
+            client_runners: BTreeMap::new(),
             integrity: BTreeMap::new(),
         }
     }
@@ -320,6 +325,14 @@ impl FindingStore {
         }
         Ok(())
     }
+    /// Whether `account` recorded a client assessment of `proposal`
+    /// (ADR-033 record of lane L31, I-03).
+    pub fn ran_client_assessment(&self, proposal: ProposalId, account: AccountId) -> bool {
+        self.client_runners
+            .get(&proposal)
+            .is_some_and(|s| s.contains(&account))
+    }
+
     /// How many client assessments `proposal` holds (ADR-033).
     pub fn client_runs_of(&self, proposal: ProposalId) -> u32 {
         self.client_runs.get(&proposal).copied().unwrap_or(0)
@@ -639,6 +652,10 @@ impl FindingStore {
                 self.check_client_run(*proposal)?;
                 let n = self.client_runs_of(*proposal);
                 self.client_runs.insert(*proposal, n.saturating_add(1));
+                self.client_runners
+                    .entry(*proposal)
+                    .or_default()
+                    .insert(*by);
                 Ok(())
             }
             FindingRecord::IntegrityHeld {

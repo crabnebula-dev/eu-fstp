@@ -1019,3 +1019,93 @@ fn adr035_i03_a_conflicted_coordinator_cannot_release() {
             .held(ProposalId::from_raw(v))
     );
 }
+
+/// Runs a client assessment of `p` with no reply, as the coordinator.
+fn run_empty(inner: &Inner, p: u128) {
+    let t = token(inner, COORDINATOR, &[Scope::AssessRun]);
+    declare(inner, p);
+    let input = tool(
+        inner,
+        &t,
+        "fstp_assessment_get_input",
+        &format!(r#"{{"proposal":"{p}"}}"#),
+    )
+    .unwrap();
+    tool(
+        inner,
+        &t,
+        "fstp_assessment_submit",
+        &submission(&input, MODEL, Vec::new()),
+    )
+    .unwrap();
+}
+
+/// The coordinator's assignment of `reviewer` to `p`, run on the engine,
+/// with a fresh assignment id and handle.
+fn assign(inner: &Inner, p: u128, reviewer: AccountId, n: u8) -> Result<(), String> {
+    use fstp_domain_testkit::r#gen::roster::{Flags, Step};
+    tick(inner);
+    let step = Step::by(
+        COORDINATOR,
+        Flags::NONE,
+        fstp_domain::command::Command::Assign {
+            assignment: fstp_domain::id::AssignmentId::from_raw(990_000 + u128::from(n)),
+            proposal: ProposalId::from_raw(p),
+            reviewer,
+            kind: fstp_domain::assignment::AssignmentKind::Reviewer,
+            handle: Some(fstp_domain::id::Handle::from_bytes([n; 16])),
+        },
+    );
+    let ctx = step.ctx(
+        inner.ports.clock.now(),
+        fstp_domain::id::CommandId::from_bytes([n; 16]),
+    );
+    inner
+        .ports
+        .engine
+        .setup_step(&step.cmd, ctx)
+        .map(|_| ())
+        .map_err(|e| format!("{e}"))
+}
+
+/// ADR-033 record of lane L31 (Daniel, 2026-11-22), I-03: an account that
+/// recorded the AI assessment of a proposal is never assigned to review
+/// it. The coordinator who ran it on x, and who also holds a committee
+/// binding, is refused on x under I-03, while the same assignment on a
+/// proposal it did not assess meets no such refusal.
+#[test]
+fn adr033_l31_i03_the_runner_is_never_assigned_to_review_it() {
+    use fstp_domain_testkit::r#gen::roster;
+    let (inner, _) = scene();
+    let x: u128 = 1001;
+    run_empty(&inner, x);
+    tick(&inner);
+    let mut grant = roster::grant(
+        fstp_domain::id::BindingId::from_raw(990_100),
+        COORDINATOR,
+        fstp_domain::id::ProgrammeId::from_raw(1),
+        fstp_domain::roles::Role::CommitteeMember,
+        inner.ports.clock.now(),
+    );
+    if let fstp_domain::command::Command::GrantRole { organisation, .. } = &mut grant.cmd {
+        *organisation = Some(fstp_domain_testkit::r#gen::review::O3);
+    }
+    let ctx = grant.ctx(
+        inner.ports.clock.now(),
+        fstp_domain::id::CommandId::from_bytes([0xc0; 16]),
+    );
+    inner.ports.engine.setup_step(&grant.cmd, ctx).unwrap();
+    let refused = assign(&inner, x, COORDINATOR, 1).unwrap_err();
+    assert!(
+        refused.contains("I-03") || refused.contains("I03"),
+        "{refused}"
+    );
+    let other = assign(&inner, 1002, COORDINATOR, 2);
+    assert!(
+        other
+            .as_ref()
+            .err()
+            .is_none_or(|e| !e.contains("I-03") && !e.contains("I03")),
+        "{other:?}"
+    );
+}
