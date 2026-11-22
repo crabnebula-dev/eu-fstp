@@ -11,7 +11,13 @@
 //! - `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`:
 //!   record the tenant part of the ledger (ADR-026 "Tenant provisioning");
 //! - `init-keys <dir>`: create the sealed cell key file at genesis and
-//!   write the public keys the witness and the vault pin into `<dir>`.
+//!   write the public keys the witness and the vault pin into `<dir>`;
+//! - `admins <file>`: write the tenant admins' account ids, for
+//!   `fstp-vault verify-first-admin` (ADR-028, lane L19);
+//! - `copy-key-file <out>`: copy the sealed cell key file off the host and
+//!   record the copy (ADR-004 record of lane L16);
+//! - `retire-key-file-copy <id>`: record that every copy of `id` is
+//!   destroyed.
 //!
 //! It writes typed events only (R-NF-02). A refused configuration or
 //! argument exits with status 2, any other failure with status 1.

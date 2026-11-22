@@ -54,6 +54,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "backup_custodian_decode"
+path = "fuzz_targets/backup_custodian_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

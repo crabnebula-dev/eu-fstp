@@ -223,7 +223,7 @@ fn value_json(v: &fstp_mail::Value) -> Option<Value> {
                 // J2: the link token of an invitation never goes into a
                 // spec. Only the accounts port composes that message, and
                 // it seals the composed bytes (ADR-026 record of lane L5).
-                LinkTarget::RoleInvitation(_) => return None,
+                LinkTarget::RoleInvitation(_) | LinkTarget::AdminInvitation(_) => return None,
             };
             o.insert("to", Value::String(to.to_owned()));
             if let Some(id) = id {

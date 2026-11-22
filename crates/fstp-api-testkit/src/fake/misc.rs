@@ -52,7 +52,7 @@ impl FakeAccounts {
             InviteKind::ProgrammeRole {
                 email: e, token, ..
             } if e == email => Some(token.hex()),
-            InviteKind::ProgrammeRole { .. } => None,
+            InviteKind::ProgrammeRole { .. } | InviteKind::TenantAdmin { .. } => None,
         })
     }
 
@@ -83,6 +83,8 @@ impl Accounts for FakeAccounts {
             InviteKind::ProgrammeRole { token, .. } => {
                 format!("/app/invitation#{}", token.hex())
             }
+            // SoD-07, ADR-026 record of lane L18: the M3 enrolment page.
+            InviteKind::TenantAdmin { token, .. } => format!("/auth/invite#{}", token.hex()),
         };
         lock(&self.kinds).push(kind);
         let mut n = lock(&self.invited);

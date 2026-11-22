@@ -37,7 +37,10 @@ pub(crate) fn mail_new(inner: &Inner) {
     {
         let mut auth = lock(&inner.auth);
         for kind in auth.take_unmailed(inner.ports.accounts.invitations()) {
-            let InviteKind::ProgrammeRole { email, token, .. } = kind;
+            // The cell mails its own admin invitation (`crate::onboarding`).
+            let InviteKind::ProgrammeRole { email, token, .. } = kind else {
+                continue;
+            };
             let token = token.hex();
             let (account, new) = auth.invite_programme_role(&email, &token);
             if new && let Some(tag) = auth.fresh_identity() {

@@ -50,6 +50,10 @@ pub struct ProbeSettings {
     pub sending_domain: Option<String>,
     /// The DKIM selector of the sending domain.
     pub dkim_selector: Option<String>,
+    /// The pinned socket address of the relay (`mail.address`, ADR-026
+    /// "Relay address"), so the channel probe checks the relay the cell
+    /// submits to.
+    pub mail_address: Option<std::net::SocketAddr>,
 }
 
 /// The prober of a serving cell (module documentation).
@@ -84,7 +88,13 @@ impl<R: Runtime> CellProber<R> {
         let Ok(tls) = mail_tls(self.settings.mail_ca_pem.as_deref()) else {
             return ProbeOutcome::Fail;
         };
-        let transport = TcpMailTransport::new(self.rt.clone());
+        let transport = match self.settings.mail_address {
+            Some(addr) => crate::mail::RelayTransport::Pinned {
+                rt: self.rt.clone(),
+                addr,
+            },
+            None => crate::mail::RelayTransport::Dns(TcpMailTransport::new(self.rt.clone())),
+        };
         let run = async {
             let io = transport
                 .open(&host, fstp_smtp::client::SUBMISSION_PORT)
@@ -100,6 +110,20 @@ impl<R: Runtime> CellProber<R> {
             Ok(Some(true)) => ProbeOutcome::Pass,
             _ => ProbeOutcome::Fail,
         }
+    }
+
+    /// The sending domain probe of `domain`, the domain a tenant admin
+    /// saved in the Domains and email step, with the configured DKIM
+    /// selector (ADR-026 record of lane L18). Absent without a resolver
+    /// or a selector.
+    pub async fn domain_of(&self, domain: &str) -> ProbeOutcome {
+        let (Some(resolver), Some(selector)) = (
+            self.resolver.as_ref(),
+            self.settings.dkim_selector.as_deref(),
+        ) else {
+            return ProbeOutcome::Absent;
+        };
+        sending_domain(resolver.as_ref(), domain, selector).await
     }
 
     async fn sending_domain(&self) -> ProbeOutcome {
@@ -169,5 +193,25 @@ impl<R: Runtime> Prober for CellProber<R> {
                 ProbeKind::Inference => ProbeOutcome::Absent,
             }
         })
+    }
+}
+
+/// The onboarding probes of the API core's `Prober` port (ADR-026 record
+/// of lane L18): the email channel and the sending domain a tenant admin
+/// saved. Tests use a fake one.
+pub trait TenantProbe: Send + Sync + 'static {
+    /// The email channel: the platform relay's TLS greeting.
+    fn channel(&self) -> ProbeFuture<'_>;
+    /// SPF, DKIM and DMARC of `domain`.
+    fn domain<'a>(&'a self, domain: &'a str) -> ProbeFuture<'a>;
+}
+
+impl<R: Runtime> TenantProbe for CellProber<R> {
+    fn channel(&self) -> ProbeFuture<'_> {
+        Box::pin(CellProber::channel(self))
+    }
+
+    fn domain<'a>(&'a self, domain: &'a str) -> ProbeFuture<'a> {
+        Box::pin(self.domain_of(domain))
     }
 }

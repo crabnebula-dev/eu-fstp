@@ -427,3 +427,74 @@ export interface McpValue {
 export function mcpValue(enabled: boolean, publicTools: boolean, everyRole: boolean, roles: Iterable<string>): McpValue {
   return { enabled, public_tools: publicTools, roles: everyRole ? null : nameSet(roles) };
 }
+
+// ---------------------------------------------------------------------------
+// The setup checklist of the summary page (ADR-026 record of lane L18).
+// ---------------------------------------------------------------------------
+
+/** One item of the setup checklist, in the order a pilot runs them. */
+export const CHECKLIST_ITEMS = [
+  "second_admin",
+  "verified",
+  "signatories",
+  "steps",
+  "activation_requested",
+  "activation_approved",
+] as const;
+
+/** One checklist item. */
+export type ChecklistItem = (typeof CHECKLIST_ITEMS)[number];
+
+/** Who acts on an item: an admin on the web, or the technical admin on the host. */
+export type ChecklistActor = "web" | "host" | "other_admin";
+
+/** One row of the checklist. */
+export interface ChecklistRow {
+  readonly item: ChecklistItem;
+  readonly done: boolean;
+  readonly actor: ChecklistActor;
+}
+
+/** What the checklist reads: the four onboarding reads. */
+export interface ChecklistInput {
+  readonly admins: readonly AdminRow[];
+  readonly signatories: readonly SignatoryRow[];
+  readonly statuses: Readonly<Record<string, StepStatus>>;
+  readonly activation: ActivationView;
+}
+
+/** The checklist rows and the first item not done, or null when every item is done. */
+export function checklist(input: ChecklistInput): { rows: ChecklistRow[]; next: ChecklistItem | null } {
+  const { admins, signatories, statuses, activation } = input;
+  const stepsDone = ONBOARDING_STEPS.every((s) => passes(statuses[s]));
+  const requested = activation.state !== "not_requested";
+  const active = activation.state === "active";
+  const rows: ChecklistRow[] = [
+    { item: "second_admin", done: admins.length >= 2, actor: "web" },
+    { item: "verified", done: admins.length >= 2 && admins.every((a) => a.verified), actor: "host" },
+    { item: "signatories", done: missingSignatories(signatories).length === 0, actor: "web" },
+    { item: "steps", done: stepsDone, actor: "web" },
+    { item: "activation_requested", done: requested, actor: "web" },
+    {
+      item: "activation_approved",
+      done: active,
+      // SoD-18: the admin who requested it cannot approve it.
+      actor: requested ? "other_admin" : "web",
+    },
+  ];
+  const next = rows.find((r) => !r.done)?.item ?? null;
+  return { rows, next };
+}
+
+/**
+ * The account `id` (canonical decimal) in the form the technical admin
+ * types for `fstp-vault verify-first-admin`: 32 lowercase hex digits in
+ * the groups 8-4-4-4-12. Null for anything that is not an account id.
+ */
+export function accountNumber(id: string): string | null {
+  if (!/^[0-9]{1,39}$/.test(id)) return null;
+  const n = BigInt(id);
+  if (n >= 1n << 128n) return null;
+  const hex = n.toString(16).padStart(32, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}

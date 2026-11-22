@@ -376,6 +376,11 @@ pub(crate) const SECTION_8_7: &[Spec] = &[
         Class::SessionOrIdentityDownload,
     ),
     row("POST", "/api/v1/verifications", Class::VerificationTicket),
+    row(
+        "GET",
+        "/api/v1/verification-people",
+        Class::VerificationTicket,
+    ),
     row("GET", "/api/v1/audit/anchors", Class::AuditorOrAdmin),
     row("GET", "/api/v1/erasures", Class::AuditorOrAdmin),
     row("GET", "/healthz", Class::Loopback),

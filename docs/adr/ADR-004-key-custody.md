@@ -587,7 +587,7 @@ Each entry builds one decision of the section above. Interim readings are marked
   - Interim, pending Daniel: only the console socket creates keys, and only cluster CA keys, since the install runs as root. No socket creates a cell CA key yet.
   - `sign` opens the key from its file for one signature. A destroy overwrites `K` in its slot in place and fsyncs, unlinks the file, fsyncs the directory and reads back, and answers the `"FKS1"` receipt with every step. A retried destroy answers the same receipt.
   - `fstp_control::install::create_cluster_ca_keys` is the install step. It names each local cluster CA key from its cluster id (`cluster_ca_key`). The install run itself stays unbuilt (B-06). `KeydCustody` implements `SignKeyCustody` through `destroy_sign_key`, so cell erasure destroys a keyd-held CA key in place.
-- **Route table polling.** `fstp_control::routes::RoutePublisher` holds every cell's route and a version that rises with each change. It signs each version with the control-plane composite key under the context `fstp-route-table-v1`. Interim, pending Daniel, the bytes: `"FRT1"`, the version as `u64`, a route count, and per cell its id, application host and both tunnel endpoints, in ascending host order, then the signature. The decoder `fstp_edge::decode_signed_route_table` has the fuzz target `route_table_decode`.
+- **Route table polling.** `fstp_control::routes::RoutePublisher` holds every cell's route and a version that rises with each change. It signs each version with the control-plane composite key under the context `fstp-route-table-v1`. Interim, pending Daniel, the bytes: `"FRT1"`, the version as `u64`, a route count, and per cell its id, application host and both tunnel endpoints, in ascending host order, then the signature. The decoder `fstp_edge::decode_signed_route_table` has the fuzz target `route_table_decode`. Lane L15 replaced these bytes by version 2 (`"FRT2"`, context `fstp-route-table-v2`), which carries a pin after each endpoint (ADR-009 "Pilot route feed").
   - Each edge polls over mutual TLS, one exchange per connection, with a 12-byte poll `"FRP1"` and the version it serves. `fstp_edge::RouteFeed` checks both signature halves (I-90), builds the table through the route table's own rules, and swaps it in only for a newer version (`LiveRoutes::apply`), so a replayed table never brings back a removed route.
   - `fstp_control::routes::RemoteEdges` implements `EdgeRoutes`. It publishes the version without the cell, then waits until every configured edge reports that version or a newer one. A wait that runs out fails the erasure with no confirmation.
   - Interim, pending Daniel: an edge is named by its client certificate's one subject CN, `edge_<32 hex digits>`, and the set of edges is configured. `fstp_edge::run` still refuses to start, since the edge listener configuration and credentials are not designed. The in-process `LiveRoutes` path stays for the test world.
@@ -732,3 +732,173 @@ Written by lane L13 before its code, on Daniel's decision of 2026-11-21 to build
 | Not built | A seal count for `F(X)` (ADR-004 part 1 "Seal-count limit"). Erasure of the facts under the shared `Fact` key. An erasure route from the cell |
 
 Tests, written before the code: `i81_erased_identity_facts_unreadable_from_live_store_snapshot_and_backup`, `r_ky_02_live_identity_facts_open_after_erasure_and_restart`, `adr004_identity_registration_is_idempotent` and `i81_start_refuses_shared_key_identity_facts` (over PostgreSQL, in `crates/fstp-vault/tests/identity_facts_pg.rs`). `i81_unregistered_identity_facts_refused_at_intake`, `i81_identity_facts_sealed_for_the_bound_identity`, `adr004_identity_binding_is_idempotent_and_never_moves_an_account` and `i81_erased_identity_unbinds_its_accounts` (`crates/fstp-vault/tests/identity_facts.rs`) and the property `i81_prop_erased_write_keeps_epochs_and_drops_its_fact` (`crates/fstp-vault-core/tests/i81_erased_write.rs`) run without a database. The route itself runs over mutual TLS with a witness in `adr004_vault_registers_an_identity_on_the_internal_route` (`crates/fstp-vault/tests/vault_chain.rs`). Built by lane L13 on 2026-11-21 as written above.
+
+## Decided by Daniel, 2026-11-21: lane L13's open points
+
+- **Identity fact kinds.** Only kinds 14 and 17 are sealed under `F(X)` and refused for an unregistered account. Kinds 1 to 13, 15, 16 and 18 stay under the shared `Fact` key. Decided by Daniel on 2026-11-21.
+- **Old facts.** `fstp-vault serve` refuses to start while an identity fact is sealed under the shared `Fact` key, and such a pilot vault is recreated. Decided by Daniel on 2026-11-21.
+- **Left open, recorded.** `Vault::take_fact` stays the library seam of the test world. A seal count for `F(X)`, erasure of the facts under the shared `Fact` key and an erasure route from the cell stay not built.
+- **Registration at verification.** The cell registers the identity at identity verification: when the vault accepts an applicant's identity verification, the cell calls `register_identity` with the account and the attribute tuple. Retries are idempotent, and a failed registration never leaves a verification half done without a retry path. Lane L13b's reading is below.
+- **Registrar reconnect.** When the registrar's keys connection drops, the vault takes the keystore lock again on a new connection. If another process holds it, the vault stops serving and says so. Lane L13b's reading is below.
+
+## Written by lane L13b `prod/identity-registration`, 2026-11-21: registration at verification and the registrar's lock
+
+Written by lane L13b before its code. Every row is interim, pending Daniel, unless it says otherwise.
+
+### The attribute tuple per method (Q17)
+
+| Method | Tuple |
+| --- | --- |
+| Every method | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8 bytes`, in this order: family names, given names, date of birth as `YYYY-MM-DD`, and the ISO 3166-1 alpha-3 code of the state that issued the identity evidence. The method is not part of the tuple, so one person verified by two methods has one identity |
+| `manual` (R-ID-02) | The four fields as printed on the checked document, entered by the recorder. No document number and no image enter the tuple, as R-ID-02 forbids storing them |
+| EUDI (M4, not built) | The same four fields from the person identification data. Which attribute of the presentation fills each field is open |
+| Normalisation | Leading and trailing spaces are removed and inner runs of spaces become one. No case folding and no Unicode normalisation are applied yet: two spellings of one name give two identities, which over-separates and never merges two persons. Open for Daniel, with `TODO(legal)` for the data minimisation basis of the four fields |
+
+### Where the tuple travels: a conflict, stopped for Daniel
+
+Daniel's decision has the cell call `register_identity` with the attribute tuple. Two higher sources say the application never receives identity attributes:
+
+- `SPEC/03-architecture/overview.md`, "Operations other than queries" (decided 2026-10-28): "The application writes only facts that carry no identity attributes", and the browser sends attributes to the vault origin directly, "So the application never receives them (I-17, NOTE 6)".
+- ADR-008, "Where the outcome travels": the recorder enters the verification outcome on the vault origin under a `VerificationRecorded` write ticket, and "No identity attribute enters the application".
+
+No path accepts a verification in production today either. The cell issues the `VerificationRecorded` ticket (`POST /api/v1/verifications`), but the vault origin decodes no kind 6 write, and the cell's vault intake (ADR-026) is refused as `OracleDown`. Lane L13b therefore builds no transport of the tuple. The options for Daniel:
+
+- (A) The cell carries the tuple as a `VaultBound` value, never read, stored or logged, from a recorder route of the cell to `POST /v1/identity`. The overview and ADR-008 change to say so.
+- (B) The recorder enters the tuple with the outcome on the vault origin under the ticket the cell already issues. The vault registers the identity as it accepts the verification, and the cell never holds the tuple. Nothing in the SPEC changes. Proposed by lane L13b.
+
+### What lane L13b builds for either option
+
+| Topic | Reading |
+| --- | --- |
+| Verification with registration | `fstp_vault::erasure::Runner::record_verification(verifier, account, record, tuple)`. It refuses a recorder who verifies their own account or an account of their own identity (ADR-008 rules 1 and 2) before anything is written. It then registers the account (`register_account`), and only then writes the `VerificationRecorded` fact, whose identity is the registered one. A verification is never recorded for an unregistered account |
+| Retry | Each step is idempotent. A failure after the registration leaves a registered account with no verification, and the same call again writes the verification. A call for an account whose newest facts already show it verified as that identity writes nothing. So a retry always completes, and never writes twice |
+| Bank details after verification | A verified account is registered, so its bank details and hardship evidence are taken and sealed under `F(X)` |
+
+### The registrar's keystore lock
+
+| Topic | Reading |
+| --- | --- |
+| Watch | The serving vault probes the registrar's keys connection every 5 seconds with `SELECT 1`, under the registrar's lock. The PostgreSQL advisory lock lives exactly as long as that session |
+| Reconnect | On a failed probe, or a registration whose keys connection failed, the vault opens a new keys connection and calls `pg_try_advisory_lock` on it. If it gets the lock, it reads the keystore rows again. Rows equal to the ones it holds keep it serving on the new connection. A database that cannot be reached is tried again at the next probe, and registrations answer 503 meanwhile |
+| Fail closed | If another process holds the lock, or the rows changed while the lock was free, the vault stops serving. Every request on both listeners answers 503, the log line `{"event":"serving_stopped","rule":"I-81"}` is written, and `fstp-vault` drains and exits with status 1. Its in-memory keys may then be stale against an erasure that ran meanwhile, which only a restart resolves |
+| Window | Between the drop and the next probe, another process may take the lock. An erasure that runs in that window ends the serving vault at its next probe. A fact the vault sealed meanwhile for the erased identity is sealed under a key that the erasure destroyed, so it stays unreadable (I-81) |
+
+Tests, written before the code: `r_id_02_verification_registers_before_it_records_and_retries` and `r_id_02_recorder_never_registers_their_own_identity` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `i81_vault_retakes_the_keystore_lock_after_its_connection_drops` and `i81_vault_stops_serving_when_another_process_takes_the_lock` (`crates/fstp-vault/tests/vault_chain.rs`); `r_nf_02_serving_stopped_is_one_json_line` (`crates/fstp-obs`).
+
+## Decided by Daniel, 2026-11-21: lane L13b's open points
+
+- **Where the tuple travels.** Option B. The recorder enters the identity attributes with the outcome on the vault origin, under the `VerificationRecorded` ticket the cell issues (`POST /api/v1/verifications`). The vault registers the identity as it accepts the verification, through `Runner::record_verification`. The cell never sees the attributes (I-17). Decided by Daniel on 2026-11-21. Option A is withdrawn, and the overview and ADR-008 stand.
+- **Name normalisation of the tuple.** Unicode NFC plus case folding, with no new crate. The four fields stay, and the `TODO(legal)` on data minimisation stays. Decided by Daniel on 2026-11-21. Lane L13b's finding on the tables it needs is below.
+- **Watch interval.** The registrar's keys connection is probed every 5 seconds. Decided by Daniel on 2026-11-21.
+
+## Written by lane L13b, 2026-11-21: the recorder route on the vault origin
+
+Written before the code. Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading |
+| --- | --- |
+| Cell ticket | `POST /api/v1/verifications` takes `{command_id, proposal}` and runs the new command `IssueVerificationTicket { proposal }`. The cell issues a `write:verification_recorded` ticket naming the proposal, held by the recorder, only when: the recorder is a tenant admin (ADR-008 "Recorder in M3"); the proposal is in NEGOTIATION or later (the strict release window of ADR-008); the recorder holds no Judging binding in any state (the I-17 guard of ADR-008); the recorder holds no binding on the proposal (rule 1); the vault answers that the recorder is verified, and that the recorder shares no identity with any account bound to the proposal (rule 2, and ADR-008's interim refusal of an unverified recorder). The ticket record is `TicketIssued` with kind 6, as for every write ticket |
+| Origin body | `POST /w` with a kind 6 ticket takes the body `{"account":"<id>","checks":[...],"document_type":"...","identity":{"birth_date":"YYYY-MM-DD","family_names":"...","given_names":"...","issuing_state":"AAA"},"method":"manual"}` in canonical JSON. The labels are those of R-ID-02 in `fstp_vault_core::fact`. Each name is 1 to 200 characters with no control character. The date is a calendar date from 1900-01-01. The state is three capital letters. The body limit of the kind rises from 1 KiB to 4 KiB, since a name may take four bytes per character. The decoder `fstp_vault::codec::decode_verification_write` has the fuzz target `verification_write_decode` from its first commit |
+| Origin checks | The ticket checks of every `/w` write come first: signature, cell, route, window, lifetime and single use. The ticket must be of kind `verification_recorded` and name a proposal. The vault's own negotiation fact of that proposal must list the body's account, as a release needs (ADR-009, design section 6.5 "Second guard"). The account must not be the ticket's holder (rule 1). `Runner::record_verification` then refuses a recorder of the subject's identity (rule 2), registers the account, and records the fact with the vault's time and the ticket's holder as verifier |
+| Ticket use | The ticket is marked used only after the verification is recorded. A failure before leaves it unused, so the recorder retries with the same link, and the retry completes without writing twice. A ticket used once is refused after |
+| Reply | 204, as every write with no reference. The reply names no identity |
+| Sans-IO path | `Vault::origin` has no keystore, so it answers a kind 6 write 503. The serving vault routes it to its registrar |
+| Page | The write page of the vault origin shows a form for `write:verification_recorded`: the account id of the person checked, method, document type, checks, and the four identity fields. It posts to `/w` as the other forms do. The cell never sees the entries. The ticket names the proposal but not the person, so the recorder enters the account id. Open for Daniel: whether the ticket should name the person |
+| Tuple | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8`, in this order: family names, given names, date of birth, issuing state. Names are trimmed and inner runs of white space become one space. NFC and case folding are decided, but not built: see the next table |
+| Static page | The shipped vault does not serve the static write page yet (ADR-009, third route group). Only the test world serves `web/dist/vault`. So a recorder on a pilot vault cannot open the form until the vault serves its pages. Open for Daniel |
+| Not on real binaries | No end-to-end test runs on the real binaries. The cell issues the ticket only to a verified recorder, and no account is verified in production before the operator path of ADR-008, which waits on the ML-DSA-65 pull request. The g12 harness cannot seed a verification. The flow is tested through the cell's command decision with the vault's ground truth, and through the vault over PostgreSQL |
+
+### NFC and case folding: what an in-house normaliser needs
+
+No workspace code applies NFC or case folding. `fstp_api_core::display_name::normalised` trims, collapses and calls `to_lowercase`, and says so. `fstp_import::text` applies no normalisation form either. So the decided normalisation is not built, and lane L13b stopped before writing one. What it needs, from the Unicode Character Database of one pinned Unicode version, as approximate sizes for Unicode 15.1:
+
+| Part | Data |
+| --- | --- |
+| Canonical decomposition | About 2,060 code points with a canonical mapping of one or two code points (`UnicodeData.txt` field 5 without a `<tag>`). Hangul syllables are computed and need no table |
+| Canonical combining class | About 920 code points with a non-zero class, in about 380 ranges |
+| Composition | About 940 primary composite pairs, and about 1,120 code points with `Full_Composition_Exclusion` (`DerivedNormalizationProps.txt`) |
+| Quick check | `NFC_QC` No and Maybe, about 1,250 code points, optional, for speed only |
+| Case folding | About 1,450 simple (`C`) and about 105 full (`F`) mappings of `CaseFolding.txt`. Full folding can lengthen a string, as `ß` to `ss` |
+| Conformance | `NormalizationTest.txt`, about 19,000 cases and 2.5 MB, as a test fixture only |
+
+In compact Rust tables that is roughly 30 to 40 KB of static data, generated from the UCD files by an in-house Rust generator, since no Python may be used. The UCD files are under the Unicode licence, and adding them or tables derived from them needs Daniel's review. The canonical caseless form would be `NFC(casefold(NFD(x)))`, which needs decomposition, composition and folding together. Open for Daniel: approve that work as its own lane. Until then the tuple uses the trimmed, collapsed form above. When the normaliser lands, the tuple's label changes, the stored tuples are recomputed and the match keys rekeyed, and pilot vaults are recreated.
+
+Tests, written before the code: `adr008_verification_ticket_rules`, `adr008_verification_ticket_issued_in_negotiation` and `adr008_second_admin_issued_once_verified` (`crates/fstp-celltest/tests/adr008_verification_ticket.rs`); `adr008_vault_verification_body_spelling` and `adr008_vault_verification_field_bounds` (`web/test/vault_verification.test.ts`); `adr008_recorder_verification_registers_the_identity`, `adr008_recorder_route_refuses_without_writing` and `adr008_recorder_retry_completes_and_replay_is_refused` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `adr008_verification_write_body_decodes_and_refuses` (`crates/fstp-vault/tests/codecs.rs`).
+
+## Decided by Daniel, 2026-11-21: the first admins and the person in the ticket
+
+- The technical admin verifies the first admins on the host, with the operator as verifier of record (ADR-008, same date). Decided by Daniel on 2026-11-21.
+- The verification ticket names the person, and the recorder types only that person's identity details. Decided by Daniel on 2026-11-21.
+- The shipped vault serves the static write and release pages. Decided by Daniel on 2026-11-21.
+- The full NFC plus case folding normaliser is its own lane. The tuple keeps a seam for it. Decided by Daniel on 2026-11-21.
+
+### Lane L13b's readings
+
+Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading |
+| --- | --- |
+| Host command | `fstp-vault verify-first-admin <account> <identity file>`. It runs with the vault stopped, as `erase-identity` does: it takes the keystore lock, so it refuses while the vault serves, and it needs the configuration, the credentials directory and the vault's `fstp-keyd` entry, which only root and the vault's OS user can read. It asks nothing and prints nothing. Exit status 0 means the verification is recorded, or was recorded before for the same person. Status 2 means a refused argument or file. Status 1 means any other failure |
+| Identity file | One JSON object with the members `checks`, `document_type`, `identity` and `method` of the recorder's body (below). Any JSON spelling is taken, since a person writes it by hand. At most 4 KiB. No document number |
+| Verifier of record | The operator, as the reserved account id `340282366920938463463374607431768211455` (`u128::MAX`), which no cell assigns. Lead reading, 2026-11-21 |
+| Limit | The command records operator verifications for at most two accounts per vault, the first admins. A repeat for an account it verified before is idempotent and does not count again. A third account is refused with status 1. The vault does not know the tenant admin roles, so it counts instead. Verified admins record everyone else on the web. Two first admins per vault, one for each of the two operators: lead reading, 2026-11-21 |
+| Cell side | The verification ends at the vault as a provisional epoch. The cell takes it at its next vault exchange after the vault starts again, as for every vault write (NOTE 4) |
+| Ticket | `IssueVerificationTicket { account, proposal }` names the person and, for an applicant, the proposal. The record is `VerificationTicketIssued { id, holder, subject, proposal }`. The cell issues it to a verified tenant admin with no Judging binding, who is not the person and shares no identity with the person, and, for a proposal, holds no binding on it and shares no identity with its accounts. With a proposal, the proposal is in NEGOTIATION or later and the person holds a binding on it. Without one, the person holds no Receiving binding at all, so an applicant is verified only in NEGOTIATION (R-NG-01). The claims carry the person as the scope `person:<id>` |
+| Vault checks | The person comes from the ticket's scope, never from the body. The body is `{checks, document_type, identity, method}`. With a proposal, the vault's negotiation fact must list the person. The person must not be the holder |
+| Staff app | The member page of the tenant admin (`/app/admin/members`) shows "Record verification" next to each member, and, in a section of its own, next to each person of a proposal in NEGOTIATION or later, whose ticket names that proposal. That list comes from the cell route `GET /api/v1/verification-people`, `{people: [{account, proposal, role}]}`: ids and roles only (I-17), for a tenant admin with no Judging binding, never their own account. No existing staff proposal page shows a tenant admin the team's accounts, so the list lives on the member page. The button asks the cell for the ticket and opens the vault form in the same tab |
+| Static pages | The vault configuration takes an optional `assets_dir`. It holds `vault/` (the compiled vault modules and `shell.html`) and `auth/` (`dom.js`, `encoding.js`, `i18n.js`, `tokens.css` and `auth.css`). The vault serves `GET /w`, `GET /r`, `/assets/vault/<name>` and `/assets/auth/<name>` under the loader policy of ADR-009. Without the member it serves no page, as before |
+| Normaliser seam | `fstp_vault::codec::tuple_name` is the one function the NFC plus case folding lane replaces. The tuple label changes with it |
+
+## Written by lane L16 `prod/backup-custody`, 2026-11-21: off-host sealed copy of a `fstp-keyd` volume
+
+Written by lane L16 before its code. Decided by Daniel on 2026-11-21: on the single-host pilot (ADR-026, D1), the `fstp-keyd` state gets an off-host sealed copy, made by an operator command, with an import onto a fresh host and a runbook. A destroyed root epoch must not come back from an old copy. A second custodian holds its own custody of the ClusterBackup chain (ADR-012 record of lane L16). Every reading below is interim, pending Daniel, unless it says otherwise.
+
+**Reading of I-80.** For file custody the backend is the `fstp-keyd` process with its key volume. On the volume each root exists only sealed under its `K(e)`, and each `K(e)` only sealed under the passphrase key. The copy holds exactly those sealed forms, inside one more seal under a key derived from the same passphrase. It never holds a root, a `K(e)` or a table key in the clear. Only `fstp-keyd` makes or opens it, and opening writes the sealed forms onto a new key volume. `RootMaterial` stays named in `fstp-keyd` only. So the copy is a sealed artefact of the same custody backend, as the key volume is, and I-80 holds for it with no condition. "Custody interface" is unchanged: the `Custody` trait and the socket protocol gain nothing, and no client can ask for a copy.
+
+**Reading of I-81.** Q32 scoped the I-81 claim of file custody to a key volume that is never backed up, snapshotted or copied. A copy is a copy, so these rules carry the claim:
+
+1. A copy never holds a destroyed epoch. It re-encodes the opened key table, with each live `K(e)` and each destroyed entry as a tombstone of zeros, and it carries the epoch and sign-key files of live keys only. A slot that a failed write left blocked is never copied.
+2. An imported volume is held. While the hold marker exists, `fstp-keyd` serves only unwrap and usage requests on the CellBackup and ClusterBackup chains, to a socket whose role reaches them. Every other request is refused with `NotPermitted` and logged. So `fstp-backup restore` runs, and no cell or vault can open a key.
+3. Release ends the hold. The operator names the current epoch of each erasable chain the volume holds (App, Vault): the highest epoch whose `keystore.root` row is live in the restored keystore (ADR-004 record of lane L11). Release destroys every live epoch of that chain below it, with the steps and receipt of a destroy. An epoch above it is kept, since a rotation creates its new root before it commits. If the named epoch is not live in the volume, the copy is older than the last erasure. Release then destroys the older epochs, keeps the hold and refuses.
+4. Each copy is recorded on its source volume in `exports.log`. At each start `fstp-keyd` reports reduced I-81 assurance, reason `ExportHoldsErasedEpoch`, while a copy that is not retired holds an epoch or sign key that has since been destroyed. `fstp-keyd retire-export` records the operator's statement that every copy of that id is destroyed.
+
+Residual risk: a copy made before an erasure still holds the erased epoch. Whoever holds that copy and its passphrase can open the epoch outside our tools. An offline copy cannot prevent this by cryptography alone: only a component that is destroyed online can. Rules 2 and 3 keep our own tools from serving such an epoch, and rule 4 reports it until the copy is retired. The same holds for a cell erasure (R-SW-02) and the cell's CA sign key. Q-L16-1 below records how Daniel decided this.
+
+| Topic | Reading |
+| --- | --- |
+| Copy file | `header = "FKX1" \| version u8 = 1 \| kdf u8 = 1 \| iterations u32 \| salt 16 \| export id 16 \| created u64` (50 bytes). `file = header \| nonce 12 \| ciphertext \| tag 16`, AES-256-GCM with AAD = header under `PBKDF2-HMAC-SHA-256(passphrase, salt, iterations)`, at least 600 000 iterations as the key table. `body = count u16 \| count times (name_len u8 \| name \| len u32 \| bytes)`. The first file is `keytable`. Every other is the epoch file of a live root, the sign-key file of a live sign key, or the usage log `usage.log` (Q-L16-2), named as on the volume. No other file, no repeated name and nothing after the last file is accepted. The whole copy is at most 160 MiB. Integers are big-endian. The decoders are fuzzed (`keyd_export_decode`) |
+| Export | `fstp-keyd export <volume> <file>` opens the key table strictly, opens each live epoch and sign-key file under its key to check it, and writes the copy with a fresh salt and a random export id. It then appends the register record. It writes the copy with mode 0600 and refuses an existing file |
+| Import | `fstp-keyd import <file> <volume>` refuses a volume that holds a key table, and a wrong passphrase (`WrongPassphrase`). It checks that the files are exactly those the opened table implies, and that each live file opens under its key. It then writes each file with mode 0600, fsyncs each and the directory, and writes the hold marker last |
+| Hold marker | The empty file `import.hold` on the key volume |
+| Release | `fstp-keyd release <volume> <chain>=<epoch> ...`, with chain `app` or `vault`. Every erasable chain with a live epoch in the volume must be named. A chain named but absent counts as a copy older than the last erasure |
+| Register | `exports.log` on the source volume, append-only. `record = tag u8 \| export id 16`, then for tag 1 (taken) `created u64 \| count u16 \| count times slot head (9 bytes, as in the key table: chain u8 \| epoch u64, or the sign-key class with its 8 name bytes)`. Tag 2 (retired) has nothing more. It holds no key bytes. The decoder is fuzzed (`keyd_export_decode`) |
+| Assurance | New `ReducedReason::ExportHoldsErasedEpoch`, code 23 in `fstp-obs`: "an off-host copy holds a destroyed key". A volume reason found by the filesystem check is reported first |
+| Lock | `keyd.lock` on the key volume, held with an exclusive `flock` (std `File::try_lock`) by the server for its lifetime, and by export, import, release and retire-export. So none of them runs while the entry serves. A start waits up to 5 seconds for the lock |
+| Passphrase | The commands read it as the server does: the systemd credential, or else `systemd-ask-password`. The copy is sealed under the passphrase of the volume, so an import needs the passphrase of the volume it came from |
+| Usage log | Carried in the copy since Q-L16-2, sealed with the rest, as the file `usage.log`. Import writes it, so a restored entry answers the usage records made before the copy, and release's destroys follow them. Reconciliation after a restore therefore covers the time before the loss. It holds no key bytes. A copy is at most 160 MiB, room for a usage log at twice its size bound |
+| Second custodian | Another `fstp-keyd` entry, on another machine, that creates its own ClusterBackup root. No request or command moves a root between entries. The ceremony is in ADR-012 (record of lane L16) |
+
+Tests, in `crates/fstp-keyd/tests/offhost_copy.rs` and the unit tests of `fstp_keyd::export`: `i80_i81_host_loss_restore_from_offhost_copy`, `i80_offhost_copy_never_holds_a_root_or_epoch_key_in_the_clear`, `i81_destroyed_epoch_never_in_a_later_copy`, `i81_older_copy_restored_after_erasure_is_re_erased_before_serving`, `i81_held_import_serves_backup_chains_only`, `i81_copy_register_reports_reduced_assurance_after_erasure`, `i81_release_destroys_only_epochs_below_the_current_one`, `i81_destroyed_epoch_bytes_never_in_a_later_copy_body`, `adr004_copy_formats_round_trip_in_one_spelling`, `adr004_keyd_binary_takes_five_command_forms`, `i80_import_refuses_a_wrong_passphrase`, `i80_import_refuses_a_tampered_copy_or_a_used_volume`, `adr004_keyd_volume_lock_excludes_a_second_holder` and `adr004_offhost_copy_carries_the_usage_log_for_reconciliation`.
+
+Questions raised by lane L16, all decided by Daniel on 2026-11-21:
+
+- **Q-L16-1. Decided by Daniel on 2026-11-21:** the residual risk is accepted for the pilot. The runbook retires, which means destroys, every older copy after each erasure. A guard key that the second custodian holds online and destroys at each erasure is a release item. It must be built before a release, and the pilot runs without it.
+- **Q-L16-2. Decided by Daniel on 2026-11-21:** yes. A copy carries the usage log, sealed with the rest, and reconciliation after a restore covers the time before the loss. Built: the "Usage log" row above.
+- **Q-L16-3. Decided by Daniel on 2026-11-21:** yes. The cell key file and the witness receipt key file follow the same rule. Built: "Copies of sealed key files" below.
+- **Copy id. Decided by Daniel on 2026-11-21:** the runbook reads the id of a copy from its header with `od`. No command prints it (R-NF-02).
+- The escrow formats of ADR-012 (record of lane L16) stay interim.
+
+### Copies of sealed key files (Q-L16-3)
+
+Built by lane L16 after Daniel's answer of 2026-11-21. The readings are interim, pending Daniel, unless a row says otherwise.
+
+| Topic | Reading |
+| --- | --- |
+| Rule | Decided by Daniel on 2026-11-21: each copy of `cell-keys.sealed` or of the witness receipt key file `receipt.key` is recorded in a copy register. The owning process reports reduced I-81 assurance while a copy that is not retired holds a key it has since replaced |
+| Commands | `fstp-cell copy-key-file <out>` and `fstp-witness copy-key-file <out>` open the file through the owner's own `fstp-keyd` entry, write its sealed bytes to the new file `<out>` with mode 0600, record the copy, and write its id to the new file `<out>.id`. `retire-key-file-copy <id>` records that every copy of an id is destroyed. The commands write typed events only |
+| Register | `cell-keys.copies` and `receipt.copies`, beside the key file. `record = tag u8 \| copy id 16`, then for tag 1 (taken) `created u64 \| count u16 \| count times digest 32`. Tag 2 (retired) has nothing more. The decoder is fuzzed (`copy_register_decode`, in `fstp_custody::copies`) |
+| Digest | `SHA-256("fstp-copy-register-v1" \| label_len u8 \| label \| key)`. The cell labels its keys `anchor`, `cred_lookup`, `ticket` and `ledger`, the witness its key `receipt`. Each key is high-entropy, so a digest names it without revealing it. The register holds no key bytes (I-80) |
+| Replaced | A key whose digest the copy holds and the live file does not. A new ledger generation adds a key and replaces none. A register that does not decode counts as holding a replaced key |
+| Report | At each start, after the key file opens, the owner logs `key_file_assurance` with the file name and `ReducedReason::CopyHoldsReplacedKey` (code 24): "an off-host copy of a key file holds a replaced key". Nothing is logged when no copy holds a replaced key, since the owner does not vouch for the credentials directory |
+
+Tests: `i81_copy_register_flags_a_copy_holding_a_replaced_key`, `i81_unreadable_copy_register_counts_as_reduced`, `i80_copy_register_holds_no_key_bytes` and `adr004_copy_register_round_trips_in_one_spelling` in `crates/fstp-custody/tests/copy_register.rs`; `i81_cell_key_file_copy_reports_reduced_after_a_key_is_replaced`, `i80_cell_key_file_copy_register_holds_no_key` and `adr004_cell_binary_takes_the_key_file_copy_commands` in `fstp_cell::key_copy`; `i81_witness_key_file_copy_reports_reduced_after_the_key_is_replaced` in `fstp_witness::key_copy`.

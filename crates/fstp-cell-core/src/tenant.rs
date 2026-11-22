@@ -95,6 +95,22 @@ pub enum TenantCommand {
         /// `fstp_auth::ceremony::token_digest` of the link token.
         token_digest: [u8; 32],
     },
+    /// The accounts port issues the enrolment invitation of a second
+    /// tenant admin invited by address (SoD-07, ADR-026 record of lane L18).
+    /// Only the system task `SystemTask::Provisioning` issues it, after
+    /// `tenant.invite_admin` appended the tenant admin invitation. The
+    /// invitation id is the tenant invitation id, big-endian. The decider
+    /// refuses it unless that invitation is open in the tenant part, names
+    /// `account` and holds `token_digest`, and refuses an account any
+    /// record names. The enrolment through it takes the invitation.
+    IssueAdminInvitation {
+        /// The tenant admin invitation.
+        admin_invitation: u128,
+        /// The invitee, new to the cell.
+        account: AccountId,
+        /// `fstp_auth::ceremony::token_digest` of the link token.
+        token_digest: [u8; 32],
+    },
     /// Enrol the first passkey of an invited account (design section 8.3,
     /// ceremony 1). Only the ceremony route admission
     /// `gate::admit_invitation_enrolment` admits it, after it verified the

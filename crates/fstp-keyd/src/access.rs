@@ -10,6 +10,8 @@
 //! | [`ClientRole::Vault`] | `fstp-vault` | Vault | none |
 //! | [`ClientRole::PgAgent`] | `fstp-pgagent` | none | the local cluster CAs |
 //! | [`ClientRole::Console`] | root, at the host console | CellBackup, ClusterBackup | none |
+//! | [`ClientRole::Control`] | `fstp-control` of a pilot | ControlPlane | none |
+//! | [`ClientRole::Witness`] | `fstp-witness` of a single host | ControlPlane | none |
 //!
 //! So a compromise of application keys does not expose the vault. A
 //! request for a chain outside its socket's set is refused with
@@ -26,8 +28,13 @@
 //! restore command reads keystore snapshots under CellBackup, and the
 //! open point of ADR-004 part 2 proposes that self-hosted cluster backups
 //! use ClusterBackup through the console socket only. The ControlPlane
-//! entry for a self-hosted witness is an open point too, so no socket
-//! serves that chain yet.
+//! entry for a self-hosted witness is an open point too. The control row is
+//! lane L15's reading, interim, pending Daniel (ADR-009 "Pilot route feed"):
+//! the pilot `fstp-control` wraps the seal key of its route feed signing
+//! key under a ControlPlane root. It serves no witness. The witness row is
+//! lane L19's, a lead reading of 2026-11-22 (ADR-028 "Witness custody"): a
+//! self-hosted witness wraps the seal key of its receipt key under a
+//! ControlPlane root of its own `fstp-keyd` entry, with its own passphrase.
 //!
 //! # Permissions
 //!
@@ -56,15 +63,25 @@ pub enum ClientRole {
     PgAgent,
     /// The root-only host console: the restore command and recovery.
     Console,
+    /// `fstp-control` of a pilot: the ControlPlane chain only, for the
+    /// seal key of its route feed signing key (ADR-009 "Pilot route
+    /// feed", lane L15). Interim, pending Daniel.
+    Control,
+    /// `fstp-witness` of a single host: the ControlPlane chain only, for the
+    /// seal key of its receipt key (ADR-004 part 2 "Self-hosted witness
+    /// receipt key", ADR-028 "Witness custody"). Lead reading, 2026-11-22.
+    Witness,
 }
 
 impl ClientRole {
     /// Every role.
-    pub const ALL: [ClientRole; 4] = [
+    pub const ALL: [ClientRole; 6] = [
         ClientRole::Cell,
         ClientRole::Vault,
         ClientRole::PgAgent,
         ClientRole::Console,
+        ClientRole::Control,
+        ClientRole::Witness,
     ];
 
     /// The one-byte code of the role in the usage log. Code 0 is a
@@ -76,6 +93,8 @@ impl ClientRole {
             ClientRole::Vault => 2,
             ClientRole::PgAgent => 3,
             ClientRole::Console => 4,
+            ClientRole::Control => 5,
+            ClientRole::Witness => 6,
         }
     }
 
@@ -87,6 +106,8 @@ impl ClientRole {
             ClientRole::Vault => "vault",
             ClientRole::PgAgent => "pgagent",
             ClientRole::Console => "console",
+            ClientRole::Control => "control",
+            ClientRole::Witness => "witness",
         }
     }
 
@@ -98,6 +119,8 @@ impl ClientRole {
             ClientRole::Vault => &[Chain::Vault],
             ClientRole::PgAgent => &[],
             ClientRole::Console => &[Chain::CellBackup, Chain::ClusterBackup],
+            ClientRole::Control => &[Chain::ControlPlane],
+            ClientRole::Witness => &[Chain::ControlPlane],
         }
     }
 
@@ -107,7 +130,9 @@ impl ClientRole {
         match self {
             ClientRole::Cell => &[SignKeyClass::CellCa],
             ClientRole::PgAgent => &[SignKeyClass::ClusterCa],
-            ClientRole::Vault | ClientRole::Console => &[],
+            ClientRole::Vault | ClientRole::Console | ClientRole::Control | ClientRole::Witness => {
+                &[]
+            }
         }
     }
 
@@ -126,7 +151,11 @@ impl ClientRole {
     pub const fn creates_sign_keys(self) -> &'static [SignKeyClass] {
         match self {
             ClientRole::Console => &[SignKeyClass::ClusterCa],
-            ClientRole::Cell | ClientRole::Vault | ClientRole::PgAgent => &[],
+            ClientRole::Cell
+            | ClientRole::Vault
+            | ClientRole::PgAgent
+            | ClientRole::Control
+            | ClientRole::Witness => &[],
         }
     }
 

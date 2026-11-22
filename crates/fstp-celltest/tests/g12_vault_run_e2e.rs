@@ -128,6 +128,7 @@ fn g12_vault_binary_answers_the_cell_binary() {
         key_file_custody: key_file_custody.socket().to_path_buf(),
         assets_dir: None,
         relay: None,
+        shell: None,
     };
     let (world, vault) = start_world(
         WorldSpec {

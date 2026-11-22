@@ -110,6 +110,7 @@ dependencies = [
  "fstp-ledger",
  "fstp-programme",
  "fstp-report",
+ "fstp-tenant",
  "fstp-webauthn",
 ]
 

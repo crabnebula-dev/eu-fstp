@@ -38,7 +38,7 @@ use fstp_vault_proto::{
     encode_response, scope_programme,
 };
 
-use crate::codec::decode_origin_write;
+use crate::codec::{VerificationWrite, decode_origin_write, decode_verification_write};
 use crate::{MATCH_KEY_LEN, VaultError};
 
 /// Why the vault origin refused a request.
@@ -111,6 +111,15 @@ impl From<TicketRefusal> for OriginRefusal {
     }
 }
 
+/// The verifier of record of a verification the technical admin records on
+/// the host (`fstp-vault verify-first-admin`, ADR-008, Daniel, 2026-11-21):
+/// the operator, as an account id no cell assigns. Interim, pending Daniel.
+pub const OPERATOR_VERIFIER: WireAccount = WireAccount(u128::MAX);
+
+/// How many accounts the operator verifies on the host: the first admins
+/// (ADR-004 record of lane L13b, row "Limit"). Interim, pending Daniel.
+pub const MAX_OPERATOR_VERIFIED: usize = 2;
+
 /// Whether `f` is an identity fact: a fact the registered identity of its
 /// account seals under its fact key `F(X)`, which the erasure of that
 /// identity destroys (ADR-004 record of lane L13, row "Identity fact
@@ -126,13 +135,15 @@ pub fn is_identity_fact(f: &Fact) -> bool {
 pub const fn body_limit(kind: WriteKind) -> usize {
     match kind {
         WriteKind::ProximityListDeclared | WriteKind::ReviewerDeclaration => 64 << 10,
+        // ADR-004 record of lane L13b: a name may take four bytes per
+        // character.
+        WriteKind::VerificationRecorded => 4 << 10,
         WriteKind::HardshipEvidence => 32 << 10,
         WriteKind::DocumentUpload
         | WriteKind::CountryStated
         | WriteKind::AffiliationDeclared
         | WriteKind::AdultAttestation
         | WriteKind::GuardianConsent
-        | WriteKind::VerificationRecorded
         | WriteKind::PartnerStaffDeclared
         | WriteKind::BankDetails
         | WriteKind::BankVerification
@@ -258,7 +269,7 @@ pub fn origin_headers(content_type: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-fn refusal_reply(r: OriginRefusal) -> Reply {
+pub(crate) fn refusal_reply(r: OriginRefusal) -> Reply {
     Reply {
         status: r.status(),
         headers: origin_headers("text/plain; charset=utf-8"),
@@ -410,6 +421,9 @@ pub struct Vault {
     /// The registered identity of each account (ADR-004 record of lane
     /// L13). An erased identity leaves it.
     accounts: BTreeMap<WireAccount, Person>,
+    /// The accounts the operator verified on the host (ADR-008, Daniel,
+    /// 2026-11-21): every write of a verification by [`OPERATOR_VERIFIER`].
+    operator_verified: BTreeSet<WireAccount>,
     journal: Vec<JournalEntry>,
 }
 
@@ -460,6 +474,7 @@ impl Vault {
             .and_then(|e| e.checked_add(1))
             .ok_or(unavailable)?;
         let sealed_for = self.sealed_for(&fact);
+        self.note_operator(&fact);
         let events = fstp_vault_core::write_fact(&mut self.state, fact.clone(), now)?;
         let affected = match self.state.provisional() {
             Some(p) if p.epoch() == epoch => p.affected().clone(),
@@ -545,6 +560,7 @@ impl Vault {
         fact: Fact,
         at: i64,
     ) -> Result<Vec<VaultEvent>, CoreError> {
+        self.note_operator(&fact);
         fstp_vault_core::write_fact(&mut self.state, fact, at)
     }
 
@@ -698,6 +714,22 @@ impl Vault {
     /// match key order.
     pub fn identity_keys(&self) -> impl Iterator<Item = ([u8; MATCH_KEY_LEN], Person)> + '_ {
         self.identities.iter().map(|(k, p)| (*k, *p))
+    }
+
+    /// Keeps the account of an operator verification.
+    fn note_operator(&mut self, fact: &Fact) {
+        if let Fact::VerificationRecorded {
+            account, record, ..
+        } = fact
+            && record.verifier == OPERATOR_VERIFIER
+        {
+            self.operator_verified.insert(*account);
+        }
+    }
+
+    /// The accounts the operator verified on the host, in id order.
+    pub fn operator_verified(&self) -> &BTreeSet<WireAccount> {
+        &self.operator_verified
     }
 
     /// The registered identity of `account`, if a registration binds it
@@ -876,6 +908,64 @@ impl Vault {
         Ok(c)
     }
 
+    /// The checks of a recorder's verification write on `POST /w` that
+    /// need no keystore (ADR-004 record of lane L13b, row "Origin
+    /// checks"): the frame, the ticket checks with the signature first,
+    /// then the kind, the body limit, the body, the person the ticket's
+    /// scope names, rule 1, and, when the ticket names a proposal, the
+    /// vault's own negotiation fact of it, which must list the person. `None` for a verified ticket
+    /// of another kind, which the ordinary write path takes.
+    ///
+    /// # Errors
+    ///
+    /// The first [`OriginRefusal`]. Nothing is journaled and the ticket
+    /// stays unused.
+    pub fn check_verification_write(
+        &self,
+        bytes: &[u8],
+        now: i64,
+    ) -> Result<Option<CheckedVerification>, OriginRefusal> {
+        if bytes.len() > crate::codec::MAX_ORIGIN_WRITE_LEN {
+            return Err(OriginRefusal::TooLarge);
+        }
+        let w = decode_origin_write(bytes).map_err(|_| OriginRefusal::Malformed)?;
+        let c = self.checked(&w.ticket, Route::Write, now)?;
+        if c.kind != TicketKind::Write(WriteKind::VerificationRecorded) {
+            return Ok(None);
+        }
+        if w.body.len() > body_limit(WriteKind::VerificationRecorded) {
+            return Err(OriginRefusal::TooLarge);
+        }
+        let write = decode_verification_write(&w.body).map_err(|_| OriginRefusal::Malformed)?;
+        // The person comes from the ticket, never from the body (Daniel,
+        // 2026-11-21).
+        let account = fstp_vault_proto::scope_person(&c.scope).ok_or(OriginRefusal::WrongKind)?;
+        // ADR-008 rule 1: never the recorder's own account.
+        if account == c.account {
+            return Err(OriginRefusal::WrongKind);
+        }
+        // An applicant is verified in NEGOTIATION only: the vault's own
+        // negotiation fact of the ticket's proposal must list the person.
+        if let Some(proposal) = c.proposal
+            && !self.state.negotiation_lists(proposal, account)
+        {
+            return Err(OriginRefusal::NoNegotiationFact);
+        }
+        Ok(Some(CheckedVerification {
+            ticket_id: c.nonce,
+            verifier: c.account,
+            account,
+            write,
+        }))
+    }
+
+    /// Marks the ticket `ticket_id` used at `now`, once the verification it
+    /// carried is recorded (ADR-004 record of lane L13b, row "Ticket
+    /// use"). The id is the ticket's single-use identifier (ADR-009
+    /// "Single use"), never a seal nonce: it seals nothing.
+    pub fn use_verification_ticket(&mut self, ticket_id: [u8; 16], now: i64) {
+        self.use_ticket(ticket_id, now);
+    }
     /// `POST /w` with the request `bytes` at `now`.
     ///
     /// # Errors
@@ -894,6 +984,14 @@ impl Vault {
         };
         if w.body.len() > body_limit(kind) {
             return Err(OriginRefusal::TooLarge);
+        }
+        // ADR-004 record of lane L13b, row "Sans-IO path": a recorder's
+        // verification needs the keystore, which only the serving vault's
+        // registrar holds. A body of any other form is still malformed
+        // (R-ID-02).
+        if kind == WriteKind::VerificationRecorded {
+            decode_verification_write(&w.body).map_err(|_| OriginRefusal::Malformed)?;
+            return Err(OriginRefusal::Unavailable);
         }
         let fact = fact_for(kind, &w.body, now, c.nonce, self.state.latest())
             .ok_or(OriginRefusal::Malformed)?;
@@ -1335,4 +1433,18 @@ fn escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// A recorder's verification write that passed the checks of
+/// [`Vault::check_verification_write`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckedVerification {
+    /// The ticket id, used once the verification is recorded.
+    pub ticket_id: [u8; 16],
+    /// The ticket's holder: the recorder, who becomes the verifier.
+    pub verifier: WireAccount,
+    /// The person the ticket names, whose identity was checked.
+    pub account: WireAccount,
+    /// The write.
+    pub write: VerificationWrite,
 }

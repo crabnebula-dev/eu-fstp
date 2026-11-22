@@ -120,6 +120,12 @@ pub mod kind {
     /// holds the link token the one email carries. The plan never cancels
     /// it, and [`firing`] never builds its entry.
     pub const ROLE_INVITATION: u16 = 16;
+    /// The invitation of a second tenant admin by address (J0, SoD-07,
+    /// ADR-026 record of lane L18). Sourced by the tenant invitation id
+    /// ([`admin_invitation_event`]), due when the accounts port schedules
+    /// it. As for [`ROLE_INVITATION`], only that port fires it, the plan
+    /// never cancels it, and [`super::firing`] never builds its entry.
+    pub const ADMIN_INVITATION: u16 = 17;
 }
 
 /// A level 2 signing key is due for replacement this long after its
@@ -488,6 +494,7 @@ pub fn diff(t: &TimelineState, derived: &BTreeMap<EventId, Derived>) -> Vec<Time
         if e.status != EventStatus::Scheduled
             || derived.contains_key(id)
             || e.kind == kind::ROLE_INVITATION
+            || e.kind == kind::ADMIN_INVITATION
         {
             continue;
         }
@@ -587,7 +594,7 @@ pub fn firing(s: &CellState, event: &EventId, now: Timestamp) -> Option<Firing> 
         kind::SIGNER_ROTATION_DUE => Vec::new(),
         // J2: only the accounts port fires an invitation, with the body it
         // composed (`kind::ROLE_INVITATION`).
-        kind::ROLE_INVITATION => return None,
+        kind::ROLE_INVITATION | kind::ADMIN_INVITATION => return None,
         // ADR-008, 2026-11-19: one email to the holder of the flagged
         // passkey, when the tenant has a relay.
         kind::PASSKEY_DISABLED => {
@@ -685,6 +692,34 @@ pub fn role_invitation_event(programme: ProgrammeId, invitation: u128, now: Time
     }
 }
 
+/// The `ADMIN_INVITATION` event of the tenant admin invitation
+/// `invitation`, due at `now` (J0, ADR-026 record of lane L18). Its source
+/// is the invitation id, big-endian, so a retried schedule names the same
+/// event.
+pub fn admin_invitation_event(invitation: u128, now: Timestamp) -> Derived {
+    Derived {
+        kind: kind::ADMIN_INVITATION,
+        lead: 0,
+        source: invitation.to_be_bytes().to_vec(),
+        source_version: 0,
+        due: now.micros(),
+        offset_minutes: 0,
+    }
+}
+
+/// The message of the admin invitation event `event` to the address whose
+/// SHA-256 digest is `address`, with the `admin-invitation` template at its
+/// latest version (I-26). [`role_invitation_firing`] fires it.
+pub fn admin_invitation_message(event: &EventId, address: [u8; 32]) -> Option<InvitationMessage> {
+    let template = Template::latest(TemplateId::AdminInvitation, Locale::En)?;
+    let idem = message_idem(event, Recipient::Address(address), CHANNEL_EMAIL);
+    Some(InvitationMessage {
+        outbox: outbox_id(&idem),
+        idem,
+        template,
+    })
+}
+
 /// The one message of a `ROLE_INVITATION` firing before it is composed:
 /// its row id, key and template version.
 #[derive(Clone, Copy, Debug)]
@@ -711,8 +746,10 @@ pub fn role_invitation_message(event: &EventId, address: [u8; 32]) -> Option<Inv
 }
 
 /// The firing of the scheduled invitation event `event` at `now`, with
-/// the composed message `body` of `message` (J2, I-25). It records the
-/// template version first when the ledger does not hold it, and lists the
+/// the composed message `body` of `message` (J2, I-25). It fires an
+/// `ADMIN_INVITATION` event the same way (J0, ADR-026 record of lane
+/// L18). It records the template version first when the ledger does not
+/// hold it, and lists the
 /// one message. `None` when the event is not a scheduled, due invitation.
 pub fn role_invitation_firing(
     s: &CellState,
@@ -723,8 +760,8 @@ pub fn role_invitation_firing(
 ) -> Option<Firing> {
     let t = s.timeline();
     let e = t.event(event)?;
-    if e.kind != kind::ROLE_INVITATION || e.status != EventStatus::Scheduled || e.due > now.micros()
-    {
+    let port_fired = e.kind == kind::ROLE_INVITATION || e.kind == kind::ADMIN_INVITATION;
+    if !port_fired || e.status != EventStatus::Scheduled || e.due > now.micros() {
         return None;
     }
     let code = template_code(message.template.id());
@@ -843,6 +880,7 @@ pub fn event_template(s: &CellState, event: &EventId) -> Option<TemplateId> {
         kind::CORRIGENDUM => Some(TemplateId::Corrigendum),
         kind::PASSKEY_DISABLED => Some(TemplateId::PasskeyDisabled),
         kind::ROLE_INVITATION => Some(TemplateId::RoleInvitation),
+        kind::ADMIN_INVITATION => Some(TemplateId::AdminInvitation),
         _ => None,
     }
 }

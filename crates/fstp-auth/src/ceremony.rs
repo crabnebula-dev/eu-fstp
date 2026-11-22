@@ -185,6 +185,14 @@ pub enum Issuer {
         /// Whether the creator invitation is live.
         invitation_live: bool,
     },
+    /// The cell's accounts port, for the invitation of a second tenant
+    /// admin by address (SoD-07, ADR-026 record of lane L18). It issues
+    /// only for a tenant admin invitation that is open and names the same
+    /// account and token digest. Its enrolment takes that invitation.
+    AdminInvitation {
+        /// Whether the tenant admin invitation is open and matches.
+        invitation_open: bool,
+    },
 }
 
 /// An invitation as the fold holds it.
@@ -261,6 +269,12 @@ pub fn issue_invitation(
         }
         Issuer::RoleInvitation { invitation_live } => {
             if !invitation_live {
+                return Err(EnrolDeny::InvitationIssuer);
+            }
+            false
+        }
+        Issuer::AdminInvitation { invitation_open } => {
+            if !invitation_open {
                 return Err(EnrolDeny::InvitationIssuer);
             }
             false

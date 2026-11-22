@@ -5,10 +5,14 @@
 //! client OS user, under `/run/fstp-keyd`:
 //!
 //! - `console.sock`, always, for root at the host console (mode 0600).
-//! - `cell.sock`, `vault.sock` and `pgagent.sock`, each only when its
-//!   variable `FSTP_KEYD_GROUP_CELL`, `FSTP_KEYD_GROUP_VAULT` or
-//!   `FSTP_KEYD_GROUP_PGAGENT` names the group id of that client's OS
-//!   user. The socket is handed to that group (mode 0660). The install
+//! - `cell.sock`, `vault.sock`, `pgagent.sock`, `control.sock` and
+//!   `witness.sock`, each only when its variable `FSTP_KEYD_GROUP_CELL`,
+//!   `FSTP_KEYD_GROUP_VAULT`, `FSTP_KEYD_GROUP_PGAGENT`,
+//!   `FSTP_KEYD_GROUP_CONTROL` or `FSTP_KEYD_GROUP_WITNESS` names the group
+//!   id of that client's OS user. `control.sock` serves the pilot
+//!   `fstp-control` (ADR-009 "Pilot route feed"), and `witness.sock` a
+//!   self-hosted `fstp-witness` (ADR-028 "Witness custody"). The socket is handed to
+//!   that group (mode 0660). The install
 //!   sets the variables in the systemd unit and makes `fstp-keyd` a
 //!   member of each group.
 //!
@@ -26,11 +30,18 @@
 //! a missing key volume or socket directory is replaced by a fresh
 //! temporary one, and a missing passphrase by an ephemeral one, each
 //! with a warning event.
+//!
+//! Four operator commands work on a stopped entry (ADR-004 record of
+//! lane L16): `export <volume> <file>` writes an off-host sealed copy,
+//! `import <file> <volume>` writes it onto a fresh volume and holds it,
+//! `release <volume> app=<e> vault=<e>` ends the hold, and
+//! `retire-export <volume> <id>` records that a copy is destroyed.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use fstp_keyd::{ClientRole, ClientSocket, KeydError, PassphraseSource, VolumeOrigin};
+use fstp_keyd::export::{self, Command};
+use fstp_keyd::{ClientRole, ClientSocket, KeydError, Passphrase, PassphraseSource, VolumeOrigin};
 use fstp_obs::LogEvent;
 use fstp_obs::assurance::{DeploymentMode, HostCheck, deployment_mode_from_env};
 
@@ -47,6 +58,8 @@ fn group_var(role: ClientRole) -> Option<&'static str> {
         ClientRole::Vault => Some("FSTP_KEYD_GROUP_VAULT"),
         ClientRole::PgAgent => Some("FSTP_KEYD_GROUP_PGAGENT"),
         ClientRole::Console => None,
+        ClientRole::Control => Some("FSTP_KEYD_GROUP_CONTROL"),
+        ClientRole::Witness => Some("FSTP_KEYD_GROUP_WITNESS"),
     }
 }
 
@@ -122,7 +135,61 @@ fn run() -> Result<(), KeydError> {
     fstp_keyd::serve_sockets_from(&sockets, &volume, origin, PassphraseSource::CredentialOrAsk)
 }
 
+/// Runs one operator command on a key volume (ADR-004 record of lane
+/// L16). The passphrase comes from the systemd credential, or else from
+/// the operator through `systemd-ask-password`, as for a start. The
+/// commands write typed events only (R-NF-02). A copy's id stands in
+/// clear in bytes 26 to 41 of its header, for `retire-export`.
+fn operator(command: &Command) -> Result<(), KeydError> {
+    use std::io::Write as _;
+    let passphrase = || Passphrase::from_credentials_or_ask();
+    match command {
+        Command::Serve => Ok(()),
+        Command::Export { volume, file } => {
+            let (_, bytes) = export::export_volume(volume, &passphrase()?)?;
+            let mut out = std::fs::OpenOptions::new();
+            out.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                out.mode(0o600);
+            }
+            let mut f = out
+                .open(file)
+                .map_err(|_| KeydError::Io("create the copy file"))?;
+            f.write_all(&bytes)
+                .and_then(|()| f.sync_all())
+                .map_err(|_| KeydError::Io("write the copy file"))
+        }
+        Command::Import { file, volume } => {
+            let meta = std::fs::metadata(file).map_err(|_| KeydError::Io("read the copy file"))?;
+            if meta.len() > export::MAX_EXPORT_LEN as u64 {
+                return Err(KeydError::Malformed("a copy is too long"));
+            }
+            let bytes = std::fs::read(file).map_err(|_| KeydError::Io("read the copy file"))?;
+            export::import_volume(&bytes, volume, &passphrase()?).map(|_| ())
+        }
+        Command::Release { volume, current } => {
+            export::release_import(volume, &passphrase()?, current)
+        }
+        Command::Retire { volume, id } => export::retire_export(volume, *id),
+    }
+}
+
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let command = match export::parse_command(&args) {
+        Ok(c) => c,
+        Err(_) => return ExitCode::from(2),
+    };
+    if command != Command::Serve {
+        return if operator(&command).is_ok() {
+            ExitCode::SUCCESS
+        } else {
+            let _ = fstp_obs::log_to_stderr(&LogEvent::ShuttingDown);
+            ExitCode::FAILURE
+        };
+    }
     let _ = fstp_obs::log_to_stderr(&LogEvent::Started);
     if run().is_ok() {
         ExitCode::SUCCESS

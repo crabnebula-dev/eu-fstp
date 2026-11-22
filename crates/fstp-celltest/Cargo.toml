@@ -80,6 +80,9 @@ fstp-mail.workspace = true
 fstp-timeline.workspace = true
 fstp-smtp.workspace = true
 fstp-api-core.workspace = true
+# Lane L19: the constants of the operator tool, tied to their sources
+# (`tests/l19_admin_setup_e2e.rs`).
+fstp-admin.workspace = true
 # Lane L2: the OAuth form encoder and the grant facts of the production
 # authorisation server tests (`tests/l2_oauth_pg.rs`).
 fstp-oauth.workspace = true

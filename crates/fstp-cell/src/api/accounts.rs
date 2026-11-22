@@ -45,6 +45,10 @@ use crate::routes::Backend;
 /// The label of the command id of an enrolment invitation.
 const ENROL_LABEL: &[u8] = b"fstp-role-invitation-enrol-v1";
 
+/// The label of the command id of an admin enrolment invitation (ADR-026
+/// record of lane L18).
+const ADMIN_ENROL_LABEL: &[u8] = b"fstp-admin-invitation-enrol-v1";
+
 /// The accounts port.
 pub(crate) struct CellAccounts<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
 
@@ -52,8 +56,14 @@ pub(crate) struct CellAccounts<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
 /// invitation `invitation` in the cell `cell`, keyed by the cell id as the
 /// timeline's ids are (I-20).
 fn enrol_command_id(cell: [u8; 16], invitation: u128) -> [u8; 16] {
+    labelled_command_id(ENROL_LABEL, cell, invitation)
+}
+
+/// The system command id under `label` of the invitation `invitation` in
+/// the cell `cell`, keyed by the cell id (I-20).
+fn labelled_command_id(label: &[u8], cell: [u8; 16], invitation: u128) -> [u8; 16] {
     let mut h = fstp_crypto::HmacSha256::new(&cell);
-    h.update(ENROL_LABEL);
+    h.update(label);
     h.update(&invitation.to_be_bytes());
     let d = h.finish();
     let mut suffix = [0u8; 8];
@@ -150,19 +160,65 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
             .await
     }
 
-    /// Step 3: the invitation event, scheduled and fired with the composed
-    /// message. Returns the row and body to deliver, or `None` when the
-    /// event fired before.
+    /// The account whose login email is `email`, if any.
+    async fn login_account(&self, email: &str) -> Result<Option<AccountId>, PortError> {
+        self.0
+            .erasure
+            .login_account(crate::tasks::erasure::normalise_email(email))
+            .await
+            .map_err(|_| PortError::Unavailable)
+    }
+
+    /// Step 2 of an admin invitation (SoD-07, ADR-026 record of lane L18):
+    /// the M3 enrolment invitation of the invitee the API core drew, for
+    /// the link token, unless the ledger holds it already. The enrolment
+    /// binds the address as the login email and takes the tenant admin
+    /// invitation.
+    async fn admin_enrolment(
+        &self,
+        invitation: u128,
+        invitee: AccountId,
+        token: &[u8; 32],
+        email: &str,
+        now: Timestamp,
+    ) -> Result<(), PortError> {
+        if self
+            .0
+            .engine
+            .state()
+            .auth()
+            .invitation(invitation.to_be_bytes())
+            .is_some()
+        {
+            return Ok(());
+        }
+        let digest = fstp_auth::ceremony::token_digest(&fstp_auth::codec::Token(*token));
+        self.0
+            .backend
+            .note_invitation_email(digest, email.to_owned())
+            .await
+            .map_err(|_| PortError::Unavailable)?;
+        let command = CellCommand::Tenant(TenantCommand::IssueAdminInvitation {
+            admin_invitation: invitation,
+            account: invitee,
+            token_digest: digest,
+        });
+        let id = labelled_command_id(ADMIN_ENROL_LABEL, self.0.cell, invitation);
+        self.system(command, SystemTask::Provisioning, id, Vec::new(), now)
+            .await
+    }
+
+    /// Step 3: the invitation event `derived`, scheduled and fired with the
+    /// composed message, whose one link is `link`. Returns the row and body
+    /// to deliver, or `None` when the event fired before.
     async fn fire(
         &self,
         relay: &SharedRelay,
-        programme: ProgrammeId,
-        invitation: u128,
-        token: [u8; 32],
+        derived: fstp_timeline::Derived,
+        link: LinkTarget,
         to: &Mailbox,
         now: Timestamp,
     ) -> Result<Option<([u8; 16], Vec<u8>)>, PortError> {
-        let derived = fstp_timeline::role_invitation_event(programme, invitation, now);
         let event = derived.id();
         if self.0.engine.state().timeline().event(&event).is_none() {
             let plan = TimelineCommand::Plan {
@@ -186,8 +242,13 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
         }
         let address =
             fstp_crypto::sha256(crate::tasks::erasure::normalise_email(to.as_str()).as_bytes());
-        let message = fstp_timeline::role_invitation_message(&event, address)
-            .ok_or(PortError::Unavailable)?;
+        let message = match link {
+            LinkTarget::AdminInvitation(_) => {
+                fstp_timeline::admin_invitation_message(&event, address)
+            }
+            _ => fstp_timeline::role_invitation_message(&event, address),
+        }
+        .ok_or(PortError::Unavailable)?;
         let cfg = MailConfig {
             origin: Origin::new(&format!("https://{}", self.0.host))
                 .map_err(|_| PortError::Unavailable)?,
@@ -197,10 +258,7 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
             // ADR-030: the tenant's and the programme's logos and colour.
             brand: self.mail_brand(programme).await,
         };
-        let bindings = Bindings::new().with(
-            Slot::Link,
-            Value::Link(LinkTarget::RoleInvitation(InvitationToken(token))),
-        );
+        let bindings = Bindings::new().with(Slot::Link, Value::Link(link));
         let body = fstp_mail::compose(
             &cfg,
             &Message {
@@ -234,31 +292,50 @@ impl<R: Runtime, V: VaultClient> Accounts for CellAccounts<R, V> {
     /// The invitation of a person to a programme role (module
     /// documentation). The link is the landing, `/app/invitation#<token>`.
     async fn invite(&self, kind: InviteKind) -> Result<InvitationLink, PortError> {
-        let InviteKind::ProgrammeRole {
-            programme,
-            invitation,
-            email,
-            token,
-            ..
-        } = kind;
         // Step 1: no relay, no invitation.
         let relay = self.0.relay.clone().ok_or(PortError::Unavailable)?;
-        let to = Mailbox::new(&email).map_err(|_| PortError::Refused)?;
-        let invitation = invitation.raw();
         let now = self.0.now();
-        let known = self
-            .0
-            .erasure
-            .login_account(crate::tasks::erasure::normalise_email(&email))
-            .await
-            .map_err(|_| PortError::Unavailable)?;
-        if known.is_none() {
-            self.enrolment(programme, invitation, token.bytes(), &email, now)
-                .await?;
-        }
-        let fired = self
-            .fire(&relay, programme, invitation, *token.bytes(), &to, now)
-            .await?;
+        let (to, derived, link, path) = match kind {
+            InviteKind::ProgrammeRole {
+                programme,
+                invitation,
+                email,
+                token,
+                ..
+            } => {
+                let to = Mailbox::new(&email).map_err(|_| PortError::Refused)?;
+                let invitation = invitation.raw();
+                let known = self.login_account(&email).await?;
+                if known.is_none() {
+                    self.enrolment(programme, invitation, token.bytes(), &email, now)
+                        .await?;
+                }
+                let derived = fstp_timeline::role_invitation_event(programme, invitation, now);
+                let link = LinkTarget::RoleInvitation(InvitationToken(*token.bytes()));
+                let path = format!("/app/invitation#{}", token.hex());
+                (to, derived, link, path)
+            }
+            // SoD-07, ADR-026 record of lane L18: the second tenant admin.
+            InviteKind::TenantAdmin {
+                invitation,
+                invitee,
+                email,
+                token,
+            } => {
+                let to = Mailbox::new(&email).map_err(|_| PortError::Refused)?;
+                if self.login_account(&email).await?.is_some() {
+                    return Err(PortError::Refused);
+                }
+                let invitation = invitation.raw();
+                self.admin_enrolment(invitation, invitee, token.bytes(), &email, now)
+                    .await?;
+                let derived = fstp_timeline::admin_invitation_event(invitation, now);
+                let link = LinkTarget::AdminInvitation(InvitationToken(*token.bytes()));
+                let path = format!("/auth/invite#{}", token.hex());
+                (to, derived, link, path)
+            }
+        };
+        let fired = self.fire(&relay, derived, link, &to, now).await?;
         // Step 4. Without the digest key the row waits for the dispatcher.
         if let Some((outbox, body)) = fired
             && let Ok(Some(key)) = self.0.erasure.delivery_digest_key().await
@@ -269,7 +346,7 @@ impl<R: Runtime, V: VaultClient> Accounts for CellAccounts<R, V> {
             })
             .await;
         }
-        Ok(InvitationLink(format!("/app/invitation#{}", token.hex())))
+        Ok(InvitationLink(path))
     }
 
     /// A pseudonymous handle from the account id. Never an email.

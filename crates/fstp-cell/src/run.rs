@@ -136,13 +136,6 @@ fn login(cfg: &FileConfig, role: fstp_pgstore::Role) -> Result<fstp_pgwire::Conf
     .connect_timeout(Some(DB_CONNECT)))
 }
 
-/// The ADR-021 organisation port of the file.
-fn organisation(cfg: &FileConfig) -> crate::public::OrganisationPort {
-    crate::public::OrganisationPort {
-        active: cfg.organisation_active,
-    }
-}
-
 /// The parts and options of the cell of `cfg` on `rt`, with `keys` from
 /// the opened key file and the listeners at `listen`.
 fn parts(
@@ -275,12 +268,15 @@ fn parts(
     // ADR-027: the creator shell over the configured probes. The relay
     // probe checks the relay the cell submits to.
     let shell = cfg.shell.clone().unwrap_or_default();
-    let creator_shell = crate::shell::facts::production_shell(
+    // ADR-026 record of lane L18: the same probes serve onboarding's
+    // Domains and email and Channels steps through the API core.
+    let (creator_shell, tenant_prober) = crate::shell::facts::production_probes(
         rt.clone(),
         crate::shell::facts::ShellSettings {
             resolver: shell.resolver,
             probes: crate::shell::probe::ProbeSettings {
                 mail_relay: cfg.mail.as_ref().map(|m| m.relay.clone()),
+                mail_address: cfg.mail.as_ref().and_then(|m| m.address),
                 mail_ca_pem: mail_ca,
                 sending_domain: shell.sending_domain,
                 dkim_selector: shell.dkim_selector,
@@ -310,7 +306,9 @@ fn parts(
         proof_mail,
         api_relay,
         creator_shell,
-        organisation: organisation(cfg),
+        // ADR-021, ADR-026 record of lane L18: the organisation port keeps
+        // its default, "not active". Only the ledger activates.
+        tenant_prober: Some(tenant_prober),
         web_assets: Some(web_assets),
         ..StartOptions::default()
     };
@@ -329,6 +327,7 @@ async fn open_keys(cfg: &FileConfig) -> Result<process::CellKeys, CellError> {
         .await
         .map_err(|e| CellError::Keys(e.0))?;
     keyfile::write_atomic(&path, &file).map_err(|e| CellError::Keys(e.0))?;
+    crate::key_copy::report(&cfg.credentials_dir, &body);
     body.cell_keys().map_err(|e| CellError::Keys(e.0))
 }
 
@@ -447,6 +446,57 @@ pub fn first_admin(cfg: &FileConfig, out: &Path, email: Option<&str>) -> Result<
     })
 }
 
+/// The account id `raw` in the form `fstp-vault verify-first-admin` takes:
+/// 32 lowercase hex digits in the groups 8-4-4-4-12, as the onboarding
+/// checklist shows it (ADR-026 record of lane L18).
+#[must_use]
+pub fn account_number(raw: u128) -> String {
+    let h = format!("{raw:032x}");
+    let (a, rest) = h.split_at(8);
+    let (b, rest) = rest.split_at(4);
+    let (c, rest) = rest.split_at(4);
+    let (d, e) = rest.split_at(4);
+    format!("{a}-{b}-{c}-{d}-{e}")
+}
+
+/// `fstp-cell admins <file>` (ADR-028 "Verify the first admins", lane
+/// L19): writes the account of each tenant admin to the new file, one per
+/// line in [`account_number`] form, the first admin first. Before the first
+/// admin enrols, its line is the account `provision-tenant` drew. Run it
+/// while the cell is stopped, as `first-admin`. An account id is a random
+/// id, not an identity attribute (R-NF-02).
+///
+/// # Errors
+///
+/// [`CellError::Config`] for an existing file, and the first step that
+/// fails, as a [`CellError`].
+pub fn admins(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
+    if std::fs::symlink_metadata(out).is_ok() {
+        return Err(cfg_err("output file"));
+    }
+    on_loopback(cfg, async |running| {
+        let state = running.engine().state();
+        let tenant = &state.engine().tenant;
+        let mut list: Vec<u128> = Vec::new();
+        if let Some(p) = tenant.provisioning() {
+            list.push(p.first_admin.raw());
+        }
+        if let Some(t) = tenant.state() {
+            for a in t.admins() {
+                if !list.contains(&a.raw()) {
+                    list.push(a.raw());
+                }
+            }
+        }
+        let mut text = String::new();
+        for a in list {
+            text.push_str(&account_number(a));
+            text.push('\n');
+        }
+        write_new(out, text.as_bytes())
+    })
+}
+
 /// `fstp-cell provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
 /// (ADR-026 "Tenant provisioning", decided by Daniel on 2026-11-21):
 /// records `TenantProvisioned` in the cell's ledger, so the ADR-021 gate
@@ -510,6 +560,24 @@ pub fn init_keys(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
     write_new(&out.join("ticket.pub"), line(&ticket).as_bytes())
 }
 
+/// `copy-key-file <out>` (ADR-004 record of lane L16, Q-L16-3): copies
+/// the sealed cell key file to the new file `out` and records it.
+///
+/// # Errors
+///
+/// [`CellError::Keys`] naming the step that failed.
+pub fn copy_key_file(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
+    let rt = runtime()?;
+    rt.block_on(async {
+        let custody = fstp_custody::KeydCustody::new(&cfg.key_file_keyd_socket)
+            .map_err(|_| cfg_err("key_file_keyd_socket"))?;
+        crate::key_copy::copy_key_file(&custody, cfg.core.cell.0, &cfg.credentials_dir, out)
+            .await
+            .map(|_| ())
+            .map_err(|e| CellError::Keys(e.0))
+    })
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -525,6 +593,14 @@ pub enum Command {
     },
     /// `init-keys <out dir>`.
     InitKeys(PathBuf),
+    /// `admins <out>`: the tenant admins' account ids, for
+    /// `fstp-vault verify-first-admin` (ADR-028 "Verify the first admins").
+    Admins(PathBuf),
+    /// `copy-key-file <out>`: an off-host copy of the cell key file,
+    /// recorded in its copy register (ADR-004 record of lane L16).
+    CopyKeyFile(PathBuf),
+    /// `retire-key-file-copy <id>`: every copy of `id` is destroyed.
+    RetireKeyFileCopy(fstp_custody::copies::CopyId),
     /// `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
     /// (ADR-026 "Tenant provisioning").
     ProvisionTenant {
@@ -591,10 +667,15 @@ pub fn parse_args(args: &[String]) -> Result<Command, CellError> {
             })
         }
         ["init-keys", out] => Ok(Command::InitKeys(PathBuf::from(out))),
+        ["admins", out] => Ok(Command::Admins(PathBuf::from(out))),
         ["provision-tenant"] => Ok(Command::ProvisionTenant { agreements: None }),
         ["provision-tenant", "--agreements", v] => Ok(Command::ProvisionTenant {
             agreements: Some(agreements_arg(v)?),
         }),
+        ["copy-key-file", out] => Ok(Command::CopyKeyFile(PathBuf::from(out))),
+        ["retire-key-file-copy", id] => fstp_custody::copies::CopyId::parse(id)
+            .map(Command::RetireKeyFileCopy)
+            .ok_or_else(|| cfg_err("arguments")),
         _ => Err(cfg_err("arguments")),
     }
 }
@@ -610,7 +691,12 @@ pub fn run_command(command: &Command) -> Result<(), CellError> {
         Command::Serve => serve(&cfg),
         Command::FirstAdmin { out, email } => first_admin(&cfg, out, email.as_deref()),
         Command::InitKeys(out) => init_keys(&cfg, out),
+        Command::Admins(out) => admins(&cfg, out),
         Command::ProvisionTenant { agreements } => provision_tenant(&cfg, *agreements),
+        Command::CopyKeyFile(out) => copy_key_file(&cfg, out),
+        Command::RetireKeyFileCopy(id) => {
+            crate::key_copy::retire(&cfg.credentials_dir, *id).map_err(|e| CellError::Keys(e.0))
+        }
     }
 }
 
@@ -684,6 +770,25 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    /// ADR-028 "Verify the first admins", ADR-026 record of lane L18: the
+    /// `admins` command takes one file, and an account prints in the
+    /// 8-4-4-4-12 hex form `fstp-vault verify-first-admin` reads.
+    #[test]
+    fn adr028_admins_command_and_account_number_form() {
+        let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert!(matches!(
+            parse_args(&args(&["admins", "/tmp/a"])),
+            Ok(Command::Admins(_))
+        ));
+        assert!(parse_args(&args(&["admins"])).is_err());
+        assert!(parse_args(&args(&["admins", "/a", "/b"])).is_err());
+        assert_eq!(
+            account_number(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef),
+            "01234567-89ab-cdef-0123-456789abcdef"
+        );
+        assert_eq!(account_number(1), "00000000-0000-0000-0000-000000000001");
+    }
 
     /// D4, ADR-026 "Tenant provisioning" and "First admin email" (decided
     /// by Daniel on 2026-11-21): the binary takes no argument,

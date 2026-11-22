@@ -23,6 +23,8 @@
     reason = "test code asserts on known-good values"
 )]
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -60,8 +62,9 @@ fn block_on<F: Future>(f: F) -> F::Output {
 }
 
 const CELL: [u8; 16] = [0x7e; 16];
-const PINNED: [[u8; 32]; 1] = [[3; 32]];
 const NOW: i64 = 1_800_000_000_000_000;
+/// The seed of the cell's ticket key in these tests.
+const SIGNER: u8 = 3;
 
 /// Synthetic attribute tuples (corpus only).
 const ALICE: &[u8] = b"synthetic|manual|passport|name=Synthetic Alpha|0001";
@@ -206,10 +209,24 @@ impl Custody for StubCustody {
 struct StoreJournal {
     client: Pg,
     sealer: AeadSealer,
+    /// Fails the next commit that writes a verification, once.
+    fail_verification: bool,
 }
 
 impl Journal for StoreJournal {
     async fn commit(&mut self, entries: &[JournalEntry], _now: i64) -> Result<(), VaultError> {
+        let verification = entries.iter().any(|e| {
+            matches!(
+                e,
+                JournalEntry::Written {
+                    fact: Fact::VerificationRecorded { .. },
+                    ..
+                }
+            )
+        });
+        if verification && std::mem::take(&mut self.fail_verification) {
+            return Err(VaultError::Unavailable("a test journal failure"));
+        }
         store::persist(&mut self.client, &self.sealer, entries).await
     }
 }
@@ -275,11 +292,21 @@ fn start(w: &World) -> Process<'_> {
     let (_, sealer) = runner.service_keys().unwrap().into_service_keys().unwrap();
     let sealer = sealer.with_identities(runner.identity_keys());
     let mut vc = w.connect();
-    let vault = block_on(store::load(&mut vc, &sealer, CELL, &PINNED)).unwrap();
+    let vault = block_on(store::load(
+        &mut vc,
+        &sealer,
+        CELL,
+        &[common::vc::Signer::new(SIGNER).public()],
+    ))
+    .unwrap();
     Process {
         runner,
         vault,
-        journal: StoreJournal { client: vc, sealer },
+        journal: StoreJournal {
+            client: vc,
+            sealer,
+            fail_verification: false,
+        },
         seq: 1000,
     }
 }
@@ -707,4 +734,468 @@ fn i81_start_refuses_shared_key_identity_facts() {
         "I-81: a shared-key bank detail passed the start check"
     );
     block_on(c.close()).unwrap();
+}
+
+fn record(at: i64) -> fstp_vault_core::fact::VerificationRecord {
+    use fstp_vault_core::fact::{Check, DocumentType, VerificationMethod, VerificationRecord};
+    VerificationRecord {
+        method: VerificationMethod::Manual,
+        document_type: DocumentType::Passport,
+        checks: [Check::DocumentAuthentic, Check::PhotoMatch]
+            .into_iter()
+            .collect(),
+        at,
+        verifier: WireAccount(0),
+    }
+}
+
+/// A synthetic recorder account.
+const RECORDER: u128 = 900;
+
+impl Process<'_> {
+    fn verify(
+        &mut self,
+        verifier: u128,
+        account: u128,
+        tuple: &[u8],
+    ) -> Result<Person, VaultError> {
+        block_on(self.runner.record_verification(
+            &mut self.vault,
+            &mut self.journal,
+            WireAccount(verifier),
+            WireAccount(account),
+            record(NOW),
+            tuple,
+            NOW,
+        ))
+    }
+}
+
+/// R-ID-02, ADR-004 record of lane L13b "Verification with
+/// registration" and "Retry": a verification registers the account
+/// before it records the fact. When the fact's write fails, the account
+/// is registered and unverified, and the same call again completes the
+/// verification. A third call writes nothing. The account's bank details
+/// are then taken and sealed for its identity, also after a restart.
+#[test]
+fn r_id_02_verification_registers_before_it_records_and_retries() {
+    let w = genesis();
+    let mut p = start(&w);
+    let kind_6 = "SELECT count(*) FROM vault.fact WHERE kind = 6";
+    let bindings = "SELECT count(*) FROM vault.identity_account";
+    p.journal.fail_verification = true;
+    assert!(p.verify(RECORDER, A_ACCOUNT, ALICE).is_err());
+    assert_eq!(
+        count(&w, bindings),
+        1,
+        "the registration did not come first"
+    );
+    assert_eq!(count(&w, kind_6), 0);
+    let a = p.vault.registered(WireAccount(A_ACCOUNT)).unwrap();
+    assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1);
+    assert_eq!(
+        p.vault.state().latest().person_of(WireAccount(A_ACCOUNT)),
+        Some(a)
+    );
+    assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1, "a repeat wrote a second verification");
+    assert_eq!(count(&w, bindings), 1);
+    // The verification is provisional until the cell acknowledges it.
+    let epoch = p.vault.state().provisional().unwrap().epoch();
+    let r = p.vault.internal(
+        &VaultRequest::Ack {
+            epoch,
+            ledger_seq: 1,
+            link: [7; 32],
+        },
+        NOW,
+    );
+    assert_eq!(r, VaultResponse::Acked);
+    p.commit();
+    p.identity_facts(A_ACCOUNT);
+    let rows = fact_rows(&w);
+    assert!(
+        rows.iter()
+            .filter(|r| r.kind == 14 || r.kind == 17)
+            .all(|r| r.dek == a.0.to_be_bytes()),
+        "I-81: a verified account's identity fact is not sealed for its identity"
+    );
+    drop(p);
+    let mut p = start(&w);
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    assert_eq!(p.verify(RECORDER, A_ACCOUNT, ALICE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1);
+    assert!(
+        p.vault
+            .state()
+            .latest()
+            .bank_of(grant_of(A_ACCOUNT))
+            .is_some()
+    );
+}
+
+/// R-ID-02, ADR-008 rules 1 and 2: a recorder never verifies their own
+/// account, nor an account of their own identity, and such a request
+/// writes nothing: no identity, no tuple, no binding and no fact.
+#[test]
+fn r_id_02_recorder_never_registers_their_own_identity() {
+    let w = genesis();
+    let mut p = start(&w);
+    let tuples = "SELECT count(*) FROM keystore.identity_tuple";
+    let bindings = "SELECT count(*) FROM vault.identity_account";
+    assert!(p.verify(A_ACCOUNT, A_ACCOUNT, ALICE).is_err(), "rule 1");
+    assert_eq!(count(&w, tuples), 0);
+    assert_eq!(count(&w, bindings), 0);
+    // The recorder's own identity is Alice's.
+    let a = p.register(RECORDER, ALICE).unwrap();
+    let keys = read_rows(&w);
+    assert!(p.verify(RECORDER, B_ACCOUNT, ALICE).is_err(), "rule 2");
+    assert_eq!(read_rows(&w), keys);
+    assert_eq!(count(&w, bindings), 1);
+    assert_eq!(p.vault.registered(WireAccount(B_ACCOUNT)), None);
+    assert_eq!(p.vault.registered(WireAccount(RECORDER)), Some(a));
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        0
+    );
+    // Another person is verified by the same recorder.
+    assert!(p.verify(RECORDER, B_ACCOUNT, BRUNO).is_ok());
+}
+
+// ---------------------------------------------------------------------
+// The recorder route on the vault origin (ADR-004 record of lane L13b).
+// ---------------------------------------------------------------------
+
+const GRANT_77: u128 = 77;
+
+fn ticket(kind: &str, holder: u128, proposal: Option<u128>, nonce: u8) -> Vec<u8> {
+    scoped_ticket(kind, holder, proposal, String::new(), nonce)
+}
+
+fn scoped_ticket(
+    kind: &str,
+    holder: u128,
+    proposal: Option<u128>,
+    scope: String,
+    nonce: u8,
+) -> Vec<u8> {
+    let t = common::vc::wire::RTicket {
+        kind: kind.to_owned(),
+        cell: CELL,
+        account: holder,
+        proposal,
+        scope,
+        issued_at: NOW - 1_000_000,
+        expires_at: NOW + 200_000_000,
+        nonce: [nonce; 16],
+    };
+    common::vc::Signer::new(SIGNER).sign(&t)
+}
+
+fn verification_body(family: &str) -> String {
+    format!(
+        "{{\"checks\":[\"document_authentic\",\"photo_match\"],\"document_type\":\"passport\",\"identity\":{{\"birth_date\":\"1990-02-28\",\"family_names\":\"{family}\",\"given_names\":\"Synthetic\",\"issuing_state\":\"DEU\"}},\"method\":\"manual\"}}"
+    )
+}
+
+/// A recorder's write with the family name `family`, under a verification
+/// ticket of `holder` naming the person `account` of grant 77.
+fn verification_write(holder: u128, account: u128, family: &str, nonce: u8) -> Vec<u8> {
+    common::origin_write(
+        &scoped_ticket(
+            "write:verification_recorded",
+            holder,
+            Some(GRANT_77),
+            fstp_vault_proto::person_scope(WireAccount(account)),
+            nonce,
+        ),
+        &verification_body(family),
+    )
+}
+
+impl Process<'_> {
+    /// The cell's negotiation fact of grant 77, listing `accounts`.
+    fn negotiation(&mut self, accounts: &[u128]) {
+        let r = self.vault.internal(
+            &VaultRequest::NegotiationOpened {
+                proposal: WireProposal(GRANT_77),
+                accounts: accounts.iter().map(|a| WireAccount(*a)).collect(),
+                ledger_seq: 1,
+            },
+            NOW,
+        );
+        assert_eq!(r, VaultResponse::Acked);
+        self.commit();
+    }
+
+    fn recorder_write(&mut self, bytes: &[u8]) -> Result<Person, fstp_vault::OriginRefusal> {
+        block_on(self.runner.take_verification_write(
+            &mut self.vault,
+            &mut self.journal,
+            bytes,
+            NOW,
+        ))
+    }
+}
+
+/// R-ID-02, I-17, ADR-004 record of lane L13b "Origin checks": a
+/// recorder's write on the vault origin, under the cell's verification
+/// ticket, registers the person's identity and records the verification
+/// with the ticket's holder as verifier. The ticket is used. The person's
+/// bank details are then taken on the origin and sealed for the identity.
+#[test]
+fn adr008_recorder_verification_registers_the_identity() {
+    let w = genesis();
+    let mut p = start(&w);
+    p.negotiation(&[A_ACCOUNT, B_ACCOUNT]);
+    let a = p
+        .recorder_write(&verification_write(RECORDER, A_ACCOUNT, "Alpha", 1))
+        .unwrap();
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    assert_eq!(
+        p.vault.state().latest().person_of(WireAccount(A_ACCOUNT)),
+        Some(a)
+    );
+    assert!(p.vault.used_tickets().contains(&[1; 16]));
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        1
+    );
+    assert_eq!(count(&w, "SELECT count(*) FROM vault.ticket_used"), 1);
+    let body = fstp_vault::codec::decode_verification_write(verification_body("Alpha").as_bytes())
+        .unwrap();
+    assert_eq!(
+        p.runner.tuple(a).unwrap(),
+        fstp_vault::codec::identity_tuple(&body.identity),
+        "the stored tuple is not the body's"
+    );
+    // The verification's epoch is acknowledged, then the bank details
+    // are taken on the origin.
+    let epoch = p.vault.state().provisional().unwrap().epoch();
+    p.vault.internal(
+        &VaultRequest::Ack {
+            epoch,
+            ledger_seq: 2,
+            link: [7; 32],
+        },
+        NOW,
+    );
+    p.commit();
+    let bank = common::origin_write(
+        &ticket("write:bank_details", A_ACCOUNT, Some(GRANT_77), 2),
+        &format!(
+            "{{\"account\":\"{A_ACCOUNT}\",\"grant\":\"{GRANT_77}\",\"holder\":\"Synthetic Holder\",\"iban\":\"{IBAN}\"}}"
+        ),
+    );
+    p.vault.post_write(&bank, NOW).unwrap();
+    p.commit();
+    let rows = fact_rows(&w);
+    assert!(
+        rows.iter()
+            .any(|r| r.kind == 14 && r.dek == a.0.to_be_bytes())
+    );
+}
+
+/// R-ID-02, I-17, ADR-008 rules 1 and 2, ADR-004 record of lane L13b
+/// "Origin checks": the route refuses a person that the negotiation fact
+/// does not list, the recorder's own account, a recorder of the person's
+/// identity, a ticket of another kind, and a ticket that names no person. Each refusal writes nothing and leaves the ticket unused.
+#[test]
+fn adr008_recorder_route_refuses_without_writing() {
+    let w = genesis();
+    let mut p = start(&w);
+    p.negotiation(&[A_ACCOUNT, RECORDER]);
+    // The recorder's own identity is the one a body with "Bravo" gives.
+    let bravo = fstp_vault::codec::decode_verification_write(verification_body("Bravo").as_bytes())
+        .unwrap();
+    p.register(
+        RECORDER,
+        &fstp_vault::codec::identity_tuple(&bravo.identity),
+    )
+    .unwrap();
+    let keys = read_rows(&w);
+    let refused = [
+        (
+            verification_write(RECORDER, C_ACCOUNT, "Charlie", 1),
+            fstp_vault::OriginRefusal::NoNegotiationFact,
+        ),
+        (
+            verification_write(RECORDER, RECORDER, "Alpha", 2),
+            fstp_vault::OriginRefusal::WrongKind,
+        ),
+        (
+            verification_write(RECORDER, A_ACCOUNT, "Bravo", 3),
+            fstp_vault::OriginRefusal::WrongKind,
+        ),
+        (
+            common::origin_write(
+                &ticket("write:bank_details", RECORDER, Some(GRANT_77), 4),
+                &verification_body("Alpha"),
+            ),
+            fstp_vault::OriginRefusal::WrongKind,
+        ),
+        (
+            common::origin_write(
+                &ticket("write:verification_recorded", RECORDER, Some(GRANT_77), 5),
+                &verification_body("Alpha"),
+            ),
+            fstp_vault::OriginRefusal::WrongKind,
+        ),
+    ];
+    for (bytes, want) in refused {
+        assert_eq!(p.recorder_write(&bytes).unwrap_err(), want);
+    }
+    assert_eq!(read_rows(&w), keys, "a refusal wrote a keystore row");
+    assert_eq!(count(&w, "SELECT count(*) FROM vault.identity_account"), 1);
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        0
+    );
+    assert_eq!(count(&w, "SELECT count(*) FROM vault.ticket_used"), 0);
+    assert!(p.vault.used_tickets().is_empty());
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), None);
+    // Its valid twin is taken.
+    assert!(
+        p.recorder_write(&verification_write(RECORDER, A_ACCOUNT, "Alpha", 6))
+            .is_ok()
+    );
+}
+
+/// ADR-004 record of lane L13b "Ticket use" and "Retry": a write whose
+/// verification fails to commit leaves the account registered and the
+/// ticket unused. The same link again completes it, and a third use is
+/// refused as replayed. One verification is recorded. A name with extra
+/// spaces gives the same identity.
+#[test]
+fn adr008_recorder_retry_completes_and_replay_is_refused() {
+    let w = genesis();
+    let mut p = start(&w);
+    p.negotiation(&[A_ACCOUNT, B_ACCOUNT]);
+    let bytes = verification_write(RECORDER, A_ACCOUNT, "Alpha", 1);
+    p.journal.fail_verification = true;
+    assert_eq!(
+        p.recorder_write(&bytes).unwrap_err(),
+        fstp_vault::OriginRefusal::Unavailable
+    );
+    assert!(p.vault.used_tickets().is_empty());
+    let a = p.vault.registered(WireAccount(A_ACCOUNT)).unwrap();
+    assert_eq!(p.recorder_write(&bytes).unwrap(), a);
+    assert_eq!(
+        p.recorder_write(&bytes).unwrap_err(),
+        fstp_vault::OriginRefusal::Replayed
+    );
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM vault.fact WHERE kind = 6"),
+        1
+    );
+    // The same person, entered with extra spaces for another account.
+    let spaced = verification_write(RECORDER, B_ACCOUNT, "  Alpha  ", 2);
+    assert_eq!(p.recorder_write(&spaced).unwrap(), a);
+}
+
+// ---------------------------------------------------------------------
+// The host command for the first admins (ADR-008 and ADR-004, decided by
+// Daniel on 2026-11-21).
+// ---------------------------------------------------------------------
+
+/// A hand-written identity file: spaces, line breaks and any member order.
+const ADMIN_FILE: &str = "{\n  \"method\": \"manual\",\n  \"document_type\": \"passport\",\n  \"checks\": [\"photo_match\", \"document_authentic\"],\n  \"identity\": {\n    \"family_names\": \"Alpha\",\n    \"given_names\": \"Synthetic\",\n    \"birth_date\": \"1990-02-28\",\n    \"issuing_state\": \"deu\"\n  }\n}\n";
+
+impl Process<'_> {
+    fn verify_first_admin(&mut self, account: u128, file: &str) -> Result<Person, VaultError> {
+        let entry = fstp_vault::codec::decode_identity_file(file.as_bytes())?;
+        block_on(self.runner.verify_first_admin(
+            &mut self.vault,
+            &mut self.journal,
+            WireAccount(account),
+            &entry,
+            NOW,
+        ))
+    }
+}
+
+/// ADR-008, decided by Daniel on 2026-11-21: the technical admin verifies
+/// a first admin on the host. The command registers the identity and
+/// records the verification with the operator as verifier of record. A
+/// repeat is idempotent. A second first admin is taken, a third account
+/// is refused, and the refusal writes nothing. The verified admin's
+/// identity then blocks a recorder verification of the same person by
+/// that admin (rule 2).
+#[test]
+fn adr008_host_verifies_the_first_admins() {
+    let w = genesis();
+    let mut p = start(&w);
+    let kind_6 = "SELECT count(*) FROM vault.fact WHERE kind = 6";
+    let a = p.verify_first_admin(A_ACCOUNT, ADMIN_FILE).unwrap();
+    assert_eq!(p.vault.registered(WireAccount(A_ACCOUNT)), Some(a));
+    assert_eq!(
+        p.vault.state().latest().person_of(WireAccount(A_ACCOUNT)),
+        Some(a)
+    );
+    assert_eq!(count(&w, kind_6), 1);
+    assert_eq!(p.verify_first_admin(A_ACCOUNT, ADMIN_FILE).unwrap(), a);
+    assert_eq!(count(&w, kind_6), 1, "a repeat wrote a second verification");
+    let b = p
+        .verify_first_admin(B_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Bravo"))
+        .unwrap();
+    assert_ne!(a, b);
+    let keys = read_rows(&w);
+    assert!(
+        p.verify_first_admin(C_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Charlie"))
+            .is_err(),
+        "a third first admin was verified"
+    );
+    assert_eq!(read_rows(&w), keys);
+    assert_eq!(count(&w, kind_6), 2);
+    assert_eq!(p.vault.registered(WireAccount(C_ACCOUNT)), None);
+    // The limit survives a restart.
+    drop(p);
+    let mut p = start(&w);
+    assert!(
+        p.verify_first_admin(C_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Charlie"))
+            .is_err()
+    );
+    assert_eq!(
+        p.verify_first_admin(B_ACCOUNT, &ADMIN_FILE.replace("Alpha", "Bravo"))
+            .unwrap(),
+        b
+    );
+}
+
+/// ADR-004 record of lane L13b, row "Identity file": the host file takes
+/// any JSON spelling of the recorder's members, and refuses a document
+/// number, a missing field and an oversized file.
+#[test]
+fn adr008_identity_file_takes_any_spelling_and_refuses_extras() {
+    use fstp_vault::codec::decode_identity_file;
+    let e = decode_identity_file(ADMIN_FILE.as_bytes()).unwrap();
+    assert_eq!(e.identity.issuing_state, "DEU", "the state is upper-cased");
+    assert!(
+        decode_identity_file(
+            ADMIN_FILE
+                .replace("\"method\"", "\"number\": \"X1\", \"method\"")
+                .as_bytes()
+        )
+        .is_err()
+    );
+    assert!(
+        decode_identity_file(
+            ADMIN_FILE
+                .replace("\"birth_date\": \"1990-02-28\",", "")
+                .as_bytes()
+        )
+        .is_err()
+    );
+    assert!(
+        decode_identity_file(
+            ADMIN_FILE
+                .replace("\"account\"", "")
+                .replace("{\n  \"method\"", "{\n  \"account\": \"5\", \"method\"")
+                .as_bytes()
+        )
+        .is_err()
+    );
+    let big = format!("{}{}", ADMIN_FILE, " ".repeat(5000));
+    assert!(decode_identity_file(big.as_bytes()).is_err());
 }

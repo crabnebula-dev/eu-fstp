@@ -122,12 +122,24 @@ fn system_now() -> i64 {
 /// system clock. The cell's start takes it through
 /// `crate::process::StartOptions::creator_shell`.
 pub fn production_shell<R: Runtime>(rt: R, settings: ShellSettings) -> Arc<dyn CreatorShell> {
+    production_probes(rt, settings).0
+}
+
+/// [`production_shell`] and the onboarding probes of the API core over
+/// the same prober (ADR-026 record of lane L18): the channel probe of the
+/// configured relay and the sending domain probe of a saved domain.
+pub fn production_probes<R: Runtime>(
+    rt: R,
+    settings: ShellSettings,
+) -> (Arc<dyn CreatorShell>, Arc<dyn super::probe::TenantProbe>) {
     let resolver = settings
         .resolver
         .and_then(|addr| TcpResolver::new(rt.clone(), addr).ok())
         .map(|r| Arc::new(r) as Arc<dyn TxtResolver>);
-    let prober = CellProber::new(rt, settings.probes, resolver);
-    Arc::new(FactsShell::new(Some(Arc::new(prober))).with_platform_url(settings.platform_url))
+    let prober = Arc::new(CellProber::new(rt, settings.probes, resolver));
+    let shell = FactsShell::new(Some(Arc::clone(&prober) as Arc<dyn Prober>))
+        .with_platform_url(settings.platform_url);
+    (Arc::new(shell), prober)
 }
 
 impl FactsShell {
@@ -512,6 +524,27 @@ mod tests {
             vec![b"v=DKIM1; p=MIIB".to_vec()],
         );
         FakeResolver(m)
+    }
+
+    /// Q5, ADR-026 record of lane L18: the onboarding probe checks the
+    /// domain the tenant admin saved, with the configured DKIM selector. A
+    /// correctly configured domain passes, another domain fails, and with
+    /// no selector the probe is absent.
+    #[test]
+    fn q5_tenant_prober_checks_the_saved_domain() {
+        use super::super::probe::{CellProber, ProbeSettings, TenantProbe};
+        let rt = fstp_rt::tokio::TokioRuntime::new_multi_thread(1).unwrap();
+        let resolver = || Some(Arc::new(records("v=DMARC1; p=reject")) as Arc<dyn TxtResolver>);
+        let settings = |selector: Option<&str>| ProbeSettings {
+            dkim_selector: selector.map(str::to_owned),
+            ..ProbeSettings::default()
+        };
+        let p = CellProber::new(rt.clone(), settings(Some("s1")), resolver());
+        let run = |p: &CellProber<_>, d: &str| fstp_rt::future::block_on(TenantProbe::domain(p, d));
+        assert_eq!(run(&p, "calls.example.org"), ProbeOutcome::Pass);
+        assert_eq!(run(&p, "other.example.org"), ProbeOutcome::Fail);
+        let none = CellProber::new(rt, settings(None), resolver());
+        assert_eq!(run(&none, "calls.example.org"), ProbeOutcome::Absent);
     }
 
     /// ADR-027: the sending domain passes with SPF, DKIM and DMARC through

@@ -15,9 +15,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fstp_api_core::port::{
-    ApprovalId, Clock, Ids, NoticePage, Outbox, Page, PortError, SecondAdminApproval, TenantConfig,
-    TenantId, TenantSettings,
+    ApprovalId, Clock, Ids, NoticePage, Outbox, Page, PortError, ProbeKind, ProbeOutcome, Prober,
+    SecondAdminApproval, TenantConfig, TenantId, TenantSettings,
 };
+
+use crate::shell::probe::TenantProbe;
 use fstp_api_core::views::{DeliveryPhase, DeliveryRow, EventState, TimelineRow};
 use fstp_cell_core::timeline::EventStatus;
 use fstp_domain::id::{AccountId, ProgrammeId};
@@ -45,7 +47,9 @@ impl<R: Runtime, V: Send + Sync> TenantConfig for CellTenant<R, V> {
     }
 
     /// ADR-021: the cell's organisation port, for a ledger with no tenant
-    /// part.
+    /// part. The production cell takes no answer from its configuration
+    /// (ADR-026 record of lane L18), so its port answers "not active". Only
+    /// a test world from before the tenant part sets it.
     fn organisation_active(&self) -> bool {
         self.0
             .organisation
@@ -179,5 +183,44 @@ impl Ids for CellIds {
         fstp_crypto::random_array::<16>()
             .map(u128::from_be_bytes)
             .map_err(|_| PortError::Unavailable)
+    }
+}
+
+/// The `Prober` of onboarding (Q5, ADR-026 record of lane L18) over the
+/// ADR-027 probes: the Channels step checks the platform relay's greeting,
+/// and the Domains and email step checks SPF, DKIM and DMARC of the domain
+/// the admin saved. A Channels save that names Matrix or WhatsApp fails,
+/// since those adapters are out of scope (B-03, B-05). Without probes, and
+/// for a probe that names no domain, every probe fails.
+pub(crate) struct CellTenantProber(pub(super) Option<Arc<dyn TenantProbe>>);
+
+/// The port's outcome of a shell probe: anything but a pass fails (Q5).
+fn outcome(o: fstp_creator::ProbeOutcome) -> ProbeOutcome {
+    match o {
+        fstp_creator::ProbeOutcome::Pass => ProbeOutcome::Pass,
+        _ => ProbeOutcome::Fail,
+    }
+}
+
+impl Prober for CellTenantProber {
+    async fn probe(&self, p: ProbeKind) -> ProbeOutcome {
+        match (p, &self.0) {
+            (ProbeKind::Channel, Some(t)) => outcome(t.channel().await),
+            _ => ProbeOutcome::Fail,
+        }
+    }
+
+    async fn sending_domain(&self, domain: &str) -> ProbeOutcome {
+        match &self.0 {
+            Some(t) => outcome(t.domain(domain).await),
+            None => ProbeOutcome::Fail,
+        }
+    }
+
+    async fn channels(&self, matrix: bool, whatsapp: bool) -> ProbeOutcome {
+        if matrix || whatsapp {
+            return ProbeOutcome::Fail;
+        }
+        self.probe(ProbeKind::Channel).await
     }
 }
