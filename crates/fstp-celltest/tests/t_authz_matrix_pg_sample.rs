@@ -47,16 +47,6 @@
 //!   cell: `me.add_passkey` (a WebAuthn registration over the session's
 //!   own options) and `agents.consent` and `agents.consent_request` (an
 //!   authorize request per cell);
-//! - for now, the operations of ADR-030 (`tenant.branding.logos`,
-//!   `tenant.branding.set_logo`, `me.set_theme`, `programme.logos`), added
-//!   after the sample was
-//!   fixed. Their cells would reshuffle every stratum, and the reshuffled
-//!   sample reaches `me.set_display_name` in a cell whose production text
-//!   store keeps no display names yet (it fails closed under SA-11). That
-//!   is a gap of the cell, recorded for the lead, not of this sample. The
-//!   matrices over fake ports cover the three operations on every channel;
-//!   the request bodies below are ready for when they rejoin, which a
-//!   follow-up lane does once it fixes those display names;
 //! - `Who::SuspendedReviewer` with a magic-link session: the cell refuses
 //!   the login, since M3 design section 8.2 counts a suspended binding as
 //!   held for I-77, while the reference counts it as not held
@@ -143,17 +133,6 @@ const STATES: [StateProfile; 2] = [
 /// Operations whose cells need a ceremony per cell (module documentation).
 const CEREMONY_OPS: [&str; 3] = ["me.add_passkey", "agents.consent", "agents.consent_request"];
 
-/// The operations of ADR-030 (lane L22), left out of the candidates so the
-/// sample stays the one it was (module documentation). Temporary: they
-/// return once production display names (SA-11) work (ADR-030, lead
-/// reading of 2026-11-22).
-const ADR030_OPS: [&str; 4] = [
-    "tenant.branding.logos",
-    "tenant.branding.set_logo",
-    "me.set_theme",
-    "programme.logos",
-];
-
 /// A SplitMix64 stream.
 struct Mix(u64);
 
@@ -207,7 +186,6 @@ fn sample() -> BTreeMap<StateProfile, Vec<(Cell, Expected)>> {
             if cell.session.login == Some(Login::Opaque)
                 || !realisable(cell.who)
                 || CEREMONY_OPS.contains(&cell.op)
-                || ADR030_OPS.contains(&cell.op)
                 || (cell.who == Who::SuspendedReviewer
                     && cell.session.login == Some(Login::MagicLink))
             {
@@ -284,6 +262,10 @@ const IRC_ASSIGNEE: AccountId = model(31);
 const IRC_UNDECLARED: AccountId = model(32);
 const IRC_CONFLICTED: AccountId = model(33);
 const IRC_2: AccountId = model(34);
+/// An IRC member whose binding a conflict suspended and whose clash then
+/// ended: the binding `roles.reinstate` names, as the direct harness's
+/// `IRC_REINSTATABLE` (lane L26).
+const IRC_REINSTATABLE: AccountId = model(35);
 const LEAD: AccountId = model(40);
 const TEAM: AccountId = model(41);
 const GUARDIAN: AccountId = model(42);
@@ -507,6 +489,10 @@ struct Pg<'w> {
     next: u128,
     /// The engine entries the cell held once the world was built.
     engine_head: usize,
+    /// The tenant revision of the onboarding step `tenant.save_step` names,
+    /// read through the cell's own route as the direct harness reads it,
+    /// or "0" when the cell answers none.
+    tenant_revision: String,
 }
 
 impl<'w> Pg<'w> {
@@ -717,6 +703,7 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
         t: Targets::default(),
         next: 7_000_000,
         engine_head: 0,
+        tenant_revision: String::new(),
     };
     let p = P1;
     w.t.programme = Some(p);
@@ -767,6 +754,7 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
         IRC_UNDECLARED,
         IRC_CONFLICTED,
         IRC_2,
+        IRC_REINSTATABLE,
         LEAD,
         TEAM,
         GUARDIAN,
@@ -824,11 +812,11 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
     ] {
         w.grant(g, a, p, Role::IrcMember);
     }
+    let reinstatable = w.grant(g, IRC_REINSTATABLE, p, Role::IrcMember);
     w.grant(g, FINANCE, p, Role::FinanceApprover);
     w.grant(g, RELEASER, p, Role::PaymentReleaser);
     w.grant(g, SIGNATORY, p, Role::ContractSignatory);
     w.grant(g, AUDITOR, p, Role::Auditor);
-    w.t.binding_suspended = suspended;
     // The programme manager's binding, which `identity.unmask` names, and
     // the call drafter's, which `roles.end` names.
     {
@@ -931,10 +919,23 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
     let tuple = "pg-matrix-shared-identity";
     w.verify(STAFF_DRAFTER, tuple);
     w.verify(REVIEWER_SUSPENDED, tuple);
-    let now = Timestamp::from_micros(w.now());
-    cell.block_on(cell.cell_engine().unwrap().react_to_vault(now))
-        .unwrap()
-        .unwrap_or_else(|e| panic!("the vault reaction: {e:?}"));
+    w.verify(IRC_REINSTATABLE, tuple);
+    let react = |w: &Pg<'_>| {
+        let now = Timestamp::from_micros(w.now());
+        cell.block_on(cell.cell_engine().unwrap().react_to_vault(now))
+            .unwrap()
+            .unwrap_or_else(|e| panic!("the vault reaction: {e:?}"));
+    };
+    react(&w);
+    // The reinstatable binding, as the direct harness's `reinstatable`:
+    // a seeded verification gives the IRC member its own identity back
+    // (the seeded vault is test code, and its seed path takes a newer
+    // verification of an account), so its I-06 clash ends and its
+    // suspension may be lifted (lane L26).
+    w.verify(IRC_REINSTATABLE, "pg-matrix-own-identity");
+    w.at(w.now() + 1_000_000);
+    react(&w);
+    w.t.binding_suspended = Some(reinstatable);
     {
         let st = w.state();
         let status = st
@@ -949,6 +950,19 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
                 Some(fstp_domain::roles::BindingStatus::Suspended(_))
             ),
             "the suspended reviewer's binding is {status:?}"
+        );
+        let status = st
+            .engine()
+            .core
+            .roster()
+            .binding(reinstatable)
+            .map(|b| b.status);
+        assert!(
+            matches!(
+                status,
+                Some(fstp_domain::roles::BindingStatus::Suspended(_))
+            ),
+            "the reinstatable binding is {status:?}"
         );
     }
     // The ended programme manager.
@@ -985,6 +999,17 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
             .unwrap_or_else(|| "null".to_owned())
     };
     w.agent = register(cell);
+    // The onboarding revision `tenant.save_step` names, as the direct
+    // harness reads it through the tenant admin's own route.
+    let admin = w.session(FIRST_ADMIN);
+    let step = web(
+        cell,
+        "GET",
+        "/api/v1/admin/onboarding/agreements",
+        Some(&admin),
+        b"",
+    );
+    w.tenant_revision = str_member(&json(&step), "revision").unwrap_or_else(|| "0".to_owned());
     w.engine_head = w.engine_entries();
     w
 }
@@ -1442,196 +1467,38 @@ fn param(w: &Pg<'_>, name: &str, op: &str, who: Who, session: Option<&str>) -> S
     }
 }
 
-/// The body members of a valid request of `op` by `who`, after the test
-/// kit's harness (`fstp_api_testkit::harness`), with the world's ids.
+/// The body members of a valid request of `op`: the direct harness's own
+/// builder (`fstp_api_testkit::harness::request_body`), with this world's
+/// ids, so every cell reaches the cell's authorisation and never a decoder
+/// refusal (lane L26). Every account and text is synthetic.
 fn body_of(w: &Pg<'_>, op: &str, state: StateProfile) -> Value {
     let t = &w.t;
-    let plan = t.plan.map_or(1, |p| p.raw());
     let now = u128::try_from(w.now()).unwrap_or(0);
-    let call_body = || {
-        obj(vec![
-            ("opens", dec(now + 86_400_000_000)),
-            ("deadline", dec(now + 30 * 86_400_000_000)),
-            ("deadline_zone", s("Europe/Brussels")),
-            ("currency", s("EUR")),
-            ("budget", s("400000.00")),
-            ("text", s("SYNTHETIC CALL TEXT")),
-        ])
-    };
-    let scores = |n: usize, max: u32| -> Value {
-        Value::Array(
-            (0..n)
-                .map(|_| Value::Number(fstp_json::Number::from(max)))
-                .collect::<Array>(),
-        )
-    };
-    let stage = if state == StateProfile::Proposal(StateTag::Stage2) {
-        "Two"
-    } else {
-        "One"
-    };
-    match op {
-        "identity.unmask" => obj(vec![
-            (
-                "subject",
-                obj(vec![
-                    ("type", s("Binding")),
-                    ("binding", dec(t.pm_binding.map_or(1, |b| b.raw()))),
-                ]),
-            ),
-            ("purpose", s("SYNTHETIC PURPOSE")),
-        ]),
-        "people.accept_invitation" => obj(vec![(
-            "terms_version",
-            Value::Number(fstp_json::Number::from(1u32)),
-        )]),
-        "tenant.invite_admin" => obj(vec![("email", s("new-admin@matrix.invalid"))]),
-        "proposal.request_copy" => obj(vec![("email", s("copy@matrix.invalid"))]),
-        "tenant.grant_signatory" => obj(vec![
-            ("account", dec(w.id(UNBOUND).raw())),
-            ("role", s("legal_signatory")),
-        ]),
-        "tenant.approve_activation" => obj(vec![("request", s("1"))]),
-        "tenant.set_login_methods" => obj(vec![(
-            "value",
-            Value::Array(Array::from(vec![s("eudi_wallet"), s("passkey")])),
-        )]),
-        "tenant.set_step_up_freshness" => obj(vec![("value", s("60000000"))]),
-        "tenant.set_session_lifetimes" => obj(vec![(
-            "value",
-            obj(vec![
-                ("absolute_us", s("3600000000")),
-                ("idle_us", s("600000000")),
-            ]),
-        )]),
-        "tenant.set_mcp" => obj(vec![(
-            "value",
-            fstp_json::parse(br#"{"enabled":true,"public_tools":true,"roles":null}"#)
-                .unwrap_or(Value::Null),
-        )]),
-        "tenant.set_payment_mode" => obj(vec![("value", s("record_only"))]),
-        "tenant.set_template_licence" => obj(vec![("value", s("MIT"))]),
-        "tenant.set_funding_defaults" => obj(vec![
-            ("contact", s("role@example.org")),
-            ("name", s("Synthetic coordinator org")),
-        ]),
-        "tenant.set_guide_notice" => obj(vec![
-            (
-                "privacy_statement_url",
-                s("https://privacy.matrix.example/statement"),
-            ),
-            (
-                "summary",
-                s("Synthetic data protection summary, matrix cell."),
-            ),
-        ]),
-        "tenant.branding.check" | "tenant.branding.set" => obj(vec![(
-            "tokens",
-            fstp_brand::BrandTokens::platform("Matrix Fund")
-                .map_or(Value::Null, |t| fstp_brand::to_value(&t)),
-        )]),
-        "tenant.terminology.set" => obj(vec![
-            ("labels", obj(vec![("vocab.call", s("Subgrant call"))])),
-            ("voyage_on", Value::Bool(true)),
-        ]),
-        "tenant.set_mail_relay" => obj(vec![
-            ("ca_pem", s("")),
-            ("credential", s("mail-relay")),
-            ("host", s("smtp.relay.example")),
-        ]),
-        "tenant.funder_profile.copy" => obj(vec![
-            ("id", s("tenant-matrix")),
-            ("from_profile", s("horizon-europe")),
-            ("from_version", s("1")),
-        ]),
-        "tenant.funder_profile.save" => obj(vec![
-            ("id", s("tenant-written")),
-            (
-                "profile",
-                fstp_json::parse(include_bytes!(
-                    "../../fstp-report/profiles/horizon-europe/profile.v1.json"
-                ))
-                .unwrap_or(Value::Null),
-            ),
-        ]),
-        "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
-        "admin.request_erasure" => obj(vec![("cause", s("retention_expiry")), ("grant", s("41"))]),
-        "creator.invite" => obj(vec![
-            ("email", s("invitee@matrix.invalid")),
-            ("role", s("programme_manager")),
-        ]),
-        "creator.apply_start" => obj(vec![
-            ("base", s(&t.revision)),
-            (
-                "start",
-                fstp_api_testkit::fake::creator_requests::supersafe_start(),
-            ),
-        ]),
-        "creator.save_fields" => obj(vec![
-            ("base", s(&t.revision)),
-            (
-                "fields",
-                Value::Array(Array::from(vec![obj(vec![
-                    ("field", s("evaluation.p28_rubric_bands")),
-                    ("value", Value::Bool(false)),
-                ])])),
-            ),
-        ]),
-        "creator.edit_narrative" => obj(vec![
-            ("base", s(&t.revision)),
-            ("value", s("SYNTHETIC narrative text, matrix cell.")),
-        ]),
-        "import.remove" | "creator.accept_narrative" => obj(vec![("base", s(&t.revision))]),
-        "creator.acknowledge" => obj(vec![
-            ("revision", s(&t.revision)),
-            ("warning", s(&t.warning)),
-        ]),
-        "creator.request_activation" | "creator.approve_activation" => {
-            obj(vec![("revision", s(&t.revision))])
-        }
-        "creator.override_activation" => obj(vec![
-            ("revision", s(&t.revision)),
-            ("reason", s("SYNTHETIC: the second admin is on leave.")),
-        ]),
-        "import.upload" => obj(vec![
-            ("media", s("text/plain")),
-            (
-                "text",
-                s("SYNTHETIC ANNEX: the grant range is 1000 to 2000 EUR."),
-            ),
-        ]),
-        "import.resolve" => obj(vec![
-            ("base", s(&t.revision)),
-            ("conflict_acknowledged", Value::Bool(false)),
-            ("resolution", obj(vec![("kind", s("dismiss"))])),
-            ("shown", s(&"0".repeat(64))),
-        ]),
-        "roles.grant" => obj(vec![
-            ("account", dec(w.id(UNBOUND).raw())),
-            ("role", s("Auditor")),
-            ("start", dec(now)),
-        ]),
-        "me.set_display_name" => obj(vec![("display_name", s("Synthetic Matrix Name"))]),
-        // ADR-030: a theme choice, and a synthetic PNG for the light slot.
-        "me.set_theme" => obj(vec![("theme", s("dark"))]),
-        "tenant.branding.set_logo" => obj(vec![
-            (
-                "image",
-                s(&fstp_brand::image::to_base64(
-                    &fstp_brand::image::sample_png(64, 32),
-                )),
-            ),
-            ("mode", s("light")),
-            ("programme", Value::Null),
-        ]),
-        "roles.reinstate" => obj(vec![("reason", s("SYNTHETIC REINSTATEMENT REASON"))]),
-        "call.draft" | "call.edit" => call_body(),
-        "proposal.save_workspace" => obj(vec![
-            ("narrative", s("SYNTHETIC NARRATIVE")),
-            ("summary", s("SYNTHETIC SUMMARY")),
-            ("title", s("SYNTHETIC TITLE")),
-        ]),
-        "proposal.record_plan" => obj(vec![
+    let admins: Vec<AccountId> = [FIRST_ADMIN, ADMIN_2]
+        .into_iter()
+        .filter_map(|m| w.client.cell_account(m))
+        .collect();
+    let unbound = w.id(UNBOUND).raw();
+    let ids = fstp_api_testkit::harness::BodyIds {
+        pm_binding: t.pm_binding.map(|b| b.raw()),
+        tenant_revision: w.tenant_revision.clone(),
+        // The step the route names (`param`).
+        onboarding_values: fstp_api_testkit::harness::onboarding_step_values(
+            "agreements",
+            w.id(FIRST_ADMIN),
+            &admins,
+        ),
+        signatory_grantee: unbound,
+        revision: Some(t.revision.clone()),
+        warning: Some(t.warning.clone()),
+        // No world of this sample is a programme draft.
+        pm_invitee: unbound,
+        unbound,
+        now,
+        opens: now + 86_400_000_000,
+        deadline: now + 30 * 86_400_000_000,
+        team_candidate: unbound,
+        plan_body: obj(vec![
             ("description", s("SYNTHETIC WORK PLAN")),
             (
                 "tasks",
@@ -1645,93 +1512,17 @@ fn body_of(w: &Pg<'_>, op: &str, state: StateProfile) -> Value {
                 )])])),
             ),
         ]),
-        "proposal.add_member" | "proposal.add_guardian" => {
-            obj(vec![("account", dec(w.id(UNBOUND).raw()))])
-        }
-        "proposal.state_country" => obj(vec![("country", s("BE"))]),
-        "me.mailbox.mark_read" => obj(vec![("message", s("notice.outcome:1"))]),
-        "proposal.declare_affiliations" => obj(vec![("affiliations", s("SYNTHETIC AFFILIATIONS"))]),
-        "proposal.state_birth_date" => obj(vec![("date_of_birth", s("1990-01-01"))]),
-        "proposal.submit" => obj(vec![("ethics", s("none")), ("notice_version", s("1"))]),
-        "stage2.answer" => obj(vec![("text", s("SYNTHETIC ANSWERS"))]),
-        "stage2.revise" | "amendment.propose" => obj(vec![("plan", dec(plan))]),
-        "negotiation.acknowledge_notice" => obj(vec![("notice_version", s("1"))]),
-        "review.declare_proposal" | "review.declare_assignment" | "irc.declare" => obj(vec![
-            ("conflicted", Value::Bool(false)),
-            ("notifiable", Value::Bool(false)),
-        ]),
-        "review.knock_out" => obj(vec![(
-            "outcomes",
-            Value::Array(
-                t.knock_outs
-                    .iter()
-                    .map(|k| obj(vec![("criterion", dec(*k)), ("passed", Value::Bool(true))]))
-                    .collect(),
-            ),
-        )]),
-        "review.assign" => obj(vec![
-            ("reviewer", dec(w.id(MEMBER).raw())),
-            ("kind", obj(vec![("type", s("Reviewer"))])),
-        ]),
-        "review.score" => obj(vec![
-            ("plan", dec(plan)),
-            ("stage", s(stage)),
-            ("values", scores(t.criteria, t.scale)),
-        ]),
-        "review.correct_score" => obj(vec![
-            ("stage", s(stage)),
-            ("values", scores(t.criteria, t.scale)),
-            ("reason", s("SYNTHETIC CORRECTION")),
-        ]),
-        "review.ranking_summary" => obj(vec![
-            ("neutral_summary", s("SYNTHETIC NEUTRAL SUMMARY")),
-            ("rationale", s("SYNTHETIC RATIONALE")),
-            ("title", s("SYNTHETIC TITLE")),
-        ]),
-        "stage2.ask" => obj(vec![("text", s("SYNTHETIC QUESTION"))]),
-        "committee.open_round" => obj(vec![
-            (
-                "order",
-                Value::Array(t.ranked.iter().map(|p| dec(p.raw())).collect()),
-            ),
-            ("nominated", Value::Number(fstp_json::Number::from(1u32))),
-            ("rationale", s("SYNTHETIC ROUND RATIONALE")),
-        ]),
-        "committee.cast" => obj(vec![("vote", s("For"))]),
-        "review.mark_finding" => obj(vec![("mark", s("Agreed"))]),
-        "committee.delegate" => obj(vec![("to", dec(w.id(MEMBER).raw()))]),
-        "irc.review" => obj(vec![("verdict", obj(vec![("type", s("Validate"))]))]),
-        "grant.determine_amount" => obj(vec![
-            ("agreed", dec(plan)),
-            ("deductions", Value::Array(Array::new())),
-            ("currency", s("EUR")),
-        ]),
-        "grant.accept" | "grant.approve" => obj(vec![("determination", s("1"))]),
-        "grant.terminate" | "milestone.close" => obj(vec![("reason", s("SYNTHETIC REASON"))]),
-        "grant.publicity.withdraw" => obj(vec![("phase", s("Funded"))]),
-        "amendment.route" => obj(vec![("route", s("Irc"))]),
-        "contract.propose_change" => obj(vec![
-            ("clause", Value::Number(fstp_json::Number::from(1u32))),
-            ("text", s("SYNTHETIC CLAUSE CHANGE")),
-        ]),
-        "contract.decide_change" => obj(vec![("accept", Value::Bool(true))]),
-        "contract.sign" => obj(vec![("route", s("wallet_qes"))]),
-        "contract.decline" | "payment.close" | "payment.request_changes" => {
-            obj(vec![("reason", s("SYNTHETIC REASON"))])
-        }
-        "payment.review_line" => obj(vec![("approved", s("100.00")), ("currency", s("EUR"))]),
-        "payment.resubmit" | "payment.submit" => obj(vec![
-            ("kind", obj(vec![("type", s("Milestone"))])),
-            ("currency", s("EUR")),
-            ("lines", Value::Array(Array::new())),
-        ]),
-        "report.generate" => obj(vec![
-            ("kind", s("audit_file")),
-            ("call", dec(t.call.map_or(1, |c| c.raw()))),
-        ]),
-        "pending.confirm" => obj(vec![("shown", s(&"0".repeat(64)))]),
-        _ => obj(vec![]),
-    }
+        plan: t.plan.map(|p| p.raw()),
+        call: t.call.map(|c| c.raw()),
+        knock_outs: t.knock_outs.clone(),
+        criteria: t.criteria,
+        scale: t.scale,
+        ranked: t.ranked.iter().map(|p| p.raw()).collect(),
+        member: w.id(MEMBER).raw(),
+        shown: None,
+    };
+    fstp_api_testkit::harness::request_body(op, state, &ids)
+        .map_or_else(|e| panic!("{e}"), Value::Object)
 }
 
 /// The request of `cell`.

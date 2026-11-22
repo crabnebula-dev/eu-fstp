@@ -294,6 +294,17 @@ Lead readings, 2026-11-22, of lane L17's other open points:
 
 Tests, written before the code: `adr012_snapshot_status_file_round_trips_in_one_spelling` and `adr012_daily_snapshot_is_due_daily_and_retried_hourly` in `fstp_obs::snapshot_status`; `i81_vault_daily_snapshot_verifies_without_a_rotation` and `adr012_vault_daily_snapshot_failure_shows_on_status` in `crates/fstp-vault/tests/snapshots_pg.rs`; `i81_app_daily_snapshot_verifies_without_a_rotation`, `adr012_app_snapshot_holds_the_keystore_tables_whole` in `crates/fstp-cell/tests/erasure_runner.rs`; `adr012_app_restore_takes_the_newest_copy_that_opens` in `crates/fstp-cell/tests/keystore_tables.rs`; `adr012_app_keystore_image_round_trips_in_one_spelling` and `adr012_cell_restore_keystore_takes_an_optional_snapshot_id` in `fstp-cell`; `r_nf_02_keystore_snapshot_event_names_no_id` in `fstp-obs`.
 
+## Record of lane L26 `prod/display-names`, 2026-11-22
+
+Each row is a lane reading, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Display names in the App image | `"FAK1"` version 2 adds the rows of `keystore.display_name` (migration `0012_display_name.sql`, ADR-004 section "Written by lane L26"): account, text and fingerprint per name. The table is not derivable from the texts alone, since only it names the account of each name. So a restore from a snapshot keeps every display name and its uniqueness. The decoder still reads version 1 as an image with no display name. The restore's changes (`fstp_cell::tasks::erasure::restore::changes_to`) and `Keystore::table_rows` carry the rows too | SA-11 amendment; record of lane L27, row "App plaintext" |
+| System page | The last verified snapshot and the failure of each process reach the host status file and the System page (ADR-028 record of lane L26). This closes the row "Status on the System page" of lane L27 | ADR-028 |
+
+Tests: `sa11_app_keystore_image_carries_the_display_name_index` (`fstp_cell::tasks::erasure::rows_image`); `adr012_app_restore_takes_the_newest_copy_that_opens` with the display rows in its tables (`crates/fstp-cell/tests/keystore_tables.rs`).
+
 ## Consequences
 
 - No third-party crate is added.

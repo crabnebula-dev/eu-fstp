@@ -177,6 +177,7 @@ dependencies = [
  "fstp-rt",
  "fstp-sigval",
  "fstp-tenant",
+ "fstp-unorm",
 ]
 
 [[package]]
@@ -436,6 +437,10 @@ dependencies = [
  "fstp-json",
  "fstp-ledger",
 ]
+
+[[package]]
+name = "fstp-unorm"
+version = "0.1.0"
 
 [[package]]
 name = "getrandom"

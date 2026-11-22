@@ -92,16 +92,36 @@ test("adr008_applicant_verification_names_the_proposal", async () => {
     '{"account":"301","command_id":"00112233445566778899aabbccddeeff","proposal":"1"}',
     "the applicant's request body",
   );
-  const people = decodePeople({ people: [{ account: "301", proposal: "1", role: "applicant" }] });
+  const people = decodePeople({ people: [{ account: "301", proposal: "1", requested: false, role: "applicant" }] });
   assert(people !== null && people.length === 1 && people[0]?.proposal === "1", "a valid list was refused");
   eq(decodePeople({ people: [] })?.length, 0, "an empty list");
   for (const bad of [
     null,
-    { people: [{ account: "0301", proposal: "1", role: "applicant" }] },
-    { people: [{ account: "301", proposal: "1", role: "applicant", name: "x" }] },
+    { people: [{ account: "0301", proposal: "1", requested: false, role: "applicant" }] },
+    { people: [{ account: "301", proposal: "1", requested: false, role: "applicant", name: "x" }] },
     { people: [], extra: 1 },
     { people: "301" },
   ]) {
     eq(decodePeople(bad), null, `accepted ${JSON.stringify(bad)}`);
   }
+});
+
+/** I-17, ADR-008 and ADR-026 record of lane L24 (decided by Daniel on 2026-11-22): the applicant reads plain words, staff see the open requests, and the shell counts them. */
+test("adr008_identity_page_says_we_will_contact_you", async () => {
+  const { CATALOGUE } = await import("../src/onboarding/messages.en.js");
+  const pending = (CATALOGUE.labels as Readonly<Record<string, string>>)["onboarding.identity_page.pending"] ?? "";
+  assert(pending.includes("We will contact you to check your ID"), "the identity page does not say we will contact you");
+  const { decodePeople } = await import("../src/admin/team/verify.js");
+  const people = decodePeople({
+    people: [
+      { account: "301", proposal: "1", requested: false, role: "applicant" },
+      { account: "777", proposal: null, requested: true, role: "staff" },
+    ],
+  });
+  assert(people !== null && people.length === 2, "a valid list was refused");
+  eq(people?.[1]?.proposal ?? "none", "none", "a staff request names no proposal");
+  eq(people?.[1]?.requested, true, "the open request is marked");
+  const { openRequests } = await import("../src/auth/appshell.js");
+  eq(openRequests({ people: [{ requested: true }, { requested: false }, { requested: true }] }), 2, "the shell count");
+  eq(openRequests({}), 0, "no list, no count");
 });

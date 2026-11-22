@@ -36,6 +36,16 @@ const ME_MAILBOX = '/api/v1/me/mailbox';
 /** The activation of the organisation (`tenant.get_activation`, SoD-18, ADR-021). */
 const ADMIN_ACTIVATION = '/api/v1/admin/activation';
 
+/** The people a tenant admin may verify, with the open requests (ADR-026 record of lane L24). */
+const VERIFICATION_PEOPLE = '/api/v1/verification-people';
+
+/** How many open verification requests `body` lists, or 0. */
+export function openRequests(body: unknown): number {
+  const people = record(body)?.['people'];
+  if (!Array.isArray(people)) return 0;
+  return (people as readonly unknown[]).filter((p) => record(p)?.['requested'] === true).length;
+}
+
 /** The paths of the top bar and the sidebar foot, as `home/model.ts` names them. */
 const APP = { home: '/app/', mailbox: '/app/mailbox', notices: '/app/notices', profile: '/app/me' } as const;
 
@@ -228,6 +238,19 @@ async function loadShell(list: HTMLElement, chip: HTMLElement, mailbox: HTMLElem
     if (typeof open === 'number' && Number.isSafeInteger(open) && open >= 0) {
       mailbox.setAttribute('data-open', String(open));
       mailbox.replaceChildren(t('shell.mailbox_count', { count: String(open) }));
+    }
+    // ADR-026 record of lane L24: a tenant admin sees the ID checks that
+    // people asked for, linked to the member page where they are recorded.
+    if (roles.tenantAdmin) {
+      const v = await get(VERIFICATION_PEOPLE);
+      const n = ok(v) ? openRequests(v.body) : 0;
+      if (n > 0) {
+        list.append(
+          h('li', {}, [
+            h('a', { href: '/app/admin/members', 'data-tool': 'id-checks' }, [t('shell.id_checks', { count: String(n) })]),
+          ]),
+        );
+      }
     }
     return false;
   } catch {

@@ -891,6 +891,13 @@ pub trait Vault: AsyncIdentityOracle {
         purpose: VerificationPurpose,
         a: AccountId,
     ) -> impl Future<Output = Result<VerificationRedirect, OracleDown>> + Send;
+    /// Whether `a` has an open verification request in the cell's ledger
+    /// (ADR-026 record of lane L24, lead reading of 2026-11-22). A port
+    /// with no ledger has none.
+    fn verification_requested(&self, a: AccountId) -> impl Future<Output = bool> + Send {
+        let _ = a;
+        std::future::ready(false)
+    }
     /// Whether the vault knows every P-13 class (Q35).
     fn classes_defined(
         &self,
@@ -1656,6 +1663,13 @@ pub trait TenantConfig: Send + Sync {
         &self,
         id: ApprovalId,
     ) -> impl Future<Output = Result<SecondAdminApproval, PortError>> + Send;
+    /// The facts of the tenant admins' System page (ADR-028 record of
+    /// lane L20): whether the vault answers, whether outgoing mail works,
+    /// and the host status file. The default is a cell that knows nothing
+    /// of itself, which the page shows as problems.
+    fn system(&self) -> impl Future<Output = crate::system::SystemFacts> + Send {
+        std::future::ready(crate::system::SystemFacts::default())
+    }
 }
 
 /// The in-app notice list, read from outbox records.

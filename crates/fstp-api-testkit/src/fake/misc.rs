@@ -311,6 +311,16 @@ impl TenantConfig for FakeTenant {
             .copied()
             .ok_or(PortError::Refused)
     }
+
+    /// ADR-028 record of lane L20: the fake cell's vault and sink always
+    /// answer, and it has no host, so no host status file.
+    async fn system(&self) -> fstp_api_core::system::SystemFacts {
+        fstp_api_core::system::SystemFacts {
+            vault_answers: true,
+            mail: fstp_api_core::system::MailState::Works,
+            host: fstp_api_core::system::HostFile::NotConfigured,
+        }
+    }
 }
 
 /// The in-app notice list. Cloning shares it.

@@ -79,9 +79,9 @@ const LABELS: Readonly<Record<string, string>> = {
   "people.invitation.accepted": "You accepted the terms.",
   "people.invitation.verify_intro":
     "Verify your identity next. A tenant admin can grant your role only after that.",
-  "people.invitation.verify": "Start identity verification",
-  "people.invitation.verification_started": "Your identity verification has started.",
-  "people.invitation.verification_continue": "Continue the verification",
+  "people.invitation.verify": "Start verification",
+  "people.invitation.verification_started": "We have your request. We will contact you to check your ID, in person or by video call.",
+  "people.invitation.verification_continue": "See your identity status",
   "people.invitation.undecided":
     "The programme has not made every choice these terms state yet, so they cannot be accepted. Open this link again later.",
 };

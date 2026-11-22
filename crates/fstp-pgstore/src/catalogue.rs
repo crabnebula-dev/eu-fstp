@@ -544,6 +544,20 @@ pub const CATALOGUE: &[TableSpec] = &[
         TableClass::KeyMaterial,
         &[col("text_id", RandomId)],
     ),
+    // Lane L26 (SA-11 amendment, ADR-004), migration
+    // `0012_display_name.sql`: the display name index. The name is a
+    // sealed text of `keystore.text`. The fingerprint is an HMAC under a
+    // key derived from `Lookup`, which erasure replaces.
+    table(
+        "keystore",
+        "display_name",
+        TableClass::KeyMaterial,
+        &[
+            col("account", RandomId),
+            col("text_id", RandomId),
+            col("fingerprint", KeyedDigest),
+        ],
+    ),
 ];
 
 #[cfg(test)]

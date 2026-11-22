@@ -96,6 +96,7 @@ export type OpName =
   | "admin.approve_break_glass"
   | "admin.erasures"
   | "admin.request_erasure"
+  | "tenant.system"
   | "admin.members"
   | "creator.open_draft"
   | "creator.list_programmes"
@@ -351,6 +352,7 @@ export interface OpParams {
   readonly "admin.approve_break_glass": { readonly "break_glass": string };
   readonly "admin.erasures": Readonly<Record<never, string>>;
   readonly "admin.request_erasure": Readonly<Record<never, string>>;
+  readonly "tenant.system": Readonly<Record<never, string>>;
   readonly "admin.members": Readonly<Record<never, string>>;
   readonly "creator.open_draft": Readonly<Record<never, string>>;
   readonly "creator.list_programmes": Readonly<Record<never, string>>;
@@ -579,6 +581,7 @@ export const OP_NAMES: readonly OpName[] = [
   "admin.approve_break_glass",
   "admin.erasures",
   "admin.request_erasure",
+  "tenant.system",
   "admin.members",
   "creator.open_draft",
   "creator.list_programmes",
@@ -1337,6 +1340,20 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: true,
     binding: false,
     session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.system",
+    method: "GET",
+    path: "/admin/system",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "system" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
     classification: "confidential",
     tool: null,
   },
@@ -5333,6 +5350,46 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "tenant.system": {
+    kind: "object",
+    fields: {
+      "now": { schema: { kind: "id" }, optional: false },
+      "vault": { schema: { kind: "enum", values: ["answers", "silent"] }, optional: false },
+      "mail": { schema: { kind: "enum", values: ["works", "fails", "not_configured"] }, optional: false },
+      "last_cell_erasure": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "host_file": { schema: { kind: "enum", values: ["present", "not_configured", "missing", "unreadable"] }, optional: false },
+      "host": { schema: { kind: "nullable", inner: {
+        kind: "object",
+        fields: {
+          "written_at": { schema: { kind: "id" }, optional: false },
+          "setup_done": { schema: { kind: "bool" }, optional: false },
+          "parts": { schema: {
+            kind: "object",
+            fields: {
+              "cell": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "vault": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "witness": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "edge": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "databases": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+              "keys": { schema: { kind: "enum", values: ["running", "unhealthy", "stopped"] }, optional: false },
+            },
+          }, optional: false },
+          "backups_configured": { schema: { kind: "bool" }, optional: false },
+          "last_backup": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_key_copy": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_vault_erasure": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_app_snapshot": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "app_snapshot_failed": { schema: { kind: "bool" }, optional: false },
+          "last_vault_snapshot": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "vault_snapshot_failed": { schema: { kind: "bool" }, optional: false },
+          "certificate_days": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
+          "self_signed": { schema: { kind: "bool" }, optional: false },
+          "route": { schema: { kind: "enum", values: ["current", "mismatch", "unknown"] }, optional: false },
+          "next": { schema: { kind: "enum", values: ["run_setup", "start_service", "renew_route", "renew", "public_certificate", "configure_backups", "backup", "keystore_snapshot", "web_admins", "verify_admins", "copy_keys", "nothing"] }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "programme.timeline": { kind: "array", items: {
     kind: "object",
     fields: {
@@ -5768,6 +5825,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/admin/branding", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/terminology", need: { kind: "reads", reads: ["tenant.settings"] }, values: {}, listed: null },
   { pattern: "/app/admin/erasures", need: { kind: "reads", reads: ["admin.erasures"] }, values: {}, listed: null },
+  { pattern: "/app/admin/system", need: { kind: "reads", reads: ["tenant.system"] }, values: {}, listed: null },
   { pattern: "/app/admin/funder-profiles", need: { kind: "reads", reads: ["tenant.funder_profiles"] }, values: {}, listed: null },
   { pattern: "/app/admin/members", need: { kind: "reads", reads: ["admin.members"] }, values: {}, listed: null },
   { pattern: "/app/creator/new", need: { kind: "reads", reads: ["creator.list_templates"] }, values: {}, listed: null },

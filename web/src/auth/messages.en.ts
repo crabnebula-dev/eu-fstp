@@ -119,6 +119,7 @@ const MESSAGES = {
   'shell.role_join': ', ',
   'shell.mailbox': 'Mailbox',
   'shell.mailbox_count': 'Mailbox ({count})',
+  'shell.id_checks': 'ID checks waiting ({count})',
   'shell.notifications': 'Notifications',
   'shell.tools': 'Account tools',
   'shell.security': 'Passkeys and sessions',

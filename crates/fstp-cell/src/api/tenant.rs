@@ -20,6 +20,7 @@ use fstp_api_core::port::{
 };
 
 use crate::shell::probe::TenantProbe;
+use fstp_api_core::system::{MailState, SystemFacts};
 use fstp_api_core::views::{DeliveryPhase, DeliveryRow, EventState, TimelineRow};
 use fstp_cell_core::timeline::EventStatus;
 use fstp_domain::id::{AccountId, ProgrammeId};
@@ -32,7 +33,7 @@ use super::Inner;
 /// The tenant configuration.
 pub(crate) struct CellTenant<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
 
-impl<R: Runtime, V: Send + Sync> TenantConfig for CellTenant<R, V> {
+impl<R: Runtime, V: crate::engine::VaultClient> TenantConfig for CellTenant<R, V> {
     fn settings(&self) -> Arc<TenantSettings> {
         Arc::new(TenantSettings {
             mcp: fstp_access::McpSettings::all_roles(),
@@ -59,6 +60,31 @@ impl<R: Runtime, V: Send + Sync> TenantConfig for CellTenant<R, V> {
     async fn approval(&self, id: ApprovalId) -> Result<SecondAdminApproval, PortError> {
         let _ = id;
         Err(PortError::Refused)
+    }
+
+    /// ADR-028 record of lane L20: the vault answers `epoch`, the relay
+    /// greets, and the host status file, each live check within
+    /// [`super::system::CHECK_LIMIT`].
+    async fn system(&self) -> SystemFacts {
+        let i = &self.0;
+        let limit = super::system::CHECK_LIMIT;
+        let vault_answers = matches!(
+            fstp_rt::timeout(&i.rt, limit, i.vault.epoch()).await,
+            Ok(Ok(_))
+        );
+        let mail = match (&i.relay, &i.probe) {
+            (None, _) => MailState::NotConfigured,
+            (Some(_), None) => MailState::Fails,
+            (Some(_), Some(p)) => match fstp_rt::timeout(&i.rt, limit, p.channel()).await {
+                Ok(fstp_creator::ProbeOutcome::Pass) => MailState::Works,
+                _ => MailState::Fails,
+            },
+        };
+        SystemFacts {
+            vault_answers,
+            mail,
+            host: super::system::read_host_file(i.host_status.as_deref()),
+        }
     }
 }
 

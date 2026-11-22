@@ -183,6 +183,7 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
 //  "database": {"dbname": "c_<32 hex>", "host": "db.internal", "port": 5432},
 //  "eudi_relying_party": "tenant_registration",                     optional
 //  "host": "grants.example.eu",
+//  "host_status": "/var/lib/fstp/status/host.json",                  optional
 //  "key_file_keyd_socket": "/run/fstp-keyd/cell-keys.sock",
 //  "keyd_socket": "/run/fstp-keyd/cell.sock",
 //  "licence": "<32 hex>",                                          self-hosted only
@@ -220,13 +221,14 @@ pub const MAX_RECEIPT_KEYS: usize = 8;
 /// The longest encoded witness receipt key, in bytes.
 pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 
-const FILE_MEMBERS: [&str; 18] = [
+const FILE_MEMBERS: [&str; 19] = [
     "assets_dir",
     "cell",
     "credentials_dir",
     "database",
     "eudi_relying_party",
     "host",
+    "host_status",
     "key_file_keyd_socket",
     "keyd_socket",
     "licence",
@@ -408,6 +410,9 @@ pub struct FileConfig {
     pub credentials_dir: PathBuf,
     /// The compiled web assets, if any.
     pub assets_dir: Option<PathBuf>,
+    /// The host status file `fstp-admin` writes, which the System page
+    /// reads (ADR-028 record of lane L20), if any.
+    pub host_status: Option<PathBuf>,
     /// The cell database.
     pub database: DatabaseConfig,
     /// The registered cluster server keys.
@@ -568,6 +573,13 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
             "assets_dir",
         )?),
     };
+    let host_status = match o.get("host_status") {
+        None => None,
+        Some(v) => Some(path_of(
+            v.as_str().ok_or(ConfigError::Invalid("host_status"))?,
+            "host_status",
+        )?),
+    };
     let db = object(o, "database", "database")?;
     members(db, &["dbname", "host", "port"], "database")?;
     let db_host = text(db, "host", "database.host")?;
@@ -710,6 +722,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
         host: host.to_owned(),
         credentials_dir,
         assets_dir,
+        host_status,
         database,
         registered_servers,
         keyd_socket,
@@ -885,6 +898,32 @@ mod file_tests {
             c.mail.unwrap().address,
             Some("127.0.0.1:2465".parse().unwrap())
         );
+    }
+
+    /// ADR-028 record of lane L20: the optional member `host_status` names
+    /// the host status file by an absolute path, and anything else is
+    /// refused.
+    #[test]
+    fn adr028_l20_config_takes_host_status() {
+        assert!(
+            decode_file(file("").as_bytes())
+                .unwrap()
+                .host_status
+                .is_none()
+        );
+        let c = decode_file(file(r#","host_status":"/var/lib/fstp/status/host.json""#).as_bytes())
+            .unwrap();
+        assert_eq!(
+            c.host_status,
+            Some(PathBuf::from("/var/lib/fstp/status/host.json"))
+        );
+        for bad in [r#""status/host.json""#, "1", "null", r#""""#] {
+            assert_eq!(
+                decode_file(file(&format!(r#","host_status":{bad}"#)).as_bytes()).err(),
+                Some(ConfigError::Invalid("host_status")),
+                "{bad}"
+            );
+        }
     }
 
     /// ADR-021, ADR-026 record of lane L18 (Daniel, 2026-11-21: "Build
