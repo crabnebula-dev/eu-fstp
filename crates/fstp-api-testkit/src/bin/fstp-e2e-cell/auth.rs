@@ -653,6 +653,7 @@ pub(crate) async fn handle(info: &SiteInfo, inner: &Inner, req: Request) -> Resp
         }
         (Method::POST, ["auth", "signup", "options"]) => signup_options(info, inner, &req),
         (Method::POST, ["auth", "signup"]) => signup_register(inner, &req),
+        (Method::POST, ["auth", "signup", "code"]) => signup_code(inner, &req),
         (Method::POST, ["auth", "passkey", "login", "options"]) => login_options(inner),
         (Method::POST, ["auth", "passkey", "login"]) => login(inner, &req),
         (Method::GET, ["auth", "sessions"]) => sessions(inner, &req).await,
@@ -821,6 +822,32 @@ fn signup_register(inner: &Inner, req: &Request) -> Response {
     let tag = made.2;
     inner.ports.vault.change(|t| t.set_identity(made.0, tag));
     open_session(inner, made.0, made.1)
+}
+
+/// `POST /auth/signup/code {code, email}`: the typed code of the
+/// registration email (Daniel, 2026-11-22, ADR-008 "Registration code")
+/// answers its proof token, as the cell's own route does. The demo keeps
+/// no attempt count.
+fn signup_code(inner: &Inner, req: &Request) -> Response {
+    let Some(body) = wire::body(req) else {
+        return wire::bad("body");
+    };
+    let (Some(code), Some(email)) = (str_member(&body, "code"), str_member(&body, "email")) else {
+        return wire::bad("body");
+    };
+    let a = lock(&inner.auth);
+    let found = a.signups.iter().find(|(token, to)| {
+        to.eq_ignore_ascii_case(email)
+            && wire::unhex(token)
+                .and_then(|t| <[u8; 32]>::try_from(t).ok())
+                .is_some_and(|t| fstp_auth::ceremony::signup_code(&t).as_slice() == code.as_bytes())
+    });
+    match found {
+        Some((token, _)) => {
+            wire::json(StatusCode::OK, &obj(vec![("token", token.as_str().into())]))
+        }
+        None => refuse(StatusCode::UNAUTHORIZED, "code"),
+    }
 }
 
 /// `POST /auth/signup {token}`: the email-only registration (ADR-032,

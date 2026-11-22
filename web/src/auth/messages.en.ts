@@ -56,6 +56,19 @@ const MESSAGES = {
   'signup.passkey.optional': 'Optional: create a passkey on this device instead. It lets you sign in without email links.',
   'signup.passkey.needed': 'This organisation asks for a passkey. Create one on this device to finish.',
   'signup.register': 'Create a passkey',
+  // ADR-008 "Registration code" (Daniel, 2026-11-22).
+  'signup.code.intro': 'Or type the 6-digit code from the email.',
+  'signup.code.label': 'Code from the email',
+  'signup.code.submit': 'Continue with the code',
+  'signup.code.wrong': 'This code does not work. Check it, or open the link in the email.',
+  // ADR-008 "Later passkey" (Daniel, 2026-11-22).
+  'offer.title': 'Add a passkey',
+  'offer.intro': 'A passkey lets you sign in on this device without waiting for an email. We send you a link. Open it on this device to create the passkey.',
+  'offer.send': 'Send me a link',
+  'offer.later': 'Not now',
+  'offer.sent': 'Check your email. Open the link on this device to create your passkey.',
+  'offer.continue': 'Continue',
+  'offer.failed': 'The link could not be sent now. You can try again later from your account page.',
 
   'invite.title': 'Create a passkey',
   'invite.intro': 'Create a passkey on this device to accept the invitation and sign in.',

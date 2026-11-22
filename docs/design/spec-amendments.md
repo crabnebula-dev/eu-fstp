@@ -353,3 +353,18 @@ Readings, pending Daniel:
 - The production cell's text store sets and reads display names. ADR-004, section "Written by lane L26", holds the readings: the sealed text, the `Lookup` subject, the index table of migration `0012_display_name.sql`, and the recompute at step 2.
 - Normalisation, lead reading of 2026-11-22: `fstp_api_core::display_name::normalised` is `fstp_unorm::name_key` now (ADR-029). It replaces the "Simpler comparison" above, since an in-house NFC and case folding exists. Two encodings of one accented name, "Straße" and "STRASSE", and a name with a zero width joiner inside are each one name. A name whose key is empty is refused under SA-11.
 - A replaced or cleared name is erased through the erasure runner at once. No ledger record names it, so it has no erasure-log row in the ledger yet. Lead reading of 2026-11-22: none for now, a later lane adds one.
+
+## SA-14: A suspended binding still counts as held for I-77
+
+Decided by Daniel on 2026-11-21 (ADR-008, "Holdings"): a suspended Drafting, Judging or Operations binding counts as held for I-77. So an account whose binding is suspended still logs in with a phishing-resistant method only.
+
+### Wording that needs the matching amendment (not edited)
+
+- `SPEC/02-domain/roles-and-sod.md`, Identity discovery: "A conflict-of-interest suspension restores I-06. The suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar."
+  Proposed: "A conflict-of-interest suspension restores I-06. For separation of duties and cooling-off, the suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar. For I-77 it still counts as held (ADR-008, decided by Daniel on 2026-11-21)."
+- `SPEC/02-domain/roles-and-sod.md`, NOTE after Enforcement point 3: "A suspended binding is inactive for every action." This stays true: the binding admits no action. The I-77 reading only says which login methods its holder may use.
+
+### Built by lane L32 `prod/registration-passkey`, 2026-11-22
+
+- The authorisation reference (`fstp_api_testkit::reference::authz`, `Who::management`) counts the suspended reviewer as covered by I-77, citing ADR-008 and the date.
+- The PostgreSQL sample (`t_authz_matrix_pg_sample`) no longer leaves out the suspended reviewer's magic-link cells, so their coverage is back.

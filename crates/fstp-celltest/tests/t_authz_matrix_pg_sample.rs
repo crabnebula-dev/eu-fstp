@@ -47,10 +47,6 @@
 //!   cell: `me.add_passkey` (a WebAuthn registration over the session's
 //!   own options) and `agents.consent` and `agents.consent_request` (an
 //!   authorize request per cell);
-//! - `Who::SuspendedReviewer` with a magic-link session: the cell refuses
-//!   the login, since M3 design section 8.2 counts a suspended binding as
-//!   held for I-77, while the reference counts it as not held
-//!   (`roles-and-sod.md` Identity discovery). This waits for Daniel.
 //!
 //! The cells are split into strata by channel (web or MCP) and principal.
 //! Each stratum is shuffled by a SplitMix64 stream from the fixed seed
@@ -186,8 +182,6 @@ fn sample() -> BTreeMap<StateProfile, Vec<(Cell, Expected)>> {
             if cell.session.login == Some(Login::Opaque)
                 || !realisable(cell.who)
                 || CEREMONY_OPS.contains(&cell.op)
-                || (cell.who == Who::SuspendedReviewer
-                    && cell.session.login == Some(Login::MagicLink))
             {
                 continue;
             }
@@ -315,10 +309,11 @@ const fn account_of(who: Who) -> Option<AccountId> {
     })
 }
 
-/// Whether the model account holds a Drafting, Judging or Operations
-/// role or is a tenant admin in every world (I-77).
+/// Whether I-77 covers the model account in every world: it holds a
+/// Drafting, Judging or Operations role or is a tenant admin, a suspended
+/// binding included (ADR-008, decided by Daniel on 2026-11-21).
 fn management(who: Who) -> bool {
-    who.management()
+    who.i77()
 }
 
 // ---------------------------------------------------------------------------
