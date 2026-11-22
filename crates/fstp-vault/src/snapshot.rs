@@ -463,6 +463,23 @@ fn changes_to(from: Option<&KeystoreRows>, to: &KeystoreRows) -> Vec<Change> {
     out
 }
 
+/// Writes `rows` over the stored keystore of `client` in one transaction,
+/// whole: every row of `rows` is put, and every group, data key, tuple and
+/// intent row that `rows` lacks is deleted. Root rows are only put, so a
+/// destroyed root keeps its row and receipt.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] when the read or the write fails.
+pub async fn write_copy<R: Runtime>(
+    client: &mut Client<R>,
+    rows: &KeystoreRows,
+    now: i64,
+) -> Result<(), VaultError> {
+    let stored = keystore::read_rows(client).await?;
+    keystore::apply_changes(client, &changes_to(stored.as_ref(), rows), now).await
+}
+
 /// `fstp-vault restore-keystore` over the keys login `client`, which
 /// holds the keystore lock: reads the restored rows, fetches snapshot
 /// `id` (or the newest one `snapshots` names), takes the first copy of
@@ -513,7 +530,7 @@ pub async fn restore_with<R: Runtime, C: Custody>(
             continue;
         }
         if source != Source::Backup {
-            keystore::apply_changes(client, &changes_to(backup.as_ref(), rows), now).await?;
+            write_copy(client, rows, now).await?;
         }
         return Ok(source);
     }
