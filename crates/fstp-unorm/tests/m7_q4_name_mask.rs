@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use fstp_prop::{Gen, check, prop_assert};
-use fstp_vault_core::mask::{MaskClass, MaskPerson, mask_spans};
+use fstp_unorm::mask::{MaskClass, MaskPerson, mask_spans};
 
 /// Invented syllables, as the synthetic corpus builds its names.
 const SYLLABLES: [&str; 8] = ["vel", "ino", "rra", "mar", "adi", "ne", "zor", "sef"];

@@ -250,7 +250,7 @@ dependencies = [
  "fstp-tenant",
  "fstp-timeline",
  "fstp-tls",
- "fstp-vault-core",
+ "fstp-unorm",
  "fstp-web",
  "fstp-web-assets",
  "fstp-webauthn",

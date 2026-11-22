@@ -8,7 +8,7 @@
 
 #![no_main]
 
-use fstp_vault_core::mask::{MaskPerson, mask_spans};
+use fstp_unorm::mask::{MaskPerson, mask_spans};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

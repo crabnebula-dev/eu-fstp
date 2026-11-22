@@ -23,7 +23,7 @@
 //! The work is linear in the text times the number of name parts, which
 //! the request bounds. Fuzz target `mask_spans`.
 
-use fstp_unorm::name_key;
+use crate::name_key;
 
 /// What a span holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

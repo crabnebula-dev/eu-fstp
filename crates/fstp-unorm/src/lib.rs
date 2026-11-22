@@ -37,6 +37,8 @@
 //! by `tools/unorm-gen` from `third_party/unicode/<version>/`.
 
 mod tables;
+// M7 Q4 (ADR-033 record of lane L31): the name mask over `name_key`.
+pub mod mask;
 
 /// The Unicode version of the tables, as `(major, minor, update)`.
 pub const UNICODE_VERSION: (u8, u8, u8) = tables::VERSION;

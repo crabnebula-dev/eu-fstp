@@ -1267,7 +1267,12 @@ fn m7_q4_i17_vault_masks_names_from_the_sealed_tuple() {
     p.verify_first_admin(A_ACCOUNT, ADMIN_FILE).unwrap();
     let text = "Lead SYNTHETIC alpha, born 28.02.1990; Alphabet stays.".to_owned();
     let accounts = [WireAccount(A_ACCOUNT), WireAccount(B_ACCOUNT)];
-    let r = fstp_vault::service::mask_response(&p.vault, &p.runner, &accounts, &[text.clone()]);
+    let r = fstp_vault::service::mask_response(
+        &p.vault,
+        &p.runner,
+        &accounts,
+        std::slice::from_ref(&text),
+    );
     let fstp_vault_proto::VaultResponse::Masks(masks) = r else {
         panic!("a mask answer: {r:?}");
     };

@@ -126,6 +126,9 @@ struct Log {
     next: u128,
 }
 
+/// The verified family names, given names and date of birth by account.
+type LegalNames = BTreeMap<AccountId, (String, String, Option<String>)>;
+
 /// The synthetic vault port. Cloning shares the facts and the log.
 #[derive(Clone, Debug)]
 pub struct FakeVault {
@@ -145,7 +148,7 @@ pub struct FakeVault {
     /// The verified family names, given names and date of birth of each
     /// account, for the name mask (M7 Q4, ADR-033 record of lane L31).
     /// Synthetic values only.
-    names: Arc<Mutex<BTreeMap<AccountId, (String, String, Option<String>)>>>,
+    names: Arc<Mutex<LegalNames>>,
     /// Whether the name mask alone is down, the queries still answering.
     mask_down: Arc<Mutex<bool>>,
 }
@@ -432,24 +435,24 @@ impl Vault for FakeVault {
             return Err(OracleDown);
         }
         let names = lock(&self.names);
-        let people: Vec<fstp_vault_core::mask::MaskPerson> = team
+        let people: Vec<fstp_unorm::mask::MaskPerson> = team
             .iter()
             .map(|a| match names.get(a) {
-                Some((f, g, b)) => fstp_vault_core::mask::MaskPerson::new(f, g, b.as_deref()),
-                None => fstp_vault_core::mask::MaskPerson::new("", "", None),
+                Some((f, g, b)) => fstp_unorm::mask::MaskPerson::new(f, g, b.as_deref()),
+                None => fstp_unorm::mask::MaskPerson::new("", "", None),
             })
             .collect();
         drop(names);
         Ok(texts
             .iter()
             .map(|t| {
-                fstp_vault_core::mask::mask_spans(t, &people)
+                fstp_unorm::mask::mask_spans(t, &people)
                     .into_iter()
                     .map(|s| NameMaskSpan {
                         start: s.start,
                         end: s.end,
                         person: s.person,
-                        birth_date: s.class == fstp_vault_core::mask::MaskClass::BirthDate,
+                        birth_date: s.class == fstp_unorm::mask::MaskClass::BirthDate,
                     })
                     .collect()
             })

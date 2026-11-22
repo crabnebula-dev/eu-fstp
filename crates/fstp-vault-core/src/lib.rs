@@ -23,7 +23,9 @@
 
 pub mod eval;
 pub mod fact;
-pub mod mask;
+/// The name mask of the vault (M7 Q4, ADR-033 record of lane L31), from
+/// `fstp-unorm`, where the test kit's synthetic vault reaches it too.
+pub use fstp_unorm::mask;
 pub mod ticket;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

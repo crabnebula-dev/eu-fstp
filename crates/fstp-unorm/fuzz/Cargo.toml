@@ -12,6 +12,13 @@ libfuzzer-sys = "=0.4.13"
 fstp-unorm = { path = ".." }
 
 [[bin]]
+name = "mask_spans"
+path = "fuzz_targets/mask_spans.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fold_nfc"
 path = "fuzz_targets/fold_nfc.rs"
 test = false
