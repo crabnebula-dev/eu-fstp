@@ -390,6 +390,94 @@ pub async fn keystore_snapshots(
     Ok(Some(fstp_backup::Snapshots::new(Arc::new(client), key)))
 }
 
+/// The registered cluster server keys of `cfg`, as the start checks them.
+fn registered_of(cfg: &FileConfig) -> Vec<RegisteredSpki> {
+    cfg.registered_servers
+        .iter()
+        .map(|r| RegisteredSpki {
+            digest: r.spki_sha256,
+            role: match r.kind {
+                ServerKind::Application => ClusterRole::Application,
+                ServerKind::Vault => ClusterRole::Vault,
+                ServerKind::Control | ServerKind::Witness => ClusterRole::Other,
+            },
+        })
+        .collect()
+}
+
+/// `fstp-cell restore-keystore [<snapshot id>]` (ADR-012 record of lane
+/// L27, row "App restore"), with the cell stopped, after a restore of the
+/// application cluster. It reads the restored keystore tables over the
+/// keys role, fetches the named snapshot or the newest one, keeps the
+/// newest copy that opens through the cell's custody entry
+/// (`crate::tasks::erasure::restore::choose`), and writes it whole in one
+/// transaction. It prints nothing.
+///
+/// # Errors
+///
+/// [`CellError::Config`] for a refused configuration or credential, and
+/// [`CellError::Keys`] when no copy opens or a step fails.
+pub fn restore_keystore(cfg: &FileConfig, id: Option<[u8; 16]>) -> Result<(), CellError> {
+    use crate::tasks::erasure::{restore, rows_image};
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    rt.block_on(async move {
+        let cell = cfg.core.cell.0;
+        let custody =
+            fstp_custody::KeydCustody::new(&cfg.keyd_socket).map_err(|_| cfg_err("keyd_socket"))?;
+        let keys = login(cfg, fstp_pgstore::Role::Keys)?
+            .server_check(process::application_server_check(&registered_of(cfg)));
+        let pool =
+            fstp_pgstore::Pool::open(task_rt.clone(), cell, fstp_pgstore::Role::Keys, keys, 1)
+                .await
+                .map_err(|_| CellError::Keys("the keys role of the cell database"))?;
+        let tables = fstp_pgstore::KeystoreTables::new(pool)
+            .map_err(|_| CellError::Keys("the keystore tables"))?;
+        let backup = tables
+            .load()
+            .await
+            .map_err(|_| CellError::Keys("the keystore tables"))?;
+        let backup = backup.chain.is_some().then_some(backup);
+        let snapshots = keystore_snapshots(&task_rt, cfg).await?;
+        let snapshot = match &snapshots {
+            None => None,
+            Some(s) => {
+                let id = match id {
+                    Some(id) => Some(id),
+                    None => s
+                        .latest()
+                        .await
+                        .map_err(|_| CellError::Keys("the snapshot pointer"))?,
+                };
+                match id {
+                    None => None,
+                    Some(id) => {
+                        let bytes = s
+                            .fetch(&custody, id)
+                            .await
+                            .map_err(|_| CellError::Keys("the keystore snapshot"))?;
+                        let (c, rows) = rows_image::decode(&bytes)
+                            .map_err(|_| CellError::Keys("the keystore snapshot"))?;
+                        if c != cell {
+                            return Err(CellError::Keys("the snapshot cell"));
+                        }
+                        Some(rows)
+                    }
+                }
+            }
+        };
+        let (_, changes) =
+            restore::choose(&custody, cell, backup.as_ref(), snapshot.as_ref()).await?;
+        if let Some(c) = changes {
+            tables
+                .apply(&c)
+                .await
+                .map_err(|_| CellError::Keys("the keystore tables refused the restore"))?;
+        }
+        Ok(())
+    })
+}
+
 /// Serves the cell of `cfg` until SIGTERM or SIGINT drains it (module
 /// documentation).
 ///
@@ -405,7 +493,9 @@ pub fn serve(cfg: &FileConfig) -> Result<(), CellError> {
     rt.block_on(async move {
         let keys = open_keys(cfg).await?;
         let (parts, mut options) = parts(&task_rt, cfg, keys, listen_of(cfg))?;
-        options.keystore_snapshots = keystore_snapshots(&task_rt, cfg).await?;
+        options.keystore_snapshots = keystore_snapshots(&task_rt, cfg)
+            .await?
+            .map(|s| (s, cfg.credentials_dir.clone()));
         let running = process::start_with(&task_rt, parts, options).await?;
         let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::Started);
         let _ = term.recv().await;
@@ -649,6 +739,9 @@ pub enum Command {
     CopyKeyFile(PathBuf),
     /// `retire-key-file-copy <id>`: every copy of `id` is destroyed.
     RetireKeyFileCopy(fstp_custody::copies::CopyId),
+    /// `restore-keystore [<snapshot id>]`: the snapshot id as 32 hex
+    /// digits, or the newest one (ADR-012 record of lane L27).
+    RestoreKeystore(Option<[u8; 16]>),
     /// `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
     /// (ADR-026 "Tenant provisioning").
     ProvisionTenant {
@@ -695,6 +788,14 @@ fn agreements_arg(s: &str) -> Result<fstp_engine::AgreementVersions, CellError> 
     })
 }
 
+/// A snapshot id: exactly 32 hex digits.
+fn snapshot_id_arg(s: &str) -> Option<[u8; 16]> {
+    if s.len() != 32 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u128::from_str_radix(s, 16).ok().map(u128::to_be_bytes)
+}
+
 /// Parses the binary's arguments, without the program name.
 ///
 /// # Errors
@@ -716,6 +817,10 @@ pub fn parse_args(args: &[String]) -> Result<Command, CellError> {
         }
         ["init-keys", out] => Ok(Command::InitKeys(PathBuf::from(out))),
         ["admins", out] => Ok(Command::Admins(PathBuf::from(out))),
+        ["restore-keystore"] => Ok(Command::RestoreKeystore(None)),
+        ["restore-keystore", id] => snapshot_id_arg(id)
+            .map(|i| Command::RestoreKeystore(Some(i)))
+            .ok_or_else(|| cfg_err("arguments")),
         ["provision-tenant"] => Ok(Command::ProvisionTenant { agreements: None }),
         ["provision-tenant", "--agreements", v] => Ok(Command::ProvisionTenant {
             agreements: Some(agreements_arg(v)?),
@@ -742,6 +847,7 @@ pub fn run_command(command: &Command) -> Result<(), CellError> {
         Command::Admins(out) => admins(&cfg, out),
         Command::ProvisionTenant { agreements } => provision_tenant(&cfg, *agreements),
         Command::CopyKeyFile(out) => copy_key_file(&cfg, out),
+        Command::RestoreKeystore(id) => restore_keystore(&cfg, *id),
         Command::RetireKeyFileCopy(id) => {
             crate::key_copy::retire(&cfg.credentials_dir, *id).map_err(|e| CellError::Keys(e.0))
         }
@@ -822,6 +928,28 @@ mod tests {
     /// ADR-028 "Verify the first admins", ADR-026 record of lane L18: the
     /// `admins` command takes one file, and an account prints in the
     /// 8-4-4-4-12 hex form `fstp-vault verify-first-admin` reads.
+    /// ADR-012 record of lane L27: `restore-keystore` takes no argument
+    /// or one snapshot id of 32 hex digits, and refuses any other form.
+    #[test]
+    fn adr012_cell_restore_keystore_takes_an_optional_snapshot_id() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert!(matches!(
+            parse_args(&s(&["restore-keystore"])),
+            Ok(Command::RestoreKeystore(None))
+        ));
+        assert!(matches!(
+            parse_args(&s(&["restore-keystore", &"0f".repeat(16)])),
+            Ok(Command::RestoreKeystore(Some(id))) if id == [0x0f; 16]
+        ));
+        for bad in [
+            &["restore-keystore", "0f0f"][..],
+            &["restore-keystore", "+f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"],
+            &["restore-keystore", "a", "b"],
+        ] {
+            assert!(parse_args(&s(bad)).is_err());
+        }
+    }
+
     #[test]
     fn adr028_admins_command_and_account_number_form() {
         let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();

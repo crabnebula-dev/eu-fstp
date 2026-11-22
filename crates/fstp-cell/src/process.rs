@@ -564,10 +564,11 @@ pub struct StartOptions {
     /// here at merge. A test world passes one of its own.
     pub api_relay: Option<ApiRelay>,
     // ---- End of lane L5's block.
-    /// The keystore snapshot writer of the App chain, when the
-    /// configuration names an object store (ADR-012 record of lane L17).
-    /// `None` keeps step 5's in-memory copy.
-    pub keystore_snapshots: Option<fstp_backup::Snapshots>,
+    /// The keystore snapshot writer of the App chain and the directory of
+    /// its status file, when the configuration names an object store
+    /// (ADR-012 records of lanes L17 and L27). `None` keeps step 5's
+    /// in-memory copy and takes no daily snapshot.
+    pub keystore_snapshots: Option<(fstp_backup::Snapshots, std::path::PathBuf)>,
     /// The onboarding probes of the API core's `Prober` port (ADR-026
     /// record of lane L18): the relay's greeting and a saved sending
     /// domain. `None` fails every probe (Q5).
@@ -763,7 +764,7 @@ where
     // ADR-012 record of lane L17: step 5 takes its snapshots through the
     // object store, when one is configured.
     let keystore = match keystore_snapshots {
-        Some(s) => keystore.with_snapshots(s),
+        Some((s, dir)) => keystore.with_snapshots(s, Some(dir)),
         None => keystore,
     };
     // ---- End of lane L3's block.

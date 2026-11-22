@@ -622,3 +622,67 @@ impl Keystore {
         Ok(fstp_crypto::sha256(&out))
     }
 }
+
+/// A sink that writes nothing, for a keystore loaded from a snapshot to
+/// be checked, never served (ADR-012 record of lane L27).
+pub struct NoSink;
+
+impl KeystoreSink for NoSink {
+    fn apply<'a>(&'a self, _: &'a KeystoreChanges) -> SinkFuture<'a> {
+        Box::pin(async { Err(keys_err("a checked snapshot writes no row")) })
+    }
+}
+
+fn put<K, R: Clone>(changes: &[Change<K, R>]) -> Vec<R> {
+    changes
+        .iter()
+        .filter_map(|c| match c {
+            Change::Put(r) => Some(r.clone()),
+            Change::Delete(_) => None,
+        })
+        .collect()
+}
+
+impl Keystore {
+    /// Every row of this keystore as its tables hold them (ADR-012 record
+    /// of lane L27, row "App plaintext"). An open chain state is sealed
+    /// again under `seal`, the seal key of its epoch. A chain state still
+    /// sealed keeps its sealed form.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Keys`] when a row does not encode or seal.
+    pub fn table_rows(&self, seal: &SealKey) -> Result<KeystoreRows, CellError> {
+        let mut k = self.clone();
+        k.persist.sink = None;
+        if !k.persist.closed {
+            k.persist.written = None;
+        }
+        let d = &mut k.persist.dirty;
+        d.meta = true;
+        d.roots.extend(k.roots.keys().copied());
+        d.roots
+            .extend(k.pending_root.iter().map(|r| r.root.epoch.0));
+        d.groups.extend(k.groups.keys().copied());
+        d.keys.extend(k.keys.keys().copied());
+        d.texts.extend(k.texts.keys().copied());
+        d.signers
+            .extend(k.signers.iter().map(|(p, r)| (*p, r.generation)));
+        d.signers.extend(k.retired.keys().copied());
+        d.digests.extend(k.logins.digests.keys().copied());
+        d.logins.extend(k.logins.texts.keys().copied());
+        d.requested.extend(k.requested.iter().copied());
+        let c = k.changes(Some(seal))?;
+        Ok(KeystoreRows {
+            chain: c.chain,
+            roots: put(&c.roots),
+            groups: put(&c.groups),
+            keys: put(&c.keys),
+            texts: put(&c.texts),
+            signers: put(&c.signers),
+            digests: put(&c.digests),
+            logins: put(&c.logins),
+            requested: put(&c.requested),
+        })
+    }
+}

@@ -83,10 +83,12 @@ use fstp_keys::{CellId, Chain, DekId, Epoch, GroupId, ObjectId, Purpose};
 use fstp_rt::ShutdownSignal;
 use fstp_rt::future::{Either, race, yield_now};
 
+pub mod restore;
+pub mod rows_image;
 pub mod snapshot;
 pub mod tables;
 
-pub use tables::{KeystoreSink, SinkFuture};
+pub use tables::{KeystoreSink, NoSink, SinkFuture};
 
 use super::Clock;
 use crate::CellError;
@@ -296,9 +298,10 @@ pub struct Keystore {
     startup_unwrap: Option<RequestId>,
     /// The write-through to the keystore tables ([`tables`], lane L3).
     persist: tables::Persist,
-    /// The keystore snapshot writer the runner of this keystore takes
-    /// (ADR-012 record of lane L17). It holds no key row.
-    snapshots: Option<fstp_backup::Snapshots>,
+    /// The keystore snapshot writer the runner of this keystore takes,
+    /// with the directory of its status file (ADR-012 records of lanes
+    /// L17 and L27). It holds no key row.
+    snapshots: Option<(fstp_backup::Snapshots, Option<std::path::PathBuf>)>,
 }
 
 impl std::fmt::Debug for Keystore {
@@ -312,11 +315,16 @@ impl std::fmt::Debug for Keystore {
 }
 
 impl Keystore {
-    /// Hands `snapshots` to the runner that opens this keystore at start
-    /// (ADR-012 record of lane L17).
+    /// Hands `snapshots` to the runner that opens this keystore at start,
+    /// with the directory of the snapshot status file (ADR-012 records of
+    /// lanes L17 and L27).
     #[must_use]
-    pub fn with_snapshots(mut self, snapshots: fstp_backup::Snapshots) -> Keystore {
-        self.snapshots = Some(snapshots);
+    pub fn with_snapshots(
+        mut self,
+        snapshots: fstp_backup::Snapshots,
+        status_dir: Option<std::path::PathBuf>,
+    ) -> Keystore {
+        self.snapshots = Some((snapshots, status_dir));
         self
     }
 
@@ -690,6 +698,13 @@ pub struct ErasureRunner<C> {
     /// configured (ADR-012 record of lane L17). Without one, step 5 keeps
     /// an in-memory copy of the committed keystore.
     snapshots: Option<fstp_backup::Snapshots>,
+    /// The directory of the snapshot status file (ADR-012 record of lane
+    /// L27): the credentials directory of a serving cell.
+    snapshot_status: Option<std::path::PathBuf>,
+    /// When the runner started and its last daily snapshot, in Unix
+    /// seconds, and whether that verified (ADR-012 record of lane L27).
+    daily_started: u64,
+    daily_last: Option<(u64, bool)>,
 }
 
 impl<C> std::fmt::Debug for ErasureRunner<C> {
@@ -744,6 +759,9 @@ impl<C: Custody> ErasureRunner<C> {
             events: Vec::new(),
             erased: Vec::new(),
             snapshots: None,
+            snapshot_status: None,
+            daily_started: fstp_obs::snapshot_status::now(),
+            daily_last: None,
         };
         let root = runner.create_root(0).await?;
         let wrapped = runner.wrap(&root, &runner.work.current, 0).await?;
@@ -780,6 +798,9 @@ impl<C: Custody> ErasureRunner<C> {
             events: Vec::new(),
             erased: Vec::new(),
             snapshots: None,
+            snapshot_status: None,
+            daily_started: fstp_obs::snapshot_status::now(),
+            daily_last: None,
         };
         let s = runner.unwrap(&row, epoch).await?;
         runner.work.current = s;
@@ -809,7 +830,10 @@ impl<C: Custody> ErasureRunner<C> {
         store.persist.dirty.meta = true;
         let chain = store.chain_state.restart();
         let epoch = store.chain_state.epoch().0;
-        let snapshots = store.snapshots.take();
+        let (snapshots, snapshot_status) = match store.snapshots.take() {
+            Some((s, d)) => (Some(s), d),
+            None => (None, None),
+        };
         let mut work = Work::new(seal);
         work.secrets = groups.0;
         work.signers = open_signers(&work.current, &store)?;
@@ -822,6 +846,9 @@ impl<C: Custody> ErasureRunner<C> {
             events: Vec::new(),
             erased: Vec::new(),
             snapshots,
+            snapshot_status,
+            daily_started: fstp_obs::snapshot_status::now(),
+            daily_last: None,
         };
         runner
             .record_call_as(KeyCall::Unwrap, epoch, request)
@@ -1807,39 +1834,88 @@ impl<C: Custody> ErasureRunner<C> {
     }
 
     /// Step 5: a snapshot of the committed keystore. With an object store
-    /// its image is sealed to the cell's snapshot key and uploaded
-    /// (ADR-012 record of lane L17). Without one the runner keeps an
-    /// in-memory copy.
+    /// its tables' rows are sealed to the cell's snapshot key and uploaded
+    /// (ADR-012 records of lanes L17 and L27). Without one the runner keeps
+    /// an in-memory copy.
     async fn snapshot(&mut self, e: Epoch) -> Result<ErasureEvent, CellError> {
         self.take_snapshot().await?;
         self.apply_durable(&Step::Snapshot(e))?;
         Ok(ErasureEvent::SnapshotTaken { epoch: e.0 })
     }
 
+    /// Seals and uploads the keystore's table rows, and returns the
+    /// snapshot id.
+    async fn upload_rows(&self, s: &fstp_backup::Snapshots) -> Result<[u8; 16], CellError> {
+        let rows = self.store.table_rows(&self.work.current)?;
+        let image =
+            rows_image::encode(self.store.cell.0, &rows).map_err(|_| keys_err("snapshot image"))?;
+        s.upload(&image)
+            .await
+            .map_err(|_| keys_err("snapshot upload"))
+    }
+
     async fn take_snapshot(&mut self) -> Result<(), CellError> {
-        if let Some(s) = &self.snapshots {
-            let image = self
-                .store
-                .image()
-                .and_then(|i| snapshot::encode_image(&i))
-                .map_err(|_| keys_err("snapshot image"))?;
-            let id = s
-                .upload(&image)
-                .await
-                .map_err(|_| keys_err("snapshot upload"))?;
-            self.work.snapshot_id = Some(id);
+        if let Some(s) = self.snapshots.clone() {
+            self.work.snapshot_id = Some(self.upload_rows(&s).await?);
         }
         self.work.snapshot = Some(self.store.clone());
         Ok(())
     }
 
+    /// Fetches snapshot `id`, loads its rows as a keystore, and opens
+    /// every current key of epoch `e` under `R(e)` through custody
+    /// ([`restore::open_loaded`]). Then the pointer names it.
+    async fn check_fetched(
+        &self,
+        s: &fstp_backup::Snapshots,
+        id: [u8; 16],
+        e: Epoch,
+    ) -> Result<(), CellError> {
+        let bytes = s
+            .fetch(&self.custody, id)
+            .await
+            .map_err(|_| keys_err("snapshot fetch"))?;
+        let (cell, rows) = rows_image::decode(&bytes).map_err(|_| keys_err("snapshot image"))?;
+        if cell != self.store.cell.0 {
+            return Err(keys_err("snapshot cell"));
+        }
+        let mut ks = Keystore::from_rows(cell, rows, Arc::new(NoSink))?;
+        if ks.epoch() != e.0 {
+            return Err(keys_err("snapshot epoch"));
+        }
+        let row = ks
+            .roots
+            .get(&e.0)
+            .cloned()
+            .ok_or(keys_err("snapshot root"))?;
+        let seal = self.unwrap(&row, e.0).await?;
+        restore::open_loaded(&mut ks, &seal)?;
+        s.publish(id)
+            .await
+            .map_err(|_| keys_err("snapshot pointer"))
+    }
+
+    /// Records one snapshot try: the status file and one typed event
+    /// (ADR-012 record of lane L27).
+    fn note(&self, trigger: fstp_obs::SnapshotTrigger, verified: bool) {
+        if let Some(d) = &self.snapshot_status {
+            let _ =
+                fstp_obs::snapshot_status::record(d, verified, fstp_obs::snapshot_status::now());
+        }
+        let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::KeystoreSnapshot {
+            chain: fstp_obs::SnapshotChain::App,
+            trigger,
+            verified,
+        });
+    }
+
     /// Step 5: a scratch restore of the snapshot opens a sample of live
     /// keys under `R(e)`. With an object store the snapshot is fetched
-    /// back and opened with the cell's snapshot key first: every group
-    /// secret and one data key of its image open under `R(e)`, and the
-    /// pointer to it is written (ADR-012 record of lane L17). A snapshot
-    /// that is missing or does not open fails the step, so `R(e-1)` lives,
-    /// and the next attempt uploads a fresh one.
+    /// back, opened with the cell's snapshot key and loaded as a keystore,
+    /// and every current key of it opens under `R(e)` (ADR-012 records of
+    /// lanes L17 and L27). A snapshot that is missing or does not open
+    /// fails the step, so `R(e-1)` lives, and the next attempt uploads a
+    /// fresh one.
     async fn verify_snapshot(&mut self, e: Epoch) -> Result<ErasureEvent, CellError> {
         if let Some(s) = self.snapshots.clone() {
             let id = match self.work.snapshot_id.take() {
@@ -1849,15 +1925,9 @@ impl<C: Custody> ErasureRunner<C> {
                     self.work.snapshot_id.take().ok_or(keys_err("snapshot"))?
                 }
             };
-            let bytes = s
-                .fetch(&self.custody, id)
-                .await
-                .map_err(|_| keys_err("snapshot fetch"))?;
-            let image = snapshot::decode_image(&bytes).map_err(|_| keys_err("snapshot image"))?;
-            self.verify_image(&image, e).await?;
-            s.publish(id)
-                .await
-                .map_err(|_| keys_err("snapshot pointer"))?;
+            let checked = self.check_fetched(&s, id, e).await;
+            self.note(fstp_obs::SnapshotTrigger::Rotation, checked.is_ok());
+            checked?;
         }
         let snap = match self.work.snapshot.clone() {
             Some(s) => s,
@@ -1886,61 +1956,50 @@ impl<C: Custody> ErasureRunner<C> {
         Ok(ErasureEvent::SnapshotVerified { epoch: e.0 })
     }
 
-    /// The fetched image of step 5 opens under `R(e)` through custody:
-    /// every group secret sealed under `S(e)`, at least one, and one data
-    /// key.
-    async fn verify_image(
-        &self,
-        image: &snapshot::KeystoreImage,
-        e: Epoch,
-    ) -> Result<(), CellError> {
-        let cell = self.store.cell;
-        if image.cell != cell.0 {
-            return Err(keys_err("snapshot cell"));
+    /// The daily snapshot (ADR-012 record of lane L27, row "Daily
+    /// snapshot"): with no batch running, the keystore's rows are sealed,
+    /// uploaded, fetched back and opened under the current root, and the
+    /// pointer names them. Nothing is rotated or destroyed. The try is
+    /// recorded in the status file and as an event. Returns whether it
+    /// verified.
+    ///
+    /// # Errors
+    ///
+    /// [`CellError::Keys`] with no object store, or while a batch runs.
+    pub async fn daily_snapshot(&mut self) -> Result<bool, CellError> {
+        let s = self.snapshots.clone().ok_or(keys_err("no object store"))?;
+        if self.busy()? {
+            return Err(keys_err("an erasure batch runs"));
         }
-        let root = image
-            .roots
-            .iter()
-            .find(|r| r.epoch == e.0 && r.receipt.is_none())
-            .ok_or(keys_err("snapshot root"))?;
-        let row = RootRow {
-            root: snapshot::root_ref(cell.0, root),
-            wrapped: snapshot::wrapped_of(root),
-        };
-        let s = self.unwrap(&row, e.0).await?;
-        let mut secrets = BTreeMap::new();
-        // Groups still sealed under an older epoch are the old generations
-        // of the batch, which die with their root at step 6.
-        for g in image.groups.iter().filter(|g| g.epoch == e.0) {
-            let grow = GroupRow {
-                epoch: g.epoch,
-                nonce: g.nonce,
-                body: g.body.clone(),
-                public: Vec::new(),
-            };
-            let id = GroupId(g.group);
-            secrets.insert(
-                (id, g.generation),
-                open_group(&s, cell, id, g.generation, &grow)?,
-            );
+        let e = Epoch(self.store.epoch());
+        let checked = async {
+            let id = self.upload_rows(&s).await?;
+            self.check_fetched(&s, id, e).await
         }
-        if secrets.is_empty() {
-            return Err(keys_err("snapshot groups"));
-        }
-        if let Some(k) = image.keys.first() {
-            let sk = secrets
-                .get(&(GroupId(k.group), k.generation))
-                .ok_or(keys_err("snapshot group"))?;
-            let sealed =
-                envelope::decode_sealed_key(&k.sealed).map_err(|_| keys_err("snapshot sample"))?;
-            envelope::open_key(
-                sk,
-                &sealed,
-                &ctx_for(cell, GroupId(k.group), k.generation, k.dek),
+        .await;
+        let ok = checked.is_ok();
+        self.note(fstp_obs::SnapshotTrigger::Daily, ok);
+        self.daily_last = Some((fstp_obs::snapshot_status::now(), ok));
+        Ok(ok)
+    }
+
+    /// Whether a daily snapshot is due now: an object store is configured
+    /// and the schedule of `fstp_obs::snapshot_status::due` says so.
+    pub fn daily_due(&self) -> bool {
+        self.snapshots.is_some()
+            && fstp_obs::snapshot_status::due(
+                self.daily_started,
+                self.daily_last,
+                fstp_obs::snapshot_status::now(),
             )
-            .map_err(|_| keys_err("snapshot sample"))?;
-        }
-        Ok(())
+    }
+
+    /// Writes the snapshot status file into `dir` after each snapshot
+    /// from now on (ADR-012 record of lane L27, row "Status file").
+    #[must_use]
+    pub fn with_snapshot_status(mut self, dir: std::path::PathBuf) -> Self {
+        self.snapshot_status = Some(dir);
+        self
     }
 
     /// Step 6: destroys `R(e)` and keeps the digest of its receipt.
@@ -2422,7 +2481,14 @@ async fn run_task<C: Custody + Send + Sync + 'static, K: Clock>(
                 // retried after one tick (`ErasureRunner::step`).
                 cooling = runner.step().await.is_err();
             }
-            Wake::Tick => cooling = false,
+            Wake::Tick => {
+                cooling = false;
+                // ADR-012 record of lane L27: the daily snapshot, only while
+                // no batch runs. It records its own outcome.
+                if runner.daily_due() {
+                    let _ = runner.daily_snapshot().await;
+                }
+            }
         }
         publish(&runner, &progress);
     }
