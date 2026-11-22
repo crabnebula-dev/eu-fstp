@@ -20,16 +20,25 @@
 //! cells are named on `CellToCp`. The set of edges is configured, not
 //! discovered. The wait gives up after a configured time and fails the
 //! erasure there, with no confirmation, as any failed step does.
+//!
+//! Lane L15 (ADR-009 "Pilot route feed", decided by Daniel on 2026-11-21):
+//! each route carries the pins of its two tunnel servers, and the
+//! publisher builds each table through the edge's own checks before it
+//! signs ([`sign_table`]). A version is `max(previous + 1, Unix time in
+//! milliseconds)` ([`next_version`]). A pilot publisher resumes from its
+//! state file and writes each new table there before an edge can fetch it
+//! ([`RoutePublisher::resume`]).
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fstp_cp_proto::CellId;
 use fstp_crypto::composite::CompositeSigningKey;
 use fstp_edge::{
-    ROUTE_TABLE_CONTEXT, RouteEntry, decode_poll, encode_route_table_body,
-    encode_signed_route_table,
+    PinnedRoute, ROUTE_TABLE_CONTEXT, check_routes, decode_poll, encode_route_table_body,
+    encode_signed_route_table, verify_route_table,
 };
 use fstp_rt::Runtime;
 
@@ -76,7 +85,7 @@ impl EdgeId {
 
 struct State {
     version: u64,
-    routes: BTreeMap<[u8; 16], RouteEntry>,
+    routes: BTreeMap<[u8; 16], PinnedRoute>,
     signed: Vec<u8>,
     reported: BTreeMap<EdgeId, u64>,
 }
@@ -87,6 +96,7 @@ pub struct RoutePublisher {
     signer: CompositeSigningKey,
     edges: Vec<EdgeId>,
     state: Mutex<State>,
+    store: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for RoutePublisher {
@@ -97,14 +107,41 @@ impl std::fmt::Debug for RoutePublisher {
     }
 }
 
-fn sign(
+/// The version after `previous`: `max(previous + 1, Unix time in
+/// milliseconds)` (ADR-009 "Pilot route feed", row "Versions"). So a
+/// table written again after a lost state still rises above every
+/// version an edge served, unless the host clock ran back.
+///
+/// # Errors
+///
+/// [`ControlError::Job`] when the version would pass `u64::MAX`.
+pub fn next_version(previous: u64) -> Result<u64, ControlError> {
+    let next = previous
+        .checked_add(1)
+        .ok_or(ControlError::Job("route table version"))?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    Ok(next.max(now))
+}
+
+/// Signs the table of `version` with `routes`. The routes first pass the
+/// edge's own checks ([`fstp_edge::check_routes`]), so the control plane
+/// never signs a table an edge refuses (ADR-009 "Pilot route feed", row
+/// "Checks before signing").
+///
+/// # Errors
+///
+/// [`ControlError::Request`] naming the rule for routes an edge would
+/// refuse, and [`ControlError::Job`] when the table does not sign.
+pub fn sign_table(
     signer: &CompositeSigningKey,
     version: u64,
-    routes: &BTreeMap<[u8; 16], RouteEntry>,
+    routes: &[PinnedRoute],
 ) -> Result<Vec<u8>, ControlError> {
-    let list: Vec<RouteEntry> = routes.values().cloned().collect();
+    check_routes(routes).map_err(|e| ControlError::Request(e.rule()))?;
     let body =
-        encode_route_table_body(version, &list).map_err(|_| ControlError::Job("route table"))?;
+        encode_route_table_body(version, routes).map_err(|_| ControlError::Request("I-19"))?;
     let signature = signer
         .sign_with_context(&body, ROUTE_TABLE_CONTEXT)
         .map_err(|_| ControlError::Job("the route table signature"))?;
@@ -112,9 +149,19 @@ fn sign(
         .map_err(|_| ControlError::Job("route table"))
 }
 
+fn sign(
+    signer: &CompositeSigningKey,
+    version: u64,
+    routes: &BTreeMap<[u8; 16], PinnedRoute>,
+) -> Result<Vec<u8>, ControlError> {
+    let list: Vec<PinnedRoute> = routes.values().cloned().collect();
+    sign_table(signer, version, &list)
+}
+
 impl RoutePublisher {
-    /// A publisher of an empty table, version 1, signed by the
-    /// control-plane key `signer`, for the edges `edges`.
+    /// A publisher of an empty table, signed by the control-plane key
+    /// `signer`, for the edges `edges`. Its version comes from
+    /// [`next_version`]. It keeps its table in memory only.
     ///
     /// # Errors
     ///
@@ -124,16 +171,55 @@ impl RoutePublisher {
         edges: &[EdgeId],
     ) -> Result<RoutePublisher, ControlError> {
         let routes = BTreeMap::new();
-        let signed = sign(&signer, 1, &routes)?;
+        let version = next_version(0)?;
+        let signed = sign(&signer, version, &routes)?;
         Ok(RoutePublisher {
             signer,
             edges: edges.to_vec(),
             state: Mutex::new(State {
-                version: 1,
+                version,
                 routes,
                 signed,
                 reported: BTreeMap::new(),
             }),
+            store: None,
+        })
+    }
+
+    /// A publisher that resumes from the signed table `signed`, the
+    /// state file of a pilot (ADR-009 "Pilot route feed", row "Table
+    /// state"), and writes each new table to `store` before it serves it.
+    /// The table must verify under `signer`'s own public key, through the
+    /// edge's own decoder and checks.
+    ///
+    /// # Errors
+    ///
+    /// [`ControlError::Config`] for a table that does not verify under
+    /// the key.
+    pub fn resume(
+        signer: CompositeSigningKey,
+        edges: &[EdgeId],
+        signed: &[u8],
+        store: PathBuf,
+    ) -> Result<RoutePublisher, ControlError> {
+        let key = signer.public_key().to_bytes().to_vec();
+        let verified = verify_route_table(&[key], signed)
+            .map_err(|_| ControlError::Config("route table state"))?;
+        let routes = verified
+            .routes
+            .into_iter()
+            .map(|r| (r.route.app.cell, r))
+            .collect();
+        Ok(RoutePublisher {
+            signer,
+            edges: edges.to_vec(),
+            state: Mutex::new(State {
+                version: verified.version,
+                routes,
+                signed: signed.to_vec(),
+                reported: BTreeMap::new(),
+            }),
+            store: Some(store),
         })
     }
 
@@ -151,24 +237,48 @@ impl RoutePublisher {
         self.state().signed.clone()
     }
 
+    /// The current routes, in ascending cell order.
+    pub fn routes(&self) -> Vec<PinnedRoute> {
+        self.state().routes.values().cloned().collect()
+    }
+
     /// Publishes `entry` as the route of its cell, replacing an older
     /// route of that cell, as a new version. Returns the version.
     ///
     /// # Errors
     ///
-    /// [`ControlError::Job`] when the table does not encode or sign, as
-    /// for a host that another cell holds. Nothing changes then.
-    pub fn publish(&self, entry: RouteEntry) -> Result<u64, ControlError> {
+    /// [`ControlError::Request`] for a host that another cell holds, or a
+    /// table an edge would refuse, and [`ControlError::Job`] or
+    /// [`ControlError::Io`] when the table does not sign or store.
+    /// Nothing changes then.
+    pub fn publish(&self, entry: PinnedRoute) -> Result<u64, ControlError> {
+        self.publish_with(entry, &mut |_| Ok(()))
+    }
+
+    /// As [`RoutePublisher::publish`], and calls `before_store` with the
+    /// new version after the table is signed and before it is stored or
+    /// served. An error of `before_store` changes nothing. The pilot
+    /// appends its audit record there (lane L15).
+    ///
+    /// # Errors
+    ///
+    /// As [`RoutePublisher::publish`], and the error of `before_store`.
+    pub fn publish_with(
+        &self,
+        entry: PinnedRoute,
+        before_store: &mut dyn FnMut(u64) -> Result<(), ControlError>,
+    ) -> Result<u64, ControlError> {
         let mut s = self.state();
         let mut routes = s.routes.clone();
+        let cell = entry.route.app.cell;
         if routes
             .iter()
-            .any(|(c, r)| *c != entry.app.cell && r.host == entry.host)
+            .any(|(c, r)| *c != cell && r.route.host == entry.route.host)
         {
-            return Err(ControlError::Job("a host of another cell"));
+            return Err(ControlError::Request("I-19"));
         }
-        routes.insert(entry.app.cell, entry);
-        self.commit(&mut s, routes)
+        routes.insert(cell, entry);
+        self.commit(&mut s, routes, before_store)
     }
 
     /// Removes the routes of `cell` as a new version, and returns the
@@ -178,27 +288,46 @@ impl RoutePublisher {
     ///
     /// # Errors
     ///
-    /// [`ControlError::Job`] when the new table cannot be signed.
+    /// [`ControlError::Job`] or [`ControlError::Io`] when the new table
+    /// cannot be signed or stored.
     pub fn remove_cell(&self, cell: CellId) -> Result<(u16, u64), ControlError> {
+        self.remove_cell_with(cell, &mut |_| Ok(()))
+    }
+
+    /// As [`RoutePublisher::remove_cell`], with `before_store` as for
+    /// [`RoutePublisher::publish_with`]. A cell without routes calls
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`RoutePublisher::remove_cell`], and the error of `before_store`.
+    pub fn remove_cell_with(
+        &self,
+        cell: CellId,
+        before_store: &mut dyn FnMut(u64) -> Result<(), ControlError>,
+    ) -> Result<(u16, u64), ControlError> {
         let mut s = self.state();
         let mut routes = s.routes.clone();
         if routes.remove(&cell.0).is_none() {
             return Ok((0, s.version));
         }
-        let version = self.commit(&mut s, routes)?;
+        let version = self.commit(&mut s, routes, before_store)?;
         Ok((2, version))
     }
 
     fn commit(
         &self,
         s: &mut State,
-        routes: BTreeMap<[u8; 16], RouteEntry>,
+        routes: BTreeMap<[u8; 16], PinnedRoute>,
+        before_store: &mut dyn FnMut(u64) -> Result<(), ControlError>,
     ) -> Result<u64, ControlError> {
-        let version = s
-            .version
-            .checked_add(1)
-            .ok_or(ControlError::Job("route table version"))?;
+        let version = next_version(s.version)?;
         let signed = sign(&self.signer, version, &routes)?;
+        before_store(version)?;
+        // The state file holds the new table before any edge can fetch it.
+        if let Some(path) = &self.store {
+            write_atomic(path, &signed)?;
+        }
         s.version = version;
         s.routes = routes;
         s.signed = signed;
@@ -290,4 +419,40 @@ impl<R: Runtime> EdgeRoutes for RemoteEdges<R> {
         }
         Ok(removed)
     }
+}
+
+/// Writes `bytes` to `path` so a crash leaves the old file or the new
+/// one: a new temporary file beside it with mode 0600, synced, then
+/// renamed over `path`, and the directory synced.
+///
+/// # Errors
+///
+/// [`ControlError::Io`] when a step fails.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ControlError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let io = |e: std::io::Error| ControlError::Io(e.kind());
+    let dir = path
+        .parent()
+        .ok_or(ControlError::Io(std::io::ErrorKind::InvalidInput))?;
+    let mut tmp_name = path
+        .file_name()
+        .ok_or(ControlError::Io(std::io::ErrorKind::InvalidInput))?
+        .to_os_string();
+    tmp_name.push(".new");
+    let tmp = dir.join(tmp_name);
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(io)?;
+    f.write_all(bytes).map_err(io)?;
+    f.sync_all().map_err(io)?;
+    drop(f);
+    std::fs::rename(&tmp, path).map_err(io)?;
+    std::fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(io)
 }

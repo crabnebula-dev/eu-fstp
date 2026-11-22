@@ -6,13 +6,21 @@
 #
 # Usage: tools/devstack/run.sh
 #        tools/devstack/run.sh e2e [playwright args...]
-#        tools/devstack/run.sh external-cell [--resolver-rules]
+#        tools/devstack/run.sh external-cell [--resolver-rules] [--route-feed]
 #
 # `external-cell` (lane L4) runs the same stack with its cell started by
 # the production `fstp-cell` binary from a configuration file. It also
 # packs the journey UI (web/dist/app and its asset manifest) and builds
 # fstp-cell. The stack prints "config <path>", the file the binary reads,
 # before the other lines.
+# With --route-feed (lane L15) it also runs the pilot route feed: the
+# fstp-control route-feed and fstp-edge binaries in front of the cell. It
+# prints "route-feed-edge <address>", "control-config <path>" and
+# "route-file <path>". Then, for example:
+#   FSTP_CONTROL_CONFIG=<control-config> "$target/debug/fstp-control" \
+#     route remove <cell id>
+# closes new connections for the host at the edge binary, and "route add
+# <route-file>" restores the route, with no restart of the edge.
 #
 # `e2e` runs the M3 browser specs (Playwright project `devstack`, the
 # root specs of e2e/) against `fstp-devstack e2e`: two cells on
@@ -84,7 +92,7 @@ if [ "${1:-}" = "external-cell" ]; then
   shift
   "$tsc" -p "$root/web/build"
   node "$root/web/dist/build/pack.js" "$root/web/dist" "$root/web/src" "$root/web/dist/app" shell/main.js
-  cargo build --locked -p fstp-cell --bin fstp-cell
+  cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-control --bin fstp-control -p fstp-edge --bin fstp-edge
   exec "$target/debug/fstp-devstack" external-cell "$@"
 fi
 

@@ -32,6 +32,7 @@ pub mod erasure;
 pub mod keystore;
 mod messages;
 pub mod origin;
+pub mod pages;
 pub mod run;
 pub mod service;
 pub mod start;

@@ -42,7 +42,7 @@ use fstp_json::{Array, Value};
 pub use query::{Query, QueryKind, decode_query};
 pub use ticket::{
     MAX_TICKET_LEN, SIGNATURE_LEN, TICKET_LIFETIME_MAX_US, Ticket, TicketClaims, TicketKind,
-    WriteKind, country_scope, decode_ticket, scope_programme,
+    WriteKind, country_scope, decode_ticket, person_scope, scope_person, scope_programme,
 };
 
 pub use json::{MAX_ANSWER_ACCOUNTS, MAX_RESPONSE_LEN};

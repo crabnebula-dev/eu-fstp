@@ -46,11 +46,14 @@ pub enum TemplateId {
     PasskeyDisabled,
     /// An invitation to a programme role (J2, ADR-026 record of lane L5).
     RoleInvitation,
+    /// An invitation of a second tenant admin (J0, ADR-026 record of lane
+    /// L18).
+    AdminInvitation,
 }
 
 impl TemplateId {
     /// Every template id.
-    pub const ALL: [TemplateId; 10] = [
+    pub const ALL: [TemplateId; 11] = [
         TemplateId::ProposalOutcome,
         TemplateId::IrcConcern,
         TemplateId::NotifiableConflict,
@@ -61,6 +64,7 @@ impl TemplateId {
         TemplateId::SubmissionCopy,
         TemplateId::PasskeyDisabled,
         TemplateId::RoleInvitation,
+        TemplateId::AdminInvitation,
     ];
 
     /// The stable code, as `X-FSTP-Template` and the ledger record carry it.
@@ -76,6 +80,7 @@ impl TemplateId {
             TemplateId::SubmissionCopy => "submission-copy",
             TemplateId::PasskeyDisabled => "passkey-disabled",
             TemplateId::RoleInvitation => "role-invitation",
+            TemplateId::AdminInvitation => "admin-invitation",
         }
     }
 }
@@ -524,6 +529,24 @@ pub static TEMPLATES: &[Template] = &[
         body: &[
             T(
                 "You are invited to take a role in a funding programme on the platform.\n\nOpen this link to see the role and its terms, and to accept it. The link works once and only for you:\n",
+            ),
+            S(Slot::Link),
+        ],
+    },
+    // TODO(legal): draft wording for the invitation of a second tenant
+    // admin (J0, ADR-026 record of lane L18). It names no organisation, no
+    // inviter and no address (I-86).
+    Template {
+        id: TemplateId::AdminInvitation,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[T(
+            "You are invited to administer an organisation on the platform",
+        )],
+        body: &[
+            T(
+                "You are invited to become an administrator of an organisation on the platform.\n\nOpen this link to create your passkey. Creating it accepts the invitation. The link works once, only for you, and for 72 hours:\n",
             ),
             S(Slot::Link),
         ],

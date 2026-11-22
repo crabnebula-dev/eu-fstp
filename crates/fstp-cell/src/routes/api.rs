@@ -266,13 +266,25 @@ fn claims_of<B: Backend>(
     s: &fstp_cell_core::CellState,
     t: &IssuedTicket,
 ) -> Option<(TicketClaims, VaultPage)> {
-    let proposal = ProposalId::from_raw(t.proposal);
-    let (programme, lead) = programme_of(s, proposal)?;
-    let (kind, account, page) = match t.kind {
-        IssuedKind::Release => (TicketKind::Release, lead, VaultPage::Release),
-        IssuedKind::Write(code) => {
-            let w = WriteKind::ALL.iter().copied().find(|w| w.code() == code)?;
-            (TicketKind::Write(w), t.holder, VaultPage::Write)
+    // ADR-004 record of lane L13b, row "Ticket": a verification ticket
+    // names its person in the scope, and a proposal only for an applicant.
+    let (kind, account, page, scope) = match t.kind {
+        IssuedKind::Verification(subject) => (
+            TicketKind::Write(WriteKind::VerificationRecorded),
+            t.holder,
+            VaultPage::Write,
+            fstp_vault_proto::person_scope(WireAccount(subject.raw())),
+        ),
+        IssuedKind::Release | IssuedKind::Write(_) => {
+            let (programme, lead) = programme_of(s, ProposalId::from_raw(t.proposal?))?;
+            let scope = country_scope(WireProgramme(programme.raw()));
+            match t.kind {
+                IssuedKind::Write(code) => {
+                    let w = WriteKind::ALL.iter().copied().find(|w| w.code() == code)?;
+                    (TicketKind::Write(w), t.holder, VaultPage::Write, scope)
+                }
+                _ => (TicketKind::Release, lead, VaultPage::Release, scope),
+            }
         }
         IssuedKind::Download => return None,
     };
@@ -282,8 +294,8 @@ fn claims_of<B: Backend>(
             kind,
             cell: ctx.cfg.cell,
             account: WireAccount(account.raw()),
-            proposal: Some(WireProposal(t.proposal)),
-            scope: country_scope(WireProgramme(programme.raw())),
+            proposal: t.proposal.map(WireProposal),
+            scope,
             issued_at: now,
             expires_at: now.checked_add(TICKET_LIFETIME_MAX_US)?,
             nonce: t.id,
@@ -464,31 +476,44 @@ pub(crate) async fn vault_tickets<B: Backend>(
     }
 }
 
-/// `POST /api/v1/verifications` (ADR-008 "Manual identity checks"):
-/// `{command_id}`. It asks for a `VerificationRecorded` write ticket. The
-/// engine decides who may have one: a tenant admin with a verified
-/// identity, inside the release window, and never for their own account.
-/// Until the ticket can be signed, the route stops after the gate
-/// ([`issue`]), so the engine refuses or commits nothing yet.
+/// `POST /api/v1/verifications` (ADR-008 "Manual identity checks", ADR-004
+/// record of lane L13b): `{account, command_id, proposal?}`. It asks for a
+/// `VerificationRecorded` write ticket for the person `account`, and for
+/// an applicant the proposal. The cell
+/// decides who may have one (`IssueVerificationTicket`): a verified tenant
+/// admin with no Judging binding and no binding on the proposal, sharing
+/// no identity with its accounts, for a proposal in NEGOTIATION or later.
+/// The recorder enters the outcome and the identity attributes on the
+/// vault origin, so the cell never receives them (I-17).
 pub(crate) async fn verifications<B: Backend>(
     ctx: &Ctx<B>,
     req: &Request,
     caller: &Caller,
 ) -> Reply {
-    let id = match decode_verification(&req.body) {
-        Ok(id) => id,
+    let (id, account, proposal) = match decode_verification(&req.body) {
+        Ok(x) => x,
         Err(e) => return bad_body(e),
     };
-    let command = CellCommand::Release(ReleaseCommand::IssueWriteTicket {
-        kind: WriteKind::VerificationRecorded.code(),
+    let command = CellCommand::Release(ReleaseCommand::IssueVerificationTicket {
+        account: AccountId::from_raw(account),
+        proposal,
     });
     issue(ctx, caller, command, id, None).await
 }
 
-fn decode_verification(bytes: &[u8]) -> Result<[u8; 16], BodyRefusal> {
+fn decode_verification(bytes: &[u8]) -> Result<([u8; 16], u128, Option<u128>), BodyRefusal> {
     let o = body::object(bytes, AUTH_BODY_LIMIT)?;
-    body::members(&o, &["command_id"], &[])?;
-    body::hex_member::<16>(&o, "command_id")
+    body::members(&o, &["account", "command_id"], &["proposal"])?;
+    let id = body::hex_member::<16>(&o, "command_id")?;
+    let account =
+        canonical_u128(body::string(&o, "account")?).ok_or(BodyRefusal::Member("account"))?;
+    let proposal = match o.get("proposal") {
+        None => None,
+        Some(_) => Some(
+            canonical_u128(body::string(&o, "proposal")?).ok_or(BodyRefusal::Member("proposal"))?,
+        ),
+    };
+    Ok((id, account, proposal))
 }
 
 /// `GET /api/v1/audit/anchors` (Auditor or tenant admin, ADR-007, G30).
@@ -566,5 +591,62 @@ pub(crate) async fn erasures<B: Backend>(ctx: &Ctx<B>, caller: &Caller) -> Reply
         .collect();
     let mut o = Object::with_capacity(1);
     o.insert("erasures", Value::Array(list));
+    Reply::json(StatusCode::OK, &Value::Object(o))
+}
+
+/// `GET /api/v1/verification-people` (ADR-004 record of lane L13b, row
+/// "Staff app"): the people a tenant admin may record a verification for
+/// on the vault origin, as `{people: [{account, proposal, role}]}`. They
+/// are the accounts bound to a proposal in NEGOTIATION or later
+/// (R-NG-01), by id and role only, never a name or attribute (I-17). The
+/// reader is a tenant admin with no Judging binding, as for the ticket
+/// itself, and never sees their own account. The cell decides each
+/// ticket again (`IssueVerificationTicket`).
+pub(crate) async fn verification_people<B: Backend>(ctx: &Ctx<B>, caller: &Caller) -> Reply {
+    let s = match ctx.backend.state().await {
+        Ok(s) => s,
+        Err(f) => return unavailable(f),
+    };
+    let actor = caller.view.account;
+    let core = &s.engine().core;
+    let judging = core
+        .roster()
+        .bindings()
+        .any(|(_, b)| b.account == actor && b.group() == fstp_domain::roles::Group::Judging);
+    if !s.tenant().is_admin(actor) || judging {
+        return Reply::refuse(StatusCode::FORBIDDEN, None, "verification-people");
+    }
+    let mut rows = Vec::new();
+    for (_, b) in core.roster().bindings() {
+        let Some(p) = b.proposal() else {
+            continue;
+        };
+        if !b.held() || b.account == actor || b.group() != fstp_domain::roles::Group::Receiving {
+            continue;
+        }
+        let open = fstp_domain::view::proposal_state(core, p)
+            .is_some_and(|st| fstp_cell_core::RELEASE_STATES.contains(&st));
+        if open {
+            rows.push((
+                p.raw(),
+                b.account.raw(),
+                fstp_access::role_wire_name(b.role),
+            ));
+        }
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    let list: Array = rows
+        .into_iter()
+        .map(|(p, a, role)| {
+            let mut o = Object::with_capacity(3);
+            o.insert("account", Value::String(a.to_string()));
+            o.insert("proposal", Value::String(p.to_string()));
+            o.insert("role", Value::String(role.to_owned()));
+            Value::Object(o)
+        })
+        .collect();
+    let mut o = Object::with_capacity(1);
+    o.insert("people", Value::Array(list));
     Reply::json(StatusCode::OK, &Value::Object(o))
 }

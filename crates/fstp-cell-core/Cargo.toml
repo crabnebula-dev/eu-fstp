@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 fstp-engine.workspace = true
+fstp-tenant.workspace = true
 # The creator shell facts of a cell (lane F-CYCLE2).
 fstp-creator.workspace = true
 fstp-guide.workspace = true

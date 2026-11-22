@@ -15,7 +15,7 @@ use std::time::Duration;
 use fstp_control::erase::EdgeRoutes;
 use fstp_control::routes::{EdgeId, RemoteEdges, RoutePublisher, serve_route_feed};
 use fstp_cp_proto::CellId;
-use fstp_edge::{CellEndpoint, HostName, LiveRoutes, RouteEntry, RouteFeed, TlsFeed};
+use fstp_edge::{CellEndpoint, HostName, LiveRoutes, PinnedRoute, RouteEntry, RouteFeed, TlsFeed};
 use fstp_pgtest::certs::ClusterCa;
 use fstp_rt::tokio::TokioRuntime;
 use fstp_rt::{Listener as _, Runtime as _, Shutdown};
@@ -39,16 +39,20 @@ fn cn(edge: EdgeId) -> String {
     format!("edge_{hex}")
 }
 
-fn route(cell: u8, host: &str) -> RouteEntry {
+fn route(cell: u8, host: &str) -> PinnedRoute {
     let ep = |port| CellEndpoint {
         cell: [cell; 16],
         address: SocketAddr::from(([10, 0, 4, cell], port)),
         tls_name: "tunnel.cell.internal".to_owned(),
     };
-    RouteEntry {
-        host: HostName::parse(host.as_bytes()).unwrap(),
-        app: ep(8443),
-        vault: ep(9443),
+    PinnedRoute {
+        route: RouteEntry {
+            host: HostName::parse(host.as_bytes()).unwrap(),
+            app: ep(8443),
+            vault: ep(9443),
+        },
+        app_pin: [cell; 32],
+        vault_pin: [cell ^ 0x80; 32],
     }
 }
 

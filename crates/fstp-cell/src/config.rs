@@ -191,7 +191,6 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
 //  "mail": {"address": "127.0.0.1:2465", "relay": "smtp.example.eu",
 //           "sender": "noreply@example.eu", "username": "cell"},     optional
 //  "mode": "saas",
-//  "organisation_active": false,                                   optional
 //  "registered_servers": [{"kind": "application", "spki_sha256": "<64 hex>"}],
 //  "vault": {"address": "127.0.0.1:4100"},
 //  "version": "0.3.0",
@@ -219,7 +218,7 @@ pub const MAX_RECEIPT_KEYS: usize = 8;
 /// The longest encoded witness receipt key, in bytes.
 pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 
-const FILE_MEMBERS: [&str; 18] = [
+const FILE_MEMBERS: [&str; 17] = [
     "assets_dir",
     "cell",
     "credentials_dir",
@@ -232,7 +231,6 @@ const FILE_MEMBERS: [&str; 18] = [
     "listen",
     "mail",
     "mode",
-    "organisation_active",
     "registered_servers",
     "shell",
     "vault",
@@ -423,12 +421,6 @@ pub struct FileConfig {
     pub listen: ListenConfig,
     /// The platform relay, if any.
     pub mail: Option<MailConfig>,
-    /// The organisation port's answer for a ledger with no tenant part
-    /// (ADR-021). Daniel decided on 2026-11-21 that `fstp-cell
-    /// provision-tenant` replaces it. It stays until a provisioned pilot can
-    /// be activated (ADR-026 row "Organisation port until onboarding runs",
-    /// interim, pending Daniel). A ledger with a tenant part ignores it.
-    pub organisation_active: bool,
     /// The creator shell's settings (ADR-027), if any.
     pub shell: Option<ShellConfig>,
 }
@@ -697,12 +689,6 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
             v.as_object().ok_or(ConfigError::Invalid("shell"))?,
         )?),
     };
-    let organisation_active = match o.get("organisation_active") {
-        None => false,
-        Some(v) => v
-            .as_bool()
-            .ok_or(ConfigError::Invalid("organisation_active"))?,
-    };
     Ok(FileConfig {
         core,
         host: host.to_owned(),
@@ -716,7 +702,6 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
         vault,
         listen,
         mail,
-        organisation_active,
         shell,
     })
 }
@@ -848,16 +833,30 @@ mod file_tests {
         let c = decode_file(file("").as_bytes()).unwrap();
         assert_eq!(c.core.mode, Mode::Saas);
         assert_eq!(c.database.port, 5432);
-        assert!(c.mail.is_none() && c.assets_dir.is_none() && !c.organisation_active);
+        assert!(c.mail.is_none() && c.assets_dir.is_none());
         let full = file(
-            r#","assets_dir":"/opt/fstp/web","mail":{"address":"127.0.0.1:2465","relay":"smtp.example.test","sender":"noreply@example.test","username":"cell"},"organisation_active":true"#,
+            r#","assets_dir":"/opt/fstp/web","mail":{"address":"127.0.0.1:2465","relay":"smtp.example.test","sender":"noreply@example.test","username":"cell"}"#,
         );
         let c = decode_file(full.as_bytes()).unwrap();
         assert_eq!(
             c.mail.unwrap().address,
             Some("127.0.0.1:2465".parse().unwrap())
         );
-        assert!(c.organisation_active);
+    }
+
+    /// ADR-021, ADR-026 record of lane L18 (Daniel, 2026-11-21: "Build
+    /// onboarding, then drop flag"): the member `organisation_active` is
+    /// gone. A file that names it is refused as an unknown member, so no
+    /// configuration activates an organisation the ledger did not.
+    #[test]
+    fn adr021_config_refuses_organisation_active() {
+        for v in ["true", "false"] {
+            let f = file(&format!(r#","organisation_active":{v}"#));
+            assert!(
+                decode_file(f.as_bytes()).is_err(),
+                "organisation_active {v}"
+            );
+        }
     }
 
     /// I-19: the file names exactly one cell. The cell member is one id,

@@ -176,6 +176,7 @@ fn serve_over(
         // No chain writer: these tests start the vault only (ADR-010 open
         // point 5, Q-C, lane F-VCHAIN).
         chain: None,
+        pages: None,
     };
     let handle = block_on(serve(rt().clone(), parts))?;
     block_on(handle.shutdown(Duration::from_secs(10)))

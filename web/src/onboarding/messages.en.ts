@@ -172,6 +172,38 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.summary.complete": "Complete onboarding",
   "onboarding.summary.completed": "Onboarding is complete. Activate the organisation below.",
 
+  // The setup checklist of the summary (ADR-026 record of lane L18).
+  "onboarding.checklist.title": "What is done, and what comes next",
+  "onboarding.checklist.intro":
+    "Your organisation opens once every item below is done. Items marked for your technical administrator happen on the server.",
+  "onboarding.checklist.done": "Done",
+  "onboarding.checklist.todo": "Not done yet",
+  "onboarding.checklist.by_host": "Your technical administrator does this.",
+  "onboarding.checklist.by_other": "The other administrator does this.",
+  "onboarding.checklist.next": "Next step: {text}",
+  "onboarding.checklist.all_done": "Everything is done. Your organisation is open.",
+  "onboarding.checklist.item.second_admin": "A second administrator has joined",
+  "onboarding.checklist.item.verified": "Both administrators have a verified identity",
+  "onboarding.checklist.item.signatories": "Someone signs for the organisation, for money and for legal matters",
+  "onboarding.checklist.item.steps": "Every onboarding step is saved and checked",
+  "onboarding.checklist.item.activation_requested": "An administrator has asked to open the organisation",
+  "onboarding.checklist.item.activation_approved": "The other administrator has approved the opening",
+  "onboarding.checklist.next.second_admin":
+    "Invite a second administrator below. They get an email with a link to create their passkey, which works once and for 72 hours.",
+  "onboarding.checklist.next.verified":
+    "Send each administrator's account number below to your technical administrator. They check each identity document and record it on the server.",
+  "onboarding.checklist.next.signatories":
+    "Choose who signs for money and who signs for legal matters, in the section below. One person may do both, but nobody can choose themselves.",
+  "onboarding.checklist.next.steps": "Open the first step that is not checked yet, fill it in and save it.",
+  "onboarding.checklist.next.activation_requested": "Ask to open the organisation with the button in the activation section below.",
+  "onboarding.checklist.next.activation_approved":
+    "The other administrator signs in and approves the opening in the activation section below.",
+  "onboarding.checklist.accounts": "Account numbers for your technical administrator",
+  "onboarding.checklist.account": "{handle}: {number}",
+  "onboarding.checklist.invite": "Send the invitation",
+  "onboarding.checklist.email": "Email address of the second administrator",
+  "onboarding.checklist.open_step": "Open the step {name}",
+
   // The identity page.
   "onboarding.identity_page.title": "Verify your identity",
   "onboarding.identity_page.intro":

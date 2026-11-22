@@ -203,6 +203,10 @@ pub enum LinkTarget {
     /// `/app/invitation#<token>` (J2). The token travels in the fragment
     /// only, so no request line to the server carries it.
     RoleInvitation(InvitationToken),
+    /// The enrolment page of a tenant admin invitation,
+    /// `/auth/invite#<token>` (J0, ADR-026 record of lane L18). The token
+    /// travels in the fragment only.
+    AdminInvitation(InvitationToken),
 }
 
 impl LinkTarget {
@@ -219,6 +223,13 @@ impl LinkTarget {
             }
             LinkTarget::RoleInvitation(t) => {
                 let mut path = String::from("/app/invitation#");
+                for b in t.0 {
+                    path.push_str(&format!("{b:02x}"));
+                }
+                path
+            }
+            LinkTarget::AdminInvitation(t) => {
+                let mut path = String::from("/auth/invite#");
                 for b in t.0 {
                     path.push_str(&format!("{b:02x}"));
                 }
