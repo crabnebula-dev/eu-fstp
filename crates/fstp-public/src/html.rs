@@ -47,6 +47,7 @@ use fstp_html::{
 };
 
 use crate::PublicError;
+use crate::legal::LegalText;
 use crate::view::{GrantStatus, PublicCall, PublicGrant, PublicView};
 
 /// The bytes of one rendered public page: a page of the view, written by
@@ -235,24 +236,37 @@ const ENTRIES: &[EntrySource<'static>] = &[
     label("public.status.granted", "Granted"),
     label("public.status.in_execution", "In execution"),
     label("public.status.completed", "Completed"),
-    // TODO(legal): the privacy notice, the accessibility statement, the
-    // Data Act information and the funder visibility elements (I-69, L-08,
-    // L-09). Daniel supplies the approved wording. The platform
-    // attribution (P-68) is a plain label.
+    // ADR-037 (Daniel, 2026-11-22, Q6): the privacy notice, the
+    // accessibility statement, the imprint, the terms of use and the Data
+    // Act information link to their pages under `/legal/`. Each page shows
+    // the draft banner until Daniel approves its text. The names are those
+    // of `legal/15-footer-texts.md`. TODO(legal): the funder visibility
+    // elements (L-08, L-09). The platform attribution (P-68) is a plain
+    // label.
     EntrySource {
         id: "public.footer.privacy",
         kind: MessageKind::Approved,
-        message: "Privacy notice: the approved wording is pending.",
+        message: "Privacy notice",
     },
     EntrySource {
         id: "public.footer.accessibility",
         kind: MessageKind::Approved,
-        message: "Accessibility statement: the approved wording is pending.",
+        message: "Accessibility statement",
+    },
+    EntrySource {
+        id: "public.footer.imprint",
+        kind: MessageKind::Approved,
+        message: "Imprint",
+    },
+    EntrySource {
+        id: "public.footer.terms",
+        kind: MessageKind::Approved,
+        message: "Terms of use",
     },
     EntrySource {
         id: "public.footer.data_act",
         kind: MessageKind::Approved,
-        message: "Data Act information for tenants: the approved wording is pending.",
+        message: "Data Act information",
     },
     EntrySource {
         id: "public.footer.funder",
@@ -524,6 +538,15 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
         };
         Element::new("li").child(span)
     };
+    // ADR-037: a legal text's element is a link to its page.
+    let legal = |t: LegalText, id: &str| -> Result<Element, PublicError> {
+        Ok(Element::new("li").child(
+            Element::new("a")
+                .attr("data-mandatory", t.mandatory_key())
+                .attr_url("href", url(t.path())?)
+                .approved(&ApprovedText::new(id), &[]),
+        ))
+    };
     let mut visibility = Element::new("li").child(
         Element::new("span")
             .attr("data-mandatory", "funder_visibility")
@@ -623,13 +646,14 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
                 Element::new("ul")
                     .child(visibility)
                     .child(item("ai_disclosure", "public.footer.ai", true))
-                    .child(item("privacy_notice", "public.footer.privacy", true))
-                    .child(item(
-                        "accessibility_statement",
+                    .child(legal(LegalText::Privacy, "public.footer.privacy")?)
+                    .child(legal(
+                        LegalText::Accessibility,
                         "public.footer.accessibility",
-                        true,
-                    ))
-                    .child(item("data_act_information", "public.footer.data_act", true))
+                    )?)
+                    .child(legal(LegalText::Imprint, "public.footer.imprint")?)
+                    .child(legal(LegalText::Terms, "public.footer.terms")?)
+                    .child(legal(LegalText::DataAct, "public.footer.data_act")?)
                     .child(item(
                         "platform_attribution",
                         "public.footer.attribution",

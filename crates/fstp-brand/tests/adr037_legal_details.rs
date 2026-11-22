@@ -1,7 +1,13 @@
 //! ADR-037 section 1: the tenant's legal details are plain text only
 //! (I-68), each field optional, and the placeholder names map to fields.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
 
 use fstp_brand::legal::{LegalDetails, LegalField, MAX_LEGAL_BYTES};
 use fstp_prop::{check, prop_assert};
@@ -86,4 +92,40 @@ fn adr037_field_keys_and_placeholders() {
     assert_eq!(d.placeholder("P-41"), None);
     assert_eq!(d.placeholder("controller.accessibility_contact"), None);
     assert_eq!(d.pairs().count(), 3);
+}
+
+/// The platform tokens, as the legal pages use them.
+const TOKENS: &str = include_str!("../../../web/src/site/tokens.css");
+
+/// The value of `--name` in the first block of `css` that sets it after
+/// byte `from`, as a colour.
+fn token(css: &str, name: &str, from: usize) -> fstp_brand::Rgb {
+    let rest = &css[from..];
+    let at = rest
+        .find(&format!("--{name}: #"))
+        .unwrap_or_else(|| panic!("{name}"));
+    let hex = &rest[at + name.len() + 5..at + name.len() + 11];
+    fstp_brand::Rgb::hex(u32::from_str_radix(hex, 16).unwrap_or_else(|_| panic!("{name}")))
+}
+
+/// I-70, ADR-037: the text of the draft banner, the pending markers, the
+/// "not set" markers and the footer links meets AA on its ground in both
+/// themes, read from the platform tokens.
+#[test]
+fn i70_adr037_legal_page_colours_meet_aa_in_both_themes() {
+    let dark = TOKENS
+        .find("prefers-color-scheme: dark")
+        .expect("a dark block");
+    for from in [0, dark] {
+        for (text, ground) in [
+            ("color-text-1", "color-state-warning-bg"),
+            ("color-state-neutral-text", "color-state-neutral-bg"),
+            ("color-brand-text", "color-surface-1"),
+        ] {
+            assert!(
+                fstp_brand::meets_aa(token(TOKENS, text, from), token(TOKENS, ground, from)),
+                "{text} on {ground} from byte {from}"
+            );
+        }
+    }
 }

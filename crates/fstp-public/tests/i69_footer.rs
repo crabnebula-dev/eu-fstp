@@ -10,11 +10,14 @@ use fstp_public::{Chrome, FunderFooter, render_html};
 use support::{all_pages, count, sample_view, traced_pages};
 
 /// The `data-mandatory` keys, one per `MandatoryElement::ALL`.
-const KEYS: [&str; 6] = [
+const KEYS: [&str; 8] = [
     "funder_visibility",
     "ai_disclosure",
     "privacy_notice",
     "accessibility_statement",
+    // ADR-037: the imprint and the terms of use joined the footer.
+    "imprint",
+    "terms_of_use",
     "data_act_information",
     "platform_attribution",
 ];
@@ -170,4 +173,29 @@ fn i69_footer_carries_the_pinned_funder_profile_elements() {
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// I-69, ADR-037: on every public page the privacy notice, the
+/// accessibility statement, the imprint, the terms of use and the Data
+/// Act information link to their pages under `/legal/`.
+#[test]
+fn i69_adr037_footer_links_the_legal_pages() {
+    let view = sample_view(true);
+    let chrome = Chrome {
+        stylesheet: None,
+        funder: None,
+        logos: Default::default(),
+    };
+    for p in traced_pages(&view) {
+        let html = render_html(&view, &p, &chrome).unwrap();
+        let footer = html.as_str().split("<footer").nth(1).unwrap_or("");
+        for t in fstp_public::legal::LegalText::ALL {
+            let link = format!(
+                "<a data-mandatory=\"{}\" href=\"{}\">",
+                t.mandatory_key(),
+                t.path()
+            );
+            assert!(footer.contains(&link), "{p:?}: {link}");
+        }
+    }
 }
