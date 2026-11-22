@@ -136,7 +136,36 @@ pub enum KeyCommand {
         /// The receipt digest.
         receipt: [u8; 32],
     },
+    /// Record the erasure request of texts that the keystore keeps and no
+    /// ledger record names, such as a replaced display name (ADR-007
+    /// section "Built by lane L33"). The erasure runner issues it.
+    RecordKeystoreErasure {
+        /// The text references.
+        ids: Vec<[u8; 16]>,
+        /// The cause, as a closed code.
+        cause: u16,
+        /// The account that authorised the erasure.
+        by: AccountId,
+        /// What the texts held, as a closed code ([`KEYSTORE_ERASURE_KINDS`]).
+        kind: u8,
+    },
+    /// Record that the destruction of root epoch `epoch` completed the
+    /// erasure of texts (ADR-007 section "Built by lane L33").
+    RecordErasuresCompleted {
+        /// The destroyed epoch.
+        epoch: u64,
+        /// The text references whose keys died with it.
+        ids: Vec<[u8; 16]>,
+    },
 }
+
+/// The kind of a text whose erasure the ledger names: a text the ledger
+/// holds (ADR-007 section "Built by lane L33").
+pub const ERASURE_KIND_LEDGER_TEXT: u8 = 1;
+/// The kind of a replaced or cleared display name (SA-11, lane L33).
+pub const ERASURE_KIND_DISPLAY_NAME: u8 = 2;
+/// The kinds a [`KeyCommand::RecordKeystoreErasure`] may name.
+pub const KEYSTORE_ERASURE_KINDS: [u8; 1] = [ERASURE_KIND_DISPLAY_NAME];
 
 /// A key record.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +181,25 @@ pub enum KeyRecord {
         epoch: u64,
         /// The receipt digest.
         receipt: [u8; 32],
+    },
+    /// The erasure of keystore texts was requested (lane L33).
+    KeystoreErasureRequested {
+        /// The text references.
+        ids: Vec<[u8; 16]>,
+        /// The cause, as a closed code.
+        cause: u16,
+        /// The account that authorised the erasure.
+        by: AccountId,
+        /// What the texts held.
+        kind: u8,
+    },
+    /// The destruction of root epoch `epoch` completed the erasure of
+    /// texts (lane L33).
+    ErasuresCompleted {
+        /// The destroyed epoch.
+        epoch: u64,
+        /// The text references.
+        ids: Vec<[u8; 16]>,
     },
 }
 

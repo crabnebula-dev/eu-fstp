@@ -492,6 +492,27 @@ fn text_record(v: &Value) -> Result<TextRecord, FromJsonError> {
 
 fn key_record_json(r: &KeyRecord) -> Value {
     match r {
+        KeyRecord::KeystoreErasureRequested {
+            ids,
+            cause,
+            by,
+            kind,
+        } => tagged(
+            "KeystoreErasureRequested",
+            vec![
+                ("by", account_json(*by)),
+                ("cause", Value::from(u64::from(*cause))),
+                ("ids", id_list(ids)),
+                ("kind", Value::from(u64::from(*kind))),
+            ],
+        ),
+        KeyRecord::ErasuresCompleted { epoch, ids } => tagged(
+            "ErasuresCompleted",
+            vec![
+                ("epoch", Value::String(epoch.to_string())),
+                ("ids", id_list(ids)),
+            ],
+        ),
         KeyRecord::KeyOpRecorded { op } => tagged("KeyOpRecorded", vec![("op", opaque_json(op))]),
         KeyRecord::EpochDestroyed { epoch, receipt } => tagged(
             "EpochDestroyed",
@@ -517,6 +538,22 @@ fn key_record(v: &Value) -> Result<KeyRecord, FromJsonError> {
             Ok(KeyRecord::EpochDestroyed {
                 epoch: u64_from(o, "epoch")?,
                 receipt: array_from(o, "receipt")?,
+            })
+        }
+        "KeystoreErasureRequested" => {
+            fields(o, &["by", "cause", "ids", "kind"])?;
+            Ok(KeyRecord::KeystoreErasureRequested {
+                ids: id_list_from(o, "ids")?,
+                cause: u16_from(o, "cause")?,
+                by: account_from(o, "by")?,
+                kind: u8_from(o, "kind")?,
+            })
+        }
+        "ErasuresCompleted" => {
+            fields(o, &["epoch", "ids"])?;
+            Ok(KeyRecord::ErasuresCompleted {
+                epoch: u64_from(o, "epoch")?,
+                ids: id_list_from(o, "ids")?,
             })
         }
         _ => Err(unknown_variant()),
@@ -1673,6 +1710,27 @@ fn text_command(v: &Value) -> Result<TextCommand, FromJsonError> {
 
 fn key_command_json(c: &KeyCommand) -> Value {
     match c {
+        KeyCommand::RecordKeystoreErasure {
+            ids,
+            cause,
+            by,
+            kind,
+        } => tagged(
+            "RecordKeystoreErasure",
+            vec![
+                ("by", account_json(*by)),
+                ("cause", Value::from(u64::from(*cause))),
+                ("ids", id_list(ids)),
+                ("kind", Value::from(u64::from(*kind))),
+            ],
+        ),
+        KeyCommand::RecordErasuresCompleted { epoch, ids } => tagged(
+            "RecordErasuresCompleted",
+            vec![
+                ("epoch", Value::String(epoch.to_string())),
+                ("ids", id_list(ids)),
+            ],
+        ),
         KeyCommand::RecordKeyOp { op } => tagged("RecordKeyOp", vec![("op", opaque_json(op))]),
         KeyCommand::RecordEpochDestroyed { epoch, receipt } => tagged(
             "RecordEpochDestroyed",
@@ -1698,6 +1756,22 @@ fn key_command(v: &Value) -> Result<KeyCommand, FromJsonError> {
             Ok(KeyCommand::RecordEpochDestroyed {
                 epoch: u64_from(o, "epoch")?,
                 receipt: array_from(o, "receipt")?,
+            })
+        }
+        "RecordKeystoreErasure" => {
+            fields(o, &["by", "cause", "ids", "kind"])?;
+            Ok(KeyCommand::RecordKeystoreErasure {
+                ids: id_list_from(o, "ids")?,
+                cause: u16_from(o, "cause")?,
+                by: account_from(o, "by")?,
+                kind: u8_from(o, "kind")?,
+            })
+        }
+        "RecordErasuresCompleted" => {
+            fields(o, &["epoch", "ids"])?;
+            Ok(KeyCommand::RecordErasuresCompleted {
+                epoch: u64_from(o, "epoch")?,
+                ids: id_list_from(o, "ids")?,
             })
         }
         _ => Err(unknown_variant()),
@@ -2123,6 +2197,17 @@ fn u16_from(o: &Object, name: &'static str) -> Result<u16, FromJsonError> {
         .and_then(|x| u16::try_from(x).ok())
         .ok_or_else(|| {
             FromJsonError::new(FromJsonErrorKind::OutOfRange { target: "u16" }).at_field(name)
+        })
+}
+
+fn u8_from(o: &Object, name: &'static str) -> Result<u8, FromJsonError> {
+    let n = member(o, name)?
+        .as_number()
+        .ok_or_else(|| FromJsonError::invalid("not a number").at_field(name))?;
+    n.as_u64()
+        .and_then(|x| u8::try_from(x).ok())
+        .ok_or_else(|| {
+            FromJsonError::new(FromJsonErrorKind::OutOfRange { target: "u8" }).at_field(name)
         })
 }
 
