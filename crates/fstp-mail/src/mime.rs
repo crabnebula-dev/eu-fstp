@@ -200,8 +200,11 @@ pub(crate) fn with_funding(r: &mut Rendered, f: &crate::MailFunding) {
         "<div style=\"margin:24px 0 0;padding:12px;border:1px solid #4b5563;background:#ffffff;color:#1f2328\">",
     );
     if f.carried().is_some() {
+        // L-08 (ADR-034 section 1): 48 px keeps the flag above the 1 cm
+        // minimum, and the padding plus the margin keep a clear space of
+        // at least 30.3 % of the height on every side.
         card.push_str(&format!(
-            "<img src=\"cid:{}\" alt=\"{}\" height=\"48\" style=\"height:48px;width:auto;display:block;margin:0 0 8px\">",
+            "<img src=\"cid:{}\" alt=\"{}\" height=\"48\" style=\"height:48px;width:auto;display:block;margin:4px 15px 15px 4px\">",
             crate::FUNDING_CID,
             escape(&f.alt)
         ));

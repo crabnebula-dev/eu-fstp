@@ -556,9 +556,6 @@ const APPROVED: Readonly<Record<string, string>> = {
   "footer.platform_attribution": "Runs on the FSTP platform.",
   "footer.funder_visibility": "Funder visibility: the approved wording is pending.",
   "footer.ai_disclosure": "AI disclosure: the approved wording is pending.",
-  // TODO(legal): the EU funding acknowledgement beside the funding card
-  // (L-08, ADR-034). The placeholder states no wording.
-  "footer.eu_funding": "EU funding acknowledgement: the approved wording is pending.",
   // TODO(legal): the wording of each funder visibility element of the
   // pinned profile on a programme page (L-08, L-09). The placeholder names
   // the element key only, as on the public pages.

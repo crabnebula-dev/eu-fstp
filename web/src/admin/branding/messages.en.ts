@@ -16,6 +16,15 @@ export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
   "admin.branding.funding.save": "Save the funding card defaults",
   "admin.branding.funding.saved": "Saved. New programmes take these values.",
   "admin.branding.funding.invalid": "Fill in both fields with plain text of up to 200 characters, without < or >.",
+  // L-08 (ADR-036): why a programme's funding sentence does not show.
+  "admin.branding.funding.ack.missing":
+    "{name}: the funding sentence is not shown. Missing: {values}. The programme editor asks for these values before activation, so ask your technical administrator to fill them in.",
+  "admin.branding.funding.ack.programme_name": "the programme name (step 2, Programme identity)",
+  "admin.branding.funding.ack.action_number": "the grant agreement number (step 1, Funder and instrument)",
+  "admin.branding.funding.ack.action_acronym": "the acronym (step 1, Funder and instrument)",
+  "admin.branding.funding.ack.and": "and",
+  "admin.branding.funding.ack.profile":
+    "{name}: the funding sentence is not shown. Its funder profile has no approved funding sentence. Ask your technical administrator.",
   "admin.branding.logos.heading": "Logos",
   "admin.branding.logos.programme_title": "Programme logo",
   "admin.branding.logos.loading": "Loading the logos in force.",

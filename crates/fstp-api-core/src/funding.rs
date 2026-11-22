@@ -3,8 +3,10 @@
 //! A card reads the programme's creator draft: its name, the grant
 //! agreement number (`funder.action_number`) and the coordinator's name
 //! and contact. A missing coordinator value falls back to the tenant's
-//! defaults (`FundingDefaultsSet`). Pages, PDFs and emails show the card
-//! as text only (I-68).
+//! defaults (`FundingDefaultsSet`). The card ends with the approved
+//! funding acknowledgement when every value it names is set (L-08,
+//! ADR-036). Pages, PDFs and emails show the card as text only
+//! (I-68).
 
 use fstp_brand::funding::{FundingCard, FundingDefaults};
 use fstp_domain::id::ProgrammeId;
@@ -30,13 +32,53 @@ fn member(spec: &Value, path: &[&str]) -> Option<String> {
 /// `fstp.programme/1` JSON form), with no tenant default applied.
 pub fn card_of_spec(programme: ProgrammeId, spec: &Value) -> FundingCard {
     let spec = spec.get("spec").unwrap_or(spec);
+    let name = member(spec, &["identity", "name"]);
+    let grant_number = member(spec, &["funder", "action_number"]);
+    let acronym = member(spec, &["funder", "action_acronym"]);
+    let (acknowledgement, acknowledgement_missing) = acknowledgement(
+        spec,
+        name.as_deref(),
+        grant_number.as_deref(),
+        acronym.as_deref(),
+    );
     FundingCard {
         programme: programme.raw(),
-        name: member(spec, &["identity", "name"])
-            .unwrap_or_else(|| format!("Programme {}", programme.raw())),
-        grant_number: member(spec, &["funder", "action_number"]),
+        name: name.unwrap_or_else(|| format!("Programme {}", programme.raw())),
+        grant_number,
         coordinator_name: member(spec, &["funder", "coordinator_name"]),
         coordinator_contact: member(spec, &["funder", "coordinator_contact"]),
+        acknowledgement,
+        acknowledgement_missing,
+    }
+}
+
+/// The funding acknowledgement of a programme (L-08, ADR-036): the
+/// approved text of its P-53 profile id, filled with its name, grant
+/// agreement number and acronym. `None` with the codes of what is
+/// missing: `profile` when no shipped version of the id holds an
+/// approved text, else each slot without a value.
+fn acknowledgement(
+    spec: &Value,
+    name: Option<&str>,
+    number: Option<&str>,
+    acronym: Option<&str>,
+) -> (Option<String>, Vec<&'static str>) {
+    let Some(w) = member(spec, &["funder", "p53_funder_profile", "profile"])
+        .and_then(|id| fstp_report::profile::approved_acknowledgement(&id))
+    else {
+        return (None, vec!["profile"]);
+    };
+    let values = fstp_report::wording::SlotValues {
+        programme_name: name,
+        action_number: number,
+        action_acronym: acronym,
+    };
+    match w.render(&values) {
+        Some(s) => (Some(s), Vec::new()),
+        None => (
+            None,
+            w.missing(&values).into_iter().map(|s| s.code()).collect(),
+        ),
     }
 }
 
@@ -82,8 +124,9 @@ fn opt(v: Option<&str>) -> Value {
 /// The JSON answer of `GET /brand/funding` (ADR-034 section 4):
 /// `{"cards": [...], "defaults": {...} | null}`. Each card holds
 /// `programme` (a decimal string), `name`, `grant_number`,
-/// `coordinator_name` and `coordinator_contact`, each value a string or
-/// `null`.
+/// `coordinator_name`, `coordinator_contact` and `acknowledgement`, each
+/// a string or `null`, and `acknowledgement_missing`, a list of codes
+/// (ADR-036).
 pub fn cards_json(cards: &[FundingCard], defaults: Option<&FundingDefaults>) -> Value {
     let rows = cards
         .iter()
@@ -94,6 +137,17 @@ pub fn cards_json(cards: &[FundingCard], defaults: Option<&FundingDefaults>) -> 
             let _ = o.insert("grant_number", opt(c.grant_number.as_deref()));
             let _ = o.insert("coordinator_name", opt(c.coordinator_name.as_deref()));
             let _ = o.insert("coordinator_contact", opt(c.coordinator_contact.as_deref()));
+            // L-08 (ADR-036): the sentence, and what keeps it from showing.
+            let _ = o.insert("acknowledgement", opt(c.acknowledgement.as_deref()));
+            let _ = o.insert(
+                "acknowledgement_missing",
+                Value::Array(
+                    c.acknowledgement_missing
+                        .iter()
+                        .map(|m| Value::from(*m))
+                        .collect(),
+                ),
+            );
             Value::Object(o)
         })
         .collect();
@@ -122,6 +176,7 @@ pub(crate) fn public_card(
         grant_number: grant.to_owned(),
         coordinator: coordinator.to_owned(),
         contact: contact.to_owned(),
+        acknowledgement: c.acknowledgement.clone(),
     })
 }
 
@@ -152,6 +207,75 @@ mod tests {
         assert_eq!(c.coordinator_name.as_deref(), Some("Synthetic coordinator"));
         assert_eq!(c.coordinator_contact, None);
         assert!(!c.complete());
+    }
+
+    /// A spec with the Horizon Europe P-53 and the given funder values.
+    fn he_spec(name: &str, number: &str, acronym: Option<&str>) -> Value {
+        let acronym = acronym.map_or("null".to_owned(), |a| format!("\"{a}\""));
+        fstp_json::parse(
+            format!(
+                r#"{{"funder":{{"action_acronym":{acronym},"action_number":"{number}","coordinator_contact":null,"coordinator_name":null,"p53_funder_profile":{{"profile":"horizon-europe","version":1}}}},"identity":{{"name":"{name}"}}}}"#
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    }
+
+    /// L-08, I-69 (ADR-036): a programme with its name, grant agreement
+    /// number and acronym shows the approved sentence. Its P-53 pins v1,
+    /// and the card reads the newest approved version of that profile.
+    #[test]
+    fn l08_card_shows_the_approved_acknowledgement() {
+        let c = card_of_spec(
+            ProgrammeId::from_raw(7),
+            &he_spec("Synthetic programme", "SYNTHETIC-000000000", Some("SYN")),
+        );
+        assert_eq!(
+            c.acknowledgement.as_deref(),
+            Some(
+                "Synthetic programme is funded by the European Union under the Horizon Europe grant agreement SYNTHETIC-000000000, SYN."
+            )
+        );
+        assert!(c.acknowledgement_missing.is_empty());
+        let text = fstp_json::to_compact(&cards_json(&[c], None));
+        assert!(
+            text.contains(r#""acknowledgement":"Synthetic programme is funded"#),
+            "{text}"
+        );
+        assert!(text.contains(r#""acknowledgement_missing":[]"#), "{text}");
+    }
+
+    /// L-08 (Daniel, 2026-11-22): a missing value shows no sentence, and
+    /// the card names what is missing so the branding page can say it.
+    /// A programme without a shipped profile names `profile`.
+    #[test]
+    fn l08_missing_value_shows_no_sentence_and_says_why() {
+        let c = card_of_spec(
+            ProgrammeId::from_raw(7),
+            &he_spec("Synthetic programme", "SYNTHETIC-000000000", None),
+        );
+        assert_eq!(c.acknowledgement, None);
+        assert_eq!(c.acknowledgement_missing, vec!["action_acronym"]);
+        let text = fstp_json::to_compact(&cards_json(&[c], None));
+        assert!(text.contains(r#""acknowledgement":null"#), "{text}");
+        assert!(
+            text.contains(r#""acknowledgement_missing":["action_acronym"]"#),
+            "{text}"
+        );
+        let c = card_of_spec(ProgrammeId::from_raw(7), &spec());
+        assert_eq!(c.acknowledgement, None);
+        assert_eq!(c.acknowledgement_missing, vec!["profile"]);
+    }
+
+    /// L-08 (ADR-034 section 1 "Usage rules"): in a contract PDF the EU
+    /// logo is drawn so high that its flag, 44 of the artwork's 47.519501
+    /// units of height, is at least 1 cm (28.35 pt).
+    #[test]
+    fn l08_pdf_letterhead_keeps_the_flag_one_centimetre() {
+        let img = crate::dispatch::brand::pdf_of(fstp_brand::funding::FUNDED_BY_EU_PNG).unwrap();
+        let (_, h) = fstp_pdf::letterhead_size(&img);
+        let flag_pt = f64::from(i32::try_from(h).unwrap()) * 44.0 / 47.519501;
+        assert!(flag_pt >= 72.0 / 2.54, "{flag_pt} pt");
     }
 
     /// ADR-034 section 3: the tenant default fills the contact gap, and

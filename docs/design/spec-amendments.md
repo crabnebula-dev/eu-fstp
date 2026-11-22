@@ -356,12 +356,14 @@ Readings, pending Daniel:
 
 ## SA-14: A suspended binding still counts as held for I-77
 
+**Status.** Spec amendment applied on 2026-11-22 by lane L35 (`prod/legal-wording`). Daniel approved the proposed wording on 2026-11-22.
+
 Decided by Daniel on 2026-11-21 (ADR-008, "Holdings"): a suspended Drafting, Judging or Operations binding counts as held for I-77. So an account whose binding is suspended still logs in with a phishing-resistant method only.
 
-### Wording that needs the matching amendment (not edited)
+### Wording amended
 
 - `SPEC/02-domain/roles-and-sod.md`, Identity discovery: "A conflict-of-interest suspension restores I-06. The suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar."
-  Proposed: "A conflict-of-interest suspension restores I-06. For separation of duties and cooling-off, the suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar. For I-77 it still counts as held (ADR-008, decided by Daniel on 2026-11-21)."
+  Applied (was "Proposed"): "A conflict-of-interest suspension restores I-06. For separation of duties and cooling-off, the suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar. For I-77 it still counts as held (ADR-008, decided by Daniel on 2026-11-21)."
 - `SPEC/02-domain/roles-and-sod.md`, NOTE after Enforcement point 3: "A suspended binding is inactive for every action." This stays true: the binding admits no action. The I-77 reading only says which login methods its holder may use.
 
 ### Built by lane L32 `prod/registration-passkey`, 2026-11-22

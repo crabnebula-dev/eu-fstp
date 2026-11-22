@@ -8,7 +8,7 @@ The number is the next free one: ADR-032 and ADR-033 are taken by other lanes' b
 
 - Daniel, 2026-11-22, supplied the "Funded by the European Union" logo: the EU flag and the words, as an Inkscape SVG. The text paths are black on a transparent ground. The flag sits on its own white box. He asked: "display on footer, always include the Grant Number and the name / contact of the coordinator in the card", and "show the privacy@crabnebula.dev contact".
 - He did not choose the European Commission or DG Connect logo. This ADR does not use it.
-- ADR-030 (lane L22) left a fixed platform slot for the EU emblem on public pages and in PDFs (`fstp_brand::emblem::EU_EMBLEM_PNG`, empty until supplied) and a placeholder for the funding acknowledgement (TODO(legal), L-08).
+- ADR-030 (lane L22) left a fixed platform slot for the EU emblem on public pages and in PDFs (`fstp_brand::emblem::EU_EMBLEM_PNG`, empty until supplied) and a placeholder for the funding acknowledgement (L-08). Daniel approved the acknowledgement on 2026-11-22 (ADR-036).
 - The programme creator already holds the action number (`funder.action_number`, the grant agreement number) and the coordinator's name (`funder.coordinator_name`) in step 1. It holds no coordinator contact. `comms.contact` is the programme's contact channel for applicants, which is a different thing.
 - Binding invariants: I-68 (branding is data only), I-69 (branding cannot remove mandatory elements of the funder profile, nor the platform attribution), I-70 (AA contrast in both themes). R-WL-04 (platform attribution in every footer) and R-NF-04 (accessibility) apply.
 
@@ -27,7 +27,29 @@ The number is the next free one: ADR-032 and ADR-033 are taken by other lanes' b
 | Slot | `EU_EMBLEM_PNG` now holds the PNG. `/brand/eu-emblem.png` serves it, and the PDF letterhead places it on the right as ADR-030 section 6 describes |
 | Alternative text | "Funded by the European Union", the words the artwork shows. It replaces ADR-030's "Emblem of the European Union" |
 | Colours | Never recoloured, never inverted in dark mode, never filtered. The card is white in both themes (section 4) |
-| Usage rules | TODO(legal): the emblem usage rules (minimum size, clear space, placement, colour versions). The card keeps the logo at least 32 CSS pixels high and gives it clear space of 8 pixels. These are placeholders until Daniel confirms the rules |
+| Usage rules | Applied by lane L35 on 2026-11-22 from the official source in section 1a. The logo is at least 1.08 cm high, so its flag is at least 1 cm. Its clear space is at least 30.3 % of its height on every side. The 32 px and 8 px placeholders are gone |
+
+### 1a. Emblem usage rules (L-08, applied 2026-11-22)
+
+Source, read by lane L35 on 2026-11-22 as Daniel asked:
+
+- Title: "The use of the EU emblem in the context of EU programmes 2021-2027. Operational guidelines for recipients of EU funding". European Commission, March 2021.
+- URL: https://commission.europa.eu/document/download/3192a0ef-6bda-4e1a-81ca-65ade2ffad73_en?filename=eu-emblem-rules_en.pdf
+
+The rules this record applies, quoted from that document:
+
+| Rule (page) | Quoted text | How the card meets it |
+| --- | --- | --- |
+| Minimum size (p. 9) | "The minimum height of the EU emblem must be 1 cm." | The flag is 44 of the artwork's 47.519501 units of height. Pages: the logo has `min-height: 1.08cm` (`fstp_brand::funding::EMBLEM_MIN_HEIGHT`), and is 2.5rem or 3rem high. Emails: 48 px, above 1.08 cm (41 px). PDFs: 40 pt, so the flag is 37 pt, 1.31 cm. Tests: `l08_emblem_minimum_height_keeps_the_flag_one_centimetre`, `l08_mail_logo_keeps_size_and_clear_space`, `l08_pdf_letterhead_keeps_the_flag_one_centimetre` |
+| Protection area (p. 9) | "The protection area must remain free of competing texts, logos, images or any other visual element that could compromise its good legibility." | The figure marks the area as a margin x and gives no number. The card keeps at least the artwork's own gap between the flag and the words, 30.3 % of the logo's height, on every side: a margin of 0.76rem around a 2.5rem logo and 0.91rem around a 3rem one (`EMBLEM_CLEAR_SPACE`). Emails: 12 px padding plus a 4 px margin above and left, 15 px right and below. PDFs: 16 pt below the band and the page margins above and right. Interim, pending Daniel: the reading of x |
+| Contrast and white border (p. 5) | "Sufficient contrast should be ensured between the EU emblem and the background. If there is no alternative to a coloured background, a white border must be placed around the flag, with the width of this being equal to one 25th of the height of the rectangle." | The card is white in both themes. The supplied artwork already has a white border of 1.76 units around the 44-unit flag, which is one 25th |
+| Font colour (p. 5) | "The colour of the font should be Reflex Blue (the same blue colour as the European flag), white or black depending on the background." | The artwork's words are black on white. The artwork is never recoloured |
+| Colour versions (pp. 6 and 7) | The document shows a positive version, a negative version on a dark ground and monochrome versions. | The card always uses the positive version on white, so no dark-ground version is needed. Interim, pending Daniel: if the logo is ever placed on a dark ground, the negative version is needed. The repository does not hold it |
+| Other logos (p. 4) | "If other logos are displayed in addition to the EU emblem, the latter must be at least the same size as the biggest of the other logos." | Pages: tenant logos are 2rem high and at most 12rem wide; the EU logo is 2.5rem or 3rem high and about 14.6rem wide. Emails: tenant logos 40 px high, the EU logo 48 px. PDFs: every logo is 40 pt high. Interim, pending Daniel: a PDF tenant logo can be up to 200 pt wide, 6 pt wider than the EU logo |
+| Placement (p. 11) | "The EU emblem, in conjunction with the funding statement, must be prominently featured on all communication material, such as printed or digital products or websites and their mobile version, intended for the public or for participants." It adds: "It is therefore recommended to place the EU emblem at a distance from the third-party organisation's logo." | The card is in the footer of every page, in contract PDFs and in programme emails (section 4). The tenant logo is in the top bar, far from the card |
+| Programme name (p. 10, "Don'ts") | "Do not write the name of the programme in conjunction with the EU emblem." | The document's example names an EU programme. The card shows the FSTP programme's name as its own line, outside the logo's clear space. Interim, pending Daniel |
+
+Open in PDFs, pending Daniel: with two wide tenant logos, the left logos of the letterhead could reach the EU logo's clear space. The writer does not shrink them yet.
 
 ### 2. What the card shows
 
@@ -40,7 +62,7 @@ One card per programme:
 | "Grant agreement number" | `funder.action_number`. For the pilot: SuperSAFE 101342989, ELFA 101298715. The pilot admins enter these in step 1 |
 | "Coordinator" | `funder.coordinator_name` |
 | "Contact" | `funder.coordinator_contact`, a new step 1 field (section 3) |
-| The acknowledgement | ADR-030's placeholder on pages: "EU funding acknowledgement: the approved wording is pending." Nothing in PDFs and emails. TODO(legal) (L-08): Daniel supplies the approved sentence. This lane writes no wording |
+| The acknowledgement | Approved by Daniel, 2026-11-22, with no disclaimer (L-08, ADR-036): "{{programme.name}} is funded by the European Union under the Horizon Europe grant agreement {{action.number}}, {{action.acronym}}." It is the last line of the card on pages, in PDFs and in emails. A programme that lacks a value shows no sentence. The branding page names the missing value |
 
 The labels "Grant agreement number", "Coordinator" and "Contact" are interface labels, not legal wording.
 
@@ -94,11 +116,15 @@ The app and sign-in pages read `GET /brand/funding`, a JSON answer of the `/bran
 
 ## Open questions for Daniel
 
-1. TODO(legal): the approved funding acknowledgement sentence (L-08). The placeholder stays.
-2. TODO(legal): the emblem usage rules: minimum size, clear space, placement and colour versions (section 1).
+1. Answered: Daniel approved the funding acknowledgement on 2026-11-22, with no disclaimer (L-08). ADR-036 stores it and shows it.
+2. Answered: the emblem usage rules come from the official source in section 1a, applied on 2026-11-22. The readings marked "Interim, pending Daniel" there remain.
 3. Interim, pending Daniel: vault pages show no card (section 4).
 4. Interim, pending Daniel: the tenant defaults sit inline in the ledger (section 3).
 5. Decided by the lead on 2026-11-22 (usability): a contact that is one e-mail address is a `mailto:` link on web pages. Only the `href` of an `a` takes it, for one address with no query, in `fstp_html` (`SafeUrl::mailto`, checked again by the well-formedness check) and in both DOM builders (`mailtoHref`). Any other contact stays text. Emails and PDFs show it as text.
 6. Interim, pending Daniel: `tenant.set_funding_defaults` asks for a step-up like the other tenant settings.
 7. Interim, pending Daniel: only the contract PDF carries the card, as only it carries a letterhead (ADR-030 open question 7). Funder reports and the Guide PDF get it when their letterhead is pinned in their records.
 8. Interim, pending Daniel: the demo cell seeds the defaults "CrabNebula Ltd" and "privacy@crabnebula.dev" for its tenant. They name an organisation and a role address, not a person.
+9. Interim, pending Daniel: the protection area's x is read as the artwork's own gap between the flag and the words (section 1a).
+10. Interim, pending Daniel: no dark-ground version is used, since the card is white in both themes. A placement on a dark ground needs the official negative version, which the repository does not hold (section 1a).
+11. Interim, pending Daniel: the card shows the FSTP programme's name on its own line, outside the logo's clear space. The guidelines forbid writing "the name of the programme in conjunction with the EU emblem" (section 1a).
+12. Open, pending Daniel: in a contract PDF with two wide tenant logos, the left logos could reach the EU logo's clear space, and a tenant logo can be up to 6 pt wider than the EU logo (section 1a).

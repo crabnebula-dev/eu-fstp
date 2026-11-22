@@ -324,6 +324,24 @@ const PINNED: &[(&str, &str)] = &[
         "id-check-waiting/1/en",
         "f556657d942133da6d1572f997a09b060dc0b7427d8b9a4971c4372dc2b861ee",
     ),
+    // Q5 (Daniel, 2026-11-22; ADR-036 section 7): one template per
+    // outcome, drafts A1 to A4 of legal/09-emails.md.
+    (
+        "outcome-selected/1/en",
+        "f2193f651142c620641542e92e8356eca5c3d990ff8bdc5d6ee215ae481fc483",
+    ),
+    (
+        "outcome-not-selected/1/en",
+        "e93a6239c1dd0b8e55d1616125f70f13d55097d85ed1f0d81a32147597927aa6",
+    ),
+    (
+        "outcome-ineligible/1/en",
+        "be2d19fc548b6eec1306a589542aac85034b1a98b5cad04174fe742103d43ab4",
+    ),
+    (
+        "outcome-declined/1/en",
+        "cd922a3438987efe16ba81624d5fc67fc15eb17e0541859c680420f4991a7317",
+    ),
 ];
 
 /// I-27, J2 (ADR-026 record of lane L5): the invitation link is the fixed

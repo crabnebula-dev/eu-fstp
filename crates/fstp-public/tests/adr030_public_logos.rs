@@ -83,7 +83,8 @@ fn i69_footer_and_funding_slot_survive_logos() {
                 );
             }
             assert!(footer.contains("class=\"eu-funding\""), "{p:?}");
-            assert!(footer.contains("EU funding acknowledgement"), "{p:?}");
+            // L-08 (ADR-036): no placeholder for the acknowledgement.
+            assert!(!footer.contains("EU funding acknowledgement"), "{p:?}");
             assert_eq!(
                 footer.contains("src=\"/brand/eu-emblem.png\""),
                 emblem,

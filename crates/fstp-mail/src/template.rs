@@ -10,7 +10,9 @@
 //!   (`SPEC/03-architecture/notifications.md`, content rules).
 //! - The outcome, copy and contractual notice wordings are interim and
 //!   carry `TODO(legal)`. Request W10 in
-//!   `docs/legal/requests/04-product-wording.md` asks for them.
+//!   `docs/legal/requests/04-product-wording.md` asks for them. Each
+//!   outcome has its own template, from drafts A1 to A4 of
+//!   `legal/09-emails.md` (Q5, ADR-036), pending Daniel's approval.
 
 use std::collections::BTreeSet;
 
@@ -52,11 +54,21 @@ pub enum TemplateId {
     /// A person is waiting for an ID check that the recipient may record
     /// (ADR-026 record of lane L24).
     IdCheckWaiting,
+    /// A proposal was selected for funding and entered NEGOTIATION
+    /// (`legal/09-emails.md` A1; Q5, ADR-036).
+    OutcomeSelected,
+    /// A proposal was not selected: NOT_SELECTED (A2; P-08).
+    OutcomeNotSelected,
+    /// A proposal failed the eligibility check: INELIGIBLE (A3).
+    OutcomeIneligible,
+    /// A proposal was declined with a recorded reason: DECLINED (A4).
+    OutcomeDeclined,
 }
 
 impl TemplateId {
-    /// Every template id.
-    pub const ALL: [TemplateId; 12] = [
+    /// Every template id. A new id is appended, so the ledger code of an
+    /// older id (its position) never changes.
+    pub const ALL: [TemplateId; 16] = [
         TemplateId::ProposalOutcome,
         TemplateId::IrcConcern,
         TemplateId::NotifiableConflict,
@@ -69,6 +81,10 @@ impl TemplateId {
         TemplateId::RoleInvitation,
         TemplateId::AdminInvitation,
         TemplateId::IdCheckWaiting,
+        TemplateId::OutcomeSelected,
+        TemplateId::OutcomeNotSelected,
+        TemplateId::OutcomeIneligible,
+        TemplateId::OutcomeDeclined,
     ];
 
     /// The stable code, as `X-FSTP-Template` and the ledger record carry it.
@@ -86,6 +102,10 @@ impl TemplateId {
             TemplateId::RoleInvitation => "role-invitation",
             TemplateId::AdminInvitation => "admin-invitation",
             TemplateId::IdCheckWaiting => "id-check-waiting",
+            TemplateId::OutcomeSelected => "outcome-selected",
+            TemplateId::OutcomeNotSelected => "outcome-not-selected",
+            TemplateId::OutcomeIneligible => "outcome-ineligible",
+            TemplateId::OutcomeDeclined => "outcome-declined",
         }
     }
 }
@@ -328,8 +348,8 @@ use Part::{Slot as S, Text as T};
 /// Every template version, oldest first. Versions are never edited or
 /// removed (I-25).
 pub static TEMPLATES: &[Template] = &[
-    // TODO(legal): W10 outcome wording for selected, not selected,
-    // ineligible and declined. The text below states the state change only.
+    // The neutral outcome email for any state without a template of its
+    // own (Q5, ADR-036 section 7). It states the state change only.
     Template {
         id: TemplateId::ProposalOutcome,
         version: 1,
@@ -571,6 +591,89 @@ pub static TEMPLATES: &[Template] = &[
             T(
                 "A person on the platform is waiting for an ID check.\n\nCheck their ID in person or by video call, then record it. Open the member page to see who is waiting:\n",
             ),
+            S(Slot::Link),
+        ],
+    },
+    // Q5 (Daniel, 2026-11-22; ADR-036 section 7): one template per
+    // outcome, from drafts A1 to A4 of `legal/09-emails.md`.
+    // TODO(legal): draft, pending Daniel's approval. Whether A2 and A3
+    // must name the complaint deadline; no slot holds a duration.
+    Template {
+        id: TemplateId::OutcomeSelected,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[
+            T("Proposal "),
+            S(Slot::Proposal),
+            T(": selected for funding"),
+        ],
+        body: &[
+            T("Proposal "),
+            S(Slot::Proposal),
+            T(" was selected for funding on "),
+            S(Slot::When),
+            T(
+                ".\n\nThe next step is negotiation. Sign in to read the decision and the steps that follow:\n",
+            ),
+            S(Slot::Link),
+            T("\n\nFunding is final only once the contract is signed."),
+        ],
+    },
+    Template {
+        id: TemplateId::OutcomeNotSelected,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[
+            T("Proposal "),
+            S(Slot::Proposal),
+            T(": outcome of the evaluation"),
+        ],
+        body: &[
+            T("Thank you for applying. We are sorry to tell you that proposal "),
+            S(Slot::Proposal),
+            T(" was not selected for funding. The decision was recorded on "),
+            S(Slot::When),
+            T(".\n\nSign in to read the reviewers' feedback:\n"),
+            S(Slot::Link),
+            T(
+                "\n\nIf you think the decision was reached the wrong way, you can file a complaint on the platform. The Guide for Applicants gives the deadline.",
+            ),
+        ],
+    },
+    Template {
+        id: TemplateId::OutcomeIneligible,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[T("Proposal "), S(Slot::Proposal), T(": eligibility check")],
+        body: &[
+            T("Thank you for applying. We are sorry to tell you that proposal "),
+            S(Slot::Proposal),
+            T(
+                " did not meet the eligibility criteria of the call. It was not evaluated further. The decision was recorded on ",
+            ),
+            S(Slot::When),
+            T(".\n\nSign in to see which criterion was not met:\n"),
+            S(Slot::Link),
+            T(
+                "\n\nIf you think the check was done the wrong way, you can file a complaint on the platform. The Guide for Applicants gives the deadline.",
+            ),
+        ],
+    },
+    Template {
+        id: TemplateId::OutcomeDeclined,
+        version: 1,
+        locale: Locale::En,
+        pdf: false,
+        subject: &[T("Proposal "), S(Slot::Proposal), T(": declined")],
+        body: &[
+            T("Proposal "),
+            S(Slot::Proposal),
+            T(" was declined on "),
+            S(Slot::When),
+            T(".\n\nSign in to read the recorded reason:\n"),
             S(Slot::Link),
         ],
     },

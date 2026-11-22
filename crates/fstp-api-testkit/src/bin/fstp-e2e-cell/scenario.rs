@@ -394,12 +394,19 @@ impl Seeder<'_> {
             *slot = *b;
         }
         let ctx = step.ctx(now, CommandId::from_bytes(id));
-        self.inner
+        let before = self.inner.ports.engine.state().creator;
+        let done = self
+            .inner
             .ports
             .engine
             .setup_step(&step.cmd, ctx)
             .map(|_| ())
-            .map_err(|e| format!("seed step {:?} by {:?}: {e}", step.cmd.kind(), step.actor))
+            .map_err(|e| format!("seed step {:?} by {:?}: {e}", step.cmd.kind(), step.actor));
+        // A setup step may replay the ledger, which drops held values. The
+        // shell holds them again, as a production cell does from its value
+        // store, so the funding card keeps its saved values (ADR-036).
+        let _ = self.inner.ports.engine.rehold(&before);
+        done
     }
 
     /// Runs a command by `account` on the engine.
@@ -686,6 +693,7 @@ async fn programme(seed: &mut Seeder<'_>, deadline: i64) -> Result<(), String> {
             policy: Box::new(policy),
         },
     ))?;
+    funding_values(seed).await?;
     seed.step(&fstp_domain_testkit::activation::activation_step(PROGRAMME))?;
     let [pm, drafter] = staff_bindings(PROGRAMME);
     seed.step(&roster::grant(
@@ -753,6 +761,49 @@ async fn programme(seed: &mut Seeder<'_>, deadline: i64) -> Result<(), String> {
     }
     seed.by(STAFF_PM, publish(CALL))?;
     Ok(())
+}
+
+/// The funding card values of the demo's SuperSAFE programme, saved by
+/// tenant admin A1 through `creator.save_fields` before activation (L-08,
+/// ADR-036; Daniel, 2026-11-22): its name, its grant agreement number
+/// 101342989 and its acronym. A grant agreement number is a public fact
+/// of the action, not personal data. The coordinator's name and contact
+/// come from the demo tenant's defaults (ADR-034 section 3).
+async fn funding_values(seed: &mut Seeder<'_>) -> Result<(), String> {
+    let rev = {
+        let state = seed.inner.ports.engine.state();
+        let r = state
+            .creator
+            .head(PROGRAMME)
+            .ok_or("no draft of the SuperSAFE programme")?;
+        format!("{}.{}", r.seq(), r.entry().raw())
+    };
+    let field = |key: &str, value: &str| {
+        obj(vec![
+            ("field", Value::from(key)),
+            ("value", Value::from(value)),
+        ])
+    };
+    let fields = Value::Array(
+        [
+            field("identity.name", "SuperSAFE"),
+            field("funder.action_number", "101342989"),
+            field("funder.action_acronym", "SuperSAFE"),
+        ]
+        .into_iter()
+        .collect::<Array>(),
+    );
+    seed.api(
+        ADMIN,
+        ApiMethod::Put,
+        &format!("/programmes/{}/draft/fields", PROGRAMME.raw()),
+        &obj(vec![
+            ("base", Value::from(rev.as_str())),
+            ("fields", fields),
+        ]),
+    )
+    .await
+    .map(|_| ())
 }
 
 /// The publication of `c`, pinned to the P-21 primary model.
@@ -1797,6 +1848,42 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_else(|| panic!("no state of {key} in {}", v.to_compact()))
             .to_owned()
+    }
+
+    /// L-08, I-69 (ADR-036; Daniel, 2026-11-22): the demo's SuperSAFE
+    /// programme shows the approved funding acknowledgement with its
+    /// grant agreement number, its acronym and the demo tenant's
+    /// coordinator defaults, on the card that pages, PDFs and emails read.
+    #[test]
+    fn i69_l08_demo_card_shows_the_acknowledgement() {
+        for inner in [
+            block_on(build_review(&info(), ReviewAt::IrcReview))
+                .unwrap()
+                .0,
+            block_on(build_applicant(&info(), At::Negotiation))
+                .unwrap()
+                .0,
+        ] {
+            let state = inner.ports.engine.state();
+            let card = fstp_api_core::port::funding_card(&state, PROGRAMME).unwrap();
+            assert_eq!(card.name, "SuperSAFE");
+            assert_eq!(card.grant_number.as_deref(), Some("101342989"));
+            assert_eq!(card.coordinator_name.as_deref(), Some("CrabNebula Ltd"));
+            assert_eq!(
+                card.coordinator_contact.as_deref(),
+                Some("privacy@crabnebula.dev")
+            );
+            assert_eq!(
+                card.acknowledgement.as_deref(),
+                Some(
+                    "SuperSAFE is funded by the European Union under the Horizon Europe grant agreement 101342989, SuperSAFE."
+                )
+            );
+            assert_eq!(
+                card.text_lines().last().map(String::as_str),
+                card.acknowledgement.as_deref()
+            );
+        }
     }
 
     /// R-EV-02, R-EV-08, R-IR-01 and NOTE 7 (design sections 2.2 J5 to J8):

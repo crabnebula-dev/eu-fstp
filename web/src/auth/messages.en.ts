@@ -26,14 +26,12 @@ const MESSAGES = {
   'footer.accessibility': 'Accessibility statement: wording pending legal review.',
   'footer.attribution': 'This service runs on the FSTP platform.',
   // ADR-034: the funding card of each active programme (I-69, R-NF-04).
-  // TODO(legal): the acknowledgement wording (L-08) stays a placeholder.
   'funding.label': 'EU funding',
   'funding.alt': 'Funded by the European Union',
   'funding.grant': 'Grant agreement number',
   'funding.coordinator': 'Coordinator',
   'funding.contact': 'Contact',
   'funding.not_set': 'Not set yet',
-  'funding.acknowledgement': 'EU funding acknowledgement: the approved wording is pending.',
   'field.email.missing': 'Enter your email address.',
   'field.email.invalid': 'Enter an email address in the form name@example.org.',
 

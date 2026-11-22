@@ -1,6 +1,6 @@
 # Email wording
 
-Status: draft for Daniel's review, 2026-11-21. Not approved. Not wired into the product.
+Status: draft for Daniel's review, 2026-11-21. Not approved. Drafts A1 to A4 are wired into the product as drafts since 2026-11-22 (Q5); the others are not wired.
 
 Legal party: CrabNebula Ltd. Data Protection Officer (DPO): Daniel Thompson-Yvetot.
 
@@ -11,7 +11,7 @@ Constraints from the code (`crates/fstp-mail/src/template.rs`, `SPEC/03-architec
 - A template is fixed text plus slots. The slots are `{proposal}`, `{call}`, `{contract}`, `{milestone}`, `{request}`, `{state}`, `{when}`, `{due}`, `{amount}`, `{link}` and `{count}`. No other value can enter an email.
 - Emails hold identifiers and times, never proposal content or identity attributes (I-27).
 - Every email ends with the fixed sentence: "We never ask for bank details by email. Bank details change only inside the platform." The renderer adds it. The drafts below do not repeat it.
-- A wording change is a new version of the template. The old version stays (I-25). Each draft below is therefore "version 2".
+- A wording change is a new version of the template. The old version stays (I-25). Each draft below is therefore "version 2", except A1 to A4, which are version 1 of new template ids (section A).
 - Negative outcomes use a respectful tone (`SPEC/12-journey-ui.md`).
 - The emails are sent through the tenant's own mail relay (ADR-018).
 
@@ -19,12 +19,20 @@ The role invitation email is in `08-role-invitation-and-confidentiality-terms.md
 
 ---
 
-## A. Proposal outcome (`proposal-outcome`, version 2)
+## A. Proposal outcome (one template per outcome, Q5)
 
-Replaces: `ProposalOutcome` version 1. Today one template serves every state through `{state}`. W10 asks for one wording per outcome. Two wirings are possible, and Daniel chooses:
+Status of A1 to A4: draft, pending Daniel's approval.
 
-1. Keep one template with the neutral wording A0.
-2. Add one template id per outcome (A1 to A4). That changes `TemplateId::ALL` and the timeline that picks the template.
+Daniel chose one template per outcome on 2026-11-22 (Q5). Each draft below is wired as version 1 of its own template id (ADR-036 section 7):
+
+| Draft | Template id | Proposal state |
+| --- | --- | --- |
+| A1 | `outcome-selected` | NEGOTIATION |
+| A2 | `outcome-not-selected` | NOT_SELECTED |
+| A3 | `outcome-ineligible` | INELIGIBLE |
+| A4 | `outcome-declined` | DECLINED |
+
+Any other state keeps `proposal-outcome` version 1, which names the state. A0 is not used. Today the code enqueues an outcome email only for INELIGIBLE. The other three wait for the domain to enqueue them (ADR-036, open question 5).
 
 ### A0. Neutral, one template
 

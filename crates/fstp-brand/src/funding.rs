@@ -8,8 +8,10 @@
 //! metadata removed; the PNG was rasterised once (ADR-034 section 1).
 //! Neither is ever recoloured.
 //!
-//! TODO(legal): the emblem usage rules and the acknowledgement sentence
-//! (L-08). Nothing here states either.
+//! The card ends with the funding acknowledgement Daniel approved on
+//! 2026-11-22 (L-08, ADR-036), filled with the programme's values, or
+//! with nothing while a value is missing. The logo's minimum size and
+//! clear space follow the official emblem rules ADR-034 cites.
 
 use crate::{Rgb, ThemeMode};
 
@@ -39,6 +41,18 @@ pub const LABEL_COORDINATOR: &str = "Coordinator";
 pub const LABEL_CONTACT: &str = "Contact";
 /// What a line shows while its value is missing.
 pub const NOT_SET: &str = "Not set yet";
+
+/// The logo's minimum height on pages (L-08, ADR-034 section 1 "Usage
+/// rules"). The official rules set the emblem's minimum height at 1 cm.
+/// The flag is 44 of the artwork's 47.519501 units of height, so the
+/// logo needs 1.08 cm.
+pub const EMBLEM_MIN_HEIGHT: &str = "1.08cm";
+
+/// The logo's height and the clear space around it on pages, for the
+/// footer slot (`.eu-emblem`) and the card (`.funding-card .eu-emblem`).
+/// The space is at least the artwork's own gap between the flag and the
+/// words, 30.3 % of the logo's height (L-08, ADR-034 section 1).
+pub const EMBLEM_CLEAR_SPACE: [(&str, &str); 2] = [("2.5rem", "0.76rem"), ("3rem", "0.91rem")];
 
 /// A fixed colour of the card in light and dark. No brand token and no
 /// theme changes it (I-69, I-70).
@@ -130,6 +144,14 @@ pub struct FundingCard {
     pub coordinator_name: Option<String>,
     /// The coordinator's contact (`funder.coordinator_contact`).
     pub coordinator_contact: Option<String>,
+    /// The funding acknowledgement (L-08, ADR-036): the approved sentence
+    /// with the programme's values, or `None` while a value is missing,
+    /// never a broken sentence.
+    pub acknowledgement: Option<String>,
+    /// Why [`FundingCard::acknowledgement`] is `None`: the codes
+    /// `programme_name`, `action_number`, `action_acronym` or `profile`.
+    /// Empty when the sentence shows.
+    pub acknowledgement_missing: Vec<&'static str>,
 }
 
 /// `v` when it holds text after trimming.
@@ -175,10 +197,12 @@ impl FundingCard {
     }
 
     /// The card as plain-text lines for PDFs and emails: the programme
-    /// name, then each label with its value.
+    /// name, then each label with its value, then the acknowledgement
+    /// when it renders (L-08).
     pub fn text_lines(&self) -> Vec<String> {
         let mut out = vec![self.name.clone()];
         out.extend(self.lines().iter().map(|(l, v)| format!("{l}: {v}")));
+        out.extend(self.acknowledgement.clone());
         out
     }
 }

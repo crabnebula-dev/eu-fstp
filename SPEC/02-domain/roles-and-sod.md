@@ -115,7 +115,7 @@ The same voiding applies, in the same step, when a P-13 class is added (decided 
 
 The vault can also find that accounts holding Drafting and Judging bindings share one verified identity. SoD-09 refuses this at binding time, so only a later identity merge reaches it. In the same step, the platform suspends the Judging binding as a conflict of interest (decided 2026-10-25).
 
-- A conflict-of-interest suspension restores I-06. The suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar.
+- A conflict-of-interest suspension restores I-06. For separation of duties and cooling-off, the suspended Judging binding never counts as held, including as a past binding within the cooling-off period, and it pins no cooling-off bar. For I-77 it still counts as held (ADR-008, decided by Daniel on 2026-11-21).
 - Its reinstatement is refused while the identity clash lasts.
 - The suspended account's open assignments are released, and scores it already gave get a notifiable conflict (R-CF-04).
 - The Drafting binding stays.
