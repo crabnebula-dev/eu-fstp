@@ -888,3 +888,31 @@ mod steps {
         assert_eq!(hosts(&edge).len(), 4);
     }
 }
+
+/// R-SW-02, ADR-004 record of lane L17: a cell erasure destroys the
+/// VaultBackup root of the vault's snapshot key with the cell's other
+/// roots. A cell without one, as a pilot with no bucket, is still erased.
+#[test]
+fn r_sw_02_cell_erasure_destroys_vault_backup_roots() {
+    let mut keys = cell_keys();
+    keys.roots.push(root(CELL, Chain::VaultBackup, 1, 6));
+    assert_eq!(check_cell_keys(CELL, &keys), Ok(()));
+    let custody = custody_holding(&keys, &[]);
+    let signer = composite::generate().unwrap();
+    let (confirmation, _) = run(&custody, &approved(erase_job(CELL)), &keys, &signer);
+    let c = confirmation.unwrap();
+    assert!(
+        c.keys.iter().any(|k| k.chain == Some(Chain::VaultBackup)),
+        "R-SW-02: the vault snapshot root has no receipt"
+    );
+    assert!(
+        custody.live.lock().unwrap().is_empty(),
+        "R-SW-02: a cell key outlived the erasure"
+    );
+    assert_eq!(check_cell_keys(CELL, &cell_keys()), Ok(()));
+    let mut other = cell_keys();
+    other
+        .roots
+        .push(root(CellId([0x0d; 16]), Chain::VaultBackup, 1, 6));
+    assert!(check_cell_keys(CELL, &other).is_err());
+}

@@ -573,6 +573,7 @@ pub const fn chain_code(chain: Chain) -> u8 {
         Chain::CellBackup => 3,
         Chain::ClusterBackup => 4,
         Chain::ControlPlane => 5,
+        Chain::VaultBackup => 6,
     }
 }
 

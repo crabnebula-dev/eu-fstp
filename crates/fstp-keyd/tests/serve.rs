@@ -137,6 +137,46 @@ fn r_nf_08_keyd_sockets_keep_cell_and_vault_chains_apart() {
     assert!(wrong.is_empty(), "{wrong:?}");
 }
 
+/// R-NF-08, ADR-004 record of lane L17: the `fstp-vault` socket reaches
+/// the VaultBackup chain of its snapshot key, beside the Vault chain. It
+/// still never reaches the App or CellBackup chains, and the `fstp-cell`
+/// socket never reaches VaultBackup. A key wrapped under the vault's
+/// snapshot root does not unwrap through the cell socket.
+#[test]
+fn r_nf_08_vault_socket_reaches_vault_backup_and_never_app_chains() {
+    use fstp_custody::{CustodyError, Refusal};
+    let scratch = Scratch::new("vault-backup").unwrap_or_else(|e| panic!("{e}"));
+    let vault_socket = scratch.socket_dir.join("vault.sock");
+    let (cell, vault) = start_cell_and_vault(&scratch.socket, &vault_socket, &scratch.volume)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let refused = Err(CustodyError::Refused(Refusal::NotPermitted));
+    let aad = Aad(b"vault snapshot key".to_vec());
+    let root = block_on(vault.create_root(label(Chain::VaultBackup, 1)))
+        .unwrap_or_else(|e| panic!("the vault socket refused VaultBackup: {e:?}"));
+    let w = block_on(vault.wrap(&root, &SealKey::from_bytes(canary(40)), &aad)).unwrap();
+    assert_eq!(
+        block_on(vault.unwrap(&root, &w, &aad)).unwrap().expose(),
+        &canary(40)
+    );
+    assert_eq!(
+        block_on(cell.unwrap(&root, &w, &aad)).map(|_| ()),
+        refused,
+        "the cell socket unwrapped a vault snapshot key"
+    );
+    assert_eq!(
+        block_on(cell.create_root(label(Chain::VaultBackup, 2))).map(|_| ()),
+        refused,
+        "the cell socket created a VaultBackup root"
+    );
+    for chain in [Chain::App, Chain::CellBackup] {
+        assert_eq!(
+            block_on(vault.create_root(label(chain, 3))).map(|_| ()),
+            refused,
+            "the vault socket served {chain:?}"
+        );
+    }
+}
+
 /// I-81, ADR-004 part 2: after destroy, the root unwraps nothing, while
 /// a live root of the same chain still unwraps its own key.
 #[test]
