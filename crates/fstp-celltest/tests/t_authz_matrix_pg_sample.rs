@@ -472,6 +472,8 @@ struct Targets {
     binding_suspended: Option<BindingId>,
     pm_binding: Option<BindingId>,
     knock_outs: Vec<u128>,
+    /// The finding on X that the coordinator's agent recorded (ADR-033).
+    finding: Option<u128>,
     criteria: usize,
     scale: u32,
     /// The head revision of the draft of P, as `creator.get_draft` shows it.
@@ -880,6 +882,9 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
     w.at(deadline + 1_000_000);
     w.declare(COORD, DeclarationSubject::Proposal(x), false);
     w.declare(COORD_CONFLICTED, DeclarationSubject::Proposal(x), true);
+    // ADR-033: the coordinator's agent assesses X through the production
+    // path, so the finding operations meet a real finding.
+    w.t.finding = Some(client_assessment(&w, call, x));
     let mut reviewers = vec![
         REVIEWER,
         REVIEWER_2,
@@ -1048,6 +1053,11 @@ fn p09_wording(cell: &CellHandle, client: &AuthClient<'_>) {
         &head,
         fstp_domain::id::PolicyVersionId::from_raw(7_000_001),
     );
+    // ADR-033: the programme names the coordinator's agent as its P-21
+    // provider, so the world records a finding on the production path.
+    v.frozen.p21.provider =
+        fstp_domain::policy::OpaqueValue::from_value(&Value::from("coordinator_agent"))
+            .expect("the client provider token");
     for (n, k) in v.frozen.p09.0.iter_mut().enumerate() {
         let id = (1u128 << 90) + u128::try_from(n).unwrap_or(0);
         let wording = format!("SYNTHETIC KNOCK-OUT CRITERION {n}");
@@ -1167,6 +1177,88 @@ fn draft(
         ]),
     );
     (ProposalId::from_raw(raw), PlanVersionId::from_raw(plan))
+}
+
+/// The assessment of `x` by the coordinator's agent through the
+/// production path (ADR-033): the input read, then one submission with a
+/// quality finding per criterion that quotes the narrative. Returns the
+/// id of one recorded finding.
+fn client_assessment(w: &Pg<'_>, call: CallId, x: ProposalId) -> u128 {
+    let session = w.session(COORD);
+    let path = format!("/api/v1/proposals/{}/client-assessment/input", x.raw());
+    let r = web(w.cell(), "GET", &path, Some(&session), b"");
+    assert!(r.ok(), "the input read: {} {}", r.status, text(&r));
+    let input = json(&r);
+    let tasks = input
+        .get("tasks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let replies: Vec<Value> = tasks
+        .iter()
+        .map(|t| {
+            let stage = str_member(t, "stage").unwrap_or_default();
+            let found: Vec<Value> = match t.get("criterion").and_then(Value::as_str) {
+                Some(c) => vec![obj(vec![
+                    ("kind", s("quality")),
+                    ("criterion", s(c)),
+                    ("element", Value::Null),
+                    ("severity", s("info")),
+                    ("statement", s("SYNTHETIC OBSERVATION")),
+                    (
+                        "evidence",
+                        Value::Array(Array::from(vec![obj(vec![
+                            ("part", s("narrative")),
+                            ("quote", s("SYNTHETIC NARRATIVE")),
+                        ])])),
+                    ),
+                ])],
+                None => Vec::new(),
+            };
+            obj(vec![
+                ("stage", s(&stage)),
+                (
+                    "output",
+                    obj(vec![("findings", Value::Array(Array::from(found)))]),
+                ),
+            ])
+        })
+        .collect();
+    let prompt_set = input
+        .get("prompt_set")
+        .and_then(|p| str_member(p, "digest"))
+        .unwrap_or_default();
+    let body = obj(vec![
+        (
+            "input_digest",
+            s(&str_member(&input, "input_digest").unwrap_or_default()),
+        ),
+        ("model", s(&str_member(&input, "model").unwrap_or_default())),
+        ("prompt_set", s(&prompt_set)),
+        ("replies", Value::Array(Array::from(replies))),
+    ]);
+    let receipt = w.api(
+        COORD,
+        "POST",
+        &format!("/proposals/{}/client-assessment", x.raw()),
+        &body,
+    );
+    assert!(
+        receipt
+            .get("recorded")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0),
+        "the client assessment recorded nothing: {}",
+        receipt.to_compact()
+    );
+    let st = w.state();
+    st.engine()
+        .findings
+        .findings_of(call)
+        .into_iter()
+        .find(|f| f.proposal == x)
+        .map(|f| f.id.raw())
+        .expect("a finding on X")
 }
 
 /// Submits `x` through the web API.
@@ -1454,6 +1546,7 @@ fn param(w: &Pg<'_>, name: &str, op: &str, who: Who, session: Option<&str>) -> S
             id(own.or(any).map(|a| a.raw()))
         }
         ("round", _) => id(t.round.map(|r| r.raw())),
+        ("finding", _) => id(t.finding),
         ("score", _) => id(t.plan.map(|p| p.raw())),
         ("step", _) => "agreements".to_owned(),
         ("binding", _) => id(t.binding_end.map(|b| b.raw())),

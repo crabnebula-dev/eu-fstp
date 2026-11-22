@@ -150,15 +150,18 @@ pub fn channel_policy(
     ChannelVerdict::Execute
 }
 
-/// Whether a creator command sets P-75 or P-77 (ADR-013, Daniel's
-/// decision of 2026-11-20). A save or a clear that names either field
-/// sets it, alone or mixed with other fields. So does a start from a
-/// template or a clone, which applies the source's values of both. An
-/// accepted or edited narrative names either field only in a request the
-/// creator refuses, and it counts too. A blank start and a start from an
-/// import apply no value of either.
+/// Whether a creator command sets P-21, P-75 or P-77 (ADR-013, Daniel's
+/// decision of 2026-11-20 for P-75 and P-77; ADR-033 adds P-21, whose
+/// provider can open the coordinator's client path). A save or a clear
+/// that names one of them sets it, alone or mixed with other fields. So
+/// does a start from a template or a clone, which applies the source's
+/// values of all three. An accepted or edited narrative names one of them
+/// only in a request the creator refuses, and it counts too. A blank start
+/// and a start from an import apply no value of any.
 pub fn sets_agent_policy(cmd: &CreatorCommand) -> bool {
-    let named = |f: &FieldId| matches!(f, FieldId::P75 | FieldId::P77);
+    // ADR-033: P-21 too, since its provider can open the client path,
+    // where the coordinator's agent reads proposal content.
+    let named = |f: &FieldId| matches!(f, FieldId::P21 | FieldId::P75 | FieldId::P77);
     match cmd {
         CreatorCommand::SaveFields { fields, clear, .. } => {
             fields.iter().any(|e| named(&e.field)) || clear.iter().any(named)

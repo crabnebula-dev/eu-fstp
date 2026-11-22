@@ -80,7 +80,16 @@ async function samples(): Promise<Sample[]> {
     {
       name: 'ContentView',
       check: checkOf(kit, 'reviewer/kit', 'isContentView'),
-      value: { proposal: '11', call: '5', state: 'STAGE1', title: 'Synthetic title', text: 'Synthetic text.' },
+      // ADR-035: the flagged spans as closed reason codes and offsets.
+      value: {
+        proposal: '11',
+        call: '5',
+        state: 'STAGE1',
+        title: 'Synthetic title',
+        text: 'Synthetic text.',
+        title_flags: [],
+        text_flags: [{ reason: 'override', start: 0, end: 9 }],
+      },
     },
     { name: 'Accepted', check: checkOf(kit, 'reviewer/kit', 'isAccepted'), value: { accepted: true } },
     {
@@ -128,7 +137,15 @@ async function samples(): Promise<Sample[]> {
     {
       name: 'IrcCase',
       check: checkOf(irc, 'irc/models', 'isIrcCase'),
-      value: { proposal: '11', state: 'IRC_REVIEW', title: 'Synthetic title', text: 'Synthetic text.', outcome: 'nominated' },
+      value: {
+        proposal: '11',
+        state: 'IRC_REVIEW',
+        title: 'Synthetic title',
+        text: 'Synthetic text.',
+        title_flags: [],
+        text_flags: [],
+        outcome: 'nominated',
+      },
     },
     {
       name: 'IntakeQueue',

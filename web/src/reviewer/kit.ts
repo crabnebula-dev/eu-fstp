@@ -222,6 +222,45 @@ export const isDeclarationView: Guard<DeclarationView> = record<DeclarationView>
   neutral_summary: isText,
 });
 
+/** The reason codes of the injection scan (ADR-035), as the server spells them. */
+export const INTEGRITY_REASONS = [
+  "zero_width",
+  "bidi",
+  "tag",
+  "variation_run",
+  "format",
+  "hidden_markup",
+  "role_marker",
+  "override",
+  "addressed",
+  "score_request",
+  "tool_call",
+  "schema_payload",
+  "exfil_link",
+  "encoded_blob",
+  "confusable",
+  "truncated",
+] as const;
+
+/** A reason code of the injection scan. */
+export type IntegrityReason = (typeof INTEGRITY_REASONS)[number];
+
+/** The reasons that name hidden characters, removed before any AI system reads the text. */
+const HIDDEN_REASONS: ReadonlySet<string> = new Set(["zero_width", "bidi", "tag", "variation_run", "format"]);
+
+/** One flagged span (ADR-035): a reason code and offsets in characters of the text. */
+export interface Flag {
+  readonly reason: IntegrityReason;
+  readonly start: number;
+  readonly end: number;
+}
+
+export const isFlag: Guard<Flag> = record<Flag>({
+  reason: oneOf(...INTEGRITY_REASONS),
+  start: isCount,
+  end: isCount,
+});
+
 /** `GetContent`: the full proposal, after a declaration of no conflict (R-CF-02). */
 export interface ContentView {
   readonly proposal: string;
@@ -229,6 +268,9 @@ export interface ContentView {
   readonly state: StateTag;
   readonly title: string;
   readonly text: string;
+  /** The flagged spans of the title and of the text (ADR-035). */
+  readonly title_flags: readonly Flag[];
+  readonly text_flags: readonly Flag[];
 }
 
 export const isContentView: Guard<ContentView> = record<ContentView>({
@@ -237,6 +279,8 @@ export const isContentView: Guard<ContentView> = record<ContentView>({
   state: isStateTag,
   title: isText,
   text: isText,
+  title_flags: list(isFlag),
+  text_flags: list(isFlag),
 });
 
 /** One of the caller's assignments, as `fstp-api-core` encodes it, with no applicant identity (I-17). */
@@ -497,10 +541,55 @@ export function paragraphs(text: string): HTMLElement[] {
     .map((line) => h("p", {}, [line]));
 }
 
-/** The full proposal section, `#proposal-content`. */
+/** The longest passage a flag quotes, in characters. */
+const FLAG_QUOTE = 80;
+
+/**
+ * The flagged passages of a proposal (ADR-035): what the platform's check
+ * found and where, in plain words. A passage of visible text is quoted,
+ * short, as a text node only; hidden characters are named, never shown.
+ * Empty when nothing was flagged.
+ */
+export function flaggedPassages(
+  t: I18n,
+  parts: readonly { readonly part: "title" | "text"; readonly text: string; readonly flags: readonly Flag[] }[],
+): HTMLElement[] {
+  const items: HTMLElement[] = [];
+  for (const p of parts) {
+    const chars = Array.from(p.text);
+    for (const f of p.flags) {
+      const what = t.label(`kit.flags.reason.${f.reason}`);
+      const where = t.label(`kit.flags.part.${p.part}`, { start: String(f.start + 1), end: String(f.end) });
+      const children: Child[] = [where, ": ", what];
+      if (!HIDDEN_REASONS.has(f.reason)) {
+        const quote = chars.slice(f.start, Math.min(f.end, f.start + FLAG_QUOTE)).join("");
+        if (quote !== "") {
+          children.push(" ", h("q", { class: "flag-quote" }, [quote]));
+        }
+      }
+      items.push(h("li", { "data-flag-reason": f.reason }, children));
+    }
+  }
+  if (items.length === 0) {
+    return [];
+  }
+  return [
+    h("section", { id: "flagged-passages", "aria-labelledby": "flagged-passages-heading" }, [
+      h("h3", { id: "flagged-passages-heading" }, [t.label("kit.flags.heading")]),
+      h("p", {}, [t.label("kit.flags.lead")]),
+      h("ul", {}, items),
+    ]),
+  ];
+}
+
+/** The full proposal section, `#proposal-content`, with its flagged passages (ADR-035). */
 export function contentSection(t: I18n, view: ContentView): HTMLElement {
   return h("section", { id: "proposal-content", "aria-labelledby": "proposal-content-heading" }, [
     h("h2", { id: "proposal-content-heading" }, [t.label("kit.content.heading")]),
+    ...flaggedPassages(t, [
+      { part: "title", text: view.title, flags: view.title_flags },
+      { part: "text", text: view.text, flags: view.text_flags },
+    ]),
     h("h3", {}, [view.title]),
     ...paragraphs(view.text),
   ]);

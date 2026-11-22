@@ -232,7 +232,10 @@ export const REVIEW_UI = {
     submit: '#knockout-submit',
   },
   assign: {
-    reviewer: '#assign-reviewer',
+    /** Q38: the committee members to assign, one checkbox each, confirmed once. */
+    candidates: '#assign-candidates',
+    /** The checkbox label of a committee member to assign. */
+    addLabel: (label: string) => `Assign ${label}`,
     submit: '#assign-submit',
     /** Each check shows `data-check="pass"` or `data-check="fail"` only (R-CF-03). */
     p39: '#check-p39',

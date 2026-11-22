@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fstp_domain::id::{AccountId, CallId, LlmConfigId, ProposalId};
+use fstp_domain::id::{AccountId, CallId, ContentDigest, LlmConfigId, ProposalId};
 use fstp_domain::refusal::RuleRef;
 use fstp_domain::time::Timestamp;
 
@@ -32,6 +32,7 @@ use crate::finding::{
     Finding, FindingId, MAX_REFUSED, MAX_RERUNS, Mark, RERUN_TIMEOUT_US, RefusedStage, RerunEnd,
 };
 use crate::record::FindingRecord;
+use fstp_injscan::Reason;
 
 /// Why the store refused an operation. A refusal names ids of findings,
 /// calls and configurations only, never an account or a statement.
@@ -122,6 +123,29 @@ pub enum FindingRefusal {
         /// The finding.
         finding: FindingId,
     },
+    /// ADR-033: the proposal holds a client assessment and no re-run is
+    /// in flight, so another is refused.
+    ClientRunTaken {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// ADR-033: the client assessment names an input its account did not
+    /// read last on the proposal.
+    InputNotRead {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// ADR-035: the proposal is held by its integrity flags, so no AI
+    /// assessment of it runs until the coordinator releases it.
+    IntegrityHeld {
+        /// The proposal.
+        proposal: ProposalId,
+    },
+    /// ADR-035: the proposal holds no integrity hold to release.
+    NotHeld {
+        /// The proposal.
+        proposal: ProposalId,
+    },
 }
 
 impl FindingRefusal {
@@ -138,7 +162,11 @@ impl FindingRefusal {
             | FindingRefusal::RerunLimit { .. }
             | FindingRefusal::TooManyRefused { .. }
             | FindingRefusal::NoRerunInFlight { .. }
-            | FindingRefusal::RerunNotStale { .. } => RuleRef::I10,
+            | FindingRefusal::RerunNotStale { .. }
+            | FindingRefusal::ClientRunTaken { .. }
+            | FindingRefusal::IntegrityHeld { .. }
+            | FindingRefusal::NotHeld { .. } => RuleRef::I10,
+            FindingRefusal::InputNotRead { .. } => RuleRef::Input,
             FindingRefusal::WrongCall { .. }
             | FindingRefusal::UnknownFinding { .. }
             | FindingRefusal::MalformedEvidence { .. } => RuleRef::Input,
@@ -178,6 +206,25 @@ pub struct FindingStore {
     /// The re-runs of each proposal: how many were requested, and the call
     /// and request instant of the one still in flight (issue 6 M3).
     reruns: BTreeMap<ProposalId, (u32, Option<(CallId, Timestamp)>)>,
+    /// The digest of the latest assessable input each account read on
+    /// each proposal (ADR-033).
+    client_reads: BTreeMap<(ProposalId, AccountId), ContentDigest>,
+    /// How many client assessments each proposal holds (ADR-033).
+    client_runs: BTreeMap<ProposalId, u32>,
+    /// The integrity flags of each flagged proposal (ADR-035): the call,
+    /// the reasons, and the coordinator who released the hold, if one did.
+    integrity: BTreeMap<ProposalId, Integrity>,
+}
+
+/// The integrity flags of one proposal (ADR-035).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Integrity {
+    /// The call the proposal was submitted to.
+    pub call: CallId,
+    /// The reasons of the scan at submission.
+    pub reasons: Vec<Reason>,
+    /// The coordinator who released the hold, if one did.
+    pub released_by: Option<AccountId>,
 }
 
 impl FindingStore {
@@ -189,6 +236,32 @@ impl FindingStore {
             retired: BTreeSet::new(),
             refusals: BTreeMap::new(),
             reruns: BTreeMap::new(),
+            client_reads: BTreeMap::new(),
+            client_runs: BTreeMap::new(),
+            integrity: BTreeMap::new(),
+        }
+    }
+
+    /// The integrity flags of `proposal`, if the scan at submission
+    /// flagged it (ADR-035).
+    pub fn integrity_of(&self, proposal: ProposalId) -> Option<&Integrity> {
+        self.integrity.get(&proposal)
+    }
+
+    /// Whether every AI assessment of `proposal` is held: it is flagged
+    /// and not released (ADR-035).
+    pub fn held(&self, proposal: ProposalId) -> bool {
+        self.integrity
+            .get(&proposal)
+            .is_some_and(|i| i.released_by.is_none())
+    }
+
+    /// Refuses an AI assessment of `proposal` while it is held (ADR-035).
+    pub fn check_not_held(&self, proposal: ProposalId) -> Result<(), FindingRefusal> {
+        if self.held(proposal) {
+            Err(FindingRefusal::IntegrityHeld { proposal })
+        } else {
+            Ok(())
         }
     }
 
@@ -247,6 +320,28 @@ impl FindingStore {
         }
         Ok(())
     }
+    /// How many client assessments `proposal` holds (ADR-033).
+    pub fn client_runs_of(&self, proposal: ProposalId) -> u32 {
+        self.client_runs.get(&proposal).copied().unwrap_or(0)
+    }
+
+    /// The digest of the latest assessable input `by` read on `proposal`
+    /// (ADR-033), if any.
+    pub fn client_read(&self, proposal: ProposalId, by: AccountId) -> Option<ContentDigest> {
+        self.client_reads.get(&(proposal, by)).copied()
+    }
+
+    /// Whether a client assessment of `proposal` may be recorded now
+    /// (ADR-033): the proposal holds none yet, or a coordinator's re-run
+    /// of it is in flight.
+    pub fn check_client_run(&self, proposal: ProposalId) -> Result<(), FindingRefusal> {
+        if self.client_runs_of(proposal) == 0 || self.rerun_in_flight(proposal).is_some() {
+            Ok(())
+        } else {
+            Err(FindingRefusal::ClientRunTaken { proposal })
+        }
+    }
+
     /// The configuration of `call`'s findings, or `None` when the call
     /// holds no findings and has never been regenerated.
     pub fn config_of(&self, call: CallId) -> Option<LlmConfigId> {
@@ -523,6 +618,54 @@ impl FindingStore {
                     r.1 = None;
                 }
                 Ok(())
+            }
+            FindingRecord::AssessmentInputRead {
+                proposal,
+                by,
+                input,
+                ..
+            } => {
+                self.client_reads.insert((*proposal, *by), *input);
+                Ok(())
+            }
+            FindingRecord::ClientAssessed {
+                proposal, by, run, ..
+            } => {
+                if self.client_read(*proposal, *by) != Some(run.input) {
+                    return Err(FindingRefusal::InputNotRead {
+                        proposal: *proposal,
+                    });
+                }
+                self.check_client_run(*proposal)?;
+                let n = self.client_runs_of(*proposal);
+                self.client_runs.insert(*proposal, n.saturating_add(1));
+                Ok(())
+            }
+            FindingRecord::IntegrityHeld {
+                call,
+                proposal,
+                reasons,
+            } => {
+                self.integrity.insert(
+                    *proposal,
+                    Integrity {
+                        call: *call,
+                        reasons: reasons.clone(),
+                        released_by: None,
+                    },
+                );
+                Ok(())
+            }
+            FindingRecord::IntegrityReleased { proposal, by, .. } => {
+                match self.integrity.get_mut(proposal) {
+                    Some(i) if i.released_by.is_none() => {
+                        i.released_by = Some(*by);
+                        Ok(())
+                    }
+                    _ => Err(FindingRefusal::NotHeld {
+                        proposal: *proposal,
+                    }),
+                }
             }
             FindingRecord::RefusalsRecorded {
                 call,

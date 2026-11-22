@@ -29,11 +29,14 @@ pub enum Scope {
     AuditRead,
     /// `tenant:draft` (ADR-013 amendment of 2026-11-20).
     TenantDraft,
+    /// `assess:run`: the assessment tools of the FSTP coordinator's
+    /// connected agent, and nothing else (ADR-033).
+    AssessRun,
 }
 
 impl Scope {
     /// Every scope issued in M4, in canonical order.
-    pub const ALL: [Scope; 13] = [
+    pub const ALL: [Scope; 14] = [
         Scope::CallsRead,
         Scope::ProposalsRead,
         Scope::ProposalsDraft,
@@ -47,6 +50,7 @@ impl Scope {
         Scope::CallsDraft,
         Scope::AuditRead,
         Scope::TenantDraft,
+        Scope::AssessRun,
     ];
 
     /// The wire spelling.
@@ -65,6 +69,7 @@ impl Scope {
             Scope::CallsDraft => "calls:draft",
             Scope::AuditRead => "audit:read",
             Scope::TenantDraft => "tenant:draft",
+            Scope::AssessRun => "assess:run",
         }
     }
 
@@ -200,6 +205,7 @@ mod tests {
             ("calls:draft", 10),
             ("audit:read", 11),
             ("tenant:draft", 12),
+            ("assess:run", 13),
         ];
         assert_eq!(pinned.len(), Scope::ALL.len());
         for (wire, bit) in pinned {
@@ -208,7 +214,7 @@ mod tests {
             assert_eq!(ScopeSet::from_bits(set.bits()), Some(set));
         }
         assert_eq!(ScopeSet::from_bits(0), None);
-        assert_eq!(ScopeSet::from_bits(1 << 13), None);
+        assert_eq!(ScopeSet::from_bits(1 << 14), None);
         assert_eq!(ScopeSet::from_bits(u16::MAX), None);
     }
 }

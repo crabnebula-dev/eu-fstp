@@ -224,6 +224,9 @@ fn cell_entry(c: &CellCommand) -> Option<&'static str> {
         CellCommand::Engine(fstp_engine::Command::Creator(
             fstp_creator::CreatorCommand::ApproveActivation { .. },
         )) => Some("ActivateProgramme"),
+        // Q38 (Daniel, 2026-11-22: "Step-up, batched"): an assignment
+        // batch takes the row of `Assign`, so one step-up covers it.
+        CellCommand::Engine(fstp_engine::Command::AssignmentBatch(_)) => Some("Assign"),
         CellCommand::Auth(fstp_auth::AuthCommand::RegisterCredential { .. }) => Some("AddPasskey"),
         CellCommand::Auth(fstp_auth::AuthCommand::RevokeCredential { .. }) => {
             Some("ChangeLoginMethods")

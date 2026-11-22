@@ -33,6 +33,9 @@ struct Texts {
     next: u128,
     /// The erasure log (ADR-007, lane m5/retention), oldest first.
     erased: Vec<ErasureRow>,
+    /// Whether the store keeps no erasure log, as the production cell's
+    /// text store does today: `erasures` then answers unavailable.
+    no_log: bool,
     /// The display name of each account (SA-11): its text and the keyed
     /// fingerprint stored beside it (SA-11 amendment).
     display: BTreeMap<AccountId, DisplayRow>,
@@ -70,6 +73,19 @@ pub struct FakeTexts {
 }
 
 impl FakeTexts {
+    /// Makes the store keep no erasure log, as the production cell's text
+    /// store does today.
+    pub fn without_log(&self) {
+        let mut s = lock(&self.state);
+        s.no_log = true;
+    }
+
+    /// Removes the bytes behind `r`, as an erasure without a log does: a
+    /// later read of `r` is refused.
+    pub fn forget(&self, r: TextRef) {
+        let _ = lock(&self.state).rows.remove(&r.0);
+    }
+
     /// The bytes behind `r`, read by a test with no clearance.
     pub fn peek(&self, r: TextRef) -> Option<Vec<u8>> {
         lock(&self.state).rows.get(&r.0).map(|(_, _, b)| b.clone())
@@ -266,7 +282,11 @@ impl TextStore for FakeTexts {
     }
 
     async fn erasures(&self) -> Result<Vec<ErasureRow>, PortError> {
-        Ok(lock(&self.state).erased.clone())
+        let s = lock(&self.state);
+        if s.no_log {
+            return Err(PortError::Unavailable);
+        }
+        Ok(s.erased.clone())
     }
 
     /// Erases every text the grant owns at once: its bytes leave the

@@ -110,6 +110,44 @@ const fn opt(name: &'static str, shape: Shape) -> Member {
 /// section 7): the in-memory synthetic model of a demo cell, or a model.
 const ASSESSOR_NAMES: &[&str] = &["synthetic", "model"];
 
+/// The stages a client assessment answers (ADR-033): every stage but
+/// verification, which needs the retrieval proxy.
+const CLIENT_STAGE_NAMES: &[&str] = &["completeness", "quality", "claims", "integrity"];
+
+/// The prompt set a client assessment names (ADR-033): its version and
+/// digest.
+/// ADR-035: the reason codes of the injection scan, as
+/// `fstp_injscan::Reason::code` spells them. A test of `fstp-api-core`
+/// keeps the two lists equal.
+pub const INTEGRITY_REASONS: &[&str] = &[
+    "zero_width",
+    "bidi",
+    "tag",
+    "variation_run",
+    "format",
+    "hidden_markup",
+    "role_marker",
+    "override",
+    "addressed",
+    "score_request",
+    "tool_call",
+    "schema_payload",
+    "exfil_link",
+    "encoded_blob",
+    "confusable",
+    "truncated",
+];
+
+/// ADR-035, TH-60: the flagged spans of a served text, as closed reason
+/// codes and scalar offsets. No member can hold text.
+const FLAGS: Shape = Shape::Array(&Shape::Object(&[
+    m("reason", Shape::Enum(INTEGRITY_REASONS)),
+    m("start", Shape::Int),
+    m("end", Shape::Int),
+]));
+
+const PROMPT_SET: Shape = Shape::Object(&[m("version", Shape::String), m("digest", Shape::String)]);
+
 /// The stage names a refused-stage notice may carry, as
 /// `fstp_assess::Stage::as_str` spells them (issue 6 M3, I-10, H-03).
 pub const REFUSED_STAGE_NAMES: &[&str] =
@@ -207,6 +245,19 @@ const PRECHECK_VIEW: Shape = Shape::Object(&[
                     ),
                 ])),
             ),
+        ])),
+    ),
+    // ADR-035, TH-02: the platform's injection check of the draft as it
+    // stands: closed reason codes, spans and short quotes of the
+    // applicant's own text. No detector internals.
+    m(
+        "scan",
+        Shape::Array(&Shape::Object(&[
+            m("section", Shape::Enum(&["title", "summary", "narrative"])),
+            m("reason", Shape::Enum(INTEGRITY_REASONS)),
+            m("start", Shape::Int),
+            m("end", Shape::Int),
+            m("quote", Shape::String),
         ])),
     ),
 ]);
@@ -393,6 +444,7 @@ const SCOPE_NAMES: &[&str] = &[
     "calls:draft",
     "audit:read",
     "tenant:draft",
+    "assess:run",
 ];
 
 /// The party kinds of an unmask (ADR-023), as
@@ -1354,6 +1406,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("state", Shape::Enum(OWN_STATE_NAMES)),
             m("title", Shape::String),
             m("text", Shape::String),
+            m("title_flags", FLAGS),
+            m("text_flags", FLAGS),
             m("call", Shape::Id),
         ]),
     ),
@@ -1366,6 +1420,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("state", Shape::Enum(OWN_STATE_NAMES)),
             m("title", Shape::String),
             m("text", Shape::String),
+            m("title_flags", FLAGS),
+            m("text_flags", FLAGS),
             m("outcome", Shape::Enum(&["nominated"])),
         ]),
     ),
@@ -1443,7 +1499,74 @@ pub const REPLIES: &[(&str, Shape)] = &[
             // whether the coordinator may run the assessment again.
             m("refused", Shape::Int),
             m("rerun", Shape::Enum(&["available", "in_flight", "used_up"])),
+            // ADR-035: the integrity hold and the scan's reason codes.
+            m("integrity", Shape::Enum(&["clear", "held", "released"])),
+            m("reasons", Shape::Array(&Shape::Enum(INTEGRITY_REASONS))),
         ])),
+    ),
+    // ADR-033: the queue names proposals by id and state, never a title.
+    (
+        "assess.client_queue",
+        Shape::Object(&[
+            m("call", Shape::Id),
+            m("open", Shape::Bool),
+            m("model", Shape::Nullable(&Shape::String)),
+            m("prompt_set", PROMPT_SET),
+            m(
+                "proposals",
+                Shape::Array(&Shape::Object(&[
+                    m("proposal", Shape::Id),
+                    m("state", Shape::Enum(OWN_STATE_NAMES)),
+                    m(
+                        "status",
+                        Shape::Enum(&["awaiting", "assessed", "rerun", "held"]),
+                    ),
+                    m("declared", Shape::Bool),
+                ])),
+            ),
+        ]),
+    ),
+    // ADR-033: the stripped submission under closed labels, and the tasks
+    // as closed values. The texts are data (TH-60).
+    (
+        "assess.client_input",
+        Shape::Object(&[
+            m("proposal", Shape::Id),
+            m("call", Shape::Id),
+            m("input_digest", Shape::String),
+            m("model", Shape::String),
+            m("prompt_set", PROMPT_SET),
+            m(
+                "tasks",
+                Shape::Array(&Shape::Object(&[
+                    m("stage", Shape::Enum(CLIENT_STAGE_NAMES)),
+                    m("criterion", Shape::Nullable(&Shape::String)),
+                    m("elements", Shape::Array(&Shape::String)),
+                ])),
+            ),
+            m(
+                "parts",
+                Shape::Array(&Shape::Object(&[
+                    m("label", Shape::Enum(&["title", "summary", "narrative"])),
+                    m("text", Shape::String),
+                    m("flags", FLAGS),
+                ])),
+            ),
+        ]),
+    ),
+    // ADR-033, I-10: a count and the dropped replies as closed names.
+    (
+        "assess.client_submit",
+        Shape::Object(&[
+            m("recorded", Shape::Int),
+            m(
+                "refused",
+                Shape::Array(&Shape::Object(&[
+                    m("stage", Shape::Enum(REFUSED_STAGE_NAMES)),
+                    m("code", Shape::Enum(REFUSED_STAGE_CODES)),
+                ])),
+            ),
+        ]),
     ),
     // R-EV-05, R-AN-01: a question names its asker by P-11 handle only.
     (

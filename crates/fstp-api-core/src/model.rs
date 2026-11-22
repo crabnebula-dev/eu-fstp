@@ -184,6 +184,9 @@ pub enum ReadModel {
     /// `tenant.branding.logos`: the logos of the tenant and of each
     /// programme (ADR-030). Paths name digests only.
     Logos(crate::brand::LogosView),
+    /// ADR-033: the queue, the input and the receipt of the assessment
+    /// run by the FSTP coordinator's connected agent.
+    ClientAssessment(crate::assess::ClientModel),
     /// `tenant.system`: the facts of the System page (ADR-028 record of
     /// lane L20). Instants, counts, flags and closed words only.
     System(crate::system::SystemView),
@@ -348,6 +351,7 @@ impl ToJson for ReadModel {
             ReadModel::System(v) => v.to_json(),
             ReadModel::FunderProfiles(rows) => crate::views::profiles_json(rows),
             ReadModel::Logos(v) => v.to_json(),
+            ReadModel::ClientAssessment(m) => m.to_json(),
             ReadModel::RouteMap(v) => v.to_json(),
             ReadModel::Findings(rows) => array(rows),
             ReadModel::Calls(rows) => array(rows),
@@ -1471,6 +1475,12 @@ pub(crate) mod reply_shape_tests {
             title: "Synthetic open sensor kit".to_owned(),
             text: "A synthetic narrative.".to_owned(),
             outcome,
+            title_flags: Vec::new(),
+            text_flags: vec![crate::views::FlagRow {
+                reason: "addressed",
+                start: 2,
+                end: 11,
+            }],
         }
     }
 
@@ -1805,6 +1815,11 @@ pub(crate) mod reply_shape_tests {
             ReadModel::System(_) => &["tenant.system"],
             ReadModel::FunderProfiles(_) => &["tenant.funder_profiles"],
             ReadModel::Logos(_) => &["tenant.branding.logos", "programme.logos"],
+            ReadModel::ClientAssessment(m) => match m {
+                crate::assess::ClientModel::Queue(_) => &["assess.client_queue"],
+                crate::assess::ClientModel::Input(_) => &["assess.client_input"],
+                crate::assess::ClientModel::Receipt(_) => &["assess.client_submit"],
+            },
             ReadModel::Timeline(_) => &["programme.timeline"],
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
             ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],
@@ -2561,6 +2576,7 @@ pub(crate) mod reply_shape_tests {
                         }],
                     }],
                 }],
+                scan: Vec::new(),
             }),
             ReadModel::Precheck(crate::views::PrecheckView {
                 assessor: "model",
@@ -2569,6 +2585,13 @@ pub(crate) mod reply_shape_tests {
                 account_call: 5,
                 next: None,
                 runs: Vec::new(),
+                scan: vec![crate::views::PrecheckScanRow {
+                    section: "narrative",
+                    reason: "override",
+                    start: 10,
+                    end: 42,
+                    quote: "SYNTHETIC QUOTE".to_owned(),
+                }],
             }),
             ReadModel::FindingsRefusals(vec![
                 crate::views::RefusedStageRow {
@@ -2587,12 +2610,19 @@ pub(crate) mod reply_shape_tests {
                 findings: 9,
                 refused: 2,
                 rerun: "available",
+                integrity: "held",
+                reasons: vec!["zero_width", "override"],
             }]),
             ReadModel::Mailbox(crate::mailbox::MailboxView::default()),
             ReadModel::Mailbox(crate::mailbox::samples()),
         ]
         .into_iter()
         .chain(crate::grant::samples().into_iter().map(ReadModel::Grant))
+        .chain(
+            crate::assess::samples()
+                .into_iter()
+                .map(ReadModel::ClientAssessment),
+        )
         .chain(crate::unmask::samples().into_iter().map(ReadModel::Unmask))
         .chain(crate::audit::samples().into_iter().map(ReadModel::Audit))
         .chain([
@@ -2676,7 +2706,7 @@ pub(crate) mod reply_shape_tests {
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 60;
+    const VARIANTS: usize = 61;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2742,7 +2772,8 @@ pub(crate) mod reply_shape_tests {
             ReadModel::FindingsRefusals(_) => 56,
             ReadModel::ConsentRequest(_) => 57,
             ReadModel::Logos(_) => 58,
-            ReadModel::System(_) => 59,
+            ReadModel::ClientAssessment(_) => 59,
+            ReadModel::System(_) => 60,
         }
     }
 

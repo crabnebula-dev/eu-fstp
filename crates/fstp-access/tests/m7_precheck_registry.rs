@@ -72,9 +72,19 @@ fn th02_precheck_reply_has_no_score_member() {
 fn i10_findings_status_shows_counts_only() {
     let names = reply_names("assess.findings_status");
     // Issue 6 M3: two more numbers and a word, still no statement.
+    // ADR-035: the hold as a word and the scan's reasons as closed codes,
+    // still no statement and no text.
     assert_eq!(
         names,
-        vec!["proposal", "status", "findings", "refused", "rerun"]
+        vec![
+            "proposal",
+            "status",
+            "findings",
+            "refused",
+            "rerun",
+            "integrity",
+            "reasons"
+        ]
     );
 }
 

@@ -239,6 +239,10 @@ pub enum ReadKind {
     // Lane m4/author-reads (Daniel, 2026-11-15, night): the plan the team
     // recorded, read back read-only by the team, current and former.
     GetOwnPlan,
+    // ADR-033: the proposals of a call awaiting the coordinator's client
+    // assessment, ids and states only, and the assessable input of one.
+    GetAssessmentQueue,
+    GetAssessmentInput,
     // ADR-028 record of lane L20: the facts of the System page, for the
     // tenant admins. No personal data.
     GetSystemStatus,
@@ -246,7 +250,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 82] = [
+    pub const ALL: [ReadKind; 84] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -328,6 +332,8 @@ impl ReadKind {
         ReadKind::ListMembers,
         ReadKind::GetMyDisplayName,
         ReadKind::GetOwnPlan,
+        ReadKind::GetAssessmentQueue,
+        ReadKind::GetAssessmentInput,
         ReadKind::GetSystemStatus,
     ];
 }
@@ -773,6 +779,20 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
         ReadKind::GetPrecheckRuns,
         ReadRule::Team,
         &[StateTag::Draft],
+    ),
+    // ADR-033: the coordinator of the call's programme. The queue lists ids
+    // and states only. The engine's `ReadAssessmentInput` judges the input:
+    // the P-21 path, the state and P-10, the declaration, the assignments
+    // and the vault, before any content is opened.
+    (
+        ReadKind::GetAssessmentQueue,
+        ReadRule::Holder(Role::FstpCoordinator),
+        OPEN_ALWAYS,
+    ),
+    (
+        ReadKind::GetAssessmentInput,
+        ReadRule::Holder(Role::FstpCoordinator),
+        OPEN_ALWAYS,
     ),
     // M7 design section 7: the coordinator sees counts, never statements.
     (

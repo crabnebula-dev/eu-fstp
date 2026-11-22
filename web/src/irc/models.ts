@@ -7,7 +7,7 @@
 // carried any other member is refused whole, never shown. It carries no
 // identity field of the applicant either (I-17).
 
-import { isId, isStateTag, isText, oneOf, record, type Guard, type StateTag } from "../reviewer/kit.js";
+import { isFlag, isId, isStateTag, isText, list, oneOf, record, type Flag, type Guard, type StateTag } from "../reviewer/kit.js";
 
 /** The outcome that brought the proposal to the IRC. */
 export type CaseOutcome = "nominated";
@@ -18,6 +18,9 @@ export interface IrcCase {
   readonly state: StateTag;
   readonly title: string;
   readonly text: string;
+  /** The flagged spans of the title and of the text (ADR-035). */
+  readonly title_flags: readonly Flag[];
+  readonly text_flags: readonly Flag[];
   readonly outcome: CaseOutcome;
 }
 
@@ -26,5 +29,7 @@ export const isIrcCase: Guard<IrcCase> = record<IrcCase>({
   state: isStateTag,
   title: isText,
   text: isText,
+  title_flags: list(isFlag),
+  text_flags: list(isFlag),
   outcome: oneOf<CaseOutcome>("nominated"),
 });

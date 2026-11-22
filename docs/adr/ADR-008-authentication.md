@@ -49,7 +49,7 @@ Options considered for the WebAuthn implementation (Q10):
 | Sessions on a binding end | Every session of the account ends | Interim, pending Daniel (Q16) |
 | Login email | Sealed in the cell, keyed lookup | Interim, pending Daniel (Q22) |
 | Break-glass | Approval, scope, expiry, gate path and logging in M3. Content views in M4 | Interim, pending Daniel (Q21) |
-| High-risk additions | `Assign`, `Unassign`, `SetLoginPolicy`, `ApproveSelfGrant`. `ApproveRecovery` is not among them: it is high-risk under the answered Q15 row above | Interim, pending Daniel (Q38) |
+| High-risk additions | `Assign`, `Unassign`, `SetLoginPolicy`, `ApproveSelfGrant`. `ApproveRecovery` is not among them: it is high-risk under the answered Q15 row above | `Assign` and `Unassign` decided by Daniel on 2026-11-22 (Q38, section "Decided by Daniel on 2026-11-22: Q38"). `SetLoginPolicy` and `ApproveSelfGrant` interim, pending Daniel (Q38) |
 | SoD-07 approval | Digest-bound, single-use, expires P-71 after its step-up | Interim, pending Daniel (Q40) |
 | Constants | Invitation 72 hours and break-glass at most 4 hours as ADR constants. P-71 and P-72 as proposed | Interim, pending Daniel (Q37) |
 
@@ -170,7 +170,7 @@ Answered (Q15): one step-up authorises exactly one command.
 
 - Every domain kind that `CommandKind::high_risk()` marks must be in the table.
 - `ApproveRecovery` matches the `authentication.md` row "Approving an account recovery" (decided 2026-10-28, Q15).
-- Every other entry must be a domain high-risk kind or sit on the explicit list `STRICT_ADDITIONS`, each with its source row: `Assign`, `Unassign`, `ApproveSelfGrant` and `SetLoginPolicy`. These four are interim, pending Daniel (Q38).
+- Every other entry must be a domain high-risk kind or sit on the explicit list `STRICT_ADDITIONS`, each with its source row: `Assign`, `Unassign`, `ApproveSelfGrant` and `SetLoginPolicy`. `Assign` and `Unassign` are decided (Daniel, 2026-11-22, Q38). `ApproveSelfGrant` and `SetLoginPolicy` stay interim, pending Daniel (Q38).
 - `i78_high_risk_table_matches_spec_and_domain` checks the table against a transcription of the spec table and against `CommandKind::high_risk()`. W0 re-derives it from the commit that closes M2.
 
 ## SoD-07 approval
@@ -371,3 +371,18 @@ Daniel's standing rule of 2026-11-21: the platform must be runnable by two peopl
 - **Later methods.** The EUDI Wallet may be added later as a second method. Decided by Daniel on 2026-11-22.
 - **When.** A full identity verification is required at NEGOTIATION, as `02-domain/state-machine.md` already says. A request may come earlier. Its check of an applicant is recorded once the proposal is in NEGOTIATION (R-NG-01). Decided by Daniel on 2026-11-22.
 - The readings that build this are in ADR-026, record of lane L24.
+
+## Decided by Daniel on 2026-11-22: Q38
+
+Daniel, verbatim: "Step-up, batched."
+
+| Topic | Decision | Basis |
+| --- | --- | --- |
+| Assign and Unassign | High-risk. Assigning a reviewer grants a Judging role, the `authentication.md` row "Granting or changing a role in the Drafting, Judging or Operations groups" read strictly. The gate already held them as strict additions; the operation registry and the reference now mark `review.assign` and `review.unassign` high-risk too, so a web call asks for a step-up | I-78; Daniel, 2026-11-22 |
+| The batch | `review.assign_batch` (`POST /proposals/{proposal}/assignment-batch`): the assignments and unassignments of one proposal, `{"assign": [{"reviewer", "kind"}], "unassign": [{"assignment"}]}`, 1 to 64 items. Each item is built exactly as the single operation builds its command, so every rule of a single command holds for it (I-03, I-06, SoD-09 to SoD-11, P-11 handles). The engine command `AssignmentBatch` decides the commands in order in one entry: one bad item refuses the whole batch with that item's rule, and nothing is recorded | Daniel, 2026-11-22; usability rule, 2026-11-21 |
+| One step-up per batch | The step-up binds the digest of the whole request (design section 3.7 step 7). The gate takes the batch under the `Assign` row and consumes the step-up once, so one step-up covers exactly one batch, and a spent one admits nothing | I-78 |
+| Why per proposal | The coordinator's assignment page is per proposal, and the access rules of every item are those of that proposal. A batch across the proposals of a call is a later extension. Lead reading, 2026-11-22 | Usability rule |
+| MCP | None of the three operations has a tool, so no agent completes an assignment (I-85) | I-85 |
+| Web | The assignment page lists a checkbox per committee member to assign and per assignment to remove, and one "Apply the changes" button, confirmed once with the passkey | Usability rule |
+
+Tests: `q38_i78_one_step_up_covers_exactly_one_batch`, `q38_one_bad_item_refuses_the_whole_batch_with_its_reason`, `q38_i78_batch_unassigns_and_single_assign_needs_a_step_up` (`crates/fstp-api-testkit/src/bin/fstp-e2e-cell/assign_batch_tests.rs`), the reference rows of `reference::authz` (all three high-risk, binding) and the Playwright spec `r_cf_03_assignment_checks_show_pass_or_fail_only`, which assigns through the batch and its step-up dialog.

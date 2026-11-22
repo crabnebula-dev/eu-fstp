@@ -23,7 +23,7 @@ use crate::extract::{Mark, extract_text};
 use crate::rubric::Rubric;
 use crate::span::SpanMap;
 use crate::strip::{NameMask, Placeholders, apply, detect, name_hits};
-use crate::validate::{MAX_EVIDENCE, OutputError, RawFinding, Stage, decode_output};
+use crate::validate::{OutputError, RawFinding, Stage, decode_output};
 
 /// One text of a submission, or one retrieved source, as the cell holds it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +79,7 @@ pub struct PreparedPart {
     label: DataLabel,
     text_ref: TextRef,
     original_len: usize,
+    original: UntrustedText,
     marks: Vec<Mark>,
     stripped: UntrustedText,
     /// Stripped to pattern-stripped, pattern-stripped to cleaned, cleaned
@@ -230,66 +231,20 @@ impl Prepared {
         })
     }
 
-    /// Stage 7, deterministic part: hidden characters and text addressed
-    /// to an assessor become integrity findings (TH-01, T-LLM-INJ).
+    /// Stage 7, deterministic part: the injection scan of every original
+    /// submission text, as integrity findings (ADR-035, TH-01, T-LLM-INJ).
     pub fn integrity_scan(&self) -> Vec<AssessedFinding> {
-        let mut out = Vec::new();
-        for p in self.parts.iter().filter(|p| !p.is_source()) {
-            let marks: Vec<EvidenceRef> = p
-                .marks
-                .iter()
-                .take(MAX_EVIDENCE)
-                .filter_map(|m| p.pointer(m.start, m.end))
-                .collect();
-            if !marks.is_empty() {
-                out.push(integrity(
-                    "The text holds hidden or control characters. They were removed before assessment.",
-                    marks,
-                ));
-            }
-            let text = p.stripped.as_data();
-            let lower = text.to_ascii_lowercase();
-            let hit = ADDRESSED
-                .iter()
-                .filter_map(|ph| lower.find(ph).map(|at| (at, ph.len())))
-                .min();
-            if let Some(ev) = hit
-                .and_then(|(at, len)| p.original_span(at, at.saturating_add(len)))
-                .and_then(|(s, e)| p.pointer(s, e))
-            {
-                out.push(integrity(
-                    "The text addresses an assessor or a model. It is treated as data.",
-                    vec![ev],
-                ));
-            }
-        }
-        out
-    }
-}
-
-/// Phrases that address an assessor or a model, lowercase ASCII.
-const ADDRESSED: [&str; 11] = [
-    "ignore previous",
-    "ignore all previous",
-    "disregard previous",
-    "system prompt",
-    "language model",
-    "as an ai",
-    "assessor",
-    "assessment system",
-    "ai system",
-    "ai reviewer",
-    "previous instructions",
-];
-
-fn integrity(statement: &str, evidence: Vec<EvidenceRef>) -> AssessedFinding {
-    AssessedFinding {
-        kind: FindingKind::Integrity,
-        criterion: None,
-        element: None,
-        severity: Severity::Major,
-        statement: UntrustedText::new(statement.to_owned()),
-        evidence,
+        let originals: Vec<SubmissionPart> = self
+            .parts
+            .iter()
+            .filter(|p| !p.is_source())
+            .map(|p| SubmissionPart {
+                label: p.label,
+                text_ref: p.text_ref,
+                text: p.original.clone(),
+            })
+            .collect();
+        crate::integrity::scan_findings(&originals)
     }
 }
 
@@ -317,6 +272,7 @@ pub async fn prepare<M: NameMask>(mask: &M, job: &Job) -> Result<Prepared, Asses
             label: part.label,
             text_ref: part.text_ref,
             original_len: original.len(),
+            original: part.text.clone(),
             marks: x.marks().to_vec(),
             stripped: UntrustedText::new(stripped),
             maps: [name_map, pattern_map, x.map().clone()],

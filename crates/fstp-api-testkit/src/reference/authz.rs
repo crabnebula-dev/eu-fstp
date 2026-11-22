@@ -867,6 +867,16 @@ pub enum Rule {
     /// The FSTP coordinator of P, declared and free of conflict: the
     /// knock-out check (`roles-and-sod.md` Conflict declarations).
     CoordinatorDeclared,
+    /// The FSTP coordinator of P with no conflict on X, declared or not:
+    /// the release of an integrity hold (ADR-035, I-03, lead reading of
+    /// 2026-11-22). A conflicted coordinator is refused under I-03.
+    CoordinatorUnconflicted,
+    /// ADR-033: the FSTP coordinator of P assessing X through its agent,
+    /// while the coordinator reads X's content (SUBMITTED, or STAGE1 and
+    /// STAGE2 under P-10 "operator staff only"), declared and free of
+    /// conflict. Another state is a visibility denial for every act and
+    /// read, as the engine's `ReadAssessmentInput` judges it (R-AC-01).
+    ClientAssessor,
     /// The FSTP coordinator of P, and under P-10 "all committee members"
     /// every committee member of P: both declare per proposal before
     /// reading full content (`roles-and-sod.md` Conflict declarations).
@@ -1099,9 +1109,11 @@ impl Rule {
                 Some(Role::FstpCoordinator),
                 Some(Role::TenantAdmin),
             ],
-            Rule::Coordinator | Rule::CoordinatorDeclared | Rule::AssignmentBoard => {
-                &[Some(Role::FstpCoordinator)]
-            }
+            Rule::Coordinator
+            | Rule::CoordinatorDeclared
+            | Rule::CoordinatorUnconflicted
+            | Rule::ClientAssessor
+            | Rule::AssignmentBoard => &[Some(Role::FstpCoordinator)],
             Rule::ProposalDeclarant => &[Some(Role::FstpCoordinator), Some(Role::CommitteeMember)],
             Rule::NewApplicant => &[
                 None,
@@ -1716,8 +1728,18 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane m4reg: one proposal's assignments, candidates and the P-39 and
     // proximity results as pass or fail, for the assignment screen (J5).
     RefOp::read("review.assignments", T::Proposal, R::AssignmentBoard),
-    RefOp::act("review.assign", T::Proposal, R::Coordinator).binding(),
-    RefOp::act("review.unassign", T::Assignment, R::Coordinator).binding(),
+    // Q38 (decided by Daniel on 2026-11-22: "Step-up, batched"): assigning
+    // grants a Judging role, so assigning and unassigning are high-risk
+    // (authentication.md, I-78), one at a time or in one batch.
+    RefOp::act("review.assign", T::Proposal, R::Coordinator)
+        .binding()
+        .hr(),
+    RefOp::act("review.unassign", T::Assignment, R::Coordinator)
+        .binding()
+        .hr(),
+    RefOp::act("review.assign_batch", T::Proposal, R::Coordinator)
+        .binding()
+        .hr(),
     RefOp::act("review.admit", T::Proposal, R::Coordinator).binding(),
     RefOp::act("review.close_stage1", T::Proposal, R::Coordinator).binding(),
     RefOp::read(
@@ -1751,6 +1773,23 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Issue 6 M3: the coordinator runs the assessment of a proposal again.
     // Binding, not high-risk, as the coordinator's `review.assign`.
     RefOp::act("assess.rerun", T::Proposal, R::Coordinator).binding(),
+    // ADR-035: the coordinator releases the integrity hold of a flagged
+    // proposal. Web only, binding, not high-risk, as `assess.rerun`.
+    RefOp::act(
+        "assess.release_integrity",
+        T::Proposal,
+        R::CoordinatorUnconflicted,
+    )
+    .binding(),
+    // ADR-033: the assessment run by the coordinator's connected agent. The
+    // engine judges the actor, the state, the declaration, then the P-21
+    // path, whose refusal is a guard.
+    RefOp::read("assess.client_queue", T::Call, R::Coordinator)
+        .tool("fstp_assessment_list_proposals"),
+    RefOp::read("assess.client_input", T::Proposal, R::ClientAssessor)
+        .tool("fstp_assessment_get_input"),
+    RefOp::act("assess.client_submit", T::Proposal, R::ClientAssessor)
+        .tool("fstp_assessment_submit"),
     // J7: the committee.
     RefOp::read("committee.ranking", T::PublishedCall, R::Committee).tool("fstp_get_ranking_view"),
     RefOp::read("committee.round", T::Round, R::Committee),
@@ -1937,6 +1976,14 @@ fn admit(
             who.manager() || who == Who::CallDrafter || who.coordinator() || who.tenant_admin(),
         ),
         Rule::Coordinator => open(who.coordinator()),
+        Rule::CoordinatorUnconflicted => {
+            open(who.coordinator())?;
+            if who == Who::CoordinatorConflicted {
+                Err(Conflict)
+            } else {
+                Ok(())
+            }
+        }
         Rule::ProposalDeclarant => {
             open(who.coordinator() || (who.committee_member() && policy.p10 == P10::AllCommittee))?;
             // A declared conflict is final (Daniel, 2026-11-06): a second
@@ -1953,6 +2000,22 @@ fn admit(
             Who::CoordinatorUndeclared,
             Who::CoordinatorConflicted,
         ),
+        Rule::ClientAssessor => {
+            open(who.coordinator())?;
+            let reads = match x {
+                Some(StateTag::Submitted) => true,
+                Some(StateTag::Stage1 | StateTag::Stage2) => policy.p10 == P10::OperatorStaffOnly,
+                _ => false,
+            };
+            if !reads {
+                return Err(Visibility);
+            }
+            assignee(
+                Who::Coordinator,
+                Who::CoordinatorUndeclared,
+                Who::CoordinatorConflicted,
+            )
+        }
         Rule::NewApplicant => open(matches!(
             who,
             Who::Unbound | Who::Lead | Who::TeamMember | Who::Guardian | Who::OtherProgrammeManager
