@@ -156,10 +156,9 @@ impl LegalDetails {
     pub fn placeholder(&self, name: &str) -> Option<&str> {
         let field = if let Some(k) = name.strip_prefix("tenant.") {
             LegalField::from_key(k)?
-        } else if let Some(k) = name.strip_prefix("controller.") {
-            LegalField::from_key(k).filter(|f| f.controller())?
         } else {
-            return None;
+            let k = name.strip_prefix("controller.")?;
+            LegalField::from_key(k).filter(|f| f.controller())?
         };
         self.get(field)
     }

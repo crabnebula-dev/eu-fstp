@@ -10,10 +10,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 fstp-public = { path = ".." }
+fstp-html = { path = "../../fstp-html" }
 
 [[bin]]
 name = "public_query_parse"
 path = "fuzz_targets/public_query_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "legal_markdown"
+path = "fuzz_targets/legal_markdown.rs"
 test = false
 doc = false
 bench = false

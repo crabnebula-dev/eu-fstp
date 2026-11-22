@@ -26,3 +26,20 @@ This platform is operated by:
 - Security and vulnerability reports: TODO(legal): the published vulnerability handling contact (CRA, L-03).
 
 Each funding programme on this platform is run by its own organisation. The programme's contact details are in its Guide for Applicants.
+
+## This programme portal
+
+The organisation that runs the programmes on this portal:
+
+- **{{tenant.legal_name}}**
+- Address: {{tenant.address}}.
+- Registered address: {{tenant.registered_address}}.
+- Company Registration Number: {{tenant.company_number}}.
+- VAT number: {{tenant.vat_number}}.
+- EU Transparency Register number: {{tenant.transparency_register}}.
+- Privacy contact: {{tenant.privacy_contact}}.
+- Data Protection Officer (DPO): {{tenant.dpo_name}}, {{tenant.dpo_contact}}.
+- Data protection supervisory authority: {{tenant.supervisory_authority}}.
+- Governing law: {{tenant.governing_law}}.
+
+TODO(legal): whether a portal imprint must carry each of these facts, and whether it should state the governing law (ADR-037).

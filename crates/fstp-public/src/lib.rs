@@ -20,6 +20,7 @@
 pub mod feed;
 pub mod guide;
 pub mod html;
+pub mod legal;
 pub mod preview;
 pub mod query;
 mod route;
