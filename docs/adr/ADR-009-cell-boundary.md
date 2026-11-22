@@ -203,7 +203,7 @@ pub enum Destination {
     ControlPlane,                // SaaS only: CellToCp
     Witness,                     // App chain prepares, aborts and receipts
     CrabNebula(CnCall),          // self-hosted only, built only by fstp-release::egress (I-38)
-    KeystoreSnapshots,           // proposed by ADR-012, pending Daniel: <cell>/keystore/ prefix only
+    KeystoreSnapshots,           // accepted by Daniel 2026-11-21 (ADR-012): <cell>/keystore/ prefix only
 }
 
 // fstp-vault
@@ -211,11 +211,11 @@ pub enum VaultDestination {
     VaultDatabase,               // v_<cell> on its vault cluster
     Custody,                     // its own Vault custody entry, with its own credential
     Witness,                     // Vault chain prepares, aborts and receipts
-    KeystoreSnapshots,           // proposed by ADR-012, pending Daniel: <cell>/keystore/ prefix only
+    KeystoreSnapshots,           // accepted by Daniel 2026-11-21 (ADR-012): <cell>/keystore/ prefix only
 }
 ```
 
-- **Keystore snapshots.** Proposed by ADR-012 (Keystore snapshots), interim, pending Daniel. ADR-004 erasure step 5 needs each process to upload and fetch back its own keystore snapshot. Each `KeystoreSnapshots` member reaches object storage with a per-cell credential limited to `<cell>/keystore/` where the service allows it (ADR-005 V15). It allows `PutObject`, the multipart calls, `GetObject` and `HeadObject` only. No connector builds either member before Daniel accepts it.
+- **Keystore snapshots.** Accepted by Daniel on 2026-11-21 with ADR-012 option A (ADR-012 record of lane L17). ADR-004 erasure step 5 needs each process to upload and fetch back its own keystore snapshot. Each `KeystoreSnapshots` member reaches object storage with a per-cell credential limited to `<cell>/keystore/` where the service allows it (ADR-005 V15). It allows `PutObject`, the multipart calls, `GetObject` and `HeadObject` only. Each process builds its member only when its configuration names an `object_store`, and only over the S3 client of `fstp-backup`.
 
 - No variant reaches a payment service or names a platform account (I-16). `i16_cell_egress_has_no_payment_destination` enumerates `Destination`.
 - `CrabNebula` accepts only the two `CnCall` variants of design section 10.1: the update check and the licence refresh. `i38_only_egress_reaches_crabnebula_hosts` checks that no other caller reaches those hosts.
@@ -343,7 +343,7 @@ Interim, pending Daniel (Q34). R-NF-09 is read as covering links between platfor
 | Cell to control plane, `fstp-control` to `fstp-pgagent` | mTLS, control-plane CA | Claimed |
 | Edge to `fstp-control`, the route feed (lane L15) | mTLS, control-plane CA, the operator's tunnel CA on the pilot | Claimed |
 | `fstp-control` to the witness, for restore declarations | mTLS, control-plane CA (ADR-012, interim, pending Daniel) | Claimed once ADR-012's proposal is accepted |
-| Cell and vault to object storage, for keystore snapshots | SigV4 over server-authenticated TLS (ADR-012, interim, pending Daniel) | Not claimed. Request credentials only |
+| Cell and vault to object storage, for keystore snapshots | SigV4 over server-authenticated TLS (ADR-012, destinations accepted by Daniel on 2026-11-21) | Not claimed. Request credentials only |
 | Cell and vault to OKMS | Access certificate over mutual TLS on REST (Q11 A), otherwise KMIP with certificates (Q11 B) | Claimed once the verify item is settled. Whether REST accepts an access certificate as mutual TLS is a question to OVHcloud |
 | Control plane to its managed databases | SCRAM over server-authenticated TLS (Q3 C) | Not claimed. Request credentials only |
 | `fstp-backup` to object storage | SigV4 over server-authenticated TLS | Not claimed. Request credentials only |
@@ -390,7 +390,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 - **Self-hosted issuers.** The design names no issuer for the local edge's tunnel certificate or the local witness's server certificate. One option is an install-time CA in local custody, kept apart from the cell CA. Daniel decides before ADR-011 fixes the install.
 - **Root on hosts.** Settled by Daniel on 2026-10-28 (Q35 A). Confidential computing stays an L-15 evaluation item.
 - **Legal markers.** Two `TODO(legal)` markers in this ADR have no L- number: rate limiting on client addresses, and storing reviewers' relatives. Both are listed in `SPEC/10-open-questions.md` for Daniel to number.
-- **Keystore snapshot destinations.** The two `KeystoreSnapshots` members proposed by ADR-012, and `fstp-control` as a witness client for restore declarations. Both wait for Daniel with ADR-012.
+- **Keystore snapshot destinations.** Daniel accepted the two `KeystoreSnapshots` members on 2026-11-21 (ADR-012 record of lane L17). `fstp-control` as a witness client for restore declarations still waits for Daniel with ADR-012.
 - **Assessor egress.** The `AssessorDestination` members of ADR-019 for M7. Accepted by Daniel on 2026-11-07.
 - **Q34 wording.** A wording proposal for R-NF-09 is with Daniel (Q28).
 - **OVHcloud verify items.** Whether OKMS REST accepts an access certificate as mutual TLS. Whether the Public Cloud Load Balancer's TCP listener forwards the ClientHello unchanged and can pass the client address. Whether OVHcloud offers confidential computing for cell and vault hosts. None of these is assumed here.

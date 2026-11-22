@@ -87,12 +87,13 @@ pub fn expect_refused<T: std::fmt::Debug>(r: Result<T, Fail>, what: &str) -> Res
 // Seal contexts.
 
 /// Every chain, in ADR-004 code order.
-pub const CHAINS: [Chain; 5] = [
+pub const CHAINS: [Chain; 6] = [
     Chain::App,
     Chain::Vault,
     Chain::CellBackup,
     Chain::ClusterBackup,
     Chain::ControlPlane,
+    Chain::VaultBackup,
 ];
 
 /// Every purpose the W0 stub of `fstp_keys::Purpose` names.
@@ -113,6 +114,7 @@ pub fn chain_code(chain: Chain) -> u8 {
         Chain::CellBackup => 3,
         Chain::ClusterBackup => 4,
         Chain::ControlPlane => 5,
+        Chain::VaultBackup => 6,
     }
 }
 

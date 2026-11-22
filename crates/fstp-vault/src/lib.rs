@@ -14,6 +14,8 @@
 //!   vault's own `fstp-keyd` entry (ADR-004 record of lane L8).
 //! - [`erasure`]: erasure and root-epoch rotation on the Vault chain
 //!   (design section 3.5, ADR-004 record of lane L11).
+//! - [`snapshot`]: the keystore snapshots of the Vault chain and the restore
+//!   rule (ADR-012 record of lane L17).
 //! - [`run`]: the binary's commands over a configuration file (G12).
 //! - [`match_key`]: the identity match key of design section 6.4 (Q17).
 //! - [`egress`]: the closed set of outbound destinations (B4a).
@@ -35,6 +37,7 @@ pub mod origin;
 pub mod pages;
 pub mod run;
 pub mod service;
+pub mod snapshot;
 pub mod start;
 pub mod store;
 

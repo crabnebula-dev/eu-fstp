@@ -36,6 +36,9 @@ pub enum ContainerKind {
     /// A ClusterBackup group secret sealed to a second custodian's key
     /// (ADR-012 record of lane L16).
     CustodianEscrow,
+    /// A keystore snapshot of a vault, on the VaultBackup chain (ADR-012
+    /// record of lane L17).
+    VaultKeystoreSnapshot,
 }
 
 impl ContainerKind {
@@ -47,6 +50,7 @@ impl ContainerKind {
             ContainerKind::WalSegment => 2,
             ContainerKind::KeystoreSnapshot => 3,
             ContainerKind::CustodianEscrow => 4,
+            ContainerKind::VaultKeystoreSnapshot => 5,
         }
     }
 
@@ -54,7 +58,8 @@ impl ContainerKind {
     /// ClusterBackup chain for base backups and WAL segments, the
     /// CellBackup chain for keystore snapshots (ADR-012 "What is backed
     /// up"). A custodian escrow carries a ClusterBackup group secret, so
-    /// it sits on that chain too (record of lane L16).
+    /// it sits on that chain too (record of lane L16). A vault's keystore
+    /// snapshot sits on the VaultBackup chain (record of lane L17).
     #[must_use]
     pub const fn chain(self) -> Chain {
         match self {
@@ -62,15 +67,19 @@ impl ContainerKind {
             | ContainerKind::WalSegment
             | ContainerKind::CustodianEscrow => Chain::ClusterBackup,
             ContainerKind::KeystoreSnapshot => Chain::CellBackup,
+            ContainerKind::VaultKeystoreSnapshot => Chain::VaultBackup,
         }
     }
 
-    fn from_code(code: u8) -> Option<ContainerKind> {
+    /// The kind of an ADR-012 code, if the code is known.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<ContainerKind> {
         match code {
             1 => Some(ContainerKind::BaseBackup),
             2 => Some(ContainerKind::WalSegment),
             3 => Some(ContainerKind::KeystoreSnapshot),
             4 => Some(ContainerKind::CustodianEscrow),
+            5 => Some(ContainerKind::VaultKeystoreSnapshot),
             _ => None,
         }
     }

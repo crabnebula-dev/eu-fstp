@@ -573,6 +573,7 @@ pub const fn chain_code(chain: Chain) -> u8 {
         Chain::CellBackup => 3,
         Chain::ClusterBackup => 4,
         Chain::ControlPlane => 5,
+        Chain::VaultBackup => 6,
     }
 }
 
@@ -753,7 +754,7 @@ pub fn decode_sealed_key(bytes: &[u8]) -> Option<RefSealedKey> {
     if header.version != FORMAT_VERSION
         || header.kem != KEM_HYBRID
         || header.aead != AEAD_AES_256_GCM
-        || !(1..=5).contains(&header.chain)
+        || !(1..=6).contains(&header.chain)
     {
         return None;
     }
