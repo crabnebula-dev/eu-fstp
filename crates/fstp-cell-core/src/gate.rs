@@ -1039,6 +1039,7 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Tenant(
                 TenantCommand::IssueFirstAdminInvitation { .. }
                     | TenantCommand::IssueRoleInvitation { .. }
+                    | TenantCommand::IssueAdminInvitation { .. }
                     | TenantCommand::ProvisionTenant { .. }
             )
             | CellCommand::Auth(fstp_auth::AuthCommand::MarkCredentialSuspect { .. })
@@ -1856,6 +1857,12 @@ pub fn admit_system(
         (
             SystemTask::Provisioning,
             CellCommand::Tenant(TenantCommand::IssueRoleInvitation { .. }),
+        ) => true,
+        // SoD-07 (ADR-026 record of lane L18): the accounts port's
+        // enrolment invitation of a second tenant admin by address.
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueAdminInvitation { .. }),
         ) => true,
         (
             SystemTask::LoginVerifier,

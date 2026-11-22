@@ -437,6 +437,7 @@ fn system_only(c: &CellCommand) -> bool {
             | CellCommand::Tenant(
                 TenantCommand::IssueFirstAdminInvitation { .. }
                     | TenantCommand::IssueRoleInvitation { .. }
+                    | TenantCommand::IssueAdminInvitation { .. }
                     | TenantCommand::ProvisionTenant { .. }
             )
     )
@@ -813,6 +814,14 @@ fn decide_system(
                 token_digest,
             }),
         ) => issue_role_invitation(s, *programme, *role_invitation, *account, *token_digest),
+        (
+            SystemTask::Provisioning,
+            CellCommand::Tenant(TenantCommand::IssueAdminInvitation {
+                admin_invitation,
+                account,
+                token_digest,
+            }),
+        ) => issue_admin_invitation(s, *admin_invitation, *account, *token_digest),
         (
             SystemTask::Timeline,
             CellCommand::Ops(OpsCommand::EndSessionsAtBindingEnd { account }),
@@ -1548,6 +1557,7 @@ fn decide_tenant(
         // ceremony admission enrols. Neither reaches this point.
         TenantCommand::IssueFirstAdminInvitation { .. }
         | TenantCommand::IssueRoleInvitation { .. }
+        | TenantCommand::IssueAdminInvitation { .. }
         | TenantCommand::ProvisionTenant { .. }
         | TenantCommand::EnrolByInvitation { .. }
         | TenantCommand::EnrolBySelfRegistration { .. } => Err(wrong_actor()),
@@ -1706,6 +1716,55 @@ fn issue_role_invitation(
     Ok(vec![CellRecord::Auth(record)])
 }
 
+/// Whether the tenant part holds the tenant admin invitation `id`, open,
+/// naming `account` with the token digest `digest` (SoD-07, ADR-026
+/// record of lane L18).
+fn open_admin_invitation(s: &CellState, id: u128, account: AccountId, digest: &[u8; 32]) -> bool {
+    let want = fstp_tenant::TokenDigest::from_bytes(*digest);
+    s.engine()
+        .tenant
+        .state()
+        .and_then(|ts| ts.invitation(fstp_tenant::InvitationId::from_raw(id)))
+        .is_some_and(|i| i.invitee == account && !i.taken && i.token_digest == want)
+}
+
+/// `IssueAdminInvitation` of the system task `Provisioning` for the
+/// accounts port (SoD-07, ADR-026 record of lane L18). The rule is
+/// `fstp_auth::ceremony::issue_invitation` with the issuer
+/// `AdminInvitation`: the tenant admin invitation `admin_invitation` is
+/// open, names `account` and holds `token_digest`, and no record names the
+/// account. The invitation id is the tenant invitation id, so a second
+/// issue for one tenant invitation is a reuse. The batch grants nothing:
+/// the enrolment through it takes the tenant invitation.
+fn issue_admin_invitation(
+    s: &CellState,
+    admin_invitation: u128,
+    account: AccountId,
+    token_digest: [u8; 32],
+) -> Result<Vec<CellRecord>, CellRefusal> {
+    let invitation = admin_invitation.to_be_bytes();
+    if s.auth().invitation(invitation).is_some() {
+        return Err(reused());
+    }
+    let open = open_admin_invitation(s, admin_invitation, account, &token_digest);
+    let issuer = fstp_auth::ceremony::Issuer::AdminInvitation {
+        invitation_open: open,
+    };
+    let record = fstp_auth::ceremony::issue_invitation(
+        issuer,
+        fstp_auth::recovery::Deployment::Saas,
+        invitation,
+        account,
+        token_digest,
+        !account_known(s, account),
+    )
+    .map_err(|e| match e {
+        fstp_auth::ceremony::EnrolDeny::InviteeNotNew => reused(),
+        _ => refuse(RuleRef::Input, RefusalReason::WrongState),
+    })?;
+    Ok(vec![CellRecord::Auth(record)])
+}
+
 /// `IssueInvitation` by a tenant admin (design section 8.3 ceremony 1,
 /// `authentication.md` "First passkey"). The rule is
 /// `fstp_auth::ceremony::issue_invitation` with the tenant admin issuer:
@@ -1803,7 +1862,13 @@ fn decide_enrolment(
     if cred.id != credential {
         return Err(invalid());
     }
-    if (inv.first_admin || holds_management_at(s, actor, now)) && !cred.user_verified {
+    // SoD-07, ADR-026 record of lane L18: an enrolment through the
+    // enrolment invitation of an open tenant admin invitation takes it.
+    let admin_invitation = u128::from_be_bytes(invitation);
+    let takes_admin =
+        open_admin_invitation(s, admin_invitation, actor, &inv.token_digest) && !inv.first_admin;
+    if (inv.first_admin || takes_admin || holds_management_at(s, actor, now)) && !cred.user_verified
+    {
         return Err(invalid());
     }
     let mut batch: Vec<CellRecord> =
@@ -1811,7 +1876,25 @@ fn decide_enrolment(
             .into_iter()
             .map(CellRecord::Auth)
             .collect();
-    if inv.first_admin && !s.tenant().is_admin(actor) {
+    if takes_admin {
+        // The account is new to the cell (`issue_admin_invitation`), so no
+        // binding names it and it holds no Receiving role (SoD-03).
+        if s.engine()
+            .core
+            .roster()
+            .bindings()
+            .any(|(_, b)| b.account == actor)
+        {
+            return Err(refuse(RuleRef::Input, RefusalReason::WrongState));
+        }
+        batch.push(CellRecord::Engine(fstp_engine::Record::Tenant(
+            fstp_engine::TenantEntry::Record(fstp_tenant::TenantRecord::AdminAdded {
+                account: actor,
+                invitation: fstp_tenant::InvitationId::from_raw(admin_invitation),
+            }),
+        )));
+    }
+    if (inv.first_admin || takes_admin) && !s.tenant().is_admin(actor) {
         batch.push(CellRecord::Tenant(TenantRecord::TenantAdminGranted {
             account: actor,
         }));

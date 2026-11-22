@@ -48,10 +48,10 @@
 //!   A P-74 role set that holds `Applicant` also admits an account that
 //!   acts as an applicant with no binding yet.
 //! - `tenant.invite_admin` draws the invitation, the invitee's account and
-//!   a random invitation token, and records only the token's digest. No
-//!   port hands the token and the email to M3 yet (`port::InviteKind` is
-//!   a W0 placeholder), so the e2e cell's M3 emulation sends the
-//!   invitation.
+//!   a random invitation token, and records only the token's digest. Once
+//!   appended, it hands the address and the token to the accounts port
+//!   (`port::InviteKind::TenantAdmin`, ADR-026 record of lane L18), which
+//!   mails the enrolment link. The e2e cell's M3 emulation mails its own.
 //! - SoD-07 (Daniel, 2026-11-15): a tenant admin's `roles.grant` to their
 //!   own account, naming no approval, appends `SelfGrantRequested`, the
 //!   grant awaiting approval with its grantee, programme, role and dates
@@ -61,10 +61,11 @@
 //!   consumes it in the grant's own entry, through the composed engine
 //!   command `ApprovedSelfGrant` ([`with_approval`], lane m3/cell-routes).
 //!   An id the ledger does not hold is read from M3's recorded approvals.
-//! - The port prober takes no domain and has no absent outcome. So the
-//!   sending-domain check cannot name the domain of this save, and a cell
-//!   with no prober shows `probe_failed`, not `prober_absent` (Q5). Both
-//!   need a port change by the lead.
+//! - The port prober has no absent outcome, so a cell with no prober shows
+//!   `probe_failed`, not `prober_absent` (Q5). The sending-domain check
+//!   names the saved domain, and the channel check the Matrix and
+//!   WhatsApp choices (`Prober::sending_domain`, `Prober::channels`, ADR-026
+//!   record of lane L18).
 
 use fstp_access::{McpSettings, RoleOrApplicant};
 use fstp_access::{ReadKind, TenantKind};
@@ -88,8 +89,8 @@ use super::{
 use crate::model::{AdminRow, TenantAdmins};
 use crate::port::PendingId;
 use crate::port::{
-    AsyncEngine, CellPorts, DisplayHandle, ExecMeta, OpName, Outcome, ProbeKind as PortProbe,
-    ProbeOutcome as PortOutcome, Prober, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore,
+    AsyncEngine, CellPorts, DisplayHandle, ExecMeta, OpName, Outcome, ProbeOutcome as PortOutcome,
+    Prober, StepUpRef, TenantConfig, TextClass, TextOwner, TextStore,
 };
 use crate::tenant::{
     ActivationView, SaveRequest, SettingsView, SignatoryList, SignatoryRow, StepView, TenantView,
@@ -246,14 +247,6 @@ const fn unprovisioned() -> ApiError {
     ApiError::refused(ErrorCode::NotFound, "Input")
 }
 
-/// The port probe of a tenant prober check.
-fn port_probe(kind: &fstp_tenant::ProbeKind) -> PortProbe {
-    match kind {
-        fstp_tenant::ProbeKind::SendingDomain(_) => PortProbe::SendingDomain,
-        fstp_tenant::ProbeKind::Channels => PortProbe::Channel,
-    }
-}
-
 /// The tenant state of the call's snapshot, and the caller's account,
 /// once the ledger's admin set holds the caller (Q31 A). Refusals are
 /// audited.
@@ -278,11 +271,13 @@ fn admin<'a, P: Seams>(call: &'a Call<'_, P>) -> Result<(AccountId, &'a TenantSt
     Ok((account, ts))
 }
 
-/// The tenant command of `op`, before its texts are stored.
+/// The tenant command of `op`, before its texts are stored. An admin
+/// invitation leaves its link token in `token`.
 fn build<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
     kind: TenantKind,
+    token: &mut Option<[u8; 32]>,
 ) -> Result<(TenantCommand, Option<SaveRequest>), ApiError> {
     match kind {
         TenantKind::SaveStep => {
@@ -315,14 +310,15 @@ fn build<P: Seams>(
             None,
         )),
         TenantKind::InviteAdmin => {
-            // The email is checked and goes to M3 with the token, once a
-            // port takes them (module documentation).
+            // The email and the token go to the accounts port once the
+            // invitation is appended ([`mail_admin_invitation`]).
             let _email = crate::tenant::invite_email(&op.request)?;
             let invitation = InvitationId::from_raw(call.draw()?);
             let invitee = AccountId::from_raw(call.draw()?);
-            let token = fstp_crypto::random_array::<32>()
+            let drawn = fstp_crypto::random_array::<32>()
                 .map_err(|_| ApiError::refused(ErrorCode::Unavailable, "ids"))?;
-            let token_digest = TokenDigest::from_bytes(fstp_crypto::sha256(&token));
+            let token_digest = TokenDigest::from_bytes(fstp_crypto::sha256(&drawn));
+            *token = Some(drawn);
             Ok((
                 TenantCommand::InviteAdmin {
                     invitation,
@@ -397,9 +393,27 @@ async fn with_facts<P: Seams>(
             _ => None,
         })
         .collect();
+    // ADR-026 record of lane L18: the Channels step names Matrix and
+    // WhatsApp, which its probe reads beside email.
+    let (matrix, whatsapp) = match &cmd {
+        TenantCommand::SaveStep {
+            values:
+                StepValues::Channels {
+                    matrix_homeserver,
+                    whatsapp,
+                },
+            ..
+        } => (matrix_homeserver.is_some(), *whatsapp),
+        _ => (false, false),
+    };
     let mut req = TenantRequest::new(cmd);
     for kind in probes {
-        let outcome = match call.ports.prober().probe(port_probe(&kind)).await {
+        let prober = call.ports.prober();
+        let outcome = match &kind {
+            fstp_tenant::ProbeKind::SendingDomain(d) => prober.sending_domain(d.as_str()).await,
+            fstp_tenant::ProbeKind::Channels => prober.channels(matrix, whatsapp).await,
+        };
+        let outcome = match outcome {
             PortOutcome::Pass => ProbeOutcome::Passed,
             PortOutcome::Fail => ProbeOutcome::Failed,
         };
@@ -533,7 +547,8 @@ pub(super) async fn command<P: Seams>(
             seq: None,
         });
     }
-    let (tenant_cmd, save) = build(call, op, kind).map_err(|e| call.refuse(e))?;
+    let mut token = None;
+    let (tenant_cmd, save) = build(call, op, kind, &mut token).map_err(|e| call.refuse(e))?;
     let mut req = with_facts(call, ts, tenant_cmd).await;
     if matches!(
         req.command,
@@ -613,8 +628,25 @@ pub(super) async fn command<P: Seams>(
         pending,
         second_tenant_admin: None,
     };
+    let invited = match &cmd {
+        Command::Tenant(TenantRequest {
+            command:
+                TenantCommand::InviteAdmin {
+                    invitation,
+                    invitee,
+                    ..
+                },
+            ..
+        }) => Some((*invitation, *invitee)),
+        _ => None,
+    };
     match call.ports.engine().execute(cmd, ctx, meta).await {
         Ok(seq) => {
+            if let (Some((invitation, invitee)), Some(t)) = (invited, token) {
+                mail_admin_invitation(call, op, invitation, invitee, t)
+                    .await
+                    .map_err(|e| call.refuse(e))?;
+            }
             let body = match &save {
                 Some(s) => {
                     let after = call.ports.engine().snapshot();
@@ -633,6 +665,35 @@ pub(super) async fn command<P: Seams>(
         }
         Err(e) => Err(call.refuse(exec_failed(e))),
     }
+}
+
+/// Hands the address, the invitee and the link token of an appended
+/// admin invitation to the accounts port, which mails the enrolment link
+/// (SoD-07, J0, ADR-026 record of lane L18). Nothing else receives the
+/// token: the reply, the ledger and the audit log name only its digest.
+/// A port failure refuses the call with the invitation recorded and no
+/// link mailed, as for `creator.invite`. The admin invites again.
+async fn mail_admin_invitation<P: Seams>(
+    call: &Call<'_, P>,
+    op: &Op,
+    invitation: InvitationId,
+    invitee: AccountId,
+    token: [u8; 32],
+) -> Result<(), ApiError> {
+    use crate::port::Accounts as _;
+    let email = crate::tenant::invite_email(&op.request)?;
+    let kind = crate::port::InviteKind::TenantAdmin {
+        invitation,
+        invitee,
+        email,
+        token: crate::port::LinkToken::from_bytes(token),
+    };
+    call.ports
+        .accounts()
+        .invite(kind)
+        .await
+        .map(|_| ())
+        .map_err(|e| super::port_failed(e, "accounts"))
 }
 
 /// The text of a stored data protection contact, if `values` hold one:

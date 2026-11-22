@@ -240,6 +240,19 @@ pub enum InviteKind {
         /// The link token.
         token: LinkToken,
     },
+    /// The invitation of a second tenant admin (`tenant.invite_admin`,
+    /// SoD-07, ADR-026 record of lane L18). The ledger holds the
+    /// invitation with the invitee and the token's digest.
+    TenantAdmin {
+        /// The tenant admin invitation.
+        invitation: fstp_tenant::InvitationId,
+        /// The invitee, a new account the API core drew.
+        invitee: AccountId,
+        /// The address M3 mails the link to.
+        email: String,
+        /// The link token.
+        token: LinkToken,
+    },
 }
 
 impl std::fmt::Debug for InviteKind {
@@ -255,6 +268,15 @@ impl std::fmt::Debug for InviteKind {
                 .field("programme", programme)
                 .field("invitation", invitation)
                 .field("role", role)
+                .finish_non_exhaustive(),
+            InviteKind::TenantAdmin {
+                invitation,
+                invitee,
+                ..
+            } => f
+                .debug_struct("TenantAdmin")
+                .field("invitation", invitation)
+                .field("invitee", invitee)
                 .finish_non_exhaustive(),
         }
     }
@@ -1660,6 +1682,22 @@ pub trait Outbox: Send + Sync {
 pub trait Prober: Send + Sync {
     /// Runs one probe.
     fn probe(&self, p: ProbeKind) -> impl Future<Output = ProbeOutcome> + Send;
+
+    /// The sending domain probe of `domain`, the domain a tenant admin
+    /// saved in the Domains and email step (ADR-026 record of lane L18).
+    /// The default asks [`Prober::probe`], which names no domain.
+    fn sending_domain(&self, domain: &str) -> impl Future<Output = ProbeOutcome> + Send {
+        let _ = domain;
+        self.probe(ProbeKind::SendingDomain)
+    }
+
+    /// The channel probe of a Channels save that names a Matrix
+    /// homeserver (`matrix`) or WhatsApp (`whatsapp`), beside email (ADR-026
+    /// record of lane L18). The default asks [`Prober::probe`].
+    fn channels(&self, matrix: bool, whatsapp: bool) -> impl Future<Output = ProbeOutcome> + Send {
+        let _ = (matrix, whatsapp);
+        self.probe(ProbeKind::Channel)
+    }
 }
 
 /// The cell clock.

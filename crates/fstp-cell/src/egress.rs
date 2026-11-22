@@ -73,7 +73,8 @@ pub enum Destination {
         /// The relay host.
         host: MailHost,
     },
-    /// The configured DNS resolver, TCP port 53 only, for the sending
+    /// The configured DNS resolver, TCP port 53 only (any port on a
+    /// loopback address, ADR-026 record of lane L18), for the sending
     /// domain probe of the creator shell (ADR-027, proposed amendment of
     /// ADR-009). It takes an address, so it never names a CrabNebula host.
     DnsResolver {
@@ -112,7 +113,7 @@ pub enum EgressRefusal {
     /// A mail relay that resolves to a private, loopback, link-local or
     /// other non-public address (ADR-018).
     MailAddress,
-    /// A DNS resolver on a port other than 53 (ADR-027).
+    /// A DNS resolver on a port other than 53, off loopback (ADR-027).
     DnsPort,
 }
 
@@ -232,8 +233,11 @@ pub fn check_port(to: &Destination, port: u16) -> Result<(), EgressRefusal> {
         Destination::MailSubmission { .. } if port != SUBMISSION_PORT => {
             Err(EgressRefusal::MailPort)
         }
+        // ADR-026 record of lane L18 (lead reading, 2026-11-22): a
+        // loopback resolver may listen on any port.
         Destination::DnsResolver { addr }
-            if port != crate::shell::dns::DNS_PORT || addr.port() != port =>
+            if addr.port() != port
+                || (port != crate::shell::dns::DNS_PORT && !addr.ip().is_loopback()) =>
         {
             Err(EgressRefusal::DnsPort)
         }
@@ -1345,5 +1349,34 @@ mod tests {
         );
         let r = rt.block_on(big.fetch(&url("https://forge.example/a")));
         assert_eq!(r, Err(FetchFault::TooLarge));
+    }
+}
+
+#[cfg(test)]
+mod l18_resolver_tests {
+    use super::*;
+
+    /// ADR-027, ADR-026 record of lane L18 (lead reading, 2026-11-22): a
+    /// resolver off loopback is reached on port 53 only. A loopback
+    /// resolver, as the devstack and the binary test run, may use any
+    /// port. The port must always be the address's own.
+    #[test]
+    fn adr027_loopback_resolver_takes_any_port() {
+        let at = |s: &str| Destination::DnsResolver {
+            addr: s
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0))),
+        };
+        assert_eq!(check_port(&at("192.0.2.53:53"), 53), Ok(()));
+        assert_eq!(
+            check_port(&at("192.0.2.53:5353"), 5353),
+            Err(EgressRefusal::DnsPort)
+        );
+        assert_eq!(check_port(&at("127.0.0.1:5353"), 5353), Ok(()));
+        assert_eq!(check_port(&at("[::1]:5353"), 5353), Ok(()));
+        assert_eq!(
+            check_port(&at("127.0.0.1:5353"), 53),
+            Err(EgressRefusal::DnsPort)
+        );
     }
 }

@@ -101,6 +101,7 @@ fn i19_r_mc_01_edge_binary_routes_tenant_sni_to_the_cell_binary() {
         key_file_custody: key_file_custody.socket().to_path_buf(),
         assets_dir: None,
         relay: None,
+        shell: None,
     };
     let world = World::start_external(
         WorldSpec {

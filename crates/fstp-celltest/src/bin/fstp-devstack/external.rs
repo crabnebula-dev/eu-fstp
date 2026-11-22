@@ -8,12 +8,12 @@
 //! assembles the compiled web assets (`web/dist/auth` with the shell and
 //! stylesheets of `web/src/auth`, and `web/dist/app`) into one assets
 //! directory. The world then writes `cell.json` and the credentials
-//! directory, runs `fstp-cell first-admin --email` with the first admin's
-//! synthetic login email, and starts `fstp-cell` with `FSTP_CELL_CONFIG`
-//! (`fstp_celltest::world::World::start_external`). It runs no
-//! `fstp-cell provision-tenant`: a provisioned pilot cannot be activated
-//! yet (ADR-026 row "Organisation port until onboarding runs"), so the
-//! configuration keeps `organisation_active`.
+//! directory, runs `fstp-cell provision-tenant` and `fstp-cell first-admin
+//! --email` with the first admin's synthetic login email, and starts
+//! `fstp-cell` with `FSTP_CELL_CONFIG`
+//! (`fstp_celltest::world::World::start_external`). As on a pilot, the
+//! organisation is not active until onboarding opens it (ADR-026 record
+//! of lane L18). The configuration has no `organisation_active` member.
 //!
 //! It prints the lines of the default mode, and before them `config
 //! <path>`: the configuration file the binary reads. SIGTERM stops the
@@ -21,8 +21,11 @@
 //!
 //! The stack names no mail relay, since rule A9 keeps the test SMTP sink
 //! of `fstp-api-testkit` out of this binary. Sign-up, magic link and
-//! recovery proofs therefore answer 503 here. `tests/prod_mcp_e2e.rs` runs
-//! the relay path.
+//! recovery proofs therefore answer 503 here, and the second admin's
+//! invitation is refused, so onboarding stops at the checklist's first
+//! item. It names no resolver either, so the Domains and email and
+//! Channels checks fail. `tests/prod_mcp_e2e.rs` runs the whole
+//! onboarding with a relay and a fake resolver.
 //!
 //! With `--route-feed` (lane L15, ADR-009 "Pilot route feed") it also starts
 //! the `fstp-control route-feed` and `fstp-edge` binaries in front of the
@@ -169,6 +172,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             // Rule A9 keeps the test SMTP sink out of this binary, so the
             // stack names no relay: proofs answer 503 (`NoProofMail`).
             relay: None,
+            shell: None,
         };
         let world = World::start_external(SPEC, custody.socket().to_path_buf(), &spec)?;
         let feed = if route_feed {
