@@ -23,9 +23,9 @@
 //!   the second by mail, the second enrols from the mailed link, both
 //!   are verified, the signatories are granted, every step validates with
 //!   the real probes, and the activation is requested and approved.
-//! - The admins' verification is seeded into the world vault. It stands
-//!   in for `fstp-vault verify-first-admin` of lane L13b, which the
-//!   technical admin runs on a pilot host.
+//! - The vault runs as the `fstp-vault` binary (lane L8). Both admins are
+//!   verified with `fstp-vault verify-first-admin` (lane L13b), with the
+//!   vault stopped, as the technical admin does on a pilot host.
 //! - The sending domain probe asks a fake resolver on loopback, which
 //!   serves SPF, DKIM and DMARC records of a synthetic domain. The channel
 //!   probe greets the test SMTP sink, the platform relay.
@@ -44,6 +44,7 @@
 
 use fstp_api_testkit::smtp_sink::{SINK_SERVER_NAME, SinkConfig, SmtpSink};
 use fstp_celltest::external_cell::{ExternalRelay, ExternalShell, ExternalSpec};
+use fstp_celltest::external_vault::{ExternalVault, ExternalVaultSpec, start_world};
 use fstp_celltest::mc::auth_model::http::{AuthClient, Cookie, FIRST_ADMIN};
 use fstp_celltest::reference::auth::RefMethod;
 use fstp_celltest::world::{
@@ -138,10 +139,14 @@ const SINK_CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
 /// before its custody goes.
 struct Stack {
     world: World,
+    /// The vault, run by the `fstp-vault` binary (lane L8), so the first
+    /// admins are verified with `fstp-vault verify-first-admin` (lane L13b).
+    vault: ExternalVault,
     sink: SmtpSink,
     _rt: fstp_rt::tokio::TokioRuntime,
     _custody: SimProcess,
     _key_file_custody: SimProcess,
+    _vault_custody: SimProcess,
     dir: std::path::PathBuf,
 }
 
@@ -163,6 +168,10 @@ fn stack() -> Stack {
     std::fs::create_dir_all(&dir).unwrap();
     let custody = SimProcess::spawn(0, &dir).unwrap_or_else(|e| panic!("{e}"));
     let key_file_custody = SimProcess::spawn(1, &dir).unwrap_or_else(|e| panic!("{e}"));
+    let vault_custody = SimProcess::spawn(2, &dir).unwrap_or_else(|e| panic!("{e}"));
+    let vault_binary = bin_path("fstp-vault").unwrap_or_else(|e| {
+        panic!("{e}: run `cargo build -p fstp-vault --bin fstp-vault` before this test")
+    });
     // The platform relay (D3): the test SMTP sink, on the world's runtime
     // kind. It must outlive the cell, so the stack holds it.
     let rt = fstp_rt::tokio::TokioRuntime::new_multi_thread(1).unwrap();
@@ -194,7 +203,7 @@ fn stack() -> Stack {
             dkim_selector: DKIM_SELECTOR.to_owned(),
         }),
     };
-    let world = World::start_external(
+    let (world, vault) = start_world(
         WorldSpec {
             cells: 1,
             mode: DbMode::Shared,
@@ -204,14 +213,21 @@ fn stack() -> Stack {
         },
         custody.socket().to_path_buf(),
         &spec,
+        ExternalVaultSpec {
+            binary: vault_binary,
+            dir: dir.clone(),
+            keyd_socket: vault_custody.socket().to_path_buf(),
+        },
     )
     .unwrap_or_else(|e| panic!("{e}"));
     Stack {
         world,
+        vault,
         sink,
         _rt: rt,
         _custody: custody,
         _key_file_custody: key_file_custody,
+        _vault_custody: vault_custody,
         dir,
     }
 }
@@ -471,6 +487,14 @@ fn relayed(stack: &Stack, to: &str) -> usize {
         .count()
 }
 
+/// A synthetic identity file of `fstp-vault verify-first-admin` (ADR-004
+/// record of lane L13b), with no document number.
+fn identity_file(family: &str) -> String {
+    format!(
+        r#"{{"method":"manual","document_type":"passport","checks":["document_authentic","photo_match"],"identity":{{"family_names":"{family}","given_names":"Synthetic","birth_date":"1990-02-28","issuing_state":"DEU"}}}}"#
+    )
+}
+
 /// The link token of the newest admin invitation mail to `to`, read from
 /// its text part's `/auth/invite#<token>` link as the invitee reads it.
 fn admin_invitation_token(stack: &Stack, to: &str) -> Option<Vec<u8>> {
@@ -558,14 +582,16 @@ fn onboard(stack: &Stack, client: &AuthClient<'_>) -> (Cookie, Cookie) {
             "SoD-07: the admin {a:?} is not listed: {listed}"
         );
     }
-    // Lane L13b's `fstp-vault verify-first-admin` on a pilot host.
-    for (a, tag) in [
-        (a1, b"synthetic-l18-admin-1"),
-        (a2, b"synthetic-l18-admin-2"),
-    ] {
-        cell.seed_verification(a, tag)
-            .unwrap_or_else(|e| panic!("{e:?}"));
+    // ADR-008 (lane L13b): the technical admin verifies both admins on
+    // the host with `fstp-vault verify-first-admin`, the vault stopped.
+    stack.vault.stop().unwrap_or_else(|e| panic!("{e}"));
+    for (a, family) in [(a1, "Alpha"), (a2, "Bravo")] {
+        stack
+            .vault
+            .verify_first_admin(a.raw(), &identity_file(family))
+            .unwrap_or_else(|e| panic!("ADR-008: verify-first-admin: {e}"));
     }
+    stack.vault.start().unwrap_or_else(|e| panic!("{e}"));
     // SoD-14, SoD-15, SoD-16: the first admin grants both signatory roles
     // to the second (SoD-07 bars a grant to oneself).
     for role in ["financial_signatory", "legal_signatory"] {
