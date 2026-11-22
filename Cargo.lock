@@ -1062,6 +1062,7 @@ dependencies = [
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",
+ "fstp-unorm",
  "fstp-vault-core",
  "fstp-vault-proto",
  "fstp-witness",

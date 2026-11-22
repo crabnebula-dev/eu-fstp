@@ -15,6 +15,12 @@ Status: Accepted in part. Drafted 2026-11-22 by lane L21 `prod/unicode-normalise
 - **Compatibility forms.** Decided by Daniel on 2026-11-21: compatibility forms match. Two names that differ only by a compatibility character, such as a ligature or a full-width letter, are one name. The tuple uses the compatibility caseless key `fold_nfkc` (row "Match key"). NFC and NFD stay in the crate.
 - **Unicode version.** Decided by Daniel on 2026-11-21: 18.0.0, the lead's reading, unless a newer final exists. On 2026-11-22 the newest final version on `https://www.unicode.org/Public/` was 18.0.0.
 
+## Lead decisions, 2026-11-22
+
+- **Key construction.** The construction of `fold_nfkc` in row "Match key" is accepted as the lead's reading. It matches the Unicode `NFKC_CF` mapping for every code point.
+- **Notices.** `THIRD_PARTY_NOTICES.md` lists every third-party component: the Unicode data, the fonts (IBM Plex Sans of ADR-017, and the Lohit fonts named in LibPDF's FontBox licence), the vendored LibPDF of ADR-016, the allowlisted crates with the licences their manifests declare, and the npm build and test tools. The release step that ships the file, with the full licence texts of the crates, comes later.
+- **Wiring.** `prod/identity-registration` merged into `main` (PR 35), so lane L21 wired the normaliser into the tuple. See section "Wiring into the identity tuple".
+
 ## Decision
 
 | Topic | Decision | Basis |
@@ -28,7 +34,7 @@ Status: Accepted in part. Drafted 2026-11-22 by lane L21 `prod/unicode-normalise
 | Ordering | Each run of non-starters is sorted by combining class with a stable sort, so equal classes keep their order. Interim, pending Daniel | Canonical Ordering Algorithm |
 | Composition | The Canonical Composition Algorithm over primary composites. A pair is a primary composite when its canonical decomposition has two code points and it is not fully excluded. The full exclusion is the union of `CompositionExclusions.txt`, the singleton decompositions, and the non-starter decompositions. Hangul LV and LVT syllables compose by computation. Interim, pending Daniel | UAX #15 |
 | Case folding | Full case folding: status C and F of `CaseFolding.txt`. Status S and T are not used, so the folding is the same for every language. Interim, pending Daniel | `CaseFolding.txt` header |
-| Match key | `fold_nfkc(s) = toNFKC_Casefold(NFD(s))`. The input goes to NFKD. Then case folding, the removal of the code points that `NFKC_CF` removes (the default ignorables, such as the soft hyphen and the zero width joiner), and NFKD repeat until nothing changes. The result is composed to NFC. `DerivedNormalizationProps.txt` constructs `NFKC_CF` the same way. Starting from the decomposed input makes canonically equivalent spellings give one key. Decided by Daniel on 2026-11-21: compatibility forms match. The exact construction is interim, pending Daniel | Unicode chapter 3.13; UAX #44 `NFKC_CF` |
+| Match key | `fold_nfkc(s) = toNFKC_Casefold(NFD(s))`. Accepted as the lead's reading on 2026-11-22. The input goes to NFKD. Then case folding, the removal of the code points that `NFKC_CF` removes (the default ignorables, such as the soft hyphen and the zero width joiner), and NFKD repeat until nothing changes. The result is composed to NFC. `DerivedNormalizationProps.txt` constructs `NFKC_CF` the same way. Starting from the decomposed input makes canonically equivalent spellings give one key. Decided by Daniel on 2026-11-21: compatibility forms match | Unicode chapter 3.13; UAX #44 `NFKC_CF` |
 | Canonical key | `fold_nfc(s) = NFC(casefold(NFD(s)))` stays in the crate. It is the standard canonical caseless key `NFD(casefold(NFD(s)))` (Unicode chapter 3.13, D145) composed to NFC. The tuple does not use it. Interim, pending Daniel | Unicode chapter 3.13 |
 | Name form | `name_key(s)` is `fold_nfkc(s)` with leading and trailing white space removed and each inner run of white space replaced by one space. White space is the `White_Space` property. The collapse runs after the fold, because compatibility decomposition can make spaces, as U+00A0 and U+3000 do. Interim, pending Daniel | ADR-004 row "Normalisation" |
 | Stability | Tests prove that `fold_nfkc`, `name_key` and `fold_nfc` are idempotent and in NFC. They cover every code point alone, every code point before and after each of a set of combining marks, and random strings. They also prove that `fold_nfkc` equals `NFKC_CF` followed by NFC for every code point, and `toNFKC_Casefold(NFD(s))` for random strings. Interim, pending Daniel | Brief of lane L21 |
@@ -42,11 +48,11 @@ Status: Accepted in part. Drafted 2026-11-22 by lane L21 `prod/unicode-normalise
 
 ## Wiring into the identity tuple
 
-`fstp_vault::codec::tuple_name` lives on branch `prod/identity-registration` (lane L13b), which had not merged into `main` when lane L21 finished. The wiring is a one-function follow-up once it merges:
+Built by lane L21 on 2026-11-22, after `prod/identity-registration` merged into `main` (ADR-004, "Built by lane L21"):
 
-- `tuple_name(s)` becomes `fstp_unorm::name_key(s)`. It folds first and collapses white space after, so it replaces the trim and collapse of the first label.
-- The tuple label becomes `fstp-identity-tuple-v2`, and ADR-004's row "Normalisation" changes with it: case, canonical equivalence, compatibility variants and default ignorables no longer separate two spellings of one name.
-- Stored tuples are recomputed and the match keys rekeyed, and pilot vaults are recreated (ADR-004, record of lane L13b).
+- `fstp_vault::codec::tuple_name(s)` is `fstp_unorm::name_key(s)`. It folds first and collapses white space after, so it replaces the trim and collapse of the first label. A name that folds to nothing is refused.
+- The tuple label is `fstp-identity-tuple-v2`, and ADR-004's row "Normalisation" says so: case, canonical equivalence, compatibility variants and default ignorables no longer separate two spellings of one name.
+- A vault that stores a tuple under the label `fstp-identity-tuple-v1` refuses to start, and `verify-first-admin` refuses it too, as for shared-key identity facts. Such a pilot vault is recreated: a fresh vault database, then `init-keys`. The operator guide `docs/guide/claude-connector-production.md` says so.
 
 ## Vendored files
 
@@ -64,4 +70,4 @@ The SHA-256 of each file as downloaded on 2026-11-22:
 ## Open points, pending Daniel
 
 - The Unicode version moves only by a new row here: new files under `third_party/unicode/<version>/`, a fresh generation, and a new tuple label, since a new version may change a fold.
-- `THIRD_PARTY_NOTICES.md` lists only the Unicode data today. No release step copies it into a shipped artefact yet. The other components that may need an entry, such as the IBM Plex Sans font of ADR-017, are not listed. Open for Daniel: whether the notices file should list every third-party component and where it ships.
+- No release step copies `THIRD_PARTY_NOTICES.md` into a shipped artefact yet, and the full licence and copyright texts of the crates are not collected. A later release step does both (lead decision, 2026-11-22).
