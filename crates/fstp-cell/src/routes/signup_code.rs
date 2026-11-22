@@ -198,7 +198,7 @@ mod tests {
 
     fn wrong() -> [u8; 6] {
         let mut c = code();
-        c[5] = if c[5] == b'9' { b'0' } else { c[5] + 1 };
+        c[5] = if c[5] == b'9' { b'0' } else { c[5].saturating_add(1) };
         c
     }
 
