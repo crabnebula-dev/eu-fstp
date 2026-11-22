@@ -202,6 +202,10 @@ pub fn public_logos(ts: Option<&TenantState>, programme: ProgrammeId) -> fstp_pu
     }
 }
 
+/// The plan of a branded message: the colour and the logos with their
+/// text alternatives.
+pub type MailPlan = ([u8; 3], Vec<(LogoRef, String)>);
+
 /// What a message shows of the tenant (ADR-030 section 5): the brand
 /// colour of the light family, as `[r, g, b]`, and the light logos an
 /// email can show, the tenant's then the programme's, each with its text
@@ -210,7 +214,7 @@ pub fn public_logos(ts: Option<&TenantState>, programme: ProgrammeId) -> fstp_pu
 pub fn mail_plan(
     ts: &TenantState,
     programme: Option<ProgrammeId>,
-) -> Option<([u8; 3], Vec<(LogoRef, String)>)> {
+) -> Option<MailPlan> {
     let tokens = ts.branding().map(|(t, _)| t);
     let name = tokens
         .map(|t| t.name.as_str().to_owned())
