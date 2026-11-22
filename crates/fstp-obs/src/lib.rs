@@ -169,6 +169,14 @@ pub enum LogEvent {
         /// Which check.
         check: HostCheck,
     },
+    /// A process that owns a sealed key file found it at this I-81
+    /// assurance at start (ADR-004 record of lane L16, Q-L16-3).
+    KeyFileAssurance {
+        /// The key file, by its fixed name.
+        file: &'static str,
+        /// The I-81 assurance its copy register gives.
+        assurance: Assurance,
+    },
 }
 
 impl fmt::Debug for LogEvent {
@@ -221,6 +229,11 @@ impl fmt::Debug for LogEvent {
             Self::HostCheckWarned { check } => f
                 .debug_struct("HostCheckWarned")
                 .field("check", &check)
+                .finish(),
+            Self::KeyFileAssurance { file, assurance } => f
+                .debug_struct("KeyFileAssurance")
+                .field("file", &file)
+                .field("assurance", &assurance)
                 .finish(),
         }
     }

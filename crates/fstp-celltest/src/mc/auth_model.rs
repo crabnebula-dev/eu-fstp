@@ -3567,7 +3567,8 @@ pub mod http {
         /// Enrols the model account `account` at the cell account `cell`
         /// with a software passkey, through an invitation that someone
         /// else issued with the token `token`, such as a tenant admin in a
-        /// browser (lane m3/devstack-scenarios). `false` when the model
+        /// browser (lane m3/devstack-scenarios). A split first-admin token
+        /// is both halves joined, first half first. `false` when the model
         /// account is enrolled already or the cell refused the
         /// registration.
         ///
@@ -3579,7 +3580,7 @@ pub mod http {
             &self,
             account: AccountId,
             cell: AccountId,
-            token: &[u8; 32],
+            token: &[u8],
         ) -> Result<bool, NotImplemented> {
             if self.known().people.contains_key(&account) {
                 return Ok(false);

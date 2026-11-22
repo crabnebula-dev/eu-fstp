@@ -776,6 +776,22 @@ pub trait StepUp: Send + Sync {
         action: ActionDigest,
         now: Timestamp,
     ) -> impl Future<Output = Result<StepUpProof, StepUpRequired>> + Send;
+    /// Records the step-up `proof`, which [`StepUp::take`] gave for
+    /// `action` in session `s`, as used at `now` (I-78). An operation
+    /// whose step-up no executed command consumes spends it before it
+    /// acts: `agents.consent` (ADR-013 "Consent page", ADR-026 record of
+    /// lane L12). A proof spent once is refused. The default is the seam
+    /// of a port that cannot record a use: it fails closed.
+    fn spend(
+        &self,
+        s: SessionId,
+        proof: StepUpRef,
+        action: ActionDigest,
+        now: Timestamp,
+    ) -> impl Future<Output = Result<(), PortError>> + Send {
+        let _ = (s, proof, action, now);
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// Accounts: invitations, enrolment and pseudonymous display handles only.

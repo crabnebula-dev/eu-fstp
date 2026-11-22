@@ -5,7 +5,10 @@
 //!   SIGTERM or SIGINT drains it.
 //! - [`first_admin`] starts the same cell with every listener on a loopback
 //!   port the system picks, records the first admin's invitation, writes
-//!   its token once to a new file, and stops (D4).
+//!   its token once to a new file, and stops (D4). With `--email` it also
+//!   records the first admin's login email (ADR-026 "First admin email").
+//! - [`provision_tenant`] starts the cell the same way, records
+//!   `TenantProvisioned`, and stops (ADR-026 "Tenant provisioning").
 //! - [`init_keys`] creates the sealed cell key file at genesis, through the
 //!   dedicated custody entry, and writes the public keys the witness and
 //!   the vault pin (ADR-004 record of L4).
@@ -326,6 +329,7 @@ async fn open_keys(cfg: &FileConfig) -> Result<process::CellKeys, CellError> {
         .await
         .map_err(|e| CellError::Keys(e.0))?;
     keyfile::write_atomic(&path, &file).map_err(|e| CellError::Keys(e.0))?;
+    crate::key_copy::report(&cfg.credentials_dir, &body);
     body.cell_keys().map_err(|e| CellError::Keys(e.0))
 }
 
@@ -395,19 +399,13 @@ fn write_new(path: &Path, text: &[u8]) -> Result<(), CellError> {
         .map_err(|_| cfg_err("output file"))
 }
 
-/// `fstp-cell first-admin <out>` (D4, module documentation): records the
-/// first admin's invitation and writes its token once to the new file
-/// `out`. Run it while the cell is stopped.
-///
-/// # Errors
-///
-/// The first step that fails, as a [`CellError`]. An existing `out` is
-/// refused before the cell starts. A cell whose first admin is invited or
-/// enrolled already refuses the invitation ([`CellError::Store`]).
-pub fn first_admin(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
-    if std::fs::symlink_metadata(out).is_ok() {
-        return Err(cfg_err("output file"));
-    }
+/// Starts the cell of `cfg` with every listener on a loopback port the
+/// system picks, runs `f` on it, and stops it. The commands that act on a
+/// stopped cell run this way (D4, ADR-026 "Tenant provisioning").
+fn on_loopback<T>(
+    cfg: &FileConfig,
+    f: impl AsyncFnOnce(&process::RunningCell<TokioRuntime>) -> Result<T, CellError>,
+) -> Result<T, CellError> {
     let rt = runtime()?;
     let task_rt = rt.clone();
     let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
@@ -420,10 +418,61 @@ pub fn first_admin(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
         };
         let (parts, options) = parts(&task_rt, cfg, keys, listen)?;
         let running = process::start_with(&task_rt, parts, options).await?;
-        let issued = running.issue_first_admin_invitation().await;
-        let written = issued.and_then(|t| write_new(out, token_text(&t).as_bytes()));
+        let done = f(&running).await;
         let stopped = running.shutdown(DRAIN).await;
-        written.and(stopped)
+        let out = done?;
+        stopped.map(|()| out)
+    })
+}
+
+/// `fstp-cell first-admin [--email <address>] <out>` (D4, module
+/// documentation): records the first admin's invitation and writes its
+/// token once to the new file `out`. With `email`, the address becomes
+/// the first admin's login email (ADR-026 "First admin email", decided by
+/// Daniel on 2026-11-21). Run it while the cell is stopped.
+///
+/// # Errors
+///
+/// The first step that fails, as a [`CellError`]. An existing `out` is
+/// refused before the cell starts. A cell whose first admin is invited or
+/// enrolled already refuses the invitation ([`CellError::Store`]), and so
+/// does an address that is another account's login email
+/// ([`CellError::Config`]).
+pub fn first_admin(cfg: &FileConfig, out: &Path, email: Option<&str>) -> Result<(), CellError> {
+    if std::fs::symlink_metadata(out).is_ok() {
+        return Err(cfg_err("output file"));
+    }
+    on_loopback(cfg, async |running| {
+        let token = running.first_admin_invitation(email).await?;
+        write_new(out, token_text(&token).as_bytes())
+    })
+}
+
+/// `fstp-cell provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
+/// (ADR-026 "Tenant provisioning", decided by Daniel on 2026-11-21):
+/// records `TenantProvisioned` in the cell's ledger, so the ADR-021 gate
+/// reads a real tenant part. A SaaS cell needs the agreement versions the
+/// tenant accepted (Q22). A self-hosted cell refuses them. Run it while
+/// the cell is stopped, after `init-keys` and before `first-admin`.
+///
+/// # Errors
+///
+/// [`CellError::Config`] for agreement versions missing on a SaaS cell or
+/// given on a self-hosted one, before the cell starts. Then the first step
+/// that fails, as a [`CellError`]. A ledger that holds a tenant part
+/// refuses it ([`CellError::Store`]).
+pub fn provision_tenant(
+    cfg: &FileConfig,
+    agreements: Option<fstp_engine::AgreementVersions>,
+) -> Result<(), CellError> {
+    match (cfg.core.mode, agreements) {
+        (config::Mode::Saas, None) | (config::Mode::SelfHosted, Some(_)) => {
+            return Err(cfg_err("agreements"));
+        }
+        _ => {}
+    }
+    on_loopback(cfg, async |running| {
+        running.provision_tenant(agreements).await.map(|_| ())
     })
 }
 
@@ -462,15 +511,88 @@ pub fn init_keys(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
     write_new(&out.join("ticket.pub"), line(&ticket).as_bytes())
 }
 
+/// `copy-key-file <out>` (ADR-004 record of lane L16, Q-L16-3): copies
+/// the sealed cell key file to the new file `out` and records it.
+///
+/// # Errors
+///
+/// [`CellError::Keys`] naming the step that failed.
+pub fn copy_key_file(cfg: &FileConfig, out: &Path) -> Result<(), CellError> {
+    let rt = runtime()?;
+    rt.block_on(async {
+        let custody = fstp_custody::KeydCustody::new(&cfg.key_file_keyd_socket)
+            .map_err(|_| cfg_err("key_file_keyd_socket"))?;
+        crate::key_copy::copy_key_file(&custody, cfg.core.cell.0, &cfg.credentials_dir, out)
+            .await
+            .map(|_| ())
+            .map_err(|e| CellError::Keys(e.0))
+    })
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Serve the cell.
     Serve,
-    /// `first-admin <out>`.
-    FirstAdmin(PathBuf),
+    /// `first-admin [--email <address>] <out>`.
+    FirstAdmin {
+        /// The new token file.
+        out: PathBuf,
+        /// The first admin's login email, if any (ADR-026 "First admin
+        /// email").
+        email: Option<String>,
+    },
     /// `init-keys <out dir>`.
     InitKeys(PathBuf),
+    /// `copy-key-file <out>`: an off-host copy of the cell key file,
+    /// recorded in its copy register (ADR-004 record of lane L16).
+    CopyKeyFile(PathBuf),
+    /// `retire-key-file-copy <id>`: every copy of `id` is destroyed.
+    RetireKeyFileCopy(fstp_custody::copies::CopyId),
+    /// `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
+    /// (ADR-026 "Tenant provisioning").
+    ProvisionTenant {
+        /// The agreement versions the tenant accepted (Q22).
+        agreements: Option<fstp_engine::AgreementVersions>,
+    },
+}
+
+/// The longest login email the routes take (`POST /auth/magic/request`).
+const MAX_EMAIL: usize = 254;
+
+/// A login email as the routes take it: 1 to 254 bytes with an `@`. The
+/// refusal names the rule, never the address (R-NF-02).
+fn email_arg(s: &str) -> Result<String, CellError> {
+    if s.is_empty() || s.len() > MAX_EMAIL || !s.contains('@') || s.chars().any(char::is_control) {
+        return Err(cfg_err("email"));
+    }
+    Ok(s.to_owned())
+}
+
+/// One agreement version: a canonical decimal of 1 or more.
+fn version_arg(s: &str) -> Option<u32> {
+    let canonical = !s.is_empty()
+        && s.len() <= 10
+        && s.bytes().all(|b| b.is_ascii_digit())
+        && !s.starts_with('0');
+    if !canonical {
+        return None;
+    }
+    s.parse::<u32>().ok()
+}
+
+/// `<saas_terms>,<dpa>,<sub_processors>`, each a version of 1 or more.
+fn agreements_arg(s: &str) -> Result<fstp_engine::AgreementVersions, CellError> {
+    let parts: Vec<&str> = s.split(',').collect();
+    let [saas_terms, dpa, sub_processors] = parts.as_slice() else {
+        return Err(cfg_err("agreements"));
+    };
+    let v = |p: &str| version_arg(p).ok_or_else(|| cfg_err("agreements"));
+    Ok(fstp_engine::AgreementVersions {
+        saas_terms: v(saas_terms)?,
+        dpa: v(dpa)?,
+        sub_processors: v(sub_processors)?,
+    })
 }
 
 /// Parses the binary's arguments, without the program name.
@@ -479,10 +601,28 @@ pub enum Command {
 ///
 /// [`CellError::Config`] for any other form.
 pub fn parse_args(args: &[String]) -> Result<Command, CellError> {
-    match args {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match args.as_slice() {
         [] => Ok(Command::Serve),
-        [cmd, out] if cmd == "first-admin" => Ok(Command::FirstAdmin(PathBuf::from(out))),
-        [cmd, out] if cmd == "init-keys" => Ok(Command::InitKeys(PathBuf::from(out))),
+        ["first-admin", out] if !out.starts_with("--") => Ok(Command::FirstAdmin {
+            out: PathBuf::from(out),
+            email: None,
+        }),
+        ["first-admin", "--email", email, out] if !out.starts_with("--") => {
+            Ok(Command::FirstAdmin {
+                out: PathBuf::from(out),
+                email: Some(email_arg(email)?),
+            })
+        }
+        ["init-keys", out] => Ok(Command::InitKeys(PathBuf::from(out))),
+        ["provision-tenant"] => Ok(Command::ProvisionTenant { agreements: None }),
+        ["provision-tenant", "--agreements", v] => Ok(Command::ProvisionTenant {
+            agreements: Some(agreements_arg(v)?),
+        }),
+        ["copy-key-file", out] => Ok(Command::CopyKeyFile(PathBuf::from(out))),
+        ["retire-key-file-copy", id] => fstp_custody::copies::CopyId::parse(id)
+            .map(Command::RetireKeyFileCopy)
+            .ok_or_else(|| cfg_err("arguments")),
         _ => Err(cfg_err("arguments")),
     }
 }
@@ -496,8 +636,13 @@ pub fn run_command(command: &Command) -> Result<(), CellError> {
     let cfg = load_config()?;
     match command {
         Command::Serve => serve(&cfg),
-        Command::FirstAdmin(out) => first_admin(&cfg, out),
+        Command::FirstAdmin { out, email } => first_admin(&cfg, out, email.as_deref()),
         Command::InitKeys(out) => init_keys(&cfg, out),
+        Command::ProvisionTenant { agreements } => provision_tenant(&cfg, *agreements),
+        Command::CopyKeyFile(out) => copy_key_file(&cfg, out),
+        Command::RetireKeyFileCopy(id) => {
+            crate::key_copy::retire(&cfg.credentials_dir, *id).map_err(|e| CellError::Keys(e.0))
+        }
     }
 }
 
@@ -572,26 +717,78 @@ mod tests {
 
     use super::*;
 
-    /// D4: the binary takes no argument, `first-admin <file>` or
-    /// `init-keys <dir>`, and refuses any other form.
+    /// D4, ADR-026 "Tenant provisioning" and "First admin email" (decided
+    /// by Daniel on 2026-11-21): the binary takes no argument,
+    /// `first-admin [--email <address>] <file>`, `init-keys <dir>` or
+    /// `provision-tenant [--agreements <a>,<b>,<c>]`, and refuses any
+    /// other form. A refused email or version names its rule and never
+    /// quotes the argument (R-NF-02).
     #[test]
-    fn adr026_binary_takes_three_command_forms() {
+    fn adr026_binary_takes_its_command_forms() {
         let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
         assert_eq!(parse_args(&s(&[])).unwrap(), Command::Serve);
         assert_eq!(
             parse_args(&s(&["first-admin", "/tmp/t"])).unwrap(),
-            Command::FirstAdmin(PathBuf::from("/tmp/t"))
+            Command::FirstAdmin {
+                out: PathBuf::from("/tmp/t"),
+                email: None
+            }
+        );
+        assert_eq!(
+            parse_args(&s(&[
+                "first-admin",
+                "--email",
+                "admin@example.test",
+                "/tmp/t"
+            ]))
+            .unwrap(),
+            Command::FirstAdmin {
+                out: PathBuf::from("/tmp/t"),
+                email: Some("admin@example.test".to_owned())
+            }
         );
         assert_eq!(
             parse_args(&s(&["init-keys", "/tmp/d"])).unwrap(),
             Command::InitKeys(PathBuf::from("/tmp/d"))
         );
+        assert_eq!(
+            parse_args(&s(&["provision-tenant"])).unwrap(),
+            Command::ProvisionTenant { agreements: None }
+        );
+        assert_eq!(
+            parse_args(&s(&["provision-tenant", "--agreements", "1,2,3"])).unwrap(),
+            Command::ProvisionTenant {
+                agreements: Some(fstp_engine::AgreementVersions {
+                    saas_terms: 1,
+                    dpa: 2,
+                    sub_processors: 3,
+                })
+            }
+        );
         for bad in [
             &["first-admin"][..],
+            &["first-admin", "--email"],
+            &["first-admin", "--email", "a@b"],
+            &["first-admin", "--email", "no-at-sign", "/tmp/t"],
+            &["first-admin", "--email", "", "/tmp/t"],
+            &["first-admin", "/tmp/t", "--email", "a@b"],
             &["serve", "x"],
             &["init-keys", "a", "b"],
+            &["provision-tenant", "--agreements"],
+            &["provision-tenant", "--agreements", "1,1"],
+            &["provision-tenant", "--agreements", "1,1,0"],
+            &["provision-tenant", "--agreements", "1,01,1"],
+            &["provision-tenant", "--agreements", "1,1,1,1"],
+            &["provision-tenant", "x"],
         ] {
-            assert!(parse_args(&s(bad)).is_err());
+            match parse_args(&s(bad)) {
+                Err(CellError::Config(ConfigError::Invalid(rule))) => {
+                    for arg in bad.iter().filter(|a| a.len() > 2) {
+                        assert!(!rule.contains(*arg), "R-NF-02: {rule} quotes {arg}");
+                    }
+                }
+                other => panic!("{bad:?}: {other:?}"),
+            }
         }
     }
 

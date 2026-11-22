@@ -20,6 +20,7 @@ The pilot is one host in SaaS mode, with `fstp-keyd` custody and no control plan
 - **Edge.** The `fstp-edge` binary, which routes the tenant domain to the cell's tunnel listener by SNI, and the `fstp-control` binary, which serves it a signed route feed. Section 5 sets both up.
 - **Mail.** An account on a submission relay for proof mail: sign-up proofs, magic links and recovery proofs (D3). A tenant's own relay replaces it once the tenant sets one (ADR-018).
 - **Backups.** Object storage under ADR-012, and `fstp-backup` per self-operated cluster. The section "Backups and restore (operator)" sets it up.
+- **Second custodian.** Another machine with its own `fstp-keyd` entry. It holds its own custody of the ClusterBackup chain and the off-host copies of the pilot's custody entries (section "Backups and restore (operator)").
 - **claude.ai.** A claude.ai plan that allows custom connectors, if staff use claude.ai. The claude.ai trace of D9 is still open, so claude.ai is not yet verified against a production cell.
 
 ## 2. Configure the cell
@@ -53,7 +54,7 @@ Notes on the members:
 - `listen.health` must be a loopback address.
 - `assets_dir` holds `auth/` (the compiled auth pages, with `shell.html` and the stylesheets beside them) and `app/` (the packed journey UI with its `asset-manifest.json`). Without it, the cell serves the API, `/mcp` and the OAuth endpoints with an empty `/app` page and no sign-in pages.
 - `mail.address` may pin the relay's socket address in place of a DNS lookup. Interim, pending Daniel: the public address and port 465 rules of ADR-018 then do not apply. Leave it out for a public relay.
-- `organisation_active` is an interim reading, pending Daniel. A pilot cell records no tenant provisioning, since no control plane runs. Without this member, the ADR-021 gate refuses every programme operation, so no draft can be prepared.
+- `organisation_active` stands for the organisation's activation on a ledger with no tenant part. Daniel decided on 2026-11-21 that `fstp-cell provision-tenant` (section 3, "Provision the tenant") replaces it. Until a provisioned pilot can be activated, keep the member and do not provision (interim, pending Daniel, ADR-026 row "Organisation port until onboarding runs"). Without it, the ADR-021 gate refuses every programme operation, so no draft can be prepared.
 
 The credentials directory holds these files, readable by the cell's OS user only:
 
@@ -93,6 +94,22 @@ FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell
 ```
 
 Each start opens the key file through its custody entry, draws a new ledger key generation, and rewrites the file before it seals anything. The first start on an empty database creates the keystore. The cell is ready when `GET /healthz` on the health listener answers 200. SIGTERM drains it. A refused configuration exits with status 2, and any other failure with status 1. Log lines name a rule, never a secret.
+
+### Provision the tenant
+
+`fstp-cell provision-tenant` records the tenant part of the cell's ledger (`TenantProvisioned`), as the control plane does on a SaaS cell. The ADR-021 setup gate then reads the real organisation: not active until onboarding completes and a second tenant admin approves the activation. The design is ADR-026 "Tenant provisioning", decided by Daniel on 2026-11-21.
+
+**Not yet on a pilot.** A provisioned pilot cannot be activated today, so it could prepare no programme draft. No second tenant admin can join the tenant part, the cell's onboarding prober fails every probe, and no pilot vault route verifies an admin's identity. Until those exist, skip this step and keep `organisation_active` (section 2). Once a cell is provisioned, `organisation_active` has no effect on it.
+
+When the step applies, stop the cell and run it after `init-keys` and before `first-admin`:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell provision-tenant --agreements 1,1,1
+```
+
+- `--agreements` names the versions of the SaaS terms, the data processing agreement and the sub-processor list that the tenant accepted, in that order. A SaaS cell needs it. A self-hosted cell refuses it. The agreement texts are `TODO(legal)`.
+- The command draws the first admin's account. `first-admin` then invites exactly that account.
+- It refuses a ledger that holds a tenant part, so it records once. It writes no output. Exit status 0 means the tenant part is recorded.
 
 ## 3a. Configure and start the vault
 
@@ -191,17 +208,17 @@ An identity whose attribute tuple the vault never stored cannot be erased this w
 
 ## 4. Create the first admin
 
-Stop the cell first. Then run:
+Stop the cell first. Then run, with the first admin's own address:
 
 ```sh
-FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell first-admin /root/first-admin.token
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell first-admin --email admin@grants.example.eu /root/first-admin.token
 ```
 
-The command starts the cell with its listeners on loopback, records the first admin's invitation, and writes the token once to the new file, with mode 0600 (D4). On a SaaS cell the file holds two lines, one for each half. Hand each half to the first admin through a different staff channel. The command refuses an existing file, and a cell whose first admin is already invited or enrolled. Start the cell again afterwards.
+The command starts the cell with its listeners on loopback, records the first admin's login email and invitation, and writes the token once to the new file, with mode 0600 (D4). The address is sealed and fingerprinted as every login email is (ADR-026 "First admin email", decided by Daniel on 2026-11-21). `--email` is optional. On a SaaS cell the file holds two lines, one for each half. Hand each half to the first admin through a different staff channel. The command refuses an existing file, and a cell whose first admin is already invited or enrolled. Start the cell again afterwards.
 
 The first admin opens `https://<host>/auth/invite#<first half><second half>` and enrols a passkey. The first admin then invites the other staff from the platform.
 
-The first admin has no login email after this step, so recovery by email does not apply to that account. A second tenant admin can approve its recovery.
+With `--email`, recovery by email works for the first admin from day one. Before the first admin enrols, the address opens nothing: no magic link and no recovery case. Only both token halves enrol the first admin. Without `--email`, the first admin has no login email, and a second tenant admin approves its recovery. The command refuses an address that is another account's login email.
 
 ## 5. Run the edge
 
@@ -325,7 +342,7 @@ On claude.ai, add a custom connector with the same URL, and upload the skill as 
 
 In Claude Code, run `/mcp`, choose `fstp` and sign in. Your browser opens the cell's consent page. It shows the agent's name as unverified text, the host the browser returns to, and each permission in plain words.
 
-Sign in with your passkey if the page asks. Choose **Approve**. The cell asks for a passkey step-up, since connecting an agent links a new device. A magic-link session cannot approve.
+Sign in with your passkey if the page asks. Choose **Approve**. The cell asks for a passkey step-up, since connecting an agent links a new device. Each step-up approves one consent only (I-78). A magic-link session cannot approve.
 
 ## 8. Work with Claude and confirm in the platform
 
@@ -337,7 +354,7 @@ Access tokens live 10 minutes. Claude refreshes them while your grant lasts, als
 
 ## Checked by
 
-`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` and `i19_route_feed_e2e.rs` run section 5: the `fstp-control route-feed` and `fstp-edge` binaries from their files in front of that binary. Routes change with `fstp-control route` while the edge runs. `fstp-control` restarts with its table, and the edge restarts from its signed cache. `tools/devstack/run.sh external-cell --route-feed` starts the route feed for a manual check. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` runs the backup section: a base backup and WAL from a configuration file, and two restores to the same ledger head. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
+`crates/fstp-celltest/tests/prod_mcp_e2e.rs` runs sections 3, 4, 7 and 8 against the `fstp-cell` binary over local PostgreSQL. `crates/fstp-celltest/tests/g12_vault_run_e2e.rs` runs section 3a: the `fstp-vault` binary from its file beside the `fstp-cell` binary, with a restart of the vault and a vault answer that reaches the cell. `crates/fstp-celltest/tests/i19_edge_binary_e2e.rs` and `i19_route_feed_e2e.rs` run section 5: the `fstp-control route-feed` and `fstp-edge` binaries from their files in front of that binary. Routes change with `fstp-control route` while the edge runs. `fstp-control` restarts with its table, and the edge restarts from its signed cache. `tools/devstack/run.sh external-cell --route-feed` starts the route feed for a manual check. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` runs the backup section: a base backup and WAL from a configuration file, and two restores to the same ledger head. `crates/fstp-celltest/tests/l12_cell_decisions_pg.rs` runs the tenant provisioning of section 3 and the first admin email of section 4 on a world cell. `tools/devstack/run.sh external-cell` starts the same stack for a manual check with Claude Code.
 
 ## Backups and restore (operator)
 
@@ -395,7 +412,7 @@ FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup init-keys
 
 It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` with mode 0600. It refuses to overwrite an existing key file.
 
-The root of that key lives in this host's `fstp-keyd`. If the host and its key volume are lost, no backup of this cluster opens again. Keep the key volume of that `fstp-keyd` entry, and `cluster-backup.key`, recoverable off the host by the procedure for custody volumes. Interim, pending Daniel: the pilot has no second custody for this root.
+The root of that key lives in this host's `fstp-keyd`. Decided by Daniel on 2026-11-21: a backup must still open after the loss of this host. Two measures carry that, and the pilot uses both. A second custodian on another machine holds its own custody of the ClusterBackup chain ("Second custodian" below). An off-host sealed copy of each `fstp-keyd` entry keeps the App and Vault roots ("Off-host copy of a custody entry" below). The rows inside a backup open only with those roots.
 
 ### Archive WAL continuously
 
@@ -439,13 +456,96 @@ For archive recovery driven by PostgreSQL itself, `restore_command = 'FSTP_BACKU
 
 Exit status: 0 on success, 2 for a refused configuration or argument, 1 for any other failure. No line names a secret.
 
+### Second custodian
+
+Written by lane L16 `prod/backup-custody` (ADR-012 record of lane L16). Every item waits for Daniel unless it says otherwise.
+
+The second custodian is another machine, outside the pilot host. It runs its own `fstp-keyd` entry with its own key volume, passphrase and console socket. It never receives a root of the pilot host. It creates its own ClusterBackup root, and the pilot host seals the group secret to a key that root protects.
+
+Set up the second host:
+
+- An `fstp-keyd` entry as on the pilot (section 1), on a Linux ext4 or XFS volume.
+- `fstp-backup` and a configuration file with the pilot's `cluster` and `object_store`, and `keyd_socket` set to this host's console socket.
+- The object store credentials. Give this host a read-only credential where the service allows it.
+- A copy of the pilot's `cluster-backup.key`. It holds the public key and a secret sealed under the pilot's root only, so it opens nothing here by itself.
+
+The key ceremony, as root on each host:
+
+1. On the second host, run `FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup custodian-init`. It creates this host's ClusterBackup root and writes `custodian.key` and `custodian.pub` into the credentials directory. It refuses to overwrite either.
+2. Carry `custodian.pub` to the pilot host. It holds no secret. Compare `sha256sum custodian.pub` on both hosts over a second channel, such as a phone call between the two operators.
+3. On the pilot host, run `FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup custodian-escrow /root/custodian.pub /root/cluster-backup.escrow`. It opens the group secret through the console socket and seals it to the second custodian's key. It refuses a request for another cluster.
+4. Carry `cluster-backup.escrow` to the second host's credentials directory, with mode 0600. It is sealed to that host's key, so only that host's `fstp-keyd` opens it.
+5. Run a restore drill on the second host into a scratch directory (section "Restore after the loss of the host", step 2). Delete the escrow copy from the pilot host once the drill passes.
+
+On a host whose credentials directory holds `cluster-backup.escrow`, `restore` and `wal-restore` open `custodian.key` through the console socket and then the escrow. They check that it names the group key of `cluster-backup.key`.
+
+The second custodian holds only a ClusterBackup root. ClusterBackup is never rotated or destroyed by an erasure, so no erased key is ever held there (I-81).
+
+### Off-host copy of a custody entry
+
+Written by lane L16 (ADR-004 record of lane L16). Every item waits for Daniel unless it says otherwise.
+
+Each `fstp-keyd` entry of the pilot gets an off-host sealed copy: the cell's entry, the cell key file's entry and the vault's entry. A copy holds the key table and the key files of live keys, as sealed as on the volume, inside one more seal under the entry's passphrase. It also carries the entry's usage log, so reconciliation after a restore covers the time before the loss. It never holds a root in the clear (I-80). Only `fstp-keyd` makes or opens it.
+
+Make a copy while the entry is stopped, as root:
+
+```sh
+systemctl stop fstp-keyd
+fstp-keyd export /var/lib/fstp-keyd /root/keyd-cell-2026-11-21.fkx
+systemctl start fstp-keyd
+```
+
+- The command reads the passphrase as the service does: the systemd credential, or else `systemd-ask-password`. It refuses while the entry serves.
+- It writes the copy with mode 0600 and refuses an existing file. Move it off the host at once, for example to the second custodian.
+- The copy's id stands in clear in bytes 26 to 41 of the file: `od -An -tx1 -j26 -N16 /root/keyd-cell-2026-11-21.fkx | tr -d ' \n'`. Note it beside the copy.
+- After each erasure, make a new copy, destroy every older copy, and retire each older id (below). Decided by Daniel on 2026-11-21. A copy made before an erasure still holds the erased key, and whoever holds it with the passphrase can open that key outside our tools.
+
+The entry records each copy in `exports.log` on its volume. While a copy that is not retired holds a key that has since been destroyed, the entry starts at reduced I-81 assurance with the reason "an off-host copy holds a destroyed key". Once every copy of an old id is destroyed, record it:
+
+```sh
+fstp-keyd retire-export /var/lib/fstp-keyd <copy id>
+```
+
+The entry reports full assurance again at its next start, if nothing else reduces it.
+
+### Restore after the loss of the host
+
+On a fresh host, as root, in this order:
+
+1. Install each `fstp-keyd` entry with the passphrase of the entry it replaces. Import its newest copy onto an empty key volume: `fstp-keyd import /root/keyd-cell-2026-11-21.fkx /var/lib/fstp-keyd`. A wrong passphrase, a changed byte and a volume that already holds a key table are refused, and nothing is written.
+2. Start the entries. An imported entry is held: it answers only unwraps on the backup chains, so `fstp-backup restore` runs and no cell or vault opens a key. Run `fstp-backup restore` for each cluster (section "Restore"). If the pilot host's ClusterBackup root is gone with its entry, run the restore on the second custodian instead, and carry the restored directory over.
+3. Start PostgreSQL on each restored directory, without the cell and the vault. Read the current epoch of each erasable chain as the PostgreSQL superuser over the local socket: `SELECT chain, max(epoch) FROM keystore.root WHERE state = 1 GROUP BY chain;` in `c_<cell>` gives the App chain (1), and in `v_<cell>` the Vault chain (2).
+4. Stop each entry and release it with those epochs, for example `fstp-keyd release /var/lib/fstp-keyd app=7` for the cell's entry and `fstp-keyd release /var/lib/fstp-keyd vault=3` for the vault's. Release destroys every older epoch of each named chain. The cell key file's entry holds no erasable chain, so release it with no epoch.
+5. If release refuses, the copy is older than the last erasure. It has destroyed the erased epochs and keeps the hold. The data under the current epoch does not open from this copy. Import a newer copy onto a fresh volume and release again.
+6. Start the entries, the cell and the vault. Then follow the restore rule of ADR-012: each verifies its chain against the witness, and lost receipted entries are reported, never hidden.
+
+### Copies of the cell key file and the witness receipt key file
+
+Decided by Daniel on 2026-11-21 (ADR-004 record of lane L16, Q-L16-3). The cell key file `cell-keys.sealed` and the witness receipt key file `receipt.key` live in credentials directories, outside the key volumes. A restore needs copies of them too. Make each copy with its owner's command, as root:
+
+```sh
+FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell copy-key-file /root/cell-keys-2026-11-21.sealed
+FSTP_WITNESS_CONFIG=/etc/fstp/witness.json fstp-witness copy-key-file /root/receipt-2026-11-21.key
+```
+
+- Each command opens the file through its owner's `fstp-keyd` entry, writes the sealed bytes with mode 0600, and records the copy in `cell-keys.copies` or `receipt.copies` beside the file. Copy that register off the host with the copy.
+- Each command also writes the copy's id as 32 hex digits to `<out>.id`, for example `/root/cell-keys-2026-11-21.sealed.id`. Keep it beside the copy.
+- At each start the owner compares the register with its live keys. While a copy that is not retired holds a key it has since replaced, it logs `key_file_assurance` at reduced assurance, with the reason "an off-host copy of a key file holds a replaced key".
+- Once every copy of an id is destroyed, record it with `fstp-cell retire-key-file-copy <id>` or `fstp-witness retire-key-file-copy <id>`.
+- On the fresh host, put each copy back under its file name in the owner's credentials directory before step 6.
+
 ### What is not built yet
 
 - A second provider (Q25). One `object_store` only.
 - Keystore snapshots written by `fstp-cell` and `fstp-vault` (ADR-012 "Keystore snapshots").
-- Rotation of the ClusterBackup root, and a key held outside this host.
+- Rotation of the ClusterBackup root and group. A new group generation needs a new escrow for each custodian.
+- A copy bound to a guard key that the second custodian destroys at each erasure. Decided by Daniel on 2026-11-21: a release item, built before a release (ADR-004 record of lane L16, Q-L16-1).
 - Declared restores at the witness and the monthly restore drill.
 
 ### Checked by
 
 `crates/fstp-backup/tests/s3_agent.rs` runs the S3 client and the agent against a fake S3 that verifies every SigV4 signature on its own. `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs` takes a base backup of a PostgreSQL world from a configuration file, archives its WAL, restores two copies and starts PostgreSQL on each. It checks the ledger head, that no stored object holds plaintext (R-CR-01), and that erased texts stay unreadable from the restored keystores (I-81).
+
+`crates/fstp-backup/tests/second_custodian.rs` runs the key ceremony between two custodies and a restore through the second custodian after the first is dropped (I-80, I-81). `crates/fstp-keyd/tests/offhost_copy.rs` runs `fstp-keyd` on a volume, copies it, loses the volume and imports the copy onto a fresh one. It checks the hold and the release, that an older copy is re-erased before anything serves, the register's reduced assurance, and that a wrong passphrase or a changed byte is refused.
+
+The copy test also checks that a restored entry answers the usage records made before the copy (Q-L16-2). `crates/fstp-custody/tests/copy_register.rs`, and the `key_copy` tests of `fstp-cell` and `fstp-witness`, check that a copy of a key file lowers the owner's assurance once the owner replaces a key the copy holds, until the copy is retired (Q-L16-3).

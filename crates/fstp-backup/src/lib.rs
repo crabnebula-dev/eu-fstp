@@ -16,6 +16,7 @@
 pub mod agent;
 pub mod config;
 mod container;
+pub mod custodian;
 pub mod index;
 pub mod keyfile;
 pub mod s3;
@@ -242,6 +243,18 @@ pub enum Command {
         /// index.
         backup: Option<([u8; 16], u64)>,
     },
+    /// `custodian-init`, on a second custodian: create `custodian.key`
+    /// and `custodian.pub` in the credentials directory (ADR-012 record
+    /// of lane L16).
+    CustodianInit,
+    /// `custodian-escrow <request> <out>`, on the first host: seal the
+    /// group secret to the custodian key of the request file.
+    CustodianEscrow {
+        /// The request file of the second custodian.
+        request: PathBuf,
+        /// The new escrow file.
+        out: PathBuf,
+    },
 }
 
 /// Parses the binary's arguments, without the program name.
@@ -274,6 +287,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
                 backup: Some((id, size)),
             })
         }
+        [c] if c == "custodian-init" => Ok(Command::CustodianInit),
+        [c, request, out] if c == "custodian-escrow" => Ok(Command::CustodianEscrow {
+            request: PathBuf::from(request),
+            out: PathBuf::from(out),
+        }),
         _ => Err(usage),
     }
 }
@@ -309,14 +327,37 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
         let bytes = rt.block_on(keyfile::create(&custody, cfg.cluster))?;
         return write_key_file(&path, &bytes);
     }
+    if *command == Command::CustodianInit {
+        let key_path = cfg.credentials_dir.join(custodian::CUSTODIAN_KEY_FILE);
+        let req_path = cfg.credentials_dir.join(custodian::REQUEST_FILE);
+        for p in [&key_path, &req_path] {
+            if std::fs::symlink_metadata(p).is_ok() {
+                return Err(BackupError::Config(custodian::CUSTODIAN_KEY_FILE));
+            }
+        }
+        let custody = console(&cfg)?;
+        let (key, request) = rt.block_on(custodian::init(&custody, cfg.cluster))?;
+        write_key_file(&key_path, &key)?;
+        return write_key_file(&req_path, &request);
+    }
+    if let Command::CustodianEscrow { request, out } = command {
+        let request = read_small(request, custodian::REQUEST_LEN)?;
+        let key = keyfile::decode(&config::read_credential(
+            &cfg.credentials_dir,
+            keyfile::KEY_FILE,
+        )?)?;
+        let custody = console(&cfg)?;
+        let escrow = rt.block_on(custodian::escrow(&custody, &key, &request))?;
+        return write_key_file(out, &escrow);
+    }
     let agent = agent::Agent::from_config(rt.clone(), &cfg)?;
     rt.block_on(async {
         match command {
-            Command::InitKeys => Ok(()),
+            Command::InitKeys | Command::CustodianInit | Command::CustodianEscrow { .. } => Ok(()),
             Command::BaseBackup => agent.base_backup(&cfg).await.map(|_| ()),
             Command::WalArchive { path, name } => agent.archive(path, name).await.map(|_| ()),
             Command::WalRestore { name, path } => {
-                let secret = agent.open_secret(&console(&cfg)?).await?;
+                let secret = open_group_secret(&agent, &cfg).await?;
                 agent.restore_wal(&secret, name, path).await
             }
             Command::Restore { data_dir, backup } => {
@@ -329,11 +370,38 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
                     },
                     None => index::newest(&cfg.state_dir, cfg.cluster)?,
                 };
-                let secret = agent.open_secret(&console(&cfg)?).await?;
+                let secret = open_group_secret(&agent, &cfg).await?;
                 agent.restore(&secret, &entry, data_dir).await.map(|_| ())
             }
         }
     })
+}
+
+/// The group secret for a restore command, through the console socket.
+/// On a second custodian, whose credentials directory holds the escrow,
+/// it opens the custodian key and then the escrow (ADR-012 record of lane
+/// L16). Otherwise it opens the key file under this host's root.
+async fn open_group_secret<R: fstp_rt::Runtime>(
+    agent: &agent::Agent<R>,
+    cfg: &config::FileConfig,
+) -> Result<fstp_crypto::hybrid_kem::HybridSecretKey, BackupError> {
+    let custody = console(cfg)?;
+    let escrow = cfg.credentials_dir.join(custodian::ESCROW_FILE);
+    if std::fs::symlink_metadata(&escrow).is_err() {
+        return agent.open_secret(&custody).await;
+    }
+    let escrow = read_small(&escrow, custodian::MAX_ESCROW_LEN)?;
+    let key = config::read_credential(&cfg.credentials_dir, custodian::CUSTODIAN_KEY_FILE)?;
+    agent.open_escrow(&custody, &key, &escrow).await
+}
+
+/// Reads a file of at most `max` bytes.
+fn read_small(path: &std::path::Path, max: usize) -> Result<Vec<u8>, BackupError> {
+    let meta = std::fs::metadata(path).map_err(|_| BackupError::Io("read a ceremony file"))?;
+    if meta.len() > u64::try_from(max).unwrap_or(u64::MAX) {
+        return Err(BackupError::KeyFile("ceremony file length"));
+    }
+    std::fs::read(path).map_err(|_| BackupError::Io("read a ceremony file"))
 }
 
 /// Writes a new key file with mode 0600.
@@ -361,9 +429,21 @@ mod tests {
         v.iter().map(|x| (*x).to_owned()).collect()
     }
 
-    /// ADR-012 record of lane L10: the five command forms, and no other.
+    /// ADR-012 records of lanes L10 and L16: the seven command forms, and
+    /// no other.
     #[test]
-    fn adr012_binary_takes_five_command_forms() {
+    fn adr012_binary_takes_seven_command_forms() {
+        assert_eq!(
+            parse_args(&s(&["custodian-init"])).unwrap(),
+            Command::CustodianInit
+        );
+        assert_eq!(
+            parse_args(&s(&["custodian-escrow", "/r", "/o"])).unwrap(),
+            Command::CustodianEscrow {
+                request: PathBuf::from("/r"),
+                out: PathBuf::from("/o")
+            }
+        );
         assert_eq!(parse_args(&s(&["init-keys"])).unwrap(), Command::InitKeys);
         assert_eq!(
             parse_args(&s(&["base-backup"])).unwrap(),
@@ -399,6 +479,8 @@ mod tests {
             &["restore", "/d", "nothex", "1"],
             &["restore", "/d", &"ab".repeat(16)],
             &["serve"],
+            &["custodian-init", "x"],
+            &["custodian-escrow", "/r"],
         ] {
             assert_eq!(
                 parse_args(&s(bad)).unwrap_err(),

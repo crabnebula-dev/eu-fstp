@@ -2575,10 +2575,14 @@ async fn agent<P: Seams>(
 /// `agents.consent` (ADR-013 "Consent", I-78): the user approves a
 /// consent of the authorize flow by its handle. Approving links a device,
 /// so the call is web only and needs a fresh step-up bound to this
-/// request, whose digest covers the handle. The token port then attests
-/// that step-up to the authorisation server of `fstp-oauth`, which checks
-/// it against the consent's own digest and issues the code. A handle the
-/// server does not hold is refused under `Input`, after the step-up.
+/// request, whose digest covers the handle. No executed command consumes
+/// that step-up, so the call spends it first, through the step-up port:
+/// one step-up approves one consent (ADR-026 record of lane L12, decided
+/// by Daniel on 2026-11-21). A spend that fails approves nothing. The
+/// token port then attests the step-up to the authorisation server of
+/// `fstp-oauth`, which checks it against the consent's own digest and
+/// issues the code. A handle the server does not hold is refused under
+/// `Input`, after the step-up.
 async fn consent<P: Seams>(
     call: &Call<'_, P>,
     op: &Op,
@@ -2602,6 +2606,21 @@ async fn consent<P: Seams>(
             return Ok(ask);
         }
     };
+    let Some(session) = call.caller.session else {
+        return Err(call.refuse(ApiError::refused(ErrorCode::LoginStrength, "I-78")));
+    };
+    match call
+        .ports
+        .step_up()
+        .spend(session, proof, call.digest, call.now)
+        .await
+    {
+        Ok(()) => {}
+        Err(PortError::Refused) => {
+            return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "I-78")));
+        }
+        Err(e) => return Err(call.refuse(port_failed(e, "I-78"))),
+    }
     let approval = crate::port::ConsentApproval {
         account,
         handle,

@@ -237,4 +237,65 @@ impl<R: Runtime, V: Send + Sync> StepUp for CellStepUp<R, V> {
         }
         Err(StepUpRequired)
     }
+
+    /// I-78, ADR-026 record of lane L12: spends the step-up `proof` of an
+    /// operation that executes no command, `agents.consent`. The gate
+    /// admits `ApproveAgentConsent` in the step-up's own session, for the
+    /// request digest `action`, with every check of a web command: the
+    /// session, a phishing-resistant session for `LinkDevice`, a strong
+    /// step-up of this session for this digest, within P-71 and unused.
+    /// Its batch records the step-up as consumed, and the store checks
+    /// freshness and use again at commit. A spent step-up is refused.
+    async fn spend(
+        &self,
+        s: SessionId,
+        proof: StepUpRef,
+        action: ActionDigest,
+        now: Timestamp,
+    ) -> Result<(), PortError> {
+        let session = session_bytes(s);
+        let id = proof.0.to_be_bytes();
+        let (account, _) = self.0.stepups.of(session).ok_or(PortError::Refused)?;
+        let state = self.0.engine.state();
+        let row = self
+            .0
+            .backend
+            .sessions_of(account)
+            .await
+            .map_err(|_| PortError::Unavailable)?
+            .into_iter()
+            .find(|r| r.id == session && r.account == account)
+            .ok_or(PortError::Refused)?;
+        let view = SessionView {
+            id: row.id,
+            account: row.account,
+            method: row.method,
+            started: row.started,
+            last_used: row.last_used,
+        };
+        let stepup = super::engine::stepup_view_of(&self.0, &state, id).await?;
+        let command = fstp_cell_core::CellCommand::Ops(
+            fstp_cell_core::ops::OpsCommand::ApproveAgentConsent {
+                request_digest: action.0,
+            },
+        );
+        let command_id: [u8; 16] =
+            fstp_crypto::random_array().map_err(|_| PortError::Unavailable)?;
+        let admitted = gate::admit_api_command(
+            &state,
+            &view,
+            Action::Command(command),
+            command_id,
+            action.0,
+            stepup.as_ref(),
+            now,
+            &POLICY,
+        )
+        .map_err(|_| PortError::Refused)?;
+        match self.0.engine.execute(admitted).await {
+            Ok(_) => Ok(()),
+            Err(crate::engine::EngineError::Exec(_)) => Err(PortError::Refused),
+            Err(_) => Err(PortError::Unavailable),
+        }
+    }
 }

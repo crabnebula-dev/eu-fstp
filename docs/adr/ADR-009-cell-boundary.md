@@ -245,6 +245,19 @@ pub enum AssessorDestination {
 - Tests, before the code: `i16_assessor_egress_has_no_payment_destination` enumerates `AssessorDestination`, and `b4_assessor_connector_refuses_every_address_outside_its_destination`.
 - `TODO(legal)`: the inference provider as a sub-processor and the DPIA (`gdpr.md`) before a production tenant enables P-21.
 
+### Amendment: DNS resolver (ADR-027, accepted by Daniel on 2026-11-21)
+
+ADR-027 drafted this amendment for the sending domain probe of the production creator shell. Daniel accepted it on 2026-11-21 (`docs/handoff/production-mcp-design.md` section 2.4, decision 9). `Destination` of `fstp-cell` gains one member:
+
+```rust
+DnsResolver { addr: SocketAddr },   // the configured resolver, TCP port 53 only (ADR-027)
+```
+
+- It carries TXT questions for the SPF, DKIM and DMARC records of the tenant's sending domain only. It reaches no payment service and names no platform account (I-16).
+- It takes an address, not a host name, so no CrabNebula host is reached through it (I-38).
+- R-NF-09 is not claimed for it. DNS over TCP to a resolver is neither encrypted nor authenticated. A spoofed answer can only make a probe pass or fail.
+- `i16_cell_egress_has_no_payment_destination`, `i38_only_egress_reaches_crabnebula_hosts` and `adr009_cell_egress_connect_builds_the_closed_set_only` enumerate it.
+
 ## Vault origin
 
 Answered (Q7 A). The vault origin is `https://id.<cell host>`, a web origin of the vault, separate from the application origin and inside the cell (`overview.md`).

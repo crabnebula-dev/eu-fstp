@@ -8,8 +8,12 @@
 //! assembles the compiled web assets (`web/dist/auth` with the shell and
 //! stylesheets of `web/src/auth`, and `web/dist/app`) into one assets
 //! directory. The world then writes `cell.json` and the credentials
-//! directory, runs `fstp-cell first-admin`, and starts `fstp-cell` with
-//! `FSTP_CELL_CONFIG` (`fstp_celltest::world::World::start_external`).
+//! directory, runs `fstp-cell first-admin --email` with the first admin's
+//! synthetic login email, and starts `fstp-cell` with `FSTP_CELL_CONFIG`
+//! (`fstp_celltest::world::World::start_external`). It runs no
+//! `fstp-cell provision-tenant`: a provisioned pilot cannot be activated
+//! yet (ADR-026 row "Organisation port until onboarding runs"), so the
+//! configuration keeps `organisation_active`.
 //!
 //! It prints the lines of the default mode, and before them `config
 //! <path>`: the configuration file the binary reads. SIGTERM stops the
