@@ -25,6 +25,7 @@ fstp-rt.workspace = true
 # the async lock the service holds its vault under.
 fstp-edge.workspace = true
 fstp-witness.workspace = true
+fstp-backup.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

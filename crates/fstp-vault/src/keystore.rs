@@ -960,6 +960,8 @@ pub(crate) enum Change {
     DropTuple([u8; 16]),
     /// Inserts or replaces the intent row.
     PutIntent(IntentRow),
+    /// Deletes an intent row (a restore, ADR-012 record of lane L17).
+    DropIntent([u8; 16]),
 }
 
 /// Writes `changes` in one transaction: all of them, or none.
@@ -1076,6 +1078,14 @@ pub(crate) async fn apply_changes<R: Runtime>(
             Change::DropTuple(id) => {
                 tx.execute(
                     "DELETE FROM keystore.identity_tuple WHERE identity_id = $1",
+                    &[&Uuid::from_bytes(*id)],
+                )
+                .await
+                .map_err(db)?;
+            }
+            Change::DropIntent(id) => {
+                tx.execute(
+                    "DELETE FROM keystore.erasure_intent WHERE id = $1",
                     &[&Uuid::from_bytes(*id)],
                 )
                 .await

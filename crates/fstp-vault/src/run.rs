@@ -9,6 +9,9 @@
 //! - [`erase_identity`] erases the identity of one account on the Vault
 //!   chain, one batch of design section 3.5, while the vault is stopped
 //!   (ADR-004 record of lane L11).
+//! - [`restore_keystore`] keeps the newest keystore copy that opens after
+//!   a restore: the restored rows or the newest snapshot (ADR-012 record
+//!   of lane L17).
 //!
 //! Every start reads the credentials directory by fixed name
 //! ([`crate::config::CREDENTIAL_FILES`]), runs the I-83 start check over
@@ -36,6 +39,9 @@ use crate::erasure::{ChainJournal, Registrar, Runner};
 use crate::keystore::{self, IdentityKeys, VaultKeys};
 use crate::origin::Vault;
 use crate::service::{self, VaultHandle, VaultParts};
+use fstp_backup::keyfile;
+use fstp_backup::s3::S3Client;
+use fstp_backup::snapshot::{SnapshotKey, SnapshotOwner, Snapshots};
 use fstp_keys::erasure::Phase;
 
 /// The environment variable that names the configuration file.
@@ -342,7 +348,7 @@ pub async fn resume_keystore<R: Runtime, C: Custody>(
 ) -> Result<(Registrar<R>, VaultKeys), VaultError> {
     let mut client = keys_client(rt, cfg, creds).await?;
     lock_keystore(&mut client).await?;
-    let mut runner = Runner::load(client, cfg.cell, custody).await?;
+    let mut runner = load_runner(rt, cfg, client, custody).await?;
     if runner.phase() != Phase::Idle {
         let (mut vault, mut journal) = erasure_journal(
             rt,
@@ -358,6 +364,113 @@ pub async fn resume_keystore<R: Runtime, C: Custody>(
     }
     let keys = runner.service_keys()?;
     Ok((runner.into_registrar()?, keys))
+}
+
+/// The vault's snapshot key file `vault-snapshot.key` in the credentials
+/// directory of `cfg`, created through `custody` when it is missing
+/// (ADR-004 record of lane L17, row "Genesis"): no operator step.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] when custody refuses the create, and
+/// [`VaultError::Config`] for a file that does not read, write or decode.
+pub async fn snapshot_key<C: Custody>(
+    cfg: &VaultConfig,
+    custody: &C,
+) -> Result<SnapshotKey, VaultError> {
+    let owner = SnapshotOwner::Vault;
+    let path = cfg.credentials_dir.join(owner.key_file_name());
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let b = SnapshotKey::create(custody, cfg.cell, owner)
+                .await
+                .map_err(|_| VaultError::Unavailable("the vault snapshot key"))?;
+            write_new(&path, &b)?;
+            b
+        }
+        Err(_) => return Err(cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE)),
+    };
+    SnapshotKey::decode(&bytes, cfg.cell, owner)
+        .map_err(|_| cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE))
+}
+
+/// The keystore snapshot writer of `cfg`, or `None` when no object store
+/// is configured (ADR-012 record of lane L17, row "Fallback"). The
+/// object store credentials come from the credentials directory by fixed
+/// name, as for `fstp-backup`.
+///
+/// # Errors
+///
+/// The errors of [`snapshot_key`], and [`VaultError::Config`] for a
+/// refused object store credential.
+pub async fn snapshots_of<R: Runtime, C: Custody>(
+    rt: &R,
+    cfg: &VaultConfig,
+    custody: &C,
+) -> Result<Option<Snapshots>, VaultError> {
+    let Some(endpoint) = cfg.object_store.clone() else {
+        return Ok(None);
+    };
+    let dir = &cfg.credentials_dir;
+    let credentials =
+        fstp_backup::config::s3_credentials(dir).map_err(|_| cfg_err("s3-access-key-id"))?;
+    let ca = fstp_backup::config::s3_ca(dir).map_err(|_| cfg_err("s3-ca.pem"))?;
+    let client = S3Client::new(rt.clone(), endpoint, credentials, ca.as_deref())
+        .map_err(|_| cfg_err("s3-ca.pem"))?;
+    let key = snapshot_key(cfg, custody).await?;
+    Ok(Some(Snapshots::new(Arc::new(client), key)))
+}
+
+/// The runner of `client` with the snapshot writer of `cfg`, if any.
+async fn load_runner<'c, R: Runtime, C: Custody>(
+    rt: &R,
+    cfg: &VaultConfig,
+    client: Client<R>,
+    custody: &'c C,
+) -> Result<Runner<'c, R, C>, VaultError> {
+    let snapshots = snapshots_of(rt, cfg, custody).await?;
+    let runner = Runner::load(client, cfg.cell, custody).await?;
+    Ok(match snapshots {
+        Some(s) => runner.with_snapshots(s),
+        None => runner,
+    })
+}
+
+/// `fstp-vault restore-keystore [<snapshot id>]` over `custody` (ADR-012
+/// record of lane L17, row "Restore command"), with the vault stopped:
+/// takes the keystore lock and applies the restore rule
+/// ([`crate::snapshot::restore_with`]). Returns where the kept copy came
+/// from.
+///
+/// # Errors
+///
+/// [`VaultError::Conflict`] while the vault runs, and
+/// [`VaultError::Unavailable`] when no copy opens or a step fails.
+pub async fn restore_keystore_with<R: Runtime, C: Custody>(
+    rt: &R,
+    cfg: &VaultConfig,
+    custody: &C,
+    id: Option<[u8; 16]>,
+) -> Result<crate::snapshot::Source, VaultError> {
+    let creds = Credentials::read(&cfg.credentials_dir)?;
+    let snapshots = snapshots_of(rt, cfg, custody).await?;
+    let mut client = keys_client(rt, cfg, &creds).await?;
+    let done = async {
+        lock_keystore(&mut client).await?;
+        crate::snapshot::restore_with(
+            &mut client,
+            custody,
+            cfg.cell,
+            snapshots.as_ref(),
+            id,
+            now_us(),
+        )
+        .await
+    }
+    .await;
+    let _ = client.close().await;
+    done
 }
 
 /// `fstp-vault erase-identity <account>` over `custody` (ADR-004 record
@@ -381,7 +494,7 @@ pub async fn erase_identity_with<R: Runtime, C: Custody>(
     check_start(rt, cfg, &creds).await?;
     let mut client = keys_client(rt, cfg, &creds).await?;
     lock_keystore(&mut client).await?;
-    let mut runner = Runner::load(client, cfg.cell, custody).await?;
+    let mut runner = load_runner(rt, cfg, client, custody).await?;
     let (mut vault, mut journal) = erasure_journal(
         rt,
         cfg,
@@ -598,7 +711,8 @@ fn write_new(path: &Path, text: &[u8]) -> Result<(), VaultError> {
 
 /// `fstp-vault init-keys <out dir>` (ADR-004 record of lane L8): creates
 /// the keystore of `cfg` with fresh keys and writes [`ANCHOR_PUB`] to
-/// `out`, in lowercase hex. An existing output file or keystore is
+/// `out`, in lowercase hex. It also creates `vault-snapshot.key` when it is
+/// missing (ADR-004 record of lane L17). An existing output file or keystore is
 /// refused.
 ///
 /// # Errors
@@ -614,8 +728,13 @@ pub fn init_keys(cfg: &VaultConfig, out: &Path) -> Result<(), VaultError> {
     let custody = keyd(cfg)?;
     let rt = runtime()?;
     let task_rt = rt.clone();
-    let anchor =
-        rt.block_on(async move { genesis_with(&task_rt, cfg, &creds, &custody, &keys).await })?;
+    let anchor = rt.block_on(async move {
+        let anchor = genesis_with(&task_rt, cfg, &creds, &custody, &keys).await?;
+        // ADR-004 record of lane L17: the snapshot key comes with the
+        // keystore, so a bucket configured later needs no other step.
+        snapshot_key(cfg, &custody).await?;
+        Ok::<_, VaultError>(anchor)
+    })?;
     let mut line: String = anchor.iter().map(|b| format!("{b:02x}")).collect();
     line.push('\n');
     write_new(&target, line.as_bytes())
@@ -636,6 +755,21 @@ pub fn erase_identity(cfg: &VaultConfig, account: u128) -> Result<(), VaultError
         .map(|_| ())
 }
 
+/// `fstp-vault restore-keystore [<snapshot id>]` ([`restore_keystore_with`]
+/// over the vault's `fstp-keyd` entry). It exits with status 0 once a copy
+/// that opens is written, and prints nothing.
+///
+/// # Errors
+///
+/// As [`restore_keystore_with`].
+pub fn restore_keystore(cfg: &VaultConfig, id: Option<[u8; 16]>) -> Result<(), VaultError> {
+    let custody = keyd(cfg)?;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    rt.block_on(async move { restore_keystore_with(&task_rt, cfg, &custody, id).await })
+        .map(|_| ())
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -647,6 +781,9 @@ pub enum Command {
     /// or without the dashes of the UUID form (ADR-004 record of lane
     /// L11).
     EraseIdentity(u128),
+    /// `restore-keystore [<snapshot id>]`: the snapshot id as 32 hex
+    /// digits, or the newest one (ADR-012 record of lane L17).
+    RestoreKeystore(Option<[u8; 16]>),
 }
 
 /// The account id of `text`: 32 hex digits, with or without the four
@@ -682,6 +819,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, VaultError> {
         [cmd, account] if cmd == "erase-identity" => account_of(account)
             .map(Command::EraseIdentity)
             .ok_or(cfg_err("arguments")),
+        [cmd] if cmd == "restore-keystore" => Ok(Command::RestoreKeystore(None)),
+        [cmd, id] if cmd == "restore-keystore" => account_of(id)
+            .filter(|_| id.len() == 32)
+            .map(|n| Command::RestoreKeystore(Some(n.to_be_bytes())))
+            .ok_or(cfg_err("arguments")),
         _ => Err(cfg_err("arguments")),
     }
 }
@@ -697,6 +839,7 @@ pub fn run_command(command: &Command) -> Result<(), VaultError> {
         Command::Serve => serve(&cfg),
         Command::InitKeys(out) => init_keys(&cfg, out),
         Command::EraseIdentity(account) => erase_identity(&cfg, *account),
+        Command::RestoreKeystore(id) => restore_keystore(&cfg, *id),
     }
 }
 
@@ -750,6 +893,28 @@ mod tests {
             &["erase-identity", "0123456789-abcdef-0123-456789abcdef"],
             &["erase-identity", "+123456789abcdef0123456789abcdef"],
             &["erase-identity", "0123456789abcdef0123456789abcdef", "x"],
+        ] {
+            assert_eq!(parse_args(&s(bad)), Err(VaultError::Config("arguments")));
+        }
+    }
+
+    /// ADR-012 record of lane L17: `restore-keystore` takes no argument or
+    /// one snapshot id of 32 hex digits, and refuses any other form.
+    #[test]
+    fn adr012_vault_restore_keystore_takes_an_optional_snapshot_id() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(&s(&["restore-keystore"])).unwrap(),
+            Command::RestoreKeystore(None)
+        );
+        assert_eq!(
+            parse_args(&s(&["restore-keystore", &"0f".repeat(16)])).unwrap(),
+            Command::RestoreKeystore(Some([0x0f; 16]))
+        );
+        for bad in [
+            &["restore-keystore", "0f0f"][..],
+            &["restore-keystore", "01234567-89ab-cdef-0123-456789abcdef"],
+            &["restore-keystore", "a", "b"],
         ] {
             assert_eq!(parse_args(&s(bad)), Err(VaultError::Config("arguments")));
         }

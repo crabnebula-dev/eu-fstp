@@ -34,6 +34,7 @@ mod messages;
 pub mod origin;
 pub mod run;
 pub mod service;
+pub mod snapshot;
 pub mod start;
 pub mod store;
 

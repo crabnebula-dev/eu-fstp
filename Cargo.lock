@@ -1039,6 +1039,7 @@ name = "fstp-vault"
 version = "0.1.0"
 dependencies = [
  "fstp-audit",
+ "fstp-backup",
  "fstp-crypto",
  "fstp-custody",
  "fstp-edge",
