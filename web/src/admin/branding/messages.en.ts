@@ -4,7 +4,37 @@
 // approved or legal text is held here.
 
 export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
-  "admin.branding.title": "Brand colours",
+  "admin.branding.title": "Logos and brand colours",
+  "admin.branding.colours.heading": "Brand colours",
+  "admin.branding.logos.heading": "Logos",
+  "admin.branding.logos.loading": "Loading the logos in force.",
+  "admin.branding.logos.unavailable": "The logos could not be loaded. Reload the page to try again.",
+  "admin.branding.logos.intro":
+    "Your logo shows in the top bar, on the sign-in pages, on public pages, in emails and on PDFs. Use a PNG or WebP image of up to 256 KB.",
+  "admin.branding.logos.tenant": "Organisation logo",
+  "admin.branding.logos.programme": "Logo of {name}",
+  "admin.branding.logos.light": "For light mode",
+  "admin.branding.logos.dark": "For dark mode. Without one, the light logo shows in dark mode too.",
+  "admin.branding.logos.none": "No logo yet.",
+  "admin.branding.logos.choose": "Choose an image",
+  "admin.branding.logos.preview": "This is how the image looks on the light and the dark top bar.",
+  "admin.branding.logos.save": "Use this logo",
+  "admin.branding.logos.remove": "Remove this logo",
+  "admin.branding.logos.saved": "The logo is saved.",
+  "admin.branding.logos.removed": "The logo is removed.",
+  "admin.branding.logos.too_big": "This file is too big. Choose an image of up to 256 KB.",
+  "admin.branding.logos.wrong_type": "Only PNG or WebP images can be used. SVG and other formats are not accepted.",
+  "admin.branding.logos.dimensions": "This image is too small or too large. Use 16 to 2048 pixels on each side.",
+  "admin.branding.logos.unreadable": "This image could not be read. Try saving it again as a PNG.",
+  "admin.branding.logos.low_contrast_light": "This logo may be hard to see on the light top bar.",
+  "admin.branding.logos.low_contrast_dark":
+    "This logo may be hard to see on the dark top bar. You can add a separate logo for dark mode.",
+  "admin.branding.logos.no_pdf":
+    "PDFs show this logo only as a PNG without see-through areas. Until then, PDFs leave it out.",
+  "admin.branding.logos.no_email": "Emails show PNG logos only. A WebP logo is left out of emails.",
+  "admin.branding.logos.refused": "This image was not accepted. Check that it is a PNG or WebP of up to 256 KB.",
+  "admin.branding.logos.emblem_note":
+    "The EU emblem and the funding statement have their own fixed place on public pages and PDFs. No logo can replace them.",
   "admin.branding.intro":
     "Set the tenant name and the brand colours of your pages, in light and dark mode. Each colour pair must meet WCAG 2.2 AA contrast, or the colours are not saved.",
   "admin.branding.start":
