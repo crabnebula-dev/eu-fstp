@@ -100,7 +100,7 @@ impl<R: Runtime, V: VaultClient> CellAccounts<R, V> {
     fn mail_funding(&self, programme: Option<ProgrammeId>) -> Option<fstp_mail::MailFunding> {
         let card = {
             let st = self.0.engine.state();
-            fstp_api_core::funding::card(st.engine(), programme?)?
+            fstp_api_core::port::funding_card(st.engine(), programme?)?
         };
         Some(fstp_mail::MailFunding {
             png: fstp_api_core::brand::funding::FUNDED_BY_EU_PNG.to_vec(),

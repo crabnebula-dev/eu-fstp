@@ -2,6 +2,15 @@
 //! step 1 field like the grant agreement number and the coordinator's
 //! name, so a gap is a `FieldUnset` failure (I-69, I-66).
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::string_slice
+)]
+
 use fstp_programme::{
     Field, FieldId, FieldKind, FieldValue, Narrative, Step, decode_spec, encode_spec,
     supersafe_fixture,

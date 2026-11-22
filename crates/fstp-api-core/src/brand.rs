@@ -242,7 +242,7 @@ pub fn public_logos(ts: Option<&TenantState>, programme: ProgrammeId) -> fstp_pu
 
 /// The logos of a public page of `programme` with its funding card
 /// (ADR-034, I-69).
-pub fn public_chrome_logos(
+pub(crate) fn public_chrome_logos(
     state: &fstp_engine::EngineState,
     programme: ProgrammeId,
 ) -> fstp_public::PublicLogos {

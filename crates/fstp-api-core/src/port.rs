@@ -1997,6 +1997,24 @@ pub fn api_core_with_signing<P: CellPorts>(
     }
 }
 
+/// The funding card of `programme` with the tenant's defaults filling its
+/// gaps, for the cell's messages (ADR-034, I-69), or `None` when the
+/// creator holds no draft of it.
+pub fn funding_card(
+    state: &fstp_engine::EngineState,
+    programme: fstp_domain::id::ProgrammeId,
+) -> Option<fstp_brand::funding::FundingCard> {
+    crate::funding::card(state, programme)
+}
+
+/// The logos of a public page of `programme` with its funding card, for
+/// the cell's public pages (ADR-030, ADR-034, I-69).
+pub fn public_chrome_logos(
+    state: &fstp_engine::EngineState,
+    programme: fstp_domain::id::ProgrammeId,
+) -> fstp_public::PublicLogos {
+    crate::brand::public_chrome_logos(state, programme)
+}
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

@@ -41,12 +41,12 @@ pub fn card_of_spec(programme: ProgrammeId, spec: &Value) -> FundingCard {
 }
 
 /// The tenant's funding card defaults, if an admin set them.
-pub fn defaults(state: &EngineState) -> Option<&FundingDefaults> {
+pub(crate) fn defaults(state: &EngineState) -> Option<&FundingDefaults> {
     state.tenant.state()?.funding_defaults()
 }
 
 /// The active programmes of the tenant, in id order.
-pub fn active_programmes(state: &EngineState) -> Vec<ProgrammeId> {
+pub(crate) fn active_programmes(state: &EngineState) -> Vec<ProgrammeId> {
     let mut ids: Vec<ProgrammeId> = state
         .core
         .calls()
@@ -62,13 +62,13 @@ pub fn active_programmes(state: &EngineState) -> Vec<ProgrammeId> {
 
 /// The card of `programme` with the tenant's defaults filling its gaps,
 /// or `None` when the creator holds no draft of it.
-pub fn card(state: &EngineState, programme: ProgrammeId) -> Option<FundingCard> {
+pub(crate) fn card(state: &EngineState, programme: ProgrammeId) -> Option<FundingCard> {
     let view = fstp_creator::draft_view(&state.core, &state.creator, programme)?;
     Some(card_of_spec(programme, &view.spec).with_defaults(defaults(state)))
 }
 
 /// The card of each active programme of the tenant, in id order.
-pub fn cards(state: &EngineState) -> Vec<FundingCard> {
+pub(crate) fn cards(state: &EngineState) -> Vec<FundingCard> {
     active_programmes(state)
         .into_iter()
         .filter_map(|p| card(state, p))
@@ -111,7 +111,7 @@ pub fn cards_json(cards: &[FundingCard], defaults: Option<&FundingDefaults>) -> 
 
 /// The funding card a public page of `programme` shows, each missing
 /// value as "Not set yet" (ADR-034 section 4).
-pub fn public_card(
+pub(crate) fn public_card(
     state: &EngineState,
     programme: ProgrammeId,
 ) -> Option<fstp_public::PublicFunding> {
@@ -126,7 +126,7 @@ pub fn public_card(
 }
 
 /// The JSON answer of `GET /brand/funding` for `state`.
-pub fn answer(state: &EngineState) -> Value {
+pub(crate) fn answer(state: &EngineState) -> Value {
     cards_json(&cards(state), defaults(state))
 }
 

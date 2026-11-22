@@ -1,6 +1,15 @@
 //! ADR-034: the funding card's platform asset, its colours and its
 //! lines (I-68, I-69, I-70, R-WL-04, R-NF-04).
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::string_slice
+)]
+
 use fstp_brand::funding::{
     CARD_GROUND, CARD_LABEL, CARD_TEXT, FUNDED_BY_EU_ALT, FUNDED_BY_EU_PNG, FUNDED_BY_EU_SVG,
     FundingCard, FundingDefaults, MAX_DEFAULT_BYTES,
