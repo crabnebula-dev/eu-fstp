@@ -26,6 +26,8 @@ fstp-rt.workspace = true
 fstp-edge.workspace = true
 fstp-witness.workspace = true
 fstp-backup.workspace = true
+# ADR-029, lane L21: the identity tuple names are NFKC and case folded.
+fstp-unorm.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true

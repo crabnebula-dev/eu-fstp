@@ -1199,3 +1199,59 @@ fn adr008_identity_file_takes_any_spelling_and_refuses_extras() {
     let big = format!("{}{}", ADMIN_FILE, " ".repeat(5000));
     assert!(decode_identity_file(big.as_bytes()).is_err());
 }
+
+/// The tuple of the verification body with family name `family`.
+fn tuple_of(family: &str) -> Vec<u8> {
+    let w = fstp_vault::codec::decode_verification_write(verification_body(family).as_bytes())
+        .unwrap_or_else(|e| panic!("{family:?} was refused: {e:?}"));
+    fstp_vault::codec::identity_tuple(&w.identity)
+}
+
+/// I-81, ADR-004 row "Normalisation" (decided by Daniel on 2026-11-21:
+/// NFKC plus case folding, ADR-029): accounts verified under spellings of
+/// one name that differ by case, canonical equivalence, compatibility
+/// variants or default ignorables register as one identity. A different
+/// name stays another identity.
+#[test]
+fn i81_adr004_name_variants_register_as_one_identity() {
+    let w = genesis();
+    let mut p = start(&w);
+    let a = p.register(A_ACCOUNT, &tuple_of("M\u{00FC}ller")).unwrap();
+    let b = p.register(B_ACCOUNT, &tuple_of("MU\u{0308}LLER")).unwrap();
+    let c = p
+        .register(C_ACCOUNT, &tuple_of("\u{FF2D}\u{00FC}l\u{00AD}ler "))
+        .unwrap();
+    assert_eq!(a, b, "a case and canonical variant made a second identity");
+    assert_eq!(a, c, "a compatibility variant made a second identity");
+    let d = p.register(104, &tuple_of("Muller")).unwrap();
+    assert_ne!(a, d, "two different names share an identity");
+    assert_eq!(
+        count(&w, "SELECT count(*) FROM keystore.identity_tuple"),
+        2,
+        "one tuple per identity"
+    );
+}
+
+/// I-81, ADR-004 row "Normalisation": a vault that stores a tuple under
+/// the earlier label `fstp-identity-tuple-v1` refuses to start, as for
+/// shared-key identity facts, so the pilot vault is recreated. A vault
+/// with only current tuples passes.
+#[test]
+fn i81_start_refuses_identity_tuples_of_an_earlier_label() {
+    let w = genesis();
+    let mut p = start(&w);
+    p.register(A_ACCOUNT, &tuple_of("Alpha")).unwrap();
+    p.runner.check_tuple_labels().unwrap();
+    assert!(start(&w).runner.check_tuple_labels().is_ok());
+    let mut old = fstp_vault::codec::OLD_TUPLE_LABELS[0].to_vec();
+    old.extend_from_slice(b"\x00\x05Bravo\x00\x09Synthetic\x00\x0a1990-02-28\x00\x03DEU");
+    p.register(B_ACCOUNT, &old).unwrap();
+    assert!(
+        p.runner.check_tuple_labels().is_err(),
+        "I-81: a v1 tuple passed the start check"
+    );
+    assert!(
+        start(&w).runner.check_tuple_labels().is_err(),
+        "I-81: a restarted vault took a v1 tuple"
+    );
+}

@@ -339,7 +339,8 @@ async fn erasure_journal<R: Runtime>(
 /// # Errors
 ///
 /// [`VaultError::Conflict`] when another process holds the lock, and the
-/// errors of [`Runner::load`] and of the resumed batch.
+/// errors of [`Runner::load`], of the resumed batch and of
+/// [`Runner::check_tuple_labels`].
 pub async fn resume_keystore<R: Runtime, C: Custody>(
     rt: &R,
     cfg: &VaultConfig,
@@ -362,6 +363,8 @@ pub async fn resume_keystore<R: Runtime, C: Custody>(
         let _ = journal.client.close().await;
         done?;
     }
+    // ADR-004 row "Normalisation": no tuple of an earlier label.
+    runner.check_tuple_labels()?;
     let keys = runner.service_keys()?;
     Ok((runner.into_registrar()?, keys))
 }
@@ -831,6 +834,7 @@ pub async fn verify_first_admin_with<R: Runtime, C: Custody>(
         runner
             .run_to_idle(&mut vault, &mut journal, now_us())
             .await?;
+        runner.check_tuple_labels()?;
         runner
             .verify_first_admin(
                 &mut vault,

@@ -749,10 +749,10 @@ Written by lane L13b before its code. Every row is interim, pending Daniel, unle
 
 | Method | Tuple |
 | --- | --- |
-| Every method | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8 bytes`, in this order: family names, given names, date of birth as `YYYY-MM-DD`, and the ISO 3166-1 alpha-3 code of the state that issued the identity evidence. The method is not part of the tuple, so one person verified by two methods has one identity |
+| Every method | `"fstp-identity-tuple-v2"` (the label was `"fstp-identity-tuple-v1"` until lane L21, see row "Normalisation"), then each field as `be16(len) \|\| UTF-8 bytes`, in this order: family names, given names, date of birth as `YYYY-MM-DD`, and the ISO 3166-1 alpha-3 code of the state that issued the identity evidence. The method is not part of the tuple, so one person verified by two methods has one identity |
 | `manual` (R-ID-02) | The four fields as printed on the checked document, entered by the recorder. No document number and no image enter the tuple, as R-ID-02 forbids storing them |
 | EUDI (M4, not built) | The same four fields from the person identification data. Which attribute of the presentation fills each field is open |
-| Normalisation | Leading and trailing spaces are removed and inner runs of spaces become one. No case folding and no Unicode normalisation are applied yet: two spellings of one name give two identities, which over-separates and never merges two persons. Open for Daniel, with `TODO(legal)` for the data minimisation basis of the four fields |
+| Normalisation | Decided by Daniel on 2026-11-21: NFKC + case fold. Each name is `fstp_unorm::name_key`: the compatibility caseless key `toNFKC_Casefold(NFD(s))`, then leading and trailing white space removed and inner runs one space (ADR-029). Case, canonical equivalence, compatibility variants (ligatures, full-width letters) and default ignorables (soft hyphen, zero width joiner) no longer separate two spellings of one name. Diacritics still count: `Muller` and `Müller` stay two names. A name that folds to nothing is refused. The label is `fstp-identity-tuple-v2` since lane L21. A vault that stores a tuple under the label `fstp-identity-tuple-v1` refuses to start, as for shared-key identity facts, since its match keys would give the same person a second identity. Such a pilot vault is recreated. The `TODO(legal)` on the data minimisation basis of the four fields stays |
 
 ### Where the tuple travels: a conflict, stopped for Daniel
 
@@ -804,7 +804,7 @@ Written before the code. Every row is interim, pending Daniel, unless it says ot
 | Reply | 204, as every write with no reference. The reply names no identity |
 | Sans-IO path | `Vault::origin` has no keystore, so it answers a kind 6 write 503. The serving vault routes it to its registrar |
 | Page | The write page of the vault origin shows a form for `write:verification_recorded`: the account id of the person checked, method, document type, checks, and the four identity fields. It posts to `/w` as the other forms do. The cell never sees the entries. The ticket names the proposal but not the person, so the recorder enters the account id. Open for Daniel: whether the ticket should name the person |
-| Tuple | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8`, in this order: family names, given names, date of birth, issuing state. Names are trimmed and inner runs of white space become one space. NFC and case folding are decided, but not built: see the next table |
+| Tuple | `"fstp-identity-tuple-v1"`, then each field as `be16(len) \|\| UTF-8`, in this order: family names, given names, date of birth, issuing state. Names are trimmed and inner runs of white space become one space. NFC and case folding are decided, but not built: see the next table. Superseded by lane L21: label `fstp-identity-tuple-v2`, names through `fstp_unorm::name_key` (row "Normalisation" above) |
 | Static page | The shipped vault does not serve the static write page yet (ADR-009, third route group). Only the test world serves `web/dist/vault`. So a recorder on a pilot vault cannot open the form until the vault serves its pages. Open for Daniel |
 | Not on real binaries | No end-to-end test runs on the real binaries. The cell issues the ticket only to a verified recorder, and no account is verified in production before the operator path of ADR-008, which waits on the ML-DSA-65 pull request. The g12 harness cannot seed a verification. The flow is tested through the cell's command decision with the vault's ground truth, and through the vault over PostgreSQL |
 
@@ -928,3 +928,16 @@ Written by lane L17 before its code. Decided by Daniel on 2026-11-21: ADR-012 "K
 | Rotation | The yearly re-wrap of CellBackup and VaultBackup is not built, as for ClusterBackup |
 
 Tests, written before the code: `r_nf_08_vault_socket_reaches_vault_backup_and_never_app_chains` in `crates/fstp-keyd/tests/serve.rs`; `adr004_vault_backup_chain_code_is_six` in `fstp-keys`; `r_nf_08_snapshot_keys_never_open_each_other` and `adr004_snapshot_key_files_decode_only_under_their_magic` in `crates/fstp-backup/tests/keystore_snapshots.rs`; `r_sw_02_cell_erasure_destroys_vault_backup_roots` in `fstp-control`. Also `i81_held_volume_serves_vault_backup_unwrap_only` in `fstp_keyd::export`. Built by lane L17 on 2026-11-21 as written above.
+
+## Built by lane L21 `prod/unicode-normaliser`, 2026-11-22: the normaliser in the tuple
+
+Decided by Daniel on 2026-11-21: NFKC + case fold (ADR-029). Every other reading is the lead's, pending Daniel.
+
+| Topic | Reading |
+| --- | --- |
+| Seam | `fstp_vault::codec::tuple_name` is `fstp_unorm::name_key`. `fstp_vault::codec::TUPLE_LABEL` is `fstp-identity-tuple-v2` |
+| Field check | A name field must also give a non-empty `name_key`, so a name of only default ignorables is refused at decode |
+| Earlier labels | `fstp_vault::codec::OLD_TUPLE_LABELS` holds `fstp-identity-tuple-v1`. `Runner::check_tuple_labels` opens every live tuple and refuses a keystore that stores one under an earlier label. `fstp-vault serve` runs it at each start (`resume_keystore`), and `fstp-vault verify-first-admin` runs it before it registers. The refusal reads "an identity tuple of an earlier label: recreate this pilot vault". An erased tuple is not checked, since it no longer opens |
+| Pilot vaults | A pilot vault that verified anyone before lane L21 is recreated: a fresh vault database, then `init-keys` (the operator guide says so) |
+
+Tests: `i81_adr004_name_variants_register_as_one_identity` and `i81_start_refuses_identity_tuples_of_an_earlier_label` (over PostgreSQL, `crates/fstp-vault/tests/identity_facts_pg.rs`); `adr004_name_variants_give_one_tuple` (`crates/fstp-vault/tests/codecs.rs`).

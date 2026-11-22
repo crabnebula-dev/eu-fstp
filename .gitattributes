@@ -2,3 +2,6 @@
 # convert line endings in SQL files, or a checkout with core.autocrlf would
 # embed other bytes and refuse every database that another build migrated.
 *.sql -text
+# ADR-029: the vendored Unicode Character Database files stay byte for byte as
+# published, so a fresh generation of the fstp-unorm tables matches on every checkout.
+third_party/unicode/** -text
