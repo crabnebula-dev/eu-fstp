@@ -275,6 +275,12 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SetFundingDefaults { defaults } => {
+            Ok(vec![TenantRecord::FundingDefaultsSet {
+                defaults: defaults.clone(),
+                by,
+            }])
+        }
         TenantCommand::SetGuideNotice { notice } => {
             // R-GA-01: only an https address stands in the Guide.
             if notice

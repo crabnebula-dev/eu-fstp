@@ -174,6 +174,11 @@ fn text_ref(t: &TextRef) -> Value {
     ])
 }
 
+/// The funding card defaults (ADR-034).
+fn funding_defaults(d: &fstp_brand::funding::FundingDefaults) -> Value {
+    object(vec![("contact", s(d.contact())), ("name", s(d.name()))])
+}
+
 fn guide_notice(n: &Option<GuideNoticeOverride>) -> Value {
     n.as_ref().map_or(Value::Null, |n| {
         object(vec![
@@ -389,6 +394,10 @@ fn command_value(cmd: &TenantCommand) -> Value {
                 ("value", setting(value)),
             ],
         ),
+        TenantCommand::SetFundingDefaults { defaults } => tagged(
+            "SetFundingDefaults",
+            vec![("defaults", funding_defaults(defaults))],
+        ),
         TenantCommand::SetGuideNotice { notice } => {
             tagged("SetGuideNotice", vec![("notice", guide_notice(notice))])
         }
@@ -528,6 +537,10 @@ fn record_value(rec: &TenantRecord) -> Value {
                 ("param", s(param_name(value.param()))),
                 ("value", setting(value)),
             ],
+        ),
+        TenantRecord::FundingDefaultsSet { defaults, by } => tagged(
+            "FundingDefaultsSet",
+            vec![("by", dec(by.raw())), ("defaults", funding_defaults(defaults))],
         ),
         TenantRecord::GuideNoticeSet { notice, by } => tagged(
             "GuideNoticeSet",
@@ -966,6 +979,16 @@ fn take_text_ref(v: &Value) -> R<TextRef> {
     Ok(TextRef::new(id, digest))
 }
 
+/// The funding card defaults: both values plain text (I-68, ADR-034).
+fn take_funding_defaults(v: &Value) -> R<fstp_brand::funding::FundingDefaults> {
+    let f = Fields::of(v, &["contact", "name"])?;
+    fstp_brand::funding::FundingDefaults::new(
+        str_of(f.get("name")?)?,
+        str_of(f.get("contact")?)?,
+    )
+    .ok_or_else(|| err("not plain text"))
+}
+
 /// The Guide notice override, or `None` for `null`. The address must be
 /// an https address (`crate::rules::https_address`), as a domain name
 /// must be a host name.
@@ -1199,6 +1222,12 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 value: take_setting(param, f.get("value")?)?,
             }
         }
+        "SetFundingDefaults" => {
+            let f = Fields::of(v, &["defaults", "kind"])?;
+            TenantCommand::SetFundingDefaults {
+                defaults: take_funding_defaults(f.get("defaults")?)?,
+            }
+        }
         "SetGuideNotice" => {
             let f = Fields::of(v, &["kind", "notice"])?;
             TenantCommand::SetGuideNotice {
@@ -1349,6 +1378,13 @@ fn take_record(v: &Value) -> R<TenantRecord> {
             let param = take_param(f.get("param")?)?;
             TenantRecord::SettingChanged {
                 value: take_setting(param, f.get("value")?)?,
+                by: take_account(f.get("by")?)?,
+            }
+        }
+        "FundingDefaultsSet" => {
+            let f = Fields::of(v, &["by", "defaults", "kind"])?;
+            TenantRecord::FundingDefaultsSet {
+                defaults: take_funding_defaults(f.get("defaults")?)?,
                 by: take_account(f.get("by")?)?,
             }
         }
