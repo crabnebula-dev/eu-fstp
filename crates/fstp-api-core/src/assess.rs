@@ -108,9 +108,7 @@ impl ToJson for QueueView {
             ("open", Value::Bool(self.open)),
             (
                 "model",
-                self.model
-                    .as_deref()
-                    .map_or(Value::Null, |m| Value::from(m)),
+                self.model.as_deref().map_or(Value::Null, Value::from),
             ),
             ("prompt_set", self.prompt_set.to_json()),
             ("proposals", array(&self.proposals)),
@@ -135,9 +133,7 @@ impl ToJson for TaskRow {
             ("stage", Value::from(self.stage)),
             (
                 "criterion",
-                self.criterion
-                    .as_deref()
-                    .map_or(Value::Null, |c| Value::from(c)),
+                self.criterion.as_deref().map_or(Value::Null, Value::from),
             ),
             ("elements", strings(&self.elements)),
         ])

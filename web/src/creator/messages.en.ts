@@ -259,7 +259,8 @@ const LABELS: Readonly<Record<string, string>> = {
   "creator.field.evaluation.p14_irc_exemptions": "IRC exemptions for amendments (P-14)",
   "creator.field.evaluation.p15_irc_members": "Minimum IRC members per proposal (P-15)",
   "creator.field.evaluation.p16_voting": "Committee voting rules (P-16)",
-  "creator.field.evaluation.p21_inference": "Inference provider, pinned model and fallbacks (P-21)",
+  "creator.field.evaluation.p21_inference":
+    "Inference provider, pinned model and fallbacks (P-21). The provider coordinator_agent lets the FSTP coordinator run the AI assessment in their own Claude Code (ADR-033).",
   "creator.field.evaluation.p23_precheck": "Pre-check and its limits (P-23)",
   "creator.field.evaluation.p24_effective_score": "Effective score after stage 2 (P-24)",
   "creator.field.evaluation.p28_rubric_bands": "Reviewers see indicative rubric bands (P-28)",

@@ -62,14 +62,44 @@ Claude Code wraps the assessor agent in its own system text, and the version of 
 
 ## Known gaps, each interim, pending Daniel
 
-- Names are not stripped in production. Stripping legal names needs the vault mask query of M7 Q4, which is not built. The cell strips emails, phone numbers, IBAN-shaped strings and the team's handles. The coordinator already reads the unstripped text in the web, so no new reader sees a name. The provider does.
+- Names are not stripped in production. Stripping legal names needs the vault mask query of M7 Q4, which is not built. The cell strips emails, phone numbers and IBAN-shaped strings. The coordinator already reads the unstripped text in the web, so no new reader sees a name. The provider does.
 - No raw reply is retained. Production has no trace store (R-LA-07). The ledger keeps the digests and the accepted findings. Refused replies keep stage and code only.
 - No fallback switch for a client-run call. `Regenerate` stays a system command, and the client cannot regenerate a whole call in one step (P-21 NOTE 10).
 - The model id is the client's own report. The cell cannot verify it.
 
 ## Tests
 
-Listed in the record of lane L28 below once built.
+| ID | Test | Where |
+| --- | --- | --- |
+| ADR-033, I-11 | `adr033_i11_only_the_reserved_provider_names_the_client_path` | `crates/fstp-findings/tests/adr033_client_runs.rs` |
+| ADR-033, R-AU-01 | `adr033_client_run_binds_the_runners_latest_input_read` | same |
+| ADR-033, I-10 | `adr033_i10_one_client_run_per_proposal_unless_a_rerun_is_in_flight` | same |
+| TH-26 | the record generator and the fuzz seeds of `finding_decode` cover the two new records | `crates/fstp-findings` |
+| ADR-033, TH-01, I-84, I-85 | `adr033_th01_assessment_tools_need_their_own_scope_and_nothing_more` | `crates/fstp-access/src/tests.rs` |
+| ADR-033, I-85 | `p75_p77_sets_agent_policy_by_the_decoded_command` (P-21 clear prepares) | same |
+| ADR-033 | `adr033_input_digest_binds_tasks_and_parts`, `adr033_th01_submission_body_is_closed` | `crates/fstp-api-core/src/dispatch/assess.rs` |
+| ADR-033, I-11 | `adr033_i11_a_client_path_call_has_no_cell_assessment` | `crates/fstp-api-testkit/src/bin/fstp-e2e-cell/assess_client_tests.rs` |
+| ADR-033, R-LA-01, R-LA-02, I-10, I-11, I-84, I-85, R-AU-01 | `adr033_coordinator_agent_assesses_a_proposal_end_to_end` | same |
+| ADR-033, TH-01, I-10, T-LLM-INJ | `adr033_th01_injected_replies_yield_only_findings_or_refusals` | same |
+| ADR-033, I-11, R-AU-01 | `adr033_i11_model_prompt_set_and_input_must_match` | same |
+| ADR-033, I-84, SoD | `adr033_i84_only_the_coordinator_with_assess_run` | same |
+| ADR-033, I-17, I-86 | `adr033_i17_i86_the_input_holds_no_identity_attribute` | same |
+| ADR-033, I-11, R-LA-05 | `adr033_i11_agent_ships_the_pinned_prompt_set` | `crates/fstp-infer/tests/adr033_plugin_prompt.rs` |
+| ADR-033, TH-01 | `adr033_th01_agent_reaches_only_the_assessment_server`, `adr033_th01_skill_treats_submissions_as_data` | same |
+| I-84 | `i84_reference_and_registry_name_the_same_operations`, with the three operations in `reference::authz` | `crates/fstp-api-testkit/src/matrix.rs` |
+
+The PostgreSQL authorisation sample (`t_authz_matrix_pg_sample`) now builds its world with P-21 on the client path, and the coordinator records a real finding on X through `assess.client_submit`. `review.findings` and `review.mark_finding` cells meet that finding. The three new operations are left out of the sample's candidates, as the ADR-030 operations are, so the sample stays the one it was.
+
+## Record of lane L28 (2026-11-22)
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Order of the engine checks | The coordinator binding first, then the P-21 path, then the state and P-10, the conflict facts, the declaration and the assignments, then the vault. A caller who is no coordinator learns nothing of the path. In a call off the path every coordinator gets the `P-21` guard | Interim, pending Daniel; T-AUTHZ-MATRIX classes |
+| Input read rule | `assess.client_input` admits the coordinator of the programme in every state at the access layer. The engine's `ReadAssessmentInput` then refuses every state but SUBMITTED, and STAGE1 and STAGE2 under P-10 "operator staff only", before any content is opened | R-AC-01; I-21 |
+| Evidence references | Each section's text reference is derived from the proposal, the section and the section's digest. No reviewer page shows spans today | Interim, pending Daniel |
+| Confidence | The v1 output schema carries no confidence, so each finding records 0 permille, as the test cell's intake does | Interim, pending Daniel |
+| Test cell | `fstp-e2e-cell --assessor client` (or `client:<model>`) seeds the programme with P-21 `coordinator_agent` and no assessor in the cell, for a local trial with Claude Code | ADR-013 record of lane mcp-demo |
+| Creator label | The P-21 field names the token `coordinator_agent`, so the person setting up the programme finds it on the page | Usability rule, 2026-11-21 |
 
 ## Record
 

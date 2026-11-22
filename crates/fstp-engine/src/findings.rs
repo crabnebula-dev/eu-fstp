@@ -16,6 +16,15 @@
 //!   regeneration, because the store cannot see a pin it never held.
 //! - `Mark` records a reviewer's mark on a current finding. Marks feed
 //!   calibration and never a decision (I-10).
+//! - `ReadAssessmentInput` and `RecordClientAssessment` (ADR-033) are the
+//!   FSTP coordinator's, through the connected agent that runs the
+//!   assessment when the call's frozen P-21 names the client path. They
+//!   are judged by the coordinator binding, the path, the state and P-10,
+//!   the declaration, the absence of an assignment on the proposal, and a
+//!   fresh vault answer (I-03). The run records its provenance, its
+//!   findings under the call's pin (I-11) and its refusal list, all finding
+//!   records only (I-10). The model the run reports must be the call's
+//!   pinned model, and the input it names the one its account read last.
 //! - Findings stay with the call that produced them, also after the
 //!   proposal is deferred into a later call (state-machine NOTE 8). The
 //!   store is keyed by call, and nothing here moves a finding.

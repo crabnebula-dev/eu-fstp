@@ -157,6 +157,7 @@ name = "fstp-api-core"
 version = "0.1.0"
 dependencies = [
  "fstp-access",
+ "fstp-assess",
  "fstp-brand",
  "fstp-contract",
  "fstp-creator",
@@ -167,6 +168,7 @@ dependencies = [
  "fstp-guide",
  "fstp-html",
  "fstp-import",
+ "fstp-infer",
  "fstp-journey",
  "fstp-json",
  "fstp-ledger",
@@ -177,6 +179,17 @@ dependencies = [
  "fstp-rt",
  "fstp-sigval",
  "fstp-tenant",
+]
+
+[[package]]
+name = "fstp-assess"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-findings",
+ "fstp-infer",
+ "fstp-json",
 ]
 
 [[package]]
@@ -301,6 +314,18 @@ dependencies = [
  "fstp-json",
  "fstp-ledger",
  "fstp-programme",
+]
+
+[[package]]
+name = "fstp-infer"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-domain",
+ "fstp-findings",
+ "fstp-http",
+ "fstp-json",
+ "fstp-rt",
 ]
 
 [[package]]

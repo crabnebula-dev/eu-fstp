@@ -23,6 +23,7 @@ Status: scope decided by Daniel on 2026-10-10 (O-40).
 | Reviewer and committee | Read assignments, ranking view and findings within P-10 and P-75; draft scores and comments |
 | Programme staff | Programme creator drafts, call drafting, timeline and reminder status, reporting drafts. Prepare invitations, activation requests, call approvals and other setup steps for a person to confirm in the platform (ADR-013 amendment of 2026-11-20) |
 | Finance roles | Payment queue status and reconciliation views |
+| FSTP coordinator | Run the AI assessment of the submitted proposals of a call through the coordinator's own agent, when the call's frozen P-21 names the provider `coordinator_agent`: list the proposals awaiting it, read each one's text with personal data replaced, and record advisory findings (decided by Daniel on 2026-11-22, ADR-033) |
 | Tenant admin | Prepare new programme drafts, role grants and ends, funder profile versions, brand tokens and interface labels, for a person to confirm in the platform with a step-up. Read programme roles by account id and funder profiles (ADR-013 amendment of 2026-11-20) |
 | Auditor | Read-only audit views and aggregates |
 | Anyone, without an account | Public research tools: open calls, Guides for Applicants, eligibility and deadlines, and published subgrants within each grantee's publication choice |

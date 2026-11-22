@@ -92,15 +92,18 @@ fn unhex32(s: &str) -> Option<[u8; 32]> {
     if raw.len() != 64 {
         return None;
     }
-    let digit = |b: u8| match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        _ => None,
+    let digit = |b: u8| {
+        char::from(b)
+            .to_digit(16)
+            .and_then(|d| u8::try_from(d).ok())
     };
+    if raw.iter().any(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
     let mut out = [0u8; 32];
     for (o, pair) in out.iter_mut().zip(raw.chunks_exact(2)) {
         let [h, l] = pair else { return None };
-        *o = (digit(*h)? << 4) | digit(*l)?;
+        *o = digit(*h)?.wrapping_shl(4) | digit(*l)?;
     }
     Some(out)
 }
