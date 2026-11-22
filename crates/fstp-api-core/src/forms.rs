@@ -692,6 +692,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::Finding(fstp_access::FindingKind::Mark) => BodyRule::Exactly(&["mark"]),
         // Issue 6 M3: `assess.rerun` names the proposal in its path only.
         OpKind::Finding(fstp_access::FindingKind::RequestRerun) => BodyRule::Empty,
+        // ADR-035: the release names the proposal in its path only.
+        OpKind::Finding(fstp_access::FindingKind::ReleaseIntegrity) => BodyRule::Empty,
         // ADR-033: the input digest, the prompt set digest, the model the
         // client reports, and one reply per task.
         OpKind::Finding(fstp_access::FindingKind::RecordClient) => {

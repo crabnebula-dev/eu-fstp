@@ -27,6 +27,7 @@ fstp-findings.workspace = true
 # digest of the assessment run by the coordinator's connected agent.
 fstp-assess.workspace = true
 fstp-infer.workspace = true
+fstp-injscan.workspace = true
 fstp-rt.workspace = true
 # The journey projector, visibility function and diary read (ADR-015,
 # lane j2): pure, with no I/O.

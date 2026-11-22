@@ -129,6 +129,34 @@ impl ToJson for DeclarationView {
 
 impl McpSafe for DeclarationView {}
 
+/// One flagged span of a served text (ADR-035 "Marks"): the part, the
+/// closed reason code and the start and end in Unicode scalar values of
+/// that part. Platform data beside the text, never inside it (TH-60).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlagRow {
+    /// The reason code of `fstp_injscan::Reason`.
+    pub reason: &'static str,
+    /// The first scalar of the span.
+    pub start: u64,
+    /// The scalar just after the span.
+    pub end: u64,
+}
+
+impl ToJson for FlagRow {
+    fn to_json(&self) -> Value {
+        object(vec![
+            ("reason", Value::from(self.reason)),
+            ("start", int(self.start)),
+            ("end", int(self.end)),
+        ])
+    }
+}
+
+/// The flag rows as a JSON list.
+pub(crate) fn flag_list(rows: &[FlagRow]) -> Value {
+    Value::Array(rows.iter().map(ToJson::to_json).collect())
+}
+
 /// `review.read_content` and `irc.case`: the submitted proposal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentView {
@@ -144,6 +172,10 @@ pub struct ContentView {
     pub text: String,
     /// For an IRC case, the outcome that brought it there: `nominated`.
     pub outcome: Option<&'static str>,
+    /// The flagged spans of the title (ADR-035).
+    pub title_flags: Vec<FlagRow>,
+    /// The flagged spans of the text (ADR-035).
+    pub text_flags: Vec<FlagRow>,
 }
 
 impl ToJson for ContentView {
@@ -153,6 +185,8 @@ impl ToJson for ContentView {
             ("state", Value::from(self.state)),
             ("title", Value::from(self.title.as_str())),
             ("text", Value::from(self.text.as_str())),
+            ("title_flags", flag_list(&self.title_flags)),
+            ("text_flags", flag_list(&self.text_flags)),
         ];
         match self.outcome {
             // The IRC case has no call member, only its outcome (R-IR-03).
@@ -707,13 +741,26 @@ mod tests {
             title: "t".to_owned(),
             text: "x".to_owned(),
             outcome: Some("nominated"),
+            title_flags: Vec::new(),
+            text_flags: Vec::new(),
         }
         .to_json();
         let keys: Vec<&str> = v
             .as_object()
             .map(|o| o.keys().collect())
             .unwrap_or_default();
-        assert_eq!(keys, ["proposal", "state", "title", "text", "outcome"]);
+        assert_eq!(
+            keys,
+            [
+                "proposal",
+                "state",
+                "title",
+                "text",
+                "title_flags",
+                "text_flags",
+                "outcome"
+            ]
+        );
     }
 }
 
@@ -994,6 +1041,10 @@ pub struct FindingsStatusRow {
     /// Whether the coordinator may run the assessment again now:
     /// `available`, `in_flight` or `used_up` (issue 6 M3).
     pub rerun: &'static str,
+    /// The integrity hold (ADR-035): `clear`, `held` or `released`.
+    pub integrity: &'static str,
+    /// The reason codes of the scan at submission, empty when clear.
+    pub reasons: Vec<&'static str>,
 }
 
 impl ToJson for FindingsStatusRow {
@@ -1004,6 +1055,11 @@ impl ToJson for FindingsStatusRow {
             ("findings", int(self.findings)),
             ("refused", int(self.refused)),
             ("rerun", Value::from(self.rerun)),
+            ("integrity", Value::from(self.integrity)),
+            (
+                "reasons",
+                Value::Array(self.reasons.iter().map(|r| Value::from(*r)).collect()),
+            ),
         ])
     }
 }

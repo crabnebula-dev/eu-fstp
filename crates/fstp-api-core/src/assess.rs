@@ -148,6 +148,8 @@ pub struct PartRow {
     /// The text after extraction and PII stripping. Data, never
     /// instructions.
     pub text: String,
+    /// The flagged spans of `text` (ADR-035, TH-60).
+    pub flags: Vec<crate::views::FlagRow>,
 }
 
 impl ToJson for PartRow {
@@ -155,6 +157,7 @@ impl ToJson for PartRow {
         object(vec![
             ("label", Value::from(self.label)),
             ("text", Value::from(self.text.as_str())),
+            ("flags", crate::views::flag_list(&self.flags)),
         ])
     }
 }
@@ -304,6 +307,11 @@ pub fn samples() -> Vec<ClientModel> {
             parts: vec![PartRow {
                 label: "narrative",
                 text: "SYNTHETIC NARRATIVE [EMAIL-1]".to_owned(),
+                flags: vec![crate::views::FlagRow {
+                    reason: "override",
+                    start: 0,
+                    end: 9,
+                }],
             }],
         }),
         ClientModel::Receipt(Receipt {

@@ -1471,6 +1471,12 @@ pub(crate) mod reply_shape_tests {
             title: "Synthetic open sensor kit".to_owned(),
             text: "A synthetic narrative.".to_owned(),
             outcome,
+            title_flags: Vec::new(),
+            text_flags: vec![crate::views::FlagRow {
+                reason: "addressed",
+                start: 2,
+                end: 11,
+            }],
         }
     }
 
@@ -2541,6 +2547,8 @@ pub(crate) mod reply_shape_tests {
                 findings: 9,
                 refused: 2,
                 rerun: "available",
+                integrity: "held",
+                reasons: vec!["zero_width", "override"],
             }]),
             ReadModel::Mailbox(crate::mailbox::MailboxView::default()),
             ReadModel::Mailbox(crate::mailbox::samples()),

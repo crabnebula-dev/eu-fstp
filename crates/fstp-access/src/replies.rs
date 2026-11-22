@@ -116,6 +116,36 @@ const CLIENT_STAGE_NAMES: &[&str] = &["completeness", "quality", "claims", "inte
 
 /// The prompt set a client assessment names (ADR-033): its version and
 /// digest.
+/// ADR-035: the reason codes of the injection scan, as
+/// `fstp_injscan::Reason::code` spells them. A test of `fstp-api-core`
+/// keeps the two lists equal.
+pub const INTEGRITY_REASONS: &[&str] = &[
+    "zero_width",
+    "bidi",
+    "tag",
+    "variation_run",
+    "format",
+    "hidden_markup",
+    "role_marker",
+    "override",
+    "addressed",
+    "score_request",
+    "tool_call",
+    "schema_payload",
+    "exfil_link",
+    "encoded_blob",
+    "confusable",
+    "truncated",
+];
+
+/// ADR-035, TH-60: the flagged spans of a served text, as closed reason
+/// codes and scalar offsets. No member can hold text.
+const FLAGS: Shape = Shape::Array(&Shape::Object(&[
+    m("reason", Shape::Enum(INTEGRITY_REASONS)),
+    m("start", Shape::Int),
+    m("end", Shape::Int),
+]));
+
 const PROMPT_SET: Shape = Shape::Object(&[m("version", Shape::String), m("digest", Shape::String)]);
 
 /// The stage names a refused-stage notice may carry, as
@@ -1342,6 +1372,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("state", Shape::Enum(OWN_STATE_NAMES)),
             m("title", Shape::String),
             m("text", Shape::String),
+            m("title_flags", FLAGS),
+            m("text_flags", FLAGS),
             m("call", Shape::Id),
         ]),
     ),
@@ -1354,6 +1386,8 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("state", Shape::Enum(OWN_STATE_NAMES)),
             m("title", Shape::String),
             m("text", Shape::String),
+            m("title_flags", FLAGS),
+            m("text_flags", FLAGS),
             m("outcome", Shape::Enum(&["nominated"])),
         ]),
     ),
@@ -1431,6 +1465,9 @@ pub const REPLIES: &[(&str, Shape)] = &[
             // whether the coordinator may run the assessment again.
             m("refused", Shape::Int),
             m("rerun", Shape::Enum(&["available", "in_flight", "used_up"])),
+            // ADR-035: the integrity hold and the scan's reason codes.
+            m("integrity", Shape::Enum(&["clear", "held", "released"])),
+            m("reasons", Shape::Array(&Shape::Enum(INTEGRITY_REASONS))),
         ])),
     ),
     // ADR-033: the queue names proposals by id and state, never a title.
@@ -1446,7 +1483,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 Shape::Array(&Shape::Object(&[
                     m("proposal", Shape::Id),
                     m("state", Shape::Enum(OWN_STATE_NAMES)),
-                    m("status", Shape::Enum(&["awaiting", "assessed", "rerun"])),
+                    m(
+                        "status",
+                        Shape::Enum(&["awaiting", "assessed", "rerun", "held"]),
+                    ),
                     m("declared", Shape::Bool),
                 ])),
             ),
@@ -1475,6 +1515,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
                 Shape::Array(&Shape::Object(&[
                     m("label", Shape::Enum(&["title", "summary", "narrative"])),
                     m("text", Shape::String),
+                    m("flags", FLAGS),
                 ])),
             ),
         ]),

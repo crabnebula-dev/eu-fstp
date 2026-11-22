@@ -138,6 +138,7 @@ mod creator_ops;
 pub(crate) mod grant;
 /// The M5 reads follow-up: the caller's grants and contracts to sign.
 mod grant_lists;
+mod integrity;
 /// `proposal.journey` and `proposal.diary` (lane j2, ADR-015), and
 /// `proposal.route_map` (lane j4).
 pub(crate) mod journey;
@@ -837,6 +838,9 @@ async fn steps<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiErr
         OpKind::Finding(fstp_access::FindingKind::Mark) => finding_mark(call, op).await,
         OpKind::Finding(fstp_access::FindingKind::RequestRerun) => finding_rerun(call, op).await,
         OpKind::Finding(fstp_access::FindingKind::RecordClient) => assess::submit(call, op).await,
+        OpKind::Finding(fstp_access::FindingKind::ReleaseIntegrity) => {
+            integrity::release(call, op).await
+        }
         // `Record`, `Regenerate` and `RecordRefusals` are the assessor's,
         // through no route.
         OpKind::Finding(_) => Err(call.refuse(ApiError::NotImplemented(
@@ -1430,6 +1434,8 @@ async fn command<P: Seams>(
     texts.extend(preset);
     let cmd = build(call, &form, op, &texts, &mut ids).map_err(|e| call.refuse(e))?;
     let cmd = tenant::with_approval(cmd, ledger).map_err(|e| call.refuse(e))?;
+    // ADR-035: a flagged submission carries its scan records.
+    let cmd = integrity::scanned(call, cmd).await;
     let meta = ExecMeta {
         via: call.caller.via(),
         session: call.caller.session,
@@ -1464,6 +1470,15 @@ async fn command<P: Seams>(
 /// frozen at submission.
 async fn executed<P: Seams>(call: &Call<'_, P>, actor: AccountId, cmd: &Command) {
     use fstp_domain::command::Command as Core;
+    // ADR-035: a flagged submission folds as its core `Submit`.
+    let unwrapped;
+    let cmd = match cmd {
+        Command::ScannedSubmit(s) => {
+            unwrapped = Command::Core(s.submit().clone());
+            &unwrapped
+        }
+        other => other,
+    };
     {
         let mut journal = journal(call);
         journal.fold(cmd, &call.state, call.now);
@@ -1748,6 +1763,8 @@ async fn confirm<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpResult, ApiE
         texts.insert("confidentiality", terms);
     }
     let cmd = build(call, &form, &stored, &texts, &mut ids).map_err(|e| call.refuse(e))?;
+    // ADR-035: a flagged submission carries its scan records.
+    let cmd = integrity::scanned(call, cmd).await;
     let meta = ExecMeta {
         via: Via::Web,
         session: call.caller.session,
@@ -3432,12 +3449,25 @@ async fn content_read<P: Seams>(
         submitted_content(call, p, clearance).await?
     };
     let seq = append_content_read(call, p).await?;
+    // ADR-035, TH-60: an agent receives the neutralised view, and every
+    // reader the flagged spans beside the text. A person in the web reads
+    // the text as submitted.
+    let (title, text) = if call.caller.via() == Via::Mcp {
+        (
+            integrity::for_agent(content.title),
+            integrity::for_agent(content.narrative),
+        )
+    } else {
+        (content.title, content.narrative)
+    };
     let view = crate::views::ContentView {
         proposal: p.raw(),
         call: call_of(&call.state, p).map_or(0, CallId::raw),
         state: state_name(&call.state, p),
-        title: content.title,
-        text: content.narrative,
+        title_flags: integrity::flags(&title),
+        text_flags: integrity::flags(&text),
+        title,
+        text,
         outcome,
     };
     Ok(OpResult::Done {

@@ -488,6 +488,8 @@ impl Journal {
             }
             // SoD-07: the grant of a self-grant with its ledger approval.
             Command::ApprovedSelfGrant(g) => self.fold_core(g.grant(), before, now),
+            // ADR-035: a flagged submission is its core `Submit`.
+            Command::ScannedSubmit(s) => self.fold_core(s.submit(), before, now),
             _ => {}
         }
     }

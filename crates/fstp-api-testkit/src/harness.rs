@@ -664,6 +664,7 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         | "guardian.begin_consent"
         | "review.admit"
         | "assess.rerun"
+        | "assess.release_integrity"
         | "review.close_stage1"
         | "review.unassign"
         | "stage2.no_questions"

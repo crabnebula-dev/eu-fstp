@@ -1753,6 +1753,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Issue 6 M3: the coordinator runs the assessment of a proposal again.
     // Binding, not high-risk, as the coordinator's `review.assign`.
     RefOp::act("assess.rerun", T::Proposal, R::Coordinator).binding(),
+    // ADR-035: the coordinator releases the integrity hold of a flagged
+    // proposal. Web only, binding, not high-risk, as `assess.rerun`.
+    RefOp::act("assess.release_integrity", T::Proposal, R::Coordinator).binding(),
     // ADR-033: the assessment run by the coordinator's connected agent. The
     // engine judges the actor, the state, the declaration, then the P-21
     // path, whose refusal is a guard.

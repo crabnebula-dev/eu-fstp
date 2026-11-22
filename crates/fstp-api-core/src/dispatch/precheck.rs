@@ -476,6 +476,18 @@ pub(crate) fn findings_status<P: Seams>(call: &Call<'_, P>, c: CallId) -> Vec<Fi
                     Err(fstp_findings::FindingRefusal::RerunInFlight { .. }) => "in_flight",
                     Err(_) => "used_up",
                 },
+                // ADR-035: the integrity hold and the scan's reasons.
+                integrity: match call.state.findings.integrity_of(p) {
+                    None => "clear",
+                    Some(i) if i.released_by.is_none() => "held",
+                    Some(_) => "released",
+                },
+                reasons: call
+                    .state
+                    .findings
+                    .integrity_of(p)
+                    .map(|i| i.reasons.iter().map(|r| r.code()).collect())
+                    .unwrap_or_default(),
             }
         })
         .collect()

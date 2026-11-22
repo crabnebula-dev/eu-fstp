@@ -146,7 +146,7 @@ fn client_path<P: Seams>(call: &Call<'_, P>, c: CallId) -> bool {
 }
 
 /// The text reference of section `k` of `p`'s submitted text `text`.
-fn part_ref(p: ProposalId, k: u8, text: &str) -> TextRef {
+pub(super) fn part_ref(p: ProposalId, k: u8, text: &str) -> TextRef {
     let mut h = fstp_crypto::Sha256::new();
     h.update(b"fstp-api-core/client-assessment/part\0");
     h.update(&p.raw().to_be_bytes());
@@ -275,9 +275,13 @@ async fn input_of<P: Seams>(
     let parts: Vec<PartRow> = prepared
         .parts()
         .iter()
-        .map(|part| PartRow {
-            label: part.label().as_str(),
-            text: part.stripped().as_data().to_owned(),
+        .map(|part| {
+            let text = part.stripped().as_data().to_owned();
+            PartRow {
+                label: part.label().as_str(),
+                flags: super::integrity::flags(&text),
+                text,
+            }
         })
         .collect();
     let tasks = tasks(&criteria);
@@ -382,7 +386,11 @@ pub(super) fn queue<P: Seams>(
                 if !readable {
                     return None;
                 }
-                let status = if store.rerun_in_flight(p).is_some() {
+                // ADR-035: a held proposal waits for the coordinator's
+                // release before any AI assessment.
+                let status = if store.held(p) {
+                    "held"
+                } else if store.rerun_in_flight(p).is_some() {
                     "rerun"
                 } else if store.client_runs_of(p) > 0 {
                     "assessed"
@@ -546,8 +554,11 @@ pub(super) async fn submit<P: Seams>(call: &Call<'_, P>, op: &Op) -> Result<OpRe
         }
     }
     // Stage 7, deterministic part: the cell's own scan, whatever the
-    // client sent (TH-01).
-    found.extend(input.prepared.integrity_scan());
+    // client sent (TH-01). A proposal the scan flagged at submission holds
+    // these findings already (ADR-035), so they are not recorded twice.
+    if call.state.findings.integrity_of(p).is_none() {
+        found.extend(input.prepared.integrity_scan());
+    }
     if found.len() > fstp_findings::MAX_CLIENT_FINDINGS {
         return Err(bad());
     }
@@ -617,12 +628,14 @@ mod tests {
         let parts = vec![PartRow {
             label: "narrative",
             text: "SYNTHETIC".to_owned(),
+            flags: Vec::new(),
         }];
         let d = input_digest(c, p, &t, &parts).unwrap();
         assert_eq!(input_digest(c, p, &t, &parts), Some(d));
         let other = vec![PartRow {
             label: "narrative",
             text: "SYNTHETIC.".to_owned(),
+            flags: Vec::new(),
         }];
         assert_ne!(input_digest(c, p, &t, &other), Some(d));
         assert_ne!(

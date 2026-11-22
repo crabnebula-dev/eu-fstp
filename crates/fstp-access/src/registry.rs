@@ -343,6 +343,9 @@ pub enum FindingKind {
     /// `FindingCommand::RecordClientAssessment`, by the FSTP coordinator
     /// of the call through its connected agent (ADR-033).
     RecordClient,
+    /// `FindingCommand::ReleaseIntegrityHold`, by the FSTP coordinator of
+    /// the call, in the web only (ADR-035).
+    ReleaseIntegrity,
 }
 
 /// An import operation kind, one per `ImportCommand` variant.
@@ -2262,6 +2265,19 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Finding(FindingKind::RequestRerun),
         Post,
         "/proposals/{proposal}/assessment-rerun",
+    )
+    .binding()
+    .acting(COORDINATOR),
+    // ADR-035: the coordinator releases the integrity hold of a flagged
+    // proposal, after looking at its flags. Web only, with no tool, so no
+    // agent that read the flagged text can release it. Binding, not
+    // high-risk, as `assess.rerun`: it binds nothing, and the findings it
+    // lets through stay advisory (I-10).
+    OpSpec::new(
+        "assess.release_integrity",
+        OpKind::Finding(FindingKind::ReleaseIntegrity),
+        Post,
+        "/proposals/{proposal}/integrity-release",
     )
     .binding()
     .acting(COORDINATOR),
