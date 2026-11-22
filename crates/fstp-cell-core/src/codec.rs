@@ -1054,6 +1054,13 @@ impl ToJson for CellCommand {
             CellCommand::Engine(fstp_engine::Command::ScannedSubmit(s)) => {
                 wrap("scanned_submit", s.submit().to_json())
             }
+            // Q38: the core commands of an assignment batch, in order. The
+            // decoder does not read it back, so no step-up admits it through
+            // this codec (fail closed); the API names the request digest.
+            CellCommand::Engine(fstp_engine::Command::AssignmentBatch(b)) => wrap(
+                "assignment_batch",
+                Value::Array(b.commands().iter().map(|c| c.to_json()).collect::<Array>()),
+            ),
             CellCommand::Engine(fstp_engine::Command::Contract(c)) => wrap("contract", c.to_json()),
             CellCommand::Engine(fstp_engine::Command::Report(r)) => wrap("report", r.to_json()),
             // Lane m3/cell-routes (SoD-07): the approval and the core grant

@@ -383,6 +383,44 @@ pub enum Command {
     /// `Submit`, then the scan's integrity findings and `IntegrityHeld`,
     /// decided in one entry by `findings::decide_scanned_submit`.
     ScannedSubmit(ScannedSubmit),
+    /// A coordinator's batch of assignments and unassignments on one
+    /// proposal, decided in order in one entry under one step-up (Q38,
+    /// decided by Daniel on 2026-11-22: "Step-up, batched").
+    AssignmentBatch(AssignmentBatch),
+}
+
+/// The most commands one assignment batch holds (Q38).
+pub const MAX_ASSIGNMENT_BATCH: usize = 64;
+
+/// A batch of core `Assign` and `Unassign` commands (Q38, ADR-008). Only
+/// [`AssignmentBatch::new`] builds it, so it holds 1 to
+/// [`MAX_ASSIGNMENT_BATCH`] commands, each an `Assign` or an `Unassign`.
+/// The engine decides them in order in one entry: one bad command refuses
+/// the whole batch with its own refusal, and nothing is recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AssignmentBatch {
+    commands: Vec<fstp_domain::Command>,
+}
+
+impl AssignmentBatch {
+    /// The batch of `commands`, or `None` unless it holds 1 to
+    /// [`MAX_ASSIGNMENT_BATCH`] commands, each an `Assign` or an `Unassign`.
+    pub fn new(commands: Vec<fstp_domain::Command>) -> Option<AssignmentBatch> {
+        let ok = !commands.is_empty()
+            && commands.len() <= MAX_ASSIGNMENT_BATCH
+            && commands.iter().all(|c| {
+                matches!(
+                    c,
+                    fstp_domain::Command::Assign { .. } | fstp_domain::Command::Unassign { .. }
+                )
+            });
+        ok.then_some(AssignmentBatch { commands })
+    }
+
+    /// The core commands, in the order they are decided.
+    pub fn commands(&self) -> &[fstp_domain::Command] {
+        &self.commands
+    }
 }
 
 /// A flagged submission (ADR-035): the core `Submit` and the records of
@@ -569,6 +607,10 @@ impl core::hash::Hash for Command {
             Command::ScannedSubmit(s) => {
                 10u8.hash(state);
                 s.hash(state);
+            }
+            Command::AssignmentBatch(b) => {
+                11u8.hash(state);
+                b.hash(state);
             }
         }
     }
