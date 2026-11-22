@@ -618,23 +618,24 @@ where
     let cell = config.cell.0;
     let mut store = open(cell)?;
     let witness_keys = store.pinned_witness_keys();
-    match store.resolve_open_prepare().await? {
+    match crate::process::step(|| store.resolve_open_prepare()).await? {
         Resolved::Nothing => {}
         Resolved::Committed => report(StartPhase::InDoubtCommitted),
         Resolved::AbsentRecorded => report(StartPhase::InDoubtAbsentRecorded),
     }
-    let log = store.witness_log().await?;
+    let log = crate::process::step(|| store.witness_log()).await?;
     let in_doubt = in_doubt_absent(&log);
     if !in_doubt.is_empty() {
-        store.raise_possible_deletions(&in_doubt).await?;
+        crate::process::step(|| store.raise_possible_deletions(&in_doubt)).await?;
         report(StartPhase::PossibleDeletionRaised);
     }
-    let chain = store.stored_chain().await?;
+    let chain = crate::process::step(|| store.stored_chain()).await?;
     let shutdown = Shutdown::new();
-    let (engine, engine_task) =
+    let (engine, engine_task) = crate::process::step(|| {
         CellEngine::start(rt, store, parts.vault, &shutdown, super::DEFAULT_QUEUE)
-            .await
-            .map_err(|_| StartRefusal::Store)?;
+    })
+    .await
+    .map_err(|_| StartRefusal::Store)?;
     let engine = engine.with_clock(std::sync::Arc::clone(&parts.clock));
     report(StartPhase::LedgerReplayed);
     let view = ChainView {
@@ -661,10 +662,11 @@ where
         listeners.push((kind, l));
         report(StartPhase::Listening(kind));
     }
-    let runner =
+    let runner = crate::process::step(|| {
         ErasureRunner::from_open(parts.custody, engine.clone(), parts.keystore, seal, groups)
-            .await
-            .map_err(|_| StartRefusal::KeyRecord)?;
+    })
+    .await
+    .map_err(|_| StartRefusal::KeyRecord)?;
     // The timeline: scheduled role ends and every other due system
     // command (design sections 5.1 and 8.2).
     let sessions = timeline::SessionSlot::new();

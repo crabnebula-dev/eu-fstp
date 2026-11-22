@@ -19,11 +19,15 @@
 //! the raw `std::io::stdout` and `std::io::stderr` handles. A binary writes
 //! its events through [`log_to_stderr`] and [`metric_to_stdout`] instead.
 //!
-//! The one decoder, [`snapshot_status::decode`], is fuzzed in the fuzz
-//! project of `fstp-admin`, its reader (ADR-012 record of lane L27).
+//! The crate has two parsers. [`host_status`] reads the host status file of
+//! the System page (ADR-028 record of lane L20), with the fuzz target
+//! `host_status_decode`. [`snapshot_status::decode`] reads the keystore
+//! snapshot status file, fuzzed in the fuzz project of `fstp-admin`, its
+//! reader (ADR-012 record of lane L27).
 
 pub mod assurance;
 mod encode;
+pub mod host_status;
 pub mod snapshot_status;
 
 use crate::assurance::{Assurance, DeploymentMode, HostCheck};

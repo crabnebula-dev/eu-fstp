@@ -310,6 +310,8 @@ fn parts(
         // its default, "not active". Only the ledger activates.
         tenant_prober: Some(tenant_prober),
         web_assets: Some(web_assets),
+        // ADR-028 record of lane L20: the System page's host status file.
+        host_status: cfg.host_status.clone(),
         ..StartOptions::default()
     };
     Ok((parts, options))

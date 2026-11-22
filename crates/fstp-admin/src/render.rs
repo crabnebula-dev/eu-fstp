@@ -82,7 +82,7 @@ pub fn cell(l: &Layout, f: &Facts) -> String {
     format!(
         "{{{assets}\"cell\":\"{cell}\",\"credentials_dir\":{creds},\
          \"database\":{{\"dbname\":\"c_{cell}\",\"host\":\"127.0.0.1\",\"port\":{app_port}}},\
-         \"host\":{host},\"key_file_keyd_socket\":{kf},\"keyd_socket\":{keyd},\
+         \"host\":{host},\"host_status\":{status},\"key_file_keyd_socket\":{kf},\"keyd_socket\":{keyd},\
          \"listen\":{{\"health\":\"{health}\",\"internal\":\"{internal}\",\"tunnel\":\"{tunnel}\"}},\
          \"mail\":{{{address}\"relay\":{relay},\"sender\":{sender},\"username\":{user}}},\
          \"mode\":\"saas\",{os}\"registered_servers\":{reg},\
@@ -92,6 +92,7 @@ pub fn cell(l: &Layout, f: &Facts) -> String {
         creds = p(&l.creds("cell")),
         app_port = l.pg_port(Cluster::App),
         host = quote(&l.cfg.domain),
+        status = p(&l.host_status()),
         kf = p(&l.keyd_socket(Entry::CellKeys, "cell")),
         keyd = p(&l.keyd_socket(Entry::Cell, "cell")),
         health = l.cell_health(),
@@ -393,5 +394,17 @@ mod tests {
             vault_pin: "02".repeat(32),
         };
         assert_eq!(parse_routes(&routes(std::slice::from_ref(&r))), vec![r]);
+    }
+
+    /// ADR-028 record of lane L20: `cell.json` names the host status file,
+    /// so the cell's System page reads what `fstp-admin report` writes.
+    #[test]
+    fn adr028_l20_cell_json_names_the_status_file() {
+        let l = layout();
+        let v = fstp_json::parse(cell(&l, &facts()).as_bytes()).unwrap();
+        assert_eq!(
+            v.get("host_status").and_then(fstp_json::Value::as_str),
+            Some("/var/lib/fstp/status/host.json")
+        );
     }
 }

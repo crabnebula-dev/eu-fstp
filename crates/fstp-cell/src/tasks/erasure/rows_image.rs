@@ -1,4 +1,4 @@
-//! The App keystore snapshot image `"FAK1"`: every row of the nine
+//! The App keystore snapshot image `"FAK1"`: every row of the ten
 //! `keystore` tables, as `fstp_pgstore::KeystoreRows` holds them (ADR-012
 //! record of lane L27, row "App plaintext").
 //!
@@ -9,9 +9,10 @@
 //! a root of its rows lives (I-80, I-81).
 //!
 //! ```text
-//! image   = "FAK1" | version u8 = 1 | cell 16 | has_chain u8 | chain?
+//! image   = "FAK1" | version u8 (1 or 2) | cell 16 | has_chain u8 | chain?
 //!           | n u32 | root* | n u32 | group* | n u32 | key* | n u32 | text*
 //!           | n u32 | signer* | n u32 | digest* | n u32 | login* | n u32 | requested*
+//!           | (n u32 | display*, version 2 only)
 //! chain   = epoch u64 | len u32 | state | opt lookup | opt login group | opt startup unwrap
 //! opt     = 0 | 1 id 16
 //! root    = epoch u64 | backend u8 | status u8 (1 live, 2 pending, 3 destroyed)
@@ -25,22 +26,29 @@
 //! digest  = digest 32 | account 16
 //! login   = account 16 | text 16
 //! requested = text 16
+//! display = account 16 | text 16 | fingerprint 32
 //! ```
 //!
 //! Integers are big-endian. Rows are strictly increasing by their table's
 //! key, so the decoder admits one spelling only. It bounds every length
-//! and refuses trailing bytes. Fuzzed (`app_keystore_image_decode`). A
+//! and refuses trailing bytes. Version 2 adds the display name index of
+//! `keystore.display_name` (SA-11 amendment, ADR-004 section "Written by
+//! lane L26"). The encoder writes version 2, and the decoder reads a
+//! version 1 image as one with no display name.
+//! Fuzzed (`app_keystore_image_decode`). A
 //! refusal names its rule and never quotes the input (R-NF-02).
 
 use fstp_pgstore::{
-    ChainRow, DataKeyRow, GroupKeyRow, KeystoreRows, KeystoreTextRow, LoginDigestRow, LoginTextRow,
-    RootRow, RootStatus, SignerRow,
+    ChainRow, DataKeyRow, DisplayNameRow, GroupKeyRow, KeystoreRows, KeystoreTextRow,
+    LoginDigestRow, LoginTextRow, RootRow, RootStatus, SignerRow,
 };
 
 /// The magic of an App keystore image.
 pub const MAGIC: [u8; 4] = *b"FAK1";
-/// The only version.
-pub const VERSION: u8 = 1;
+/// The version the encoder writes.
+pub const VERSION: u8 = 2;
+/// The first version, which held no display name index.
+pub const VERSION_1: u8 = 1;
 /// The longest handle, wrapped seal key or sealed data key.
 pub const MAX_SHORT: usize = 4096;
 /// The longest public key, sealed secret or sealed chain state.
@@ -127,6 +135,7 @@ pub fn encode(cell: [u8; 16], rows: &KeystoreRows) -> Result<Vec<u8>, ImageError
     ordered(rows.digests.iter().map(|d| d.digest), "digest order")?;
     ordered(rows.logins.iter().map(|l| l.account), "login order")?;
     ordered(rows.requested.iter().copied(), "request order")?;
+    ordered(rows.displays.iter().map(|d| d.account), "display order")?;
     let mut out = MAGIC.to_vec();
     out.push(VERSION);
     out.extend_from_slice(&cell);
@@ -212,6 +221,12 @@ pub fn encode(cell: [u8; 16], rows: &KeystoreRows) -> Result<Vec<u8>, ImageError
     for r in &rows.requested {
         out.extend_from_slice(r);
     }
+    count(&mut out, rows.displays.len())?;
+    for d in &rows.displays {
+        out.extend_from_slice(&d.account);
+        out.extend_from_slice(&d.text);
+        out.extend_from_slice(&d.fingerprint);
+    }
     Ok(out)
 }
 
@@ -292,7 +307,8 @@ pub fn decode(bytes: &[u8]) -> Result<([u8; 16], KeystoreRows), ImageError> {
     if r.arr::<4>()? != MAGIC {
         return Err(bad("magic"));
     }
-    if r.u8()? != VERSION {
+    let version = r.u8()?;
+    if version != VERSION && version != VERSION_1 {
         return Err(bad("version"));
     }
     let cell = r.arr::<16>()?;
@@ -385,6 +401,15 @@ pub fn decode(bytes: &[u8]) -> Result<([u8; 16], KeystoreRows), ImageError> {
     for _ in 0..r.count()? {
         rows.requested.push(r.arr()?);
     }
+    if version == VERSION {
+        for _ in 0..r.count()? {
+            rows.displays.push(DisplayNameRow {
+                account: r.arr()?,
+                text: r.arr()?,
+                fingerprint: r.arr()?,
+            });
+        }
+    }
     if !r.rest.is_empty() {
         return Err(bad("trailing bytes"));
     }
@@ -402,6 +427,7 @@ pub fn decode(bytes: &[u8]) -> Result<([u8; 16], KeystoreRows), ImageError> {
     ordered(rows.digests.iter().map(|d| d.digest), "digest order")?;
     ordered(rows.logins.iter().map(|l| l.account), "login order")?;
     ordered(rows.requested.iter().copied(), "request order")?;
+    ordered(rows.displays.iter().map(|d| d.account), "display order")?;
     Ok((cell, rows))
 }
 
@@ -488,6 +514,11 @@ mod tests {
                 text: [15; 16],
             }],
             requested: vec![[22; 16]],
+            displays: vec![DisplayNameRow {
+                account: [23; 16],
+                text: [24; 16],
+                fingerprint: [25; 32],
+            }],
         }
     }
 
@@ -516,5 +547,28 @@ mod tests {
         let mut bad_flag = bytes;
         bad_flag[21] = 2;
         assert!(decode(&bad_flag).is_err());
+    }
+
+    /// SA-11 amendment, ADR-004 section "Written by lane L26", ADR-012
+    /// record of lane L27: a version 2 image carries the display name
+    /// index, so a restore from a snapshot keeps every name and its
+    /// uniqueness. A version 1 image reads as one with no display name.
+    #[test]
+    fn sa11_app_keystore_image_carries_the_display_name_index() {
+        let cell = [0x42; 16];
+        let r = rows();
+        let bytes = encode(cell, &r).unwrap();
+        assert_eq!(bytes[4], VERSION);
+        assert_eq!(decode(&bytes).unwrap().1.displays, r.displays);
+        // The version 1 spelling: no display section.
+        let mut old = r.clone();
+        old.displays.clear();
+        let mut v1 = encode(cell, &old).unwrap();
+        v1[4] = VERSION_1;
+        v1.truncate(v1.len() - 4);
+        assert_eq!(decode(&v1).unwrap(), (cell, old));
+        let mut v3 = bytes;
+        v3[4] = 3;
+        assert!(decode(&v3).is_err());
     }
 }

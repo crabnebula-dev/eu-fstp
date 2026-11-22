@@ -208,11 +208,11 @@ const LABELS: Readonly<Record<string, string>> = {
   "onboarding.identity_page.title": "Verify your identity",
   "onboarding.identity_page.intro":
     "Tenant admins and the people who build or approve a programme verify their identity through the vault. This page never sees your identity data.",
-  "onboarding.identity_page.verify": "Start identity verification",
+  "onboarding.identity_page.verify": "Start verification",
   "onboarding.identity_page.unverified": "Your identity is not verified yet.",
-  "onboarding.identity_page.pending": "Your identity verification has started.",
+  "onboarding.identity_page.pending": "We have your request. We will contact you to check your ID, in person or by video call.",
   "onboarding.identity_page.verified": "Your identity is verified.",
-  "onboarding.identity_page.continue": "Continue the verification",
+  "onboarding.identity_page.continue": "See your identity status",
 
   // Tenant settings.
   "onboarding.setting.unnamed": "Tenant setting",

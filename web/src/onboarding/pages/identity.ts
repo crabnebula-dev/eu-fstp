@@ -49,7 +49,9 @@ export function mount(): void {
       show("pending");
       const to = safeUrl(record(o.body)?.["redirect"]);
       next.replaceChildren();
-      if (to !== null) {
+      // ADR-026 record of lane L24: the reply is this page itself, so a
+      // link back to it is left out.
+      if (to !== null && to !== location.pathname) {
         next.append(h("a", { href: to }, [t.label("onboarding.identity_page.continue")]));
       }
     }),

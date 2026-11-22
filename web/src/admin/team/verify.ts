@@ -29,10 +29,11 @@ export function verificationRequest(
 /** The cell route that lists the applicants a tenant admin may verify. */
 export const VERIFICATION_PEOPLE = "/api/v1/verification-people";
 
-/** One applicant a tenant admin may verify: an account of a proposal in NEGOTIATION or later. */
+/** One person a tenant admin may verify: an account of a proposal in NEGOTIATION or later, or a staff member who asked (no proposal). */
 export interface PersonRow {
   readonly account: string;
-  readonly proposal: string;
+  readonly proposal: string | null;
+  readonly requested: boolean;
   readonly role: string;
 }
 
@@ -46,12 +47,13 @@ export function decodePeople(v: unknown): readonly PersonRow[] | null {
   const out: PersonRow[] = [];
   for (const x of people as readonly unknown[]) {
     const r = record(x);
-    if (r === null || Object.keys(r).length !== 3) return null;
-    const { account, proposal, role } = r;
-    if (typeof account !== "string" || !ID.test(account) || typeof proposal !== "string" || !ID.test(proposal) || typeof role !== "string") {
+    if (r === null || Object.keys(r).length !== 4) return null;
+    const { account, proposal, requested, role } = r;
+    const proposalOk = proposal === null || (typeof proposal === "string" && ID.test(proposal));
+    if (typeof account !== "string" || !ID.test(account) || !proposalOk || typeof requested !== "boolean" || typeof role !== "string") {
       return null;
     }
-    out.push(Object.freeze({ account, proposal, role }));
+    out.push(Object.freeze({ account, proposal: proposal as string | null, requested, role }));
   }
   return Object.freeze(out);
 }

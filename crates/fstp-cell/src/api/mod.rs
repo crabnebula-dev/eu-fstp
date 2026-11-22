@@ -45,6 +45,7 @@ mod engine;
 pub(crate) mod facts;
 pub(crate) mod mail;
 mod session;
+mod system;
 mod tenant;
 
 use std::sync::Arc;
@@ -109,6 +110,11 @@ pub(crate) struct ApiParts<R: Runtime, V> {
     /// The onboarding probes of the `Prober` port (ADR-026 record of lane
     /// L18). `None` fails every probe (Q5).
     pub prober: Option<Arc<dyn crate::shell::probe::TenantProbe>>,
+    /// The runtime, for the time limits of the System page's live checks.
+    pub rt: R,
+    /// The host status file of the System page (ADR-028 record of lane
+    /// L20), if the configuration names one.
+    pub host_status: Option<std::path::PathBuf>,
 }
 
 /// The shared state of every port of one cell.
@@ -127,6 +133,10 @@ pub(crate) struct Inner<R: Runtime, V> {
     facts: Arc<dyn facts::ShellFacts>,
     audit: audit::Buffer,
     stepups: session::Begun,
+    // ADR-028 record of lane L20: the System page.
+    rt: R,
+    host_status: Option<std::path::PathBuf>,
+    probe: Option<Arc<dyn crate::shell::probe::TenantProbe>>,
 }
 
 impl<R: Runtime, V> Inner<R, V> {
@@ -183,6 +193,8 @@ where
         relay,
         facts,
         prober,
+        rt,
+        host_status,
     } = parts;
     let facts = facts.unwrap_or_else(|| Arc::new(facts::BackendFacts(Arc::clone(&backend))));
     let inner = Arc::new(Inner {
@@ -200,6 +212,9 @@ where
         relay,
         facts,
         stepups: session::Begun::default(),
+        rt,
+        host_status,
+        probe: prober.clone(),
     });
     let tokens = Arc::new(tokens);
     let ports = Ports {

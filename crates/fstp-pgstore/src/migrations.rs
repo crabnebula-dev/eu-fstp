@@ -31,6 +31,8 @@ use fstp_migrate::Migration;
 ///     (ADR-013 amendment of 2026-11-20, lane L2).
 /// 11. `keystore`: the keystore tables of the App chain (ADR-004, decided
 ///     by Daniel on 2026-11-20, lane L3).
+/// 12. `display_name`: the display name index of the App chain (SA-11
+///     amendment, ADR-004 section "Written by lane L26").
 pub const MIGRATIONS: &[Migration] = &[
     Migration::new(1, "meta", include_str!("../migrations/app/0001_meta.sql")),
     Migration::new(
@@ -69,6 +71,12 @@ pub const MIGRATIONS: &[Migration] = &[
         11,
         "keystore",
         include_str!("../migrations/app/0011_keystore.sql"),
+    ),
+    // Lane L26 (SA-11 amendment, ADR-004): the display name index.
+    Migration::new(
+        12,
+        "display_name",
+        include_str!("../migrations/app/0012_display_name.sql"),
     ),
 ];
 

@@ -1,15 +1,18 @@
 //! Unique display names within the organisation (SA-11 amendment, Daniel
-//! 2026-11-15 night; ADR-004, ADR-007, I-20).
+//! 2026-11-15 night; ADR-004, ADR-007, ADR-029, I-20).
 //!
 //! A display name is stored sealed, so a text store checks uniqueness on
 //! a keyed fingerprint of the normalised name, never on the name itself.
 //!
-//! - [`normalised`] is the comparison form. Daniel chose the simpler
-//!   comparison: surrounding white space trimmed, inner white space
-//!   collapsed to one space, then `to_lowercase`. No Unicode NFC and no
-//!   full case folding is applied, since no workspace code does either.
-//!   Two names that differ only in how an accent is encoded, such as
-//!   U+00E9 against `e` with U+0301, may therefore both be accepted.
+//! - [`normalised`] is the comparison form: `fstp_unorm::name_key`, the
+//!   compatibility caseless key of ADR-029 (`NFKC_CF`, default ignorables
+//!   removed), with white space trimmed and each inner run collapsed to
+//!   one space. Lane L26 chose it in place of the "Simpler comparison" of
+//!   2026-11-15, which trimmed, collapsed and lower-cased only, because no
+//!   workspace code did NFC or case folding then (ADR-004, section
+//!   "Written by lane L26", lead reading of 2026-11-22). Two encodings of one
+//!   accented name, case variants such as "Straße" and "STRASSE", and a
+//!   name with a zero width joiner inside are each one name.
 //! - [`fingerprint_key`] derives the fingerprint key from the tenant
 //!   cell's App chain `Lookup` key through HKDF-SHA256 with the fixed
 //!   label [`FINGERPRINT_KEY_LABEL`], as the delivery body digest key is
@@ -32,19 +35,11 @@ pub const TAKEN_RULE: &str = "SA-11-unique";
 /// The length of a fingerprint, in bytes.
 pub const FINGERPRINT_LEN: usize = fstp_crypto::HMAC_SHA256_LEN;
 
-/// The comparison form of `name` (SA-11 amendment, "Simpler comparison"):
-/// white space trimmed, each inner run of white space one U+0020, then
-/// `to_lowercase`. White space is Unicode `White_Space`. No NFC is
-/// applied.
+/// The comparison form of `name` (SA-11 amendment, ADR-029, lane L26):
+/// `fstp_unorm::name_key`. A name whose form is empty, such as one made
+/// only of default ignorables, names nobody, and the API core refuses it.
 pub fn normalised(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for word in name.split_whitespace() {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(word);
-    }
-    out.to_lowercase()
+    fstp_unorm::name_key(name)
 }
 
 /// The fingerprint key of the tenant cell whose App chain `Lookup` key is
@@ -70,17 +65,19 @@ mod tests {
 
     use super::*;
 
-    /// SA-11 amendment: trimmed, inner white space collapsed to one
-    /// space, then lower case. "Anna Berg" and "anna  berg" are the same.
+    /// SA-11 amendment, ADR-029: trimmed, inner white space collapsed to
+    /// one space, then case folded. "Anna Berg" and "anna  berg" are the
+    /// same.
     #[test]
-    fn sa11_unique_normalisation_trims_collapses_and_lowercases() {
+    fn sa11_unique_normalisation_trims_collapses_and_folds() {
         for (raw, want) in [
             ("Anna Berg", "anna berg"),
             ("anna  berg", "anna berg"),
             ("  ANNA\u{a0}\u{2003}Berg \t", "anna berg"),
             ("Anna\u{3000}Berg", "anna berg"),
             ("ÉLODIE Ørsted", "élodie ørsted"),
-            ("ΣΊΣΥΦΟΣ", "σίσυφος"),
+            // Full case folding folds the final sigma too.
+            ("ΣΊΣΥΦΟΣ", "σίσυφοσ"),
             ("", ""),
             (" \u{2009} ", ""),
         ] {
@@ -98,24 +95,40 @@ mod tests {
             "İstanbul",
             "STRASSE straße",
             "x\u{2028}y",
+            "Ａｎｎａ ﬁne",
         ] {
             let once = normalised(raw);
             assert_eq!(normalised(&once), once, "{raw:?}");
         }
     }
 
-    /// SA-11 amendment, "Simpler comparison": no NFC is applied, so two
-    /// encodings of the same accented name stay apart and may both be
-    /// accepted. This records the known limit Daniel accepted.
+    /// SA-11 amendment, ADR-029, lane L26: canonical equivalents, full
+    /// case folding, compatibility forms and default ignorables give one
+    /// name, so look-alike names cannot both be taken.
     #[test]
-    fn sa11_unique_names_differing_only_in_accent_encoding_stay_apart() {
-        let composed = "Jos\u{e9} Synthetic";
-        let decomposed = "Jose\u{301} Synthetic";
-        assert_ne!(normalised(composed), normalised(decomposed));
+    fn sa11_unique_adr029_variants_of_one_name_are_one_name() {
         let key = fingerprint_key(&[7; 32]).unwrap();
-        assert_ne!(fingerprint(&key, composed), fingerprint(&key, decomposed));
-        // No full case folding either: "ß" is not "ss".
-        assert_ne!(normalised("Straße"), normalised("STRASSE"));
+        for (a, b) in [
+            ("Jos\u{e9} Synthetic", "Jose\u{301} Synthetic"),
+            ("Straße", "STRASSE"),
+            ("Anna Berg", "An\u{200d}na Berg"),
+            ("Anna Berg", "Anna\u{ad} Berg"),
+            ("Anna Berg", "Ａｎｎａ Ｂｅｒｇ"),
+            ("Synthetic fine", "Synthetic ﬁne"),
+        ] {
+            assert_eq!(normalised(a), normalised(b), "{a:?} {b:?}");
+            assert_eq!(fingerprint(&key, a), fingerprint(&key, b), "{a:?} {b:?}");
+        }
+        assert_ne!(normalised("Anna Berg"), normalised("Anna Bergh"));
+    }
+
+    /// SA-11 amendment, ADR-029: a name of default ignorables only has an
+    /// empty comparison form, which the API core refuses.
+    #[test]
+    fn sa11_unique_name_of_ignorables_only_is_empty() {
+        for raw in ["\u{200d}", "\u{ad}\u{200b}", "\u{feff} \u{200c}"] {
+            assert_eq!(normalised(raw), "", "{raw:?}");
+        }
     }
 
     /// SA-11 amendment, I-20: the fingerprint is keyed. Equal names give
