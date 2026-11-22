@@ -531,3 +531,20 @@ pub trait Backend: Send + Sync + 'static {
     /// Every erasure-log entry, in request order.
     fn erasures(&self) -> impl Future<Output = Result<Vec<ErasureRow>, BackendFault>> + Send;
 }
+
+/// The rows of the erasure log in `state` (ADR-007 section "Built by lane
+/// L33"), oldest request first. A completion is the destruction of the
+/// key's root epoch once recorded. A text's programme is not recorded, so
+/// each row is tenant-wide.
+pub(crate) fn log_rows(state: &fstp_cell_core::CellState) -> Vec<ErasureRow> {
+    crate::tasks::erasure::erasure_log(state)
+        .into_iter()
+        .map(|(text, e)| ErasureRow {
+            text,
+            requested_at: e.requested_at.micros(),
+            completed_at: e.destroyed_at.or(e.completed_at).map(|t| t.micros()),
+            cause: e.cause,
+            programme: None,
+        })
+        .collect()
+}

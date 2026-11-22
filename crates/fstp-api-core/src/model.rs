@@ -2271,6 +2271,8 @@ pub(crate) mod reply_shape_tests {
                         grant: Some(ProposalId::from_raw(8)),
                         requested_at: fstp_domain::time::Timestamp::from_micros(1),
                         completed_at: Some(fstp_domain::time::Timestamp::from_micros(2)),
+                        kind: crate::port::ErasureKind::Text,
+                        destroyed_epoch: Some(3),
                     },
                     crate::port::ErasureRow {
                         text: crate::port::TextRef(9),
@@ -2278,6 +2280,8 @@ pub(crate) mod reply_shape_tests {
                         grant: None,
                         requested_at: fstp_domain::time::Timestamp::from_micros(3),
                         completed_at: None,
+                        kind: crate::port::ErasureKind::DisplayName,
+                        destroyed_epoch: None,
                     },
                 ],
                 retention_ended: vec![fstp_domain::retention::RetentionEnd {

@@ -1297,7 +1297,12 @@ impl ErasureCause {
         }
     }
 
-    /// The cause of a wire name.
+    /// The cause of the closed code `code`, if it is one (lane L33).
+    pub fn from_code(code: u16) -> Option<ErasureCause> {
+        ErasureCause::ALL.into_iter().find(|c| c.code() == code)
+    }
+
+    /// The cause of the wire name `s`, if it is one.
     pub fn from_wire(s: &str) -> Option<ErasureCause> {
         ErasureCause::ALL.into_iter().find(|c| c.wire() == s)
     }
@@ -1318,6 +1323,33 @@ pub struct ErasureRow {
     pub requested_at: Timestamp,
     /// When it completed, once it did.
     pub completed_at: Option<Timestamp>,
+    /// What the text held (lane L33).
+    pub kind: ErasureKind,
+    /// The root epoch whose destruction completed the erasure, once the
+    /// store knows it (I-81, lane L33).
+    pub destroyed_epoch: Option<u64>,
+}
+
+/// What an erased text held (ADR-007 section "Built by lane L33").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ErasureKind {
+    /// A text the ledger names.
+    Text,
+    /// A display name an account replaced or cleared (SA-11).
+    DisplayName,
+}
+
+impl ErasureKind {
+    /// Every kind.
+    pub const ALL: [ErasureKind; 2] = [ErasureKind::Text, ErasureKind::DisplayName];
+
+    /// The wire name (`fstp_access::ERASURE_KINDS`).
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ErasureKind::Text => "text",
+            ErasureKind::DisplayName => "display_name",
+        }
+    }
 }
 
 /// Blobs, such as uploaded import documents (R-PG-02): content-addressed,

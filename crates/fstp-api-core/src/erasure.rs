@@ -56,6 +56,14 @@ impl ToJson for ErasuresView {
             let _ = o.insert("grant", r.grant.map_or(Value::Null, |g| dec(g.raw())));
             let _ = o.insert("requested_at", instant(r.requested_at));
             let _ = o.insert("completed_at", r.completed_at.map_or(Value::Null, instant));
+            // Lane L33: what the text held, and the root epoch whose
+            // destruction completed the erasure.
+            let _ = o.insert("kind", Value::from(r.kind.wire()));
+            let _ = o.insert(
+                "destroyed_epoch",
+                r.destroyed_epoch
+                    .map_or(Value::Null, |e| dec(u128::from(e))),
+            );
             erasures.push(Value::Object(o));
         }
         let mut ended = Array::new();
