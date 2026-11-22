@@ -243,6 +243,34 @@ fn tenant_error(r: TenantRefusal) -> ApiError {
     ApiError::refused(ErrorCode::Refused, rule)
 }
 
+/// The caller of `tenant.branding.set_logo` (ADR-030, lead reading of
+/// 2026-11-22): a tenant admin for any slot, or a programme manager for a
+/// slot of that programme. Anyone else is refused as an actor, as
+/// [`admin`] refuses.
+fn logo_caller<'a, P: Seams>(
+    call: &'a Call<'_, P>,
+    op: &Op,
+) -> Result<(AccountId, &'a TenantState), ApiError> {
+    let (Some(account), Some(ts)) = (call.account(), call.state.tenant.state()) else {
+        return admin(call);
+    };
+    if ts.is_admin(account) {
+        return Ok((account, ts));
+    }
+    let manages = crate::tenant::logo_request(&op.request)
+        .ok()
+        .and_then(|r| match r.slot.owner {
+            fstp_tenant::LogoOwner::Programme(p) => Some(p),
+            fstp_tenant::LogoOwner::Tenant => None,
+        })
+        .is_some_and(|p| super::brand::manages(&call.state, account, p));
+    if manages {
+        Ok((account, ts))
+    } else {
+        Err(call.refuse(ApiError::refused(ErrorCode::Refused, "actor")))
+    }
+}
+
 /// The refusal of a tenant operation in a cell with no provisioning
 /// record.
 const fn unprovisioned() -> ApiError {
@@ -400,6 +428,7 @@ fn build<P: Seams>(
 /// refused under I-68 and names no request content.
 fn checked_logo(text: &str) -> Result<(fstp_tenant::LogoRef, Vec<u8>), ApiError> {
     let logo = fstp_brand::image::from_base64(text)
+        .map(fstp_brand::image::reencode)
         .map_err(|_| ApiError::refused(ErrorCode::Refused, "I-68"))?;
     let r = fstp_tenant::LogoRef {
         digest: ContentDigest::from_bytes(fstp_crypto::sha256(&logo.bytes)),
@@ -577,7 +606,11 @@ pub(super) async fn command<P: Seams>(
     {
         return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-85")));
     }
-    let (account, ts) = admin(call)?;
+    let (account, ts) = if kind == TenantKind::SetLogo {
+        logo_caller(call, op)?
+    } else {
+        admin(call)?
+    };
     // A self-grant approval and the brand check are never prepared: the
     // one has no tool, and the other records nothing.
     if prepared

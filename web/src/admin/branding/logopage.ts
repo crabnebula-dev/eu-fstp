@@ -223,11 +223,13 @@ function owner(
   ]);
 }
 
-/** The body of the section for the logos in force. */
-function body(env: PageEnv, t: I18n, f: Frame, v: LogosView, refresh: () => Promise<void>): Child[] {
+/** The body of the section for the logos in force. A programme manager's page (`tenantSlots` false) offers the programme's slots only. */
+function body(env: PageEnv, t: I18n, f: Frame, v: LogosView, refresh: () => Promise<void>, tenantSlots: boolean): Child[] {
   return [
     h("p", {}, [t.label("admin.branding.logos.intro")]),
-    owner(env, t, f, t.label("admin.branding.logos.tenant"), null, v.tenant.light, v.tenant.dark, refresh),
+    ...(tenantSlots
+      ? [owner(env, t, f, t.label("admin.branding.logos.tenant"), null, v.tenant.light, v.tenant.dark, refresh)]
+      : []),
     ...v.programmes.map((p) =>
       owner(env, t, f, t.label("admin.branding.logos.programme", { name: p.name }), p.programme, p.light, p.dark, refresh),
     ),
@@ -235,20 +237,29 @@ function body(env: PageEnv, t: I18n, f: Frame, v: LogosView, refresh: () => Prom
   ];
 }
 
-/** The logos section of the branding page. It reads the logos in force and renders again after each change. */
-export function logosSection(env: PageEnv, t: I18n, f: Frame): HTMLElement {
+/**
+ * The logos section of a page. It reads the logos in force and renders
+ * again after each change. With no `programme` it is the tenant admin's
+ * section (`tenant.branding.logos`). With one it is that programme's
+ * managers' section (`programme.logos`), which sets that programme's
+ * slots only (ADR-030, lead reading of 2026-11-22).
+ */
+export function logosSection(env: PageEnv, t: I18n, f: Frame, programme: string | null = null): HTMLElement {
   const holder = h("div", { class: "logo-section" }, [h("p", {}, [t.label("admin.branding.logos.loading")])]);
   const unavailable = (): void => {
     holder.replaceChildren(h("p", {}, [t.label("admin.branding.logos.unavailable")]));
   };
   const refresh = async (): Promise<void> => {
-    const r = await readOp(env, "tenant.branding.logos", {}, (x): x is unknown => decodeLogos(x) !== null);
+    const r =
+      programme === null
+        ? await readOp(env, "tenant.branding.logos", {}, (x): x is unknown => decodeLogos(x) !== null)
+        : await readOp(env, "programme.logos", { programme }, (x): x is unknown => decodeLogos(x) !== null);
     const v = r.ok ? decodeLogos(r.data) : null;
     if (v === null) {
       unavailable();
       return;
     }
-    holder.replaceChildren(...body(env, t, f, v, refresh));
+    holder.replaceChildren(...body(env, t, f, v, refresh, programme === null));
   };
   refresh().catch(unavailable);
   return section("branding-logos", t.label("admin.branding.logos.heading"), [holder]);

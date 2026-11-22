@@ -509,7 +509,12 @@ impl TenantState {
                 self.branding = Some((tokens.clone(), *digest));
             }
             TenantRecord::LogoSet { slot, logo, by } => {
-                self.need_admin(*by)?;
+                // ADR-030: a programme slot may be its managers', which
+                // `decide` judged from the roster. A tenant slot is the
+                // tenant admins'.
+                if slot.owner == crate::types::LogoOwner::Tenant {
+                    self.need_admin(*by)?;
+                }
                 crate::decide::check_logo(logo.as_ref()).map_err(FoldError)?;
                 match logo {
                     Some(l) => {

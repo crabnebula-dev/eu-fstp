@@ -750,9 +750,11 @@ export function mountProgress(p: string): void {
       h("ul", { class: "card-list" }, [
         h("li", {}, [link(SETUP_PATHS.stage(p, "programme"), t.label("setup.progress.wizard_link"), { id: "setup-wizard-link" })]),
         h("li", {}, [link(PATHS.people(p), t.label("setup.progress.people_link"), { id: "setup-people-link" })]),
-        // ADR-030: the programme's logo is set on the branding page. The
-        // link shows only to a viewer the page gate admits (SA-09).
-        h("li", {}, [link("/app/admin/branding", t.label("setup.progress.logo_link"), { id: "setup-logo-link" })]),
+        // ADR-030: the programme's logo page for its programme managers, and
+        // the branding page for tenant admins. Each link shows only to a
+        // viewer the page gate admits (SA-09).
+        h("li", {}, [link(`/app/programmes/${p}/logo`, t.label("setup.progress.logo_link"), { id: "setup-logo-link" })]),
+        h("li", {}, [link("/app/admin/branding", t.label("setup.progress.branding_link"), { id: "setup-branding-link" })]),
       ]),
     );
     if (calls === null) parts.push(h("p", { class: "text-sm muted" }, [t.label("setup.progress.calls_unread")]));

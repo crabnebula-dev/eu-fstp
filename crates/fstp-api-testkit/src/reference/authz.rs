@@ -1468,6 +1468,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // only.
     RefOp::read("tenant.branding.logos", T::None, R::TenantAdmin),
     RefOp::act("tenant.branding.set_logo", T::None, R::TenantAdmin).hr(),
+    // ADR-030 (lead reading of 2026-11-22): a programme manager reads the
+    // logos of the programme. Setting a programme slot is the manager's
+    // too, judged on the body's slot. The matrix body names the tenant
+    // slot, which stays the tenant admins'.
+    RefOp::read("programme.logos", T::Programme, R::ProgrammeManager),
     // M9 lane T1: interface labels and the Voyage switch (I-72, interim).
     RefOp::act("tenant.terminology.set", T::None, R::TenantAdmin)
         .hr()
@@ -2343,6 +2348,8 @@ fn p74_refuses(rule: Rule, who: Who, policy: &Policy) -> bool {
 ///
 /// - any caller: the account security operations, which R-LG-04 keeps
 ///   open ("Users can see and end their sessions and linked devices");
+/// - any caller: its theme choice, a personal display preference and no
+///   organisation data (ADR-030, lead reading of 2026-11-22);
 /// - a tenant admin: every `tenant.*` operation, the onboarding approvals
 ///   (`admin.approvals`, `admin.approve_self_grant`,
 ///   `admin.approve_recovery`), and the admin's own roles and
@@ -2361,6 +2368,7 @@ pub fn setup_admits(op: &RefOp, who: Who) -> bool {
         "me.begin_verification",
     ];
     ACCOUNT_SECURITY.contains(&op.name)
+        || op.name == "me.set_theme"
         || (who.tenant_admin()
             && (op.name.starts_with("tenant.") || ADMIN_ONBOARDING.contains(&op.name)))
 }

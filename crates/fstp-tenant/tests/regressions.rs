@@ -100,6 +100,7 @@ impl Tenant {
                         answers.holds_receiving(a, h);
                     }
                 }
+                TenantQuery::ProgrammeManagers(_) => {}
             }
         }
         let recs = decide(&self.state, &ctx(actor, at), cmd, &answers)?;

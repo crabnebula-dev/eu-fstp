@@ -72,6 +72,7 @@ export type OpName =
   | "tenant.branding.set"
   | "tenant.branding.logos"
   | "tenant.branding.set_logo"
+  | "programme.logos"
   | "tenant.terminology.set"
   | "tenant.set_mail_relay"
   | "tenant.get_mail_relay"
@@ -325,6 +326,7 @@ export interface OpParams {
   readonly "tenant.branding.set": Readonly<Record<never, string>>;
   readonly "tenant.branding.logos": Readonly<Record<never, string>>;
   readonly "tenant.branding.set_logo": Readonly<Record<never, string>>;
+  readonly "programme.logos": { readonly "programme": string };
   readonly "tenant.terminology.set": Readonly<Record<never, string>>;
   readonly "tenant.set_mail_relay": Readonly<Record<never, string>>;
   readonly "tenant.get_mail_relay": Readonly<Record<never, string>>;
@@ -551,6 +553,7 @@ export const OP_NAMES: readonly OpName[] = [
   "tenant.branding.set",
   "tenant.branding.logos",
   "tenant.branding.set_logo",
+  "programme.logos",
   "tenant.terminology.set",
   "tenant.set_mail_relay",
   "tenant.get_mail_relay",
@@ -995,6 +998,20 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: true,
     binding: false,
     session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "programme.logos",
+    method: "GET",
+    path: "/programmes/{programme}/logos",
+    base: "api",
+    segments: [{ kind: "literal", text: "programmes" }, { kind: "param", name: "programme" }, { kind: "literal", text: "logos" }],
+    params: ["programme"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
     classification: "confidential",
     tool: null,
   },
@@ -5052,6 +5069,67 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "programme.logos": {
+    kind: "object",
+    fields: {
+      "tenant": { schema: {
+        kind: "object",
+        fields: {
+          "light": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+          "dark": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+        },
+      }, optional: false },
+      "programmes": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "programme": { schema: { kind: "id" }, optional: false },
+          "name": { schema: { kind: "string" }, optional: false },
+          "light": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+          "dark": { schema: { kind: "nullable", inner: {
+            kind: "object",
+            fields: {
+              "path": { schema: { kind: "string" }, optional: false },
+              "format": { schema: { kind: "enum", values: ["png", "webp"] }, optional: false },
+              "width": { schema: { kind: "string" }, optional: false },
+              "height": { schema: { kind: "string" }, optional: false },
+              "pdf": { schema: { kind: "bool" }, optional: false },
+              "email": { schema: { kind: "bool" }, optional: false },
+            },
+          } }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "tenant.get_step": {
     kind: "object",
     fields: {
@@ -5672,6 +5750,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/programmes/{programme}/setup/{stage}", need: { kind: "reads", reads: ["creator.get_draft"] }, values: { stage: ["programme", "applicants", "evaluation", "team", "communications", "review"] }, listed: null },
   { pattern: "/app/programmes/{programme}/people", need: { kind: "reads", reads: ["creator.get_draft"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/team", need: { kind: "reads", reads: ["team.list"] }, values: {}, listed: null },
+  { pattern: "/app/programmes/{programme}/logo", need: { kind: "reads", reads: ["programme.logos"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/audit", need: { kind: "reads", reads: ["audit.entries", "audit.unmasks"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/reports", need: { kind: "reads", reads: ["report.list"] }, values: {}, listed: null },
   { pattern: "/app/programmes/{programme}/funder-profile", need: { kind: "reads", reads: ["programme.funder_profile.view"] }, values: {}, listed: null },

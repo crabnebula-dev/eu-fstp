@@ -393,6 +393,21 @@ fn tenant_answers(
             TenantQuery::HoldsReceiving(a) => {
                 answers.holds_receiving(a, holds_receiving(&state.core, a));
             }
+            // ADR-030: the active Programme manager bindings of the programme.
+            TenantQuery::ProgrammeManagers(p) => {
+                let managers = state
+                    .core
+                    .roster()
+                    .bindings()
+                    .filter(|(_, b)| {
+                        b.programme == p
+                            && b.role == fstp_domain::roles::Role::ProgrammeManager
+                            && b.held()
+                    })
+                    .map(|(_, b)| b.account)
+                    .collect();
+                answers.programme_managers(p, managers);
+            }
         }
     }
     answers

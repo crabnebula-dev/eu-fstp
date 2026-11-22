@@ -1799,7 +1799,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Deliveries(_) => &["tenant.deliveries"],
             ReadModel::Erasures(_) => &["admin.erasures"],
             ReadModel::FunderProfiles(_) => &["tenant.funder_profiles"],
-            ReadModel::Logos(_) => &["tenant.branding.logos"],
+            ReadModel::Logos(_) => &["tenant.branding.logos", "programme.logos"],
             ReadModel::Timeline(_) => &["programme.timeline"],
             ReadModel::MailRelay(_) => &["tenant.get_mail_relay"],
             ReadModel::Precheck(_) => &["proposal.precheck", "proposal.precheck_runs"],

@@ -1067,7 +1067,15 @@ pub const OPS: &[OpSpec] = &[
         "/admin/branding/logo",
     )
     .hr()
-    .acting(ADMIN),
+    .acting(MANAGER_OR_ADMIN),
+    // ADR-030 (lead reading of 2026-11-22): a programme manager reads and
+    // sets the logos of the programme. Web only.
+    OpSpec::read(
+        "programme.logos",
+        RK::GetProgrammeLogos,
+        "/programmes/{programme}/logos",
+    )
+    .acting(MANAGER),
     // M9 lane T1: interface label overrides and the Voyage switch (I-72,
     // O-55). It changes what every interface shows, so it is high-risk by
     // the strict reading, as the brand tokens are (interim, pending Daniel).

@@ -7,6 +7,7 @@ export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
   "admin.branding.title": "Logos and brand colours",
   "admin.branding.colours.heading": "Brand colours",
   "admin.branding.logos.heading": "Logos",
+  "admin.branding.logos.programme_title": "Programme logo",
   "admin.branding.logos.loading": "Loading the logos in force.",
   "admin.branding.logos.unavailable": "The logos could not be loaded. Reload the page to try again.",
   "admin.branding.logos.intro":

@@ -1149,7 +1149,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 80] = [
+const READ_NAMES: [&str; 81] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1220,6 +1220,7 @@ const READ_NAMES: [&str; 80] = [
     "ListErasures",
     "ListFunderProfiles",
     "ListLogos",
+    "GetProgrammeLogos",
     // M5 reads follow-up: the caller's grants and contracts to sign.
     "ListMyGrants",
     "ListMyContractsToSign",

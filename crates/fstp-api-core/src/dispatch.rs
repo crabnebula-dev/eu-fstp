@@ -2321,6 +2321,13 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         ReadKind::ListFunderProfiles => tenant::funder_profiles(call)?,
         // ADR-030: the logos of the tenant and of each programme.
         ReadKind::ListLogos => brand::logos(call),
+        // ADR-030: one programme's logos, for its programme managers.
+        ReadKind::GetProgrammeLogos => {
+            let p = forms::id_param(&op.request, "programme")
+                .map(ProgrammeId::from_raw)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            brand::programme_logos(call, p)
+        }
         // M6 lane L6-API: the programme manager's timeline of a programme.
         ReadKind::GetProgrammeTimeline => {
             use crate::port::Outbox as _;

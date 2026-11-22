@@ -788,3 +788,29 @@ pub fn to_base64(bytes: &[u8]) -> String {
     }
     out
 }
+
+// ----------------------------------------------------------------- seam
+
+/// The re-encoding seam of ADR-030 (lead reading of 2026-11-22). A
+/// follow-up lane writes an in-house inflate and a PNG decoder and
+/// encoder, with no new crate. It then fills these three steps, and the
+/// callers stay as they are:
+///
+/// - [`reencode`]: every upload is decoded and written again, so no
+///   encoded byte of the uploader's file is stored;
+/// - [`pdf_image`]: a logo with an alpha channel is flattened onto white,
+///   so every PNG logo shows in PDFs;
+/// - [`header_contrast`]: the cell judges the contrast of a logo against
+///   the header colours, so a refusal needs no browser.
+///
+/// Until then `reencode` returns the chunk rewrite of [`inspect`]
+/// unchanged and `header_contrast` knows nothing.
+pub fn reencode(logo: Logo) -> Logo {
+    logo
+}
+
+/// The contrast of a logo against a header colour, once a decoder exists
+/// ([`reencode`]). `None` until then: the cell does not judge it.
+pub fn header_contrast(_logo: &Logo, _header: fstp_creator::Rgb) -> Option<u32> {
+    None
+}

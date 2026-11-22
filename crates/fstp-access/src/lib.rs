@@ -65,8 +65,8 @@ pub use replies::{
 };
 
 pub use setup::{
-    ACCOUNT_SECURITY_OPS, ADMIN_OWN_OPS, ONBOARDING_ADMIN_OPS, SETUP_RULE, onboarding_op,
-    setup_admits,
+    ACCOUNT_SECURITY_OPS, ADMIN_OWN_OPS, ONBOARDING_ADMIN_OPS, PERSONAL_PREFERENCE_OPS, SETUP_RULE,
+    onboarding_op, setup_admits,
 };
 
 #[cfg(test)]

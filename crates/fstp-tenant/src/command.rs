@@ -317,12 +317,14 @@ impl TenantKind {
             )
     }
 
-    /// Whether only a tenant admin may issue the kind. Only taking an
-    /// invitation is open to an account outside the admin set.
+    /// Whether only a tenant admin may issue the kind. Open to others:
+    /// taking an invitation, the caller's own theme, and a programme's
+    /// logo, which its programme managers may set (ADR-030, `decide`
+    /// judges the slot).
     pub const fn admin_only(self) -> bool {
         !matches!(
             self,
-            TenantKind::AcceptAdminInvitation | TenantKind::SetTheme
+            TenantKind::AcceptAdminInvitation | TenantKind::SetTheme | TenantKind::SetLogo
         )
     }
 }

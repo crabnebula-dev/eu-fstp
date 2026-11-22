@@ -126,6 +126,8 @@ impl Sut {
                 TenantQuery::HoldsReceiving(a) => {
                     answers.holds_receiving(a, self.env.receiving.contains(&a));
                 }
+                // The machine issues no logo command (ADR-030).
+                TenantQuery::ProgrammeManagers(_) => {}
             }
         }
         match fstp_tenant::decide(&self.state, &ctx, &cmd, &answers) {

@@ -338,7 +338,9 @@ impl<R: Runtime, V: VaultClient> Accounts for CellAccounts<R, V> {
                 (to, derived, link, path, None)
             }
         };
-        let fired = self.fire(&relay, derived, link, &to, programme, now).await?;
+        let fired = self
+            .fire(&relay, derived, link, &to, programme, now)
+            .await?;
         // Step 4. Without the digest key the row waits for the dispatcher.
         if let Some((outbox, body)) = fired
             && let Ok(Some(key)) = self.0.erasure.delivery_digest_key().await

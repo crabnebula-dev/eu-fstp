@@ -84,7 +84,9 @@ impl Tenant {
             match q {
                 TenantQuery::AdminVerified(a) => answers.verified(a, true),
                 TenantQuery::HoldsReceiving(a) => answers.holds_receiving(a, false),
-                TenantQuery::Probe(_) | TenantQuery::Agreements => {}
+                TenantQuery::Probe(_)
+                | TenantQuery::Agreements
+                | TenantQuery::ProgrammeManagers(_) => {}
             }
         }
         let ctx = TenantCtx {

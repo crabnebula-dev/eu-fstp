@@ -220,3 +220,40 @@ fn adr030_theme_is_kept_per_account() {
         Theme::System
     );
 }
+
+/// ADR-030 (lead reading of 2026-11-22): the theme is a personal display
+/// preference, so the setup gate of ADR-021 lets it through before the
+/// organisation is activated.
+#[test]
+fn adr030_theme_is_set_before_activation() {
+    let c = cell(false);
+    let l = c.login(A1, LoginMethod::Passkey);
+    let set = decode_route(Method::Put, "/me/theme", br#"{"theme":"light"}"#);
+    match c.web(&l, set) {
+        Ok(OpResult::Done { .. }) => {}
+        other => panic!("ADR-021 lets the theme through: {other:?}"),
+    }
+    let theme = block_on(c.core().theme(
+        Credential::SessionCookie(l.cookie.clone()),
+        &RequestHead::new(),
+    ));
+    assert_eq!(theme, Theme::Light);
+}
+
+/// ADR-030 (lead reading of 2026-11-22): a programme slot is refused as an
+/// actor refusal to an account that is neither a tenant admin nor a
+/// programme manager of the programme, and the programme read is closed
+/// to it.
+#[test]
+fn adr030_programme_logo_is_closed_to_outsiders() {
+    let c = cell(true);
+    let o = c.login(OUTSIDER, LoginMethod::Passkey);
+    let body = format!(
+        r#"{{"image":"{}","mode":"light","programme":"7"}}"#,
+        to_base64(&sample_png(64, 32))
+    );
+    let set = decode_route(Method::Put, "/admin/branding/logo", body.as_bytes());
+    assert!(matches!(c.web(&o, set), Err(ApiError::Refused { .. })));
+    let read = decode_route(Method::Get, "/programmes/7/logos", b"");
+    assert!(c.web(&o, read).is_err());
+}

@@ -153,3 +153,25 @@ pub(crate) async fn letterhead<P: Seams>(
         emblem: fstp_brand::emblem::EU_EMBLEM_PNG.and_then(pdf_of),
     }
 }
+
+/// Whether `account` holds an active Programme manager binding in
+/// `programme`, as the engine answers the domain's question (ADR-030,
+/// lead reading of 2026-11-22).
+pub(crate) fn manages(state: &EngineState, account: AccountId, programme: ProgrammeId) -> bool {
+    state.core.roster().bindings().any(|(_, b)| {
+        b.account == account
+            && b.programme == programme
+            && b.role == fstp_domain::roles::Role::ProgrammeManager
+            && b.held()
+    })
+}
+
+/// `programme.logos` (ADR-030, lead reading of 2026-11-22): the tenant's
+/// logos, shown read-only, and the one programme's slots. The read rule
+/// admitted the caller as a programme manager of `programme`.
+pub(super) fn programme_logos<P: Seams>(call: &Call<'_, P>, programme: ProgrammeId) -> ReadModel {
+    ReadModel::Logos(LogosView::of(
+        call.state.tenant.state(),
+        [(programme, crate::creator::programme_name(programme))],
+    ))
+}

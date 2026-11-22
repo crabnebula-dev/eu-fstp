@@ -576,6 +576,23 @@ const LOGO: Shape = Shape::Nullable(&Shape::Object(&[
     m("email", Shape::Bool),
 ]));
 
+/// The reply of `tenant.branding.logos` and `programme.logos` (ADR-030).
+const LOGOS: Shape = Shape::Object(&[
+    m(
+        "tenant",
+        Shape::Object(&[m("light", LOGO), m("dark", LOGO)]),
+    ),
+    m(
+        "programmes",
+        Shape::Array(&Shape::Object(&[
+            m("programme", Shape::Id),
+            m("name", Shape::String),
+            m("light", LOGO),
+            m("dark", LOGO),
+        ])),
+    ),
+]);
+
 const ONBOARDING_STEP: Shape = Shape::Object(&[
     m(
         "step",
@@ -1663,24 +1680,10 @@ pub const REPLIES: &[(&str, Shape)] = &[
     ),
     // ADR-030: the tenant's logos in light and dark, and each
     // programme's. A path names a digest only, never tenant text.
-    (
-        "tenant.branding.logos",
-        Shape::Object(&[
-            m(
-                "tenant",
-                Shape::Object(&[m("light", LOGO), m("dark", LOGO)]),
-            ),
-            m(
-                "programmes",
-                Shape::Array(&Shape::Object(&[
-                    m("programme", Shape::Id),
-                    m("name", Shape::String),
-                    m("light", LOGO),
-                    m("dark", LOGO),
-                ])),
-            ),
-        ]),
-    ),
+    ("tenant.branding.logos", LOGOS),
+    // ADR-030 (lead reading of 2026-11-22): the same reply for one
+    // programme, to its programme managers.
+    ("programme.logos", LOGOS),
     // Lane m4tenant. R-TN-01: one onboarding step, and the reply of its
     // save. The values are those of `fstp-tenant`'s codec, with the data
     // protection contact as its text.

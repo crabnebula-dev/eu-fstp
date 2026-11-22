@@ -130,10 +130,10 @@ fn i68_logo_outside_bounds_is_refused() {
 /// R-LG-03, I-85: setting a logo is high-risk and web only, and only a
 /// tenant admin sets one.
 #[test]
-fn r_lg_03_set_logo_is_high_risk_and_admin_only() {
+fn r_lg_03_set_logo_is_high_risk_and_web_only() {
     let k = TenantKind::SetLogo;
     assert!(TenantKind::ALL.contains(&k));
-    assert!(k.high_risk() && k.web_only() && k.admin_only());
+    assert!(k.high_risk() && k.web_only());
     let admin = acct(1);
     let s = TenantState::genesis(admin, CellKind::Saas);
     let cmd = TenantCommand::SetLogo {
@@ -148,6 +148,69 @@ fn r_lg_03_set_logo_is_high_risk_and_admin_only() {
         fstp_tenant::decide(&s, &ctx(acct(2), Via::Web), &cmd, &TenantAnswers::new()),
         Err(TenantRefusal::NotTenantAdmin)
     );
+}
+
+/// ADR-030 (lead reading of 2026-11-22): a programme manager of a
+/// programme sets that programme's logo, and only that one. The tenant
+/// logo stays the tenant admins'. The record of a programme slot folds
+/// for its manager, and a tenant slot set by a non-admin does not.
+#[test]
+fn adr030_programme_manager_sets_only_their_programme_logo() {
+    use fstp_tenant::TenantQuery;
+    let admin = acct(1);
+    let manager = acct(5);
+    let p = ProgrammeId::from_raw(77);
+    let mut s = TenantState::genesis(admin, CellKind::Saas);
+    let slot = LogoSlot {
+        owner: LogoOwner::Programme(p),
+        mode: ThemeMode::Light,
+    };
+    let logo = LogoRef {
+        digest: ContentDigest::from_bytes([3; 32]),
+        format: LogoFormat::Png,
+        width: 64,
+        height: 32,
+        pdf: true,
+    };
+    let cmd = TenantCommand::SetLogo {
+        slot,
+        logo: Some(logo),
+    };
+    assert_eq!(
+        fstp_tenant::queries(&s, &cmd),
+        vec![TenantQuery::ProgrammeManagers(p)]
+    );
+    let mut answers = TenantAnswers::new();
+    answers.programme_managers(p, [manager].into_iter().collect());
+    let r = fstp_tenant::decide(&s, &ctx(manager, Via::Web), &cmd, &answers).expect("manager");
+    s.apply_all(&r).expect("folds");
+    assert_eq!(s.logo(slot), Some(&logo));
+    // Another programme, or no answer, is refused.
+    let other = TenantCommand::SetLogo {
+        slot: LogoSlot {
+            owner: LogoOwner::Programme(ProgrammeId::from_raw(78)),
+            mode: ThemeMode::Light,
+        },
+        logo: None,
+    };
+    assert_eq!(
+        fstp_tenant::decide(&s, &ctx(manager, Via::Web), &other, &answers),
+        Err(TenantRefusal::NotTenantAdmin)
+    );
+    let tenant = TenantCommand::SetLogo {
+        slot: light_tenant(),
+        logo: None,
+    };
+    assert_eq!(
+        fstp_tenant::decide(&s, &ctx(manager, Via::Web), &tenant, &answers),
+        Err(TenantRefusal::NotTenantAdmin)
+    );
+    let rec = TenantRecord::LogoSet {
+        slot: light_tenant(),
+        logo: Some(logo),
+        by: manager,
+    };
+    assert!(s.apply_all(&[rec]).is_err());
 }
 
 /// ADR-030 section 1: any account sets its own theme, which the state
