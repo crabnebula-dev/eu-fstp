@@ -66,3 +66,15 @@ Interim, pending Daniel: the lane recommends option 1, with option 2 for uploads
 5. Contrast metric: the opacity-weighted median ratio and the share under 3:1. The threshold, and whether it advises or refuses, belong to L22's follow-up. Interim, pending Daniel.
 6. WebP: section "WebP". Interim, pending Daniel.
 7. The dependency on `fstp-creator` brings its in-house tree (`fstp-domain`, `fstp-ledger` and others) into the codec's build. The alternative is to move the luminance bounds into a small crate of their own. Interim, pending Daniel.
+
+## Built by lane L23, 2026-11-22
+
+| Item | Where |
+| --- | --- |
+| Crate | `crates/fstp-png`: `src/inflate.rs`, `src/deflate.rs`, `src/png.rs` (decoder), `src/encode.rs` (canonical encoder, `reencode`, PDF helpers), `src/contrast.rs`, `src/check.rs` (CRC-32, Adler-32), `src/image.rs` |
+| Lints | The crate denies `float_arithmetic`, `float_cmp`, `cast_precision_loss`, `arithmetic_side_effects` and `indexing_slicing`, as `fstp-brand` does for floats |
+| Public surface | `inflate`, `zlib_decompress`, `InflateError`; `deflate`, `deflate_with`, `zlib_compress`, `zlib_compress_with`, `Blocks`; `decode`, `Limits` (`Limits::LOGO`), `MAX_RAW_BYTES`, `PngError` (with `code()` and a plain message); `encode`, `reencode`, `Image`; `flatten`, `pdf_rgb`, `pdf_alpha`, `PdfStream`; `contrast`, `Contrast`, `ratio_x100`; `crc32`, `adler32` |
+| Tests | `tests/adr031_inflate.rs` (TH-26), `tests/adr031_png.rs` (I-68, R-WL-03, TH-26), `tests/adr031_helpers.rs` (I-70, R-WL-03). The reference PNG writer of `tests/common` packs samples, filters rows and lays out Adam7 on its own, with stored zlib blocks and an Adler-32 of its own |
+| Reference stream | One raw DEFLATE stream with a dynamic block, written once by the system `gzip -9 -n` over synthetic text, is a constant of `tests/adr031_inflate.rs`. Its gzip CRC-32 and size are checked too |
+| Cross-checks, run once by hand | `gzip -d` read this crate's stored, fixed, dynamic and best streams back to their input. The best stream of a 43 KB text was 12,943 bytes against 12,620 for `gzip -9`. The macOS `sips` tool read this crate's PNGs, and its own PNG of an RGBA image (with `sRGB` and `eXIf` chunks) decoded here to identical pixels. These checks are not committed, since CI cannot rely on those tools |
+| Fuzzing | `crates/fstp-png/fuzz`, targets `inflate`, `png_decode` and `roundtrip`, with seeds written by the test helpers. The fuzz project depends on `fstp-png` and `fstp-creator` (for `Rgb`) and on `libfuzzer-sys` only |

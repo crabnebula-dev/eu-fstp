@@ -1,0 +1,17 @@
+[package]
+name = "fstp-png"
+description = "In-house PNG and DEFLATE codec for tenant logos: inflate, deflate, PNG decode and canonical encode, alpha flattening and an integer contrast estimate (ADR-031)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstp-creator.workspace = true
+
+[dev-dependencies]
+fstp-prop.workspace = true
+
+[lints]
+workspace = true

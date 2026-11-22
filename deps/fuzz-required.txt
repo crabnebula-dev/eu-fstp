@@ -96,3 +96,6 @@ fstp-unorm
 unorm-gen
 # ADR-028, lane L19: the host configuration decoder.
 fstp-admin
+# ADR-031, lane L23: the in-house inflate and PNG decoder take uploaded logos
+# (targets inflate, png_decode and roundtrip).
+fstp-png

@@ -90,6 +90,8 @@ members = [
     "crates/fstp-assessor",
     # ADR-029, lane L21: in-house Unicode normalisation.
     "crates/fstp-unorm",
+    # ADR-031, lane L23: in-house PNG and DEFLATE codec.
+    "crates/fstp-png",
     # ADR-028, lane L19: the operator tool.
     "crates/fstp-admin",
     "tools/deps-check",
@@ -220,6 +222,8 @@ fstp-web = { path = "crates/fstp-web" }
 fstp-web-assets = { path = "crates/fstp-web-assets" }
 # ADR-029, lane L21. unorm-gen is a build tool and only a dev-dependency.
 fstp-unorm = { path = "crates/fstp-unorm" }
+# ADR-031, lane L23.
+fstp-png = { path = "crates/fstp-png" }
 unorm-gen = { path = "tools/unorm-gen" }
 # fstp-api-testkit is test only and never a normal dependency (M4 layering rule A9).
 
