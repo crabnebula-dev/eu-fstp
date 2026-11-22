@@ -90,7 +90,7 @@ fn m7_q4_i17_spans_are_sound_and_mask_every_name_word() {
                 .collect();
             for w in masked.split(|c: char| !c.is_alphanumeric()) {
                 let k = fstp_unorm::name_key(w);
-                prop_assert!(!parts.iter().any(|p| *p == k), "an unmasked name word");
+                prop_assert!(!parts.contains(&k), "an unmasked name word");
             }
             prop_assert!(!masked.contains("2001-12-31") && !masked.contains("31.12.2001"));
             Ok(())
