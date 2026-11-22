@@ -9,9 +9,16 @@
 //!   programme's likewise (ADR-030 section 2).
 
 use fstp_brand::ThemeMode;
-use fstp_brand::image::{LogoFormat, logo_path};
+use fstp_brand::image::logo_path;
+
+/// The logo formats, the path grammar and the EU emblem slot, for the
+/// web adapter (ADR-030).
+pub use fstp_brand::emblem::{EU_EMBLEM_PNG, FUNDING_ACKNOWLEDGEMENT};
+pub use fstp_brand::image::{LogoFormat, logo_path_digest};
 use fstp_domain::id::ProgrammeId;
 use fstp_json::{Object, ToJson, Value};
+/// A person's theme choice (ADR-030 section 1).
+pub use fstp_tenant::Theme as ThemeChoice;
 use fstp_tenant::{LogoOwner, LogoRef, LogoSlot, TenantState};
 
 /// The served bytes of one logo, with its checked format.
