@@ -57,7 +57,14 @@ fn adr034_web_copy_keeps_the_path_data_of_the_original() {
 fn i68_web_copy_holds_no_script_link_or_metadata() {
     let lower = FUNDED_BY_EU_SVG.to_ascii_lowercase();
     for banned in [
-        "inkscape", "sodipodi", "<script", "href", " on", "<!--", "<foreignobject", "url(",
+        "inkscape",
+        "sodipodi",
+        "<script",
+        "href",
+        " on",
+        "<!--",
+        "<foreignobject",
+        "url(",
     ] {
         assert!(!lower.contains(banned), "{banned}");
     }
@@ -88,7 +95,11 @@ fn r_nf_04_alt_text_is_funded_by_the_european_union() {
 fn i70_card_text_meets_aa_in_both_themes() {
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
         let ground = CARD_GROUND.of(mode);
-        assert_eq!((ground.r, ground.g, ground.b), (0xff, 0xff, 0xff), "{mode:?}");
+        assert_eq!(
+            (ground.r, ground.g, ground.b),
+            (0xff, 0xff, 0xff),
+            "{mode:?}"
+        );
         assert!(meets_aa(CARD_TEXT.of(mode), ground), "{mode:?} text");
         assert!(meets_aa(CARD_LABEL.of(mode), ground), "{mode:?} label");
     }
@@ -146,8 +157,17 @@ fn adr034_tenant_default_fills_only_gaps() {
 #[test]
 fn i68_tenant_defaults_are_plain_text() {
     assert!(FundingDefaults::new("Org", "a@b.example").is_some());
-    for bad in ["", " lead", "<b>x</b>", "a\nb", &"x".repeat(MAX_DEFAULT_BYTES + 1)] {
-        assert!(FundingDefaults::new(bad, "a@b.example").is_none(), "{bad:?}");
+    for bad in [
+        "",
+        " lead",
+        "<b>x</b>",
+        "a\nb",
+        &"x".repeat(MAX_DEFAULT_BYTES + 1),
+    ] {
+        assert!(
+            FundingDefaults::new(bad, "a@b.example").is_none(),
+            "{bad:?}"
+        );
         assert!(FundingDefaults::new("Org", bad).is_none(), "{bad:?}");
     }
 }

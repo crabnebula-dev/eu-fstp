@@ -79,7 +79,15 @@ fn adr034_only_an_admin_on_the_web_sets_the_defaults() {
     let cmd = TenantCommand::SetFundingDefaults {
         defaults: defaults(),
     };
-    assert!(decide(&state, &ctx(OUTSIDER, Via::Web), &cmd, &TenantAnswers::new()).is_err());
+    assert!(
+        decide(
+            &state,
+            &ctx(OUTSIDER, Via::Web),
+            &cmd,
+            &TenantAnswers::new()
+        )
+        .is_err()
+    );
     assert!(decide(&state, &ctx(ADMIN, Via::Mcp), &cmd, &TenantAnswers::new()).is_err());
     assert_eq!(cmd.kind(), TenantKind::SetFundingDefaults);
     assert!(TenantKind::SetFundingDefaults.high_risk());
@@ -104,10 +112,12 @@ fn i68_funding_defaults_round_trip_and_refuse_markup() {
     let text = encode_record(&rec).unwrap();
     assert_eq!(decode_record(&text), Ok(rec));
 
-    let bad = String::from_utf8(encode_command(&TenantCommand::SetFundingDefaults {
-        defaults: defaults(),
-    })
-    .unwrap())
+    let bad = String::from_utf8(
+        encode_command(&TenantCommand::SetFundingDefaults {
+            defaults: defaults(),
+        })
+        .unwrap(),
+    )
     .unwrap()
     .replace("Synthetic coordinator org", "<b>org</b>");
     assert!(decode_command(bad.as_bytes()).is_err());

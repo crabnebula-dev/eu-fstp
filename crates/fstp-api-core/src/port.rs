@@ -1841,6 +1841,8 @@ pub(crate) trait Dispatch: Send + Sync {
     fn brand(&self) -> Option<crate::Brand>;
     /// The paths of the tenant's logos (ADR-030).
     fn tenant_logos(&self) -> crate::brand::LogoPaths;
+    /// The funding cards and the tenant defaults (ADR-034).
+    fn funding(&self) -> fstp_json::Value;
     /// The bytes of the current logo at `path` (ADR-030).
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a>;
     /// The theme of the session `cred` names (ADR-030).
@@ -1886,6 +1888,10 @@ impl<P: CellPorts> Dispatch for Core<P> {
     fn tenant_logos(&self) -> crate::brand::LogoPaths {
         let state = self.ports.engine().snapshot();
         crate::brand::paths_of(state.tenant.state(), fstp_tenant::LogoOwner::Tenant)
+    }
+
+    fn funding(&self) -> fstp_json::Value {
+        crate::funding::answer(&self.ports.engine().snapshot())
     }
 
     fn brand_asset<'a>(&'a self, path: &'a str) -> crate::AssetFuture<'a> {

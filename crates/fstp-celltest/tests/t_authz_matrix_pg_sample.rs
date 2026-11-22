@@ -1511,6 +1511,10 @@ fn body_of(w: &Pg<'_>, op: &str, state: StateProfile) -> Value {
         )]),
         "tenant.set_payment_mode" => obj(vec![("value", s("record_only"))]),
         "tenant.set_template_licence" => obj(vec![("value", s("MIT"))]),
+        "tenant.set_funding_defaults" => obj(vec![
+            ("contact", s("role@example.org")),
+            ("name", s("Synthetic coordinator org")),
+        ]),
         "tenant.set_guide_notice" => obj(vec![
             (
                 "privacy_statement_url",

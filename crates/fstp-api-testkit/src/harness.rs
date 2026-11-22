@@ -734,6 +734,10 @@ fn body_of(op: &str, who: Who, state: StateProfile, w: &Built) -> Result<Object,
         "tenant.set_mcp" => obj(vec![("value", mcp_value(P74::AllRoles))]),
         "tenant.set_payment_mode" => obj(vec![("value", s("record_only"))]),
         "tenant.set_template_licence" => obj(vec![("value", s("MIT"))]),
+        "tenant.set_funding_defaults" => obj(vec![
+            ("contact", s("role@example.org")),
+            ("name", s("Synthetic coordinator org")),
+        ]),
         "tenant.set_guide_notice" => obj(vec![
             (
                 "privacy_statement_url",

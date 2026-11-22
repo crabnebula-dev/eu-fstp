@@ -287,6 +287,9 @@ pub enum TenantKind {
     /// `TenantCommand::SetGuideNotice`: the tenant's override of the
     /// Guide's data protection texts (R-GA-01).
     SetGuideNotice,
+    /// `TenantCommand::SetFundingDefaults`: the tenant's default
+    /// coordinator name and contact for the funding card (ADR-034).
+    SetFundingDefaults,
     /// `TenantCommand::RecordInferenceConfig`, saved with the Inference
     /// onboarding step.
     RecordInferenceConfig,
@@ -1237,6 +1240,17 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Tenant(TenantKind::SetGuideNotice),
         Put,
         "/admin/settings/guide-notice",
+    )
+    .hr()
+    .acting(ADMIN),
+    // ADR-034: the tenant's default coordinator name and contact for
+    // the funding card in every footer. A tenant setting, so high-risk by
+    // the strict reading and web only (interim, pending Daniel).
+    OpSpec::new(
+        "tenant.set_funding_defaults",
+        OpKind::Tenant(TenantKind::SetFundingDefaults),
+        Put,
+        "/admin/settings/funding-defaults",
     )
     .hr()
     .acting(ADMIN),
@@ -2826,6 +2840,8 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     // R-GA-01, section 15.0 of the M4 design (2026-11-06): the Guide's
     // data protection texts are a tenant setting too.
     OpKind::Tenant(TenantKind::SetGuideNotice),
+    // ADR-034: the funding card defaults are a tenant setting too.
+    OpKind::Tenant(TenantKind::SetFundingDefaults),
     OpKind::Tenant(TenantKind::SetBranding),
     // ADR-030: a logo slot, as the brand tokens.
     OpKind::Tenant(TenantKind::SetLogo),

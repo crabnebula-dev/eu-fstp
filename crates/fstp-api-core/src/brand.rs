@@ -14,6 +14,8 @@ use fstp_brand::image::logo_path;
 /// The logo formats, the path grammar and the EU emblem slot, for the
 /// web adapter (ADR-030).
 pub use fstp_brand::emblem::{EU_EMBLEM_PNG, FUNDING_ACKNOWLEDGEMENT};
+/// The funding card of ADR-034: its logo, labels and colours.
+pub use fstp_brand::funding;
 pub use fstp_brand::image::{LogoFormat, logo_path_digest};
 use fstp_domain::id::ProgrammeId;
 use fstp_json::{Object, ToJson, Value};

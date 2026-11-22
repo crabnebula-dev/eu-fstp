@@ -540,7 +540,10 @@ fn record_value(rec: &TenantRecord) -> Value {
         ),
         TenantRecord::FundingDefaultsSet { defaults, by } => tagged(
             "FundingDefaultsSet",
-            vec![("by", dec(by.raw())), ("defaults", funding_defaults(defaults))],
+            vec![
+                ("by", dec(by.raw())),
+                ("defaults", funding_defaults(defaults)),
+            ],
         ),
         TenantRecord::GuideNoticeSet { notice, by } => tagged(
             "GuideNoticeSet",
@@ -982,11 +985,8 @@ fn take_text_ref(v: &Value) -> R<TextRef> {
 /// The funding card defaults: both values plain text (I-68, ADR-034).
 fn take_funding_defaults(v: &Value) -> R<fstp_brand::funding::FundingDefaults> {
     let f = Fields::of(v, &["contact", "name"])?;
-    fstp_brand::funding::FundingDefaults::new(
-        str_of(f.get("name")?)?,
-        str_of(f.get("contact")?)?,
-    )
-    .ok_or_else(|| err("not plain text"))
+    fstp_brand::funding::FundingDefaults::new(str_of(f.get("name")?)?, str_of(f.get("contact")?)?)
+        .ok_or_else(|| err("not plain text"))
 }
 
 /// The Guide notice override, or `None` for `null`. The address must be

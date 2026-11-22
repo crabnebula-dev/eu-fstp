@@ -298,8 +298,8 @@ impl TenantKind {
         matches!(
             self,
             TenantKind::InviteAdmin
-                                | TenantKind::SetFundingDefaults
-| TenantKind::RequestSelfGrant
+                | TenantKind::SetFundingDefaults
+                | TenantKind::RequestSelfGrant
                 | TenantKind::ApproveSelfGrant
                 | TenantKind::SetSetting(_)
                 | TenantKind::SetGuideNotice

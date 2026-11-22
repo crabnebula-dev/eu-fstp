@@ -175,6 +175,13 @@ pub(crate) fn check(spec: &OpSpec, request: &Object) -> Option<Result<(), ApiErr
                     Err(bad())
                 }
             }
+            TenantKind::SetFundingDefaults => {
+                if exactly(spec, request, &["contact", "name"]) {
+                    funding_defaults_request(request).map(|_| ())
+                } else {
+                    Err(bad())
+                }
+            }
             TenantKind::SetMailRelay => {
                 if exactly(spec, request, &["ca_pem", "credential", "host"]) {
                     mail_relay_request(request).map(|_| ())
@@ -487,6 +494,20 @@ pub(crate) fn notice_request(request: &Object) -> Result<NoticeRequest, ApiError
         summary: summary.clone(),
         privacy_statement_url: url.clone(),
     })
+}
+
+/// Decodes a `tenant.set_funding_defaults` request (ADR-034):
+/// `{contact, name}`, both plain text of at most 200 bytes (I-68). The
+/// error names no request content.
+pub(crate) fn funding_defaults_request(
+    request: &Object,
+) -> Result<fstp_brand::funding::FundingDefaults, ApiError> {
+    let (Some(Value::String(name)), Some(Value::String(contact))) =
+        (request.get("name"), request.get("contact"))
+    else {
+        return Err(bad());
+    };
+    fstp_brand::funding::FundingDefaults::new(name, contact).ok_or_else(bad)
 }
 
 /// The operation that clears the mail relay (M6 lane L6-API). It shares
