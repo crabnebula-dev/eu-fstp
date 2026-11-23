@@ -1269,7 +1269,12 @@ async fn open_from_rows(
 }
 
 /// The checks of one durable state of the F-017 test, after a restart.
-async fn check_workspace_state(c: &Cell, backup: &snapshot::KeystoreImage, saves: &[Vec<u8>], k: usize) {
+async fn check_workspace_state(
+    c: &Cell,
+    backup: &snapshot::KeystoreImage,
+    saves: &[Vec<u8>],
+    k: usize,
+) {
     let state = c.engine.state();
     let entry = state
         .erasure(ERASED_PROPOSAL)
@@ -1288,11 +1293,7 @@ async fn check_workspace_state(c: &Cell, backup: &snapshot::KeystoreImage, saves
             "F-017: the workspace opened after its request, step {k}"
         );
     }
-    let deleted = c
-        .sink
-        .tables()
-        .workspace_deletes
-        .contains(&ERASED_PROPOSAL);
+    let deleted = c.sink.tables().workspace_deletes.contains(&ERASED_PROPOSAL);
     if deleted {
         assert!(
             entry.destroyed_epoch.is_some(),
@@ -1310,7 +1311,10 @@ async fn check_workspace_state(c: &Cell, backup: &snapshot::KeystoreImage, saves
                 "TH-30: a draft text with a live key after step {k}"
             );
         }
-        assert!(deleted, "F-017: the rows stayed after the restart, step {k}");
+        assert!(
+            deleted,
+            "F-017: the rows stayed after the restart, step {k}"
+        );
     }
     assert!(
         !c.sink.tables().workspace_deletes.contains(&LIVE_PROPOSAL),

@@ -956,6 +956,17 @@ impl<C: Custody> ErasureRunner<C> {
             .map(|(id, _)| id)
             .collect();
         runner.store.persist.dirty.blobs.extend(documents);
+        // F-017: so are the rows of every completed workspace erasure.
+        let workspaces: Vec<[u8; 16]> = runner
+            .engine
+            .state()
+            .erasures()
+            .filter(|(_, e)| {
+                e.kind == fstp_cell_core::ERASURE_KIND_WORKSPACE && e.destroyed_epoch.is_some()
+            })
+            .map(|(id, _)| id)
+            .collect();
+        runner.store.persist.dirty.workspaces.extend(workspaces);
         // The owed record is written, so its request id leaves the row.
         runner.flush().await?;
         Ok(runner)
@@ -1416,6 +1427,180 @@ impl<C: Custody> ErasureRunner<C> {
             system_command_id(suffix),
         )
         .await
+    }
+
+    /// Whether the workspace of `proposal` is under erasure or erased: the
+    /// ledger has an entry for its key, or the chain state holds a request
+    /// for it.
+    fn workspace_erased(&self, proposal: [u8; 16]) -> bool {
+        self.engine.state().erasure(proposal).is_some() || self.chain.is_requested(DekId(proposal))
+    }
+
+    /// Seals `bytes` as a workspace value of `proposal` under the
+    /// proposal's own workspace key, and returns the stored form, an
+    /// `FSB1` blob (F-017, ADR-026 section "Written by the M10 fix lane").
+    ///
+    /// The key's id is the proposal id. The first seal of a proposal
+    /// creates the key in a group of its own, as for a document. A batch
+    /// before its commit is first run to its commit, since no group may be
+    /// added then. Each seal draws a fresh random nonce. The blob's
+    /// context names generation 0 and the proposal as its object, so a
+    /// value of another proposal does not open, and a later reseal of the
+    /// key at another generation still opens it.
+    ///
+    /// The caller writes the rows before it hands the value out
+    /// (`durable`), so the key is durable before any row names it.
+    ///
+    /// # Errors
+    ///
+    /// A workspace under erasure or erased, a value over
+    /// [`fstp_pgstore::MAX_WORKSPACE_SEALED`], a step of the batch in
+    /// flight that fails, a planner refusal, or a failed seal.
+    pub async fn seal_workspace(
+        &mut self,
+        proposal: [u8; 16],
+        bytes: &[u8],
+    ) -> Result<Vec<u8>, CellError> {
+        if self.workspace_erased(proposal) {
+            return Err(keys_err("the workspace is erased"));
+        }
+        if bytes.len() > fstp_pgstore::MAX_WORKSPACE_SEALED.saturating_sub(envelope::MIN_BLOB_LEN) {
+            return Err(keys_err("a workspace value over its limit"));
+        }
+        let dek = DekId(proposal);
+        if self.store.texts.contains_key(&proposal) {
+            return Err(keys_err("a text holds this id"));
+        }
+        let data_key = match self.store.keys.get(&dek) {
+            Some((g, generation, sealed)) => {
+                let sk = self
+                    .work
+                    .secrets
+                    .get(&(*g, *generation))
+                    .ok_or(keys_err("group secret not open"))?;
+                let ctx = ctx_for(self.store.cell, *g, *generation, proposal);
+                envelope::open_key(sk, sealed, &ctx).map_err(|_| keys_err("workspace key"))?
+            }
+            None => {
+                while self.resealing() {
+                    if self.step().await?.is_none() {
+                        break;
+                    }
+                }
+                if self.resealing() {
+                    return Err(keys_err("a batch is resealing the keystore"));
+                }
+                let group = fstp_crypto::random_array::<16>().map_err(|_| keys_err("group id"))?;
+                self.add_group(group)?;
+                let g = GroupId(group);
+                let generation = self
+                    .store
+                    .chain_state
+                    .generation(g)
+                    .ok_or(keys_err("unknown group"))?;
+                let sk = self
+                    .work
+                    .secrets
+                    .get(&(g, generation))
+                    .ok_or(keys_err("group secret not open"))?;
+                let mut chain = self.chain.clone();
+                chain.admit(g, dek).map_err(|_| keys_err("key admission"))?;
+                let data_key = DataKey::generate().map_err(|_| keys_err("data key"))?;
+                let ctx = ctx_for(self.store.cell, g, generation, proposal);
+                let sealed = envelope::seal_key(sk.public(), &data_key, &ctx)
+                    .map_err(|_| keys_err("data key seal"))?;
+                self.store
+                    .chain_state
+                    .admit(g, dek)
+                    .map_err(|_| keys_err("key admission"))?;
+                self.chain = chain;
+                self.store.keys.insert(dek, (g, generation, sealed));
+                self.store.persist.dirty.keys.insert(dek);
+                data_key
+            }
+        };
+        let g = self
+            .store
+            .keys
+            .get(&dek)
+            .map(|(g, _, _)| *g)
+            .ok_or(keys_err("workspace key"))?;
+        let blob = envelope::seal_blob(&data_key, &ctx_for(self.store.cell, g, 0, proposal), bytes)
+            .map_err(|_| keys_err("workspace seal"))?;
+        envelope::encode_sealed_blob(&blob).map_err(|_| keys_err("workspace form"))
+    }
+
+    /// Opens the stored workspace value `stored` of `proposal`
+    /// ([`ErasureRunner::seal_workspace`]), or refuses it from the moment
+    /// the workspace's erasure request is in the ledger (F-017).
+    ///
+    /// # Errors
+    ///
+    /// [`OpenRefusal`] as for a document.
+    pub fn open_workspace(
+        &self,
+        proposal: [u8; 16],
+        stored: &[u8],
+    ) -> Result<impl std::ops::Deref<Target = Vec<u8>> + use<C>, OpenRefusal> {
+        if self.workspace_erased(proposal) {
+            return Err(OpenRefusal::Erased);
+        }
+        if self.store.texts.contains_key(&proposal) {
+            return Err(OpenRefusal::Unknown);
+        }
+        self.open_document(proposal, stored)
+    }
+
+    /// Requests the erasure of the workspace of `proposal` with `cause` as
+    /// `by` asked (F-017, ADR-026 section "Written by the M10 fix lane").
+    /// `false` when the proposal has no workspace key, so nothing of it is
+    /// stored under one.
+    ///
+    /// The ledger record `KeystoreErasureRequested` of the workspace kind
+    /// is the durable trigger, as for a document: from it on nothing seals
+    /// or opens the workspace, the next step joins the key to the chain
+    /// state, and step 7 completes the entry with the destroyed epoch. The
+    /// rows leave in the keystore batch after that. A command id fixed per
+    /// proposal and the check of an entry already in the log make a
+    /// repeated call append nothing twice.
+    ///
+    /// # Errors
+    ///
+    /// An id whose entry is not a workspace's, or a refused record.
+    pub async fn erase_workspace(
+        &mut self,
+        proposal: [u8; 16],
+        cause: u16,
+        by: fstp_domain::id::AccountId,
+    ) -> Result<bool, CellError> {
+        if let Some(e) = self.engine.state().erasure(proposal) {
+            return if e.kind == fstp_cell_core::ERASURE_KIND_WORKSPACE {
+                Ok(true)
+            } else {
+                Err(keys_err("not a workspace"))
+            };
+        }
+        if self.store.texts.contains_key(&proposal)
+            || !self.store.keys.contains_key(&DekId(proposal))
+        {
+            return Ok(false);
+        }
+        let mut suffix = [b'w'; 8];
+        for (d, s) in suffix.iter_mut().skip(1).zip(proposal.iter()) {
+            *d = *s;
+        }
+        self.record(
+            KeyCommand::RecordKeystoreErasure {
+                ids: vec![proposal],
+                cause,
+                by,
+                kind: fstp_cell_core::ERASURE_KIND_WORKSPACE,
+                reason: None,
+            },
+            system_command_id(suffix),
+        )
+        .await?;
+        Ok(true)
     }
 
     /// Opens text `id` for `state`, or refuses it (design section 3.4).
@@ -1914,10 +2099,13 @@ impl<C: Custody> ErasureRunner<C> {
             .keys()
             .copied()
             .filter(|id| !self.store.requested.contains(id) && state.erasure(*id).is_some());
+        // A workspace's key id is its proposal id (F-017), as a document's
+        // is its data key id.
         let documents = state
             .erasures()
             .filter(|(id, e)| {
-                e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT
+                (e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT
+                    || e.kind == fstp_cell_core::ERASURE_KIND_WORKSPACE)
                     && !self.store.requested.contains(id)
                     && !self.store.texts.contains_key(id)
                     && self.store.keys.contains_key(&DekId(*id))
@@ -2484,11 +2672,13 @@ impl<C: Custody> ErasureRunner<C> {
             .map_err(|_| keys_err("planner"))?
             .ok_or(keys_err("planner"))?;
         if let Step::Complete { erased, .. } = &step {
-            let documents = self.record_completions(old, erased).await?;
+            let (documents, workspaces) = self.record_completions(old, erased).await?;
             // ADR-007 (Daniel, 2026-11-23, decision 2; lane L39): the
             // sealed rows of the documents whose completion is now in the
-            // ledger go in the flush after this step, never before.
+            // ledger go in the flush after this step, never before. So do
+            // the rows of the workspaces (F-017).
             self.store.persist.dirty.blobs.extend(documents);
+            self.store.persist.dirty.workspaces.extend(workspaces);
             self.erased.extend(erased.iter().map(|d| d.0));
         }
         self.apply_durable(&step)?;
@@ -2503,12 +2693,13 @@ impl<C: Custody> ErasureRunner<C> {
     /// appends nothing twice.
     ///
     /// It gives the data key ids of the completed documents, whose sealed
-    /// rows the next flush deletes (lane L39).
+    /// rows the next flush deletes (lane L39), and the proposals of the
+    /// completed workspaces, whose rows it deletes too (F-017).
     async fn record_completions(
         &self,
         old: u64,
         erased: &[DekId],
-    ) -> Result<Vec<[u8; 16]>, CellError> {
+    ) -> Result<(Vec<[u8; 16]>, Vec<[u8; 16]>), CellError> {
         let erased: BTreeSet<DekId> = erased.iter().copied().collect();
         let state = self.engine.state();
         let texts = self
@@ -2518,18 +2709,22 @@ impl<C: Custody> ErasureRunner<C> {
             .filter(|(id, t)| erased.contains(&t.dek) && state.erasure(**id).is_some())
             .map(|(id, _)| *id);
         // ADR-007 section "Built by lane L37": a document's entry is named
-        // by its data key id.
+        // by its data key id, and a workspace's by its proposal id, which
+        // is its key id (F-017).
+        let kind_of = |d: &DekId| state.erasure(d.0).map(|e| e.kind);
         let documents = erased
             .iter()
-            .filter(|d| {
-                state
-                    .erasure(d.0)
-                    .is_some_and(|e| e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT)
-            })
+            .filter(|d| kind_of(d) == Some(fstp_cell_core::ERASURE_KIND_DOCUMENT))
+            .map(|d| d.0);
+        let workspaces = erased
+            .iter()
+            .filter(|d| kind_of(d) == Some(fstp_cell_core::ERASURE_KIND_WORKSPACE))
             .map(|d| d.0);
         let completed_documents: Vec<[u8; 16]> = documents.clone().collect();
+        let completed_workspaces: Vec<[u8; 16]> = workspaces.clone().collect();
         let ids: Vec<[u8; 16]> = texts
             .chain(documents)
+            .chain(workspaces)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -2552,7 +2747,7 @@ impl<C: Custody> ErasureRunner<C> {
             )
             .await?;
         }
-        Ok(completed_documents)
+        Ok((completed_documents, completed_workspaces))
     }
 
     fn apply_durable(&mut self, step: &Step) -> Result<(), CellError> {
@@ -2634,6 +2829,22 @@ enum Request {
         reason: Option<[u8; 16]>,
         reply: ReplyTx<Result<(), CellError>>,
     },
+    SealWorkspace {
+        proposal: [u8; 16],
+        bytes: Vec<u8>,
+        reply: ReplyTx<Result<Vec<u8>, CellError>>,
+    },
+    OpenWorkspace {
+        proposal: [u8; 16],
+        stored: Vec<u8>,
+        reply: ReplyTx<Result<Plaintext, OpenRefusal>>,
+    },
+    EraseWorkspace {
+        proposal: [u8; 16],
+        cause: u16,
+        by: fstp_domain::id::AccountId,
+        reply: ReplyTx<Result<bool, CellError>>,
+    },
     Keystore {
         reply: ReplyTx<Keystore>,
     },
@@ -2689,6 +2900,13 @@ impl Request {
             }
             Request::OpenDocument { reply, .. } => reply.send(Err(OpenRefusal::Keys)),
             Request::EraseDocument { reply, .. } => reply.send(Err(gone)),
+            Request::SealWorkspace { reply, .. } => {
+                reply.send(Err(keys_err("the erasure task is not running")))
+            }
+            Request::OpenWorkspace { reply, .. } => reply.send(Err(OpenRefusal::Keys)),
+            Request::EraseWorkspace { reply, .. } => {
+                reply.send(Err(keys_err("the erasure task is not running")))
+            }
             Request::Signer { reply, .. } => reply.send(Err(gone)),
             Request::RotateSigner { reply, .. } => reply.send(Err(gone)),
             Request::SetLoginEmail { reply, .. } => reply.send(Err(gone)),
@@ -2848,6 +3066,72 @@ impl ErasureHandle {
             cause,
             by,
             reason,
+            reply,
+        })
+        .await
+        .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// Seals `bytes` as a workspace value of `proposal` under its own
+    /// workspace key ([`ErasureRunner::seal_workspace`], F-017): the stored
+    /// form, once the key is durable.
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn seal_workspace(
+        &self,
+        proposal: [u8; 16],
+        bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, CellError> {
+        self.ask(|reply| Request::SealWorkspace {
+            proposal,
+            bytes,
+            reply,
+        })
+        .await
+        .unwrap_or(Err(keys_err("the erasure task is not running")))
+    }
+
+    /// Opens the stored workspace value `stored` of `proposal`
+    /// ([`ErasureRunner::open_workspace`], F-017).
+    ///
+    /// # Errors
+    ///
+    /// The runner's [`OpenRefusal`], or [`OpenRefusal::Keys`] once the
+    /// task ended.
+    pub async fn open_workspace(
+        &self,
+        proposal: [u8; 16],
+        stored: Vec<u8>,
+    ) -> Result<Plaintext, OpenRefusal> {
+        self.ask(|reply| Request::OpenWorkspace {
+            proposal,
+            stored,
+            reply,
+        })
+        .await
+        .unwrap_or(Err(OpenRefusal::Keys))
+    }
+
+    /// Requests the erasure of the workspace of `proposal` with `cause` as
+    /// `by` asked ([`ErasureRunner::erase_workspace`], F-017). `false` when
+    /// the proposal has no workspace key. The task then runs the batch that
+    /// destroys the key, and deletes the rows after it.
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn erase_workspace(
+        &self,
+        proposal: [u8; 16],
+        cause: u16,
+        by: fstp_domain::id::AccountId,
+    ) -> Result<bool, CellError> {
+        self.ask(|reply| Request::EraseWorkspace {
+            proposal,
+            cause,
+            by,
             reply,
         })
         .await
@@ -3146,6 +3430,33 @@ async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
             reply,
         } => {
             let done = runner.erase_document(id, cause, by, reason).await;
+            reply.send(durable(runner, done).await);
+        }
+        Request::SealWorkspace {
+            proposal,
+            bytes,
+            reply,
+        } => {
+            let done = runner.seal_workspace(proposal, &bytes).await;
+            reply.send(durable(runner, done).await);
+        }
+        Request::OpenWorkspace {
+            proposal,
+            stored,
+            reply,
+        } => {
+            let opened = runner
+                .open_workspace(proposal, &stored)
+                .map(|t| Box::new(t) as Plaintext);
+            reply.send(opened);
+        }
+        Request::EraseWorkspace {
+            proposal,
+            cause,
+            by,
+            reply,
+        } => {
+            let done = runner.erase_workspace(proposal, cause, by).await;
             reply.send(durable(runner, done).await);
         }
         Request::Keystore { reply } => reply.send(runner.keystore().clone()),

@@ -138,7 +138,8 @@ fn m10_f017_i82_only_the_keys_role_deletes_draft_rows() {
     put_key(&db, &other);
     assert_eq!(db.state_as("app", &save_sql(&other, "draft")), None);
     assert_eq!(
-        db.state_as("keys", &save_sql(&fresh16(), "draft")).as_deref(),
+        db.state_as("keys", &save_sql(&fresh16(), "draft"))
+            .as_deref(),
         Some("42501")
     );
     assert_eq!(rows(&db, &other), 1);

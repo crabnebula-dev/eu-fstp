@@ -270,8 +270,9 @@ fn i82_writer_holds_insert_and_select_only() {
 /// I-82, design section 4.1: the keys role holds rights on the keystore
 /// only, plus SELECT and DELETE on `blob` in the application database for
 /// rows of completed erasures, and exactly SELECT and DELETE on
-/// `doc.blob` for the sealed rows of erased documents (ADR-007, lane L39).
-/// It never inserts or updates a blob.
+/// `doc.blob` for the sealed rows of erased documents (ADR-007, lane L39),
+/// and on `workspace.drafts` for the rows of erased workspaces (F-017). It
+/// never inserts or updates a blob or a workspace row.
 #[test]
 fn i82_keys_role_reaches_only_the_keystore_and_blob_deletion() {
     fstp_prop::check(
@@ -294,6 +295,18 @@ fn i82_keys_role_reaches_only_the_keystore_and_blob_deletion() {
                         // exactly SELECT and DELETE on `doc.blob`.
                         (CellDatabase::App, "doc") => {
                             prop_assert_eq!(row.object, "doc.blob", "{row:?}");
+                            prop_assert_eq!(
+                                row.privileges.as_slice(),
+                                &[Privilege::Select, Privilege::Delete][..],
+                                "{row:?}"
+                            );
+                        }
+                        // F-017 (migration 15, ADR-026 section "Written by
+                        // the M10 fix lane"): the rows of an erased
+                        // workspace, exactly SELECT and DELETE on
+                        // `workspace.drafts`.
+                        (CellDatabase::App, "workspace") => {
+                            prop_assert_eq!(row.object, "workspace.drafts", "{row:?}");
                             prop_assert_eq!(
                                 row.privileges.as_slice(),
                                 &[Privilege::Select, Privilege::Delete][..],

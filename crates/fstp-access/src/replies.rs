@@ -312,7 +312,7 @@ pub const ERASURE_CAUSES: &[&str] = &[
 ];
 
 /// What an erased text held (ADR-007 section "Built by lane L33").
-pub const ERASURE_KINDS: &[&str] = &["text", "display_name", "document"];
+pub const ERASURE_KINDS: &[&str] = &["text", "display_name", "document", "workspace"];
 
 /// Who authorised an erasure (ADR-007, Daniel 2026-11-23, question 3; lane
 /// L39): the system, or an account the page never names (R-CF-03).

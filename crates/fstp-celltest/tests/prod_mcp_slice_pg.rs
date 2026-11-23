@@ -345,12 +345,15 @@ fn i23_restart_replays_pending_and_workspace() {
     let (admin, token) = connected(&client);
     let id = prepare(cell, &token);
     let before = programmes(cell);
-    let cell_id = cell.id();
     let proposal = [0x9A; 16];
     let value = b"synthetic workspace value".to_vec();
     cell.with_running(async |c| {
-        let sealed =
-            fstp_pgstore::seal_workspace(c.ledger_keys(), &cell_id, &proposal, &value).unwrap();
+        // F-017: the erasure task seals it under the proposal's own key.
+        let sealed = c
+            .erasure()
+            .seal_workspace(proposal, value.clone())
+            .await
+            .unwrap();
         c.api_store()
             .unwrap()
             .put_workspace(proposal, "draft", &sealed, 1)
@@ -369,7 +372,11 @@ fn i23_restart_replays_pending_and_workspace() {
                 .await
                 .unwrap()
                 .expect("I-23: the workspace row is lost");
-            fstp_pgstore::open_workspace(c.ledger_keys(), &cell_id, &proposal, &sealed).unwrap()
+            c.erasure()
+                .open_workspace(proposal, sealed)
+                .await
+                .map(|t| t.to_vec())
+                .unwrap_or_else(|_| panic!("I-23: the workspace value does not open"))
         })
         .unwrap();
     assert_eq!(reopened, value, "I-23: the workspace value");

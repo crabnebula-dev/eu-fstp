@@ -132,8 +132,10 @@ pub fn changes_to(from: Option<&KeystoreRows>, to: &KeystoreRows) -> KeystoreCha
         logins: diff(&f.logins, &to.logins, |l| l.account),
         requested: diff(&f.requested, &to.requested, |r| *r),
         displays: diff(&f.displays, &to.displays, |d| d.account),
-        // A restore deletes no document row (lane L39).
+        // A restore deletes no document row (lane L39) and no workspace
+        // row (F-017). The next start deletes those of completed erasures.
         blobs: Vec::new(),
+        workspaces: Vec::new(),
     }
 }
 

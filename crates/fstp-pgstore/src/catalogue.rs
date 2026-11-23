@@ -437,7 +437,8 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("proposal", RandomId),
             col("slot", Enum),
             col("revision", Count),
-            col("key_ix", Sequence),
+            // F-017 (migration 15): sealed under the proposal's own
+            // workspace key, so no ledger key generation names the row.
             col("sealed", Sealed),
             col("updated_at", Time),
         ],

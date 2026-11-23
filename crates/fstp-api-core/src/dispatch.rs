@@ -3084,16 +3084,10 @@ async fn m3_port<P: Seams>(
                 .await,
             "SoD-08",
         ),
-        PortCall::RequestErasure(cause, grant) => {
-            use crate::port::TextStore as _;
-            done(
-                call.ports
-                    .texts()
-                    .request_erasure(account, cause, grant, call.now, proof_of(proof))
-                    .await,
-                "ADR-007",
-            )
-        }
+        PortCall::RequestErasure(cause, grant) => done(
+            erasure::request_erasure(call, account, cause, grant, proof_of(proof)).await,
+            "ADR-007",
+        ),
         PortCall::EraseDocument(p, blob, reason) => done(
             erasure::erase_document(call, account, p, blob, &reason).await,
             "ADR-007",
