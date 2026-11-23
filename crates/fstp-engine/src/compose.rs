@@ -1103,9 +1103,23 @@ pub fn sod_previews(
 
 /// The profile name of a P-53 reference, `{"profile": name, "version": n}`,
 /// as a shell looks the funder profile up in its profile source.
+///
+/// ADR-036 section 8 (Daniel, 2026-11-23): for a profile the Guide ships,
+/// the version must be one [`fstp_guide::SHIPPED_VERSIONS`] names, v1 or
+/// v2 of Horizon Europe. Any other version of it names no Guide.
 pub fn profile_name(p: &fstp_domain::policy::FunderProfileRef) -> Option<String> {
     let v = fstp_json::parse(p.0.as_str().as_bytes()).ok()?;
-    v.get("profile")?.as_str().map(str::to_owned)
+    let name = v.get("profile")?.as_str()?;
+    let version = v.get("version").and_then(fstp_json::Value::as_i64);
+    let known = fstp_guide::SHIPPED_VERSIONS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .is_none_or(|(_, vs)| {
+            version
+                .and_then(|x| u16::try_from(x).ok())
+                .is_some_and(|x| vs.contains(&x))
+        });
+    known.then(|| name.to_owned())
 }
 
 /// The P-53 reference the funder profile of `cmd` is read from: the one
@@ -1226,6 +1240,35 @@ pub(crate) fn decide_approved_self_grant(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-036 section 8: the Guide is read for Horizon Europe v1 and v2,
+    /// and for no other version of it. A profile the Guide does not ship
+    /// passes through to the shell's own source.
+    #[test]
+    fn adr036_q2_profile_name_knows_v1_and_v2() {
+        let r = |s: &str| {
+            fstp_domain::policy::FunderProfileRef(
+                fstp_domain::policy::OpaqueValue::from_value(
+                    &fstp_json::parse(s.as_bytes()).unwrap_or(fstp_json::Value::Null),
+                )
+                .unwrap_or_else(|_| panic!("{s}")),
+            )
+        };
+        for v in [1, 2] {
+            let s = format!(r#"{{"profile":"horizon-europe","version":{v}}}"#);
+            assert_eq!(profile_name(&r(&s)).as_deref(), Some("horizon-europe"));
+        }
+        for s in [
+            r#"{"profile":"horizon-europe","version":3}"#,
+            r#"{"profile":"horizon-europe"}"#,
+        ] {
+            assert_eq!(profile_name(&r(s)), None, "{s}");
+        }
+        assert_eq!(
+            profile_name(&r(r#"{"profile":"tenant-he","version":7}"#)).as_deref(),
+            Some("tenant-he")
+        );
+    }
 
     /// I-66, D2e: the empty state has no programme to activate.
     #[test]

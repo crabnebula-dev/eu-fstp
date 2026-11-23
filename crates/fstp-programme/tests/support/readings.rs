@@ -395,7 +395,7 @@ pub(crate) fn readings() -> Vec<SuperSafeReading> {
             Typed(|v| {
                 same_json(
                     v.frozen.p53.0.as_str(),
-                    r#"{"profile":"horizon-europe","version":1}"#,
+                    r#"{"profile":"horizon-europe","version":2}"#,
                 )
                 .map_err(|e| format!("P-53 {e}"))
             }),

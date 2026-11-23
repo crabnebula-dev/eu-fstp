@@ -47,7 +47,7 @@ The rules this record applies, quoted from that document:
 | Colour versions (pp. 6 and 7) | The document shows a positive version, a negative version on a dark ground and monochrome versions. | The card always uses the positive version on white, so no dark-ground version is needed. Interim, pending Daniel: if the logo is ever placed on a dark ground, the negative version is needed. The repository does not hold it |
 | Other logos (p. 4) | "If other logos are displayed in addition to the EU emblem, the latter must be at least the same size as the biggest of the other logos." | Pages: tenant logos are 2rem high and at most 12rem wide; the EU logo is 2.5rem or 3rem high and about 14.6rem wide. Emails: tenant logos 40 px high, the EU logo 48 px. PDFs: every logo is 40 pt high. Interim, pending Daniel: a PDF tenant logo can be up to 200 pt wide, 6 pt wider than the EU logo |
 | Placement (p. 11) | "The EU emblem, in conjunction with the funding statement, must be prominently featured on all communication material, such as printed or digital products or websites and their mobile version, intended for the public or for participants." It adds: "It is therefore recommended to place the EU emblem at a distance from the third-party organisation's logo." | The card is in the footer of every page, in contract PDFs and in programme emails (section 4). The tenant logo is in the top bar, far from the card |
-| Programme name (p. 10, "Don'ts") | "Do not write the name of the programme in conjunction with the EU emblem." | The document's example names an EU programme. The card shows the FSTP programme's name as its own line, outside the logo's clear space. Interim, pending Daniel |
+| Programme name (p. 10, "Don'ts") | "Do not write the name of the programme in conjunction with the EU emblem." | Decided by Daniel, 2026-11-23: the card shows the logo alone, with no programme name beside it, on every surface: public pages, `/app/` and sign-in pages, contract PDFs and emails. The programme name appears only inside the acknowledgement sentence. While the sentence cannot render, the card names no programme. Tests: `adr034_q11_text_lines_name_the_programme_only_in_the_acknowledgement`, `adr034_q11_public_card_names_the_programme_only_in_the_sentence`, `adr034_q11_card_names_the_programme_only_in_the_sentence` |
 
 Open in PDFs, pending Daniel: with two wide tenant logos, the left logos of the letterhead could reach the EU logo's clear space. The writer does not shrink them yet.
 
@@ -58,7 +58,6 @@ One card per programme:
 | Line | Source |
 | --- | --- |
 | The logo | Section 1 |
-| The programme name | `identity.name` |
 | "Grant agreement number" | `funder.action_number`. For the pilot: SuperSAFE 101342989, ELFA 101298715. The pilot admins enter these in step 1 |
 | "Coordinator" | `funder.coordinator_name` |
 | "Contact" | `funder.coordinator_contact`, a new step 1 field (section 3) |
@@ -93,7 +92,7 @@ Interim, pending Daniel: the defaults are kept inline in the ledger record, not 
 
 Before the organisation is activated (ADR-021), no programme is active, so the list is empty and no card shows.
 
-The app and sign-in pages read `GET /brand/funding`, a JSON answer of the `/brand` surface with no session needed, like `/brand/logo/light`. It holds `cards` (programme id, name, grant agreement number, coordinator name and contact, for each active programme) and `defaults` (the tenant defaults or `null`). Everything in it is shown on public pages anyway. It is sent with `no-store`.
+The app and sign-in pages read `GET /brand/funding`, a JSON answer of the `/brand` surface with no session needed, like `/brand/logo/light`. It holds `cards` (programme id, name, grant agreement number, coordinator name and contact, for each active programme) and `defaults` (the tenant defaults or `null`). Everything in it is shown on public pages anyway. It is sent with `no-store`. Each card keeps its programme `name` in the answer, since the branding page names the programme in its hints. The card itself never shows it beside the logo (Q11, 2026-11-23).
 
 ### 5. Markup, contrast and accessibility
 
@@ -126,5 +125,5 @@ The app and sign-in pages read `GET /brand/funding`, a JSON answer of the `/bran
 8. Interim, pending Daniel: the demo cell seeds the defaults "CrabNebula Ltd" and "privacy@crabnebula.dev" for its tenant. They name an organisation and a role address, not a person.
 9. Interim, pending Daniel: the protection area's x is read as the artwork's own gap between the flag and the words (section 1a).
 10. Interim, pending Daniel: no dark-ground version is used, since the card is white in both themes. A placement on a dark ground needs the official negative version, which the repository does not hold (section 1a).
-11. Interim, pending Daniel: the card shows the FSTP programme's name on its own line, outside the logo's clear space. The guidelines forbid writing "the name of the programme in conjunction with the EU emblem" (section 1a).
+11. Decided by Daniel, 2026-11-23: the funding card shows the "Funded by the European Union" logo alone, with no programme name beside it. The programme name appears only inside the acknowledgement sentence below, on every surface (section 1a, "Programme name").
 12. Open, pending Daniel: in a contract PDF with two wide tenant logos, the left logos could reach the EU logo's clear space, and a tenant logo can be up to 6 pt wider than the EU logo (section 1a).

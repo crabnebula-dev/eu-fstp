@@ -209,14 +209,19 @@ fn settle_concern(state: &State, proposal: ProposalId, ctx: &Ctx) -> Result<Vec<
     let call = current_call(state, proposal)?;
     let later = future_call_exists(state, call);
     match (ctx.actor, later) {
-        (Actor::Account(_), false) => Ok(vec![Record::Transitioned(Transitioned {
-            proposal,
-            from: StateTag::IrcReview,
-            to: StateTag::Declined,
-            row: Row::IrcReviewToDeclined,
-            actor: ctx.actor,
-            decision: None,
-        })]),
+        // Q5 (2026-11-23): the declined notice (A4) precedes the move. The
+        // concern text stays on the platform (I-27).
+        (Actor::Account(_), false) => Ok(vec![
+            crate::decision::outcome_notice(proposal, StateTag::Declined),
+            Record::Transitioned(Transitioned {
+                proposal,
+                from: StateTag::IrcReview,
+                to: StateTag::Declined,
+                row: Row::IrcReviewToDeclined,
+                actor: ctx.actor,
+                decision: None,
+            }),
+        ]),
         (Actor::System(_), true) => Ok(vec![
             Record::DeferralRecorded {
                 proposal,

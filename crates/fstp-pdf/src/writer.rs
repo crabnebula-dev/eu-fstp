@@ -142,9 +142,10 @@ pub struct Letterhead {
     /// (ADR-034).
     pub emblem: Option<Image>,
     /// The funding card's lines of the document's programme (ADR-034,
-    /// I-69): the programme name, then each label with its value. They
-    /// are the first paragraphs of the text, tagged `/P`, so a screen
-    /// reader reads them (R-NF-04). Empty for none.
+    /// I-69): each label with its value, then the acknowledgement. No
+    /// line names the programme on its own (ADR-034 Q11). They are the
+    /// first paragraphs of the text, tagged `/P`, so a screen reader
+    /// reads them (R-NF-04). Empty for none.
     pub funding: Vec<String>,
 }
 

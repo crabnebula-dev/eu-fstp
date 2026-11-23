@@ -306,12 +306,13 @@ fn exact<'a>(v: &'a Value, names: &[&str]) -> Result<&'a Object, ApiError> {
     Ok(o)
 }
 
-/// The default funder profile of a new draft: Horizon Europe version 1,
-/// as P-53 spells it (`{"profile": ..., "version": 1}`).
+/// The default funder profile of a new draft: Horizon Europe at its current
+/// version, 2, as P-53 spells it (`{"profile": ..., "version": 2}`;
+/// ADR-036 section 8, Daniel, 2026-11-23).
 pub(crate) fn default_profile() -> Result<FunderProfileRef, ApiError> {
     let mut o = Object::new();
     let _ = o.insert("profile", Value::from(fstp_guide::HORIZON_EUROPE));
-    let _ = o.insert("version", Value::from(1u32));
+    let _ = o.insert("version", Value::from(2u32));
     OpaqueValue::from_value(&Value::Object(o))
         .map(FunderProfileRef)
         .map_err(|_| ApiError::NotImplemented("the default funder profile reference"))
@@ -1400,6 +1401,21 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+
+    /// ADR-036 section 8 (Daniel, 2026-11-23): a new draft opens on the
+    /// programme compiler's current profile, Horizon Europe version 2.
+    #[test]
+    fn adr036_q2_new_drafts_open_on_profile_v2() {
+        let current = fstp_programme::FunderProfile::horizon_europe();
+        assert_eq!(default_profile().ok(), current.policy_ref());
+        assert!(
+            default_profile()
+                .unwrap()
+                .0
+                .as_str()
+                .contains(r#""version":2"#)
+        );
+    }
 
     /// R-PG-01, design section 3.7 step 1: a revision travels as two
     /// canonical decimals and reads back to itself. Any other spelling is

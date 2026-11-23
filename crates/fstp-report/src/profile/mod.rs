@@ -409,28 +409,41 @@ pub fn shipped_all() -> Result<Vec<FunderProfile>, ProfileError> {
     SHIPPED.iter().map(|(i, v, _)| shipped(i, *v)).collect()
 }
 
-/// The approved funding acknowledgement for a programme whose P-53 names
-/// the profile `id`: the text of the newest shipped version of `id` whose
-/// `acknowledgement` element is [`WordingStatus::Approved`] (ADR-036
-/// section 4). A card is presentation, not a report, so it pins no
-/// version. `None` for a tenant-owned or unknown id. Interim, pending
-/// Daniel.
-pub fn approved_acknowledgement(id: &str) -> Option<&'static crate::wording::ApprovedWording> {
-    let mut versions: Vec<FunderProfile> = SHIPPED
+/// Each shipped version that a newer shipped version replaces: id, the
+/// older version and its successor (ADR-036 section 8; Daniel, 2026-11-23,
+/// "everything v2"). A successor keeps the outputs, fields and reporting
+/// periods of the version it replaces, so a move changes no report
+/// content. The older file itself never changes (P-53).
+pub const SUCCESSORS: &[(&str, u16, u16)] = &[("horizon-europe", 1, 2)];
+
+/// The current version of the pin `id` at `version`: the end of its chain
+/// in [`SUCCESSORS`], or `version` itself when nothing replaces it.
+pub fn current_version(id: &str, version: u16) -> u16 {
+    let mut v = version;
+    // Each step moves to a strictly newer version, so the chain ends.
+    while let Some((_, _, next)) = SUCCESSORS
         .iter()
-        .filter(|(i, _, _)| *i == id)
-        .filter_map(|(i, v, _)| shipped(i, *v).ok())
-        .collect();
-    versions.sort_by_key(|p| std::cmp::Reverse(p.version));
-    versions
-        .into_iter()
-        .filter_map(|p| {
-            p.visibility
-                .iter()
-                .find(|e| e.key == ACKNOWLEDGEMENT_KEY && e.status == WordingStatus::Approved)
-                .and_then(|e| crate::wording::approved(&e.wording))
-        })
-        .next()
+        .find(|(i, from, to)| *i == id && *from == v && *to > v)
+    {
+        v = *next;
+    }
+    v
+}
+
+/// The approved funding acknowledgement for a programme whose P-53 pins
+/// the profile `id` at `version`: the approved text of the shipped version
+/// the pin moves to through [`SUCCESSORS`] (ADR-036 sections 4 and 8;
+/// Daniel, 2026-11-23). `None` for a tenant-owned or unknown pin, or a
+/// version whose acknowledgement is not approved.
+pub fn approved_acknowledgement_at(
+    id: &str,
+    version: u16,
+) -> Option<&'static crate::wording::ApprovedWording> {
+    let p = shipped(id, current_version(id, version)).ok()?;
+    p.visibility
+        .iter()
+        .find(|e| e.key == ACKNOWLEDGEMENT_KEY && e.status == WordingStatus::Approved)
+        .and_then(|e| crate::wording::approved(&e.wording))
 }
 
 /// The shipped profile the P-53 value `p53_text` pins (R-RP-01). A value

@@ -1945,6 +1945,12 @@ fn decide_decline(
     // The answers precede the transition, which drops the kept
     // attestation bit, so no bit outlives the batch (state-machine NOTE 14).
     out.extend(outcomes);
+    // Q5 (2026-11-23): the declined notice (A4), by ids and a link only.
+    // The computed reason stays on the platform (I-27).
+    out.push(crate::decision::outcome_notice(
+        plan.proposal,
+        StateTag::Declined,
+    ));
     out.push(transition(
         plan.proposal,
         StateTag::Negotiation,
