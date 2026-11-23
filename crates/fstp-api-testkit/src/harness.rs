@@ -445,6 +445,9 @@ pub struct Targets {
     report: Option<u128>,
     request: Option<u128>,
     line: Option<u128>,
+    /// The import document of P2 that `admin.erase_document` names
+    /// (ADR-007, lane L39).
+    document: Option<u128>,
     p71: i64,
 }
 
@@ -526,9 +529,10 @@ fn param(name: &str, who: Who, t: &Targets, session: Option<u128>) -> Result<Str
         "import_proposal" => "1".to_owned(),
         // SA-12: an id no world registers, so the removal meets a guard.
         "import_document" => "1".to_owned(),
-        // ADR-007 (lane L39): an import document no world registers, so
-        // the erasure meets a guard after its actor rule.
-        "document" => "1".to_owned(),
+        // ADR-007 (lane L39): the import document every world with a
+        // programme holds on P2, so an admitted erasure reaches the store.
+        // A world with no programme names an id no world registers.
+        "document" => t.document.unwrap_or(1).to_string(),
         "client" => account
             .map(|a| other_agent_of(a).raw())
             .unwrap_or(1)
@@ -2862,6 +2866,7 @@ pub fn build(key: WorldKey) -> Result<Built, String> {
         line: reached.line,
         accepted: reached.accepted,
         approved: reached.approved,
+        document: erasable_document(&seed.ports.engine.state()),
     };
     let head = seed.ports.engine.head();
     Ok(Built {
@@ -2913,10 +2918,38 @@ fn request_self_grants(
 }
 
 /// P2, the other programme of the tenant, with [`PM_OTHER`] its manager.
+/// Its manager uploads one synthetic import document, which states no
+/// value, so the proposer proposes nothing and P2 stays as it was. The
+/// `admin.erase_document` cells name it (ADR-007, lane L39).
 fn other_programme(seed: &mut Seeder) -> Result<(), String> {
     let p2 = open_draft(seed, ADMIN_BUILDER, PM_OTHER)?;
-    let _ = p2;
+    seed.api(
+        PM_OTHER,
+        ApiMethod::Post,
+        &format!("/programmes/{}/imports", p2.raw()),
+        &request_body_of_upload(),
+    )?;
     Ok(())
+}
+
+/// The synthetic import document of P2 (lane L39). It states no value
+/// the proposer's fixture knows.
+pub const ERASABLE_DOCUMENT: &str =
+    "SYNTHETIC DOCUMENT L39: an upload a tenant admin may erase. It states no value.";
+
+/// The `import.upload` body of [`ERASABLE_DOCUMENT`], which the matrix
+/// worlds of both harnesses upload to P2 (lane L39).
+pub fn request_body_of_upload() -> Value {
+    obj(vec![
+        ("media", s("text/plain")),
+        ("text", s(ERASABLE_DOCUMENT)),
+    ])
+}
+
+/// The import document of P2 in `state`, if the world holds one (lane
+/// L39).
+fn erasable_document(state: &fstp_engine::EngineState) -> Option<u128> {
+    state.import.documents().map(|d| d.id.raw()).min()
 }
 
 /// The held binding of `account` on `p`, if any.

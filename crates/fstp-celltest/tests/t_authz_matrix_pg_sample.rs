@@ -473,6 +473,9 @@ struct Targets {
     knock_outs: Vec<u128>,
     /// The finding on X that the coordinator's agent recorded (ADR-033).
     finding: Option<u128>,
+    /// The import document of P2 that `admin.erase_document` names
+    /// (ADR-007, lane L39).
+    document: Option<u128>,
     /// The open recovery case of `RECOVERING`, its email proof given, as
     /// the id `admin.approve_recovery` takes (I-79).
     recovery: Option<u128>,
@@ -864,6 +867,23 @@ fn build(world: &World, state: StateProfile) -> Pg<'_> {
             )),
         );
         w.grant(FIRST_ADMIN, PM_OTHER, p2, Role::ProgrammeManager);
+        // ADR-007 (lane L39): P2's manager uploads one synthetic import
+        // document through the production path, which states no value, so
+        // the `admin.erase_document` cells meet a real document.
+        w.api(
+            PM_OTHER,
+            "POST",
+            &format!("/programmes/{}/imports", p2.raw()),
+            &fstp_api_testkit::harness::request_body_of_upload(),
+        );
+        w.t.document = w
+            .state()
+            .engine()
+            .import
+            .documents()
+            .map(|d| d.id.raw())
+            .min();
+        assert!(w.t.document.is_some(), "the import document of P2");
     }
     // X, with its team, while C is open.
     let (opens, deadline) = {
@@ -1567,6 +1587,7 @@ fn param(w: &Pg<'_>, name: &str, op: &str, who: Who, session: Option<&str>) -> S
         }
         ("round", _) => id(t.round.map(|r| r.raw())),
         ("finding", _) => id(t.finding),
+        ("document", _) => id(t.document),
         ("recovery", _) => id(t.recovery),
         ("score", _) => id(t.plan.map(|p| p.raw())),
         ("step", _) => "agreements".to_owned(),
