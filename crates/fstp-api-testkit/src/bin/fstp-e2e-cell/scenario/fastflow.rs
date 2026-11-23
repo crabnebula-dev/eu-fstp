@@ -162,7 +162,9 @@ async fn set_up(seed: &mut Seeder<'_>) -> Result<(), String> {
             budget: NonNegAmount::new(eur(40_000_000)?).map_err(|e| format!("{e:?}"))?,
             text,
         },
-    )
+    )?;
+    // ADR-036 section 9: ELFA runs beside SuperSAFE in this scene too.
+    elfa(seed, OPENS, CLOSES).await
 }
 
 /// Drafts and submits x, z and w to call 1, each as its lead, and gives
