@@ -322,3 +322,15 @@ Tests: `sa11_app_keystore_image_carries_the_display_name_index` (`fstp_cell::tas
 - The standby's custody credential, its region and the promotion approval.
 - The response size bound: Record at first use.
 - OVHcloud facts this ADR relies on: ADR-005 verify items V14, V15 and V16, and ADR-004 verify item K4.
+
+## Record of lane `m10/guard-key`, 2026-11-23: the guard on the second custodian
+
+Daniel decided on 2026-11-23 that the second custodian of the record of lane L16 becomes required and also holds the guard of the key copies. The custody side is in ADR-004 ("The guard key of Q-L16-1 (F-018)"), the operator side in ADR-028 (record of lane `m10/guard-key`). Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| The second custodian | The same `fstp-keyd` entry on another machine as in the record of lane L16. It now also serves the guard link over mutual TLS on port 7460, and must stay on. Its console socket and its ClusterBackup escrow are unchanged | Decided by Daniel on 2026-11-23 |
+| Key copies | Every off-host copy of a pilot `fstp-keyd` entry is sealed once more to that entry's guard. A copy older than the last destroy of its entry no longer opens, wherever it is kept. So an old copy, its passphrase and a base backup of the same age open no data erased later (I-81, TH-30) | ADR-004 record of lane `m10/guard-key` |
+| The custodian's own volume | Never copied. `fstp-keyd export` refuses a volume that holds a guard. The escrow files of the record of lane L16 hold no guard | I-81 |
+| Restore | A full restore after the loss of the pilot host needs the custodian online to open the key copies, and either the cluster backups through its escrow or the copies of the backup chains. The restore order of the record of lane L27 is unchanged | ADR-012 record of lane L27 |
+| Loss of the custodian | The base backups and WAL still open through the pilot's own entries while the pilot lives. The operator pairs a new custodian, makes new key copies at once, and runs the escrow ceremony again | ADR-004 record of lane `m10/guard-key` |

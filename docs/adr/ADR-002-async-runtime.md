@@ -78,3 +78,8 @@ Record notes:
 - `tools/deps-check` fails until the allowlist, the roots file and this record match the new tree, as for every other ADR-002 change.
 - Recorded 2026-10-28: `deps/allowlist.txt` gains `signal-hook-registry 1.4.8` and `errno 0.3.14`, both tied to ADR-002 with role `runtime`. The tokio line in `deps/adr-roots.txt` gains `signal` and `signal-hook-registry`.
 - When cargo first locked errno, it chose the `windows-sys 0.52.0` that `Cargo.lock` already held for the unused optional ring edge (ADR-001 weak dependency note). That would have reached `windows-sys 0.52.0` and the `windows-targets 0.52.6` crates on other targets. `cargo update -p errno` moved errno to the allowlisted `windows-sys 0.61.2`, which its requirement `>=0.52, <0.62` allows. Every lockfile in the repository records that choice.
+
+## Record of lane `m10/guard-key`, 2026-11-23: `fstp-keyd` and the guard link
+
+- `fstp-keyd` serves its Unix sockets on std threads, as before. The guard link of ADR-004 (record of lane `m10/guard-key`) runs TLS through `fstp-tls`, which needs the runtime trait. So `fstp-keyd` runs that link on tokio through `fstp_rt::tokio::TokioRuntime`, its one runtime.
+- No version, feature or crate changes: `fstp-rt` and `fstp-tls` were already in the tree of `fstp-keyd` through `fstp-custody`.
