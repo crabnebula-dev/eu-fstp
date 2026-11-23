@@ -16,17 +16,102 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
-use fstp_celltest::external_cell::ExternalSpec;
+use fstp_api_testkit::smtp_sink::{SINK_SERVER_NAME, SinkConfig, SmtpSink};
+use fstp_celltest::external_cell::{ExternalRelay, ExternalSpec};
 use fstp_celltest::external_vault::{ExternalVaultSpec, start_world};
-use fstp_celltest::mc::auth_model::RosterChange;
-use fstp_celltest::mc::auth_model::http::{AuthClient, FIRST_ADMIN};
+use fstp_celltest::mc::auth_model::http::{AuthClient, Cookie, FIRST_ADMIN};
+use fstp_celltest::reference::auth::RefMethod;
 use fstp_celltest::world::{
-    CellHandle, ClusterKind, DbMode, HttpRequest, VaultLayout, World, WorldSpec,
+    CellHandle, ClusterKind, DbMode, HttpReply, HttpRequest, VaultLayout, World, WorldSpec,
 };
 use fstp_celltest::world_host::{SimProcess, bin_path};
 use fstp_domain_testkit::r#gen::roster::ADMIN_2;
+use fstp_json::Value;
 use fstp_vault_core::fact::Fact;
 use fstp_vault_proto::{TicketClaims, TicketKind, WireAccount, WireProgramme, WriteKind};
+
+/// The CA of the test SMTP sink's certificate, which the cell pins for
+/// its platform relay.
+const SINK_CA: &[u8] = include_bytes!("../../fstp-tls/testdata/ca.pem");
+
+/// A call of the web API in the session `cookie`, as `web/src/core/api.ts`
+/// sends it. On `step_up_required` the passkey ceremony of the challenge
+/// runs with the software authenticator, and the request is sent once
+/// more (`withStepUp`, I-78).
+fn web(
+    client: &AuthClient<'_>,
+    method: &str,
+    path: &str,
+    cookie: &Cookie,
+    body: &str,
+) -> HttpReply {
+    let cell = client.cell();
+    let send = || {
+        let mut r = HttpRequest::new(method, path)
+            .header("host", cell.host())
+            .header("cookie", cookie.0.clone())
+            .header("accept", "application/json");
+        if method != "GET" {
+            r = r
+                .header("origin", format!("https://{}", cell.host()))
+                .header("x-fstp-request", "1")
+                .header("content-type", "application/json")
+                .body(body.as_bytes().to_vec());
+        }
+        cell.request(&r).unwrap_or_else(|e| panic!("{e}"))
+    };
+    let first = send();
+    let v = fstp_json::parse(&first.body).unwrap_or(Value::Null);
+    if v.get("code").and_then(Value::as_str) != Some("step_up_required") {
+        return first;
+    }
+    let ch = v.get("challenge").unwrap();
+    let id = ch.get("challenge_id").and_then(Value::as_str).unwrap();
+    let bytes = ch
+        .get("public_key")
+        .and_then(|p| p.get("challenge"))
+        .and_then(Value::as_str)
+        .unwrap();
+    let challenge: [u8; 32] = fstp_oauth::decode_base64url(bytes.as_bytes())
+        .unwrap()
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    assert!(
+        client.prove_api_step_up(cookie, id, challenge).unwrap(),
+        "I-78: the passkey step-up was refused"
+    );
+    send()
+}
+
+/// The link token of the newest admin invitation mail to `to` that the
+/// sink holds, read from its text part's `/auth/invite#<token>` link as
+/// the invitee reads it.
+fn admin_invitation_token(sink: &SmtpSink, to: &str) -> Option<Vec<u8>> {
+    let begun = std::time::Instant::now();
+    let mine = || {
+        sink.messages()
+            .into_iter()
+            .filter(|m| m.to.iter().any(|t| t == to))
+            .collect::<Vec<_>>()
+    };
+    while mine().is_empty() && begun.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let m = mine().pop()?;
+    let parsed = fstp_mail::parse(&m.data).ok()?;
+    let text = parsed
+        .parts
+        .iter()
+        .find(|p| p.content_type == "text/plain")
+        .map(|p| String::from_utf8_lossy(&p.decoded).into_owned())?;
+    let at = text.find("/auth/invite#")? + "/auth/invite#".len();
+    let hex = text.get(at..at + 64)?;
+    (0..64)
+        .step_by(2)
+        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect()
+}
 
 fn now_us() -> i64 {
     i64::try_from(
@@ -99,8 +184,9 @@ fn vault_sql(world: &World, cell: &CellHandle, sql: &str) -> String {
 ///    file. Its keystore survives the restart: its chain verifies at
 ///    start, and a second write is answered 204.
 /// 4. The world ran `fstp-cell first-admin` and started the cell binary
-///    before step 2. The first admin and a second admin enrol, and the
-///    first grants the second the tenant admin role. Each is a cell
+///    before step 2. The first admin enrols, invites a second admin
+///    through the API core with a step-up, and the second admin enrols
+///    from the mailed link, which accepts the invitation. Each is a cell
 ///    command, so the cell binary asks the vault binary its epoch, asks
 ///    `ChangedSince`, and acknowledges epoch 2 (NOTE 4). The acknowledgement in `vault.epoch` and the logged
 ///    query in `vault.query_log` show that the answer reached the cell.
@@ -122,12 +208,32 @@ fn g12_vault_binary_answers_the_cell_binary() {
     let custody = SimProcess::spawn(0, &dir).unwrap_or_else(|e| panic!("{e}"));
     let key_file_custody = SimProcess::spawn(1, &dir).unwrap_or_else(|e| panic!("{e}"));
     let vault_custody = SimProcess::spawn(2, &dir).unwrap_or_else(|e| panic!("{e}"));
+    // The platform relay (D3): the test SMTP sink, which carries the
+    // second admin's invitation mail. It must outlive the cell.
+    let rt = fstp_rt::tokio::TokioRuntime::new_multi_thread(1).unwrap();
+    let sink_cfg = SinkConfig::default();
+    let sink = rt.block_on(SmtpSink::start(&rt, sink_cfg.clone())).unwrap();
+    let handle = sink.handle().clone();
+    let relay = ExternalRelay {
+        address: sink.addr(),
+        relay: SINK_SERVER_NAME.to_owned(),
+        username: sink_cfg.username,
+        password: sink_cfg.password,
+        ca_pem: SINK_CA.to_vec(),
+        messages: std::sync::Arc::new(move || {
+            handle
+                .messages()
+                .into_iter()
+                .filter_map(|m| Some((m.to.first()?.clone(), m.data)))
+                .collect()
+        }),
+    };
     let spec = ExternalSpec {
         binary: cell_binary,
         dir: dir.clone(),
         key_file_custody: key_file_custody.socket().to_path_buf(),
         assets_dir: None,
-        relay: None,
+        relay: Some(relay),
         shell: None,
     };
     let (world, vault) = start_world(
@@ -199,15 +305,42 @@ fn g12_vault_binary_answers_the_cell_binary() {
         ),
         "0"
     );
+    // The second admin joins as a production client adds one: the
+    // `tenant.invite_admin` operation of the API core with its step-up,
+    // the mailed link, and the enrolment that accepts the invitation
+    // (SoD-07, J0). The raw command route of a production build serves
+    // break-glass approval only (ADR-026 D8 as amended 2026-11-23).
     let client = AuthClient::new(cell);
     assert!(client.enrol(FIRST_ADMIN).unwrap(), "the first admin enrols");
-    assert!(client.enrol(ADMIN_2).unwrap(), "the second admin enrols");
     let admin1 = client.admin_session().expect("the first admin's session");
+    let email = cell.login_email(ADMIN_2);
+    let invited = web(
+        &client,
+        "POST",
+        "/api/v1/admin/admins",
+        &admin1,
+        &format!(r#"{{"email":"{email}"}}"#),
+    );
+    assert_eq!(
+        invited.status,
+        200,
+        "SoD-07: the admin invitation: {}",
+        String::from_utf8_lossy(&invited.body)
+    );
+    let token = admin_invitation_token(&sink, &email).expect("SoD-07: no admin invitation mail");
+    let a2 = client
+        .enrol_by_link(ADMIN_2, &token)
+        .unwrap()
+        .expect("SoD-07: the second admin enrols from the mailed link");
+    let admin2 = client
+        .login(ADMIN_2, RefMethod::Passkey)
+        .unwrap()
+        .expect("the second admin's session");
+    let admins = web(&client, "GET", "/api/v1/admin/admins", &admin2, "");
+    assert_eq!(admins.status, 200);
     assert!(
-        client
-            .roster(&admin1, RosterChange::GrantAdmin { account: ADMIN_2 })
-            .unwrap(),
-        "the tenant admin grant to the second admin"
+        String::from_utf8_lossy(&admins.body).contains(&a2.raw().to_string()),
+        "the second admin is a tenant admin"
     );
     assert_eq!(
         vault_sql(
