@@ -207,9 +207,19 @@ pub fn compile(
         // copy. Its id starts with `tenant-`, so it never names a shipped
         // profile, and the readers resolve it in the tenant fold.
         && !p.profile.as_str().starts_with("tenant-")
+        // ADR-036 section 8 (Daniel, 2026-11-23): a pin of a version this
+        // profile replaces compiles, and moves to this profile below.
+        && !profile.replaces(p)
     {
         return Err(CompileError::ProfileMismatch);
     }
+    let mut spec = std::borrow::Cow::Borrowed(spec);
+    if let Field::Set(p) = &spec.funder.p53_funder_profile
+        && profile.replaces(p)
+    {
+        spec.to_mut().funder.p53_funder_profile = Field::Set(profile.reference());
+    }
+    let spec = spec.as_ref();
     let mut unset = BTreeSet::new();
     let mut values = BTreeMap::new();
     let mut artefacts = ProgrammeArtefacts::default();

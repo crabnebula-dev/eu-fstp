@@ -57,7 +57,7 @@ export function decodeCards(body: unknown): FundingCard[] | null {
   return out;
 }
 
-/** One card: the logo with its alternative text, the programme name and the label and value lines. */
+/** One card: the logo with its alternative text and the label and value lines. The programme name shows only inside the acknowledgement (ADR-034 Q11). */
 export function fundingCard(c: FundingCard): HTMLElement {
   const line = (label: string, value: string | null, link = false): HTMLElement => {
     // ADR-034 (lead decision): a contact that is one e-mail address is a link.
@@ -71,7 +71,7 @@ export function fundingCard(c: FundingCard): HTMLElement {
   return h('section', { class: 'funding-card', 'aria-label': t('funding.label') }, [
     h('img', { class: 'eu-emblem', src: LOGO_PATH, alt: t('funding.alt') }),
     h('div', { class: 'funding-card-text' }, [
-      h('p', { class: 'funding-card-name' }, [c.name]),
+      // ADR-034 Q11 (Daniel, 2026-11-23): no programme name beside the logo.
       line(t('funding.grant'), c.grantNumber),
       line(t('funding.coordinator'), c.coordinatorName),
       line(t('funding.contact'), c.coordinatorContact, true),

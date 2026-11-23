@@ -94,3 +94,31 @@ test("adr036_l08_branding_page_says_why_the_sentence_is_missing", () => {
   const name = ackHints([{ ...cards[1]!, acknowledgementMissing: ["programme_name"] }])[0] ?? "";
   assert(name.includes("programme name") && name.includes("step 2"), name);
 });
+
+/** Every non-overlapping occurrence of `needle` in `s`. */
+function occurrences(s: string, needle: string): number {
+  return s.split(needle).length - 1;
+}
+
+/**
+ * ADR-034 Q11 (Daniel, 2026-11-23): the Commission's emblem rules say not to
+ * write the programme's name in conjunction with the EU emblem. The `/app/`
+ * and sign-in cards show the logo with no name beside it. The name shows only
+ * inside the acknowledgement sentence, and not at all without it.
+ */
+test("adr034_q11_card_names_the_programme_only_in_the_sentence", () => {
+  freshDom();
+  const a = decodeFunding(ANSWER);
+  const [one, two] = [a?.cards[0], a?.cards[1]];
+  assert(one !== undefined && two !== undefined, "two cards");
+  if (one === undefined || two === undefined) return;
+  for (const make of [fundingCard, authCard]) {
+    const el = make(one) as unknown as FakeElement;
+    eq(occurrences(el.textContent ?? "", one.name), 1, "only in the sentence");
+    const ack = el.getElementsByTagName("p").filter((p) => p.getAttribute("class") === "funding-card-ack");
+    eq(ack.length, 1, "one sentence");
+    assert((ack[0]?.textContent ?? "").includes(one.name), "the name is in the sentence");
+    const none = (make(two) as unknown as FakeElement).textContent ?? "";
+    eq(occurrences(none, two.name), 0, "no sentence, no name");
+  }
+});

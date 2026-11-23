@@ -132,8 +132,6 @@ pub struct PublicLogos {
 /// labels with the programme's values, each shown as text only (I-68).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PublicFunding {
-    /// The programme's name.
-    pub programme: String,
     /// The grant agreement number.
     pub grant_number: String,
     /// The coordinator's name.
@@ -622,13 +620,10 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
             if let Some(img) = logo {
                 section = section.child(img);
             }
+            // ADR-034 Q11 (Daniel, 2026-11-23): no programme name beside
+            // the logo. The name shows only inside the sentence below.
             let text = Element::new("div")
                 .attr("class", "funding-card-text")
-                .child(
-                    Element::new("p")
-                        .attr("class", "funding-card-name")
-                        .text(&card.programme),
-                )
                 .child(dl);
             // L-08 (ADR-036): the approved sentence as text, or nothing
             // while a value it names is missing (I-68).

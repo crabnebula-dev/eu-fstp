@@ -18,7 +18,6 @@ fn chrome(contact: &str) -> Chrome {
         logos: PublicLogos {
             emblem: Some(SVG.to_owned()),
             funding: Some(PublicFunding {
-                programme: "Synthetic programme".to_owned(),
                 grant_number: "SYNTHETIC-000000000".to_owned(),
                 coordinator: "Synthetic coordinator org".to_owned(),
                 contact: contact.to_owned(),
@@ -52,7 +51,6 @@ fn i69_public_footer_holds_the_funding_card() {
             "{p:?}: alt text"
         );
         for text in [
-            "Synthetic programme",
             "Grant agreement number",
             "SYNTHETIC-000000000",
             "Coordinator",

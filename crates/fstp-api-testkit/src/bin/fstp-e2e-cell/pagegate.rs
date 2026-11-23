@@ -228,7 +228,7 @@ fn check_scene(
     seen: &mut BTreeSet<(&'static str, &'static str)>,
 ) -> Vec<String> {
     let mut failures = Vec::new();
-    let mut viewers: Vec<(String, Option<Vec<u8>>)> = vec![("no session".to_owned(), None)];
+    let mut viewers: Vec<(String, Option<Vec<u8>>)> = Vec::new();
     for a in people(inner) {
         // A fresh minute of the clock for each viewer, so no rate limit
         // of design section 3.7 step 4 refuses the oracle's reads.
@@ -241,6 +241,11 @@ fn check_scene(
         let login = inner.ports.sessions.login(a, method);
         viewers.push((format!("account {}", a.raw()), Some(login.cookie)));
     }
+    // The visitor with no session comes last: each of its rows gets a
+    // fresh minute, since every anonymous call is charged to one peer
+    // (ADR-024), and the demo holds two programmes since 2026-11-23
+    // (ADR-036 section 9). The sessions above are not read after it.
+    viewers.push(("no session".to_owned(), None));
     for (who, cookie) in &viewers {
         let cookie = cookie.as_deref();
         let missing = get(inner, "/app/no-such-page", cookie);
@@ -250,6 +255,9 @@ fn check_scene(
             Some("/app/")
         );
         for row in PAGES {
+            if cookie.is_none() {
+                inner.ports.clock.advance(61_000_000);
+            }
             for (path, params) in paths(inner, row) {
                 let r = get(inner, &path, cookie);
                 let status = r.status.as_u16();

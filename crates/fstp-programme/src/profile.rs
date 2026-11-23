@@ -4,6 +4,12 @@
 //! P-53 reference, its currency, the placeholders a gap compiles to and the
 //! flow-down obligation identifiers of I-49 (Q18, interim, pending Daniel).
 //! M9 owns the profile bundle format.
+//!
+//! Since 2026-11-23 (ADR-036 section 8, Daniel: "everything v2") a new
+//! programme pins version 2, and a spec that still pins version 1 compiles
+//! to version 2: the move is recorded in the next policy version. Version 2
+//! keeps the outputs, fields and periods of version 1
+//! (`fstp_report::profile::SUCCESSORS`).
 
 use std::num::NonZeroU16;
 
@@ -18,8 +24,15 @@ use crate::value::{Codec, Token};
 /// profile (`02-domain/contracts.md`, I-49).
 const HORIZON_EUROPE_FLOW_DOWN: &[FlowDownObligation] = FlowDownObligation::ALL;
 
-/// Version 1, the only version of a shipped profile so far.
+/// Version 1, which version 2 replaces (ADR-036 section 8).
 const VERSION_1: NonZeroU16 = NonZeroU16::MIN;
+
+/// Version 2, the current version: version 1 with the funding
+/// acknowledgement approved (ADR-036; Daniel, 2026-11-22 and 2026-11-23).
+const VERSION_2: NonZeroU16 = match NonZeroU16::new(2) {
+    Some(v) => v,
+    None => NonZeroU16::MIN,
+};
 
 /// A funder profile that compiles programme specs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -31,8 +44,20 @@ pub struct FunderProfile {
 }
 
 impl FunderProfile {
-    /// The Horizon Europe profile, version 1, in EUR.
+    /// The Horizon Europe profile at its current version, 2, in EUR. Every
+    /// new programme pins it (ADR-036 section 8).
     pub const fn horizon_europe() -> FunderProfile {
+        FunderProfile {
+            name: "horizon-europe",
+            version: VERSION_2,
+            currency: Currency::Eur,
+            flow_down: HORIZON_EUROPE_FLOW_DOWN,
+        }
+    }
+
+    /// The Horizon Europe profile, version 1, which version 2 replaces. It
+    /// never changes (P-53). Only older drafts and policies pin it.
+    pub const fn horizon_europe_v1() -> FunderProfile {
         FunderProfile {
             name: "horizon-europe",
             version: VERSION_1,
@@ -57,11 +82,26 @@ impl FunderProfile {
             .map(FunderProfileRef)
     }
 
-    /// The profile whose P-53 value is `r`. Only the Horizon Europe
-    /// profile ships in M4, so any other value names no profile.
+    /// The current profile for the P-53 value `r`: Horizon Europe version 2
+    /// for a reference to version 1 or 2 (ADR-036 section 8). Any other
+    /// value names no shipped profile.
     pub fn for_policy_ref(r: &FunderProfileRef) -> Option<FunderProfile> {
-        let he = FunderProfile::horizon_europe();
-        (he.policy_ref().as_ref() == Some(r)).then_some(he)
+        let current = FunderProfile::horizon_europe();
+        [FunderProfile::horizon_europe_v1(), current]
+            .iter()
+            .any(|p| p.policy_ref().as_ref() == Some(r))
+            .then_some(current)
+    }
+
+    /// Whether this profile replaces the pin `r`: Horizon Europe version 2
+    /// replaces version 1 (ADR-036 section 8). A spec that pins a replaced
+    /// version compiles under this profile and moves to
+    /// [`FunderProfile::reference`].
+    pub fn replaces(&self, r: &ProfileRef) -> bool {
+        self.name == "horizon-europe"
+            && self.version == VERSION_2
+            && r.profile.as_str() == self.name
+            && r.version == VERSION_1
     }
 
     /// The currency of every programme under this profile (ADR-006).

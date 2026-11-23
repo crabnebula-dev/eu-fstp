@@ -499,6 +499,16 @@ fn frozen_of(state: &State, proposal: ProposalId) -> Result<&FrozenPolicy, Refus
     crate::policy::frozen_policy(state, call).ok_or_else(unknown)
 }
 
+/// The outcome notice of `proposal` on reaching the outcome `state`:
+/// NEGOTIATION (selected), NOT_SELECTED, INELIGIBLE or DECLINED (Q5,
+/// Daniel, 2026-11-23; ADR-036 section 7). It names the proposal and the
+/// state only. The email it fires carries ids, time and a link, never a
+/// reason or a criterion (I-27, O-54). It precedes the transition in the
+/// batch, as the INELIGIBLE notice always did.
+pub(crate) const fn outcome_notice(proposal: ProposalId, state: StateTag) -> Record {
+    Record::OutboxEnqueued(OutboxEvent::ProposalOutcome { proposal, state })
+}
+
 /// A transition record of `proposal` with the command's actor (R-AU-01).
 const fn transition(
     proposal: ProposalId,
@@ -670,10 +680,7 @@ fn decide_knock_out(
         // The lead is told of the outcome, by ids and a link only (I-27).
         // The recorded reason stays on the platform (O-54). Lane
         // m4/fast-flow, so the early decision reaches the applicant.
-        out.push(Record::OutboxEnqueued(OutboxEvent::ProposalOutcome {
-            proposal: *proposal,
-            state: StateTag::Ineligible,
-        }));
+        out.push(outcome_notice(*proposal, StateTag::Ineligible));
         out.push(transition(
             *proposal,
             StateTag::Submitted,
@@ -883,6 +890,10 @@ fn decide_close(
     out.push(Record::Stage1Closed(Stage1Closed::from_verdict(
         &verdict, c.actor,
     )));
+    // Q5 (2026-11-23): NOT_SELECTED is an outcome, so the lead is told.
+    if to == StateTag::NotSelected {
+        out.push(outcome_notice(c.proposal, to));
+    }
     out.push(transition(
         c.proposal,
         StateTag::Stage1,
@@ -1683,6 +1694,10 @@ fn decide_round(
                 } else {
                     (StateTag::NotSelected, Row::RankedToNotSelected)
                 };
+                // Q5 (2026-11-23): each proposal below the cut-off is told.
+                if to == StateTag::NotSelected {
+                    out.push(outcome_notice(*proposal, to));
+                }
                 out.push(transition(
                     *proposal,
                     StateTag::Ranked,
@@ -1973,14 +1988,18 @@ fn decide_review(
         return Ok(out);
     }
     match r.verdict {
-        IrcVerdict::Validate if r.completes && admitted => out.push(transition(
-            r.proposal,
-            StateTag::IrcReview,
-            StateTag::Negotiation,
-            Row::IrcReviewToNegotiation,
-            ctx.actor,
-            None,
-        )),
+        IrcVerdict::Validate if r.completes && admitted => {
+            // Q5 (2026-11-23): the selected notice (A1).
+            out.push(outcome_notice(r.proposal, StateTag::Negotiation));
+            out.push(transition(
+                r.proposal,
+                StateTag::IrcReview,
+                StateTag::Negotiation,
+                Row::IrcReviewToNegotiation,
+                ctx.actor,
+                None,
+            ));
+        }
         IrcVerdict::Validate => {}
         IrcVerdict::Concern(concern) => {
             out.push(Record::OutboxEnqueued(OutboxEvent::IrcConcern {

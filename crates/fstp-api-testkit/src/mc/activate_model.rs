@@ -358,9 +358,10 @@ pub mod production {
         RefCheck::ALL.into_iter().find(|r| r.name() == c.name())
     }
 
-    /// The default funder profile reference of a new draft (P-53).
+    /// The default funder profile reference of a new draft (P-53): Horizon
+    /// Europe v2 since 2026-11-23 (ADR-036 section 8).
     fn default_profile() -> Result<fstp_domain::policy::FunderProfileRef, NotImplemented> {
-        let v = fstp_json::parse(br#"{"profile":"horizon-europe","version":1}"#)
+        let v = fstp_json::parse(br#"{"profile":"horizon-europe","version":2}"#)
             .map_err(|_| GAP_STEP)?;
         fstp_domain::policy::OpaqueValue::from_value(&v)
             .map(fstp_domain::policy::FunderProfileRef)
