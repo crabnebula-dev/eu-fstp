@@ -2109,6 +2109,16 @@ fn transition(
     }
 }
 
+/// The outcome notice of `proposal` on reaching the outcome `state`, by
+/// ids only (Q5, Daniel, 2026-11-23; I-27): NEGOTIATION, NOT_SELECTED,
+/// INELIGIBLE and DECLINED each enqueue one in the batch of the move.
+pub fn outcome_notice(proposal: ProposalId, state: StateTag) -> Want {
+    Want::Exact(Record::OutboxEnqueued(OutboxEvent::ProposalOutcome {
+        proposal,
+        state,
+    }))
+}
+
 fn verdict_of(r: Result<Expect, String>) -> LifeVerdict {
     match r {
         Ok(e) => LifeVerdict::Accept(e),
@@ -2191,12 +2201,8 @@ fn knock_out(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
     };
     if failed {
         // The outcome notice of the lead, by ids only (I-27, O-54).
-        exp.wants.push(Want::Exact(Record::OutboxEnqueued(
-            OutboxEvent::ProposalOutcome {
-                proposal: *proposal,
-                state: StateTag::Ineligible,
-            },
-        )));
+        exp.wants
+            .push(outcome_notice(*proposal, StateTag::Ineligible));
         exp.transitions.push(transition(
             *proposal,
             StateTag::Submitted,
@@ -2380,15 +2386,19 @@ fn close(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
     } else {
         (StateTag::NotSelected, Row::Stage1ToNotSelected)
     };
+    let mut wants = vec![Want::Stage1Closed {
+        proposal: *proposal,
+        recorder: a,
+        score,
+        threshold_bp: facts.p02_bp,
+        counted: facts.valid.clone(),
+        passed,
+    }];
+    if !passed {
+        wants.push(outcome_notice(*proposal, StateTag::NotSelected));
+    }
     Ok(Expect {
-        wants: vec![Want::Stage1Closed {
-            proposal: *proposal,
-            recorder: a,
-            score,
-            threshold_bp: facts.p02_bp,
-            counted: facts.valid.clone(),
-            passed,
-        }],
+        wants,
         transitions: vec![transition(
             *proposal,
             StateTag::Stage1,
@@ -3075,6 +3085,8 @@ fn cut_off(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
             (StateTag::IrcReview, Row::RankedToIrcReview)
         } else {
             exp.terminal.push(*p);
+            exp.wants
+                .push(outcome_notice(*p, StateTag::NotSelected));
             (StateTag::NotSelected, Row::RankedToNotSelected)
         };
         exp.transitions.push(transition(
@@ -3182,6 +3194,8 @@ fn irc_review(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> LifeVerdict {
                     ..Expect::default()
                 });
             }
+            let mut wants = wants;
+            wants.push(outcome_notice(proposal, StateTag::Negotiation));
             LifeVerdict::Accept(Expect {
                 wants,
                 transitions: vec![transition(
@@ -3274,6 +3288,7 @@ fn decline(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
         return Err("NOTE 7: a future call exists".to_owned());
     }
     Ok(Expect {
+        wants: vec![outcome_notice(*proposal, StateTag::Declined)],
         transitions: vec![transition(
             *proposal,
             StateTag::IrcReview,
@@ -3283,6 +3298,5 @@ fn decline(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
             None,
         )],
         terminal: vec![*proposal],
-        ..Expect::default()
     })
 }

@@ -2112,6 +2112,13 @@ fn decline(cx: &MoneyCx<'_>, actor: Actor, proposal: ProposalId) -> MoneyVerdict
         e.wants.push(Want::Released(proposal));
         e.synth.push(Record::CapReleased { proposal, amount });
     }
+    // Q5 (Daniel, 2026-11-23): the declined notice, by ids only (I-27).
+    e.push_exact(Record::OutboxEnqueued(
+        fstp_domain::record::OutboxEvent::ProposalOutcome {
+            proposal,
+            state: StateTag::Declined,
+        },
+    ));
     e.transitions.push((
         proposal,
         StateTag::Negotiation,

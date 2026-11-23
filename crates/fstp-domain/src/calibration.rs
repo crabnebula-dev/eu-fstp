@@ -23,9 +23,11 @@
 //! The outcome notice record is `OutboxEnqueued(ProposalOutcome)`. A notice
 //! with state INELIGIBLE (a failed knock-out) does not count: it opens no
 //! consent, so no INELIGIBLE proposal enters a calibration set (I-37,
-//! decided by Daniel on 2026-11-13). No core
-//! command writes it yet. M6 dispatch adds it, and once M6 dispatches email
-//! the request also waits for the dispatch record. Use beyond the tenant
+//! decided by Daniel on 2026-11-13). The domain writes it in the batch
+//! of each outcome: NEGOTIATION, NOT_SELECTED, INELIGIBLE and DECLINED
+//! (Q5, Daniel, 2026-11-23; ADR-036 section 7). So the selected notice
+//! opens consent too (interim reading, pending Daniel). The request does
+//! not wait for the dispatch record. Use beyond the tenant
 //! (R-LA-11) is not built.
 //!
 //! TODO(legal): the consent wording and the legal basis for pseudonymised
