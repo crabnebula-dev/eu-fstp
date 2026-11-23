@@ -151,6 +151,9 @@ pub struct FakeVault {
     names: Arc<Mutex<LegalNames>>,
     /// Whether the name mask alone is down, the queries still answering.
     mask_down: Arc<Mutex<bool>>,
+    /// How many mask requests reached the vault, answered or not (M10
+    /// F-005, I-86): a test counts them to show a read asked none.
+    mask_requests: Arc<Mutex<u64>>,
 }
 
 /// What the synthetic vault knows for the Q35 answers (see
@@ -175,7 +178,14 @@ impl FakeVault {
             origin: Arc::new(Mutex::new(None)),
             names: Arc::new(Mutex::new(BTreeMap::new())),
             mask_down: Arc::new(Mutex::new(false)),
+            mask_requests: Arc::new(Mutex::new(0)),
         }
+    }
+
+    /// How many mask requests reached the vault so far, answered or not
+    /// (M10 F-005, I-86).
+    pub fn mask_requests(&self) -> u64 {
+        *lock(&self.mask_requests)
     }
 
     /// Sets the name mask alone down or up (M7 Q4): the queries still
@@ -431,6 +441,10 @@ impl Vault for FakeVault {
         team: &[AccountId],
         texts: &[String],
     ) -> Result<Vec<Vec<NameMaskSpan>>, OracleDown> {
+        {
+            let mut n = lock(&self.mask_requests);
+            *n = n.saturating_add(1);
+        }
         if *lock(&self.down) || *lock(&self.mask_down) {
             return Err(OracleDown);
         }

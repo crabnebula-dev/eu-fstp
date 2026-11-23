@@ -3602,6 +3602,24 @@ fn state_name(state: &EngineState, p: ProposalId) -> &'static str {
     fstp_domain::view::proposal_state(&state.core, p).map_or("UNKNOWN", |t| t.spec_name())
 }
 
+/// Whether the caller reads `p` from the applicant side (M10 F-005,
+/// I-86): the read rule admitted it as the team or the former team, or it
+/// holds a Receiving binding on `p`. Such a read never asks the vault to
+/// mask.
+fn receiving_reader<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> bool {
+    use fstp_access::ReadRule;
+    matches!(
+        clearance.rule(),
+        ReadRule::Team | ReadRule::FormerTeam | ReadRule::FormerAuthor | ReadRule::Lead
+    ) || call
+        .account()
+        .is_some_and(|a| team_of(&call.state, p).contains(&a))
+}
+
 /// A content read (R-AU-01, R-AC-01, I-03): the domain `ReadContent`
 /// appends a `ContentRead` and re-runs every guard, then the submitted
 /// content is returned. The append carries the call's one audit entry.
@@ -3620,6 +3638,15 @@ async fn content_read<P: Seams>(
     // team reads its latest workspace (R-AC-01).
     let draft = fstp_domain::view::proposal_state(&call.state.core, p)
         == Some(fstp_domain::StateTag::Draft);
+    // M10 F-005 (I-86, I-17, TH-07; Daniel 2026-11-23): the applicant side
+    // never reads through the vault mask, or a team member could write
+    // candidates into the text and learn a teammate's verified attributes
+    // from the answer. Through MCP its draft read is refused, and the team
+    // reads its drafts in the web. Its other reads are served unmasked.
+    let applicant_side = receiving_reader(call, p, clearance);
+    if draft && applicant_side && call.caller.via() == Via::Mcp {
+        return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-86")));
+    }
     let content = if draft {
         workspace_of(call, p, clearance)
             .await
@@ -3635,7 +3662,14 @@ async fn content_read<P: Seams>(
     // of the domain, so the vault is asked only for a read that happens. A
     // vault that cannot mask then refuses the call, and no text leaves.
     let seq = append_content_read(call, p).await?;
-    let (title, text) = if call.caller.via() == Via::Mcp {
+    let (title, text) = if call.caller.via() == Via::Mcp && applicant_side {
+        // M10 F-005: the team reads its own text, neutralised for its
+        // agent, and the vault is never asked.
+        (
+            integrity::for_agent(content.title),
+            integrity::for_agent(content.narrative),
+        )
+    } else if call.caller.via() == Via::Mcp {
         let masked = mask_for_agent(
             call,
             p,
