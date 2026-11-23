@@ -313,6 +313,53 @@ fn vault_origin<B>(ctx: &Ctx<B>) -> String {
     }
 }
 
+/// Why a ticket could not be signed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TicketFault {
+    /// The claims have no canonical form.
+    Encode,
+    /// The key refused to sign.
+    Sign,
+}
+
+/// The ticket of `claims` as hexadecimal: the canonical body followed by
+/// the Ed25519 signature of the cell's `Ticket` key over it (the framing
+/// of `fstp_vault_proto::ticket`).
+pub(crate) fn sign_ticket(
+    claims: &TicketClaims,
+    key: &fstp_crypto::sig::Ed25519SigningKey,
+) -> Result<String, TicketFault> {
+    let mut bytes = claims.canonical().map_err(|_| TicketFault::Encode)?;
+    let signature = key.sign(&bytes).map_err(|_| TicketFault::Sign)?;
+    bytes.extend_from_slice(&signature);
+    Ok(crate::http::body::hex(&bytes))
+}
+
+/// The claims of an `unmask` ticket of cell `cell` for the party
+/// `account` of `programme`, issued at `now` with the random `nonce`
+/// (ADR-023 readings 7 and 8). The ticket names the party's account and
+/// the programme scope, and no proposal. The `PartyUnmasked` record is
+/// the ledger record of the issue, so the nonce is random. `None` when
+/// the lifetime bound overflows.
+pub(crate) fn unmask_claims(
+    cell: [u8; 16],
+    programme: ProgrammeId,
+    account: AccountId,
+    now: i64,
+    nonce: [u8; 16],
+) -> Option<TicketClaims> {
+    Some(TicketClaims {
+        kind: TicketKind::Unmask,
+        cell,
+        account: WireAccount(account.raw()),
+        proposal: None,
+        scope: country_scope(WireProgramme(programme.raw())),
+        issued_at: now,
+        expires_at: now.checked_add(TICKET_LIFETIME_MAX_US)?,
+        nonce,
+    })
+}
+
 /// The signed ticket of `claims`, the canonical body followed by the
 /// Ed25519 signature of the cell's `Ticket` key over it (the framing of
 /// `fstp_vault_proto::ticket`), as the reply
@@ -325,14 +372,13 @@ fn signed_reply<B>(
     page: VaultPage,
     key: &fstp_crypto::sig::Ed25519SigningKey,
 ) -> Reply {
-    let Ok(mut bytes) = claims.canonical() else {
-        return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+    let ticket = match sign_ticket(claims, key) {
+        Ok(t) => t,
+        Err(TicketFault::Encode) => {
+            return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+        }
+        Err(TicketFault::Sign) => return unavailable(crate::routes::BackendFault::Unavailable),
     };
-    let Ok(signature) = key.sign(&bytes) else {
-        return unavailable(crate::routes::BackendFault::Unavailable);
-    };
-    bytes.extend_from_slice(&signature);
-    let ticket = crate::http::body::hex(&bytes);
     let mut o = Object::with_capacity(4);
     o.insert("expires_at", decimal(claims.expires_at));
     o.insert("kind", Value::String(claims.kind.label()));
@@ -374,18 +420,8 @@ async fn run_unmask<B: Backend>(
                 Err(r) => return r,
             };
             let now = ctx.backend.now().micros();
-            let Some(expires_at) = now.checked_add(TICKET_LIFETIME_MAX_US) else {
+            let Some(claims) = unmask_claims(ctx.cfg.cell, programme, account, now, nonce) else {
                 return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
-            };
-            let claims = TicketClaims {
-                kind: TicketKind::Unmask,
-                cell: ctx.cfg.cell,
-                account: WireAccount(account.raw()),
-                proposal: None,
-                scope: country_scope(WireProgramme(programme.raw())),
-                issued_at: now,
-                expires_at,
-                nonce,
             };
             signed_reply(ctx, &claims, VaultPage::Release, key)
         }

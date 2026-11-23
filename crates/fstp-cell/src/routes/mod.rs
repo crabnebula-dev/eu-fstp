@@ -33,6 +33,7 @@ pub mod memory;
 pub mod pg;
 pub mod signup_code;
 
+pub(crate) use api::{sign_ticket, unmask_claims};
 pub use auth::{CHALLENGE_US, MAGIC_LINK_US};
 pub(crate) use auth::{holds, live as live_session, send_enrolment_by};
 pub use backend::{

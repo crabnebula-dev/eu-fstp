@@ -1416,6 +1416,14 @@ async fn command<P: Seams>(
     if verdict == ChannelVerdict::Prepare {
         return prepare(call, op, account).await;
     }
+    // ADR-023 reading 7, M10 F-058: an unmask is recorded only when the
+    // vault port can open its release page, so `audit.unmasks` lists no
+    // unmask that showed nothing, and no step-up is spent on one.
+    if form.kind == fstp_domain::command::CommandKind::UnmaskParty
+        && !call.ports.vault().releases_unmask().await
+    {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle")));
+    }
     // Step 7.
     let proof = if call.spec.high_risk && call.caller.via() == Via::Web {
         match step_up(call, call.digest)

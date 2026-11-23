@@ -151,6 +151,9 @@ pub struct FakeVault {
     names: Arc<Mutex<LegalNames>>,
     /// Whether the name mask alone is down, the queries still answering.
     mask_down: Arc<Mutex<bool>>,
+    /// Whether the unmask release page alone cannot open, the queries
+    /// still answering (M10 F-058).
+    unmask_down: Arc<Mutex<bool>>,
 }
 
 /// What the synthetic vault knows for the Q35 answers (see
@@ -175,6 +178,7 @@ impl FakeVault {
             origin: Arc::new(Mutex::new(None)),
             names: Arc::new(Mutex::new(BTreeMap::new())),
             mask_down: Arc::new(Mutex::new(false)),
+            unmask_down: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -182,6 +186,13 @@ impl FakeVault {
     /// answer, so a test sees the mask fail closed on its own.
     pub fn set_mask_down(&self, down: bool) {
         *lock(&self.mask_down) = down;
+    }
+
+    /// Sets the unmask release page alone down or up (M10 F-058, ADR-023
+    /// reading 7): the queries still answer, and every other verification
+    /// still begins, so a test sees the unmask fail closed on its own.
+    pub fn set_unmask_down(&self, down: bool) {
+        *lock(&self.unmask_down) = down;
     }
 
     /// Records the verified names and date of birth (`YYYY-MM-DD`) of
@@ -377,7 +388,9 @@ impl Vault for FakeVault {
         purpose: VerificationPurpose,
         a: AccountId,
     ) -> Result<VerificationRedirect, OracleDown> {
-        if *lock(&self.down) {
+        if *lock(&self.down)
+            || (matches!(purpose, VerificationPurpose::Unmask { .. }) && *lock(&self.unmask_down))
+        {
             return Err(OracleDown);
         }
         // I-18: the guardian consents on the vault's write page, with a
@@ -401,6 +414,12 @@ impl Vault for FakeVault {
         log.verifications.push((purpose, a));
         log.next = n.saturating_add(1);
         Ok(VerificationRedirect(to))
+    }
+
+    /// The synthetic vault opens an unmask page unless it is down or its
+    /// unmask page alone is down (M10 F-058).
+    async fn releases_unmask(&self) -> bool {
+        !*lock(&self.down) && !*lock(&self.unmask_down)
     }
 
     /// Whether the synthetic vault knows every class (Q35, synthetic

@@ -898,6 +898,15 @@ pub trait Vault: AsyncIdentityOracle {
         let _ = a;
         std::future::ready(false)
     }
+    /// Whether [`Vault::begin_verification`] can open the release page of
+    /// an unmask now (ADR-023 reading 7, ADR-026 amendment of
+    /// 2026-11-23, M10 F-058). The API core asks it before the step-up
+    /// and the append of `UnmaskParty`, so no unmask is recorded that
+    /// would show nothing. The default answers no, so a port that serves
+    /// no unmask fails closed.
+    fn releases_unmask(&self) -> impl Future<Output = bool> + Send {
+        std::future::ready(false)
+    }
     /// Whether the vault knows every P-13 class (Q35).
     fn classes_defined(
         &self,
