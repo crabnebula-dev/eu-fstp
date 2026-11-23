@@ -183,3 +183,27 @@ fn i68_adr037_any_source_renders_as_text() {
         Ok(())
     });
 }
+
+/// ADR-037 (Daniel, 2026-11-23): the imprint names no governing law; the
+/// terms of use keep theirs. The accessibility statement takes its
+/// contact and its response time from the tenant's legal details.
+#[test]
+fn adr037_imprint_has_no_governing_law_and_accessibility_fills_both() {
+    let imprint = LegalText::Imprint.shown().to_ascii_lowercase();
+    assert!(!imprint.contains("governing law"), "imprint");
+    assert!(!imprint.contains("governing_law"), "imprint");
+    assert!(
+        LegalText::Terms.shown().contains("governed by"),
+        "the terms state their law"
+    );
+    let value = |n: &str| match n {
+        "tenant.accessibility_contact" => Some("a11y@example.org".to_owned()),
+        "tenant.accessibility_response_time" => Some("10 working days".to_owned()),
+        _ => None,
+    };
+    let html = render(LegalText::Accessibility, false, &value);
+    assert!(html.contains("a11y@example.org"));
+    assert!(html.contains("10 working days"));
+    assert!(!html.contains("[not set: tenant.accessibility_contact]"));
+    assert!(!html.contains("[not set: tenant.accessibility_response_time]"));
+}

@@ -4,8 +4,8 @@
 // information) fill their blanks from these values. A non-technical admin
 // fills them here: one plain label and one short hint per field, and any
 // field may stay empty, which the pages show as "[not set: ...]".
-// `tenant.set_legal_details` is high-risk, so it asks for a step-up, as the
-// funding card defaults do.
+// `tenant.set_legal_details` is not high-risk (Daniel, 2026-11-23): a
+// signed-in tenant admin saves directly, with no step-up.
 
 import { h } from "../../core/dom.js";
 import type { I18n } from "../../core/i18n.js";
@@ -28,10 +28,10 @@ export const LEGAL_KEYS: readonly string[] = Object.freeze([
   "dpo_contact",
   "supervisory_authority",
   "accessibility_contact",
+  "accessibility_response_time",
   "company_number",
   "vat_number",
   "transparency_register",
-  "governing_law",
 ]);
 
 /** Whether `s` may be a set value: 1 to 300 bytes, no control character, no angle bracket (I-68). `s` is trimmed. */

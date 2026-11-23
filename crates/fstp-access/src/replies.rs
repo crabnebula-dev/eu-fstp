@@ -314,6 +314,13 @@ pub const ERASURE_CAUSES: &[&str] = &[
 /// What an erased text held (ADR-007 section "Built by lane L33").
 pub const ERASURE_KINDS: &[&str] = &["text", "display_name", "document"];
 
+/// Who authorised an erasure (ADR-007, Daniel 2026-11-23, question 3; lane
+/// L39): the system, or an account the page never names (R-CF-03).
+pub const ERASURE_AUTHORISERS: &[&str] = &["system", "account"];
+
+/// The media types of an import document (`fstp_import::ImportMedia`).
+pub const IMPORT_MEDIA: &[&str] = &["text/plain", "text/markdown"];
+
 /// How one part of the host runs, in the host status file (ADR-028 record
 /// of lane L20).
 pub const PART_STATES: &[&str] = &["running", "unhealthy", "stopped"];
@@ -1948,6 +1955,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     // epoch once known (I-81).
                     m("kind", Shape::Enum(ERASURE_KINDS)),
                     m("destroyed_epoch", Shape::Nullable(&Shape::Id)),
+                    // Lane L39 (ADR-007, Daniel 2026-11-23): whether the
+                    // system or an account authorised it, never which
+                    // account (R-CF-03), and the stated reason, resolved
+                    // for the reader (I-97).
+                    m("authoriser", Shape::Enum(ERASURE_AUTHORISERS)),
+                    m("reason", Shape::Nullable(&Shape::String)),
                 ])),
             ),
             m(
@@ -1957,6 +1970,16 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("programme", Shape::Id),
                     m("start", Shape::Id),
                     m("end", Shape::Id),
+                ])),
+            ),
+            // Lane L39: the import documents a tenant admin may erase.
+            m(
+                "documents",
+                Shape::Array(&Shape::Object(&[
+                    m("document", Shape::Id),
+                    m("programme", Shape::Id),
+                    m("media", Shape::Enum(IMPORT_MEDIA)),
+                    m("erased", Shape::Bool),
                 ])),
             ),
         ]),

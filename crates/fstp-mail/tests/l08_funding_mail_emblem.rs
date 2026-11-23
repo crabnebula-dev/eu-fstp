@@ -25,7 +25,6 @@ fn funding() -> MailFunding {
         png,
         alt: "Funded by the European Union".to_owned(),
         lines: vec![
-            "Synthetic programme".to_owned(),
             "Grant agreement number: SYNTHETIC-000000000".to_owned(),
             "Coordinator: Synthetic coordinator org".to_owned(),
             "Contact: role@example.org".to_owned(),

@@ -677,6 +677,8 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::M3Port(PortKind::ApproveBreakGlass) => BodyRule::Exactly(&["approve"]),
         // ADR-007, P-41 (lane m5/retention): the cause and the grant.
         OpKind::M3Port(PortKind::RequestErasure) => BodyRule::Exactly(&["cause", "grant"]),
+        // ADR-007 (lane L39): the stated reason.
+        OpKind::M3Port(PortKind::EraseDocument) => BodyRule::Exactly(&["reason"]),
         // R-LG-04: the registration, in the body form of the cell's
         // `POST /auth/passkeys` route (lowercase hexadecimal).
         OpKind::M3Port(PortKind::AddPasskey) => {
@@ -860,6 +862,9 @@ fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
         }
         OpKind::M3Port(fstp_access::PortKind::AddPasskey) => {
             passkey_registration(request).is_some()
+        }
+        OpKind::M3Port(fstp_access::PortKind::EraseDocument) => {
+            request.get("reason").and_then(Value::as_str).is_some()
         }
         OpKind::M3Port(fstp_access::PortKind::SetTheme) => theme_param(request).is_some(),
         OpKind::Agent(fstp_access::AgentKind::Consent) => consent_handle(request).is_some(),

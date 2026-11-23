@@ -162,6 +162,7 @@ fn put_all(r: &KeystoreRows) -> KeystoreChanges {
         logins: r.logins.iter().copied().map(Change::Put).collect(),
         requested: r.requested.iter().copied().map(Change::Put).collect(),
         displays: r.displays.iter().copied().map(Change::Put).collect(),
+        blobs: Vec::new(),
     }
 }
 

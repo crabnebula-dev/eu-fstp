@@ -103,8 +103,8 @@ pub enum TenantCommand {
         defaults: fstp_brand::funding::FundingDefaults,
     },
     /// Set the tenant's legal details (`tenant.set_legal_details`,
-    /// ADR-037). The whole set replaces the former one. High-risk by the
-    /// strict reading of settings, so web only.
+    /// ADR-037). The whole set replaces the former one. Not high-risk:
+    /// Daniel dropped the step-up on 2026-11-23. Web only, with no tool.
     SetLegalDetails {
         /// The details.
         details: fstp_brand::legal::LegalDetails,
@@ -304,11 +304,12 @@ impl TenantKind {
     ///   every label the same way.
     /// - Setting the mail relay decides where every message of the tenant
     ///   goes (ADR-018, interim, pending Daniel).
+    /// - Not the legal details (ADR-037): Daniel dropped their step-up on
+    ///   2026-11-23.
     pub const fn high_risk(self) -> bool {
         matches!(
             self,
             TenantKind::InviteAdmin
-                | TenantKind::SetLegalDetails
                 | TenantKind::SetFundingDefaults
                 | TenantKind::RequestSelfGrant
                 | TenantKind::ApproveSelfGrant
@@ -331,11 +332,15 @@ impl TenantKind {
     ///   tenant admin grant. It runs in the M3 enrolment ceremony, whose
     ///   new passkey stands for the step-up (design J0).
     /// - Using a SoD-07 approval, which completes a role grant.
+    /// - Setting the legal details (ADR-037), which has no tool and asks
+    ///   for no step-up (Daniel, 2026-11-23).
     pub const fn web_only(self) -> bool {
         self.high_risk()
             || matches!(
                 self,
-                TenantKind::AcceptAdminInvitation | TenantKind::UseSelfGrantApproval
+                TenantKind::AcceptAdminInvitation
+                    | TenantKind::UseSelfGrantApproval
+                    | TenantKind::SetLegalDetails
             )
     }
 

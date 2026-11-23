@@ -754,6 +754,20 @@ where
             drop(signal);
         }));
     }
+    // ADR-007 (Daniel, 2026-11-23, decision 1b; lane L39): the hourly
+    // retention sweep of stored documents. With today's rule table it
+    // erases nothing (`crate::tasks::retention`).
+    {
+        let signal = started.shutdown.signal();
+        let clock = crate::tasks::FnClock::new(rt.clone(), Arc::clone(&clock));
+        let store = fstp_pgstore::ApiStore::new(app_pool.clone(), Arc::clone(&keys.ledger))
+            .map_err(store_err)?;
+        let erasure = started.erasure.clone();
+        drop(rt.spawn(async move {
+            crate::tasks::retention::run(&clock, store, erasure, &signal).await;
+            drop(signal);
+        }));
+    }
     // The public text class lives in memory, as the text store it copies
     // from does, so a start copies the texts of every published call
     // again (`crate::public`).

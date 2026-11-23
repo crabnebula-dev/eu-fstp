@@ -1,6 +1,6 @@
 # ADR-036: Approved wording store, funder profile v2 and outcome email templates
 
-Status: Proposed. Drafted 2026-11-22 by lane L35 (`prod/legal-wording`) before its code, as CLAUDE.md asks. Rows marked "Interim, pending Daniel" wait for his answer.
+Status: Proposed. Drafted 2026-11-22 by lane L35 (`prod/legal-wording`) before its code, as CLAUDE.md asks. Rows marked "Interim, pending Daniel" wait for his answer. Updated 2026-11-23 by lane L38 (`prod/outcomes-funding`) with Daniel's decisions of that day: every outcome sends its email (section 7), everything moves to profile v2 (section 8), and the demo seeds ELFA (section 9).
 
 The number is the next free one. ADR-035 is lane L30's.
 
@@ -52,13 +52,13 @@ Binding rules: P-53 (a programme pins a profile version, which never changes), I
 | File | `crates/fstp-report/profiles/horizon-europe/profile.v2.json`. The outputs, fields and periods equal v1. The `acknowledgement` element is `approved`. The `emblem` element stays `TODO(legal)`, since Daniel approved no emblem wording |
 | v1 | Unchanged byte for byte. A test pins its SHA-256 (`4b0f1269...5e06`) |
 | Shipped list | v1 and v2. `for_p53` resolves both. Reports keep the version their programme pins (R-RP-01) |
-| Pinning v2 in P-53 | Out of scope. The programme compiler and the Guide know v1 only. Interim, pending Daniel |
+| Pinning v2 in P-53 | Decided by Daniel, 2026-11-23: everything moves to v2. Section 8 |
 
 ### 4. Which version the funding card reads
 
-The acknowledgement on a card comes from the newest shipped version of the programme's P-53 profile id whose `acknowledgement` element is `Approved`.
+Decided 2026-11-23 (section 8): the acknowledgement on a card comes from the version the programme's P-53 pins, moved to its current version through the successor table (`fstp_report::profile::approved_acknowledgement_at`). Every new programme pins v2, and a v1 programme moves to v2 (section 8), so the card reads v2. A version with no approved acknowledgement shows no sentence.
 
-Reason: every programme today pins v1, and v1 never changes. Reading only the pinned version would keep the sentence away from every programme, including the pilot. The card is presentation, not a report output, so it pins nothing. Reports still pin their version.
+Until 2026-11-23 the card read the newest approved version of the profile id, since every programme pinned v1.
 
 A programme whose P-53 names a tenant-owned profile, or no profile, shows no sentence. Interim, pending Daniel.
 
@@ -81,25 +81,56 @@ The rules come from the official source recorded in ADR-034 section 1a, with its
 
 | Topic | Decision |
 | --- | --- |
-| Outcomes in the code | The domain enqueues an outcome notice (`OutboxEvent::ProposalOutcome`) only for INELIGIBLE today (`fstp-domain/src/decision.rs`). The state tags that are outcomes are NEGOTIATION (selected), NOT_SELECTED, INELIGIBLE and DECLINED. The code has no reserve list. DEFERRED is a carry-over to the next call |
+| Outcomes in the code | Decided by Daniel, 2026-11-23: all four outcome emails are sent. The domain enqueues an outcome notice (`OutboxEvent::ProposalOutcome`) in the batch of each move into an outcome: NEGOTIATION (selected) from the completing IRC validation, NOT_SELECTED from the stage 1 close and from the cut-off, INELIGIBLE from the failed knock-out, and DECLINED from the decline after a concern and from the decline of a negotiation (`crate::decision::outcome_notice`). The lifecycle and money references expect the same notice. The code has no reserve list. DEFERRED is a carry-over to the next call and sends no outcome email. Tests: `i27_every_outcome_enqueues_its_notice` |
+| I-27 | The notice names the proposal and the state only. The email carries ids, time and a link, never a reason, a score or a criterion |
+| Calibration consent | A notice that is not INELIGIBLE opens calibration consent (I-37 reading of 2026-11-13), so a selected, not selected or declined proposal can be asked once its notice is committed. Interim, pending Daniel: the selected notice opens consent too |
 | New template ids | `outcome-selected` (A1, NEGOTIATION), `outcome-not-selected` (A2, NOT_SELECTED), `outcome-ineligible` (A3, INELIGIBLE), `outcome-declined` (A4, DECLINED). Each is version 1. They are appended to `TemplateId::ALL`, so the ledger codes of the older ids stay |
 | Any other state | `proposal-outcome` version 1, unchanged (I-25) |
 | Slots | A1 to A4 use `{proposal}`, `{when}` and `{link}` only. No `{state}` |
 | Where it is chosen | `fstp_timeline`: the immediate firing of the outbox record and the delivery log read (`event_template`) both call `outcome_template(state)` |
 | Status | Draft wording, pending Daniel's approval. Each template carries `TODO(legal)`. A2 and A3 do not name the complaint deadline: TODO(legal) in `legal/09-emails.md` |
 
+### 8. Everything on profile v2 (Daniel, 2026-11-23)
+
+Daniel chose "everything v2": programmes pin horizon-europe profile v2, not only the card.
+
+| Topic | Decision |
+| --- | --- |
+| New programmes | `fstp_programme::FunderProfile::horizon_europe()` is version 2. The API core opens every new draft on v2 (`creator::default_profile`). The blank spec, the shipped templates and the SuperSAFE fixture pin v2. Activation records the policy with P-53 v2 |
+| v1 | Never changes, byte for byte. Its SHA-256 test stays. `FunderProfile::horizon_europe_v1()` still exists so that an older draft can be read |
+| The successor table | `fstp_report::profile::SUCCESSORS` and `fstp_programme::FunderProfile::current` name horizon-europe v1 as replaced by v2. A successor is declared only when its outputs, fields and reporting periods equal the older version's, so the move changes no report content. Test: `adr036_q2_successor_keeps_outputs_fields_and_periods` |
+| The compiler | `FunderProfile::for_policy_ref` reads a v1 or v2 reference and returns the current version, v2. `compile` accepts a spec whose P-53 names an older shipped version of the profile it compiles under, and writes that profile's own P-53. Any other version is refused, as before (`ProfileMismatch`) |
+| How a v1 programme moves | Automatic and recorded, with no operator step (usability rule). The next policy version the creator composes for the programme pins v2: a step save, a start, or the P-09 save of an active programme. The core `EditPolicy` records it in the ledger as any other value. Nobody chooses, confirms or schedules the move |
+| Until it moves | The funding card reads the programme's pin moved through the successor table, so it shows the v2 sentence at once (section 4). Reports and the public footer read the pin the ledger holds, so an output always names the recorded version (R-RP-01) |
+| Published calls | A call published under v1 keeps v1, since P-53 is frozen at publication (I-12). Its reports pin v1. v1 and v2 give the same outputs, fields and periods |
+| Clone start | A clone between programmes on v1 and v2 of the same profile is allowed. Both move to v2 |
+| The Guide | `fstp_guide::SHIPPED_VERSIONS` names the versions of each shipped profile: horizon-europe 1 and 2. Both use the shipped Guide template `guide.v1.md`, since v2 changes only the acknowledgement's wording status, not the Guide. `ShippedProfiles::profile_at(name, version)` refuses an unknown version, and the creator reads the Guide for the draft's P-53 name and version. Test: `adr036_q2_guide_knows_v1_and_v2` |
+
+Interim, pending Daniel: a v1 programme that never gets another policy version keeps v1 in its ledger. Its card still shows the v2 sentence. A move with no save at all would need a System policy command, which this lane did not add.
+
+### 9. ELFA in the demo (Daniel, 2026-11-23)
+
+| Topic | Decision |
+| --- | --- |
+| Programme | The demo cell seeds ELFA (grant agreement 101298715, acronym "ELFA") as a second active programme of the same CrabNebula tenant, beside SuperSAFE, in every scene that seeds SuperSAFE |
+| Funding card | Saved before activation through `creator.save_fields`: the name "ELFA", the grant agreement number 101298715, the acronym "ELFA", the coordinator "CrabNebula Ltd" and the contact "privacy@crabnebula.dev". Its card shows the acknowledgement |
+| Public slug | `elfa`, so its public pages sit beside `/p/supersafe/` |
+| Call | One published call, "ELFA open call 2026", on the SuperSAFE call's dates |
+| Staff | Two staff accounts of its own: an ELFA programme manager and an ELFA call drafter. The demo personas keep only their SuperSAFE roles, so each still reaches their work by clicking from sign-in as before |
+| Data | Synthetic text only. A grant agreement number is a public fact of the action, not personal data |
+
 ## Consequences
 
 - New: one module and one text file in `fstp-report`, one profile file, one fuzz target, four template versions. No new crate and no new dependency.
 - `FundingCard` gains the acronym and the rendered acknowledgement. Its JSON gains two members.
 - `fstp_brand::emblem::FUNDING_ACKNOWLEDGEMENT` is removed: the sentence is per programme now.
-- The demo cell's review and applicant scenes save the SuperSAFE programme name, grant agreement number 101342989 and acronym before activation, so their cards show the sentence. The test kit's seeder holds saved creator values again after a setup step replays the ledger (`FakeEngine::rehold`), as a production shell does from its value store.
+- The demo cell's review and applicant scenes save the SuperSAFE programme name, grant agreement number 101342989 and acronym before activation, so their cards show the sentence. Since 2026-11-23 they also seed ELFA (section 9). The test kit's seeder holds saved creator values again after a setup step replays the ledger (`FakeEngine::rehold`), as a production shell does from its value store.
 
 ## Open questions for Daniel
 
-1. Interim, pending Daniel: cards read the newest approved version of the programme's profile, not the pinned one (section 4).
-2. Interim, pending Daniel: P-53 cannot pin v2 yet. The programme compiler and the Guide know v1 only (section 3).
+1. Decided 2026-11-23: cards read the programme's own pin, moved to v2 through the successor table (sections 4 and 8).
+2. Decided by Daniel, 2026-11-23: everything on v2. New programmes pin v2, and a v1 programme moves at its next policy version, recorded in the ledger with no operator step (section 8). Interim, pending Daniel: a v1 programme with no further policy version keeps v1 in its ledger.
 3. Interim, pending Daniel: tenant-owned profiles never show a shipped approved sentence (section 2).
 4. TODO(legal): approve the outcome drafts A1 to A4 (`legal/09-emails.md`), and say whether A2 and A3 must name the complaint deadline.
-5. Interim, pending Daniel: the code enqueues an outcome notice only for INELIGIBLE. Notices for NOT_SELECTED, NEGOTIATION and DECLINED need the domain to enqueue them. That is a domain change outside this lane. The templates and their selection are ready.
-6. The demo seeds only SuperSAFE. No ELFA programme is seeded, so ELFA 101298715 does not show in the demo.
+5. Decided by Daniel, 2026-11-23: all four outcome emails are sent. The domain enqueues the notice for NEGOTIATION, NOT_SELECTED, INELIGIBLE and DECLINED (section 7). Interim, pending Daniel: the selected notice opens calibration consent like the others.
+6. Decided by Daniel, 2026-11-23: the demo seeds ELFA (101298715) beside SuperSAFE, with its own funding card and one call (section 9). Interim, pending Daniel: ELFA has staff accounts of its own and no demo persona.

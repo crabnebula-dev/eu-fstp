@@ -3,7 +3,7 @@
 // grants whose retention ended and the erasure log, and requests an
 // erasure with its cause through `admin.request_erasure`.
 
-import { ERASURE_CAUSES, ERASURE_KINDS, dayOf, decodeErasures, requestBody } from "../src/admin/erasures/model.js";
+import { ERASURE_CAUSES, ERASURE_KINDS, MAX_REASON, dayOf, decodeErasures, eraseBody, requestBody } from "../src/admin/erasures/model.js";
 import { ADMIN_ERASURE_LABELS } from "../src/admin/erasures/messages.en.js";
 import { ADMIN_ERASURE_PAGES } from "../src/admin/erasures/page.js";
 import { OPERATIONS, PAGES, VALIDATORS } from "../src/gen/api.js";
@@ -13,10 +13,11 @@ import { assert, eq, test } from "./support/harness.js";
 
 const REPLY = {
   erasures: [
-    { text: "7", cause: "retention_expiry", grant: "8", requested_at: "1794700800000000", completed_at: "1794700800000000", kind: "text", destroyed_epoch: "3" },
-    { text: "9", cause: "verification_completed", grant: null, requested_at: "3", completed_at: null, kind: "display_name", destroyed_epoch: null },
+    { text: "7", cause: "retention_expiry", grant: "8", requested_at: "1794700800000000", completed_at: "1794700800000000", kind: "text", destroyed_epoch: "3", authoriser: "account", reason: null },
+    { text: "9", cause: "verification_completed", grant: null, requested_at: "3", completed_at: null, kind: "display_name", destroyed_epoch: null, authoriser: "account", reason: null },
   ],
   retention_ended: [{ grant: "8", programme: "4", start: "1573862400000000", end: "1794700800000000" }],
+  documents: [],
 };
 
 /** ADR-007, P-41: the reply decodes, and any other shape is refused. */
@@ -32,12 +33,12 @@ test("adr007_p41_erasures_reply_decodes_strictly", () => {
   for (const bad of [
     null,
     {},
-    { erasures: [], retention_ended: [{ grant: 8, programme: "4", start: "1", end: "2" }] },
-    { erasures: [{ ...REPLY.erasures[0], cause: "other" }], retention_ended: [] },
-    { erasures: [{ ...REPLY.erasures[0], text: "07" }], retention_ended: [] },
+    { erasures: [], retention_ended: [{ grant: 8, programme: "4", start: "1", end: "2" }], documents: [] },
+    { erasures: [{ ...REPLY.erasures[0], cause: "other" }], retention_ended: [], documents: [] },
+    { erasures: [{ ...REPLY.erasures[0], text: "07" }], retention_ended: [], documents: [] },
     // Lane L33: the kind and the destroyed epoch are closed too.
-    { erasures: [{ ...REPLY.erasures[0], kind: "name" }], retention_ended: [] },
-    { erasures: [{ ...REPLY.erasures[0], destroyed_epoch: 3 }], retention_ended: [] },
+    { erasures: [{ ...REPLY.erasures[0], kind: "name" }], retention_ended: [], documents: [] },
+    { erasures: [{ ...REPLY.erasures[0], destroyed_epoch: 3 }], retention_ended: [], documents: [] },
   ]) {
     eq(decodeErasures(bad), null, JSON.stringify(bad));
   }
@@ -87,8 +88,50 @@ test("adr007_l37_document_kind_has_a_label", () => {
     assert(typeof ADMIN_ERASURE_LABELS[`admin.erasures.kind.${k}`] === "string", `the label of ${k}`);
   }
   const row = { ...REPLY.erasures[0], kind: "document", destroyed_epoch: "5" };
-  const r = decodeErasures({ erasures: [row], retention_ended: [] });
+  const r = decodeErasures({ erasures: [row], retention_ended: [], documents: [] });
   eq(r?.erasures[0]?.kind, "document", "a document row decodes");
   const validate = VALIDATORS["admin.erasures"];
-  assert(validate !== undefined && validate({ erasures: [row], retention_ended: [] }), "the generated validator accepts it");
+  assert(validate !== undefined && validate({ erasures: [row], retention_ended: [], documents: [] }), "the generated validator accepts it");
+});
+
+/**
+ * ADR-007 (Daniel, 2026-11-23, decisions 1c and 3; lane L39): the reply
+ * lists the import documents a tenant admin may erase, each row of the
+ * log names whether the system or an account authorised it (never which
+ * account, R-CF-03) and the reason, and the erasure body is a reason of
+ * 1 to MAX_REASON characters after trimming. The operation needs no
+ * step-up.
+ */
+test("adr007_l39_documents_and_authoriser_decode", () => {
+  const doc = { document: "12", programme: "4", media: "text/markdown", erased: false };
+  const row = { ...REPLY.erasures[0], kind: "document", cause: "retention_expiry", authoriser: "system", reason: null };
+  const manual = { ...REPLY.erasures[0], text: "13", kind: "document", cause: "erasure_request", reason: "Synthetic reason" };
+  const reply = { erasures: [row, manual], retention_ended: [], documents: [doc] };
+  const r = decodeErasures(reply);
+  assert(r !== null, "the reply decodes");
+  eq(r?.documents[0]?.document, "12", "the document id");
+  eq(r?.documents[0]?.erased, false, "not erased yet");
+  eq(r?.erasures[0]?.authoriser, "system", "the system authorised it");
+  eq(r?.erasures[1]?.reason, "Synthetic reason", "the stated reason");
+  const validate = VALIDATORS["admin.erasures"];
+  assert(validate !== undefined && validate(reply), "the generated validator accepts it");
+  for (const bad of [
+    { ...reply, documents: undefined },
+    { ...reply, documents: [{ ...doc, erased: "no" }] },
+    { ...reply, documents: [{ ...doc, document: "x" }] },
+    { ...reply, erasures: [{ ...row, authoriser: "admin" }] },
+    { ...reply, erasures: [{ ...row, reason: 7 }] },
+  ]) {
+    eq(decodeErasures(bad), null, JSON.stringify(bad));
+  }
+  eq(eraseBody("  Synthetic reason  "), { reason: "Synthetic reason" }, "trimmed");
+  eq(eraseBody("   "), null, "a reason is required");
+  eq(eraseBody("x".repeat(MAX_REASON)), { reason: "x".repeat(MAX_REASON) }, "the longest reason");
+  eq(eraseBody("x".repeat(MAX_REASON + 1)), null, "too long");
+  const op = OPERATIONS.find((o) => o.name === "admin.erase_document");
+  eq(op?.method, "POST", "the erasure");
+  eq(op?.highRisk, false, "no step-up: no invariant asks for one");
+  for (const k of ["admin.erasures.documents.heading", "admin.erasures.documents.erase", "admin.erasures.documents.reason", "admin.erasures.authoriser.system", "admin.erasures.authoriser.account"]) {
+    assert(typeof ADMIN_ERASURE_LABELS[k] === "string", `the label ${k}`);
+  }
 });

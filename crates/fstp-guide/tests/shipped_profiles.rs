@@ -67,3 +67,28 @@ fn a9b_shipped_profile_tree_holds_no_synthetic_marker() {
         );
     }
 }
+
+/// ADR-036 section 8 (Daniel, 2026-11-23, "everything v2"): the Guide
+/// knows the shipped versions of the Horizon Europe profile, 1 and 2. Both
+/// use the one shipped Guide template, since v2 changes only the funding
+/// acknowledgement's wording status. An unknown version names no Guide.
+#[test]
+fn adr036_q2_guide_knows_v1_and_v2() {
+    assert!(
+        fstp_guide::SHIPPED_VERSIONS.contains(&(HORIZON_EUROPE, &[1, 2][..])),
+        "{:?}",
+        fstp_guide::SHIPPED_VERSIONS
+    );
+    let plain = ShippedProfiles.profile(HORIZON_EUROPE).unwrap();
+    for v in [1, 2] {
+        let p = ShippedProfiles.profile_at(HORIZON_EUROPE, v).unwrap();
+        assert_eq!(p, plain, "version {v}");
+    }
+    for v in [0, 3] {
+        assert_eq!(
+            ShippedProfiles.profile_at(HORIZON_EUROPE, v),
+            Err(fstp_guide::ProfileError::UnknownProfile),
+            "version {v}"
+        );
+    }
+}

@@ -446,6 +446,10 @@ pub enum PortKind {
     /// A tenant admin's erasure request with its cause (ADR-007, P-41,
     /// lane m5/retention).
     RequestErasure,
+    /// A tenant admin erases a chosen import document with a stated
+    /// reason (ADR-007, Daniel 2026-11-23, lane L39). Not high-risk, and
+    /// web only.
+    EraseDocument,
     /// The caller sets or clears its own display name, a confidential
     /// text of its account (SA-11, ADR-007).
     SetDisplayName,
@@ -1287,15 +1291,15 @@ pub const OPS: &[OpSpec] = &[
     .hr()
     .acting(ADMIN),
     // ADR-037: the tenant's legal details, which fill the legal pages
-    // behind the footer. A tenant setting, so high-risk by the strict
-    // reading and web only (interim, pending Daniel).
+    // behind the footer. Not high-risk (Daniel, 2026-11-23): a signed-in
+    // tenant admin saves them directly, with no step-up. No tool, so web
+    // only.
     OpSpec::new(
         "tenant.set_legal_details",
         OpKind::Tenant(TenantKind::SetLegalDetails),
         Put,
         "/admin/settings/legal-details",
     )
-    .hr()
     .acting(ADMIN),
     OpSpec::read("admin.approvals", RK::ListApprovals, "/admin/approvals").acting(ADMIN),
     OpSpec::new(
@@ -1334,6 +1338,17 @@ pub const OPS: &[OpSpec] = &[
         "/admin/erasures",
     )
     .hr()
+    .acting(ADMIN),
+    // ADR-007 (Daniel, 2026-11-23, decision 1c; lane L39): a tenant admin
+    // erases a chosen import document with a stated reason. No erasure is
+    // in the high-risk table, so no step-up (usability rule). No tool, so
+    // web only.
+    OpSpec::new(
+        "admin.erase_document",
+        OpKind::M3Port(PortKind::EraseDocument),
+        Post,
+        "/admin/documents/{document}/erasure",
+    )
     .acting(ADMIN),
     // ADR-028 record of lane L20 (Daniel, 2026-11-21, usability rule): the
     // facts of the System page. A read with no personal data, no tool and
@@ -2974,8 +2989,6 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetGuideNotice),
     // ADR-034: the funding card defaults are a tenant setting too.
     OpKind::Tenant(TenantKind::SetFundingDefaults),
-    // ADR-037: the legal details are a tenant setting too.
-    OpKind::Tenant(TenantKind::SetLegalDetails),
     OpKind::Tenant(TenantKind::SetBranding),
     // ADR-030: a logo slot, as the brand tokens.
     OpKind::Tenant(TenantKind::SetLogo),

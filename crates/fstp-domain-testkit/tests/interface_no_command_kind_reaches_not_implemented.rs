@@ -571,9 +571,8 @@ fn walk(backend: Backend) {
 }
 
 /// The calibration consent commands of lane L12-I37 (I-37, R-LA-09,
-/// R-LA-10). No production command writes the outcome notice record yet
-/// (M6), so they run in the I-37 consent world, which appends the notice
-/// itself and runs each command through production `decide`. The money
+/// R-LA-10). They run in the I-37 consent world, which appends the
+/// outcome notice itself on a submitted proposal and runs each command through production `decide`. The money
 /// references hold no consent model, so the reference twin skips them.
 fn calibration_consent(walk: &mut Walk, backend: Backend) {
     use fstp_domain_testkit::r#gen::review::PR1;

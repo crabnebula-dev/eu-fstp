@@ -22,12 +22,36 @@
 //!   (ADR-007 "Retention and erasure").
 //! - The page lists the grants whose retention ended, not those still
 //!   under retention.
+//!
+//! Lane L39 (ADR-007, Daniel 2026-11-23, decisions 1c and 3):
+//!
+//! - `admin.erasures` also lists the import documents, each with whether
+//!   it is erased, and each log row says whether the system or an account
+//!   authorised it, never which account, with the stated reason resolved
+//!   for the reader (I-97).
+//! - `admin.erase_document` takes `{reason}`: plain text of 1 to
+//!   [`MAX_REASON`] characters after trimming. It erases the import
+//!   document's blob, with no step-up, as no invariant asks for one.
 
 use fstp_domain::retention::RetentionEnd;
 use fstp_domain::time::Timestamp;
 use fstp_json::{Array, Object, ToJson, Value};
 
 use crate::port::ErasureRow;
+
+/// One import document a tenant admin may erase (ADR-007, Daniel
+/// 2026-11-23, decision 1c; lane L39).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DocumentLine {
+    /// The import document.
+    pub document: u128,
+    /// Its programme.
+    pub programme: u128,
+    /// Its media type.
+    pub media: &'static str,
+    /// Whether it is erased or under erasure.
+    pub erased: bool,
+}
 
 /// `admin.erasures`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +60,11 @@ pub struct ErasuresView {
     pub erasures: Vec<ErasureRow>,
     /// The grants whose retention ended, by grant.
     pub retention_ended: Vec<RetentionEnd>,
+    /// The stated reasons, by the erased text's id, resolved for the
+    /// reader (I-97, lane L39). A reason that does not open is absent.
+    pub reasons: std::collections::BTreeMap<u128, String>,
+    /// The import documents, by document (lane L39).
+    pub documents: Vec<DocumentLine>,
 }
 
 fn dec(n: u128) -> Value {
@@ -64,6 +93,18 @@ impl ToJson for ErasuresView {
                 r.destroyed_epoch
                     .map_or(Value::Null, |e| dec(u128::from(e))),
             );
+            // Lane L39: system or account, never which account, and the
+            // stated reason.
+            let _ = o.insert(
+                "authoriser",
+                Value::from(if r.by_system { "system" } else { "account" }),
+            );
+            let _ = o.insert(
+                "reason",
+                self.reasons
+                    .get(&r.text.0)
+                    .map_or(Value::Null, |s| Value::String(s.clone())),
+            );
             erasures.push(Value::Object(o));
         }
         let mut ended = Array::new();
@@ -78,8 +119,29 @@ impl ToJson for ErasuresView {
         let mut o = Object::new();
         let _ = o.insert("erasures", Value::Array(erasures));
         let _ = o.insert("retention_ended", Value::Array(ended));
+        let mut documents = Array::new();
+        for d in &self.documents {
+            let mut row = Object::new();
+            let _ = row.insert("document", dec(d.document));
+            let _ = row.insert("programme", dec(d.programme));
+            let _ = row.insert("media", Value::from(d.media));
+            let _ = row.insert("erased", Value::Bool(d.erased));
+            documents.push(Value::Object(row));
+        }
+        let _ = o.insert("documents", Value::Array(documents));
         Value::Object(o)
     }
+}
+
+/// The longest stated reason, in characters (lane L39, interim).
+pub const MAX_REASON: usize = 500;
+
+/// The trimmed reason of `s`, or `None` when it is empty, too long, or
+/// holds a control character (lane L39).
+pub fn checked_reason(s: &str) -> Option<&str> {
+    let t = s.trim();
+    let n = t.chars().count();
+    ((1..=MAX_REASON).contains(&n) && !t.chars().any(char::is_control)).then_some(t)
 }
 
 /// The grants whose retention ended at `now`: the end is at or before it.

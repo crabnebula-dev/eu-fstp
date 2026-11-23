@@ -45,6 +45,7 @@ fn keystore_erasure(ids: Vec<[u8; 16]>, by: AccountId) -> KeyCommand {
         cause: 2,
         by,
         kind: ERASURE_KIND_DISPLAY_NAME,
+        reason: None,
     }
 }
 
@@ -88,6 +89,7 @@ fn r_ky_02_i81_keystore_erasure_is_logged_then_completed_by_its_epoch() {
             cause: 2,
             by: A,
             kind: ERASURE_KIND_DISPLAY_NAME,
+            reason: None,
         })]
     );
     let s = state(vec![(at(5), cid(3), requested)]);
@@ -101,6 +103,7 @@ fn r_ky_02_i81_keystore_erasure_is_logged_then_completed_by_its_epoch() {
         cause: 2,
         by: A,
         kind: ERASURE_KIND_DISPLAY_NAME,
+        reason: None,
     })];
     let s = state(vec![
         (at(5), cid(3), destroyed),
@@ -131,6 +134,7 @@ fn r_ky_02_i81_keystore_erasure_is_logged_then_completed_by_its_epoch() {
                 cause: 2,
                 by: A,
                 kind: ERASURE_KIND_DISPLAY_NAME,
+                reason: None,
             })],
         ),
         (
@@ -209,6 +213,7 @@ fn adr007_keystore_erasure_refusals() {
             cause: 2,
             by: A,
             kind: ERASURE_KIND_DISPLAY_NAME,
+            reason: None,
         })],
     )]);
     for bad in [
@@ -221,12 +226,14 @@ fn adr007_keystore_erasure_refusals() {
             cause: 9,
             by: A,
             kind: ERASURE_KIND_DISPLAY_NAME,
+            reason: None,
         },
         KeyCommand::RecordKeystoreErasure {
             ids: vec![NAME_2],
             cause: 2,
             by: A,
             kind: ERASURE_KIND_LEDGER_TEXT,
+            reason: None,
         },
     ] {
         assert!(decide_runner(&s, bad.clone(), at(6)).is_err(), "{bad:?}");
@@ -261,6 +268,7 @@ fn i81_completion_needs_a_destroyed_epoch_and_an_open_entry() {
         cause: 2,
         by: A,
         kind: ERASURE_KIND_DISPLAY_NAME,
+        reason: None,
     });
     let s = state(vec![(at(5), cid(3), vec![requested.clone()])]);
     let done = |epoch, ids| KeyCommand::RecordErasuresCompleted { epoch, ids };
@@ -325,6 +333,7 @@ fn i24_erasure_log_records_round_trip() {
             cause: 2,
             by: A,
             kind: ERASURE_KIND_DISPLAY_NAME,
+            reason: None,
         }),
         CellRecord::Key(KeyRecord::ErasuresCompleted {
             epoch: 7,

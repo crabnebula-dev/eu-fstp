@@ -43,7 +43,7 @@ use crate::model::{DraftRevision, FieldEdit, Provenance, StartingPoint, ValueDig
 use crate::state::{CreatorState, Draft};
 
 /// A draft whose P-53 names no shipped funder profile cannot compile.
-pub(crate) const NO_PROFILE: &str = "a funder profile other than horizon-europe version 1, the only fstp_programme::FunderProfile in M4 (design 3.1),";
+pub(crate) const NO_PROFILE: &str = "a funder profile other than horizon-europe version 1 or 2, the only fstp_programme::FunderProfile versions (design 3.1, ADR-036 section 8),";
 
 /// A start from a tenant-private template needs its spec, which the
 /// ledger keeps only as a reference (Q17).
@@ -329,7 +329,12 @@ pub(crate) fn start_policy(
         StartingPoint::Clone { source } => {
             let s =
                 fstp_domain::policy::head(core, *source).ok_or(CreatorRefusal::UnknownSource)?;
-            if s.currency != head.currency || s.frozen.p53 != head.frozen.p53 {
+            // ADR-036 section 8: v1 and v2 of a profile name the same
+            // current profile, so a clone between them is allowed.
+            let same_profile = s.frozen.p53 == head.frozen.p53
+                || FunderProfile::for_policy_ref(&s.frozen.p53)
+                    .is_some_and(|p| Some(p) == FunderProfile::for_policy_ref(&head.frozen.p53));
+            if s.currency != head.currency || !same_profile {
                 return Err(CreatorRefusal::NothingToSave);
             }
             let saved_policy = draft
@@ -339,12 +344,19 @@ pub(crate) fn start_policy(
             if saved_policy {
                 return restart(fstp_programme::policy_spec(s));
             }
-            Ok(PolicyVersion {
+            let mut copy = PolicyVersion {
                 id: version,
                 programme: head.programme,
                 parent: Some(head.id),
                 ..s.clone()
-            })
+            };
+            // ADR-036 section 8: the copy pins the current version.
+            if let Some(r) = profile.policy_ref()
+                && FunderProfile::for_policy_ref(&copy.frozen.p53) == Some(profile)
+            {
+                copy.frozen.p53 = r;
+            }
+            Ok(copy)
         }
     }
 }

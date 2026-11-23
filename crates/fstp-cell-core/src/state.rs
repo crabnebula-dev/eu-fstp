@@ -528,6 +528,9 @@ pub struct ErasureEntry {
     pub destroyed_epoch: Option<u64>,
     /// When the erasure runner recorded that destruction.
     pub destroyed_at: Option<Timestamp>,
+    /// The text id of the reason a tenant admin stated for a manual
+    /// erasure (ADR-007, Daniel 2026-11-23, lane L39).
+    pub reason: Option<[u8; 16]>,
 }
 
 /// What the gate needs of one binding that the M2 roster does not keep.
@@ -1375,6 +1378,7 @@ fn fold_text(s: &mut CellState, at: Timestamp, r: &TextRecord) -> Result<(), Fol
                         kind: crate::ERASURE_KIND_LEDGER_TEXT,
                         destroyed_epoch: None,
                         destroyed_at: None,
+                        reason: None,
                     },
                 );
             }
@@ -1411,6 +1415,7 @@ fn fold_key(s: &mut CellState, at: Timestamp, r: &KeyRecord) -> Result<(), FoldE
             cause,
             by,
             kind,
+            reason,
         } => {
             if ids.is_empty() || !crate::KEYSTORE_ERASURE_KINDS.contains(kind) {
                 return Err(inconsistent());
@@ -1435,6 +1440,7 @@ fn fold_key(s: &mut CellState, at: Timestamp, r: &KeyRecord) -> Result<(), FoldE
                         kind: *kind,
                         destroyed_epoch: None,
                         destroyed_at: None,
+                        reason: *reason,
                     },
                 );
             }

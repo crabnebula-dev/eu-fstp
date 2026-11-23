@@ -196,12 +196,18 @@ impl FundingCard {
         ]
     }
 
-    /// The card as plain-text lines for PDFs and emails: the programme
-    /// name, then each label with its value, then the acknowledgement
-    /// when it renders (L-08).
+    /// The card as plain-text lines for PDFs and emails: each label with
+    /// its value, then the acknowledgement when it renders (L-08). No line
+    /// names the programme on its own: the Commission's emblem rules say
+    /// not to write the programme's name in conjunction with the emblem
+    /// (ADR-034 Q11, Daniel, 2026-11-23). The name shows only inside the
+    /// acknowledgement sentence.
     pub fn text_lines(&self) -> Vec<String> {
-        let mut out = vec![self.name.clone()];
-        out.extend(self.lines().iter().map(|(l, v)| format!("{l}: {v}")));
+        let mut out: Vec<String> = self
+            .lines()
+            .iter()
+            .map(|(l, v)| format!("{l}: {v}"))
+            .collect();
         out.extend(self.acknowledgement.clone());
         out
     }

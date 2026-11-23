@@ -1450,8 +1450,8 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("tenant.set_guide_notice", T::None, R::TenantAdmin).hr(),
     // ADR-034: the funding card defaults, a tenant setting as well.
     RefOp::act("tenant.set_funding_defaults", T::None, R::TenantAdmin).hr(),
-    // ADR-037: the legal details, a tenant setting as well.
-    RefOp::act("tenant.set_legal_details", T::None, R::TenantAdmin).hr(),
+    // ADR-037: the legal details. No step-up (Daniel, 2026-11-23).
+    RefOp::act("tenant.set_legal_details", T::None, R::TenantAdmin),
     RefOp::read("admin.approvals", T::None, R::TenantAdmin),
     RefOp::act("admin.approve_self_grant", T::None, R::SecondAdmin).hr(),
     RefOp::act("admin.approve_recovery", T::None, R::TenantAdmin).hr(),
@@ -1462,6 +1462,10 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // ADR-028 record of lane L20: the System page.
     RefOp::read("tenant.system", T::None, R::TenantAdmin),
     RefOp::act("admin.request_erasure", T::None, R::TenantAdmin).hr(),
+    // ADR-007 (Daniel, 2026-11-23, decision 1c; lane L39): a tenant admin
+    // erases a chosen import document with a reason. No erasure is in the
+    // high-risk table, so no step-up, and no tool, so web only.
+    RefOp::act("admin.erase_document", T::None, R::TenantAdmin),
     // Lane m4reg, the Administrators step: the tenant's admins and whether
     // each verified identity, since onboarding finishes only with two
     // verified admins (J0, SoD-07).

@@ -32,5 +32,18 @@ export const ADMIN_ERASURE_LABELS: Readonly<Record<string, string>> = {
   "admin.erasures.kind.document": "a document",
   "admin.erasures.log.no_grant": "none",
   "admin.erasures.log.pending": "not yet",
+  "admin.erasures.log.reason": "Reason: {reason}",
+  "admin.erasures.authoriser.system": "Erased automatically by the platform.",
+  "admin.erasures.authoriser.account": "Requested by a person.",
+  "admin.erasures.documents.heading": "Documents",
+  "admin.erasures.documents.intro":
+    "Documents uploaded to programmes. Erasing one destroys its key and then deletes the stored copy. It cannot be undone. Write down why you erase it.",
+  "admin.erasures.documents.none": "No document has been uploaded.",
+  "admin.erasures.documents.row": "Document {document} (programme {programme}, {media})",
+  "admin.erasures.documents.erased": "is erased.",
+  "admin.erasures.documents.reason": "Reason",
+  "admin.erasures.documents.erase": "Erase",
+  "admin.erasures.documents.invalid": "Write a reason of at most {max} characters.",
+  "admin.erasures.documents.done": "Document {document} is being erased.",
   "admin.erasures.back": "Back to home",
 };

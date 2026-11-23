@@ -84,6 +84,29 @@ const CALL: CallId = CallId::from_raw(1);
 /// The later call of NOTE 7, published in the `irc_review` stage.
 const FUTURE_CALL: CallId = CallId::from_raw(2);
 
+/// ELFA, the second programme of the demo tenant, beside SuperSAFE
+/// (ADR-036 section 9; Daniel, 2026-11-23).
+const ELFA: ProgrammeId = ProgrammeId::from_raw(2);
+/// Its first policy version.
+const ELFA_VERSION: PolicyVersionId = PolicyVersionId::from_raw(2);
+/// Its one call, published on the dates of SuperSAFE's first call.
+const ELFA_CALL: CallId = CallId::from_raw(3);
+/// The title of the ELFA call.
+const ELFA_CALL_TITLE: &str = "ELFA open call 2026";
+/// ELFA's programme manager: staff of its own, so every demo persona
+/// keeps only its SuperSAFE roles (ADR-036 section 9).
+const ELFA_PM: AccountId = AccountId::from_raw(0x0005_1700);
+/// ELFA's call drafter.
+const ELFA_DRAFTER: AccountId = AccountId::from_raw(0x0005_1701);
+/// The decision id of the approval of the ELFA call's publication.
+const ELFA_APPROVAL: DecisionId = DecisionId::from_raw(0x0005_1702);
+/// The synthetic knock-out wording of ELFA, in P-09 order.
+const ELFA_KNOCK_OUTS: [&str; 3] = [
+    "Within the scope of the ELFA open call",
+    "R&D as primary objective",
+    "English",
+];
+
 /// One second, in microseconds.
 const SECOND: i64 = 1_000_000;
 /// One day, in microseconds.
@@ -578,6 +601,11 @@ pub(crate) fn primary_model() -> String {
 fn review_truth() -> GroundTruth {
     let mut t = GroundTruth::new();
     add_staff(&mut t);
+    // ADR-036 section 9: ELFA's own staff, verified like the others.
+    for a in [ELFA_PM, ELFA_DRAFTER] {
+        t.set_identity(a, tag(a));
+        t.verify(a);
+    }
     for p in &PERSONAS {
         t.set_identity(p.account, tag(p.account));
         t.verify(p.account);
@@ -760,7 +788,88 @@ async fn programme(seed: &mut Seeder<'_>, deadline: i64) -> Result<(), String> {
         )?;
     }
     seed.by(STAFF_PM, publish(CALL))?;
-    Ok(())
+    elfa(seed, CALL_OPENS, deadline).await
+}
+
+/// ELFA, the second programme of the demo tenant, beside SuperSAFE
+/// (ADR-036 section 9; Daniel, 2026-11-23). Tenant admin A1 creates it
+/// from the same fixture under its own ids and synthetic knock-out
+/// wording, saves its funding card values and public slug before
+/// activation, and its own staff draft, approve and publish one call
+/// from `opens` to `deadline`. No demo persona gets an ELFA role.
+async fn elfa(seed: &mut Seeder<'_>, opens: i64, deadline: i64) -> Result<(), String> {
+    let mut policy = supersafe(seed).await?;
+    policy.id = ELFA_VERSION;
+    policy.programme = ELFA;
+    policy.parent = None;
+    for (k, text) in policy.frozen.p09.0.iter_mut().zip(ELFA_KNOCK_OUTS) {
+        k.text = seed.public_text(text).await?;
+    }
+    seed.step(&Step::by(
+        ADMIN,
+        Flags::ADMIN,
+        Core::CreateProgramme {
+            policy: Box::new(policy),
+        },
+    ))?;
+    save_fields(
+        seed,
+        ELFA,
+        &[
+            ("identity.name", "ELFA"),
+            ("identity.public_slug", "elfa"),
+            (
+                "identity.narrative",
+                "Synthetic text. ELFA gives financial support to third parties in its open calls.",
+            ),
+            (
+                "identity.scope",
+                "Synthetic text. The scope of the ELFA open calls.",
+            ),
+            ("funder.action_number", "101298715"),
+            ("funder.action_acronym", "ELFA"),
+            ("funder.coordinator_name", "CrabNebula Ltd"),
+            ("funder.coordinator_contact", "privacy@crabnebula.dev"),
+        ],
+    )
+    .await?;
+    seed.step(&fstp_domain_testkit::activation::activation_step(ELFA))?;
+    let [pm, drafter] = staff_bindings(ELFA);
+    seed.step(&roster::grant(
+        pm,
+        ELFA_PM,
+        ELFA,
+        Role::ProgrammeManager,
+        seed.next(),
+    ))?;
+    seed.step(&roster::grant(
+        drafter,
+        ELFA_DRAFTER,
+        ELFA,
+        Role::CallDrafter,
+        seed.next(),
+    ))?;
+    let text = seed.public_text(ELFA_CALL_TITLE).await?;
+    seed.by(
+        ELFA_DRAFTER,
+        Core::DraftCall {
+            call: ELFA_CALL,
+            programme: ELFA,
+            opens: Timestamp::from_micros(opens),
+            deadline: Timestamp::from_micros(deadline),
+            deadline_zone: ZoneName::new("Europe/Brussels").ok_or("zone")?,
+            budget: NonNegAmount::new(eur(40_000_000)?).map_err(|e| format!("{e:?}"))?,
+            text,
+        },
+    )?;
+    seed.by(
+        ELFA_PM,
+        Core::ApproveCallPublication {
+            call: ELFA_CALL,
+            decision: ELFA_APPROVAL,
+        },
+    )?;
+    seed.by(ELFA_PM, publish(ELFA_CALL))
 }
 
 /// The funding card values of the demo's SuperSAFE programme, saved by
@@ -770,12 +879,31 @@ async fn programme(seed: &mut Seeder<'_>, deadline: i64) -> Result<(), String> {
 /// of the action, not personal data. The coordinator's name and contact
 /// come from the demo tenant's defaults (ADR-034 section 3).
 async fn funding_values(seed: &mut Seeder<'_>) -> Result<(), String> {
+    save_fields(
+        seed,
+        PROGRAMME,
+        &[
+            ("identity.name", "SuperSAFE"),
+            ("funder.action_number", "101342989"),
+            ("funder.action_acronym", "SuperSAFE"),
+        ],
+    )
+    .await
+}
+
+/// Tenant admin A1 saves `values`, each a field key with its text, on the
+/// creator draft of `programme` through `creator.save_fields`.
+async fn save_fields(
+    seed: &mut Seeder<'_>,
+    programme: ProgrammeId,
+    values: &[(&str, &str)],
+) -> Result<(), String> {
     let rev = {
         let state = seed.inner.ports.engine.state();
         let r = state
             .creator
-            .head(PROGRAMME)
-            .ok_or("no draft of the SuperSAFE programme")?;
+            .head(programme)
+            .ok_or_else(|| format!("no draft of programme {}", programme.raw()))?;
         format!("{}.{}", r.seq(), r.entry().raw())
     };
     let field = |key: &str, value: &str| {
@@ -784,19 +912,11 @@ async fn funding_values(seed: &mut Seeder<'_>) -> Result<(), String> {
             ("value", Value::from(value)),
         ])
     };
-    let fields = Value::Array(
-        [
-            field("identity.name", "SuperSAFE"),
-            field("funder.action_number", "101342989"),
-            field("funder.action_acronym", "SuperSAFE"),
-        ]
-        .into_iter()
-        .collect::<Array>(),
-    );
+    let fields = Value::Array(values.iter().map(|(k, v)| field(k, v)).collect::<Array>());
     seed.api(
         ADMIN,
         ApiMethod::Put,
-        &format!("/programmes/{}/draft/fields", PROGRAMME.raw()),
+        &format!("/programmes/{}/draft/fields", programme.raw()),
         &obj(vec![
             ("base", Value::from(rev.as_str())),
             ("fields", fields),
@@ -1883,6 +2003,60 @@ mod tests {
                 card.text_lines().last().map(String::as_str),
                 card.acknowledgement.as_deref()
             );
+        }
+    }
+
+    /// ADR-036 section 9, L-08, I-69 (Daniel, 2026-11-23): the demo seeds
+    /// ELFA beside SuperSAFE as a second active programme of the same
+    /// tenant, with its own funding card and a published call. The cards
+    /// of both show the acknowledgement, and no demo persona gains an
+    /// ELFA role, so each still reaches the same work from sign-in.
+    #[test]
+    fn adr036_q6_demo_seeds_elfa_beside_supersafe() {
+        use fstp_domain::programme::{ProgrammeStatus, programme_status};
+        for inner in [
+            block_on(build_review(&info(), ReviewAt::Submitted))
+                .unwrap()
+                .0,
+            block_on(build_applicant(&info(), At::OpenCall)).unwrap().0,
+        ] {
+            let state = inner.ports.engine.state();
+            for p in [PROGRAMME, ELFA] {
+                assert_eq!(
+                    programme_status(&state.core, p),
+                    Some(ProgrammeStatus::Active),
+                    "{p:?}"
+                );
+            }
+            let card = fstp_api_core::port::funding_card(&state, ELFA).unwrap();
+            assert_eq!(card.name, "ELFA");
+            assert_eq!(card.grant_number.as_deref(), Some("101298715"));
+            assert_eq!(card.coordinator_name.as_deref(), Some("CrabNebula Ltd"));
+            assert_eq!(
+                card.coordinator_contact.as_deref(),
+                Some("privacy@crabnebula.dev")
+            );
+            assert_eq!(
+                card.acknowledgement.as_deref(),
+                Some(
+                    "ELFA is funded by the European Union under the Horizon Europe grant agreement 101298715, ELFA."
+                )
+            );
+            let call = fstp_domain::programme::call(&state.core, ELFA_CALL).unwrap();
+            assert_eq!(call.programme(), ELFA);
+            assert!(
+                fstp_domain::policy::frozen_policy(&state.core, ELFA_CALL).is_some(),
+                "the ELFA call is published"
+            );
+            let roster = state.core.roster();
+            for p in PERSONAS.iter().map(|p| p.account).chain([STAFF_PM]) {
+                assert!(
+                    !roster
+                        .bindings()
+                        .any(|(_, b)| b.account == p && b.programme == ELFA),
+                    "{p:?} holds no ELFA role"
+                );
+            }
         }
     }
 

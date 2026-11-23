@@ -84,6 +84,13 @@ pub const MIGRATIONS: &[Migration] = &[
         "anonymous_drafts",
         include_str!("../migrations/app/0013_anonymous_drafts.sql"),
     ),
+    // Lane L39 (ADR-007, Daniel 2026-11-23): the keys role deletes an
+    // erased document's sealed row.
+    Migration::new(
+        14,
+        "doc_blob_erasure",
+        include_str!("../migrations/app/0014_doc_blob_erasure.sql"),
+    ),
 ];
 
 #[cfg(test)]

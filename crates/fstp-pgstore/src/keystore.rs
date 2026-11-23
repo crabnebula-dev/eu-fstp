@@ -224,6 +224,12 @@ pub struct KeystoreChanges {
     pub displays: Vec<Change<[u8; 16], DisplayNameRow>>,
     /// Erasure request rows by text.
     pub requested: Vec<Change<[u8; 16], [u8; 16]>>,
+    /// The data keys whose `doc.blob` rows the batch deletes, last in the
+    /// transaction (ADR-007, Daniel 2026-11-23, decision 2, lane L39). A
+    /// missing row deletes nothing, so a repeat is a no-op. The database
+    /// refuses a row whose `keystore.data_key` row still exists
+    /// (migration 14), and the batch then fails whole.
+    pub blobs: Vec<[u8; 16]>,
 }
 
 impl KeystoreChanges {
@@ -239,6 +245,7 @@ impl KeystoreChanges {
             && self.logins.is_empty()
             && self.displays.is_empty()
             && self.requested.is_empty()
+            && self.blobs.is_empty()
     }
 }
 
@@ -310,6 +317,7 @@ const DISPLAY_ALL: &str =
 const REQUEST_PUT: &str =
     "INSERT INTO keystore.erasure_request (text_id) VALUES ($1) ON CONFLICT DO NOTHING";
 const REQUEST_DEL: &str = "DELETE FROM keystore.erasure_request WHERE text_id = $1";
+const BLOB_DEL: &str = "DELETE FROM doc.blob WHERE dek = $1";
 const REQUEST_ALL: &str = "SELECT text_id FROM keystore.erasure_request ORDER BY text_id";
 
 /// The future of one statement, built in a frame of its own and kept on the
@@ -781,6 +789,10 @@ async fn write_changes<R: Runtime>(
                 exec(&mut tx, REQUEST_DEL, &[&uuid(*t)]).await?;
             }
         }
+    }
+    // Lane L39: the sealed rows of erased documents, after every key row.
+    for dek in &c.blobs {
+        exec(&mut tx, BLOB_DEL, &[&uuid(*dek)]).await?;
     }
     tx.commit().await?;
     Ok(())

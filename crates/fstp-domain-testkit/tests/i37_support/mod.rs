@@ -3,9 +3,8 @@
 //!
 //! The world starts from genesis through production commands: three
 //! submitted proposals in call 1 (`ledger_setup`), and P-42 switched on by
-//! the programme manager's live `EditPolicy` when asked. No production
-//! command writes an outcome notice record yet (M6 dispatch), so the tests
-//! append the notice record `OutboxEnqueued(ProposalOutcome)` themselves.
+//! the programme manager's live `EditPolicy` when asked. The proposals stay SUBMITTED, so the tests append the
+//! notice record `OutboxEnqueued(ProposalOutcome)` themselves.
 //! From there each consent command runs through `fstp_domain::decide`, and
 //! its records fold through `fstp_domain::apply` at the next sequence
 //! numbers. The world keeps the ledger tail it appended, so the tests can

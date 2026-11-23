@@ -58,6 +58,13 @@ pub const LEGAL_SECTIONS: &[(&str, &[&str])] = &[(
     ],
 )];
 
+/// The versions of each profile, by profile name, that a P-53 value may
+/// pin (ADR-036 section 8; Daniel, 2026-11-23, "everything v2"). Every
+/// version of a profile uses the profile's one Guide template: Horizon
+/// Europe version 2 changes only the funding acknowledgement's wording
+/// status, not the Guide.
+pub const SHIPPED_VERSIONS: &[(&str, &[u16])] = &[(HORIZON_EUROPE, &[1, 2])];
+
 /// The largest Guide template a source may supply, in bytes.
 pub const MAX_GUIDE_BYTES: usize = 256 * 1024;
 
@@ -193,6 +200,19 @@ pub trait ProfileSource {
         let known = known_name(name).ok_or(ProfileError::UnknownProfile)?;
         let files = self.files(known)?;
         FunderProfile::load(known, files)
+    }
+
+    /// The profile `name` for a P-53 value that pins `version`: as
+    /// [`ProfileSource::profile`], once [`SHIPPED_VERSIONS`] names the
+    /// version (ADR-036 section 8). Any other version is unknown.
+    fn profile_at(&self, name: &str, version: u16) -> Result<FunderProfile, ProfileError> {
+        let known = SHIPPED_VERSIONS
+            .iter()
+            .any(|(n, vs)| *n == name && vs.contains(&version));
+        if !known {
+            return Err(ProfileError::UnknownProfile);
+        }
+        self.profile(name)
     }
 }
 

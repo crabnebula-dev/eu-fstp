@@ -45,6 +45,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+mod adr036_move;
 mod commands;
 mod harness;
 mod i50_i51;

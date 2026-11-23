@@ -18,7 +18,6 @@ fn chrome(acknowledgement: Option<&str>, card: bool) -> Chrome {
         logos: PublicLogos {
             emblem: Some("/brand/funded-by-eu.svg".to_owned()),
             funding: card.then(|| PublicFunding {
-                programme: "Synthetic programme".to_owned(),
                 grant_number: "SYNTHETIC-000000000".to_owned(),
                 coordinator: "Synthetic coordinator org".to_owned(),
                 contact: "role@example.org".to_owned(),
@@ -81,5 +80,34 @@ fn i68_public_acknowledgement_is_text() {
         let html = render_html(&view, &p, &c).unwrap().as_str().to_owned();
         assert!(!html.contains("<b>x</b>"), "{p:?}");
         assert!(html.contains("&lt;b&gt;x&lt;/b&gt; is funded"), "{p:?}");
+    }
+}
+
+/// The funding card region of `footer`: from its `funding_card` key to the
+/// end of its `section`.
+fn card_region(footer: &str) -> String {
+    let card = footer
+        .split("data-mandatory=\"funding_card\"")
+        .nth(1)
+        .unwrap_or("");
+    card.split("</section>").next().unwrap_or("").to_owned()
+}
+
+/// ADR-034 Q11 (Daniel, 2026-11-23): the Commission's emblem rules say not
+/// to write the programme's name in conjunction with the EU emblem. The
+/// card shows the logo with no programme name beside it. The name shows
+/// only inside the acknowledgement sentence, and not at all without it.
+#[test]
+fn adr034_q11_public_card_names_the_programme_only_in_the_sentence() {
+    let view = sample_view(true);
+    for (ack, want) in [(Some(SENTENCE), 1), (None, 0)] {
+        let c = chrome(ack, true);
+        for p in traced_pages(&view) {
+            let html = render_html(&view, &p, &c).unwrap().as_str().to_owned();
+            let card = card_region(&footer(&html));
+            assert!(!card.is_empty(), "{p:?}: the card");
+            assert_eq!(count(&card, "Synthetic programme"), want, "{p:?}: {card}");
+            assert!(!card.contains("funding-card-name"), "{p:?}");
+        }
     }
 }

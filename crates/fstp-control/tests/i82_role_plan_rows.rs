@@ -269,7 +269,9 @@ fn i82_writer_holds_insert_and_select_only() {
 
 /// I-82, design section 4.1: the keys role holds rights on the keystore
 /// only, plus SELECT and DELETE on `blob` in the application database for
-/// rows of completed erasures. It never inserts or updates a blob.
+/// rows of completed erasures, and exactly SELECT and DELETE on
+/// `doc.blob` for the sealed rows of erased documents (ADR-007, lane L39).
+/// It never inserts or updates a blob.
 #[test]
 fn i82_keys_role_reaches_only_the_keystore_and_blob_deletion() {
     fstp_prop::check(
@@ -287,6 +289,17 @@ fn i82_keys_role_reaches_only_the_keystore_and_blob_deletion() {
                                     .all(|p| matches!(p, Privilege::Select | Privilege::Delete)),
                             "{row:?}"
                         ),
+                        // ADR-007 (Daniel, 2026-11-23, decision 2; lane
+                        // L39): the sealed row of an erased document,
+                        // exactly SELECT and DELETE on `doc.blob`.
+                        (CellDatabase::App, "doc") => {
+                            prop_assert_eq!(row.object, "doc.blob", "{row:?}");
+                            prop_assert_eq!(
+                                row.privileges.as_slice(),
+                                &[Privilege::Select, Privilege::Delete][..],
+                                "{row:?}"
+                            );
+                        }
                         _ => return Err(format!("keys role outside the keystore: {row:?}")),
                     }
                 }
