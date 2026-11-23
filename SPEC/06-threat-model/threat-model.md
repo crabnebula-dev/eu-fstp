@@ -81,3 +81,8 @@ NOTE: TH-18 matters because CrabNebula operates the SaaS and also runs programme
 | TH-66 | Public MCP tools leaking non-public data | I-87 parity with public pages | T-MC-PUBLIC |
 | TH-67 | Future forgery of release metadata or audit anchors once classical signatures weaken | Composite signatures (I-90), offline release key | T-CR-COMPOSITE |
 | TH-68 | Flaw in moduletto ML-DSA producing forgeable signatures | Composite AND rule (I-90), ACVP and differential tests, release gate (I-74) | T-CR-MLDSA |
+| TH-69 | Wallet presentation replayed, or captured for one session and submitted in another | Nonce and audience bound to the vault session, single-use requests, key binding check (ADR-021) | T-WL-REPLAY |
+| TH-70 | Wallet request relayed to another person, whose wallet answers for the applicant or guardian | Request shows the tenant and purpose, short request lifetime, same-device link preferred, manual check fallback (ADR-021) | T-WL-RELAY |
+| TH-71 | Hostile or malformed wallet response against the in-house verifier | Bounded parsers with fuzz targets, pinned issuer trust list, credential type allowlist (ADR-021) | T-WL-PARSE |
+| TH-72 | Compromise of a credential issuer key or of the verifier key, including the intermediary key | Per-tenant pinned issuers, verifier keys in key custody (ADR-004), certificate tied to one hostname, rotation (ADR-021) | T-WL-KEYS |
+| TH-73 | Another app on the device claims the wallet URI scheme and captures the request | Universal link that only the wallet can claim, signed requests by reference (ADR-021) | T-WL-SCHEME |
