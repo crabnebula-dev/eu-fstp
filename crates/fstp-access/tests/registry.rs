@@ -669,8 +669,9 @@ const HIGH_RISK_ROWS: [(&str, &[&str], &str); 11] = [
 /// erasure request (ADR-007, P-41, Daniel 2026-11-15 late), and a tenant
 /// funder profile version (Daniel 2026-11-15 late, interim), and a logo
 /// slot (ADR-030, interim), and the funding card defaults (ADR-034,
-/// interim), and the legal details (ADR-037, interim).
-const STRICT_EXTRA: [&str; 16] = [
+/// interim). Not the legal details: Daniel dropped their step-up on
+/// 2026-11-23 (ADR-037).
+const STRICT_EXTRA: [&str; 15] = [
     "tenant.set_step_up_freshness",
     "tenant.set_session_lifetimes",
     "tenant.set_mcp",
@@ -678,7 +679,6 @@ const STRICT_EXTRA: [&str; 16] = [
     "tenant.set_template_licence",
     "tenant.set_guide_notice",
     "tenant.set_funding_defaults",
-    "tenant.set_legal_details",
     "tenant.branding.set",
     "tenant.branding.set_logo",
     "tenant.terminology.set",
@@ -737,7 +737,6 @@ fn r_lg_03_high_risk_table_matches_authentication_md() {
             matches!(o.kind, OpKind::Tenant(TenantKind::SetSetting(p)) if p != TenantParam::P70)
                 || o.kind == OpKind::Tenant(TenantKind::SetGuideNotice)
                 || o.kind == OpKind::Tenant(TenantKind::SetFundingDefaults)
-                || o.kind == OpKind::Tenant(TenantKind::SetLegalDetails)
                 || o.kind == OpKind::Tenant(TenantKind::SetBranding)
                 || o.kind == OpKind::Tenant(TenantKind::SetLogo)
                 || o.kind == OpKind::Tenant(TenantKind::SetTerminology)
@@ -1406,4 +1405,22 @@ fn i84_every_op_has_a_web_route() {
     let routes: BTreeSet<(fstp_access::Method, &str)> =
         OPS.iter().filter_map(|o| o.route).collect();
     assert!(!routes.is_empty());
+}
+
+/// ADR-037, I-78, R-LG-03 (Daniel, 2026-11-23): saving the legal details
+/// asks for no step-up. No row of the high-risk table names them, so the
+/// operation is not high-risk and needs no phishing-resistant session. It
+/// stays a tenant admin action with no tool, so it runs on the web only.
+#[test]
+fn adr037_i78_set_legal_details_needs_no_step_up() {
+    let [o] = require(&["tenant.set_legal_details"])[..] else {
+        panic!("one operation");
+    };
+    assert!(!o.high_risk, "{} is high-risk", o.name);
+    assert_eq!(o.session, SessionNeed::Any, "{} session", o.name);
+    assert!(o.tool.is_none(), "{} has a tool", o.name);
+    assert!(
+        !STRICT_EXTRA_HIGH_RISK.contains(&OpKind::Tenant(TenantKind::SetLegalDetails)),
+        "the strict reading names the legal details"
+    );
 }

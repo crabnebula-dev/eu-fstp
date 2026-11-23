@@ -40,6 +40,5 @@ The organisation that runs the programmes on this portal:
 - Privacy contact: {{tenant.privacy_contact}}.
 - Data Protection Officer (DPO): {{tenant.dpo_name}}, {{tenant.dpo_contact}}.
 - Data protection supervisory authority: {{tenant.supervisory_authority}}.
-- Governing law: {{tenant.governing_law}}.
 
-TODO(legal): whether a portal imprint must carry each of these facts, and whether it should state the governing law (ADR-037).
+TODO(legal): whether a portal imprint must carry each of these facts (ADR-037).

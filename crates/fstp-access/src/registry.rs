@@ -1287,15 +1287,15 @@ pub const OPS: &[OpSpec] = &[
     .hr()
     .acting(ADMIN),
     // ADR-037: the tenant's legal details, which fill the legal pages
-    // behind the footer. A tenant setting, so high-risk by the strict
-    // reading and web only (interim, pending Daniel).
+    // behind the footer. Not high-risk (Daniel, 2026-11-23): a signed-in
+    // tenant admin saves them directly, with no step-up. No tool, so web
+    // only.
     OpSpec::new(
         "tenant.set_legal_details",
         OpKind::Tenant(TenantKind::SetLegalDetails),
         Put,
         "/admin/settings/legal-details",
     )
-    .hr()
     .acting(ADMIN),
     OpSpec::read("admin.approvals", RK::ListApprovals, "/admin/approvals").acting(ADMIN),
     OpSpec::new(
@@ -2974,8 +2974,6 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetGuideNotice),
     // ADR-034: the funding card defaults are a tenant setting too.
     OpKind::Tenant(TenantKind::SetFundingDefaults),
-    // ADR-037: the legal details are a tenant setting too.
-    OpKind::Tenant(TenantKind::SetLegalDetails),
     OpKind::Tenant(TenantKind::SetBranding),
     // ADR-030: a logo slot, as the brand tokens.
     OpKind::Tenant(TenantKind::SetLogo),

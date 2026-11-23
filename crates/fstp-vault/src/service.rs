@@ -115,21 +115,11 @@ pub fn mask_response<R: Runtime, C: fstp_custody::Custody>(
     }
     let mut masks = Vec::with_capacity(texts.len());
     for t in texts {
-        let spans: Vec<fstp_vault_proto::WireSpan> = fstp_vault_core::mask::mask_spans(t, &people)
-            .into_iter()
-            .take(fstp_vault_proto::MAX_MASK_SPANS)
-            .map(|s| fstp_vault_proto::WireSpan {
-                start: s.start,
-                end: s.end,
-                person: s.person,
-                class: match s.class {
-                    fstp_vault_core::mask::MaskClass::Name => fstp_vault_proto::WireMaskClass::Name,
-                    fstp_vault_core::mask::MaskClass::BirthDate => {
-                        fstp_vault_proto::WireMaskClass::BirthDate
-                    }
-                },
-            })
-            .collect();
+        // ADR-033 record of lane L40: every span or none. A text with more
+        // spans than one answer carries is refused, never cut short.
+        let Some(spans) = fstp_vault_core::mask_wire_spans(t, &people) else {
+            return unavailable;
+        };
         masks.push(spans);
     }
     VaultResponse::Masks(masks)
