@@ -67,6 +67,8 @@ fn fstp_obs_words() -> Vec<&'static str> {
     vec![
         "run_setup",
         "start_service",
+        "custodian",
+        "pair_custodian",
         "renew_route",
         "renew",
         "public_certificate",

@@ -17,6 +17,11 @@ pub enum Next {
     RunSetup,
     /// A service is down.
     StartService,
+    /// The second custodian does not answer, or a guard rotation is owed:
+    /// erasures wait (ADR-028 record of lane `m10/guard-key`).
+    Custodian,
+    /// No second custodian is paired, or its pairing nears its end.
+    PairCustodian,
     /// The route's pins do not match the current certificates.
     RenewRoute,
     /// A certificate is near its end.
@@ -73,6 +78,11 @@ pub struct Findings {
     pub snapshot_age_hours: Option<i64>,
     /// The last keystore snapshot of a process failed.
     pub snapshot_failed: bool,
+    /// The link to the second custodian, on a systemd host (ADR-028
+    /// record of lane `m10/guard-key`). `None` where it does not apply.
+    pub custodian: Option<crate::custodian::Link>,
+    /// Days until the custodian's server certificate ends, if paired.
+    pub pairing_days: Option<i64>,
 }
 
 /// Whether the newest key copy is older than the last vault erasure, so
@@ -91,6 +101,11 @@ pub fn next(f: &Findings) -> Next {
         Next::RunSetup
     } else if !f.all_running {
         Next::StartService
+    } else if matches!(
+        f.custodian,
+        Some(crate::custodian::Link::Unreachable | crate::custodian::Link::Owed)
+    ) {
+        Next::Custodian
     } else if f.route_current == Some(false) {
         Next::RenewRoute
     } else if f.min_days.is_some_and(|d| d < 3) {
@@ -107,6 +122,11 @@ pub fn next(f: &Findings) -> Next {
         Next::Backup
     } else if f.snapshot_failed || f.snapshot_age_hours.is_none_or(|h| h > 36) {
         Next::KeystoreSnapshot
+    } else if f.custodian == Some(crate::custodian::Link::Unpaired)
+        || f.pairing_days
+            .is_some_and(|d| d < crate::custodian::RENEW_PAIRING_BEFORE / 86_400)
+    {
+        Next::PairCustodian
     } else if !f.keys_copied || key_copy_stale(f) {
         Next::CopyKeys
     } else {
@@ -119,6 +139,12 @@ fn next_text(n: Next) -> &'static str {
         Next::RunSetup => "run fstp-admin setup. It continues where it stopped.",
         Next::StartService => {
             "run fstp-admin start. If a service stays down, read its log: journalctl -u <its name>."
+        }
+        Next::Custodian => {
+            "the second custodian does not answer, or a guard is still to be replaced, so erasures wait. Check that the custodian machine is on and reachable on port 7460 and that fstp-keyd-custodian runs there (systemctl status fstp-keyd-custodian), then run fstp-admin status again."
+        }
+        Next::PairCustodian => {
+            "pair the second custodian: run fstp-admin pair-custodian <its host name>, copy the file it names to that machine and run fstp-admin custodian <file> there, then run fstp-admin setup here."
         }
         Next::RenewRoute => {
             "run fstp-admin renew. It puts the current certificate pins into the route."
@@ -299,6 +325,9 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         vault_erased_at: instant_of(state, VAULT_ERASED_AT),
         snapshot_age_hours: snapshots.age_hours(),
         snapshot_failed: snapshots.failing(),
+        custodian: (layout.cfg.services == crate::config::Services::Systemd)
+            .then(|| crate::custodian::host_link(layout)),
+        pairing_days: crate::custodian::pairing_days(layout),
     };
     let last_key_copy = findings.keys_copied_at;
     Survey {
@@ -331,6 +360,8 @@ pub fn next_word(n: Next) -> HostNext {
     match n {
         Next::RunSetup => HostNext::RunSetup,
         Next::StartService => HostNext::StartService,
+        Next::Custodian => HostNext::Custodian,
+        Next::PairCustodian => HostNext::PairCustodian,
         Next::RenewRoute => HostNext::RenewRoute,
         Next::Renew => HostNext::Renew,
         Next::PublicCertificate => HostNext::PublicCertificate,
@@ -386,6 +417,15 @@ pub fn host_status(
             None => RouteState::Unknown,
         },
         next: next_word(next(f)),
+        custodian: match f.custodian {
+            Some(crate::custodian::Link::Linked | crate::custodian::Link::Owed) => {
+                host_status::CustodianState::Linked
+            }
+            Some(crate::custodian::Link::Unreachable) => host_status::CustodianState::Unreachable,
+            Some(crate::custodian::Link::Unpaired) => host_status::CustodianState::Unpaired,
+            None => host_status::CustodianState::NotUsed,
+        },
+        guard_owed: f.custodian == Some(crate::custodian::Link::Owed),
     }
 }
 
@@ -501,6 +541,15 @@ pub fn run(layout: &Layout) -> u8 {
             }
         }
     }
+    out(&[Part::T(match f.custodian {
+        Some(crate::custodian::Link::Linked) => "  custodian  linked, guard current",
+        Some(crate::custodian::Link::Owed) => {
+            "  custodian  A GUARD IS STILL TO BE REPLACED: erasures wait"
+        }
+        Some(crate::custodian::Link::Unreachable) => "  custodian  NOT ANSWERING: erasures wait",
+        Some(crate::custodian::Link::Unpaired) => "  custodian  not paired",
+        None => "  custodian  not used in direct mode",
+    })]);
     out(&[Part::T(if key_copy_stale(f) {
         "  key copy   OLDER THAN THE LAST ERASURE: make a new copy"
     } else if f.keys_copied {
@@ -573,7 +622,64 @@ mod tests {
             vault_erased_at: None,
             snapshot_age_hours: Some(3),
             snapshot_failed: false,
+            custodian: Some(crate::custodian::Link::Linked),
+            pairing_days: Some(700),
         }
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, I-81: an unreachable
+    /// custodian or an owed guard rotation comes right after a stopped
+    /// service, since erasures wait. An unpaired custodian, or a pairing
+    /// near its end, comes before the key copy, which needs it. The host
+    /// status file carries the link and the owed rotation.
+    #[test]
+    fn adr028_guard_status_reads_guard_check() {
+        use crate::custodian::Link;
+        for (link, want, word, owed) in [
+            (
+                Link::Unreachable,
+                Next::Custodian,
+                host_status::CustodianState::Unreachable,
+                false,
+            ),
+            (
+                Link::Owed,
+                Next::Custodian,
+                host_status::CustodianState::Linked,
+                true,
+            ),
+            (
+                Link::Unpaired,
+                Next::PairCustodian,
+                host_status::CustodianState::Unpaired,
+                false,
+            ),
+            (
+                Link::Linked,
+                Next::Nothing,
+                host_status::CustodianState::Linked,
+                false,
+            ),
+        ] {
+            let mut f = healthy();
+            f.custodian = Some(link);
+            f.keys_copied = false;
+            let n = next(&f);
+            assert!(
+                n == want || (want == Next::Nothing && n == Next::CopyKeys),
+                "{link:?}"
+            );
+            let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+            assert_eq!((s.custodian, s.guard_owed), (word, owed));
+            let back = host_status::decode(host_status::encode(&s).as_bytes()).expect("decodes");
+            assert_eq!(back, s);
+        }
+        let mut f = healthy();
+        f.pairing_days = Some(10);
+        assert_eq!(next(&f), Next::PairCustodian);
+        f.all_running = false;
+        f.custodian = Some(Link::Unreachable);
+        assert_eq!(next(&f), Next::StartService);
     }
 
     /// ADR-028 "Status": exactly one next thing, the most urgent.

@@ -330,6 +330,8 @@ pub const PART_STATES: &[&str] = &["running", "unhealthy", "stopped"];
 pub const HOST_NEXT: &[&str] = &[
     "run_setup",
     "start_service",
+    "custodian",
+    "pair_custodian",
     "renew_route",
     "renew",
     "public_certificate",
@@ -2026,6 +2028,13 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     m("self_signed", Shape::Bool),
                     m("route", Shape::Enum(&["current", "mismatch", "unknown"])),
                     m("next", Shape::Enum(HOST_NEXT)),
+                    // ADR-028 record of lane `m10/guard-key`: the second
+                    // custodian and an owed guard rotation.
+                    m(
+                        "custodian",
+                        Shape::Enum(&["linked", "unreachable", "unpaired", "not_used"]),
+                    ),
+                    m("guard_owed", Shape::Bool),
                 ])),
             ),
         ]),

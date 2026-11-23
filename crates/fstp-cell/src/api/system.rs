@@ -16,7 +16,9 @@ use std::io::Read as _;
 use std::path::Path;
 use std::time::Duration;
 
-use fstp_api_core::system::{HostFile, HostNext, HostParts, HostReport, PartState, RouteState};
+use fstp_api_core::system::{
+    CustodianState, HostFile, HostNext, HostParts, HostReport, PartState, RouteState,
+};
 use fstp_domain::time::Timestamp;
 use fstp_obs::host_status::{self, HostStatus};
 
@@ -64,6 +66,13 @@ fn report(s: &HostStatus) -> Option<HostReport> {
             host_status::RouteState::Unknown => RouteState::Unknown,
         },
         next: HostNext::of(s.next.word())?,
+        custodian: match s.custodian {
+            host_status::CustodianState::Linked => CustodianState::Linked,
+            host_status::CustodianState::Unreachable => CustodianState::Unreachable,
+            host_status::CustodianState::Unpaired => CustodianState::Unpaired,
+            host_status::CustodianState::NotUsed => CustodianState::NotUsed,
+        },
+        guard_owed: s.guard_owed,
     })
 }
 
@@ -120,6 +129,8 @@ mod tests {
             self_signed: true,
             route: host_status::RouteState::Current,
             next: Next::CopyKeys,
+            custodian: host_status::CustodianState::Unpaired,
+            guard_owed: false,
         }
     }
 

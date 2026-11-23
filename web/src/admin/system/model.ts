@@ -28,6 +28,8 @@ export type PartState = (typeof PART_STATES)[number];
 export const HOST_NEXT = [
   "run_setup",
   "start_service",
+  "custodian",
+  "pair_custodian",
   "renew_route",
   "renew",
   "public_certificate",
@@ -64,6 +66,10 @@ export interface HostReport {
   readonly selfSigned: boolean;
   readonly route: "current" | "mismatch" | "unknown";
   readonly next: HostNext;
+  /** The link to the second custodian, which guards the key copies. */
+  readonly custodian: "linked" | "unreachable" | "unpaired" | "not_used";
+  /** A guard rotation is owed, so an erasure waits. */
+  readonly guardOwed: boolean;
 }
 
 /** The `tenant.system` reply. */
@@ -113,6 +119,8 @@ function host(v: unknown): HostReport | null {
     "self_signed",
     "route",
     "next",
+    "custodian",
+    "guard_owed",
   ];
   if (o === null || !closed(o, names)) return null;
   const p = record(o["parts"]);
@@ -142,6 +150,9 @@ function host(v: unknown): HostReport | null {
   if (days !== null && !(typeof days === "number" && Number.isSafeInteger(days) && days >= 0)) return null;
   if (typeof setupDone !== "boolean" || typeof backupsConfigured !== "boolean" || typeof selfSigned !== "boolean") return null;
   if (!oneOf(route, ["current", "mismatch", "unknown"] as const) || !oneOf(next, HOST_NEXT)) return null;
+  const { custodian, guard_owed: guardOwed } = o;
+  if (!oneOf(custodian, ["linked", "unreachable", "unpaired", "not_used"] as const)) return null;
+  if (typeof guardOwed !== "boolean") return null;
   return Object.freeze({
     writtenAt,
     setupDone,
@@ -158,6 +169,8 @@ function host(v: unknown): HostReport | null {
     selfSigned,
     route,
     next,
+    custodian,
+    guardOwed,
   });
 }
 
@@ -292,7 +305,14 @@ function hostRows(r: SystemReply): Row[] {
   // The runbook asks for a new key copy after each erasure: an older copy
   // still holds the erased key (ADR-028 record of lane L20).
   const erased = lastErasure(r);
-  if (h.lastKeyCopy === null) out.push(row("keys", "amber", "never", {}, "host", "system.tell.copy_keys"));
+  // ADR-028 record of lane `m10/guard-key`: the second custodian guards
+  // the copies. While it does not answer, or a guard is still to be
+  // replaced, erasures wait.
+  if (h.custodian === "unreachable" || h.guardOwed) {
+    out.push(row("keys", "red", "custodian_down", {}, "host", "system.tell.custodian"));
+  } else if (h.custodian === "unpaired") {
+    out.push(row("keys", "amber", "custodian_unpaired", {}, "host", "system.tell.pair_custodian"));
+  } else if (h.lastKeyCopy === null) out.push(row("keys", "amber", "never", {}, "host", "system.tell.copy_keys"));
   else if (erased !== null && erased > h.lastKeyCopy) {
     out.push(
       row("keys", "amber", "before_erasure", { date: dayOf(h.lastKeyCopy), erased: dayOf(erased) }, "host", "system.tell.copy_keys_again"),

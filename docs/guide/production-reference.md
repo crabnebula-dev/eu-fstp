@@ -559,10 +559,22 @@ fstp-keyd retire-export /var/lib/fstp-keyd <copy id>
 
 The entry reports full assurance again at its next start, if nothing else reduces it.
 
+### The guard of the copies (F-018)
+
+Written by lane `m10/guard-key` (ADR-004 "The guard key of Q-L16-1 (F-018)", ADR-028 record of lane `m10/guard-key`). Decided by Daniel on 2026-11-23: the second custodian is required, and it guards every copy above.
+
+- The second custodian's `fstp-keyd` also listens on TCP port 7460 over mutual TLS (`FSTP_KEYD_GUARD_LISTEN`). It holds one guard per pilot entry: a hybrid KEM key pair, X25519 with ML-KEM-768.
+- `fstp-keyd export` on a pilot entry with `FSTP_KEYD_GUARD` and `FSTP_KEYD_GUARD_ENTRY` set seals the copy once more to that entry's guard. The file then starts with `FGC1`, and its id stands in bytes 12 to 27. `fstp-admin backup-keys` sets both and writes the id beside the copy, so no `od` is needed. In production `export` refuses without a custodian.
+- Every destroy the entry serves replaces its guard before the receipt goes out. A copy made before the destroy then opens nowhere. While the custodian does not answer, the destroy answers "the guard of the key copies is not yet replaced" and the erasure waits.
+- `fstp-keyd import` of a guarded copy asks the custodian to open the outer seal. It needs the same two variables and, in `$CREDENTIALS_DIRECTORY`, `guard-ca.pem`, `guard-client.pem` and `guard-client.key` of that entry beside the passphrase. They are in `/etc/fstp/keyd-guard` once the new host is paired. In production `import` refuses a plain `FKX1` copy.
+- `fstp-keyd guard-check <volume>`, with the same variables, exits 0 when the custodian answers, 3 when a guard rotation is owed, 4 when it does not answer and 5 when none is configured. `fstp-admin status` and `setup` run it.
+- The custodian's own key volume is never copied: `export` refuses it.
+
 ### Restore after the loss of the host
 
 On a fresh host, as root, in this order:
 
+0. Pair the new host with the same second custodian (`fstp-admin pair-custodian`, then `fstp-admin custodian <file>` on the custodian). The custodian keeps its guards, so the newest copies open.
 1. Install each `fstp-keyd` entry with the passphrase of the entry it replaces. Import its newest copy onto an empty key volume: `fstp-keyd import /root/keyd-cell-2026-11-21.fkx /var/lib/fstp-keyd`. A wrong passphrase, a changed byte and a volume that already holds a key table are refused, and nothing is written.
 2. Start the entries. An imported entry is held: it answers only unwraps on the backup chains, so `fstp-backup restore` runs and no cell or vault opens a key. Run `fstp-backup restore` for each cluster (section "Restore"). If the pilot host's ClusterBackup root is gone with its entry, run the restore on the second custodian instead, and carry the restored directory over.
 3. Start PostgreSQL on each restored directory, without the cell and the vault. Read the current epoch of each erasable chain as the PostgreSQL superuser over the local socket: `SELECT chain, max(epoch) FROM keystore.root WHERE state = 1 GROUP BY chain;` in `c_<cell>` gives the App chain (1), and in `v_<cell>` the Vault chain (2).
@@ -614,7 +626,7 @@ FSTP_CELL_CONFIG=/etc/fstp/cell.json fstp-cell restore-keystore
 - A second provider (Q25). One `object_store` only.
 - A yearly re-wrap of the snapshot keys (lead reading, 2026-11-22: a later item).
 - Rotation of the ClusterBackup root and group. A new group generation needs a new escrow for each custodian.
-- A copy bound to a guard key that the second custodian destroys at each erasure. Decided by Daniel on 2026-11-21: a release item, built before a release (ADR-004 record of lane L16, Q-L16-1).
+- Built since 2026-11-23: the guard of the copies, above (F-018).
 - Declared restores at the witness and the monthly restore drill.
 
 ### Checked by

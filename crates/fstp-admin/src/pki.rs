@@ -233,13 +233,23 @@ impl Ca {
     ///
     /// [`PkiFail::Crypto`] when `fstp-pki` refuses the profile.
     pub fn issue(&self, leaf: &Leaf<'_>) -> Result<Issued, PkiFail> {
+        self.issue_for(leaf, None)
+    }
+
+    /// As [`Self::issue`], for `lifetime` seconds in place of the default
+    /// of a server certificate. A client certificate keeps its bound.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::issue`].
+    pub fn issue_for(&self, leaf: &Leaf<'_>, lifetime: Option<i64>) -> Result<Issued, PkiFail> {
         let key = EcdsaP256KeyPair::generate().map_err(|_| PkiFail::Crypto)?;
         let now = now();
         let lifetime = match leaf.kind {
             CertKind::Client => CLIENT_MAX_LIFETIME
                 .saturating_sub(BACKDATE)
                 .saturating_sub(1),
-            _ => SERVER_LIFETIME,
+            _ => lifetime.unwrap_or(SERVER_LIFETIME),
         };
         let not_after = now.saturating_add(lifetime);
         let spki = key.spki_der().map_err(|_| PkiFail::Crypto)?;

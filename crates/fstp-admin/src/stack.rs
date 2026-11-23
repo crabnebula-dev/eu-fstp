@@ -120,6 +120,13 @@ pub fn keyd(layout: &Layout, e: Entry) -> Vec<Service> {
             if !groups.is_empty() {
                 unit_lines.push(format!("SupplementaryGroups={}", groups.join(" ")));
             }
+            // ADR-028 record of lane `m10/guard-key`: with a custodian,
+            // each entry names it and loads its guard credentials.
+            if layout.cfg.services == Services::Systemd {
+                let (guard_env, guard_lines) = crate::custodian::keyd_guard(layout, e);
+                env.extend(guard_env);
+                unit_lines.extend(guard_lines);
+            }
             let first_role = e.roles().first().copied().unwrap_or("console");
             vec![Service {
                 name: format!("fstp-keyd-{}", e.name()),

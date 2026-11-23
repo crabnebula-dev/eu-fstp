@@ -10,6 +10,7 @@ Two people run a host. The **technical admin** uses a terminal over SSH, and par
 - A domain, for example `grants.example.eu`, and `id.grants.example.eu`, both pointing at the host, with TCP port 443 open.
 - A public certificate covering both names, for example from certbot. Without one, setup makes a self-signed one, which browsers refuse.
 - An account on a mail relay for sign-in mail. Put its password in `/etc/fstp/mail.password`.
+- A second machine that stays on: the **second custodian**. It guards the copies of the keys (part 2a). A small Linux machine with systemd is enough. The pilot host must reach it on TCP port 7460.
 - Optional: a versioned object storage bucket for backups and the daily key snapshots, with its two key files in `/etc/fstp/s3-access-key-id` and `/etc/fstp/s3-secret-access-key`.
 
 Install the release: the binaries into `/usr/local/bin`, and its `migrations/` and `web/` directories into `/usr/share/fstp`.
@@ -40,6 +41,19 @@ At the end it tells you two things:
 - **The invitation.** `/root/fstp-first-admin.token` holds two lines. Give each line to the first admin through a different channel, for example one by phone and one by chat. They open `https://<domain>/auth/invite#<line 1><line 2>`. Then delete the file.
 - **The passphrases.** Copy the four files in `/etc/fstp/keyd` into a password manager, off the host, once.
 
+## 2a. Pair the second custodian
+
+Decided by Daniel on 2026-11-23: the second custodian is required. Each key copy is sealed to a key that lives only on that machine. Every erasure replaces that key there, so an old copy no longer opens anything erased since. Pair it once:
+
+1. On the pilot host: `sudo fstp-admin pair-custodian custodian.example.eu`, with the custodian's host name or address. It writes `/root/fstp-custodian.pair` and adds `"custodian"` to `/etc/fstp/fstp.json` itself.
+2. Copy that one file to the custodian machine, for example with `scp`. It holds a private key, so copy it nowhere else.
+3. On the custodian machine, with `fstp-keyd` and `fstp-admin` installed in `/usr/local/bin`: `sudo fstp-admin custodian /root/fstp-custodian.pair`. It sets up and starts `fstp-keyd-custodian`, then deletes the file.
+4. Back on the pilot host: `sudo fstp-admin setup`. It links every key custody entry to the custodian and says `checked  second custodian linked`.
+
+While the custodian does not answer, erasures wait: the data is unreadable on the host at once, but the erasure is reported complete only once the custodian answered. `status` and the page **System** then show the custodian in red. Keep the custodian on.
+
+If the pilot host is lost, set up the new host, run steps 1 to 4 again with the same custodian, then restore. If the custodian machine is lost, pair a new one the same way, then run `fstp-admin backup-keys` at once: the old copies no longer open. The custodian's certificate lasts two years, and `status` asks for a new pairing a month before it ends.
+
 ## 3. Open the organisation
 
 `fstp-admin status` walks both of you through this and names who acts next. The steps (ADR-026 record of lane L18):
@@ -62,7 +76,8 @@ The web admin sees the same on the page **System** (`https://<domain>/app/admin/
 | Command | When |
 | --- | --- |
 | `fstp-admin verify` | Step 3 of part 3. `fstp-admin admins` only lists the accounts |
-| `fstp-admin backup-keys /media/usb/fstp-keys` | Once after setup, and after each erasure. Keep the stick apart from the passphrases |
+| `fstp-admin backup-keys /media/usb/fstp-keys` | Once after setup and pairing, and after each erasure. Keep the stick apart from the passphrases. It needs the second custodian, which seals each copy |
+| `fstp-admin pair-custodian <host>` | Once, part 2a. Again after the loss of either machine, and when `status` asks |
 | `fstp-admin backup` | A backup now. A timer runs it daily |
 | `fstp-admin restore` | After data loss. It restores both databases from their newest backups, then the cell's and the vault's keys |
 | `fstp-admin renew` | Only when `status` asks. A daily timer renews certificates and updates the route |
@@ -71,7 +86,7 @@ The web admin sees the same on the page **System** (`https://<domain>/app/admin/
 | `fstp-admin stop` and `start` | Around host maintenance |
 | `fstp-admin route add <file>`, `remove <cell>`, `list` | Rarely. Setup and renew keep the cell's own route current |
 
-Exit status: 0 done, 1 failed (the message says what to fix), 2 a wrong configuration or argument, 4 waits on a part not built yet. A second custodian of the backup keys is optional: `docs/guide/production-reference.md` describes it.
+Exit status: 0 done, 1 failed (the message says what to fix), 2 a wrong configuration or argument, 4 waits on a part not built yet. The second custodian is required (part 2a). Its escrow of the backup group key is described in `docs/guide/production-reference.md`.
 
 ## 6. Connect Claude (programme manager)
 

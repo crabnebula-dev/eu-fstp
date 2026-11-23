@@ -26,6 +26,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "custodian_pairing_decode"
+path = "fuzz_targets/custodian_pairing_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]
