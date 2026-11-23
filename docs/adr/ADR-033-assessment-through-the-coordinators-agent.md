@@ -177,3 +177,33 @@ Interim, pending Daniel:
 | M7 Q4, I-17 | `m7_q4_i17_pieces_mask_exactly_as_the_whole_text` (property), `m7_q4_i17_a_span_outside_its_piece_fails_the_join` (property), `m7_q4_i17_a_name_across_a_cut_is_masked_as_one`, `m7_q4_cuts_prefer_paragraph_then_line_then_space`, `m7_q4_i17_a_window_without_a_cut_fails_closed`, `m7_q4_piece_bounds_keep_the_vault_cap`; fuzz target `mask_pieces` | `crates/fstp-unorm/tests/m7_q4_mask_pieces.rs`, `crates/fstp-unorm/fuzz` |
 | M7 Q4, I-17, TH-60 | `m7_q4_i17_a_long_text_is_masked_in_pieces_within_the_vault_cap`, `m7_q4_i17_any_failed_piece_fails_the_whole_text_closed`, `m7_q4_short_texts_go_in_one_request`, `m7_q4_i17_an_uncuttable_or_too_long_text_fails_closed` | `crates/fstp-api-core/src/masking.rs` |
 | M7 Q4, I-17 | `m7_q4_pieces_keep_the_vault_request_cap`, `m7_q4_i17_vault_never_answers_part_of_a_mask` | `crates/fstp-vault-core/tests/m7_q4_mask_wire.rs` |
+
+## Record of the M10 mask lane (2026-11-23): no oracle, and names the cell holds
+
+The M10 review found two gaps in the name mask (F-005 and F-006, report H-03 and H-07). Daniel decided both on 2026-11-23. This record states each decision and how the lane builds it.
+
+| Topic | Decision or reading | Basis |
+| --- | --- | --- |
+| The mask is no oracle | A team member could write candidate dates or names into the shared draft and read it back through MCP. The vault then marked the candidate that equals a teammate's verified attribute. No read by the applicant side now asks the vault to mask, on any channel and in any state | Decided by Daniel on 2026-11-23; I-86; I-17; TH-07 |
+| The team's draft through MCP | `review.read_content` of a draft by the applicant side (Applicant, ApplicantTeamMember, Guardian) is refused through MCP as not exposed, rule I-86. The team reads its drafts in the web app. `fstp_get_my_proposal` serves no text and is unchanged | Decided by Daniel on 2026-11-23; I-86 |
+| The team's other reads | Through MCP the team reads its submitted text neutralised (ADR-035) and unmasked, since it wrote the text. The web shows the text as submitted, as before. The applicant side is the read rule Team, FormerTeam, FormerAuthor or Lead, or a held Receiving binding on the proposal | Decided by Daniel on 2026-11-23; I-86 |
+| Where the mask still applies | The assessment input, and the agent's content view of Judging and Operations readers (`review.read_content` and `irc.case` through MCP). The row "Where the mask applies" of the record of lane L31 is narrowed to these readers | Decided by Daniel on 2026-11-23; TH-60 |
+| Parity | M-PARITY admits a second difference beside D6: the team's content read of a draft gives `NotExposed` through MCP, where the web completes it. The reference (`reference::authz`, `content`) states the rule, so the MCP matrix judges the cell against it | Decided by Daniel on 2026-11-23; I-84 |
+| Names the cell holds | Applicants are verified only at negotiation, so a team with no verified identity gave the vault nothing to mask. The cell now passes the names it holds for the proposal's team to the pattern stage as handles: each held Receiving account's display name, and each word of it. The assessment input shows them as `[HANDLE-n]`. The agent's content view of Judging and Operations readers shows them as `[PERSON-n]`, `n` the account's place in the team as for the vault | Decided by Daniel on 2026-11-23; I-17; TH-13; TH-62 |
+| Which words | A display name is a handle whole, and so is each of its words of two characters or more. A word in lowercase letters only, such as "van" or "de", is no handle when another word of the name has a capital letter. Interim, pending Daniel | Reading of the lane |
+| No new oracle | The handles come from the team's own accounts, and the text they mask is the frozen submission or the draft the coordinator cannot change. Only Judging and Operations readers and the assessment input get masked text, and none of them writes the text. No reader receives a display name | I-17; I-86; SA-11 |
+| How the cell reads the names | `TextStore::mask_handles` opens the display names of the given accounts for the mask alone. No read model carries them, so the SA-11 release rule of display names stands. A store that cannot answer fails the input and the agent view closed | SA-11; NOTE 2 of `overview.md` |
+
+The remaining limit: a name the cell does not hold, of a person with no verified identity, is not masked. Such a name reaches the assessment and the agents of Judging and Operations readers as written. This covers a teammate who set no display name, a name spelt otherwise than the display name, and a person outside the team named in the text.
+
+`TODO(legal)`: the consent text of `assess:run` says "with personal data replaced". The disclosure to applicants and readers must state the limit above. The consent and disclosure wording needs Daniel's legal review.
+
+### Built by the M10 mask lane
+
+| ID | Test | Where |
+| --- | --- | --- |
+| F-005, I-86, I-17 | `m10_h07_i86_team_content_read_through_mcp_never_asks_the_vault_mask` | `crates/fstp-api-testkit/tests/m10_h07_mask.rs` |
+| F-005, I-86 | `m10_h07_i86_reference_team_draft_content_is_web_only` | `crates/fstp-api-testkit/src/matrix.rs` |
+| F-005, I-84 | `m10_h07_i86_m_parity_admits_the_team_draft_read_alone` | `crates/fstp-api-testkit/src/mc/parity_model.rs` |
+| F-006, I-17 | `m10_h07_i17_an_unverified_team_is_masked_by_cell_held_names` | `crates/fstp-api-testkit/src/bin/fstp-e2e-cell/assess_client_tests.rs` |
+| F-006, I-17 | `m10_h07_i17_a_display_name_gives_its_words_as_handles`, `m10_h07_i17_handle_spans_join_the_vault_spans` | `crates/fstp-api-core/src/dispatch.rs` |
