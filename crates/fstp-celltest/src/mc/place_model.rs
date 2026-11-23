@@ -226,6 +226,9 @@ pub fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
         RoleName::Keys => match schema {
             "keystore" => FULL,
             "blob" => SD,
+            // ADR-007 (Daniel, 2026-11-23, decision 2; lane L39): the keys
+            // role deletes an erased document's sealed row.
+            "doc" => SD,
             _ => &[],
         },
         RoleName::Auditor => match schema {

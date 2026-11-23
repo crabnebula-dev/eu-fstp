@@ -446,6 +446,10 @@ pub enum PortKind {
     /// A tenant admin's erasure request with its cause (ADR-007, P-41,
     /// lane m5/retention).
     RequestErasure,
+    /// A tenant admin erases a chosen import document with a stated
+    /// reason (ADR-007, Daniel 2026-11-23, lane L39). Not high-risk, and
+    /// web only.
+    EraseDocument,
     /// The caller sets or clears its own display name, a confidential
     /// text of its account (SA-11, ADR-007).
     SetDisplayName,
@@ -1334,6 +1338,17 @@ pub const OPS: &[OpSpec] = &[
         "/admin/erasures",
     )
     .hr()
+    .acting(ADMIN),
+    // ADR-007 (Daniel, 2026-11-23, decision 1c; lane L39): a tenant admin
+    // erases a chosen import document with a stated reason. No erasure is
+    // in the high-risk table, so no step-up (usability rule). No tool, so
+    // web only.
+    OpSpec::new(
+        "admin.erase_document",
+        OpKind::M3Port(PortKind::EraseDocument),
+        Post,
+        "/admin/documents/{document}/erasure",
+    )
     .acting(ADMIN),
     // ADR-028 record of lane L20 (Daniel, 2026-11-21, usability rule): the
     // facts of the System page. A read with no personal data, no tool and

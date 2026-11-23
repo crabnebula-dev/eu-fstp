@@ -2329,7 +2329,7 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         // relay and delivery log.
         ReadKind::GetMailRelay | ReadKind::ListDeliveries => tenant::mail_read(call, kind).await?,
         // P-41, ADR-007 (lane m5/retention): the erasure page.
-        ReadKind::ListErasures => erasure::read(call).await?,
+        ReadKind::ListErasures => erasure::read(call, &clearance).await?,
         // ADR-028 record of lane L20: the System page. The read rule
         // admitted a tenant admin. The facts hold no personal data.
         ReadKind::GetSystemStatus => {
@@ -2746,6 +2746,9 @@ enum PortCall {
     /// A tenant admin requests the erasure of a grant's texts with its
     /// cause (ADR-007, P-41, lane m5/retention).
     RequestErasure(crate::port::ErasureCause, ProposalId),
+    /// A tenant admin erases an import document's blob with a stated
+    /// reason (ADR-007, Daniel 2026-11-23, lane L39).
+    EraseDocument(fstp_domain::id::ProgrammeId, crate::port::BlobRef, String),
     /// The lead claims an anonymous draft into its own draft (ADR-032).
     ClaimDraft(ProposalId, crate::anon::Token),
     /// The caller sets or clears its own display name (SA-11).
@@ -2832,6 +2835,19 @@ async fn m3_port<P: Seams>(
             let grant = ProposalId::from_raw(id("grant")?);
             erasure::check_grant(call, grant)?;
             PortCall::RequestErasure(cause, grant)
+        }
+        // ADR-007 (Daniel, 2026-11-23, decision 1c; lane L39): a reason,
+        // then an import document that exists. Not high-risk.
+        PortKind::EraseDocument => {
+            let document = id("document")?;
+            let reason = op
+                .request
+                .get("reason")
+                .and_then(Value::as_str)
+                .and_then(crate::erasure::checked_reason)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?;
+            let (p, blob) = erasure::import_document(call, document)?;
+            PortCall::EraseDocument(p, blob, reason.to_owned())
         }
         // Adding a passkey is high-risk (`authentication.md`). The cell's
         // own ceremony registers it after the step-up, through the
@@ -3078,6 +3094,10 @@ async fn m3_port<P: Seams>(
                 "ADR-007",
             )
         }
+        PortCall::EraseDocument(p, blob, reason) => done(
+            erasure::erase_document(call, account, p, blob, &reason).await,
+            "ADR-007",
+        ),
         // SA-11: a confidential text of the caller's account (ADR-007),
         // unique within the tenant. A taken name is refused under its own
         // rule, which names no other account (SA-11 amendment).

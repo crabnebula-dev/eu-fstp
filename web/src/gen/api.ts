@@ -98,6 +98,7 @@ export type OpName =
   | "admin.approve_break_glass"
   | "admin.erasures"
   | "admin.request_erasure"
+  | "admin.erase_document"
   | "tenant.system"
   | "admin.members"
   | "creator.open_draft"
@@ -361,6 +362,7 @@ export interface OpParams {
   readonly "admin.approve_break_glass": { readonly "break_glass": string };
   readonly "admin.erasures": Readonly<Record<never, string>>;
   readonly "admin.request_erasure": Readonly<Record<never, string>>;
+  readonly "admin.erase_document": { readonly "document": string };
   readonly "tenant.system": Readonly<Record<never, string>>;
   readonly "admin.members": Readonly<Record<never, string>>;
   readonly "creator.open_draft": Readonly<Record<never, string>>;
@@ -597,6 +599,7 @@ export const OP_NAMES: readonly OpName[] = [
   "admin.approve_break_glass",
   "admin.erasures",
   "admin.request_erasure",
+  "admin.erase_document",
   "tenant.system",
   "admin.members",
   "creator.open_draft",
@@ -1376,6 +1379,20 @@ export const OPERATIONS: readonly Operation[] = [
     highRisk: true,
     binding: false,
     session: "phishing_resistant",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "admin.erase_document",
+    method: "POST",
+    path: "/admin/documents/{document}/erasure",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "documents" }, { kind: "param", name: "document" }, { kind: "literal", text: "erasure" }],
+    params: ["document"],
+    body: true,
+    highRisk: false,
+    binding: false,
+    session: "any",
     classification: "confidential",
     tool: null,
   },
@@ -5589,6 +5606,8 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "completed_at": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
           ["kind"]: { schema: { kind: "enum", values: ["text", "display_name", "document"] }, optional: false },
           "destroyed_epoch": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "authoriser": { schema: { kind: "enum", values: ["system", "account"] }, optional: false },
+          "reason": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },
         },
       } }, optional: false },
       "retention_ended": { schema: { kind: "array", items: {
@@ -5598,6 +5617,15 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "programme": { schema: { kind: "id" }, optional: false },
           "start": { schema: { kind: "id" }, optional: false },
           "end": { schema: { kind: "id" }, optional: false },
+        },
+      } }, optional: false },
+      "documents": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "document": { schema: { kind: "id" }, optional: false },
+          "programme": { schema: { kind: "id" }, optional: false },
+          "media": { schema: { kind: "enum", values: ["text/plain", "text/markdown"] }, optional: false },
+          "erased": { schema: { kind: "bool" }, optional: false },
         },
       } }, optional: false },
     },

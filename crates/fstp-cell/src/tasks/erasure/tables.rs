@@ -89,6 +89,9 @@ pub(super) struct Dirty {
     pub(super) requested: BTreeSet<[u8; 16]>,
     /// The display name rows, by account (lane L26).
     pub(super) displays: BTreeSet<u128>,
+    /// The data keys of erased documents whose `doc.blob` rows the next
+    /// flush deletes (ADR-007, Daniel 2026-11-23, decision 2; lane L39).
+    pub(super) blobs: BTreeSet<[u8; 16]>,
 }
 
 /// The persistence state of a keystore.
@@ -535,6 +538,7 @@ impl Keystore {
                 Change::Delete(*id)
             });
         }
+        c.blobs = d.blobs.iter().copied().collect();
         Ok(c)
     }
 

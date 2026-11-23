@@ -12,15 +12,22 @@
 // - The mailbox notice `admin.retention_ended` links here. The tenant
 //   admin's home and navigation link here too.
 //
-// Ids, causes and dates only (I-27): no text, no name, no account.
+// - Lane L39 (ADR-007, Daniel 2026-11-23, decision 1c): each import
+//   document has a reason field and an "Erase" button, through
+//   `admin.erase_document`. No step-up: no invariant asks for one. Each log
+//   row says whether the system or an account authorised it, never which
+//   account (R-CF-03), and shows the stated reason.
+//
+// Ids, causes and dates only (I-27), and the reason a tenant admin stated:
+// no other text, no name, no account.
 
 import { h, type Child } from "../../core/dom.js";
 import type { I18n } from "../../core/i18n.js";
 import type { RouteDef } from "../../core/router.js";
 import { act, anyObject, buttonEl, formEl, link, onSubmit, section } from "../../grant/kit.js";
-import { frame, pageI18n, readOp, selectEl, type Frame, type JudgingPage, type PageEnv } from "../../reviewer/kit.js";
+import { frame, inputEl, pageI18n, readOp, selectEl, type Frame, type JudgingPage, type PageEnv } from "../../reviewer/kit.js";
 import { ADMIN_ERASURE_LABELS } from "./messages.en.js";
-import { ERASURE_CAUSES, dayOf, decodeErasures, requestBody, type ErasuresReply } from "./model.js";
+import { ERASURE_CAUSES, MAX_REASON, dayOf, decodeErasures, eraseBody, requestBody, type DocumentRow, type ErasuresReply } from "./model.js";
 
 /** The path of the page. */
 export const ADMIN_ERASURE_PATHS = Object.freeze({
@@ -77,10 +84,52 @@ function logList(t: I18n, r: ErasuresReply): Child[] {
             completed: e.completedAt === null ? t.label("admin.erasures.log.pending") : dayOf(e.completedAt),
           }),
           ...(e.destroyedEpoch === null ? [] : [" ", t.label("admin.erasures.log.epoch", { epoch: e.destroyedEpoch })]),
+          " ",
+          t.label(`admin.erasures.authoriser.${e.authoriser}`),
+          ...(e.reason === null ? [] : [" ", t.label("admin.erasures.log.reason", { reason: e.reason })]),
         ]),
       ),
     ),
   ];
+}
+
+/** One import document: its facts, and, unless it is erased, a reason field and an "Erase" button (lane L39). */
+function documentItem(env: PageEnv, t: I18n, f: Frame, d: DocumentRow, reload: () => Promise<void>): HTMLElement {
+  const facts = t.label("admin.erasures.documents.row", { document: d.document, programme: d.programme, media: d.media });
+  if (d.erased) {
+    return h("li", { "data-document": d.document }, [facts, " ", t.label("admin.erasures.documents.erased")]);
+  }
+  const id = `erase-reason-${d.document}`;
+  const reason = inputEl({ id, name: id, type: "text", maxlength: String(MAX_REASON), required: true });
+  const submit = buttonEl(`erase-submit-${d.document}`, "submit", t.label("admin.erasures.documents.erase"));
+  const form = formEl(`erase-form-${d.document}`, [
+    h("div", { class: "fstp-field" }, [h("label", { for: id }, [t.label("admin.erasures.documents.reason")]), reason]),
+    submit,
+  ]);
+  onSubmit(f, form, submit, async () => {
+    f.clearAlert();
+    const body = eraseBody(reason.value);
+    if (body === null) {
+      f.alert(t.label("admin.erasures.documents.invalid", { max: String(MAX_REASON) }));
+      return;
+    }
+    const done = await act(env, "admin.erase_document", { document: d.document }, body, anyObject);
+    if (!done.ok) {
+      f.problem(done.problem);
+      return;
+    }
+    await reload();
+    f.status(t.label("admin.erasures.documents.done", { document: d.document }));
+  });
+  return h("li", { "data-document": d.document }, [facts, form]);
+}
+
+/** The import documents a tenant admin may erase (lane L39). */
+function documentList(env: PageEnv, t: I18n, f: Frame, r: ErasuresReply, reload: () => Promise<void>): Child[] {
+  if (r.documents.length === 0) {
+    return [h("p", { id: "erasures-documents-none" }, [t.label("admin.erasures.documents.none")])];
+  }
+  return [h("ul", { id: "erasures-documents" }, r.documents.map((d) => documentItem(env, t, f, d, reload)))];
 }
 
 /** The request form: a grant whose retention ended, and a cause. */
@@ -143,6 +192,10 @@ async function mountErasures(env: PageEnv): Promise<void> {
       section("erasures-request", t.label("admin.erasures.request.heading"), [
         h("p", {}, [t.label("admin.erasures.request.intro")]),
         requestForm(env, t, f, data, load),
+      ]),
+      section("erasures-documents-section", t.label("admin.erasures.documents.heading"), [
+        h("p", {}, [t.label("admin.erasures.documents.intro")]),
+        ...documentList(env, t, f, data, load),
       ]),
       section("erasures-log-section", t.label("admin.erasures.log.heading"), logList(t, data)),
       h("p", {}, [link(ADMIN_ERASURE_PATHS.home, t.label("admin.erasures.back"))]),

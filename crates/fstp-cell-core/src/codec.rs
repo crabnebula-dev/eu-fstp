@@ -490,6 +490,41 @@ fn text_record(v: &Value) -> Result<TextRecord, FromJsonError> {
     }
 }
 
+/// The body of a keystore erasure record or command. A reason is a
+/// member only when present, so an entry without one keeps the exact
+/// bytes of its old form (I-24, ADR-007 lane L39).
+fn keystore_erasure_json(
+    tag: &'static str,
+    ids: &[[u8; 16]],
+    cause: u16,
+    by: AccountId,
+    kind: u8,
+    reason: Option<[u8; 16]>,
+) -> Value {
+    let mut members = vec![
+        ("by", account_json(by)),
+        ("cause", Value::from(u64::from(cause))),
+        ("ids", id_list(ids)),
+        ("kind", Value::from(u64::from(kind))),
+    ];
+    if let Some(r) = reason {
+        members.push(("reason", hex(&r)));
+    }
+    tagged(tag, members)
+}
+
+/// The members of a keystore erasure, with or without `reason`, and the
+/// reason (lane L39).
+fn keystore_erasure_reason(o: &Object) -> Result<Option<[u8; 16]>, FromJsonError> {
+    if o.contains_key("reason") {
+        fields(o, &["by", "cause", "ids", "kind", "reason"])?;
+        Ok(Some(array_from(o, "reason")?))
+    } else {
+        fields(o, &["by", "cause", "ids", "kind"])?;
+        Ok(None)
+    }
+}
+
 fn key_record_json(r: &KeyRecord) -> Value {
     match r {
         KeyRecord::KeystoreErasureRequested {
@@ -497,15 +532,8 @@ fn key_record_json(r: &KeyRecord) -> Value {
             cause,
             by,
             kind,
-        } => tagged(
-            "KeystoreErasureRequested",
-            vec![
-                ("by", account_json(*by)),
-                ("cause", Value::from(u64::from(*cause))),
-                ("ids", id_list(ids)),
-                ("kind", Value::from(u64::from(*kind))),
-            ],
-        ),
+            reason,
+        } => keystore_erasure_json("KeystoreErasureRequested", ids, *cause, *by, *kind, *reason),
         KeyRecord::ErasuresCompleted { epoch, ids } => tagged(
             "ErasuresCompleted",
             vec![
@@ -541,12 +569,13 @@ fn key_record(v: &Value) -> Result<KeyRecord, FromJsonError> {
             })
         }
         "KeystoreErasureRequested" => {
-            fields(o, &["by", "cause", "ids", "kind"])?;
+            let reason = keystore_erasure_reason(o)?;
             Ok(KeyRecord::KeystoreErasureRequested {
                 ids: id_list_from(o, "ids")?,
                 cause: u16_from(o, "cause")?,
                 by: account_from(o, "by")?,
                 kind: u8_from(o, "kind")?,
+                reason,
             })
         }
         "ErasuresCompleted" => {
@@ -1744,15 +1773,8 @@ fn key_command_json(c: &KeyCommand) -> Value {
             cause,
             by,
             kind,
-        } => tagged(
-            "RecordKeystoreErasure",
-            vec![
-                ("by", account_json(*by)),
-                ("cause", Value::from(u64::from(*cause))),
-                ("ids", id_list(ids)),
-                ("kind", Value::from(u64::from(*kind))),
-            ],
-        ),
+            reason,
+        } => keystore_erasure_json("RecordKeystoreErasure", ids, *cause, *by, *kind, *reason),
         KeyCommand::RecordErasuresCompleted { epoch, ids } => tagged(
             "RecordErasuresCompleted",
             vec![
@@ -1788,12 +1810,13 @@ fn key_command(v: &Value) -> Result<KeyCommand, FromJsonError> {
             })
         }
         "RecordKeystoreErasure" => {
-            fields(o, &["by", "cause", "ids", "kind"])?;
+            let reason = keystore_erasure_reason(o)?;
             Ok(KeyCommand::RecordKeystoreErasure {
                 ids: id_list_from(o, "ids")?,
                 cause: u16_from(o, "cause")?,
                 by: account_from(o, "by")?,
                 kind: u8_from(o, "kind")?,
+                reason,
             })
         }
         "RecordErasuresCompleted" => {

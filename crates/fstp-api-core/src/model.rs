@@ -2273,6 +2273,8 @@ pub(crate) mod reply_shape_tests {
                         completed_at: Some(fstp_domain::time::Timestamp::from_micros(2)),
                         kind: crate::port::ErasureKind::Text,
                         destroyed_epoch: Some(3),
+                        by_system: true,
+                        reason: None,
                     },
                     crate::port::ErasureRow {
                         text: crate::port::TextRef(9),
@@ -2282,6 +2284,8 @@ pub(crate) mod reply_shape_tests {
                         completed_at: None,
                         kind: crate::port::ErasureKind::DisplayName,
                         destroyed_epoch: None,
+                        by_system: false,
+                        reason: Some(crate::port::TextRef(10)),
                     },
                 ],
                 retention_ended: vec![fstp_domain::retention::RetentionEnd {
@@ -2289,6 +2293,13 @@ pub(crate) mod reply_shape_tests {
                     programme: fstp_domain::id::ProgrammeId::from_raw(4),
                     start: fstp_domain::time::Timestamp::from_micros(10),
                     end: fstp_domain::time::Timestamp::from_micros(20),
+                }],
+                reasons: std::collections::BTreeMap::from([(9, "Synthetic reason".to_owned())]),
+                documents: vec![crate::erasure::DocumentLine {
+                    document: 12,
+                    programme: 4,
+                    media: "text/markdown",
+                    erased: false,
                 }],
             }),
             ReadModel::Created(vec![("proposal", 1001)]),

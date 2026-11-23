@@ -213,6 +213,8 @@ struct Tables {
     logins: BTreeMap<[u8; 16], LoginTextRow>,
     requested: BTreeSet<[u8; 16]>,
     displays: BTreeMap<[u8; 16], DisplayNameRow>,
+    /// The `doc.blob` rows deleted, by data key, in write order (lane L39).
+    blob_deletes: Vec<[u8; 16]>,
 }
 
 fn apply_to<K: Ord + Clone, R: Clone>(
@@ -274,6 +276,7 @@ impl Tables {
                 }
             }
         }
+        self.blob_deletes.extend(c.blobs.iter().copied());
     }
 
     fn rows(&self) -> KeystoreRows {
@@ -1149,5 +1152,63 @@ fn r_ky_02_i81_erasure_log_names_requests_and_destroyed_epochs() {
             fstp_cell::tasks::erasure::erasure_log(&c.engine.state()),
             log
         );
+    });
+}
+
+/// A synthetic document's data key id and group (lane L39).
+const DOC: [u8; 16] = [0x39; 16];
+const DOC_GROUP: [u8; 16] = [0x3A; 16];
+const DOC_REASON: [u8; 16] = [0x3B; 16];
+
+/// I-81, R-KY-02, ADR-007 (Daniel, 2026-11-23, decision 2; lane L39): the
+/// erasure of a document deletes its `doc.blob` row in a keystore batch,
+/// and never before `ErasuresCompleted` names the document with its
+/// destroyed epoch. A start deletes the row of every completed document
+/// again, so a crash between the record and the batch loses nothing, and
+/// a repeated deletion is harmless. The entry stays in the log.
+#[test]
+fn i81_l39_blob_row_deleted_after_completion_and_again_at_start() {
+    block_on(|rt| async move {
+        let mut c = cell(&rt).await;
+        c.runner.add_group(DOC_GROUP).unwrap();
+        let stored = c
+            .runner
+            .seal_document(DOC_GROUP, DOC, b"synthetic document L39")
+            .unwrap();
+        c.runner.run_until_idle().await.unwrap();
+        c.runner
+            .erase_document(DOC, 2, ADMIN, Some(DOC_REASON))
+            .await
+            .unwrap();
+        assert!(
+            c.sink.tables().blob_deletes.is_empty(),
+            "not at the request"
+        );
+        while c.runner.step().await.unwrap().is_some() {
+            if c.sink.tables().blob_deletes.contains(&DOC) {
+                let e = c.engine.state().erasure(DOC).unwrap();
+                assert!(
+                    e.destroyed_epoch.is_some(),
+                    "I-81: the row goes only after the completion"
+                );
+            }
+        }
+        assert_eq!(c.sink.tables().blob_deletes, vec![DOC], "deleted once");
+        assert!(c.runner.open_document(DOC, &stored).is_err(), "I-81");
+        let e = c.engine.state().erasure(DOC).unwrap();
+        assert_eq!(e.reason, Some(DOC_REASON), "the log keeps its entry");
+        // A restart deletes it again, which deletes nothing more.
+        c.restart().await;
+        assert_eq!(c.sink.tables().blob_deletes, vec![DOC, DOC]);
+        c.runner.run_until_idle().await.unwrap();
+        assert!(c.runner.open_document(DOC, &stored).is_err(), "I-81");
+        assert!(c.engine.state().erasure(DOC).is_some());
+        // The repeated request is a no-op.
+        c.runner
+            .erase_document(DOC, 2, ADMIN, Some(DOC_REASON))
+            .await
+            .unwrap();
+        c.runner.run_until_idle().await.unwrap();
+        assert_eq!(c.sink.tables().blob_deletes, vec![DOC, DOC]);
     });
 }

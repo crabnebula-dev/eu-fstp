@@ -92,6 +92,10 @@ fn clears(class: TextClass, owner: TextOwner, clearance: &ReadClearance) -> bool
             fstp_access::ReadKind::GetMyDisplayName => clearance.account() == Some(a),
             _ => false,
         },
+        // ADR-007 (Daniel, 2026-11-23; lane L39): the reason a tenant
+        // admin stated for an erasure opens to the erasure log read only,
+        // which the read rule admits for tenant admins.
+        (_, TextOwner::Tenant, _) => clearance.op().kind == fstp_access::ReadKind::ListErasures,
         _ => false,
     }
 }
@@ -176,6 +180,10 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
                         _ => return Err(PortError::Unavailable),
                     },
                     destroyed_epoch: e.destroyed_epoch,
+                    // Lane L39: the system or an account, and the
+                    // stated reason's text.
+                    by_system: fstp_cell_core::is_system_authoriser(e.by),
+                    reason: e.reason.map(|r| TextRef(u128::from_be_bytes(r))),
                 })
             })
             .collect()
@@ -483,12 +491,9 @@ impl<R: Runtime, V: Send + Sync> PendingActions for CellPending<R, V> {
 /// core are lower, so this bounds a caller that skips them.
 const MAX_BLOB: usize = 16 * 1024 * 1024;
 
-/// The `doc.blob.kind` of an import document (R-PG-02). Kinds 1 to 4 are
-/// the contract documents of `fstp_contract::BlobKind`.
-const KIND_IMPORT_DOCUMENT: i16 = 5;
-
-/// The `doc.blob.kind` of a brand asset, a checked logo (ADR-030).
-const KIND_BRAND_ASSET: i16 = 6;
+/// The `doc.blob` kinds of an import document and a brand asset, as the
+/// retention sweep reads them (lane L39).
+use crate::tasks::retention::{KIND_BRAND_ASSET, KIND_IMPORT_DOCUMENT};
 
 /// The `doc.blob.kind` of a blob of `owner`.
 const fn kind_of(owner: BlobOwner) -> i16 {
@@ -620,6 +625,65 @@ impl<R: Runtime, V: Send + Sync> BlobStore for CellBlobs<R, V> {
     /// of the bytes must be the brand, so no other blob is served.
     async fn get_brand(&self, r: BlobRef) -> Result<Vec<u8>, PortError> {
         self.open(BlobOwner::Brand, r.0).await
+    }
+
+    /// ADR-007 (Daniel, 2026-11-23, decisions 1c and 2; lane L39): erases
+    /// an import document by its data key id, as tenant admin `by` asked
+    /// with the reason text `reason`. A brand asset is refused, and so is
+    /// a blob of another owner. A blob already erased, or whose row the
+    /// runner deleted, is a no-op.
+    async fn erase(
+        &self,
+        owner: BlobOwner,
+        r: BlobRef,
+        by: AccountId,
+        reason: TextRef,
+    ) -> Result<(), PortError> {
+        if matches!(owner, BlobOwner::Brand) {
+            return Err(PortError::Refused);
+        }
+        let Some((dek, _)) = self
+            .0
+            .store
+            .document(r.0)
+            .await
+            .map_err(|_| PortError::Unavailable)?
+        else {
+            // The row is gone: its erasure completed.
+            return Ok(());
+        };
+        if self.0.engine.state().erasure(dek).is_some() {
+            return Ok(());
+        }
+        // The owner sealed in front of the bytes must be `owner`.
+        self.open(owner, r.0).await?;
+        self.0
+            .erasure
+            .erase_document(
+                dek,
+                ErasureCause::ErasureRequest.code(),
+                by,
+                Some(reason.0.to_be_bytes()),
+            )
+            .await
+            .map_err(|_| PortError::Unavailable)
+    }
+
+    /// Whether blob `r` is erased or under erasure: its row is gone, or
+    /// the log has an entry for its data key (lane L39).
+    async fn erased(&self, r: BlobRef) -> Result<bool, PortError> {
+        Ok(
+            match self
+                .0
+                .store
+                .document(r.0)
+                .await
+                .map_err(|_| PortError::Unavailable)?
+            {
+                None => true,
+                Some((dek, _)) => self.0.engine.state().erasure(dek).is_some(),
+            },
+        )
     }
 }
 
