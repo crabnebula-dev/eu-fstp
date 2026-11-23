@@ -144,5 +144,36 @@ Readings of lane L31, each interim, pending Daniel:
 - The mask lives in `fstp-unorm`, beside `name_key`, and `fstp-vault-core` re-exports it. The M3 layering rule keeps the test kit away from `fstp-vault-core`, and the synthetic vault must mask as the vault does.
 - A production tuple that is not one of `TUPLE_LABEL` refuses the mask as unavailable, so assessment of that team fails closed. The seeded vault of `fstp-celltest` reads such a tuple as holding no name.
 - The agent's content view records the content read before the vault masks it. A vault that cannot mask then refuses the call, with no text and no second audit entry.
-- A text over 64 KiB after the cell's pattern stripping cannot be sent to the vault, so its input fails closed.
+- A text over 64 KiB after the cell's pattern stripping cannot be sent to the vault, so its input fails closed. Superseded by the record of lane L40: such a text is masked in pieces.
 - `fstp-infer`'s `http` feature is on by default for the crate itself, and the workspace dependency turns default features off. `fstp-assessor` and the test kit ask for it.
+
+## Record of lane L40 (2026-11-23): long texts
+
+Daniel decided on 2026-11-23 that a text over the vault's cap is masked in pieces. Before, a proposal text over 64 KiB after the cell's pattern stripping could not go to the vault, so its assessment input failed closed. This record states the decision and how the lane builds it, before the code.
+
+| Topic | Decision or reading | Basis |
+| --- | --- | --- |
+| Pieces | The cell splits a text into pieces of at most 64 KiB. Each cut falls at the last paragraph break in reach, else the last line break, else the last white space, else after the last character that belongs to no word and no date run. No cut splits a UTF-8 sequence | Decided by Daniel on 2026-11-23 |
+| The vault cap | Unchanged: at most 16 accounts, 3 texts and 64 KiB per text in one request, 120 requests per minute. The cell sends the pieces of all texts of one call in order, three per request | Decided by Daniel on 2026-11-23 |
+| Whole words | The mask reads a word as a maximal run of letters, digits and combining marks, and a date as a run of digits and `.`, `/` or `-`. A cut follows white space or a character outside both, so every word and every date run lies whole in one piece, and each word passes through `name_key` whole | I-17; ADR-029 |
+| A name across a cut | The spans of each piece move by the piece's start. A name span of one person whose gap to the next name span of the same person holds only joiners and crosses a cut becomes one span, as the mask of the whole text joins them. So "Maradine" before a cut and "Velinorra" after it are one `[PERSON-n]` | I-17 |
+| Proof | The property test shows that the joined spans of the pieces equal the spans of the whole text, for generated texts, names and piece sizes. The mask is therefore as strong as one request over the whole text | I-17 |
+| Fail closed | A window with no cut, a text of more than 64 pieces (4 MiB), any failed request, an answer of the wrong length, and any span outside its piece fail every text of the call closed. No text leaves the cell | TH-60; NOTE 2 of `overview.md` |
+| Order and content | The pieces cover the text in order. The masked text is built from the joined spans over the original text, so it differs from the text only where a mask stands | Decided by Daniel on 2026-11-23 |
+| Data channel | Submission text stays untrusted data. The pieces go to the vault only, and the masked text reaches the agent through the assessor's data channel as before. No instruction is built from it | TH-60; CLAUDE.md |
+| Never part of a mask | The vault answered at most 4096 spans per text and cut longer answers short, which would leave names unmasked. It now refuses such a text as unavailable, so the cell fails closed | I-17 |
+| Where | `fstp_unorm::mask::{mask_pieces, join_piece_spans}` beside the mask, re-exported by `fstp-vault-core`. `crate::masking::mask_in_pieces` in `fstp-api-core` drives the requests for both the assessment input and the agent's content view. The test kit's synthetic vault keeps the vault's request cap, so the tests see the pieces | ADR-033 record of lane L31 |
+
+Interim, pending Daniel:
+
+- The limit of 64 pieces per text (4 MiB). It keeps one text from spending the vault's mask rate. Today's texts are at most a little over 64 KiB, so this limit is not reached.
+- A text with more than 4096 masked spans in one piece fails closed. A real proposal is not expected to name a team member that often.
+- A cut uses white space before a character that no word or date holds. A text of more than 64 KiB with neither, such as one long run of letters, fails closed.
+
+### Built by lane L40
+
+| ID | Test | Where |
+| --- | --- | --- |
+| M7 Q4, I-17 | `m7_q4_i17_pieces_mask_exactly_as_the_whole_text` (property), `m7_q4_i17_a_span_outside_its_piece_fails_the_join` (property), `m7_q4_i17_a_name_across_a_cut_is_masked_as_one`, `m7_q4_cuts_prefer_paragraph_then_line_then_space`, `m7_q4_i17_a_window_without_a_cut_fails_closed`, `m7_q4_piece_bounds_keep_the_vault_cap`; fuzz target `mask_pieces` | `crates/fstp-unorm/tests/m7_q4_mask_pieces.rs`, `crates/fstp-unorm/fuzz` |
+| M7 Q4, I-17, TH-60 | `m7_q4_i17_a_long_text_is_masked_in_pieces_within_the_vault_cap`, `m7_q4_i17_any_failed_piece_fails_the_whole_text_closed`, `m7_q4_short_texts_go_in_one_request`, `m7_q4_i17_an_uncuttable_or_too_long_text_fails_closed` | `crates/fstp-api-core/src/masking.rs` |
+| M7 Q4, I-17 | `m7_q4_pieces_keep_the_vault_request_cap`, `m7_q4_i17_vault_never_answers_part_of_a_mask` | `crates/fstp-vault-core/tests/m7_q4_mask_wire.rs` |

@@ -47,6 +47,7 @@ pub mod ids;
 mod journal;
 pub mod legal;
 pub mod mailbox;
+mod masking;
 pub mod meta;
 pub mod model;
 mod pageforms;

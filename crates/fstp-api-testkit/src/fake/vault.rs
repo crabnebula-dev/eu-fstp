@@ -434,6 +434,17 @@ impl Vault for FakeVault {
         if *lock(&self.down) || *lock(&self.mask_down) {
             return Err(OracleDown);
         }
+        // The vault's request cap, as the cell's vault client checks it
+        // (`fstp_vault_proto::mask_request_lawful`): a text over it fails
+        // closed, so the tests see the cell send long texts in pieces
+        // (ADR-033 record of lane L40).
+        if !(1..=fstp_unorm::mask::MASK_PIECES_PER_REQUEST).contains(&texts.len())
+            || texts
+                .iter()
+                .any(|t| t.len() > fstp_unorm::mask::MASK_PIECE_BYTES)
+        {
+            return Err(OracleDown);
+        }
         let names = lock(&self.names);
         let people: Vec<fstp_unorm::mask::MaskPerson> = team
             .iter()

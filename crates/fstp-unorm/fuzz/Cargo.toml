@@ -19,6 +19,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "mask_pieces"
+path = "fuzz_targets/mask_pieces.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fold_nfc"
 path = "fuzz_targets/fold_nfc.rs"
 test = false

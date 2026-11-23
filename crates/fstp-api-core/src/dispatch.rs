@@ -3513,9 +3513,11 @@ fn team_of(state: &EngineState, p: ProposalId) -> Vec<AccountId> {
     team.into_iter().collect()
 }
 
-/// The vault name mask of `texts` for `team` (M7 Q4, ADR-033 record of
-/// lane L31). A team with no account has no name to mask. `Err` when the
-/// vault cannot answer, so the caller fails closed.
+/// The vault name mask of `texts` for `team` (M7 Q4, ADR-033 records of
+/// lanes L31 and L40). A team with no account has no name to mask. A text
+/// over the vault's cap goes in pieces cut at white space, whose joined
+/// spans equal the mask of the whole text (`crate::masking`). `Err` when
+/// the vault cannot answer any piece, so the caller fails closed.
 async fn mask_spans<P: Seams>(
     ports: &P,
     team: &[AccountId],
@@ -3524,16 +3526,19 @@ async fn mask_spans<P: Seams>(
     if team.is_empty() {
         return Ok(texts.iter().map(|_| Vec::new()).collect());
     }
-    let spans = ports
-        .vault()
-        .mask_names(team, texts)
-        .await
-        .map_err(|_| ())?;
-    if spans.len() == texts.len() {
-        Ok(spans)
-    } else {
-        Err(())
-    }
+    crate::masking::mask_in_pieces(texts, |pieces: Vec<String>| async move {
+        let spans = ports
+            .vault()
+            .mask_names(team, &pieces)
+            .await
+            .map_err(|_| ())?;
+        if spans.len() == pieces.len() {
+            Ok(spans)
+        } else {
+            Err(())
+        }
+    })
+    .await
 }
 
 /// `texts` with the team's verified names and dates of birth replaced by

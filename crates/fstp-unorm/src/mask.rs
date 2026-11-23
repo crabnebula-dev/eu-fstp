@@ -242,6 +242,144 @@ pub fn mask_spans(text: &str, people: &[MaskPerson]) -> Vec<MaskSpan> {
     out
 }
 
+/// The longest piece of text one mask request carries, in bytes: the
+/// vault's cap per text (`fstp_vault_proto::MAX_MASK_TEXT_BYTES`), which
+/// stays as it is (Daniel, 2026-11-23).
+pub const MASK_PIECE_BYTES: usize = 64 << 10;
+
+/// The most pieces one mask request carries: the vault's cap on texts
+/// per request (`fstp_vault_proto::MAX_MASK_TEXTS`).
+pub const MASK_PIECES_PER_REQUEST: usize = 3;
+
+/// The most pieces of one text, 4 MiB at [`MASK_PIECE_BYTES`]. A longer
+/// text fails closed, so one text cannot spend the vault's mask rate
+/// (ADR-033 record of lane L40, interim, pending Daniel).
+pub const MAX_MASK_PIECES: usize = 64;
+
+/// Whether a cut may fall just after `c` when no white space is in reach:
+/// `c` belongs to no word and to no date run, so no word and no date
+/// crosses the cut.
+fn safe_cut(c: char) -> bool {
+    !is_word(c) && !matches!(c, '.' | '/' | '-')
+}
+
+/// The cut in `window`, a byte offset after its first byte: after the
+/// last paragraph break, else after the last line break, else after the
+/// last white space, else after the last character that no word or date
+/// run holds. `None` when the window holds none of these.
+fn cut_in(window: &str) -> Option<usize> {
+    let paragraph = ["\n\n", "\n\r\n"]
+        .iter()
+        .filter_map(|p| window.rfind(p).map(|i| i.saturating_add(p.len())))
+        .max();
+    let line = || window.rfind('\n').map(|i| i.saturating_add(1));
+    let last = |keep: fn(char) -> bool| {
+        window
+            .char_indices()
+            .rev()
+            .find(|(_, c)| keep(*c))
+            .map(|(i, c)| i.saturating_add(c.len_utf8()))
+    };
+    paragraph
+        .or_else(line)
+        .or_else(|| last(char::is_whitespace))
+        .or_else(|| last(safe_cut))
+        .filter(|cut| *cut > 0)
+}
+
+/// Splits `text` into pieces of at most `max` bytes for a mask whose
+/// requests carry at most `max` bytes per text (Daniel, 2026-11-23,
+/// ADR-033 record of lane L40). The pieces are byte ranges that cover the
+/// text in order, so joining them gives the text back.
+///
+/// - Each cut falls at the last paragraph break in reach, else the last
+///   line break, else the last white space, else after the last character
+///   that no word and no date run holds.
+/// - So no word, which [`mask_spans`] reads as a maximal run of letters,
+///   digits and combining marks, and no run of date digits and separators
+///   ever crosses a cut, and no cut splits a UTF-8 sequence.
+/// - `None` when a window of `max` bytes holds no such cut, such as one
+///   word longer than the window. The caller then fails closed.
+///
+/// An empty text is one empty piece.
+pub fn mask_pieces(text: &str, max: usize) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while text.len().saturating_sub(start) > max {
+        let mut end = start.saturating_add(max);
+        while !text.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        let cut = cut_in(text.get(start..end)?)?;
+        out.push(start..start.saturating_add(cut));
+        start = start.saturating_add(cut);
+    }
+    out.push(start..text.len());
+    Some(out)
+}
+
+/// Joins the spans the mask gave for each of `pieces` of `text` into the
+/// spans of the whole text (Daniel, 2026-11-23, ADR-033 record of lane
+/// L40). `spans` holds one answer per piece, in piece order, with offsets
+/// into that piece.
+///
+/// - Each span moves by its piece's start.
+/// - A name span of one person whose gap to the next name span of the
+///   same person holds only joiners and crosses a cut becomes one span,
+///   as [`mask_spans`] of the whole text joins them.
+/// - `None` when the answers do not match the pieces, a span is empty or
+///   lies outside its piece or off a character boundary, or the spans of
+///   a piece are not sorted and disjoint. The caller then fails closed.
+///
+/// For pieces of [`mask_pieces`], the result equals [`mask_spans`] of the
+/// whole text.
+pub fn join_piece_spans(
+    text: &str,
+    pieces: &[std::ops::Range<usize>],
+    spans: &[Vec<MaskSpan>],
+) -> Option<Vec<MaskSpan>> {
+    if pieces.len() != spans.len() {
+        return None;
+    }
+    let mut out: Vec<MaskSpan> = Vec::new();
+    for (piece, answer) in pieces.iter().zip(spans) {
+        let base = u32::try_from(piece.start).ok()?;
+        let len = piece.end.checked_sub(piece.start)?;
+        let mut floor = 0u32;
+        for s in answer {
+            let (a, b) = (s.start as usize, s.end as usize);
+            if s.start < floor || a >= b || b > len {
+                return None;
+            }
+            floor = s.end;
+            let moved = MaskSpan {
+                start: base.checked_add(s.start)?,
+                end: base.checked_add(s.end)?,
+                ..*s
+            };
+            let (ga, gb) = (moved.start as usize, moved.end as usize);
+            if !text.is_char_boundary(ga) || !text.is_char_boundary(gb) {
+                return None;
+            }
+            let joins = out.last().is_some_and(|l| {
+                l.class == MaskClass::Name
+                    && moved.class == MaskClass::Name
+                    && l.person == moved.person
+                    && (l.end as usize) <= piece.start
+                    && text
+                        .get(l.end as usize..ga)
+                        .is_some_and(|g| g.chars().all(is_joiner))
+            });
+            match out.last_mut() {
+                Some(l) if joins => l.end = moved.end,
+                Some(l) if l.end > moved.start => return None,
+                _ => out.push(moved),
+            }
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
