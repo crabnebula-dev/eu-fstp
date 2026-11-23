@@ -1215,6 +1215,23 @@ pub trait TextStore: Send + Sync {
         r: PublicTextRef,
     ) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send;
 
+    /// Whether the confidential text `r` of a proposal, stored in the
+    /// salted form of [`crate::salted::stored`], is exactly `candidate`
+    /// after its salt (F-079, ADR-038). It answers one bit and releases no
+    /// text, so it needs no read clearance. The API core asks it only with
+    /// the caller's own login email, to match a team invitation's address
+    /// before the caller is on the proposal. Any other text answers
+    /// `false`. The default is the seam of a store that cannot compare: it
+    /// fails closed.
+    fn text_equals(
+        &self,
+        r: TextRef,
+        candidate: &[u8],
+    ) -> impl Future<Output = Result<bool, PortError>> + Send {
+        let _ = (r, candidate);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
     /// The erasure log, oldest first: one row per erased text (ADR-007,
     /// lane m5/retention). The default is the seam of a store that keeps
     /// no log: it fails closed.

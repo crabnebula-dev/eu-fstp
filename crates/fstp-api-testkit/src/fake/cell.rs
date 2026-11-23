@@ -147,6 +147,78 @@ impl FakeCell {
         self.call(Credential::SessionCookie(login.cookie.clone()), op)
     }
 
+    /// The open team invitations `login` reads through
+    /// `me.team_invitations`, as `(invitation, proposal, role)` (F-079,
+    /// ADR-038). A refused or malformed read answers its refusal or `None`.
+    pub fn my_team_invitations(
+        &self,
+        login: &WebLogin,
+    ) -> Result<Vec<(u128, u128, String)>, ApiError> {
+        let r = self.web(login, requests::my_team_invitations_web())?;
+        Ok(invitation_rows(&Ok(r), &["invitation", "proposal", "role"])
+            .into_iter()
+            .filter_map(|v| match v.as_slice() {
+                [i, p, role] => Some((i.parse().ok()?, p.parse().ok()?, role.clone())),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// The team invitations of `proposal` its lead reads through
+    /// `proposal.team_invitations`, as `(invitation, email, state)` (F-079,
+    /// ADR-038).
+    pub fn lead_team_invitations(
+        &self,
+        lead: &WebLogin,
+        proposal: fstp_domain::id::ProposalId,
+    ) -> Result<Vec<(u128, String, String)>, ApiError> {
+        let r = self.web(lead, requests::team_invitations_web(proposal))?;
+        Ok(invitation_rows(&Ok(r), &["invitation", "email", "state"])
+            .into_iter()
+            .filter_map(|v| match v.as_slice() {
+                [i, e, s] => Some((i.parse().ok()?, e.clone(), s.clone())),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// F-079, ADR-038: the two steps by which `account` joins `proposal`.
+    /// The lead of `lead` invites the synthetic login email of `account`,
+    /// as a team member or as the guardian, and `account` accepts the
+    /// invitation it then reads. Answers the invitation's refusal, or the
+    /// acceptance's answer. An invitation the invitee cannot read answers
+    /// `not_found`.
+    pub fn join_team(
+        &self,
+        lead: &WebLogin,
+        proposal: fstp_domain::id::ProposalId,
+        account: AccountId,
+        guardian: bool,
+    ) -> Result<OpResult, ApiError> {
+        let email = requests::synthetic_email(account);
+        self.ports.accounts.set_login_email(account, &email);
+        let invite = if guardian {
+            requests::invite_guardian_web(proposal, &email)
+        } else {
+            requests::invite_member_web(proposal, &email)
+        };
+        self.web(lead, invite)?;
+        let me = self.login(account, LoginMethod::Passkey);
+        let found = self
+            .my_team_invitations(&me)?
+            .into_iter()
+            .rev()
+            .find(|(_, p, _)| *p == proposal.raw());
+        match found {
+            Some((id, _, _)) => self.web(&me, requests::accept_team_invitation_web(id)),
+            None => Err(ApiError::Refused {
+                code: fstp_api_core::ErrorCode::NotFound,
+                rule: "Input",
+                detail: None,
+            }),
+        }
+    }
+
     /// Founds the organisation of a cell whose ledger holds the tenant
     /// part, through real onboarding and activation (ADR-021, SoD-07,
     /// SoD-14, SoD-15, SoD-18): `first` grants both signatory roles to
@@ -262,4 +334,33 @@ impl FakeCell {
             other => Err(format!("pending.list gave {other:?}")),
         }
     }
+}
+
+/// The string members `keys` of each row of an `invitations` reply, in
+/// order. A refusal or another reply gives no row.
+fn invitation_rows(r: &Result<OpResult, ApiError>, keys: &[&str]) -> Vec<Vec<String>> {
+    use fstp_json::ToJson as _;
+    let Ok(OpResult::Done { body, .. }) = r else {
+        return Vec::new();
+    };
+    let json = body.to_json();
+    let Some(rows) = json
+        .as_object()
+        .and_then(|o| o.get("invitations"))
+        .and_then(fstp_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let o = row.as_object()?;
+            keys.iter()
+                .map(|k| {
+                    o.get(k)
+                        .and_then(fstp_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect()
+        })
+        .collect()
 }

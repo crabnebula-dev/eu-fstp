@@ -2163,6 +2163,37 @@ pub const REPLIES: &[(&str, Shape)] = &[
             ),
         ]),
     ),
+    // F-079, ADR-038: the lead's team invitations of one proposal, with
+    // the address the lead typed. A decline, a withdrawal and an expiry
+    // all read `not_joined`, so the lead learns nothing more about the
+    // invitee. Expiry in microseconds as a canonical decimal string.
+    (
+        "proposal.team_invitations",
+        Shape::Object(&[m(
+            "invitations",
+            Shape::Array(&Shape::Object(&[
+                m("invitation", Shape::Id),
+                m("email", Shape::String),
+                m("role", Shape::Enum(&["team_member", "guardian"])),
+                m("state", Shape::Enum(&["open", "joined", "not_joined"])),
+                m("expires", Shape::String),
+            ])),
+        )]),
+    ),
+    // F-079, ADR-038: the open team invitations addressed to the caller's
+    // login email. No address, no lead and no proposal content.
+    (
+        "me.team_invitations",
+        Shape::Object(&[m(
+            "invitations",
+            Shape::Array(&Shape::Object(&[
+                m("invitation", Shape::Id),
+                m("proposal", Shape::Id),
+                m("role", Shape::Enum(&["team_member", "guardian"])),
+                m("expires", Shape::String),
+            ])),
+        )]),
+    ),
     // SA-11: the caller's own display name, or null when none is set.
     (
         "me.display_name",

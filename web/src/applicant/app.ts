@@ -15,6 +15,7 @@ import { h } from "../core/dom.js";
 import { createRouter, type RouteDef, type Router } from "../core/router.js";
 import { mountPrecheck } from "../precheck/page.js";
 import { mountEligibility } from "./eligibility.js";
+import { mountTeamInvitations } from "./invitations.js";
 import { mountNotices, mountProposals } from "./lists.js";
 import { mountGuardian, mountNegotiation } from "./negotiation.js";
 import { mountPlan } from "./plan.js";
@@ -99,6 +100,8 @@ export const PAGES: readonly (RouteDef & { readonly mount: (params: Readonly<Rec
     mount: (p) => mountGuardian(p["proposal"] ?? ""),
   },
   { name: "notices", pattern: "/app/notices", segments: {}, mount: () => mountNotices() },
+  // F-079, ADR-038: the team invitations addressed to the caller.
+  { name: "team.invitations", pattern: "/app/team-invitations", segments: {}, mount: () => mountTeamInvitations() },
 ];
 
 let router: Router | null = null;

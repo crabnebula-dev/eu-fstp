@@ -150,6 +150,17 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
         }
     }
 
+    /// F-079, ADR-038: one bit for a confidential text of a proposal,
+    /// such as a team invitation's address. No text leaves the store.
+    async fn text_equals(&self, r: TextRef, candidate: &[u8]) -> Result<bool, PortError> {
+        match self.open(r.0).await? {
+            (TextClass::Confidential, TextOwner::Proposal(_), body) => {
+                Ok(fstp_api_core::salted::holds(&body, candidate))
+            }
+            _ => Ok(false),
+        }
+    }
+
     async fn get_public(&self, r: PublicTextRef) -> Result<Vec<u8>, PortError> {
         match self.open(r.0).await? {
             (TextClass::Public, _, body) => Ok(body),

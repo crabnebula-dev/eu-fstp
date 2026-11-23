@@ -24,6 +24,8 @@ export const HOME_LABELS: Readonly<Record<string, string>> = Object.freeze({
   "nav.mailbox_count": "Mailbox ({count})",
   "home.mailbox": "Your mailbox: {count} waiting for you",
   "home.mailbox_none": "Your mailbox: nothing waits for you",
+  // F-079, ADR-038: team invitations waiting for the person's answer.
+  "home.team_invitations": "Team invitations waiting for your answer: {count}",
   "nav.home": "Home",
   "nav.account": "Account",
   "nav.theme.to_dark": "Switch to dark theme",

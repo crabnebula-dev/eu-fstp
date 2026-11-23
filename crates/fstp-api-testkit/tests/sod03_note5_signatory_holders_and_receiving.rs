@@ -23,7 +23,7 @@ use fstp_api_core::{ApiError, Op, OpResult};
 use fstp_api_testkit::fake::fixture::{
     self, ADMIN, ADMIN_2, CALL_OPEN, LEAD, OWNER, PX, World, new_member,
 };
-use fstp_api_testkit::fake::{FakeCell, WebLogin, requests};
+use fstp_api_testkit::fake::{FakeCell, WebLogin};
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
 use fstp_engine::{Record, record_from_json_at};
@@ -152,12 +152,15 @@ fn stepped(
     }
 }
 
-fn add_guardian(account: AccountId) -> Result<Op, ApiError> {
-    decode_route(
-        Method::Post,
-        &format!("/proposals/{}/guardian", PX.raw()),
-        format!(r#"{{"account":"{}"}}"#, account.raw()).as_bytes(),
-    )
+/// Whether `a` holds a binding on PX, active or not.
+fn on_team(c: &FakeCell, a: AccountId) -> bool {
+    c.ports
+        .engine
+        .state()
+        .core
+        .roster()
+        .bindings()
+        .any(|(_, b)| b.account == a && b.proposal() == Some(PX))
 }
 
 fn create_draft() -> Result<Op, ApiError> {
@@ -180,37 +183,38 @@ fn grant(account: AccountId, role: &str) -> Result<Op, ApiError> {
 // SoD-03, (b): a signatory holder takes no Receiving binding
 // ---------------------------------------------------------------------------
 
-/// SoD-03, NOTE 5: the lead cannot add a holder of either signatory role
-/// to the team. The refusal names SoD-03 and appends nothing.
+/// SoD-03, NOTE 5: a holder of either signatory role cannot join the team.
+/// Since F-079 (ADR-038) the lead invites and the holder accepts, and
+/// the acceptance is refused naming SoD-03 to the holder only. Nothing
+/// binds the holder.
 #[test]
 fn sod03_note5_a_signatory_holder_is_refused_a_team_member_binding() {
     let c = cell();
     let lead = login(&c, LEAD);
     for s in [FIN, LEG, BOTH] {
-        let before = entries(&c);
-        let r = c.web(&lead, requests::add_member_web(PX, s));
+        let r = c.join_team(&lead, PX, s, false);
         assert!(
             refused_with(&r, "SoD-03"),
             "SoD-03: {s:?} joined the team: {r:?}"
         );
-        assert_eq!(entries(&c), before, "SoD-03: {s:?} appended");
+        assert!(!on_team(&c, s), "SoD-03: {s:?} was bound");
     }
 }
 
-/// SoD-03, NOTE 5: the lead cannot name a holder of either signatory
-/// role as guardian. The refusal names SoD-03 and appends nothing.
+/// SoD-03, NOTE 5: a holder of either signatory role cannot become the
+/// guardian. Since F-079 (ADR-038) the acceptance of the guardian
+/// invitation is refused naming SoD-03, and nothing binds the holder.
 #[test]
 fn sod03_note5_a_signatory_holder_is_refused_a_guardian_binding() {
     let c = cell();
     let lead = login(&c, LEAD);
     for s in [FIN, LEG, BOTH] {
-        let before = entries(&c);
-        let r = c.web(&lead, add_guardian(s));
+        let r = c.join_team(&lead, PX, s, true);
         assert!(
             refused_with(&r, "SoD-03"),
             "SoD-03: {s:?} became guardian: {r:?}"
         );
-        assert_eq!(entries(&c), before, "SoD-03: {s:?} appended");
+        assert!(!on_team(&c, s), "SoD-03: {s:?} was bound");
     }
 }
 
@@ -237,7 +241,7 @@ fn sod03_note5_a_signatory_holder_is_refused_an_applicant_binding() {
 fn sod03_note5_an_account_without_a_signatory_role_joins_the_team() {
     let c = cell();
     let lead = login(&c, LEAD);
-    let r = c.web(&lead, requests::add_member_web(PX, new_member(7)));
+    let r = c.join_team(&lead, PX, new_member(7), false);
     assert!(
         matches!(r, Ok(OpResult::Done { .. })),
         "a plain account was refused: {r:?}"

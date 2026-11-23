@@ -428,6 +428,21 @@ pub enum PortKind {
     ClaimDraft,
     /// A request for a copy of the application (R-SB-04).
     RequestCopy,
+    /// The lead invites a team member by address (F-079, ADR-038). It
+    /// carries the core `InviteToTeam`. Web only.
+    InviteTeamMember,
+    /// The lead invites the guardian by address (F-079, ADR-038). It
+    /// carries the core `InviteToTeam`. Web only.
+    InviteGuardian,
+    /// The lead withdraws an open team invitation (F-079, ADR-038). Web
+    /// only.
+    WithdrawTeamInvitation,
+    /// The invitee accepts a team invitation addressed to its login email
+    /// (F-079, ADR-038). Web only.
+    AcceptTeamInvitation,
+    /// The invitee declines a team invitation addressed to its login email
+    /// (F-079, ADR-038). Web only.
+    DeclineTeamInvitation,
     /// A pre-check run on the team's draft (M7 design section 4,
     /// R-LA-06, I-21, P-23). Web only.
     RequestPrecheck,
@@ -1956,20 +1971,43 @@ pub const OPS: &[OpSpec] = &[
         &IN_PROPOSAL_BODY,
         Scope::ProposalsDraft,
     ),
-    OpSpec::command(
+    // F-079, ADR-038 (Daniel, 2026-11-23): the lead invites by address.
+    // The invitation binds nobody and asks the vault nothing about the
+    // invitee, and its answer is the same whatever the address names. The
+    // two operations keep their names and routes, so the team page posts
+    // `{email}` as before. Web only (I-86).
+    OpSpec::new(
         "proposal.add_member",
-        CK::AddTeamMember,
+        OpKind::M3Port(PortKind::InviteTeamMember),
         Post,
         "/proposals/{proposal}/team",
     )
-    .acting(LEAD),
-    OpSpec::command(
+    .acting(LEAD)
+    .binding(),
+    OpSpec::new(
         "proposal.add_guardian",
-        CK::AddGuardian,
+        OpKind::M3Port(PortKind::InviteGuardian),
         Post,
         "/proposals/{proposal}/guardian",
     )
+    .acting(LEAD)
+    .binding(),
+    // F-079, ADR-038: the lead's own invitations of the proposal, with the
+    // address the lead typed and `open`, `joined` or `not_joined`.
+    OpSpec::read(
+        "proposal.team_invitations",
+        RK::ListTeamInvitations,
+        "/proposals/{proposal}/team/invitations",
+    )
     .acting(LEAD),
+    OpSpec::new(
+        "proposal.withdraw_team_invitation",
+        OpKind::M3Port(PortKind::WithdrawTeamInvitation),
+        Delete,
+        "/proposals/{proposal}/team/invitations/{invitation}",
+    )
+    .acting(LEAD)
+    .binding(),
     OpSpec::new(
         "proposal.state_country",
         OpKind::M3Port(PortKind::StateCountry),
@@ -2528,6 +2566,32 @@ pub const OPS: &[OpSpec] = &[
     // Lane m6/mailbox (`docs/handoff/mailbox-design.md`): the caller's own
     // messages, derived from existing state. Web only: no tool (MB-D5).
     OpSpec::read("me.mailbox", RK::GetMyMailbox, "/me/mailbox").class(Personal),
+    // F-079, ADR-038: the open team invitations addressed to the caller's
+    // login email, and the caller's answer to one. Before acceptance the
+    // caller holds no binding on the proposal, so no role admits them;
+    // the address match is the rule. Web only: no tool (I-86).
+    OpSpec::read(
+        "me.team_invitations",
+        RK::ListMyTeamInvitations,
+        "/me/team-invitations",
+    )
+    .class(Personal),
+    OpSpec::new(
+        "me.accept_team_invitation",
+        OpKind::M3Port(PortKind::AcceptTeamInvitation),
+        Post,
+        "/me/team-invitations/{invitation}/accept",
+    )
+    .class(Personal)
+    .binding(),
+    OpSpec::new(
+        "me.decline_team_invitation",
+        OpKind::M3Port(PortKind::DeclineTeamInvitation),
+        Post,
+        "/me/team-invitations/{invitation}/decline",
+    )
+    .class(Personal)
+    .binding(),
     // MB-Q1, ADR-020 (Proposed): the caller marks a notice of its own
     // mailbox read. Web only: no tool (MB-Q4 waits).
     OpSpec::new(
@@ -3035,6 +3099,13 @@ pub const SYSTEM_ONLY_OTHER: &[OpKind] = &[
 /// only `creator.approve_activation` and `creator.override_activation`
 /// (ADR-022) reach an activation (I-66).
 pub const COMPOSED_ONLY: &[CommandKind] = &[CK::ActivateProgramme];
+
+/// Kinds no registry operation, tool or seed issues any more, which the domain
+/// keeps for replay and for its property tests and model checks: the
+/// lead's `AddTeamMember` and `AddGuardian`. Since F-079 a person joins
+/// a team only by accepting an invitation (ADR-038), through the core
+/// `InviteToTeam` and `AcceptTeamInvitation`.
+pub const RETIRED: &[CommandKind] = &[CK::AddTeamMember, CK::AddGuardian];
 
 /// Kinds whose operations arrive in a later milestone: the calibration
 /// consent kinds of M12. Lane L-API routed every M5 kind.

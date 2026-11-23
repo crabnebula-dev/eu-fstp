@@ -128,3 +128,30 @@ fn adr006_codec_witness_seeds_reject_number_amounts() {
         );
     }
 }
+
+/// F-079, ADR-038, TH-26: the corpora hold a canonical seed for each team
+/// invitation command and record, and each decodes.
+#[test]
+fn m10_f079_codec_seeds_hold_the_team_invitation_kinds() {
+    let codec = codec_for!(Command);
+    let seeds = decoded_seeds(&codec, "command_decode").unwrap_or_else(|e| panic!("{e}"));
+    for kind in [
+        fstp_domain::command::CommandKind::InviteToTeam,
+        fstp_domain::command::CommandKind::WithdrawTeamInvitation,
+        fstp_domain::command::CommandKind::AcceptTeamInvitation,
+        fstp_domain::command::CommandKind::DeclineTeamInvitation,
+    ] {
+        assert!(
+            seeds.iter().any(|(_, c)| c.kind() == kind),
+            "no seed decodes to {kind:?}"
+        );
+    }
+    let codec = codec_for!(Record);
+    let seeds = decoded_seeds(&codec, "record_decode").unwrap_or_else(|e| panic!("{e}"));
+    for tag in [RecordTag::TeamInvited, RecordTag::TeamInvitationClosed] {
+        assert!(
+            seeds.iter().any(|(_, r)| RecordTag::of(r) == tag),
+            "no seed decodes to {tag:?}"
+        );
+    }
+}

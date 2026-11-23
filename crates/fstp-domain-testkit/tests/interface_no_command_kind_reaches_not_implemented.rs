@@ -555,6 +555,7 @@ fn walk(backend: Backend) {
     calibration_consent(&mut walk, backend);
     public_choice(&mut walk, backend);
     unmask(&mut walk, backend);
+    team_invitations(&mut walk, backend);
 
     walk.w
         .invariants()
@@ -741,4 +742,91 @@ fn interface_no_command_kind_reaches_not_implemented() {
 #[test]
 fn interface_no_command_kind_reaches_not_implemented_on_the_reference() {
     walk(Backend::Reference);
+}
+
+/// The team invitation commands of F-079 (ADR-038). They run in a roles
+/// world through production `decide`, since the money references hold no
+/// invitation model. The reference twin skips them.
+/// `m10_f079_team_invitations` pins the rules themselves.
+fn team_invitations(walk: &mut Walk, backend: Backend) {
+    use fstp_domain::id::{ContentDigest, ProposalId, TeamInvitationId, TextId, TextRef};
+    use fstp_domain_testkit::r#gen::roster::{A, C, Facts, SodSetup, SodWorld, draft, sod_truth};
+    let kinds = [
+        CommandKind::InviteToTeam,
+        CommandKind::WithdrawTeamInvitation,
+        CommandKind::DeclineTeamInvitation,
+        CommandKind::AcceptTeamInvitation,
+    ];
+    if backend == Backend::Reference {
+        walk.seen.extend(kinds);
+        return;
+    }
+    let mut setup = SodSetup::one(1, &[1]);
+    setup.published = vec![call(1)];
+    let mut w = SodWorld::from_setup(backend, sod_truth(), &setup)
+        .unwrap_or_else(|e| panic!("roles world: {e}"));
+    w.now = T0;
+    let p = ProposalId::from_raw(510);
+    let invitation = |n: u128| TeamInvitationId::from_raw(71_000u128.saturating_add(n));
+    let invite = |n: u128| {
+        Step::by(
+            C,
+            Flags::NONE,
+            Command::InviteToTeam {
+                proposal: p,
+                invitation: invitation(n),
+                contact: TextRef::new(
+                    TextId::from_raw(924_000u128.saturating_add(n)),
+                    ContentDigest::from_bytes([9; 32]),
+                ),
+                guardian: false,
+            },
+        )
+    };
+    let steps = [
+        draft(C, p, call(1), BindingId::from_raw(610), false),
+        invite(1),
+        invite(2),
+        invite(3),
+        Step::by(
+            C,
+            Flags::NONE,
+            Command::WithdrawTeamInvitation {
+                proposal: p,
+                invitation: invitation(1),
+            },
+        ),
+        Step::by(
+            A,
+            Flags::NONE,
+            Command::DeclineTeamInvitation {
+                proposal: p,
+                invitation: invitation(2),
+            },
+        ),
+        Step::by(
+            A,
+            Flags::NONE,
+            Command::AcceptTeamInvitation {
+                proposal: p,
+                invitation: invitation(3),
+                binding: BindingId::from_raw(611),
+            },
+        ),
+    ];
+    for step in steps {
+        let kind = step.cmd.kind();
+        match w
+            .exec(&step, Facts::Effective)
+            .unwrap_or_else(|e| panic!("roles world: {e}"))
+        {
+            Ok(_) => {
+                walk.seen.insert(kind);
+            }
+            Err(r) if is_not_implemented(&r) => {
+                panic!("{kind:?} reached a not-implemented refusal")
+            }
+            Err(r) => panic!("production refuses a legal {kind:?} with {r}"),
+        }
+    }
 }

@@ -19,8 +19,8 @@ use std::path::PathBuf;
 
 use fstp_access::{
     COMPOSED_ONLY, CreatorKind, FindingKind, ImportKind, LATER, Milestone, OPS, OpKind, OpSpec,
-    READ_RULES, ReadKind, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER, SessionNeed,
-    TenantKind, TenantParam,
+    READ_RULES, RETIRED, ReadKind, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER,
+    SessionNeed, TenantKind, TenantParam,
 };
 use fstp_domain::{CommandKind, StateTag};
 use fstp_engine::FindingCommand;
@@ -95,6 +95,19 @@ fn carried(kind: OpKind) -> &'static [CommandKind] {
         | OpKind::Read(ReadKind::GetOwnStage2Thread) => &[CommandKind::ReadContent],
         // M6 lane L6-API: the copy request port appends `RequestCopy` (R-SB-04).
         OpKind::M3Port(fstp_access::PortKind::RequestCopy) => &[CommandKind::RequestCopy],
+        // F-079, ADR-038: the team invitation ports append the core commands.
+        OpKind::M3Port(
+            fstp_access::PortKind::InviteTeamMember | fstp_access::PortKind::InviteGuardian,
+        ) => &[CommandKind::InviteToTeam],
+        OpKind::M3Port(fstp_access::PortKind::WithdrawTeamInvitation) => {
+            &[CommandKind::WithdrawTeamInvitation]
+        }
+        OpKind::M3Port(fstp_access::PortKind::AcceptTeamInvitation) => {
+            &[CommandKind::AcceptTeamInvitation]
+        }
+        OpKind::M3Port(fstp_access::PortKind::DeclineTeamInvitation) => {
+            &[CommandKind::DeclineTeamInvitation]
+        }
         _ => &[],
     }
 }
@@ -162,6 +175,8 @@ const NEW_IN_M4: [&str; 4] = [
 /// system-only, 1 composed and 15 later kinds, 62 in all. M5 adds the
 /// system-only `RecordChecks`, so 63. M6 lane L6-API routes `RequestCopy`
 /// through the copy request port.
+/// F-079 (ADR-038) retires the lead's `AddTeamMember` and `AddGuardian`
+/// into `RETIRED` and routes the four team invitation kinds.
 #[test]
 fn ops_cover_every_command_kind_once() {
     let all: BTreeSet<String> = names(&CommandKind::ALL);
@@ -186,6 +201,12 @@ fn ops_cover_every_command_kind_once() {
     }
     let system = names(SYSTEM_ONLY);
     let composed = names(COMPOSED_ONLY);
+    let retired = names(RETIRED);
+    assert_eq!(
+        retired,
+        BTreeSet::from(["AddTeamMember".to_string(), "AddGuardian".to_string()]),
+        "RETIRED (F-079, ADR-038)"
+    );
     let later: BTreeSet<String> = LATER.iter().map(|(k, _)| kind_name(*k)).collect();
 
     let expected_system: BTreeSet<String> =
@@ -235,6 +256,9 @@ fn ops_cover_every_command_kind_once() {
         if composed.contains(k) {
             at.push("COMPOSED_ONLY");
         }
+        if retired.contains(k) {
+            at.push("RETIRED");
+        }
         if later.contains(k) {
             at.push("LATER");
         }
@@ -251,11 +275,12 @@ fn ops_cover_every_command_kind_once() {
     // M5 lane L-API routes the 15 M5 kinds and M6 lane L6-API one (RequestCopy): 37 plus 15 plus 1.
     // M9 lane P1 routes the two public choice kinds: 55. ADR-023 routes
     // `UnmaskParty`: 56.
-    assert_eq!(routed.len(), 56, "routed command kinds");
+    // F-079, ADR-038: two kinds retired, four team invitation kinds routed: 58.
+    assert_eq!(routed.len(), 58, "routed command kinds");
     assert_eq!(
         all.len(),
-        70,
-        "CommandKind::ALL in M4, with RecordChecks of M5, the three consent kinds of M12, RequestCopy of M6, the two public choice kinds of M9 and UnmaskParty of ADR-023"
+        74,
+        "CommandKind::ALL in M4, with RecordChecks of M5, the three consent kinds of M12, RequestCopy of M6, the two public choice kinds of M9, UnmaskParty of ADR-023 and the four team invitation kinds of ADR-038"
     );
 }
 
@@ -577,8 +602,9 @@ fn ops_high_risk_and_binding_follow_the_domain() {
     // 37, which counted kinds, not operations.)
     // M5 lane L-API routes the 15 kinds of M5 that `LATER` held, so 49.
     // M9 lane P1 adds `SetPublicChoice` and `WithdrawPublicChoice`, so 51.
-    // ADR-023 adds `UnmaskParty`, so 52.
-    assert_eq!(kinds.len(), 52, "command kinds of command operations");
+    // ADR-023 adds `UnmaskParty`, so 52. F-079 (ADR-038) moves
+    // `AddTeamMember` and `AddGuardian` off command operations, so 50.
+    assert_eq!(kinds.len(), 50, "command kinds of command operations");
     assert!(checked >= 36, "only {checked} command operations");
 }
 
@@ -1208,7 +1234,7 @@ fn states_ok(states: &[StateTag]) -> bool {
 /// replaces an exhaustive match, which could not name the m4reg kinds
 /// before they exist. A read missing here fails
 /// `d11_read_kinds_are_the_design_reads_and_the_m4reg_reads`.
-const READ_NAMES: [&str; 84] = [
+const READ_NAMES: [&str; 86] = [
     "ListOpenCalls",
     "GetPublicCall",
     "GetGuide",
@@ -1313,6 +1339,9 @@ const READ_NAMES: [&str; 84] = [
     "GetAssessmentInput",
     // Lane L20 (ADR-028): the System page.
     "GetSystemStatus",
+    // F-079, ADR-038: the lead's team invitations and the caller's own.
+    "ListTeamInvitations",
+    "ListMyTeamInvitations",
 ];
 
 /// The index of `k` in [`READ_NAMES`], or `usize::MAX` for a read the

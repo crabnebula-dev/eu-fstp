@@ -1699,8 +1699,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("proposal.precheck", T::Proposal, R::DraftingTeam),
     RefOp::read("proposal.precheck_runs", T::Proposal, R::DraftingTeam),
     RefOp::act("proposal.record_plan", T::Proposal, R::Lead).tool("fstp_record_plan_version"),
+    // F-079, ADR-038: the lead invites by address and withdraws; web only.
     RefOp::act("proposal.add_member", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.add_guardian", T::Proposal, R::Lead).binding(),
+    RefOp::read("proposal.team_invitations", T::Proposal, R::Lead),
+    RefOp::act("proposal.withdraw_team_invitation", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.state_country", T::Proposal, R::Lead),
     // ADR-032 (Daniel, 2026-11-22): web only, the lead claims an
     // anonymous draft into its own draft.
@@ -1854,6 +1857,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane m6/mailbox: any account reads its own mailbox, web only, with
     // no tool (MB-D5, I-86).
     RefOp::read("me.mailbox", T::None, R::AnyAccount),
+    // F-079, ADR-038: any account reads and answers the invitations
+    // addressed to its login email; the address match is a guard.
+    RefOp::read("me.team_invitations", T::None, R::AnyAccount),
+    RefOp::act("me.accept_team_invitation", T::None, R::AnyAccount).binding(),
+    RefOp::act("me.decline_team_invitation", T::None, R::AnyAccount).binding(),
     RefOp::act("me.end_session", T::None, R::AnyAccount),
     // SA-11: "Each account may set its own display name on its account
     // page, and clear it." Reading: any account reads and sets its own,

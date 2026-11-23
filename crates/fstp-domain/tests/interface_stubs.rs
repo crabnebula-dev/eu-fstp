@@ -1207,5 +1207,24 @@ fn sample(kind: CommandKind) -> Command {
             subject: fstp_domain::unmask::UnmaskSubject::Binding(binding),
             purpose: text_ref(27),
         },
+        K::InviteToTeam => Command::InviteToTeam {
+            proposal,
+            invitation: fstp_domain::id::TeamInvitationId::from_raw(7),
+            contact: text_ref(28),
+            guardian: false,
+        },
+        K::WithdrawTeamInvitation => Command::WithdrawTeamInvitation {
+            proposal,
+            invitation: fstp_domain::id::TeamInvitationId::from_raw(7),
+        },
+        K::AcceptTeamInvitation => Command::AcceptTeamInvitation {
+            proposal,
+            invitation: fstp_domain::id::TeamInvitationId::from_raw(7),
+            binding,
+        },
+        K::DeclineTeamInvitation => Command::DeclineTeamInvitation {
+            proposal,
+            invitation: fstp_domain::id::TeamInvitationId::from_raw(7),
+        },
     }
 }

@@ -6,8 +6,8 @@
 
 use fstp_api_core::ApiError;
 use fstp_api_core::port::LoginMethod;
+use fstp_api_testkit::fake::FakeCell;
 use fstp_api_testkit::fake::fixture::{self, ADMIN, ADMIN_2, LEAD, PX, World, new_member};
-use fstp_api_testkit::fake::{FakeCell, requests};
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
 use fstp_engine::{Record, record_from_json_at};
@@ -50,9 +50,9 @@ fn put(store: &mut MemStore<Record>, n: u8, at: i64, records: Vec<Record>) {
 /// programme." Financial signatory is an Operations role that acts in
 /// every programme of the tenant (NOTE 5), as tenant admin does, and the
 /// grant path refuses a holder of a Receiving binding. The reverse order
-/// is open: once `new_member(0)` holds Financial signatory, the lead adds
-/// it to proposal PX as a team member (a Receiving binding), and the core
-/// accepts it, since nothing tells the core of tenant-wide holders.
+/// is open: once `new_member(0)` holds Financial signatory, the lead invites
+/// it to proposal PX as a team member and it accepts (a Receiving binding,
+/// F-079), and the core admits it, since nothing tells the core of tenant-wide holders.
 #[test]
 fn review_sod03_signatory_holder_cannot_take_a_receiving_binding() {
     let signatory = new_member(0);
@@ -97,7 +97,8 @@ fn review_sod03_signatory_holder_cannot_take_a_receiving_binding() {
     c.found(ADMIN, ADMIN_2, AccountId::from_raw(0x0f05_1600))
         .unwrap_or_else(|e| panic!("ADR-021: the founding: {e}"));
     let lead = c.login(LEAD, LoginMethod::Passkey);
-    let r = c.web(&lead, requests::add_member_web(PX, signatory));
+    // F-079 (ADR-038): the lead invites and the signatory accepts.
+    let r = c.join_team(&lead, PX, signatory, false);
     assert!(
         matches!(&r, Err(ApiError::Refused { rule, .. }) if *rule == "SoD-03"),
         "SoD-03: a Financial signatory took a Receiving binding: {r:?}"

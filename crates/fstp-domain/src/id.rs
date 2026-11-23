@@ -84,6 +84,9 @@ id!(
     /// creator's id, so a core `TermsAccepted` names the invitation it
     /// accepts.
     RoleInvitationId,
+    /// An invitation to the team of a proposal, or as its guardian
+    /// (F-079, ADR-038). The shell draws it at random.
+    TeamInvitationId,
 );
 
 /// Idempotency key of one command, from the shell.

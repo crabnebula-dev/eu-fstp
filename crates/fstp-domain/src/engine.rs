@@ -207,7 +207,11 @@ const fn command_lane(kind: CommandKind) -> Lane {
         | K::DeclineAfterConcern
         | K::ReEnter
         | K::Withdraw
-        | K::RequestCopy => Lane::Proposal,
+        | K::RequestCopy
+        | K::InviteToTeam
+        | K::WithdrawTeamInvitation
+        | K::AcceptTeamInvitation
+        | K::DeclineTeamInvitation => Lane::Proposal,
         K::RecordKnockOut
         | K::AdmitToStage1
         | K::CloseStage1
@@ -280,6 +284,8 @@ const fn record_lane(record: &Record) -> Option<Lane> {
         | Record::RevisionSubmitted { .. }
         | Record::DeferralRecorded { .. }
         | Record::ReEntered { .. }
+        | Record::TeamInvited { .. }
+        | Record::TeamInvitationClosed { .. }
         | Record::Transitioned(_) => Lane::Proposal,
         Record::KnockOutRecorded { .. }
         | Record::Stage1Closed(_)

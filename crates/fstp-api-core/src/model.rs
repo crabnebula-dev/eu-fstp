@@ -122,6 +122,9 @@ pub enum ReadModel {
     Members(crate::dispatch::team::MembersView),
     /// SA-11: the caller's own display name.
     DisplayName(crate::dispatch::team::DisplayNameView),
+    /// F-079, ADR-038: the lead's team invitations of a proposal, or the
+    /// caller's own open ones.
+    TeamInvitations(crate::dispatch::team_invite::TeamInvitationsView),
     /// `proposal.get_plan`: the plan the team recorded, read back, or
     /// `None` before the first plan (R-SB-01, lane m4/author-reads).
     Plan(Option<crate::views::PlanView>),
@@ -329,6 +332,7 @@ impl ToJson for ReadModel {
             ReadModel::Team(v) => v.to_json(),
             ReadModel::Members(v) => v.to_json(),
             ReadModel::DisplayName(v) => v.to_json(),
+            ReadModel::TeamInvitations(v) => v.to_json(),
             ReadModel::Plan(p) => {
                 let mut o = Object::new();
                 let _ = o.insert("plan", p.as_ref().map_or(Value::Null, ToJson::to_json));
@@ -378,6 +382,11 @@ impl ReadModel {
             // emails. Both are web only (I-86).
             ReadModel::Team(v) => v.rows.iter().any(|r| r.email.is_some()),
             ReadModel::Members(v) => v.members.iter().any(|r| r.email.is_some()),
+            // F-079, ADR-038: the lead's team invitations name the address
+            // the lead typed. Web only (I-86).
+            ReadModel::TeamInvitations(
+                crate::dispatch::team_invite::TeamInvitationsView::Lead(rows),
+            ) => !rows.is_empty(),
             _ => false,
         }
     }
@@ -1806,6 +1815,12 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Team(_) => &["team.list"],
             ReadModel::Members(_) => &["admin.members"],
             ReadModel::DisplayName(_) => &["me.display_name"],
+            ReadModel::TeamInvitations(
+                crate::dispatch::team_invite::TeamInvitationsView::Lead(_),
+            ) => &["proposal.team_invitations"],
+            ReadModel::TeamInvitations(crate::dispatch::team_invite::TeamInvitationsView::Own(
+                _,
+            )) => &["me.team_invitations"],
             ReadModel::Plan(_) => &["proposal.get_plan"],
             ReadModel::Journey(_) => &["proposal.journey"],
             ReadModel::Diary(_) => &["proposal.diary"],
@@ -2454,6 +2469,23 @@ pub(crate) mod reply_shape_tests {
                 "Synthetic Name".to_owned(),
             ))),
             ReadModel::DisplayName(crate::dispatch::team::DisplayNameView(None)),
+            ReadModel::TeamInvitations(crate::dispatch::team_invite::TeamInvitationsView::Lead(
+                vec![crate::dispatch::team_invite::LeadRow {
+                    invitation: fstp_domain::id::TeamInvitationId::from_raw(5),
+                    email: "member@e2e.invalid".to_owned(),
+                    guardian: false,
+                    state: "open",
+                    expires: Timestamp::from_micros(9),
+                }],
+            )),
+            ReadModel::TeamInvitations(crate::dispatch::team_invite::TeamInvitationsView::Own(
+                vec![crate::dispatch::team_invite::OwnRow {
+                    invitation: fstp_domain::id::TeamInvitationId::from_raw(5),
+                    proposal: ProposalId::from_raw(11),
+                    guardian: true,
+                    expires: Timestamp::from_micros(9),
+                }],
+            )),
             ReadModel::Plan(None),
             ReadModel::Plan(Some(plan_view(true))),
             ReadModel::Plan(Some(plan_view(false))),
@@ -2715,13 +2747,13 @@ pub(crate) mod reply_shape_tests {
             }
         }
         assert_eq!(
-            bearing, 3,
-            "the invitation list and the SA-11 team and member pages"
+            bearing, 4,
+            "the invitation list, the SA-11 team and member pages and the lead's team invitations (F-079)"
         );
     }
 
     /// The number of [`ReadModel`] variants.
-    const VARIANTS: usize = 61;
+    const VARIANTS: usize = 62;
 
     /// The position of `m`'s variant in the declaration of [`ReadModel`].
     /// The match has no wildcard, so a new variant fails to compile here,
@@ -2789,6 +2821,7 @@ pub(crate) mod reply_shape_tests {
             ReadModel::Logos(_) => 58,
             ReadModel::ClientAssessment(_) => 59,
             ReadModel::System(_) => 60,
+            ReadModel::TeamInvitations(_) => 61,
         }
     }
 
