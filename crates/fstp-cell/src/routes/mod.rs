@@ -40,7 +40,7 @@ pub use backend::{
     AnchorRow, Backend, BackendFault, ChallengePurpose, ChallengeRow, ErasureRow, SessionRow,
     TokenKind, TokenRow,
 };
-pub(crate) use handle::{CellCfg, Ctx, Outcome, Rule, serve_route, unrouted};
+pub(crate) use handle::{CellCfg, Ctx, Outcome, Rule, serve_route, unrouted, unrouted_public};
 pub use limits::{AuthLimits, Limit};
 
 use fstp_cell_core::gate::HighRiskAction;

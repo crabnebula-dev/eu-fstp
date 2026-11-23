@@ -721,6 +721,15 @@ fn site_sheet(req: &Request) -> Reply {
     }
 }
 
+/// Whether [`unrouted`] answers `path` as the public surface: a path
+/// under `/p/` (M4 design section 3.10). The front gives that answer the
+/// public header profile (R-PB-04). It refused every path that
+/// percent-encodes an unreserved character first, so `/p/` has one
+/// spelling here (ADR-026 amendment of 2026-11-23, M10 F-083).
+pub(crate) fn unrouted_public(path: &str) -> bool {
+    path.starts_with("/p/")
+}
+
 /// The answer to a path no route matches (lane m4/pubtext), as the web
 /// adapter answers it:
 ///
@@ -735,7 +744,7 @@ fn site_sheet(req: &Request) -> Reply {
 pub(crate) async fn unrouted<B: Backend>(ctx: &Ctx<B>, req: &Request) -> (Response, Outcome) {
     let path = req.target.path();
     let get = req.method == fstp_http::Method::GET || req.method == fstp_http::Method::HEAD;
-    let reply = if path.starts_with("/p/") {
+    let reply = if unrouted_public(path) {
         if let Some(refused) = public_rate_limited(ctx, req) {
             refused
         } else if get && fstp_http::is_page_navigation(req) {
