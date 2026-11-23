@@ -53,18 +53,27 @@ pub fn card_of_spec(programme: ProgrammeId, spec: &Value) -> FundingCard {
 }
 
 /// The funding acknowledgement of a programme (L-08, ADR-036): the
-/// approved text of its P-53 profile id, filled with its name, grant
+/// approved text of the version its P-53 pins, moved to its current
+/// version (ADR-036 section 8), filled with its name, grant
 /// agreement number and acronym. `None` with the codes of what is
-/// missing: `profile` when no shipped version of the id holds an
-/// approved text, else each slot without a value.
+/// missing: `profile` when that version holds no approved text, else each slot without a value.
 fn acknowledgement(
     spec: &Value,
     name: Option<&str>,
     number: Option<&str>,
     acronym: Option<&str>,
 ) -> (Option<String>, Vec<&'static str>) {
+    // ADR-036 sections 4 and 8: the programme's own pin, moved to its
+    // current version through the successor table.
+    let version = spec
+        .get("funder")
+        .and_then(|f| f.get("p53_funder_profile"))
+        .and_then(|p| p.get("version"))
+        .and_then(Value::as_i64)
+        .and_then(|v| u16::try_from(v).ok());
     let Some(w) = member(spec, &["funder", "p53_funder_profile", "profile"])
-        .and_then(|id| fstp_report::profile::approved_acknowledgement(&id))
+        .zip(version)
+        .and_then(|(id, v)| fstp_report::profile::approved_acknowledgement_at(&id, v))
     else {
         return (None, vec!["profile"]);
     };
@@ -210,10 +219,15 @@ mod tests {
 
     /// A spec with the Horizon Europe P-53 and the given funder values.
     fn he_spec(name: &str, number: &str, acronym: Option<&str>) -> Value {
+        he_spec_at(name, number, acronym, 1)
+    }
+
+    /// [`he_spec`] with P-53 pinning `version`.
+    fn he_spec_at(name: &str, number: &str, acronym: Option<&str>, version: u16) -> Value {
         let acronym = acronym.map_or("null".to_owned(), |a| format!("\"{a}\""));
         fstp_json::parse(
             format!(
-                r#"{{"funder":{{"action_acronym":{acronym},"action_number":"{number}","coordinator_contact":null,"coordinator_name":null,"p53_funder_profile":{{"profile":"horizon-europe","version":1}}}},"identity":{{"name":"{name}"}}}}"#
+                r#"{{"funder":{{"action_acronym":{acronym},"action_number":"{number}","coordinator_contact":null,"coordinator_name":null,"p53_funder_profile":{{"profile":"horizon-europe","version":{version}}}}},"identity":{{"name":"{name}"}}}}"#
             )
             .as_bytes(),
         )
@@ -222,7 +236,7 @@ mod tests {
 
     /// L-08, I-69 (ADR-036): a programme with its name, grant agreement
     /// number and acronym shows the approved sentence. Its P-53 pins v1,
-    /// and the card reads the newest approved version of that profile.
+    /// which the card reads moved to v2 (ADR-036 section 8).
     #[test]
     fn l08_card_shows_the_approved_acknowledgement() {
         let c = card_of_spec(
@@ -242,6 +256,28 @@ mod tests {
             "{text}"
         );
         assert!(text.contains(r#""acknowledgement_missing":[]"#), "{text}");
+    }
+
+    /// ADR-036 sections 4 and 8: a v2 pin shows the same sentence, and a
+    /// version no profile ships shows none and names `profile`.
+    #[test]
+    fn adr036_q1_card_reads_its_own_pin() {
+        let v2 = card_of_spec(
+            ProgrammeId::from_raw(7),
+            &he_spec_at("Synthetic programme", "SYNTHETIC-000000000", Some("SYN"), 2),
+        );
+        let v1 = card_of_spec(
+            ProgrammeId::from_raw(7),
+            &he_spec("Synthetic programme", "SYNTHETIC-000000000", Some("SYN")),
+        );
+        assert!(v2.acknowledgement.is_some());
+        assert_eq!(v2.acknowledgement, v1.acknowledgement);
+        let v9 = card_of_spec(
+            ProgrammeId::from_raw(7),
+            &he_spec_at("Synthetic programme", "SYNTHETIC-000000000", Some("SYN"), 9),
+        );
+        assert_eq!(v9.acknowledgement, None);
+        assert_eq!(v9.acknowledgement_missing, vec!["profile"]);
     }
 
     /// L-08 (Daniel, 2026-11-22): a missing value shows no sentence, and

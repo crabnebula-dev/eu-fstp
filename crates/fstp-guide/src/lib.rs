@@ -57,7 +57,7 @@ pub use corrigendum::{Corrigendum, corrigendum, page_with_corrigenda};
 pub use preview::{PreviewBlock, PreviewKind, preview_text};
 pub use profile::{
     FunderProfile, HORIZON_EUROPE, LEGAL_MARKER, LEGAL_SECTIONS, LegalSection, MAX_GUIDE_BYTES,
-    ProfileError, ProfileFiles, ProfileSource, ShippedProfiles, WordingStatus,
+    ProfileError, ProfileFiles, ProfileSource, SHIPPED_VERSIONS, ShippedProfiles, WordingStatus,
 };
 pub use publication::{GuideSource, PublicationError, publication_guide};
 pub use render::{

@@ -9,7 +9,7 @@
 
 use fstp_prop::{check, prop_assert, prop_assert_eq};
 use fstp_report::profile::{
-    HORIZON_EUROPE_V1, HORIZON_EUROPE_V2, ProfileError, WordingStatus, approved_acknowledgement,
+    HORIZON_EUROPE_V1, HORIZON_EUROPE_V2, ProfileError, WordingStatus, approved_acknowledgement_at,
     parse_profile, shipped,
 };
 use fstp_report::wording::{self, Slot, SlotValues, WordingError, parse_text};
@@ -116,15 +116,17 @@ fn i69_approved_status_needs_a_stored_text() {
     ));
 }
 
-/// I-69 (ADR-036 section 4): a card reads the newest shipped version of
-/// its profile id whose acknowledgement is approved. Another id reads
+/// I-69 (ADR-036 sections 4 and 8): a card reads its pin moved to the
+/// current version, whose acknowledgement is approved. Another id reads
 /// nothing.
 #[test]
-fn i69_card_reads_the_newest_approved_acknowledgement() {
-    let w = approved_acknowledgement("horizon-europe").unwrap();
-    assert_eq!(w.reference(), ACK_REF);
-    assert!(approved_acknowledgement("tenant-he").is_none());
-    assert!(approved_acknowledgement("").is_none());
+fn i69_card_reads_the_approved_acknowledgement_of_its_moved_pin() {
+    for v in [1, 2] {
+        let w = approved_acknowledgement_at("horizon-europe", v).unwrap();
+        assert_eq!(w.reference(), ACK_REF);
+    }
+    assert!(approved_acknowledgement_at("tenant-he", 1).is_none());
+    assert!(approved_acknowledgement_at("", 1).is_none());
 }
 
 /// A slot value as a test draws it: absent, blank or text.

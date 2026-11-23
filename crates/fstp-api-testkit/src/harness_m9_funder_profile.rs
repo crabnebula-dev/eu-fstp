@@ -44,8 +44,8 @@ fn seeder(w: Built) -> Seeder {
 }
 
 /// R-RP-01, R-AC-01, I-86: every programme staff role reads the pinned
-/// profile, which is the shipped Horizon Europe v1 (Daniel, 2026-11-15
-/// late), and nobody else does.
+/// profile, which is the shipped Horizon Europe v2 (Daniel, 2026-11-15
+/// late; v2 since 2026-11-23, ADR-036 section 8), and nobody else does.
 #[test]
 fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_programme_staff() {
     let w = world();
@@ -53,7 +53,7 @@ fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_programme_staff() {
     let mut seed = seeder(w);
     let path = format!("/programmes/{p}/funder-profile");
     // The shipped file, read here with no help from `fstp-report`.
-    let file: &[u8] = include_bytes!("../../fstp-report/profiles/horizon-europe/profile.v1.json");
+    let file: &[u8] = include_bytes!("../../fstp-report/profiles/horizon-europe/profile.v2.json");
     let digest: String = fstp_crypto::sha256(file)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -69,7 +69,7 @@ fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_programme_staff() {
     };
     let kinds = list("outputs", "kind");
     let keys = list("visibility_elements", "key");
-    assert_eq!(kinds.len(), 5, "HE v1 defines the five outputs");
+    assert_eq!(kinds.len(), 5, "HE v2 defines the five outputs");
     for who in [
         PM,
         DRAFTER,
@@ -106,7 +106,7 @@ fn r_rp_01_funder_profile_view_shows_the_pinned_profile_to_programme_staff() {
         );
         assert_eq!(
             str_member(&profile, "version").as_deref(),
-            Some("1"),
+            Some("2"),
             "{text}"
         );
         assert_eq!(

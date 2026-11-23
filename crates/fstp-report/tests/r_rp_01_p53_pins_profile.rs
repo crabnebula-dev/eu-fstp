@@ -8,20 +8,30 @@ use fstp_report::profile::{ProfileError, WordingStatus, for_p53, for_p53_with, s
 
 /// R-RP-01, P-53: the P-53 value the creator compiles for the Horizon
 /// Europe profile resolves to the shipped Horizon Europe report profile,
-/// version 1, and its digest is the SHA-256 of the shipped file.
+/// version 2 since 2026-11-23 (ADR-036 section 8), and its digest is the
+/// SHA-256 of the shipped file. A v1 pin still resolves to v1.
 #[test]
 fn r_rp_01_p53_pins_the_shipped_profile_version() {
     let p53 = fstp_programme::FunderProfile::horizon_europe()
         .policy_ref()
         .unwrap();
     let p = for_p53(p53.0.as_str()).unwrap();
+    assert_eq!((p.id(), p.version()), ("horizon-europe", 2));
+    assert_eq!(
+        p.digest().bytes(),
+        fstp_crypto::sha256(fstp_report::profile::HORIZON_EUROPE_V2)
+    );
+    assert!(p.pin().matches_p53(p53.0.as_str()));
+    assert_eq!(p, shipped("horizon-europe", 2).unwrap());
+    let v1 = fstp_programme::FunderProfile::horizon_europe_v1()
+        .policy_ref()
+        .unwrap();
+    let p = for_p53(v1.0.as_str()).unwrap();
     assert_eq!((p.id(), p.version()), ("horizon-europe", 1));
     assert_eq!(
         p.digest().bytes(),
         fstp_crypto::sha256(fstp_report::profile::HORIZON_EUROPE_V1)
     );
-    assert!(p.pin().matches_p53(p53.0.as_str()));
-    assert_eq!(p, shipped("horizon-europe", 1).unwrap());
 }
 
 /// R-RP-01, D3: a P-53 value that names another version, another
