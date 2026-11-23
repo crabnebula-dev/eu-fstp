@@ -526,6 +526,9 @@ fn param(name: &str, who: Who, t: &Targets, session: Option<u128>) -> Result<Str
         "import_proposal" => "1".to_owned(),
         // SA-12: an id no world registers, so the removal meets a guard.
         "import_document" => "1".to_owned(),
+        // ADR-007 (lane L39): an import document no world registers, so
+        // the erasure meets a guard after its actor rule.
+        "document" => "1".to_owned(),
         "client" => account
             .map(|a| other_agent_of(a).raw())
             .unwrap_or(1)
@@ -895,6 +898,7 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
         ]),
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
         "admin.request_erasure" => obj(vec![("cause", s("retention_expiry")), ("grant", s("41"))]),
+        "admin.erase_document" => obj(vec![("reason", s("Synthetic matrix reason"))]),
         "creator.invite" => obj(vec![
             ("email", s("invitee@matrix.invalid")),
             ("role", s("programme_manager")),

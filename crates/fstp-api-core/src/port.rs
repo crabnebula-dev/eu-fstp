@@ -1357,6 +1357,13 @@ pub struct ErasureRow {
     /// The root epoch whose destruction completed the erasure, once the
     /// store knows it (I-81, lane L33).
     pub destroyed_epoch: Option<u64>,
+    /// Whether the system authorised it rather than an account (ADR-007,
+    /// Daniel 2026-11-23, question 3; lane L39). The row never names
+    /// which account (R-CF-03).
+    pub by_system: bool,
+    /// The text of the reason a tenant admin stated, if any (lane L39),
+    /// resolved at read time under the reader's clearance (I-97).
+    pub reason: Option<TextRef>,
 }
 
 /// What an erased text held (ADR-007 section "Built by lane L33").
@@ -1412,6 +1419,30 @@ pub trait BlobStore: Send + Sync {
     /// clearance: a logo is public data (ADR-030). A blob of any other
     /// owner is refused. The default fails closed.
     fn get_brand(&self, r: BlobRef) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send {
+        let _ = r;
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
+    /// Erases blob `r` of `owner` as tenant admin `by` asked, with the
+    /// stated reason `reason`, a text of the text store (ADR-007, Daniel
+    /// 2026-11-23, decision 1c; lane L39). Only an import document of a
+    /// programme is erased: a brand asset is refused. The key dies with
+    /// the next erasure batch, and the sealed row is deleted after it. A
+    /// blob already erased is a no-op. The default fails closed.
+    fn erase(
+        &self,
+        owner: BlobOwner,
+        r: BlobRef,
+        by: AccountId,
+        reason: TextRef,
+    ) -> impl Future<Output = Result<(), PortError>> + Send {
+        let _ = (owner, r, by, reason);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
+    /// Whether blob `r` is erased or under erasure (lane L39). The default
+    /// fails closed.
+    fn erased(&self, r: BlobRef) -> impl Future<Output = Result<bool, PortError>> + Send {
         let _ = r;
         std::future::ready(Err(PortError::Unavailable))
     }

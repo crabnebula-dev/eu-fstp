@@ -228,3 +228,54 @@ Before this lane no production path erased a document. `doc.blob` is append-only
 | `admin.erasures` | The reply's `kind` gains `document`. `CellTexts::erasures` maps each kind code it knows and fails the read closed on any other |
 
 Tests, written before the code: `r_ky_02_i81_document_erasure_is_logged_then_completed_by_its_epoch`, `adr007_document_erasure_refusals` and `i24_document_erasure_round_trips` (`crates/fstp-cell-core/tests/adr007_document_erasure.rs`); `r_ky_02_i81_production_cell_logs_a_document_erasure` (the production cell over PostgreSQL, `crates/fstp-celltest/tests/adr007_document_erasure_pg.rs`); `adr007_l37_document_kind_has_a_label` (`web/test/admin_erasures.test.ts`).
+
+## Decided by Daniel on 2026-11-23, built by lane L39 `prod/erasure-triggers`: what erases a document, and the sealed row
+
+Daniel answered the open questions 1 to 3 of section "Built by lane L37" on 2026-11-23. Written before the code. His decisions are in the first table. The second table holds the lane's readings, each interim, pending Daniel, unless it says otherwise.
+
+| Decision (Daniel, 2026-11-23) | Text |
+| --- | --- |
+| 1a. Identity documents | An identity document is erased once identity verification is complete, when the result is recorded |
+| 1b. Retention | The runner erases a document automatically when its retention period ends. The periods are the ones the SPEC defines. Where a period is missing, it is recorded as `TODO(legal)` and nothing of that class is erased |
+| 1c. Manual | A tenant admin erases a chosen document from a web page, with a stated reason. The operation joins the access registry and the authorisation reference. A plain button and a reason field, with no ceremony that no invariant requires |
+| 2. The sealed row | Once the key is destroyed, the encrypted `doc.blob` row is deleted through the `keys` role's DELETE grant. The table stays append-only for every other role. The deletion is safe after a crash: idempotent, and ordered after the key destruction |
+| 3. Authoriser | Each trigger records its cause and its authoriser in the erasure log. A system cause names the system. A manual erasure names the tenant admin |
+| Brand assets | A logo is stored without a salt, so an erased logo could not be stored again (section "Built by lane L37"). No trigger erases a brand asset |
+
+These decisions replace, for documents only, two rows of section "Erasure-log entries": "No system or vault path records an erasure" and "When a retention period (P-41) expires, the system only reminds the tenant admins". The reminder and the tenant admin's request for a grant's texts are unchanged. They also replace the rows "Caller" and "Blob row" of section "Built by lane L37".
+
+| Topic | Reading |
+| --- | --- |
+| 1a. What the code holds | No production path stores an identity document. ADR-008 "Manual identity checks" records `VerificationRecorded { account, method, document_type, checks, at, verifier }` and states that no document number or image is stored (R-ID-02). The recorder sees the document outside the platform ("Request, staff record it", ADR-026 record of lane L24). The vault origin serves no `DocumentUpload` write (`web/src/vault/write.ts`: "no fact body exists for it yet"), and no code writes `vault.document`. The legal draft `legal/13-retention-and-erasure.md` says the same: "document upload is not served yet" |
+| 1a. What this lane builds | Nothing to erase, so no trigger code. An identity document belongs to the Vault chain (ADR-004, purpose `Document`; ADR-009 "Vault documents"), never to `doc.blob` of the application database (I-83). When a lane builds the vault document upload, the trigger belongs in the vault's `Runner::record_verification`, which runs when staff record the result. That lane erases the account's documents there with the cause `verification_completed` (P-19, R-ID-03). Open question for Daniel |
+| 1b. Document classes | A `doc.blob` row names its class by `kind` (migration `0005_doc.sql`, `crates/fstp-cell/src/api/content.rs`). Kinds 1 to 4 are contract documents (`fstp_contract::BlobKind`), kind 5 an import document (R-PG-02), kind 6 a brand asset (ADR-030) |
+| 1b. Contract documents, kinds 1 to 4 | The SPEC keeps them for the funder retention period (P-41, `SPEC/02-domain/contracts.md`, `SPEC/05-compliance/horizon-europe-mga.md`), counted per grant from its last confirmed payment (`fstp_domain::retention`). A `doc.blob` row names no grant, and the production cell stores no contract document yet (`SystemTask::ContractPort` is interim). So the sweep erases none. A lane that stores them gives the sweep their grant first |
+| 1b. Import documents, kind 5 | The SPEC sets no period for an uploaded funding document. `TODO(legal)`: the retention period of import documents. Until then the sweep erases none |
+| 1b. Brand assets, kind 6 | Never erased by a trigger (Daniel, 2026-11-23) |
+| 1b. Any other kind | Never erased: the rule table fails closed |
+| 1b. The sweep | `fstp_cell::tasks::retention` runs once an hour. It reads `kind`, `dek` and `stored_at` of each `doc.blob` row as the `app` role, asks the closed rule table of each kind, and asks the erasure runner to erase each due document. It names the cause `retention_expiry` and the system authoriser. With today's table it erases nothing. Adding a period is a change of the table alone |
+| 1c. The operation | `admin.erase_document`, `POST /admin/documents/{document}/erasure` with the body `{reason}`. `document` is an import document id. The tenant admin acts, as for `admin.request_erasure`. It erases the import document's blob only: a brand asset is refused, and a contract document is no import document |
+| 1c. Ceremony | Not high-risk. `SPEC/03-architecture/authentication.md` lists no erasure among the high-risk actions, so I-78 asks no step-up. The usability rule then asks for none. It has no MCP tool, so it is web only. `admin.request_erasure` stays high-risk, as Daniel decided on 2026-11-15 |
+| 1c. Reason | Plain text of 1 to 500 characters after trimming, with no control character, required. The API core stores it as a confidential text of the tenant in the text store, under a key of its own (ADR-007, so it is erasable). The erasure record names its text id. `admin.erasures` resolves it for a tenant admin at read time (I-97). Its length is interim |
+| 1c. The page | `/app/admin/erasures` gains a section "Documents". Each import document shows its id, its programme and its media type, with a reason field and an "Erase" button. An erased document shows that it is erased |
+| 2. Database rule | Migration `0014_doc_blob_erasure.sql` replaces the UPDATE OR DELETE trigger of `doc.blob`. UPDATE and TRUNCATE stay refused for every role. A DELETE passes only for the cell's own `keys` role (`current_database() || '_keys'`), and only once no `keystore.data_key` row holds the row's data key. Every other role, the owner included, is refused with SQLSTATE 42501 |
+| 2. Grant | The role plan (`fstp_control::pg`) gives the `keys` role SELECT and DELETE on `doc.blob`, as on `blob.text`. The `app` role keeps INSERT and SELECT |
+| 2. Order and crash safety | The erasure runner deletes the row in the keystore batch written after step 7, once `ErasuresCompleted` names the document with its destroyed epoch. Its data key row left at step 4. A start deletes the row of every completed document entry again, so a crash between the record and the batch loses nothing. A DELETE of a missing row deletes nothing, so a repeat is a no-op |
+| 2. What stays | The erasure-log entry stays: it is the ledger's (I-23, I-24). A backup taken before the deletion still holds the sealed row under a destroyed key, so it does not open (I-81) |
+| 3. System authoriser | `fstp_cell_core::ERASURE_SYSTEM`, the account id whose bytes are `fstp:st:erasure` and a zero byte. It lies in the system task namespace `SYSTEM_PREFIX`, so no account command uses it. The decider refuses a keystore erasure named by the system unless its cause is `retention_expiry` or `verification_completed` and it carries no reason |
+| 3. On the page | Each `admin.erasures` row gains `authoriser`: `system` or `account`. The page never names the account (R-CF-03) |
+
+Tests, written before the code:
+
+- `adr007_l39_system_authoriser_names_only_system_causes`, `adr007_l39_prop_keystore_erasure_authoriser_rule` and `i24_l39_reason_round_trips_and_the_old_form_decodes` (`crates/fstp-cell-core/tests/adr007_erasure_triggers.rs`).
+- `adr007_l39_prop_retention_rules_erase_no_brand_and_no_undefined_class` and `adr007_l39_sweep_plans_only_due_rows` (`crates/fstp-cell/tests/adr007_retention_sweep.rs`).
+- `i81_l39_blob_row_deleted_after_completion_and_again_at_start` (`crates/fstp-cell/tests/keystore_tables.rs`).
+- `i81_l39_doc_blob_delete_only_by_keys_after_key_row_gone` and `i81_l39_keystore_batch_deletes_blob_rows_idempotently` (`crates/fstp-pgstore/tests/adr007_doc_blob_delete.rs`).
+- `adr007_l39_admin_erases_an_import_document_with_a_reason` and `adr007_l39_retention_sweep_erases_no_import_document` (the production cell over PostgreSQL, `crates/fstp-celltest/tests/adr007_erasure_triggers_pg.rs`). The L37 test `r_ky_02_i81_production_cell_logs_a_document_erasure` now expects the erased row gone.
+- `adr007_l39_documents_and_authoriser_decode` (`web/test/admin_erasures.test.ts`).
+
+Open questions for Daniel, each recorded above as interim:
+
+1. Identity documents: no production path stores one, so 1a erases nothing today. Should the vault document upload be built, with its erasure at `record_verification`?
+2. `TODO(legal)`: the retention period of an import document (kind 5).
+3. The reason limit of 500 characters, and whether the page should name which tenant admin erased a document.

@@ -186,8 +186,12 @@ fn r_ky_02_i81_production_cell_logs_a_document_erasure() {
     assert!(log(cell, &admin).is_empty(), "no erasure yet");
 
     let erase = || {
-        cell.with_running(async |c| c.erasure().erase_document(dek, ERASURE_REQUEST, BY).await)
-            .unwrap()
+        cell.with_running(async |c| {
+            c.erasure()
+                .erase_document(dek, ERASURE_REQUEST, BY, None)
+                .await
+        })
+        .unwrap()
     };
     erase().unwrap_or_else(|e| panic!("the document erasure: {e}"));
     assert!(
@@ -210,7 +214,7 @@ fn r_ky_02_i81_production_cell_logs_a_document_erasure() {
     let wrong = cell
         .with_running(async |c| {
             c.erasure()
-                .erase_document([0x37; 16], ERASURE_REQUEST, BY)
+                .erase_document([0x37; 16], ERASURE_REQUEST, BY, None)
                 .await
         })
         .unwrap();
@@ -219,10 +223,28 @@ fn r_ky_02_i81_production_cell_logs_a_document_erasure() {
     // uploaded again, as a new blob under a new key.
     let again = stepped(&client, &path, &admin, &body);
     assert_eq!(again.status, 200, "import.upload again: {}", text(&again));
-    let deks = world
-        .app_superuser_sql(0, "SELECT dek::text FROM doc.blob")
-        .unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(deks.lines().filter(|l| !l.trim().is_empty()).count(), 2);
+    // ADR-007 (Daniel, 2026-11-23, decision 2; lane L39): the erased
+    // document's sealed row is deleted once its key died, so only the new
+    // one is left.
+    let deks = || {
+        world
+            .app_superuser_sql(0, "SELECT replace(dek::text, '-', '') FROM doc.blob")
+            .unwrap_or_else(|e| panic!("{e}"))
+            .lines()
+            .map(|l| l.trim().to_owned())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+    };
+    for _ in 0..100 {
+        if deks().len() == 1 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let left = deks();
+    assert_eq!(left.len(), 1, "{left:?}");
+    let erased: String = dek.iter().map(|b| format!("{b:02x}")).collect();
+    assert_ne!(left[0], erased, "the erased row is gone");
     // I-24: the entry is the ledger's, so a restart keeps it.
     cell.restart().unwrap_or_else(|e| panic!("{e}"));
     let admin = client

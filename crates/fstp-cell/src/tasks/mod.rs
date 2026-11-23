@@ -15,6 +15,7 @@ pub mod dispatch;
 pub mod drafts;
 pub mod erasure;
 pub mod release;
+pub mod retention;
 pub mod timeline;
 
 use std::future::Future;

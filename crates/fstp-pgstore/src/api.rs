@@ -60,6 +60,9 @@ const PUT_WORKSPACE_SQL: &str = "INSERT INTO workspace.drafts \
 const PUT_DOCUMENT_SQL: &str = "INSERT INTO doc.blob (digest, kind, dek, envelope, stored_at) \
      VALUES ($1, $2, $3, $4, $5) ON CONFLICT (digest) DO NOTHING";
 const GET_DOCUMENT_SQL: &str = "SELECT dek, envelope FROM doc.blob WHERE digest = $1";
+/// The clear columns of every stored document, for the retention sweep
+/// (ADR-007, lane L39). No envelope.
+const DOCUMENT_ROWS_SQL: &str = "SELECT kind, dek, stored_at FROM doc.blob ORDER BY stored_at, dek";
 const GET_WORKSPACE_SQL: &str =
     "SELECT key_ix, sealed FROM workspace.drafts WHERE proposal = $1 AND slot = $2";
 const ANON_INSERT_SQL: &str = "INSERT INTO workspace.anonymous_drafts \
@@ -713,6 +716,27 @@ impl<R: Runtime> ApiStore<R> {
         let dek: fstp_pgwire::Uuid = row.get(0)?;
         let envelope: Vec<u8> = row.get(1)?;
         Ok(Some((*dek.as_bytes(), envelope)))
+    }
+
+    /// The kind, data key and storage instant of every `doc.blob` row,
+    /// oldest first: the clear columns only, for the retention sweep
+    /// (ADR-007 section "Decided by Daniel on 2026-11-23", lane L39).
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn document_rows(&self) -> Result<Vec<(i16, [u8; 16], i64)>, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let rows = client.query(DOCUMENT_ROWS_SQL, &[]).await?;
+        client.release();
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let kind: i16 = row.get(0)?;
+            let dek: fstp_pgwire::Uuid = row.get(1)?;
+            let at: i64 = row.get(2)?;
+            out.push((kind, *dek.as_bytes(), at));
+        }
+        Ok(out)
     }
 }
 

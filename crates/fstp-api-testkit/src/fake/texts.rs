@@ -199,6 +199,8 @@ fn erase(s: &mut Texts, id: u128, at: Timestamp, kind: ErasureKind) {
             completed_at: Some(at),
             kind,
             destroyed_epoch: None,
+            by_system: false,
+            reason: None,
         });
     }
 }
@@ -239,6 +241,10 @@ fn clears(class: TextClass, owner: TextOwner, clearance: &ReadClearance) -> bool
             fstp_access::ReadKind::GetMyDisplayName => clearance.account() == Some(a),
             _ => false,
         },
+        // ADR-007 (Daniel, 2026-11-23; lane L39): the reason a tenant
+        // admin stated for an erasure opens to the erasure log read only,
+        // which the read rule admits for tenant admins.
+        (_, TextOwner::Tenant, _) => clearance.op().kind == fstp_access::ReadKind::ListErasures,
         _ => false,
     }
 }
@@ -330,6 +336,8 @@ impl TextStore for FakeTexts {
                 completed_at: Some(at),
                 kind: ErasureKind::Text,
                 destroyed_epoch: None,
+                by_system: false,
+                reason: None,
             });
         }
         Ok(())
@@ -473,6 +481,28 @@ impl BlobStore for FakeBlobs {
             .get(&(BlobOwner::Brand, r))
             .cloned()
             .ok_or(PortError::Refused)
+    }
+
+    /// ADR-007 (lane L39): an import document's blob leaves the store at
+    /// once. A brand asset is refused, and a blob already gone is a no-op.
+    async fn erase(
+        &self,
+        owner: BlobOwner,
+        r: BlobRef,
+        by: AccountId,
+        reason: TextRef,
+    ) -> Result<(), PortError> {
+        let _ = (by, reason);
+        if matches!(owner, BlobOwner::Brand) {
+            return Err(PortError::Refused);
+        }
+        lock(&self.rows).remove(&(owner, r));
+        Ok(())
+    }
+
+    /// Whether no owner's blob is stored under `r` (lane L39).
+    async fn erased(&self, r: BlobRef) -> Result<bool, PortError> {
+        Ok(!lock(&self.rows).keys().any(|(_, k)| *k == r))
     }
 }
 
