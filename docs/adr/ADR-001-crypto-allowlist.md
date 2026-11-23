@@ -48,6 +48,12 @@ Tier B crates may be used throughout development. No release ships a Tier B crat
 | Crate | Version | Source hash | Confirmed on | Findings |
 | --- | --- | --- | --- | --- |
 | moduletto | 0.1.0 | ded73e577220b7ae620d3a3db8d66f07904aa726 | 2026-11-20 | moduletto audits/README.md at ded73e57, Mythos 5.2 review 2026-11-20 |
+| der | 0.7.10 | e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb | 2026-11-23 | docs/hardening/m10-tier-b-review.md, Mythos 5.2 review 2026-11-23, conditions C1 to C3 |
+| spki | 0.7.3 | d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d | 2026-11-23 | docs/hardening/m10-tier-b-review.md, Mythos 5.2 review 2026-11-23, condition C3 |
+| x509-cert | 0.2.5 | 1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94 | 2026-11-23 | docs/hardening/m10-tier-b-review.md, Mythos 5.2 review 2026-11-23, conditions C1 to C3 |
+| cms | 0.2.3 | 7b77c319abfd5219629c45c34c89ba945ed3c5e49fcde9d16b6c3885f118a730 | 2026-11-23 | docs/hardening/m10-tier-b-review.md, Mythos 5.2 review 2026-11-23, conditions C1 to C3 |
+
+The four formats crates were confirmed with conditions, which Daniel accepted on 2026-11-23. The conditions C1 to C3 are stated in `docs/hardening/m10-tier-b-review.md`. C1 binds the first production `SignaturePort` or `TrustedList`: the two bounded-work items of that review close before either lands.
 
 ## Hybrid rule (I-75, I-90)
 
