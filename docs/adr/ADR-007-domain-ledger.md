@@ -268,7 +268,7 @@ These decisions replace, for documents only, two rows of section "Erasure-log en
 Tests, written before the code:
 
 - `adr007_l39_system_authoriser_names_only_system_causes`, `adr007_l39_prop_keystore_erasure_authoriser_rule` and `i24_l39_reason_round_trips_and_the_old_form_decodes` (`crates/fstp-cell-core/tests/adr007_erasure_triggers.rs`).
-- `adr007_l39_prop_retention_rules_erase_no_brand_and_no_undefined_class` and `adr007_l39_sweep_plans_only_due_rows` (`crates/fstp-cell/src/tasks/retention.rs`).
+- `adr007_l39_prop_retention_rules_erase_no_brand_and_no_undefined_class` and `adr007_l39_sweep_plans_only_due_rows` (`crates/fstp-cell/tests/adr007_retention_sweep.rs`).
 - `i81_l39_blob_row_deleted_after_completion_and_again_at_start` (`crates/fstp-cell/tests/keystore_tables.rs`).
 - `i81_l39_doc_blob_delete_only_by_keys_after_key_row_gone` and `i81_l39_keystore_batch_deletes_blob_rows_idempotently` (`crates/fstp-pgstore/tests/adr007_doc_blob_delete.rs`).
 - `adr007_l39_admin_erases_an_import_document_with_a_reason` and `adr007_l39_retention_sweep_erases_no_import_document` (the production cell over PostgreSQL, `crates/fstp-celltest/tests/adr007_erasure_triggers_pg.rs`). The L37 test `r_ky_02_i81_production_cell_logs_a_document_erasure` now expects the erased row gone.
