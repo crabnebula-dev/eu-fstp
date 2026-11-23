@@ -1074,6 +1074,24 @@ fn system_only(c: &CellCommand) -> bool {
 /// lifetimes of [`crate::lifetimes`].
 pub const ROUTE_ADMISSION_SEAM: &str = "fstp_cell_core::gate admits no GrantStepUp from a StepUp alone, and no CompleteRecovery or ProveRecoveryEmail (design sections 8.4 and 8.5, lane W3a). A step-up is admitted only with its assertion, which admit_verified_stepup verifies through fstp_auth::stepup::verify_step_up. The recovery steps need the enrolment or email token, which has no lifetime (ADR-008 \"Unset lifetimes\")";
 
+/// Whether `POST /api/v1/commands` of a production cell serves `c`
+/// (ADR-026 D8 as amended by Daniel on 2026-11-23, M10 F-039 and F-040).
+///
+/// It serves break-glass approval only: the request names the staff
+/// member, scope and end, and no port of the API core carries them
+/// (ADR-026 record of lane L5, row "Break-glass approval"). Every other
+/// command is an operation of the registry, which the API core serves
+/// with its step-up (I-78), its setup gate (ADR-021), its probes and its
+/// rate limits (ADR-024). The route handler asks this after it decoded
+/// the body, before the gate runs, so no spelling of the path bypasses it.
+/// The answer is the same for every caller.
+pub fn raw_route_serves(c: &CellCommand) -> bool {
+    matches!(
+        c,
+        CellCommand::Ops(crate::ops::OpsCommand::ApproveBreakGlass { .. })
+    )
+}
+
 /// Whether only an auth route issues `c`, after it verified what the
 /// record states (design sections 8.4, 8.5 and 8.7): `GrantStepUp` after a
 /// step-up assertion, `ProveRecoveryEmail` after the email proof, and the

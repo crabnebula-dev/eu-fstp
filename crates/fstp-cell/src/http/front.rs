@@ -170,6 +170,13 @@ pub struct FrontConfig {
     /// The organisation port of ADR-021, for a ledger with no tenant part
     /// (`crate::public::OrganisationPort`). The default fails closed.
     pub organisation: crate::public::OrganisationPort,
+    /// Test only (ADR-026 amendment of 2026-11-23, M10 F-039, F-040):
+    /// `true` serves the wide form of `POST /api/v1/commands`, every
+    /// command the gate admits. The field exists only with the test-only
+    /// feature `wide-commands`, so a production build serves break-glass
+    /// approval only on that route.
+    #[cfg(feature = "wide-commands")]
+    pub wide_commands: bool,
 }
 
 /// Why a front could not be built.
@@ -408,6 +415,8 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 enabled: cfg.enabled,
                 pages,
                 organisation: cfg.organisation,
+                #[cfg(feature = "wide-commands")]
+                wide_commands: cfg.wide_commands,
             },
             limits: crate::routes::limits::Limits::new(cfg.limits),
             codes: crate::routes::signup_code::CodeBook::new(

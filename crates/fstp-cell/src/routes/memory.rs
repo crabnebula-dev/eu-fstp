@@ -633,12 +633,28 @@ impl LocalCell {
     /// Starts the cell `cell` served at `host`, which must end in `.test`.
     /// Passkeys and magic links are enabled (P-70).
     ///
+    /// Its `POST /api/v1/commands` is the test-only wide form, which
+    /// serves every command the gate admits (ADR-026 amendment of
+    /// 2026-11-23). [`LocalCell::start_production`] serves the route as a
+    /// production build does.
+    ///
     /// # Errors
     ///
     /// A [`LocalError`] for another host, a refused front or seed, or no
     /// key.
     pub fn start(cell: [u8; 16], host: &str) -> Result<LocalCell, LocalError> {
         LocalCell::start_after(cell, host, &[])
+    }
+
+    /// [`LocalCell::start`] with `POST /api/v1/commands` as a production
+    /// build serves it: break-glass approval only (ADR-026 D8 as amended
+    /// 2026-11-23, M10 F-039, F-040).
+    ///
+    /// # Errors
+    ///
+    /// As [`LocalCell::start`].
+    pub fn start_production(cell: [u8; 16], host: &str) -> Result<LocalCell, LocalError> {
+        LocalCell::start_with(cell, host, &[], false)
     }
 
     /// [`LocalCell::start`] over a ledger that first holds `prior`, each
@@ -656,6 +672,17 @@ impl LocalCell {
         cell: [u8; 16],
         host: &str,
         prior: &[fstp_ledger::Entry<CellRecord>],
+    ) -> Result<LocalCell, LocalError> {
+        LocalCell::start_with(cell, host, prior, true)
+    }
+
+    /// [`LocalCell::start_after`], with the wide command route when `wide`
+    /// holds.
+    fn start_with(
+        cell: [u8; 16],
+        host: &str,
+        prior: &[fstp_ledger::Entry<CellRecord>],
+        wide: bool,
     ) -> Result<LocalCell, LocalError> {
         if !host.ends_with(".test") {
             return Err(LocalError::Host);
@@ -684,6 +711,7 @@ impl LocalCell {
             },
             limits: crate::routes::AuthLimits::default(),
             organisation: crate::public::OrganisationPort::default(),
+            wide_commands: wide,
         };
         let front =
             Front::new(cfg, Arc::clone(&backend), Arc::clone(&log)).map_err(LocalError::Front)?;

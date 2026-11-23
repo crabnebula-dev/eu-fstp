@@ -5,7 +5,11 @@
 //!   action.
 //! - Every M2 command kind is high risk exactly when
 //!   `CommandKind::high_risk()` says so or `STRICT_ADDITIONS` names it.
-//! - Reads and the other cell commands need no step-up.
+//! - Reads need no step-up. A cell command that no table row names
+//!   passes the gate with no step-up, so I-78 holds for it only when no
+//!   part of the platform calls it high-risk, or when no session route
+//!   serves it without the step-up of its operation (M10 H01-4, ADR-026
+//!   D8 as amended 2026-11-23).
 //!
 //! `i78_high_risk_table_matches_spec_and_domain` in `fstp-celltest`
 //! checks the table data against the spec text. These tests check the
@@ -152,19 +156,71 @@ fn i78_reads_need_no_step_up() {
     }
 }
 
-/// I-78: the cell commands that no table row names need no step-up. The
-/// table is the single list (design section 8.4).
+/// I-78: no high-risk action completes without a step-up. A cell command
+/// that no table row names passes the gate with no step-up (design
+/// section 8.4), so:
+///
+/// - each command of `low` is one that no part of the platform calls
+///   high-risk, and the gate passes it with no step-up;
+/// - each command of `high_elsewhere` is called high-risk by its own
+///   domain part or by its registry operation. The gate's table does not
+///   name it, so no session route may serve it on the gate alone. The raw
+///   command route serves none of them (ADR-026 D8 as amended
+///   2026-11-23), and the API core asks the step-up of their operations;
+/// - every command the raw route serves needs a step-up at the gate.
+///
+/// This replaces the earlier statement that every cell command outside
+/// the table needs no step-up, which held in M3 and pinned the gap of
+/// F-039 since the engine gained tenant, creator and report commands
+/// (M10 H01-4).
 ///
 /// `IssueReleaseTicket` is left out: its class depends on a download
 /// scope the stub does not carry (section 8.7, `IdentityDownload`).
 #[test]
 fn i78_cell_commands_outside_the_table_need_no_step_up() {
-    let low = [
-        CellCommand::Text(TextCommand::PutText { id: [1; 16] }),
+    use fstp_cell_core::gate::raw_route_serves;
+    let high_elsewhere = [
+        // `admin.request_erasure`, which the registry marks high-risk.
         CellCommand::Text(TextCommand::EraseTexts {
             ids: vec![[1; 16]],
             cause: 1,
         }),
+        // `TenantKind::high_risk`: every setting and the guide notice.
+        CellCommand::Engine(fstp_engine::Command::Tenant(
+            fstp_engine::TenantRequest::new(fstp_tenant::TenantCommand::SetGuideNotice {
+                notice: None,
+            }),
+        )),
+        // `CreatorCommand::high_risk`: the I-67 override of ADR-022.
+        CellCommand::Engine(fstp_engine::Command::Creator(
+            fstp_creator::CreatorCommand::OverrideActivation {
+                programme: fstp_domain::id::ProgrammeId::from_raw(1),
+                revision: fstp_creator::DraftRevision::new(1, fstp_ledger::Seq::from_raw(1)),
+                decision: fstp_domain::id::DecisionId::from_raw(1),
+                reason: fstp_domain::id::TextRef::new(
+                    fstp_domain::id::TextId::from_raw(1),
+                    fstp_domain::id::ContentDigest::from_bytes([0; 32]),
+                ),
+            },
+        )),
+    ];
+    for c in high_elsewhere {
+        assert!(
+            high_risk_of(&cmd(c.clone())) != Ok(None) || !raw_route_serves(&c),
+            "I-78: a session route serves {c:?} with no step-up"
+        );
+    }
+    for (name, c) in table_commands().unwrap() {
+        if raw_route_serves(&c) {
+            assert_ne!(
+                high_risk_of(&cmd(c)),
+                Ok(None),
+                "I-78: the raw route serves {name} with no step-up"
+            );
+        }
+    }
+    let low = [
+        CellCommand::Text(TextCommand::PutText { id: [1; 16] }),
         CellCommand::Key(KeyCommand::RecordKeyOp { op: b"{}".to_vec() }),
         CellCommand::Key(KeyCommand::RecordEpochDestroyed {
             epoch: 1,

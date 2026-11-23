@@ -22,11 +22,11 @@
 use std::sync::Arc;
 
 use fstp_auth::{EnabledMethods, SessionView};
+use fstp_cell_core::CellRefusal;
 use fstp_cell_core::CellState;
 use fstp_cell_core::driver::ExecError;
 use fstp_cell_core::gate::{self, Action, Admitted, Deny, LoginPolicy, ReadAction, StepUpView};
 use fstp_cell_core::tenant::P71_DEFAULT_US;
-use fstp_cell_core::{CellCommand, CellRefusal};
 use fstp_http::{HeaderName, HeaderValue, Request, Response, StatusCode};
 use fstp_json::{Object, Value};
 use fstp_webauthn::RelyingParty;
@@ -103,6 +103,12 @@ pub(crate) struct CellCfg {
     /// The organisation port of ADR-021, for a ledger with no tenant part
     /// (`crate::public::OrganisationPort`).
     pub(crate) organisation: crate::public::OrganisationPort,
+    /// Test only (ADR-026 amendment of 2026-11-23): whether
+    /// `POST /api/v1/commands` serves every command the gate admits. A
+    /// production build has no such field, so its route serves break-glass
+    /// approval only.
+    #[cfg(feature = "wide-commands")]
+    pub(crate) wide_commands: bool,
 }
 
 /// What a handler runs against.
@@ -605,10 +611,13 @@ pub(crate) async fn run<B: Backend>(ctx: &Ctx<B>, admitted: Admitted) -> Reply {
 
 /// Whether the batch of `c` needs an input that only a route holds and
 /// that `fstp_cell_core::decide` cannot take yet (`RouteInput`). Such a
-/// command fails closed with 501 before it reaches the engine.
-pub(crate) fn needs_route_input(c: &CellCommand) -> bool {
+/// command fails closed with 501 before it reaches the engine. Only the
+/// test-only wide command route sends one (ADR-026 amendment of
+/// 2026-11-23).
+#[cfg(feature = "wide-commands")]
+pub(crate) fn needs_route_input(c: &fstp_cell_core::CellCommand) -> bool {
     match c {
-        CellCommand::Auth(a) => !fstp_cell_core::route_inputs(a).is_empty(),
+        fstp_cell_core::CellCommand::Auth(a) => !fstp_cell_core::route_inputs(a).is_empty(),
         _ => false,
     }
 }

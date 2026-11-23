@@ -44,6 +44,14 @@
 //!   with its keys from the sealed cell key file ([`keyfile`]). The
 //!   subcommands `first-admin` and `init-keys` are in [`mod`].
 
+// ADR-026 amendment of 2026-11-23 (M10 F-039, F-040): the wide command
+// route is for test builds only. A release build that carries it does
+// not compile, as `fstp-keyd` refuses its `test-needles` (I-80).
+#[cfg(all(feature = "wide-commands", not(debug_assertions)))]
+compile_error!(
+    "the wide-commands feature serves every command on POST /api/v1/commands; it is for debug test builds only (ADR-026 D8 as amended, I-78)"
+);
+
 pub(crate) mod api;
 pub mod config;
 pub mod control;
