@@ -827,10 +827,10 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
             ("dpo_contact", s("")),
             ("supervisory_authority", s("")),
             ("accessibility_contact", s("")),
+            ("accessibility_response_time", s("")),
             ("company_number", s("")),
             ("vat_number", s("")),
             ("transparency_register", s("")),
-            ("governing_law", s("")),
         ]),
         "tenant.set_funding_defaults" => obj(vec![
             ("contact", s("role@example.org")),

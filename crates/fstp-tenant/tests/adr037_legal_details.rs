@@ -75,8 +75,9 @@ fn adr037_admin_sets_the_legal_details() {
     assert_eq!(now.get(LegalField::LegalName), None);
 }
 
-/// ADR-037, I-85: only a tenant admin sets them, on the web only, with a
-/// step-up like the other tenant settings.
+/// ADR-037, I-78, I-85: only a tenant admin sets them, on the web only.
+/// Daniel, 2026-11-23: no step-up. No row of the high-risk table names the
+/// legal details, so a signed-in tenant admin saves them directly.
 #[test]
 fn adr037_only_an_admin_on_the_web_sets_the_details() {
     let state = TenantState::genesis(ADMIN, CellKind::Saas);
@@ -90,7 +91,7 @@ fn adr037_only_an_admin_on_the_web_sets_the_details() {
     assert!(outsider.is_err());
     assert!(decide(&state, &ctx(ADMIN, Via::Mcp), &cmd, &TenantAnswers::new()).is_err());
     assert_eq!(cmd.kind(), TenantKind::SetLegalDetails);
-    assert!(TenantKind::SetLegalDetails.high_risk());
+    assert!(!TenantKind::SetLegalDetails.high_risk());
     assert!(TenantKind::SetLegalDetails.web_only());
     assert!(TenantKind::SetLegalDetails.admin_only());
     assert!(TenantKind::ALL.contains(&TenantKind::SetLegalDetails));

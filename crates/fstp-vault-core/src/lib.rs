@@ -28,6 +28,35 @@ pub mod fact;
 pub use fstp_unorm::mask;
 pub mod ticket;
 
+/// The wire spans of the mask of `text` for `people` (M7 Q4, ADR-033
+/// records of lanes L31 and L40). `None` when the text holds more spans
+/// than one answer may carry ([`fstp_vault_proto::MAX_MASK_SPANS`]): the
+/// vault then refuses as unavailable, so the cell fails closed, rather
+/// than answer part of the mask and leave names unmasked.
+pub fn mask_wire_spans(
+    text: &str,
+    people: &[mask::MaskPerson],
+) -> Option<Vec<fstp_vault_proto::WireSpan>> {
+    let spans = mask::mask_spans(text, people);
+    if spans.len() > fstp_vault_proto::MAX_MASK_SPANS {
+        return None;
+    }
+    Some(
+        spans
+            .into_iter()
+            .map(|s| fstp_vault_proto::WireSpan {
+                start: s.start,
+                end: s.end,
+                person: s.person,
+                class: match s.class {
+                    mask::MaskClass::Name => fstp_vault_proto::WireMaskClass::Name,
+                    mask::MaskClass::BirthDate => fstp_vault_proto::WireMaskClass::BirthDate,
+                },
+            })
+            .collect(),
+    )
+}
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use fstp_vault_proto::{

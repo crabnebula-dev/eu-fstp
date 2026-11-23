@@ -40,14 +40,15 @@ pub enum LegalField {
     SupervisoryAuthority,
     /// The accessibility contact.
     AccessibilityContact,
+    /// The time within which the accessibility contact replies, as
+    /// plain text (Daniel, 2026-11-23).
+    AccessibilityResponseTime,
     /// The company registration number.
     CompanyNumber,
     /// The VAT number.
     VatNumber,
     /// The EU Transparency Register number.
     TransparencyRegister,
-    /// The governing law.
-    GoverningLaw,
 }
 
 impl LegalField {
@@ -61,10 +62,10 @@ impl LegalField {
         LegalField::DpoContact,
         LegalField::SupervisoryAuthority,
         LegalField::AccessibilityContact,
+        LegalField::AccessibilityResponseTime,
         LegalField::CompanyNumber,
         LegalField::VatNumber,
         LegalField::TransparencyRegister,
-        LegalField::GoverningLaw,
     ];
 
     /// The key of every field, in the order of [`LegalField::ALL`].
@@ -77,10 +78,10 @@ impl LegalField {
         "dpo_contact",
         "supervisory_authority",
         "accessibility_contact",
+        "accessibility_response_time",
         "company_number",
         "vat_number",
         "transparency_register",
-        "governing_law",
     ];
 
     /// The field's key in requests, records and placeholders.
@@ -94,10 +95,10 @@ impl LegalField {
             LegalField::DpoContact => "dpo_contact",
             LegalField::SupervisoryAuthority => "supervisory_authority",
             LegalField::AccessibilityContact => "accessibility_contact",
+            LegalField::AccessibilityResponseTime => "accessibility_response_time",
             LegalField::CompanyNumber => "company_number",
             LegalField::VatNumber => "vat_number",
             LegalField::TransparencyRegister => "transparency_register",
-            LegalField::GoverningLaw => "governing_law",
         }
     }
 
