@@ -957,6 +957,7 @@ Options B (the guard in OKMS) and C (the pilot reading) were not taken. This rec
 - **Q-F018-2.** A lost custodian is replaced by pairing again. Its old volume holds guards sealed under a passphrase on the same machine. Should the custodian's passphrase come from the operator at each start, as `systemd-ask-password` allows, so a stolen custodian disk alone opens nothing?
 - **Q-F018-3.** Copies made before this change are plain `"FKX1"` copies. In production `import` refuses them, since no guard can be destroyed for them. The runbook retires them after the first guarded copy. Confirm.
 - **Q-F018-4.** After each erasure the old copies of that entry stop opening at once. A host loss before the next `backup-keys` then loses the keystore snapshots of that entry. An old copy already failed to open the App or Vault data after an erasure, since it lacks the new epoch. The cluster backups still restore through the custodian's escrow (ADR-012 record of lane L16). `status` and the System page name the new copy as the next thing to do. Should `fstp-keyd` write a fresh guarded copy to the custodian after each rotation, so no gap remains?
+- **Q-F018-5.** The import of a guarded copy after the loss of the host is still a command by hand, with the guard variables and credentials beside the passphrase (`docs/guide/production-reference.md`). Should `fstp-admin` gain a `restore-keys <dir>` that stages them, as `backup-keys` does?
 
 ### Copies of sealed key files (Q-L16-3)
 

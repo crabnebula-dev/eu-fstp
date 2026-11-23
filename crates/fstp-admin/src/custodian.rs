@@ -672,6 +672,41 @@ mod tests {
         }
     }
 
+    /// ADR-028 record of lane `m10/guard-key`: one command on the pilot
+    /// writes a pairing file that decodes, names the custodian in the
+    /// configuration file, and issues a guard client certificate for every
+    /// entry under the cell CA, which the pairing file carries.
+    #[test]
+    fn adr028_guard_pair_custodian_writes_one_file_and_the_member() {
+        let dir = std::env::temp_dir().join(format!("fstp-admin-pair-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = dir.display();
+        let text = format!(
+            r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{{"relay":"smtp.example.eu","username":"cell"}},
+            "paths":{{"etc":"{d}/etc","state":"{d}/state","token_dir":"{d}"}}}}"#
+        );
+        let config = dir.join("fstp.json");
+        std::fs::write(&config, &text).unwrap();
+        let layout = Layout::new(crate::config::decode(text.as_bytes()).unwrap());
+        pair(&layout, &config, "custodian.example.eu").unwrap();
+        let p = decode_pairing(&std::fs::read(dir.join(PAIRING_FILE)).unwrap()).unwrap();
+        assert_eq!(p.port, CUSTODIAN_PORT);
+        let paired = crate::config::decode(&std::fs::read(&config).unwrap()).unwrap();
+        assert_eq!(
+            paired.custodian,
+            Some(("custodian.example.eu".into(), CUSTODIAN_PORT))
+        );
+        let guard = guard_dir(&Layout::new(paired));
+        assert_eq!(std::fs::read_to_string(guard.join("ca.pem")).unwrap(), p.ca);
+        for e in guarded_entries() {
+            assert!(guard.join(format!("client-{}.key", e.name())).is_file());
+        }
+        assert!(pairing_days(&layout).is_some_and(|d| d > 700));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ADR-028 record of lane `m10/guard-key`: the custodian's unit loads
     /// its passphrase and the three TLS files as credentials and names its
     /// listen address, and the custodian's address renders as the pilot

@@ -601,7 +601,9 @@ dependencies = [
  "fstp-crypto",
  "fstp-custody",
  "fstp-obs",
+ "fstp-pgwire",
  "fstp-rt",
+ "fstp-tls",
  "zeroize",
 ]
 
