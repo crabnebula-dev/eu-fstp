@@ -246,11 +246,15 @@ pub enum ReadKind {
     // ADR-028 record of lane L20: the facts of the System page, for the
     // tenant admins. No personal data.
     GetSystemStatus,
+    // F-079, ADR-038: the lead's team invitations of one proposal, and
+    // the open team invitations addressed to the caller's login email.
+    ListTeamInvitations,
+    ListMyTeamInvitations,
 }
 
 impl ReadKind {
     /// Every read, in declaration order.
-    pub const ALL: [ReadKind; 84] = [
+    pub const ALL: [ReadKind; 86] = [
         ReadKind::ListOpenCalls,
         ReadKind::GetPublicCall,
         ReadKind::GetGuide,
@@ -335,6 +339,8 @@ impl ReadKind {
         ReadKind::GetAssessmentQueue,
         ReadKind::GetAssessmentInput,
         ReadKind::GetSystemStatus,
+        ReadKind::ListTeamInvitations,
+        ReadKind::ListMyTeamInvitations,
     ];
 }
 
@@ -875,6 +881,12 @@ pub const READ_RULES: &[(ReadKind, ReadRule, &[StateTag])] = &[
     (ReadKind::ListTeam, ReadRule::TEAM_READER, OPEN_ALWAYS),
     (ReadKind::ListMembers, ReadRule::TenantAdmin, OPEN_ALWAYS),
     (ReadKind::GetMyDisplayName, ReadRule::Own, OPEN_ALWAYS),
+    // F-079, ADR-038: the lead reads the invitations of the proposal, in
+    // every state, so a withdrawal stays possible. The invitee reads its
+    // own: the dispatch keeps only invitations addressed to the caller's
+    // login email.
+    (ReadKind::ListTeamInvitations, ReadRule::Lead, OPEN_ALWAYS),
+    (ReadKind::ListMyTeamInvitations, ReadRule::Own, OPEN_ALWAYS),
 ];
 
 /// The readers of a grant (M5 design section 5).

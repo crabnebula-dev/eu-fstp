@@ -162,6 +162,8 @@ export type OpName =
   | "proposal.record_plan"
   | "proposal.add_member"
   | "proposal.add_guardian"
+  | "proposal.team_invitations"
+  | "proposal.withdraw_team_invitation"
   | "proposal.state_country"
   | "proposal.declare_affiliations"
   | "proposal.state_birth_date"
@@ -230,6 +232,9 @@ export type OpName =
   | "me.sessions"
   | "me.roles"
   | "me.mailbox"
+  | "me.team_invitations"
+  | "me.accept_team_invitation"
+  | "me.decline_team_invitation"
   | "me.mailbox.mark_read"
   | "me.display_name"
   | "me.set_display_name"
@@ -426,6 +431,8 @@ export interface OpParams {
   readonly "proposal.record_plan": { readonly "proposal": string };
   readonly "proposal.add_member": { readonly "proposal": string };
   readonly "proposal.add_guardian": { readonly "proposal": string };
+  readonly "proposal.team_invitations": { readonly "proposal": string };
+  readonly "proposal.withdraw_team_invitation": { readonly "proposal": string; readonly "invitation": string };
   readonly "proposal.state_country": { readonly "proposal": string };
   readonly "proposal.declare_affiliations": { readonly "proposal": string };
   readonly "proposal.state_birth_date": { readonly "proposal": string };
@@ -494,6 +501,9 @@ export interface OpParams {
   readonly "me.sessions": Readonly<Record<never, string>>;
   readonly "me.roles": Readonly<Record<never, string>>;
   readonly "me.mailbox": Readonly<Record<never, string>>;
+  readonly "me.team_invitations": Readonly<Record<never, string>>;
+  readonly "me.accept_team_invitation": { readonly "invitation": string };
+  readonly "me.decline_team_invitation": { readonly "invitation": string };
   readonly "me.mailbox.mark_read": Readonly<Record<never, string>>;
   readonly "me.display_name": Readonly<Record<never, string>>;
   readonly "me.set_display_name": Readonly<Record<never, string>>;
@@ -663,6 +673,8 @@ export const OP_NAMES: readonly OpName[] = [
   "proposal.record_plan",
   "proposal.add_member",
   "proposal.add_guardian",
+  "proposal.team_invitations",
+  "proposal.withdraw_team_invitation",
   "proposal.state_country",
   "proposal.declare_affiliations",
   "proposal.state_birth_date",
@@ -731,6 +743,9 @@ export const OP_NAMES: readonly OpName[] = [
   "me.sessions",
   "me.roles",
   "me.mailbox",
+  "me.team_invitations",
+  "me.accept_team_invitation",
+  "me.decline_team_invitation",
   "me.mailbox.mark_read",
   "me.display_name",
   "me.set_display_name",
@@ -2279,6 +2294,34 @@ export const OPERATIONS: readonly Operation[] = [
     tool: null,
   },
   {
+    name: "proposal.team_invitations",
+    method: "GET",
+    path: "/proposals/{proposal}/team/invitations",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "team" }, { kind: "literal", text: "invitations" }],
+    params: ["proposal"],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "proposal.withdraw_team_invitation",
+    method: "DELETE",
+    path: "/proposals/{proposal}/team/invitations/{invitation}",
+    base: "api",
+    segments: [{ kind: "literal", text: "proposals" }, { kind: "param", name: "proposal" }, { kind: "literal", text: "team" }, { kind: "literal", text: "invitations" }, { kind: "param", name: "invitation" }],
+    params: ["proposal", "invitation"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
     name: "proposal.state_country",
     method: "PUT",
     path: "/proposals/{proposal}/vault/country",
@@ -3226,6 +3269,48 @@ export const OPERATIONS: readonly Operation[] = [
     body: false,
     highRisk: false,
     binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "me.team_invitations",
+    method: "GET",
+    path: "/me/team-invitations",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "team-invitations" }],
+    params: [],
+    body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "me.accept_team_invitation",
+    method: "POST",
+    path: "/me/team-invitations/{invitation}/accept",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "team-invitations" }, { kind: "param", name: "invitation" }, { kind: "literal", text: "accept" }],
+    params: ["invitation"],
+    body: true,
+    highRisk: false,
+    binding: true,
+    session: "any",
+    classification: "personal",
+    tool: null,
+  },
+  {
+    name: "me.decline_team_invitation",
+    method: "POST",
+    path: "/me/team-invitations/{invitation}/decline",
+    base: "api",
+    segments: [{ kind: "literal", text: "me" }, { kind: "literal", text: "team-invitations" }, { kind: "param", name: "invitation" }, { kind: "literal", text: "decline" }],
+    params: ["invitation"],
+    body: true,
+    highRisk: false,
+    binding: true,
     session: "any",
     classification: "personal",
     tool: null,
@@ -5800,6 +5885,35 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       } }, optional: false },
     },
   },
+  "proposal.team_invitations": {
+    kind: "object",
+    fields: {
+      "invitations": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "invitation": { schema: { kind: "id" }, optional: false },
+          "email": { schema: { kind: "string" }, optional: false },
+          "role": { schema: { kind: "enum", values: ["team_member", "guardian"] }, optional: false },
+          "state": { schema: { kind: "enum", values: ["open", "joined", "not_joined"] }, optional: false },
+          "expires": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
+  "me.team_invitations": {
+    kind: "object",
+    fields: {
+      "invitations": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "invitation": { schema: { kind: "id" }, optional: false },
+          "proposal": { schema: { kind: "id" }, optional: false },
+          "role": { schema: { kind: "enum", values: ["team_member", "guardian"] }, optional: false },
+          "expires": { schema: { kind: "string" }, optional: false },
+        },
+      } }, optional: false },
+    },
+  },
   "me.display_name": {
     kind: "object",
     fields: {
@@ -6096,6 +6210,7 @@ export const PAGES: readonly PageRow[] = [
   { pattern: "/app/mailbox", need: { kind: "reads", reads: ["me.mailbox"] }, values: {}, listed: null },
   { pattern: "/app/pending/{pending}", need: { kind: "reads", reads: ["pending.list"] }, values: {}, listed: "pending" },
   { pattern: "/app/notices", need: { kind: "reads", reads: ["me.notices"] }, values: {}, listed: null },
+  { pattern: "/app/team-invitations", need: { kind: "reads", reads: ["me.team_invitations"] }, values: {}, listed: null },
   { pattern: "/app/invitation", need: { kind: "anyone" }, values: {}, listed: null },
   { pattern: "/app/connect", need: { kind: "anyone" }, values: {}, listed: null },
   { pattern: "/app/admin/approvals", need: { kind: "reads", reads: ["admin.approvals"] }, values: {}, listed: null },

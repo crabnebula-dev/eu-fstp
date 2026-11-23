@@ -295,6 +295,17 @@ impl TextStore for FakeTexts {
         }
     }
 
+    /// F-079, ADR-038: one bit for a confidential text of a proposal, as
+    /// the cell's store answers it.
+    async fn text_equals(&self, r: TextRef, candidate: &[u8]) -> Result<bool, PortError> {
+        Ok(match lock(&self.state).rows.get(&r.0) {
+            Some((TextClass::Confidential, TextOwner::Proposal(_), b)) => {
+                fstp_api_core::salted::holds(b, candidate)
+            }
+            Some(_) | None => false,
+        })
+    }
+
     async fn erasures(&self) -> Result<Vec<ErasureRow>, PortError> {
         let s = lock(&self.state);
         if s.no_log {

@@ -157,14 +157,78 @@ pub fn submit_mcp(
     )
 }
 
-/// `proposal.add_member` through the web: `POST /proposals/{x}/team`.
-/// The server draws the binding id.
-pub fn add_member_web(proposal: ProposalId, account: AccountId) -> Result<Op, ApiError> {
+/// `proposal.add_member` through the web: `POST /proposals/{x}/team` with
+/// `{email}`. Since F-079 it invites the address (ADR-038). The server
+/// draws the invitation id.
+pub fn invite_member_web(proposal: ProposalId, email: &str) -> Result<Op, ApiError> {
     decode_route(
         Method::Post,
         &format!("/proposals/{}/team", proposal.raw()),
-        &body(vec![("account", dec(account.raw()))]),
+        &body(vec![("email", Value::String(email.to_owned()))]),
     )
+}
+
+/// `proposal.add_guardian` through the web: `POST /proposals/{x}/guardian`
+/// with `{email}` (F-079, ADR-038).
+pub fn invite_guardian_web(proposal: ProposalId, email: &str) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Post,
+        &format!("/proposals/{}/guardian", proposal.raw()),
+        &body(vec![("email", Value::String(email.to_owned()))]),
+    )
+}
+
+/// `proposal.team_invitations`: `GET /proposals/{x}/team/invitations`.
+pub fn team_invitations_web(proposal: ProposalId) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Get,
+        &format!("/proposals/{}/team/invitations", proposal.raw()),
+        &[],
+    )
+}
+
+/// `proposal.withdraw_team_invitation`:
+/// `DELETE /proposals/{x}/team/invitations/{i}`.
+pub fn withdraw_team_invitation_web(
+    proposal: ProposalId,
+    invitation: u128,
+) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Delete,
+        &format!(
+            "/proposals/{}/team/invitations/{invitation}",
+            proposal.raw()
+        ),
+        &[],
+    )
+}
+
+/// `me.team_invitations`: `GET /me/team-invitations`.
+pub fn my_team_invitations_web() -> Result<Op, ApiError> {
+    decode_route(Method::Get, "/me/team-invitations", &[])
+}
+
+/// `me.accept_team_invitation`: `POST /me/team-invitations/{i}/accept`.
+pub fn accept_team_invitation_web(invitation: u128) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Post,
+        &format!("/me/team-invitations/{invitation}/accept"),
+        &[],
+    )
+}
+
+/// `me.decline_team_invitation`: `POST /me/team-invitations/{i}/decline`.
+pub fn decline_team_invitation_web(invitation: u128) -> Result<Op, ApiError> {
+    decode_route(
+        Method::Post,
+        &format!("/me/team-invitations/{invitation}/decline"),
+        &[],
+    )
+}
+
+/// The synthetic login email the team helpers give `account`.
+pub fn synthetic_email(account: AccountId) -> String {
+    format!("person-{}@e2e.invalid", account.raw())
 }
 
 /// `pending.list`: `GET /me/pending-actions`.

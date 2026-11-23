@@ -55,8 +55,8 @@ pub use reads::{
 pub use registry::{
     AgentKind, BatchKind, BridgeKind, COMPOSED_ONLY, Classification, CreatorKind, FindingKind,
     GrantKind, ImportKind, LATER, Method, Milestone, OPS, OpKind, OpSpec, PendingKind, PortKind,
-    PublicKind, RoleOrApplicant, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER, Schema,
-    Scope, SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
+    PublicKind, RETIRED, RoleOrApplicant, STRICT_EXTRA_HIGH_RISK, SYSTEM_ONLY, SYSTEM_ONLY_OTHER,
+    Schema, Scope, SessionNeed, TenantKind, TenantParam, ToolDef, op, route_params,
 };
 pub use replies::{
     BRAND_PAIR_NAMES, ENTRY_KIND_NAMES, ERASURE_AUTHORISERS, ERASURE_CAUSES, ERASURE_KINDS,

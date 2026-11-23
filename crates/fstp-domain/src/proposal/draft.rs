@@ -8,10 +8,12 @@
 //!   `ProposalCreated` with the lead and the actor's `minor` field. No
 //!   guard reads that field (R-ID-04). Lane L-SOD's contribution adds the
 //!   lead's Applicant binding.
-//! - Since F-079 (ADR-038) no operation, tool or seed issues `AddTeamMember`
-//!   or `AddGuardian`. A person joins by accepting an invitation
-//!   (`crate::proposal::team`). Both stay here for replay and for the
-//!   property tests and model checks that use them as the bare binding step.
+//! - Since F-079 (ADR-038) no registry operation, tool or seed issues
+//!   `AddTeamMember` or `AddGuardian`. The raw command route of the cell
+//!   still admits them (ADR-038, open point 5). A person joins by
+//!   accepting an invitation (`crate::proposal::team`). Both stay here for
+//!   replay and for the property tests and model checks that use them as
+//!   the bare binding step.
 //! - `AddTeamMember` and `AddGuardian` need the lead as actor, with an
 //!   active Applicant binding on the proposal (enforcement point 2). An
 //!   account is bound at most once per proposal, voided bindings included.

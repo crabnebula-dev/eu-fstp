@@ -55,6 +55,14 @@ pub fn verify(salt: &[u8; SALT_LEN], text: &[u8], tag: &[u8; 32]) -> bool {
     fstp_crypto::hmac_sha256_verify(salt, text, tag)
 }
 
+/// Whether the stored bytes `stored` hold exactly `candidate` after their
+/// salt (F-079, ADR-038). It compares the keyed digests under the stored
+/// salt in constant time, so it never compares the texts byte by byte.
+/// Bytes shorter than a salt hold no text.
+pub fn holds(stored: &[u8], candidate: &[u8]) -> bool {
+    split(stored).is_some_and(|(salt, text)| verify(&salt, candidate, &digest(&salt, text)))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

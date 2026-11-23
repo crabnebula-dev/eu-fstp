@@ -169,6 +169,8 @@ mod publicity;
 mod tenant;
 // SA-11: the team and member pages and the display name.
 pub(crate) mod team;
+// F-079, ADR-038: team invitations the invitee accepts.
+pub(crate) mod team_invite;
 // ADR-023: the coordinator unmask, its parties read and its audit read.
 mod unmask;
 
@@ -693,7 +695,8 @@ fn binds_admin<P: CellPorts>(
             | Core::AddTeamMember { account, .. }
             | Core::AddGuardian { account, .. },
         ) => *account,
-        Command::Core(Core::CreateDraft { .. }) => actor,
+        // F-079, ADR-038: the accepting account binds itself.
+        Command::Core(Core::CreateDraft { .. } | Core::AcceptTeamInvitation { .. }) => actor,
         _ => return false,
     };
     tenant::holds_tenant_operations(ports, state, bound)
@@ -2282,6 +2285,21 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         // Lane inv, J2: the invitation landing, by its link token only.
         ReadKind::GetInvitation => ReadModel::Invitation(people::landing(call, op).await?),
+        // F-079, ADR-038: the lead's team invitations, and the caller's own
+        // open ones. Addresses reach the web only (I-86).
+        ReadKind::ListTeamInvitations | ReadKind::ListMyTeamInvitations => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            if call.caller.via() != Via::Web {
+                return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-86")));
+            }
+            ReadModel::TeamInvitations(if kind == ReadKind::ListTeamInvitations {
+                team_invite::lead_list(call, op, &clearance).await?
+            } else {
+                team_invite::own_list(call, a).await?
+            })
+        }
         // Lane j4, ADR-015 amendment of 2026-11-06 (section 8.1, O-58, I-97).
         ReadKind::GetRouteMap => {
             let p = proposal_param(call, op)?;
@@ -2780,6 +2798,16 @@ async fn m3_port<P: Seams>(
         PortKind::BeginInvitationVerification => {
             return people::begin_verification(call, op, account).await;
         }
+        // F-079, ADR-038: team invitations and their answers.
+        PortKind::InviteTeamMember => return team_invite::invite(call, op, account, false).await,
+        PortKind::InviteGuardian => return team_invite::invite(call, op, account, true).await,
+        PortKind::WithdrawTeamInvitation => return team_invite::withdraw(call, op, account).await,
+        PortKind::AcceptTeamInvitation => {
+            return team_invite::answer(call, op, account, true).await;
+        }
+        PortKind::DeclineTeamInvitation => {
+            return team_invite::answer(call, op, account, false).await;
+        }
         _ => {}
     }
     let id = |name: &str| {
@@ -3018,7 +3046,12 @@ async fn m3_port<P: Seams>(
         // Served before the step-up, above.
         PortKind::AcceptInvitation
         | PortKind::RequestPrecheck
-        | PortKind::BeginInvitationVerification => {
+        | PortKind::BeginInvitationVerification
+        | PortKind::InviteTeamMember
+        | PortKind::InviteGuardian
+        | PortKind::WithdrawTeamInvitation
+        | PortKind::AcceptTeamInvitation
+        | PortKind::DeclineTeamInvitation => {
             return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01")));
         }
     };

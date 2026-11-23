@@ -190,6 +190,9 @@ pub const PAGES: &[PageRow] = &[
     PageRow::read("/app/pending/{pending}", &["pending.list"])
         .listed("pending", Listed::PendingAction),
     PageRow::read("/app/notices", &["me.notices"]),
+    // F-079, ADR-038: the team invitations addressed to the caller's login
+    // email, which the caller accepts or declines.
+    PageRow::read("/app/team-invitations", &["me.team_invitations"]),
     // The invitation landing: its token is in the fragment.
     PageRow::need("/app/invitation", PageNeed::Anyone),
     // Lane L2 (ADR-013 amendment of 2026-11-20): the consent page of an
