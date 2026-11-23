@@ -91,7 +91,10 @@ fn member<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
 fn erasures(cell: &CellHandle, cookie: &Cookie) -> Value {
     let r = web(cell, "GET", "/api/v1/admin/erasures", cookie, "");
     assert_eq!(r.status, 200, "admin.erasures: {}", text(&r));
-    assert!(!text(&r).contains("SYNTHETIC ANNEX"), "a reply names content");
+    assert!(
+        !text(&r).contains("SYNTHETIC ANNEX"),
+        "a reply names content"
+    );
     json(&r)
 }
 

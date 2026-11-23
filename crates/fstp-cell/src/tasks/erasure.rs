@@ -942,6 +942,20 @@ impl<C: Custody> ErasureRunner<C> {
         runner
             .record_call_as(KeyCall::Unwrap, epoch, request)
             .await?;
+        // ADR-007 (Daniel, 2026-11-23, decision 2; lane L39): the sealed
+        // row of every completed document erasure is deleted again, so a
+        // crash between `ErasuresCompleted` and its flush loses nothing. A
+        // row deleted before deletes nothing.
+        let documents: Vec<[u8; 16]> = runner
+            .engine
+            .state()
+            .erasures()
+            .filter(|(_, e)| {
+                e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT && e.destroyed_epoch.is_some()
+            })
+            .map(|(id, _)| id)
+            .collect();
+        runner.store.persist.dirty.blobs.extend(documents);
         // The owed record is written, so its request id leaves the row.
         runner.flush().await?;
         Ok(runner)
@@ -1375,6 +1389,7 @@ impl<C: Custody> ErasureRunner<C> {
         id: [u8; 16],
         cause: u16,
         by: fstp_domain::id::AccountId,
+        reason: Option<[u8; 16]>,
     ) -> Result<(), CellError> {
         if let Some(e) = self.engine.state().erasure(id) {
             return if e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT {
@@ -1396,6 +1411,7 @@ impl<C: Custody> ErasureRunner<C> {
                 cause,
                 by,
                 kind: fstp_cell_core::ERASURE_KIND_DOCUMENT,
+                reason,
             },
             system_command_id(suffix),
         )
@@ -1810,6 +1826,7 @@ impl<C: Custody> ErasureRunner<C> {
                     cause: ErasureCause::ErasureRequest.code(),
                     by: account,
                     kind: fstp_cell_core::ERASURE_KIND_DISPLAY_NAME,
+                    reason: None,
                 },
                 system_command_id(suffix),
             )
@@ -2467,7 +2484,11 @@ impl<C: Custody> ErasureRunner<C> {
             .map_err(|_| keys_err("planner"))?
             .ok_or(keys_err("planner"))?;
         if let Step::Complete { erased, .. } = &step {
-            self.record_completions(old, erased).await?;
+            let documents = self.record_completions(old, erased).await?;
+            // ADR-007 (Daniel, 2026-11-23, decision 2; lane L39): the
+            // sealed rows of the documents whose completion is now in the
+            // ledger go in the flush after this step, never before.
+            self.store.persist.dirty.blobs.extend(documents);
             self.erased.extend(erased.iter().map(|d| d.0));
         }
         self.apply_durable(&step)?;
@@ -2480,7 +2501,14 @@ impl<C: Custody> ErasureRunner<C> {
     /// `MAX_TEXT_IDS` texts go in one record, each record under a fixed id
     /// of the epoch and its place, so a step repeated after a crash
     /// appends nothing twice.
-    async fn record_completions(&self, old: u64, erased: &[DekId]) -> Result<(), CellError> {
+    ///
+    /// It gives the data key ids of the completed documents, whose sealed
+    /// rows the next flush deletes (lane L39).
+    async fn record_completions(
+        &self,
+        old: u64,
+        erased: &[DekId],
+    ) -> Result<Vec<[u8; 16]>, CellError> {
         let erased: BTreeSet<DekId> = erased.iter().copied().collect();
         let state = self.engine.state();
         let texts = self
@@ -2499,6 +2527,7 @@ impl<C: Custody> ErasureRunner<C> {
                     .is_some_and(|e| e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT)
             })
             .map(|d| d.0);
+        let completed_documents: Vec<[u8; 16]> = documents.clone().collect();
         let ids: Vec<[u8; 16]> = texts
             .chain(documents)
             .collect::<BTreeSet<_>>()
@@ -2523,7 +2552,7 @@ impl<C: Custody> ErasureRunner<C> {
             )
             .await?;
         }
-        Ok(())
+        Ok(completed_documents)
     }
 
     fn apply_durable(&mut self, step: &Step) -> Result<(), CellError> {
@@ -2602,6 +2631,7 @@ enum Request {
         id: [u8; 16],
         cause: u16,
         by: fstp_domain::id::AccountId,
+        reason: Option<[u8; 16]>,
         reply: ReplyTx<Result<(), CellError>>,
     },
     Keystore {
@@ -2811,11 +2841,13 @@ impl ErasureHandle {
         id: [u8; 16],
         cause: u16,
         by: fstp_domain::id::AccountId,
+        reason: Option<[u8; 16]>,
     ) -> Result<(), CellError> {
         self.ask(|reply| Request::EraseDocument {
             id,
             cause,
             by,
+            reason,
             reply,
         })
         .await
@@ -3110,9 +3142,10 @@ async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
             id,
             cause,
             by,
+            reason,
             reply,
         } => {
-            let done = runner.erase_document(id, cause, by).await;
+            let done = runner.erase_document(id, cause, by, reason).await;
             reply.send(durable(runner, done).await);
         }
         Request::Keystore { reply } => reply.send(runner.keystore().clone()),

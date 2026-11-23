@@ -186,8 +186,12 @@ fn r_ky_02_i81_production_cell_logs_a_document_erasure() {
     assert!(log(cell, &admin).is_empty(), "no erasure yet");
 
     let erase = || {
-        cell.with_running(async |c| c.erasure().erase_document(dek, ERASURE_REQUEST, BY, None).await)
-            .unwrap()
+        cell.with_running(async |c| {
+            c.erasure()
+                .erase_document(dek, ERASURE_REQUEST, BY, None)
+                .await
+        })
+        .unwrap()
     };
     erase().unwrap_or_else(|e| panic!("the document erasure: {e}"));
     assert!(

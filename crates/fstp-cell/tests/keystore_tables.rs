@@ -1180,7 +1180,10 @@ fn i81_l39_blob_row_deleted_after_completion_and_again_at_start() {
             .erase_document(DOC, 2, ADMIN, Some(DOC_REASON))
             .await
             .unwrap();
-        assert!(c.sink.tables().blob_deletes.is_empty(), "not at the request");
+        assert!(
+            c.sink.tables().blob_deletes.is_empty(),
+            "not at the request"
+        );
         while c.runner.step().await.unwrap().is_some() {
             if c.sink.tables().blob_deletes.contains(&DOC) {
                 let e = c.engine.state().erasure(DOC).unwrap();
@@ -1191,14 +1194,14 @@ fn i81_l39_blob_row_deleted_after_completion_and_again_at_start() {
             }
         }
         assert_eq!(c.sink.tables().blob_deletes, vec![DOC], "deleted once");
-        assert!(c.runner.open_document(DOC, stored.clone()).is_err(), "I-81");
+        assert!(c.runner.open_document(DOC, &stored).is_err(), "I-81");
         let e = c.engine.state().erasure(DOC).unwrap();
         assert_eq!(e.reason, Some(DOC_REASON), "the log keeps its entry");
         // A restart deletes it again, which deletes nothing more.
         c.restart().await;
         assert_eq!(c.sink.tables().blob_deletes, vec![DOC, DOC]);
         c.runner.run_until_idle().await.unwrap();
-        assert!(c.runner.open_document(DOC, stored).is_err(), "I-81");
+        assert!(c.runner.open_document(DOC, &stored).is_err(), "I-81");
         assert!(c.engine.state().erasure(DOC).is_some());
         // The repeated request is a no-op.
         c.runner

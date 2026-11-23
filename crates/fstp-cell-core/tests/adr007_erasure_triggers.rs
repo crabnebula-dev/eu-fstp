@@ -74,9 +74,18 @@ fn other_system_id() -> AccountId {
 #[test]
 fn adr007_l39_system_authoriser_names_only_system_causes() {
     assert!(is_system_authoriser(ERASURE_SYSTEM));
-    assert!(ERASURE_SYSTEM.raw().to_be_bytes().starts_with(&SYSTEM_PREFIX));
+    assert!(
+        ERASURE_SYSTEM
+            .raw()
+            .to_be_bytes()
+            .starts_with(&SYSTEM_PREFIX)
+    );
     assert!(!is_system_authoriser(ADMIN));
-    assert_eq!(SYSTEM_ERASURE_CAUSES, [1, 4], "retention expiry, verification");
+    assert_eq!(
+        SYSTEM_ERASURE_CAUSES,
+        [1, 4],
+        "retention expiry, verification"
+    );
     let s = state();
     let ok = decide_runner(&s, erasure(1, ERASURE_SYSTEM, ERASURE_KIND_DOCUMENT, None)).unwrap();
     assert_eq!(
@@ -100,7 +109,13 @@ fn adr007_l39_system_authoriser_names_only_system_causes() {
     let e = s.erasure(DOC).unwrap();
     assert_eq!((e.cause, e.by, e.reason), (1, ERASURE_SYSTEM, None));
     // An erasure request is a person's or an admin's, never the system's.
-    assert!(decide_runner(&state(), erasure(2, ERASURE_SYSTEM, ERASURE_KIND_DOCUMENT, None)).is_err());
+    assert!(
+        decide_runner(
+            &state(),
+            erasure(2, ERASURE_SYSTEM, ERASURE_KIND_DOCUMENT, None)
+        )
+        .is_err()
+    );
     // The system states no reason.
     assert!(
         decide_runner(
@@ -111,8 +126,11 @@ fn adr007_l39_system_authoriser_names_only_system_causes() {
     );
     // No other id of the namespace authorises an erasure.
     assert!(
-        decide_runner(&state(), erasure(1, other_system_id(), ERASURE_KIND_DOCUMENT, None))
-            .is_err()
+        decide_runner(
+            &state(),
+            erasure(1, other_system_id(), ERASURE_KIND_DOCUMENT, None)
+        )
+        .is_err()
     );
     // A manual erasure names the admin and keeps its reason.
     let manual = decide_runner(
@@ -182,7 +200,10 @@ fn i24_l39_reason_round_trips_and_the_old_form_decodes() {
         kind: ERASURE_KIND_DOCUMENT,
         reason: Some(REASON),
     });
-    assert_eq!(decode_cell_record(&encode_cell_record(&with)).unwrap(), with);
+    assert_eq!(
+        decode_cell_record(&encode_cell_record(&with)).unwrap(),
+        with
+    );
     let without = CellRecord::Key(KeyRecord::KeystoreErasureRequested {
         ids: vec![DOC],
         cause: 2,

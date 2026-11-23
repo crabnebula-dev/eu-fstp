@@ -148,6 +148,10 @@ pub enum KeyCommand {
         by: AccountId,
         /// What the texts held, as a closed code ([`KEYSTORE_ERASURE_KINDS`]).
         kind: u8,
+        /// The text id of the reason a tenant admin stated, for a manual
+        /// erasure (ADR-007, Daniel 2026-11-23, lane L39). The text itself
+        /// lives in the text store under its own key.
+        reason: Option<[u8; 16]>,
     },
     /// Record that the destruction of root epoch `epoch` completed the
     /// erasure of texts (ADR-007 section "Built by lane L33").
@@ -169,6 +173,22 @@ pub const ERASURE_KIND_DISPLAY_NAME: u8 = 2;
 pub const ERASURE_KIND_DOCUMENT: u8 = 3;
 /// The kinds a [`KeyCommand::RecordKeystoreErasure`] may name.
 pub const KEYSTORE_ERASURE_KINDS: [u8; 2] = [ERASURE_KIND_DISPLAY_NAME, ERASURE_KIND_DOCUMENT];
+
+/// The authoriser a system cause names (ADR-007, Daniel 2026-11-23,
+/// question 3; lane L39): the id whose bytes are `fstp:st:erasure` and a
+/// zero byte. It lies in the system task namespace [`SYSTEM_PREFIX`].
+pub const ERASURE_SYSTEM: AccountId =
+    AccountId::from_raw(u128::from_be_bytes(*b"fstp:st:erasure\0"));
+
+/// The causes the system may name as authoriser: retention expiry and a
+/// completed verification (ADR-007 causes 1 and 4, lane L39).
+pub const SYSTEM_ERASURE_CAUSES: [u16; 2] = [1, 4];
+
+/// Whether `a` lies in the system task namespace, so names no account
+/// (lane L39).
+pub fn is_system_authoriser(a: AccountId) -> bool {
+    a.raw().to_be_bytes().starts_with(&SYSTEM_PREFIX)
+}
 
 /// A key record.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -195,6 +215,8 @@ pub enum KeyRecord {
         by: AccountId,
         /// What the texts held.
         kind: u8,
+        /// The text id of the stated reason, if any (lane L39).
+        reason: Option<[u8; 16]>,
     },
     /// The destruction of root epoch `epoch` completed the erasure of
     /// texts (lane L33).

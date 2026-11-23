@@ -118,7 +118,10 @@ fn i81_l39_doc_blob_delete_only_by_keys_after_key_row_gone() {
     );
     assert!(db.psql("UPDATE doc.blob SET envelope = '\\x00';").is_err());
     assert!(db.psql("TRUNCATE doc.blob;").is_err());
-    assert_eq!(db.state_as("keys", "TRUNCATE doc.blob;").as_deref(), Some("42501"));
+    assert_eq!(
+        db.state_as("keys", "TRUNCATE doc.blob;").as_deref(),
+        Some("42501")
+    );
     // The keys role deletes it, and a repeat deletes nothing.
     assert_eq!(db.state_as("keys", &delete(&dek)), None);
     assert_eq!(rows(&db, &dek), 0);
@@ -131,9 +134,14 @@ fn i81_l39_doc_blob_delete_only_by_keys_after_key_row_gone() {
 }
 
 fn tables(db: &CellDb) -> KeystoreTables<TokioRuntime> {
-    let pool: Pool<TokioRuntime> =
-        block_on(Pool::open(rt().clone(), db.cell, Role::Keys, db.config("keys"), 2))
-            .unwrap_or_else(|e| panic!("the keys pool: {e}"));
+    let pool: Pool<TokioRuntime> = block_on(Pool::open(
+        rt().clone(),
+        db.cell,
+        Role::Keys,
+        db.config("keys"),
+        2,
+    ))
+    .unwrap_or_else(|e| panic!("the keys pool: {e}"));
     KeystoreTables::new(pool).unwrap()
 }
 

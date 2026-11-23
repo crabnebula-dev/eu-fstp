@@ -37,6 +37,7 @@ fn document(ids: Vec<[u8; 16]>) -> KeyCommand {
         cause: 2,
         by: ADMIN,
         kind: ERASURE_KIND_DOCUMENT,
+        reason: None,
     }
 }
 
@@ -46,6 +47,7 @@ fn requested(ids: Vec<[u8; 16]>) -> CellRecord {
         cause: 2,
         by: ADMIN,
         kind: ERASURE_KIND_DOCUMENT,
+        reason: None,
     })
 }
 
@@ -144,12 +146,14 @@ fn adr007_document_erasure_refusals() {
             cause: 9,
             by: ADMIN,
             kind: ERASURE_KIND_DOCUMENT,
+            reason: None,
         },
         KeyCommand::RecordKeystoreErasure {
             ids: vec![DOC_2],
             cause: 2,
             by: ADMIN,
             kind: 4,
+            reason: None,
         },
     ] {
         assert!(decide_runner(&s, bad.clone(), at(6)).is_err(), "{bad:?}");

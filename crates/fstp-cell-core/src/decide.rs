@@ -2127,11 +2127,22 @@ fn decide_key(s: &CellState, cmd: &KeyCommand) -> Result<Vec<CellRecord>, CellRe
             cause,
             by,
             kind,
+            reason,
         } => {
             if !ERASURE_CAUSES.contains(cause)
                 || !crate::KEYSTORE_ERASURE_KINDS.contains(kind)
                 || ids.is_empty()
                 || ids.len() > MAX_TEXT_IDS
+            {
+                return Err(invalid());
+            }
+            // ADR-007 (Daniel, 2026-11-23, question 3; lane L39): a system
+            // cause names the system, which states no reason. No other id
+            // of the system task namespace authorises an erasure.
+            if crate::is_system_authoriser(*by)
+                && (*by != crate::ERASURE_SYSTEM
+                    || !crate::SYSTEM_ERASURE_CAUSES.contains(cause)
+                    || reason.is_some())
             {
                 return Err(invalid());
             }
@@ -2149,6 +2160,7 @@ fn decide_key(s: &CellState, cmd: &KeyCommand) -> Result<Vec<CellRecord>, CellRe
                 cause: *cause,
                 by: *by,
                 kind: *kind,
+                reason: *reason,
             })])
         }
         // The destruction of `epoch` completed these erasures (I-81).

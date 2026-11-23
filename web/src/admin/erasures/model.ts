@@ -20,6 +20,18 @@ export const ERASURE_KINDS = ["text", "display_name", "document"] as const;
 /** One kind. */
 export type ErasureKind = (typeof ERASURE_KINDS)[number];
 
+/** Who authorised an erasure, as `fstp_access::ERASURE_AUTHORISERS` names them (ADR-007, Daniel 2026-11-23, lane L39). Never which account (R-CF-03). */
+export const ERASURE_AUTHORISERS = ["system", "account"] as const;
+
+/** One authoriser. */
+export type ErasureAuthoriser = (typeof ERASURE_AUTHORISERS)[number];
+
+/** The media types of an import document, as `fstp_access::IMPORT_MEDIA` names them. */
+export const IMPORT_MEDIA = ["text/plain", "text/markdown"] as const;
+
+/** The longest stated reason, in characters (`fstp_api_core::erasure::MAX_REASON`, lane L39). */
+export const MAX_REASON = 500;
+
 /** One erasure-log row. */
 export interface ErasureEntry {
   readonly text: string;
@@ -31,6 +43,10 @@ export interface ErasureEntry {
   readonly kind: ErasureKind;
   /** The root epoch whose destruction completed the erasure, once known (I-81). */
   readonly destroyedEpoch: string | null;
+  /** Whether the system or an account authorised it (lane L39). */
+  readonly authoriser: ErasureAuthoriser;
+  /** The reason a tenant admin stated, if any (lane L39). */
+  readonly reason: string | null;
 }
 
 /** One grant whose retention ended. */
@@ -41,10 +57,19 @@ export interface RetentionEnded {
   readonly end: string;
 }
 
+/** One import document a tenant admin may erase (lane L39). */
+export interface DocumentRow {
+  readonly document: string;
+  readonly programme: string;
+  readonly media: string;
+  readonly erased: boolean;
+}
+
 /** The `admin.erasures` reply. */
 export interface ErasuresReply {
   readonly erasures: readonly ErasureEntry[];
   readonly retentionEnded: readonly RetentionEnded[];
+  readonly documents: readonly DocumentRow[];
 }
 
 const ID = /^(0|[1-9][0-9]{0,38})$/;
@@ -64,13 +89,34 @@ function record(v: unknown): Readonly<Record<string, unknown>> | null {
 function entry(v: unknown): ErasureEntry | null {
   const o = record(v);
   if (o === null) return null;
-  const { text, cause, grant, requested_at: requestedAt, completed_at: completedAt, kind, destroyed_epoch: destroyedEpoch } = o;
+  const { text, cause, grant, requested_at: requestedAt, completed_at: completedAt, kind, destroyed_epoch: destroyedEpoch, authoriser, reason } = o;
   if (!isId(text) || !isCause(cause) || !isId(requestedAt)) return null;
   if (grant !== null && !isId(grant)) return null;
   if (completedAt !== null && !isId(completedAt)) return null;
   if (typeof kind !== "string" || !(ERASURE_KINDS as readonly string[]).includes(kind)) return null;
   if (destroyedEpoch !== null && !isId(destroyedEpoch)) return null;
-  return Object.freeze({ text, cause, grant, requestedAt, completedAt, kind: kind as ErasureKind, destroyedEpoch });
+  if (typeof authoriser !== "string" || !(ERASURE_AUTHORISERS as readonly string[]).includes(authoriser)) return null;
+  if (reason !== null && typeof reason !== "string") return null;
+  return Object.freeze({
+    text,
+    cause,
+    grant,
+    requestedAt,
+    completedAt,
+    kind: kind as ErasureKind,
+    destroyedEpoch,
+    authoriser: authoriser as ErasureAuthoriser,
+    reason,
+  });
+}
+
+function documentRow(v: unknown): DocumentRow | null {
+  const o = record(v);
+  if (o === null) return null;
+  const { document, programme, media, erased } = o;
+  if (!isId(document) || !isId(programme) || typeof erased !== "boolean") return null;
+  if (typeof media !== "string" || !(IMPORT_MEDIA as readonly string[]).includes(media)) return null;
+  return Object.freeze({ document, programme, media, erased });
 }
 
 function ended(v: unknown): RetentionEnded | null {
@@ -84,13 +130,15 @@ function ended(v: unknown): RetentionEnded | null {
 /** The `admin.erasures` reply, or null when it has another shape. */
 export function decodeErasures(v: unknown): ErasuresReply | null {
   const o = record(v);
-  if (o === null || !Array.isArray(o["erasures"]) || !Array.isArray(o["retention_ended"])) return null;
+  if (o === null || !Array.isArray(o["erasures"]) || !Array.isArray(o["retention_ended"]) || !Array.isArray(o["documents"])) return null;
   const erasures = (o["erasures"] as unknown[]).map(entry);
   const retentionEnded = (o["retention_ended"] as unknown[]).map(ended);
-  if (erasures.some((e) => e === null) || retentionEnded.some((e) => e === null)) return null;
+  const documents = (o["documents"] as unknown[]).map(documentRow);
+  if (erasures.some((e) => e === null) || retentionEnded.some((e) => e === null) || documents.some((d) => d === null)) return null;
   return Object.freeze({
     erasures: Object.freeze(erasures as ErasureEntry[]),
     retentionEnded: Object.freeze(retentionEnded as RetentionEnded[]),
+    documents: Object.freeze(documents as DocumentRow[]),
   });
 }
 
@@ -98,6 +146,18 @@ export function decodeErasures(v: unknown): ErasuresReply | null {
 export function requestBody(cause: string, grant: string): { readonly cause: ErasureCause; readonly grant: string } | null {
   if (!isCause(cause) || !isId(grant)) return null;
   return Object.freeze({ cause, grant });
+}
+
+/**
+ * The `admin.erase_document` body (ADR-007, Daniel 2026-11-23, lane L39): the
+ * reason trimmed, of 1 to MAX_REASON characters with no control character,
+ * or null.
+ */
+export function eraseBody(reason: string): { readonly reason: string } | null {
+  const t = reason.trim();
+  const n = [...t].length;
+  if (n < 1 || n > MAX_REASON || /\p{Cc}/u.test(t)) return null;
+  return Object.freeze({ reason: t });
 }
 
 /** `YYYY-MM-DD` of an instant in UTC microseconds, or the decimal text when it is out of range. */
