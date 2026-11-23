@@ -45,7 +45,7 @@ No invariant forbids the decision. The guards of the Receiving binding are uncha
 | Expiry | 14 days from the invitation. An expired invitation cannot be accepted or declined | Item 4 |
 | Bounds | At most 10 open invitations per proposal, and at most 20 open invitations by one lead across proposals. Open means neither closed nor expired | Item 4 |
 | Mail | None. The lead tells the person, who signs in and sees the invitation. The existing invitation mail looks up the address's account and enrols a new one, which takes longer for an unknown address. That timing would tell the lead whether the address has an account | Item 2 |
-| Old commands | `AddTeamMember` and `AddGuardian` stay in the domain, so old ledgers replay and the domain property tests and model checks keep their bare binding step. No operation, tool or seed issues them now | I-23 |
+| Old commands | `AddTeamMember` and `AddGuardian` stay in the domain, so old ledgers replay and the domain property tests and model checks keep their bare binding step. No registry operation, tool or seed issues them now. The raw command route still admits them (open point 5) | I-23 |
 
 ### Operations
 
@@ -74,3 +74,17 @@ Each is web only. None has an MCP tool.
 2. Whether the invitee's list should name the call. It names the role and the expiry only.
 3. Whether to send a mail notice, and through which send path.
 4. Whether to retire `AddTeamMember` and `AddGuardian` from the domain, with their tests and model checks.
+5. The raw command route `POST /api/v1/commands` of the cell still admits `AddTeamMember` and `AddGuardian` from a session, so a lead can still bind an account by its id there. A guard on that route closes it, but the over-PostgreSQL M2 suites (`seam_m2_*_suite_over_pg`) send these commands through that route, from the SoD machine and the review machine's setup. Closing it needs those suites taught the invitation flow first, or the domain commands retired.
+
+## Record
+
+| Item | Value | Recorded |
+| --- | --- | --- |
+| Third-party crates or packages added | None | 2026-11-23 |
+| Domain | `fstp_domain::proposal::team`: commands `InviteToTeam`, `WithdrawTeamInvitation`, `AcceptTeamInvitation`, `DeclineTeamInvitation`; records `TeamInvited`, `TeamInvitationClosed`; id `TeamInvitationId` | 2026-11-23 |
+| Registry | `RETIRED` holds `AddTeamMember` and `AddGuardian`. Port kinds `InviteTeamMember`, `InviteGuardian`, `WithdrawTeamInvitation`, `AcceptTeamInvitation`, `DeclineTeamInvitation`. Read kinds `ListTeamInvitations`, `ListMyTeamInvitations` | 2026-11-23 |
+| Port | `TextStore::text_equals`, in the cell's text store and the fake | 2026-11-23 |
+| Pages | `/app/team-invitations`, the invitation list on the team page, and a home callout while an invitation waits | 2026-11-23 |
+| Demo seed | The guardian of a minor-flagged draft is invited by the lead and accepts, both through the API | 2026-11-23 |
+| Fuzz seeds | Four `command_decode` and two `record_decode` seeds, pinned by `m10_f079_codec_seeds_hold_the_team_invitation_kinds` | 2026-11-23 |
+| Tests | `m10_f079_th07_an_invitation_binds_nobody_and_asks_the_vault_nothing_before_acceptance`, `m10_f079_th08_the_lead_learns_nothing_about_the_invited_account`, `m10_f079_an_expired_or_withdrawn_invitation_cannot_be_accepted` and their neighbours in `fstp-api-testkit` and `fstp-domain-testkit` | 2026-11-23 |

@@ -83,8 +83,10 @@ export const APP = {
   negotiation: (p: string): string => `/app/proposals/${p}/negotiation`,
   /** The guardian page (`guardian.begin_consent`). */
   guardian: (p: string): string => `/app/proposals/${p}/guardian`,
-  /** The team: invite members in DRAFT, add a guardian (`proposal.add_member`, `proposal.add_guardian`). */
+  /** The team: invite members in DRAFT and the guardian (`proposal.add_member`, `proposal.add_guardian`; F-079, ADR-038). */
   team: (p: string): string => `/app/proposals/${p}/team`,
+  /** The invitee's team invitations (`me.team_invitations`; F-079, ADR-038). */
+  teamInvitations: '/app/team-invitations',
   /** The caller's notices (`me.notices`). */
   notices: '/app/notices',
 } as const;

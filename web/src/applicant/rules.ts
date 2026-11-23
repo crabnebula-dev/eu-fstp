@@ -149,8 +149,9 @@ export function teamReadsOffered(role: ProposalRole | undefined): boolean {
  * Whether the lead may invite team members (`proposal.add_member`).
  *
  * Interim, pending Daniel and lane W3b: the domain sets no state guard
- * on `AddTeamMember`. The team is formed while the draft is written, so
- * the pages offer it in DRAFT only.
+ * on `InviteToTeam` (F-079, ADR-038), as it set none on `AddTeamMember`.
+ * The team is formed while the draft is written, so the pages offer it
+ * in DRAFT only.
  */
 export function teamEditable(s: ProposalState): boolean {
   return s === "DRAFT";

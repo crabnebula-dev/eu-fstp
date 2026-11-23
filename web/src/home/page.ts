@@ -73,6 +73,7 @@ import {
 } from "../reviewer/kit.js";
 import { type MyRoles, type OwnProposal, WORK_PATHS, type Work, type WorkItem, workOf } from "./model.js";
 import { mailboxCount } from "../mailbox/pages.js";
+import { teamInvitationCount } from "../applicant/invitations.js";
 import { decodeQueue, type QueueRow } from "../grant/models.js";
 import { homeLabel } from "./nav.js";
 import { myRoles } from "./session.js";
@@ -625,6 +626,18 @@ export function mountHome(): void {
         h("p", { id: "home-mailbox", class: "callout" }, [
           h("a", { href: WORK_PATHS.mailbox, "data-mailbox-link": "", "data-open": String(open) }, [
             open === 0 ? homeLabel("home.mailbox_none") : homeLabel("home.mailbox", { count: String(open) }),
+          ]),
+        ]),
+      );
+    }
+    // F-079, ADR-038: the team invitations addressed to the person, shown
+    // only while one waits, with the page where they answer.
+    const invited = setup ? null : await teamInvitationCount();
+    if (invited !== null && invited > 0) {
+      parts.push(
+        h("p", { id: "home-team-invitations", class: "callout" }, [
+          h("a", { href: "/app/team-invitations", "data-team-invitations": String(invited) }, [
+            homeLabel("home.team_invitations", { count: String(invited) }),
           ]),
         ]),
       );

@@ -269,20 +269,42 @@ export const APPLICANT_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "guardian.closed": "Guardian consent is not open for this proposal, or you are not its guardian.",
 
   "team.title": "Team",
-  "team.intro": "Invite people by email address. The invitation asks them to sign in. This page asks nothing else about them.",
+  "team.intro":
+    "Invite people by email address. Nobody joins until they sign in with that address and accept. The platform sends no email, so tell them to sign in. This page shows only whether each person joined.",
   "team.closed": "No one can be added to this proposal in its current state.",
   "team.email_invalid": "Enter an email address in the form name@example.org.",
   "team.member.heading": "Invite a team member",
   "team.member.intro": "Team members can read and write the draft with you.",
   "team.member.email": "Email address of the team member",
   "team.member.send": "Invite the team member",
-  "team.member.sent": "The invitation to the team member is recorded.",
-  "team.guardian.heading": "Add a guardian",
+  "team.member.sent": "The invitation is recorded. The person joins once they sign in with this address and accept.",
+  "team.guardian.heading": "Invite a guardian",
   "team.guardian.intro":
     "If you are under 18, your guardian gives consent in the identity vault before the proposal can enter negotiation.",
   "team.guardian.email": "Email address of the guardian",
-  "team.guardian.send": "Add the guardian",
-  "team.guardian.sent": "The invitation to the guardian is recorded.",
+  "team.guardian.send": "Invite the guardian",
+  "team.guardian.sent": "The invitation is recorded. The guardian joins once they sign in with this address and accept.",
+  "team.invitations.heading": "Invitations",
+  "team.invitations.none": "No invitations yet.",
+  "team.invitations.role.team_member": "Team member.",
+  "team.invitations.role.guardian": "Guardian.",
+  "team.invitations.state.open": "Waiting for an answer",
+  "team.invitations.state.joined": "Joined",
+  "team.invitations.state.not_joined": "Not joined",
+  "team.invitations.expires": "Open until",
+  "team.invitations.withdraw": "Withdraw",
+
+  "invitations.title": "Team invitations",
+  "invitations.intro":
+    "These invitations were sent to the email address you sign in with. You join a proposal team only if you accept. When you accept, the platform checks that you may join. If it refuses, only you see why.",
+  "invitations.none": "You have no open team invitations.",
+  "invitations.role.team_member": "Join as a team member of",
+  "invitations.role.guardian": "Join as the guardian of",
+  "invitations.proposal": "proposal {id}.",
+  "invitations.expires": "Open until",
+  "invitations.accept": "Accept",
+  "invitations.decline": "Decline",
+  "invitations.accepted": "You joined the team. Open the proposal.",
 });
 
 /**

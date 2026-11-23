@@ -21,6 +21,7 @@ const TABLE = `export const OPERATIONS = [
   { name: "proposal.withdraw", method: "POST", path: "/proposals/{proposal}/withdrawal", base: "api" },
   { name: "proposal.add_member", method: "POST", path: "/proposals/{proposal}/team", base: "api" },
   { name: "proposal.add_guardian", method: "POST", path: "/proposals/{proposal}/guardian", base: "api" },
+  { name: "proposal.team_invitations", method: "GET", path: "/proposals/{proposal}/team/invitations", base: "api" },
   { name: "proposal.record_plan", method: "PUT", path: "/proposals/{proposal}/plan", base: "api" },
   { name: "stage2.view", method: "GET", path: "/proposals/{proposal}/stage2", base: "api" },
   { name: "negotiation.view", method: "GET", path: "/proposals/{proposal}/negotiation", base: "api" },
@@ -81,6 +82,10 @@ function proposalIn(state: string, role: string | null): Reply {
     }
     if (method === 'GET' && path === '/api/v1/proposals/1/negotiation') {
       return { acknowledged: false };
+    }
+    // F-079, ADR-038: the lead's invitations of the proposal.
+    if (method === 'GET' && path === '/api/v1/proposals/1/team/invitations') {
+      return { invitations: [] };
     }
     return { accepted: true };
   };
@@ -168,7 +173,9 @@ test('roles_member_reads_the_negotiation_notice_without_acknowledging', async ({
  * Journey J4 "Add team members, or a guardian for V": the lead invites
  * by email address only, to the W3a routes of `proposal.add_member` and
  * `proposal.add_guardian`, and the page asks for no identity attribute.
- * In NEGOTIATION only the guardian can be added (NOTE 14).
+ * In NEGOTIATION only the guardian can be invited (NOTE 14). F-079
+ * (ADR-038): nobody joins until they accept, and the page lists the
+ * lead's invitations from `proposal.team_invitations`.
  */
 test('r_ng_01_team_page_invites_members_and_adds_a_guardian', async ({ page }) => {
   const reply = { state: 'DRAFT' };
@@ -188,6 +195,8 @@ test('r_ng_01_team_page_invites_members_and_adds_a_guardian', async ({ page }) =
   ]);
   const inputs = await page.locator('main input, main select, main textarea').evaluateAll((els) => els.map((e) => e.id));
   expect(inputs.sort(), 'the page asks for the two addresses only').toEqual(['team-guardian-email', 'team-member-email']);
+  await expect(page.locator('#team-invitations')).toBeVisible();
+  expect(sent.some((s) => s.method === 'GET' && s.path === '/api/v1/proposals/1/team/invitations')).toBe(true);
 
   reply.state = 'NEGOTIATION';
   await page.goto(`${ORIGIN}/app/proposals/1/team`);

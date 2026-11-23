@@ -82,6 +82,7 @@ export const APP = Object.freeze({
   negotiation: (p: string): string => `/app/proposals/${p}/negotiation`,
   guardian: (p: string): string => `/app/proposals/${p}/guardian`,
   team: (p: string): string => `/app/proposals/${p}/team`,
+  teamInvitations: "/app/team-invitations",
   notices: "/app/notices",
 });
 

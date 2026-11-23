@@ -186,13 +186,15 @@ function pageSources(): string {
 /**
  * Design 2.2 J4 "Add team members, or a guardian for V | Team |
  * `proposal.add_member`, `proposal.add_guardian`". The guardian must be
- * added (`AddGuardian`) before V can pass the NEGOTIATION gate (I-18,
- * state-machine NOTE 14). No applicant page calls either operation.
+ * invited and accept (F-079, ADR-038) before V can pass the NEGOTIATION
+ * gate (I-18, state-machine NOTE 14). The invitee answers on its own page
+ * (`me.accept_team_invitation`, `me.decline_team_invitation`).
  */
 test('review_j4_team_page_calls_add_member_and_add_guardian', () => {
   const src = pageSources();
   expect(src.includes('"proposal.add_member"'), 'a page calls proposal.add_member').toBe(true);
   expect(src.includes('"proposal.add_guardian"'), 'a page calls proposal.add_guardian').toBe(true);
+  expect(src.includes('"me.accept_team_invitation"'), 'a page calls me.accept_team_invitation').toBe(true);
 });
 
 /**
