@@ -272,6 +272,15 @@ impl TextStore for FakeTexts {
         self.display_names_now(&accounts, clearance)
     }
 
+    /// M10 F-006 (ADR-033): the display names of one proposal's team, for
+    /// the name mask alone.
+    async fn mask_handles(
+        &self,
+        accounts: Vec<AccountId>,
+    ) -> Result<BTreeMap<AccountId, String>, PortError> {
+        self.mask_handles_now(&accounts)
+    }
+
     async fn put(
         &self,
         class: TextClass,
@@ -414,11 +423,37 @@ impl FakeTexts {
             if !clears(TextClass::Confidential, TextOwner::Account(*a), clearance) {
                 return Err(PortError::Refused);
             }
-            let Some((_, _, b)) = s.display.get(a).and_then(|r| s.rows.get(&r.text)) else {
+            let Some(name) = Self::display_name_of(&s, *a)? else {
                 continue;
             };
-            let name = String::from_utf8(b.clone()).map_err(|_| PortError::Refused)?;
             out.insert(*a, name);
+        }
+        Ok(out)
+    }
+
+    /// The display name of `a`, if it set one.
+    fn display_name_of(s: &Texts, a: AccountId) -> Result<Option<String>, PortError> {
+        let Some((_, _, b)) = s.display.get(&a).and_then(|r| s.rows.get(&r.text)) else {
+            return Ok(None);
+        };
+        String::from_utf8(b.clone())
+            .map(Some)
+            .map_err(|_| PortError::Refused)
+    }
+
+    /// M10 F-006 (ADR-033): the display names of one proposal's team, for
+    /// the name mask alone. No clearance opens them, since no read model
+    /// carries them.
+    fn mask_handles_now(
+        &self,
+        accounts: &[AccountId],
+    ) -> Result<BTreeMap<AccountId, String>, PortError> {
+        let s = lock(&self.state);
+        let mut out = BTreeMap::new();
+        for a in accounts {
+            if let Some(name) = Self::display_name_of(&s, *a)? {
+                out.insert(*a, name);
+            }
         }
         Ok(out)
     }

@@ -2341,9 +2341,15 @@ fn journey_position(who: Who, x: Option<StateTag>, policy: &Policy) -> Result<()
 ///   Q39).
 ///
 /// Through MCP, a reader outside the team is refused unless P-75 is on.
+/// Through MCP the team's read of its draft is not exposed (M10 F-005,
+/// I-86, Daniel 2026-11-23): the team reads its drafts in the web, so the
+/// vault mask never answers a text the team can still change.
 fn content(who: Who, x: Option<StateTag>, policy: &Policy, mcp: bool) -> Result<(), AuthClass> {
     use AuthClass::{Conflict, Visibility};
     if former_team_reads(who, x) {
+        if mcp && x == Some(StateTag::Draft) {
+            return Err(AuthClass::NotExposed);
+        }
         return Ok(());
     }
     if who.conflicted_in(x) {

@@ -42,7 +42,10 @@
 //!   equals the web outcome. The one difference the design admits is D6
 //!   (TH-62): with P-75 off, a content read outside the applicant team is
 //!   refused through MCP under P-75, where the reference admits it with
-//!   P-75 on.
+//!   P-75 on. The second is F-005 of M10 (I-86, Daniel 2026-11-23): the
+//!   team's content read of X in DRAFT is not exposed through MCP, where
+//!   the web completes it. The team reads its drafts in the web, so the
+//!   vault name mask never answers a text the team can still change.
 //! - `transition("I-84 pending")`: for a pending exposure, where the web
 //!   completes, MCP gives `Pending` and its web confirmation completes,
 //!   as the direct web outcome does. Where the web refuses, the dry run
@@ -182,6 +185,10 @@ pub struct Pair {
     /// Whether D6 admits a refusal under P-75 through MCP alone: P-75 is
     /// off, and the reference admits the MCP cell with P-75 on.
     pub p75_alone: bool,
+    /// Whether F-005 admits a channel denial of the MCP cell alone: the
+    /// team's content read of X in DRAFT, which is not exposed through MCP
+    /// and completes through the web (M10, I-86, Daniel 2026-11-23).
+    pub draft_alone: bool,
     /// The web twin's outcome.
     pub web: Observed,
     /// The MCP cell's outcome.
@@ -195,12 +202,19 @@ fn p75_refusal() -> Observed {
     Observed::Refused(Some("P-75".to_owned()))
 }
 
+/// The channel denial of the team's draft content read through MCP
+/// (M10 F-005, I-86).
+fn not_exposed() -> Observed {
+    Observed::ChannelDenied(Denial::NotExposed)
+}
+
 impl Pair {
     /// `transition("I-84 direct")` on this pair.
     pub fn direct_parity(&self) -> Result<(), String> {
         if self.exposure != Exposure::Direct
             || self.mcp == self.web
             || (self.p75_alone && self.mcp == p75_refusal())
+            || (self.draft_alone && self.mcp == not_exposed())
         {
             return Ok(());
         }
@@ -309,6 +323,24 @@ fn p75_alone(reference: &AuthzReference, cell: &Cell) -> bool {
     reference.expected(&on) == Some(Expected::Allow)
 }
 
+/// Whether F-005 admits a channel denial of the MCP `cell` alone (M10,
+/// I-86, Daniel 2026-11-23): X is in DRAFT, the reference refuses the
+/// MCP cell as not exposed, and it admits the web twin. Only the team's
+/// content read of its draft is such a cell. The team reads its drafts
+/// in the web, so the vault mask never answers a text it can change.
+fn draft_alone(reference: &AuthzReference, cell: &Cell) -> bool {
+    if cell.state != StateProfile::Proposal(StateTag::Draft)
+        || !matches!(cell.session.channel, Via::Mcp { .. })
+        || reference.expected(cell) != Some(Expected::Deny(AuthClass::NotExposed))
+    {
+        return false;
+    }
+    reference
+        .op(cell.op)
+        .and_then(|op| reference.expected(&web_twin(op, cell)))
+        == Some(Expected::Allow)
+}
+
 /// The M-PARITY model.
 pub struct ParityModel {
     backend: Backend,
@@ -409,6 +441,7 @@ impl ParityModel {
             exposure,
             public: op.public,
             p75_alone: p75_alone(&self.reference, cell),
+            draft_alone: draft_alone(&self.reference, cell),
             web: run.web,
             mcp: run.mcp,
             confirmed: run.confirmed,
@@ -556,6 +589,7 @@ mod tests {
             exposure,
             public: false,
             p75_alone: false,
+            draft_alone: false,
             web,
             mcp,
             confirmed,
@@ -604,6 +638,56 @@ mod tests {
         );
         let skipped = pair(p, guard.clone(), Observed::Pending, Some(guard.clone()));
         assert!(skipped.pending_parity().is_err());
+    }
+
+    /// M10 F-005, I-84, I-86: the team's content read of X in DRAFT is the
+    /// one cell where M-PARITY admits a `NotExposed` through MCP beside a
+    /// web completion. No other cell gets the exception, and the
+    /// exception admits no other MCP outcome.
+    #[test]
+    fn m10_h07_i86_m_parity_admits_the_team_draft_read_alone() {
+        let reference = authz_reference().unwrap();
+        let read = |who, state| Cell {
+            op: "review.read_content",
+            who,
+            state,
+            policy: policy(true),
+            session: MCP,
+        };
+        let draft = StateProfile::Proposal(StateTag::Draft);
+        assert!(draft_alone(&reference, &read(Who::Lead, draft)));
+        assert!(!draft_alone(&reference, &read(Who::Lead, PATH[2])));
+        assert!(!draft_alone(
+            &reference,
+            &read(Who::ProgrammeManager, draft)
+        ));
+        let admitted: Vec<&str> = reference
+            .ops()
+            .filter(|o| o.tool.is_some())
+            .filter(|o| {
+                ACCOUNTS.into_iter().any(|who| {
+                    draft_alone(
+                        &reference,
+                        &Cell {
+                            op: o.name,
+                            who,
+                            state: draft,
+                            policy: policy(true),
+                            session: MCP,
+                        },
+                    )
+                })
+            })
+            .map(|o| o.name)
+            .collect();
+        assert_eq!(admitted, ["review.read_content"]);
+        let done = Observed::Completed;
+        let mut p = pair(Exposure::Direct, done.clone(), not_exposed(), None);
+        assert!(p.direct_parity().is_err(), "no exception without F-005");
+        p.draft_alone = true;
+        assert!(p.direct_parity().is_ok());
+        p.mcp = Observed::Refused(Some("I-21".to_owned()));
+        assert!(p.direct_parity().is_err(), "only the denial is admitted");
     }
 
     /// I-84, I-85, ADR-013 amendment of 2026-11-20: exactly the seven

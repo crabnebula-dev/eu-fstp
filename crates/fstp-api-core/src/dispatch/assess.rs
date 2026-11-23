@@ -272,6 +272,10 @@ async fn input_of<P: Seams>(
     let w = submitted_of(call, p, clearance)
         .await
         .map_err(|e| call.refuse(e))?;
+    let team = super::team_of(&call.state, p);
+    let handles = super::team_handles(call, &team)
+        .await
+        .map_err(|e| call.refuse(e))?;
     let sections = [
         (DataLabel::Title, 0u8, w.title),
         (DataLabel::Summary, 1, w.summary),
@@ -287,11 +291,13 @@ async fn input_of<P: Seams>(
                 text: UntrustedText::new(text),
             })
             .collect(),
-        handles: Vec::new(),
+        // M10 F-006 (ADR-033): the names the cell holds for the team are
+        // handles of the pattern stage, so an unverified team is masked.
+        handles: handles.into_iter().flatten().collect(),
     };
     let mask = VaultMask {
         ports: call.ports,
-        team: super::team_of(&call.state, p),
+        team,
     };
     let prepared = fstp_assess::prepare(&mask, &job)
         .await

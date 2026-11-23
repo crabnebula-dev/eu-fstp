@@ -2253,6 +2253,32 @@ mod tests {
         );
     }
 
+    /// M10 F-005, I-86 (Daniel 2026-11-23): through MCP the team's read
+    /// of its draft is not exposed, so the vault mask never answers a text
+    /// the team can still change. The web read of the draft and the MCP
+    /// read once submitted stay open to the team.
+    #[test]
+    fn m10_h07_i86_reference_team_draft_content_is_web_only() {
+        let draft = StateProfile::Proposal(StateTag::Draft);
+        for who in [Who::Lead, Who::TeamMember, Who::Guardian] {
+            assert_eq!(
+                at("review.read_content", who, draft, SS, mcp(true)),
+                Expected::Deny(AuthClass::NotExposed),
+                "{who:?}"
+            );
+            assert_eq!(
+                at("review.read_content", who, draft, SS, PASS),
+                Expected::Allow,
+                "{who:?}"
+            );
+            assert_eq!(
+                at("review.read_content", who, S1, SS, mcp(true)),
+                Expected::Allow,
+                "{who:?}"
+            );
+        }
+    }
+
     /// Q39, D11: in RANKED and the terminal states only the team reads
     /// content.
     #[test]

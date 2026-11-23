@@ -229,6 +229,19 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
             .await
             .map_err(|_| PortError::Unavailable)
     }
+
+    /// M10 F-006 (ADR-033): the display names of one proposal's team, for
+    /// the name mask alone. The API core never puts them in a read model.
+    async fn mask_handles(
+        &self,
+        accounts: Vec<AccountId>,
+    ) -> Result<std::collections::BTreeMap<AccountId, String>, PortError> {
+        self.0
+            .erasure
+            .display_names(accounts)
+            .await
+            .map_err(|_| PortError::Unavailable)
+    }
 }
 
 /// The sealer of workspace values.

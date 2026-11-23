@@ -1281,6 +1281,20 @@ pub trait TextStore: Send + Sync {
         let _ = (accounts, clearance);
         std::future::ready(Err(PortError::Unavailable))
     }
+
+    /// The display names of those of `accounts` that have one, for the
+    /// name mask alone (M10 F-006, ADR-033, Daniel 2026-11-23). The API
+    /// core passes the accounts of one proposal's team and turns the names
+    /// into mask handles. No read model carries them, so the release rule
+    /// of [`TextStore::display_names`] stands (SA-11, I-17). The default
+    /// fails closed.
+    fn mask_handles(
+        &self,
+        accounts: Vec<AccountId>,
+    ) -> impl Future<Output = Result<BTreeMap<AccountId, String>, PortError>> + Send {
+        let _ = accounts;
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// What [`TextStore::set_display_name`] did (SA-11 amendment).
