@@ -5604,7 +5604,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "grant": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
           "requested_at": { schema: { kind: "id" }, optional: false },
           "completed_at": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
-          ["kind"]: { schema: { kind: "enum", values: ["text", "display_name", "document"] }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["text", "display_name", "document", "workspace"] }, optional: false },
           "destroyed_epoch": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
           "authoriser": { schema: { kind: "enum", values: ["system", "account"] }, optional: false },
           "reason": { schema: { kind: "nullable", inner: { kind: "string" } }, optional: false },

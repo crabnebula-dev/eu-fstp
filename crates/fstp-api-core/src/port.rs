@@ -1399,14 +1399,18 @@ pub enum ErasureKind {
     /// A document the blob store sealed (ADR-007 section "Built by lane
     /// L37").
     Document,
+    /// Every slot of a proposal's workspace, under the proposal's own key
+    /// (F-017, ADR-026 section "Written by the M10 fix lane").
+    Workspace,
 }
 
 impl ErasureKind {
     /// Every kind.
-    pub const ALL: [ErasureKind; 3] = [
+    pub const ALL: [ErasureKind; 4] = [
         ErasureKind::Text,
         ErasureKind::DisplayName,
         ErasureKind::Document,
+        ErasureKind::Workspace,
     ];
 
     /// The wire name (`fstp_access::ERASURE_KINDS`).
@@ -1415,6 +1419,7 @@ impl ErasureKind {
             ErasureKind::Text => "text",
             ErasureKind::DisplayName => "display_name",
             ErasureKind::Document => "document",
+            ErasureKind::Workspace => "workspace",
         }
     }
 }
@@ -1705,6 +1710,21 @@ pub trait Workspaces: Send + Sync {
         proposal: ProposalId,
         slot: WorkspaceSlot,
     ) -> impl Future<Output = Result<Option<Sealed>, PortError>> + Send;
+    /// Requests the erasure of every slot of `proposal`, with `cause`, as
+    /// tenant admin `by` asked (F-017, ADR-026 section "Written by the M10
+    /// fix lane"). `false` when the store holds no workspace of the
+    /// proposal. A store that seals each proposal under a key of its own
+    /// destroys that key first and deletes the rows after it. A repeated
+    /// request is `true` and does nothing more. The default fails closed.
+    fn erase(
+        &self,
+        proposal: ProposalId,
+        cause: ErasureCause,
+        by: AccountId,
+    ) -> impl Future<Output = Result<bool, PortError>> + Send {
+        let _ = (proposal, cause, by);
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// Records vault answers that commit no command, as a query digest and the

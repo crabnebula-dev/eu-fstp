@@ -888,6 +888,22 @@ Questions raised by lane L16, all decided by Daniel on 2026-11-21:
 - **Copy id. Decided by Daniel on 2026-11-21:** the runbook reads the id of a copy from its header with `od`. No command prints it (R-NF-02).
 - The escrow formats of ADR-012 (record of lane L16) stay interim.
 
+### The guard key of Q-L16-1: not built by the M10 fix lane (F-018)
+
+Daniel decided on 2026-11-23 that the M10 exit counts as the release that Q-L16-1 names. The M10 fix lane `m10/erasure` read this ADR and ADR-012 for the guard key and stopped before building it, for the reasons below. Open for Daniel.
+
+What the guard must do. A copy made before an erasure, its passphrase and a database backup of the same age must not open data erased later. Only a component that is destroyed online can stop that, as the residual risk above says. The copy must still open after the loss of the pilot host, so that component must live off the pilot host. On the pilot, the only off-host places are the second custodian, the object store and the operator's offline files. The object store deletes nothing (ADR-005, ADR-012), and offline files are destroyed only by the operator.
+
+Why it needs a new operator step. The guard of Q-L16-1 is held online by the second custodian. Today the second custodian is optional and not part of `setup` (ADR-028, decided by Daniel on 2026-11-21). It is reached only through its own console socket, and files travel between the hosts by hand. `fstp-keyd` serves Unix sockets only. So the cell's erasure runner cannot reach it at step 6, and `backup-keys` cannot reach it to seal a copy. Building the guard needs a second machine that is always on, a network link between the two `fstp-keyd` entries with its own certificates, and a pairing step at setup.
+
+Options for Daniel:
+
+- **A. The guard as Q-L16-1 describes it.** The second custodian becomes required and serves the pilot host over mutual TLS. It holds a hybrid KEM key pair, the guard. `backup-keys` seals each copy once more to the guard's public half through `fstp-crypto`. Step 6 of each App or Vault rotation asks the custodian to destroy the guard and make the next one, and records it. An import asks the custodian to open the outer seal. New for the operator: a second machine that stays on, one pairing at setup, and a configuration member that names the custodian. An erasure then waits while the custodian is unreachable, or completes at reduced assurance.
+- **B. The guard in an external KMS.** As A, with the guard as an OKMS key that is destroyed and replaced at each rotation. No second machine, but OKMS credentials on the pilot host, and Q11 and verify items K1, K4 and K10 open first.
+- **C. Keep the pilot reading for the M10 exit.** The runbook destroys every older copy after each erasure, `fstp-keyd` reports reduced I-81 assurance with `ExportHoldsErasedEpoch` until the copy is retired, and the System page shows the key copy amber. The I-81 note in `SPEC/02-domain/invariants.md` already scopes full assurance of file custody to a key volume that is never copied, and asks for reduced assurance otherwise. The M10 exit report then claims I-81 for retained old copies at reduced assurance only.
+
+The lane wrote no test for this finding: a test that fails until a decision is made would block CI, and no invariant test is marked as an expected failure.
+
 ### Copies of sealed key files (Q-L16-3)
 
 Built by lane L16 after Daniel's answer of 2026-11-21. The readings are interim, pending Daniel, unless a row says otherwise.

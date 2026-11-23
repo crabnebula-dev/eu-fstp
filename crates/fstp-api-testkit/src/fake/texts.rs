@@ -601,6 +601,8 @@ type WorkspaceRows = BTreeMap<(ProposalId, WorkspaceSlot), Sealed>;
 #[derive(Clone, Debug, Default)]
 pub struct FakeWorkspaces {
     rows: Arc<Mutex<WorkspaceRows>>,
+    /// The proposals whose workspace was erased (F-017).
+    erased: Arc<Mutex<std::collections::BTreeSet<ProposalId>>>,
     /// Whether every call fails as unavailable, for a test of a port that
     /// cannot answer.
     down: Arc<Mutex<bool>>,
@@ -612,6 +614,8 @@ impl FakeWorkspaces {
     pub fn copy_from(&self, from: &FakeWorkspaces) {
         let rows = lock(&from.rows).clone();
         *lock(&self.rows) = rows;
+        let erased = lock(&from.erased).clone();
+        *lock(&self.erased) = erased;
     }
 
     /// The slots stored for `proposal`, in order.
@@ -645,6 +649,11 @@ impl Workspaces for FakeWorkspaces {
         sealed: Sealed,
     ) -> Result<(), PortError> {
         self.up()?;
+        // F-017: an erased workspace takes no new value, as the cell's
+        // sealer refuses one.
+        if lock(&self.erased).contains(&proposal) {
+            return Err(PortError::Unavailable);
+        }
         lock(&self.rows).insert((proposal, slot), sealed);
         Ok(())
     }
@@ -656,6 +665,27 @@ impl Workspaces for FakeWorkspaces {
     ) -> Result<Option<Sealed>, PortError> {
         self.up()?;
         Ok(lock(&self.rows).get(&(proposal, slot)).cloned())
+    }
+
+    /// F-017: every slot of `proposal` leaves at once. The fake holds no
+    /// keys, so the rows going stands in for the key's destruction. A
+    /// proposal erased before answers `true` again.
+    async fn erase(
+        &self,
+        proposal: ProposalId,
+        cause: ErasureCause,
+        by: AccountId,
+    ) -> Result<bool, PortError> {
+        let _ = (cause, by);
+        self.up()?;
+        let mut erased = lock(&self.erased);
+        let mut rows = lock(&self.rows);
+        let before = rows.len();
+        rows.retain(|(p, _), _| *p != proposal);
+        if rows.len() != before {
+            erased.insert(proposal);
+        }
+        Ok(erased.contains(&proposal))
     }
 }
 
@@ -833,5 +863,30 @@ mod tests {
                 .count();
             assert_eq!(named, 1, "round {round}");
         }
+    }
+
+    /// F-017: erasing a workspace removes every slot of that proposal and
+    /// no other, refuses a later save of it, and answers `true` again on a
+    /// repeat. A proposal with no workspace answers `false`.
+    #[test]
+    fn m10_f017_fake_workspace_erase_removes_every_slot() {
+        let w = FakeWorkspaces::default();
+        let p = ProposalId::from_raw(17);
+        let q = ProposalId::from_raw(18);
+        let plan = fstp_domain::id::PlanVersionId::from_raw(3);
+        for (proposal, slot) in [
+            (p, WorkspaceSlot::Draft),
+            (p, WorkspaceSlot::Submitted(plan)),
+            (q, WorkspaceSlot::Draft),
+        ] {
+            block_on(w.put(proposal, slot, Sealed(b"sealed".to_vec()))).unwrap();
+        }
+        let erase = |x| block_on(w.erase(x, ErasureCause::RetentionExpiry, ANNA));
+        assert_eq!(erase(ProposalId::from_raw(19)), Ok(false));
+        assert_eq!(erase(p), Ok(true));
+        assert!(w.slots(p).is_empty());
+        assert_eq!(w.slots(q), vec![WorkspaceSlot::Draft]);
+        assert_eq!(erase(p), Ok(true), "a repeat");
+        assert!(block_on(w.put(p, WorkspaceSlot::Draft, Sealed(b"late".to_vec()))).is_err());
     }
 }

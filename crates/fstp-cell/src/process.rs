@@ -823,7 +823,6 @@ where
                 backend: Arc::clone(&backend),
                 store: fstp_pgstore::ApiStore::new(app_pool.clone(), Arc::clone(&keys.ledger))
                     .map_err(store_err)?,
-                keys: Arc::clone(&keys.ledger),
                 vault: api_vault,
                 erasure: started.erasure.clone(),
                 organisation,

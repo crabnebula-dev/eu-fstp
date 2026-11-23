@@ -14,8 +14,8 @@ export const ERASURE_CAUSES = ["retention_expiry", "erasure_request", "cell_eras
 /** One cause. */
 export type ErasureCause = (typeof ERASURE_CAUSES)[number];
 
-/** What an erased text held, as `fstp_access::ERASURE_KINDS` names them (ADR-007, lanes L33 and L37). */
-export const ERASURE_KINDS = ["text", "display_name", "document"] as const;
+/** What an erased text held, as `fstp_access::ERASURE_KINDS` names them (ADR-007, lanes L33 and L37; a workspace since F-017). */
+export const ERASURE_KINDS = ["text", "display_name", "document", "workspace"] as const;
 
 /** One kind. */
 export type ErasureKind = (typeof ERASURE_KINDS)[number];

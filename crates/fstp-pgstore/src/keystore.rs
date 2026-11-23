@@ -230,6 +230,13 @@ pub struct KeystoreChanges {
     /// refuses a row whose `keystore.data_key` row still exists
     /// (migration 14), and the batch then fails whole.
     pub blobs: Vec<[u8; 16]>,
+    /// The proposals whose `workspace.drafts` rows the batch deletes, last
+    /// in the transaction (F-017, ADR-026 section "Written by the M10 fix
+    /// lane"). A workspace key's id is its proposal id. A missing row
+    /// deletes nothing, so a repeat is a no-op. The database refuses a row
+    /// whose workspace key row still exists (migration 15), and the batch
+    /// then fails whole.
+    pub workspaces: Vec<[u8; 16]>,
 }
 
 impl KeystoreChanges {
@@ -246,6 +253,7 @@ impl KeystoreChanges {
             && self.displays.is_empty()
             && self.requested.is_empty()
             && self.blobs.is_empty()
+            && self.workspaces.is_empty()
     }
 }
 
@@ -318,6 +326,7 @@ const REQUEST_PUT: &str =
     "INSERT INTO keystore.erasure_request (text_id) VALUES ($1) ON CONFLICT DO NOTHING";
 const REQUEST_DEL: &str = "DELETE FROM keystore.erasure_request WHERE text_id = $1";
 const BLOB_DEL: &str = "DELETE FROM doc.blob WHERE dek = $1";
+const WORKSPACE_DEL: &str = "DELETE FROM workspace.drafts WHERE proposal = $1";
 const REQUEST_ALL: &str = "SELECT text_id FROM keystore.erasure_request ORDER BY text_id";
 
 /// The future of one statement, built in a frame of its own and kept on the
@@ -793,6 +802,10 @@ async fn write_changes<R: Runtime>(
     // Lane L39: the sealed rows of erased documents, after every key row.
     for dek in &c.blobs {
         exec(&mut tx, BLOB_DEL, &[&uuid(*dek)]).await?;
+    }
+    // F-017: the rows of erased workspaces, after every key row.
+    for proposal in &c.workspaces {
+        exec(&mut tx, WORKSPACE_DEL, &[&proposal.as_slice()]).await?;
     }
     tx.commit().await?;
     Ok(())

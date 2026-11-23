@@ -92,6 +92,10 @@ pub(super) struct Dirty {
     /// The data keys of erased documents whose `doc.blob` rows the next
     /// flush deletes (ADR-007, Daniel 2026-11-23, decision 2; lane L39).
     pub(super) blobs: BTreeSet<[u8; 16]>,
+    /// The proposals of erased workspaces whose `workspace.drafts` rows the
+    /// next flush deletes (F-017, ADR-026 section "Written by the M10 fix
+    /// lane").
+    pub(super) workspaces: BTreeSet<[u8; 16]>,
 }
 
 /// The persistence state of a keystore.
@@ -539,6 +543,7 @@ impl Keystore {
             });
         }
         c.blobs = d.blobs.iter().copied().collect();
+        c.workspaces = d.workspaces.iter().copied().collect();
         Ok(c)
     }
 

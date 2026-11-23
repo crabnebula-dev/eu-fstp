@@ -70,8 +70,8 @@ mod stored;
 mod text;
 
 pub use api::{
-    AnonDraftRow, ApiStore, MAX_API_PLAIN, PendingRow, StoredPendingStatus, anonymous_draft_aad,
-    open_workspace, pending_aad, seal_workspace, workspace_aad,
+    AnonDraftRow, ApiStore, MAX_API_PLAIN, MAX_WORKSPACE_SEALED, PendingRow, StoredPendingStatus,
+    anonymous_draft_aad, pending_aad,
 };
 pub use catalogue::CATALOGUE;
 pub use checkpoint::{Checkpoint, Checkpoints, MAX_CHECKPOINT_LEN};
