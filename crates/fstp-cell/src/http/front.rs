@@ -28,8 +28,14 @@
 //! route. `GET` of each page path serves the shell, and `GET` under the
 //! asset routes serves a loaded module or stylesheet by name.
 //!
+//! A path that percent-encodes an unreserved character is refused with
+//! 400 before step 2, so each route has one spelling (TH-26, ADR-026
+//! amendment of 2026-11-23, M10 F-083).
+//!
 //! Every response then carries the cell CSP of design section 11.2, or
-//! for a path under `/p/` the public CSP of M4 design section 3.10,
+//! for an answer of a public endpoint, or the unrouted answer under
+//! `/p/`, the public CSP of M4 design section 3.10. The front takes this
+//! profile from the handler that answered, never from the raw path,
 //! `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 //! `Strict-Transport-Security`, `Cross-Origin-Opener-Policy`,
 //! `Cross-Origin-Resource-Policy` (L17) and
@@ -61,8 +67,8 @@ use fstp_webauthn::RelyingParty;
 
 use crate::http::pages::Pages;
 use crate::routes::{
-    Access, Backend, CellCfg, Ctx, Outcome, Route, Rule, draft_table, page_table, public_table,
-    registration_table, serve_route, site_table, table,
+    Access, Backend, CellCfg, Ctx, Endpoint, Outcome, Route, Rule, draft_table, page_table,
+    public_table, registration_table, serve_route, site_table, table,
 };
 
 /// The CSP of the cell origin, verbatim from design section 11.2.
@@ -83,6 +89,27 @@ const LOGGED: &str = "x-fstp-internal-logged";
 /// so the front keeps the adapter's own security fields. The front removes
 /// it from every response.
 const WEB: &str = "x-fstp-internal-web";
+
+/// The response field a cell handler sets when it answered as the public
+/// surface, so the front gives the answer the public header profile: the
+/// public CSP and the cookie strip of R-PB-04. The front takes the profile
+/// from the handler that answered, never from the raw path (ADR-026
+/// amendment of 2026-11-23, M10 F-083). The front removes it from every
+/// response.
+const PUBLIC: &str = "x-fstp-internal-public";
+
+/// Sets the internal field `name` on `resp`.
+fn mark(resp: &mut Response, name: &str) {
+    if let (Ok(name), Ok(value)) = (HeaderName::new(name), HeaderValue::new("1")) {
+        resp.headers.insert(name, value);
+    }
+}
+
+/// Whether `endpoint` serves the public surface (M4 design section 3.10,
+/// R-PB-04): a row of `crate::routes::public_table`.
+fn public_endpoint(endpoint: Endpoint) -> bool {
+    matches!(endpoint, Endpoint::Public(_))
+}
 
 /// Whether `path` belongs to a surface of the web adapter that the cell
 /// table does not serve (ADR-026 "Composition"): the journey UI under
@@ -170,6 +197,13 @@ pub struct FrontConfig {
     /// The organisation port of ADR-021, for a ledger with no tenant part
     /// (`crate::public::OrganisationPort`). The default fails closed.
     pub organisation: crate::public::OrganisationPort,
+    /// Test only (ADR-026 amendment of 2026-11-23, M10 F-039, F-040):
+    /// `true` serves the wide form of `POST /api/v1/commands`, every
+    /// command the gate admits. The field exists only with the test-only
+    /// feature `wide-commands`, so a production build serves break-glass
+    /// approval only on that route.
+    #[cfg(feature = "wide-commands")]
+    pub wide_commands: bool,
 }
 
 /// Why a front could not be built.
@@ -235,8 +269,9 @@ impl<B: Backend, L: LogSink> Handler for RouteHandler<B, L> {
         let (_, template, _) = self.route.parts();
         self.log
             .log(event(method, template, &resp, outcome, started));
-        if let (Ok(name), Ok(value)) = (HeaderName::new(LOGGED), HeaderValue::new("1")) {
-            resp.headers.insert(name, value);
+        mark(&mut resp, LOGGED);
+        if public_endpoint(self.route.endpoint()) {
+            mark(&mut resp, PUBLIC);
         }
         resp
     }
@@ -262,11 +297,13 @@ impl<B: Backend, L: LogSink> Handler for Unrouted<B, L> {
         {
             return serve_web(web, req).await;
         }
+        let public = crate::routes::unrouted_public(req.target.path());
         let (mut resp, outcome) = crate::routes::unrouted(&self.ctx, &req).await;
         self.log
             .log(event(method, UNROUTED, &resp, outcome, started));
-        if let (Ok(name), Ok(value)) = (HeaderName::new(LOGGED), HeaderValue::new("1")) {
-            resp.headers.insert(name, value);
+        mark(&mut resp, LOGGED);
+        if public {
+            mark(&mut resp, PUBLIC);
         }
         resp
     }
@@ -408,6 +445,8 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 enabled: cfg.enabled,
                 pages,
                 organisation: cfg.organisation,
+                #[cfg(feature = "wide-commands")]
+                wide_commands: cfg.wide_commands,
             },
             limits: crate::routes::limits::Limits::new(cfg.limits),
             codes: crate::routes::signup_code::CodeBook::new(
@@ -475,7 +514,6 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         let started = Instant::now();
         let method = obs_method(&req.method);
         let home = goes_home(&req);
-        let public = is_public_path(req.target.path());
         let (mut resp, rule) = match self.precheck(&req) {
             Some(refused) => refused,
             None => match self.inner.oauth.get() {
@@ -486,6 +524,8 @@ impl<B: Backend, L: LogSink> Front<B, L> {
         };
         let logged = resp.headers.remove(LOGGED) > 0;
         let from_web = resp.headers.remove(WEB) > 0;
+        // F-083: the profile of the handler that answered.
+        let public = resp.headers.remove(PUBLIC) > 0;
         if home && resp.status == StatusCode::NOT_FOUND && !from_web {
             resp = see_home();
         }
@@ -517,13 +557,17 @@ impl<B: Backend, L: LogSink> Front<B, L> {
                 .is_some_and(|h| h.eq_ignore_ascii_case(&self.inner.host)),
             _ => false,
         };
-        if ok {
-            None
-        } else {
+        if !ok {
             // 421 Misdirected Request (RFC 9110 section 15.5.20).
             let status = StatusCode::from_u16(421).unwrap_or(StatusCode::BAD_REQUEST);
-            Some((Response::new(status), Some(Rule::I19)))
+            return Some((Response::new(status), Some(Rule::I19)));
         }
+        // TH-26, ADR-026 amendment of 2026-11-23 (M10 F-083): one spelling
+        // per route, so no reader of the raw path disagrees with the router.
+        if encodes_unreserved(req.target.path()) {
+            return Some((Response::new(StatusCode::BAD_REQUEST), Some(Rule::Th26)));
+        }
+        None
     }
 
     /// Serves one request on the loopback health listener: `GET /healthz`
@@ -594,18 +638,28 @@ fn see_home() -> Response {
     r
 }
 
-/// Sets the response fields every tunnel response carries, replacing any
-/// a handler set, and removes every CORS grant.
-/// Whether `path` lies under `/p/`, the public surface (M4 design
-/// section 3.10, lane m4/cellpub).
-fn is_public_path(path: &str) -> bool {
-    path.starts_with("/p/")
+/// Whether `path` percent-encodes an unreserved character (RFC 3986
+/// section 2.3: a letter, a digit, `-`, `.`, `_` or `~`), in either case
+/// of hexadecimal. The router decodes each segment before it matches, so
+/// such a path would be a second spelling of a route (TH-26, M10 F-083).
+fn encodes_unreserved(path: &str) -> bool {
+    path.as_bytes().windows(3).any(|w| match w {
+        [b'%', hi, lo] => std::str::from_utf8(&[*hi, *lo])
+            .ok()
+            .filter(|s| s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .and_then(|s| u8::from_str_radix(s, 16).ok())
+            .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_' | b'~')),
+        _ => false,
+    })
 }
 
 /// The HSTS value of `fstp_web::HSTS`. Interim, pending Daniel: one year,
 /// no subdomains.
 const HSTS: &str = "max-age=31536000";
 
+/// Sets the response fields every tunnel response carries, replacing any
+/// a handler set, and removes every CORS grant. `public` is the profile
+/// of the handler that answered.
 fn secure(resp: &mut Response, public: bool) {
     // R-PB-04, TH-37: a public answer never sets a cookie.
     if public {
@@ -638,6 +692,65 @@ fn strip_cors(resp: &mut Response) {
         .collect();
     for n in cors {
         resp.headers.remove(&n);
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::{encodes_unreserved, public_endpoint};
+    use crate::routes::{
+        draft_table, page_table, public_table, registration_table, site_table, table,
+    };
+
+    /// M10 F-083, TH-26: an encoded unreserved character, in either case
+    /// of hexadecimal, gives a second spelling. An encoded reserved
+    /// character, a lone `%` and a malformed triple do not count here.
+    #[test]
+    fn m10_f083_th26_encoded_unreserved_characters_are_found() {
+        for p in [
+            "/%70/x/",
+            "/p/%73afe/",
+            "/api/v1/%63ommands",
+            "/a%2Db",
+            "/a%2eb",
+            "/%5F",
+            "/%7e",
+            "/%41",
+            "/%39",
+        ] {
+            assert!(encodes_unreserved(p), "{p}");
+        }
+        for p in [
+            "/p/safe/",
+            "/p/a%3Ab/",
+            "/a%2Fb",
+            "/a%20b",
+            "/a%",
+            "/a%7",
+            "/a%zz",
+            "/a%+f",
+            "/%%",
+        ] {
+            assert!(!encodes_unreserved(p), "{p}");
+        }
+    }
+
+    /// M10 F-083, R-PB-04: the public profile belongs to the endpoints of
+    /// the public table, and to no endpoint of any other table.
+    #[test]
+    fn m10_f083_r_pb_04_public_profile_is_the_public_tables_endpoints() {
+        for r in public_table() {
+            assert!(public_endpoint(r.endpoint()), "{:?}", r.parts());
+        }
+        for r in table()
+            .iter()
+            .chain(page_table())
+            .chain(site_table())
+            .chain(draft_table())
+            .chain(registration_table())
+        {
+            assert!(!public_endpoint(r.endpoint()), "{:?}", r.parts());
+        }
     }
 }
 

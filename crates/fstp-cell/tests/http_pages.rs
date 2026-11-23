@@ -64,6 +64,9 @@ fn front(pages: Option<Pages>) -> Front<MemoryBackend, MemoryLog> {
         },
         limits: fstp_cell::routes::AuthLimits::default(),
         organisation: fstp_cell::public::OrganisationPort::default(),
+        // A production front: the raw command route serves break-glass
+        // approval only (ADR-026 amendment of 2026-11-23).
+        wide_commands: false,
     };
     let backend = Arc::new(MemoryBackend::new());
     let log = Arc::new(MemoryLog::default());

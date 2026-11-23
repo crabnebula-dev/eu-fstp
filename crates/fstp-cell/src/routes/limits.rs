@@ -19,8 +19,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Mutex, PoisonError};
 
-use fstp_domain::id::AccountId;
-
 /// A count of calls within a sliding window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limit {
@@ -173,7 +171,8 @@ enum Key {
     Login(Peer),
     Mail(Peer),
     Target([u8; 32]),
-    PutText(AccountId),
+    #[cfg(feature = "wide-commands")]
+    PutText(fstp_domain::id::AccountId),
     Public(Peer),
     DraftStart(Peer),
     DraftStartCell,
@@ -274,8 +273,10 @@ impl Limits {
         )
     }
 
-    /// Charges a `PutText` to `account`.
-    pub(crate) fn put_text(&self, account: AccountId, now_us: i64) -> bool {
+    /// Charges a `PutText` to `account`. Only the test-only wide command
+    /// route sends one (ADR-026 amendment of 2026-11-23).
+    #[cfg(feature = "wide-commands")]
+    pub(crate) fn put_text(&self, account: fstp_domain::id::AccountId, now_us: i64) -> bool {
         self.charge(
             Key::PutText(account),
             self.values.put_text_per_account,

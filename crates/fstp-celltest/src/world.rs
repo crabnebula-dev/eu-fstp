@@ -4656,6 +4656,11 @@ fn start_cell(
         tenant_prober: None,
         // ADR-028 record of lane L20: a world cell has no host status file.
         host_status: None,
+        // ADR-026 amendment of 2026-11-23 (M10 F-039, F-040): the world's
+        // cycle, its model checks and the devstack scenario send their
+        // commands through the test-only wide command route. A production
+        // build has no such option and serves break-glass approval only.
+        wide_commands: true,
     };
     let restart = match RestartParts::of(&parts, &options) {
         Ok(r) => r,

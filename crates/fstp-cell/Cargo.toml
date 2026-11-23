@@ -84,8 +84,16 @@ fstp-cell = { workspace = true, features = ["memory", "dev-pages"] }
 
 [features]
 # Test only: `routes::memory`, the in-memory backend and the local cell
-# (design section 14.3). The `fstp-cell` binary never builds them.
-memory = []
+# (design section 14.3). The `fstp-cell` binary never builds them. A local
+# cell serves the test-only wide command route, so it implies that.
+memory = ["wide-commands"]
+# Test only (ADR-026 amendment of 2026-11-23, M10 F-039, F-040): the wide
+# form of `POST /api/v1/commands`, which serves every command the gate
+# admits, for the test worlds, the devstack scenario and the cell tests.
+# A cell takes it only when its start options or front configuration ask
+# for it. No shipped build enables this feature, and a release build with
+# it does not compile (`src/lib.rs`).
+wide-commands = []
 # No longer gates anything: Daniel decided on 2026-11-20 (D2, ADR-026)
 # that every build serves the compiled auth pages. Kept so the crates that
 # name it still build.

@@ -27,8 +27,10 @@ fstp-auth.workspace = true
 fstp-cell-core.workspace = true
 # The world cell front serves the compiled auth pages (the world front,
 # lane int5). Cargo unifies features over one build, so a release build of
-# fstp-cell must not build this test-only crate with it.
-fstp-cell = { workspace = true, features = ["dev-pages"] }
+# fstp-cell must not build this test-only crate with it. The world drives
+# its cycle through the test-only wide command route (ADR-026 amendment
+# of 2026-11-23), whose feature refuses a release build at compile time.
+fstp-cell = { workspace = true, features = ["dev-pages", "wide-commands"] }
 fstp-cp-proto.workspace = true
 fstp-control.workspace = true
 fstp-witness.workspace = true

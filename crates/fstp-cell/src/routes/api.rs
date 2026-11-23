@@ -1,9 +1,11 @@
 //! The `/api/v1` routes (I-17, I-18, I-78, ADR-007, ADR-008, ADR-009,
 //! design sections 5.4, 6.5, 6.7 and 8.7).
 //!
-//! - `POST /api/v1/commands` takes `{command, command_id, stepup?}`. The
-//!   gate classes the command through `HighRiskAction::of` and checks the
-//!   step-up, and the engine runs it.
+//! - `POST /api/v1/commands` takes `{command, command_id, stepup?}`. In a
+//!   production build it serves break-glass approval only (ADR-026 D8 as
+//!   amended 2026-11-23). The gate classes the command through
+//!   `HighRiskAction::of` and checks the step-up, and the engine runs it.
+//!   The test-only wide form serves every command the gate admits.
 //! - `POST /api/v1/vault-tickets` and `POST /api/v1/verifications` issue
 //!   vault tickets through the engine, so the issue is a ledger record.
 //!   The route then signs the ticket of that record with the cell's
@@ -12,9 +14,11 @@
 //!   `Ticket` key, and a download, which the vault has no ticket kind
 //!   for, answer 501 before the engine runs, so no issue record commits
 //!   without its ticket.
-//! - An `UnmaskParty` through `POST /api/v1/commands` answers the vault
-//!   origin link of an `unmask` ticket for the party once its
-//!   `PartyUnmasked` record is in the ledger (ADR-023 reading 7).
+//! - An `UnmaskParty` through the wide form answers the vault origin link
+//!   of an `unmask` ticket for the party once its `PartyUnmasked` record
+//!   is in the ledger (ADR-023 reading 7). A production cell serves the
+//!   unmask through the API core's `identity.unmask`, whose vault port
+//!   signs the same ticket ([`unmask_claims`], [`sign_ticket`]).
 //! - The audit anchors and the erasure log are for Auditors and tenant
 //!   admins (ADR-007, G30). An Auditor reads the erasure entries of the
 //!   programmes its bindings name only (Q42, interim).
@@ -38,81 +42,39 @@ use fstp_vault_proto::{
 use crate::http::body::{self, BodyRefusal};
 use crate::http::decode_command_body;
 use crate::routes::handle::{
-    Caller, Ctx, Reply, admit, bad_body, decimal, exec_failed, hex_value, needs_route_input, run,
-    unavailable,
+    Caller, Ctx, Reply, admit, bad_body, decimal, exec_failed, hex_value, run, unavailable,
 };
 use crate::routes::{AUTH_BODY_LIMIT, Backend};
 
-/// `POST /api/v1/commands` (per command, I-78, I-18).
+/// `POST /api/v1/commands` (per command, I-78, I-18, ADR-026 D8 as
+/// amended 2026-11-23).
+///
+/// A production build serves break-glass approval only
+/// (`fstp_cell_core::gate::raw_route_serves`), which only this route
+/// approves. Every other command is refused with 403 under the rule
+/// `ADR-026` before the gate runs, so nothing is appended and no step-up
+/// is asked for (M10 F-039, F-040). The check reads the decoded command,
+/// never the path, so no spelling of the path bypasses it (TH-26).
 pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &Caller) -> Reply {
     let r = match decode_command_body(&req.body) {
         Ok(r) => r,
         Err(e) => return bad_body(e),
     };
+    #[cfg(feature = "wide-commands")]
+    if ctx.cfg.wide_commands {
+        return wide::commands(ctx, r, caller).await;
+    }
     let Some(command) = r.command.map(|c| *c) else {
         return bad_body(BodyRefusal::Member("command"));
     };
-    // An address rides with an invitation only (`CommandRequest::email`).
-    let invited = match (&command, r.email) {
-        (_, None) => None,
-        (
-            CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::IssueInvitation {
-                token_digest,
-                ..
-            }),
-            Some(email),
-        ) => Some((*token_digest, email)),
-        (_, Some(_)) => return bad_body(BodyRefusal::Member("email")),
-    };
-    // ADR-025, issue 6 M9, H-01: a session holder puts a text with an owner
-    // and a declared length, which the cell decides on. `PutText` names
-    // neither, so this route refuses it.
-    if matches!(
-        &command,
-        CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { .. })
-    ) {
+    if !fstp_cell_core::gate::raw_route_serves(&command) || r.email.is_some() {
         return Reply::refuse(
-            fstp_http::StatusCode::FORBIDDEN,
-            Some(crate::routes::Rule::Spec("ADR-025")),
-            "text",
+            StatusCode::FORBIDDEN,
+            Some(crate::routes::Rule::Spec("ADR-026")),
+            "command",
         );
     }
-    // ADR-024: a session holder puts at most `PUT_TEXT_PER_ACCOUNT` texts
-    // per window.
-    if matches!(
-        &command,
-        CellCommand::Text(fstp_cell_core::text::TextCommand::PutOwnedText { .. })
-    ) && !ctx
-        .limits
-        .put_text(caller.row.account, ctx.backend.now().micros())
-    {
-        return Reply::refuse(
-            fstp_http::StatusCode::TOO_MANY_REQUESTS,
-            Some(crate::routes::Rule::Adr024),
-            "rate",
-        );
-    }
-    let blocked = needs_route_input(&command) || runs_no_rerun(&command);
-    let unmask = match &command {
-        CellCommand::Engine(fstp_engine::Command::Core(
-            fstp_domain::command::Command::UnmaskParty {
-                programme, subject, ..
-            },
-        )) => Some((*programme, *subject)),
-        _ => None,
-    };
-    let creator = match &command {
-        CellCommand::Engine(fstp_engine::Command::Creator(c)) => Some(c.clone()),
-        _ => None,
-    };
-    // I-52: a publication carries the Guide the shell supplies.
-    let published = match &command {
-        CellCommand::Engine(fstp_engine::Command::Core(
-            fstp_domain::command::Command::PublishCall { call, .. },
-        )) => Some(*call),
-        _ => None,
-    };
-    let admitted = match admit(
+    match admit(
         ctx,
         caller,
         Action::Command(command),
@@ -121,59 +83,191 @@ pub(crate) async fn commands<B: Backend>(ctx: &Ctx<B>, req: &Request, caller: &C
     )
     .await
     {
-        // A creator command reads the shell's facts (`crate::shell`).
-        Ok((s, a)) => match (&creator, published) {
-            // ADR-027: fresh facts, so the shell runs its probes and reads
-            // the stored texts in this request.
-            (Some(c), _) => a.with_creator(ctx.backend.creator_facts_fresh(&s, c).await),
-            (None, Some(call)) => a.with_creator(fstp_cell_core::creator::CreatorFacts {
-                guide: ctx.backend.guide_inputs_fresh(&s, call).await,
-                ..Default::default()
-            }),
-            (None, None) => a,
-        },
-        Err(reply) => return reply,
-    };
-    if blocked {
-        // The batch needs a route input that `decide` cannot take yet
-        // (`fstp_cell_core::RouteInput`), or it is a re-run this cell
-        // cannot run ([`runs_no_rerun`]).
-        return Reply::not_built();
+        Ok((_, admitted)) => run(ctx, admitted).await,
+        Err(reply) => reply,
     }
-    // ADR-023 reading 7: an unmask answers its ticket, so it never
-    // commits on a cell that cannot sign one.
-    if let Some(unmask) = unmask {
-        let Some(key) = ctx.backend.ticket_key() else {
-            return Reply::not_built();
-        };
-        return run_unmask(ctx, admitted, unmask, &key).await;
-    }
-    // The address is kept for the enrolment once the gate admitted the
-    // invitation. A refused invitation leaves a kept address no token
-    // can reach.
-    if let Some((digest, email)) = invited
-        && let Err(f) = ctx.backend.note_invitation_email(digest, email).await
-    {
-        return unavailable(f);
-    }
-    run(ctx, admitted).await
 }
 
-/// Whether `command` asks for a re-run of an assessment (issue 6 M3, I-10).
-///
-/// This cell wires no assessor and no API core yet (M7 design section
-/// 3.4), so nothing would run the re-run, record its result as the system
-/// and end it. A recorded request would hold the proposal's in-flight slot
-/// and use one of its `MAX_RERUNS`. So the route answers 501 before the
-/// engine runs, as the API core answers "unavailable" when its port cannot
-/// re-run. Interim, until the production cell gets an assessor.
-fn runs_no_rerun(command: &CellCommand) -> bool {
-    matches!(
-        command,
-        CellCommand::Engine(fstp_engine::Command::Finding(
-            fstp_engine::FindingCommand::RequestRerun { .. }
-        ))
-    )
+/// Test only (ADR-026 amendment of 2026-11-23): the wide form of
+/// `POST /api/v1/commands`, which serves every command the gate admits.
+/// It compiles only with the test-only feature `wide-commands`, and a
+/// cell serves it only when its configuration asks for it. The test
+/// worlds, the devstack scenario and the cell tests drive it.
+#[cfg(feature = "wide-commands")]
+mod wide {
+    use super::*;
+    use crate::routes::handle::needs_route_input;
+
+    /// The wide form of [`super::commands`] (per command, I-78, I-18).
+    pub(super) async fn commands<B: Backend>(
+        ctx: &Ctx<B>,
+        r: crate::http::CommandRequest,
+        caller: &Caller,
+    ) -> Reply {
+        let Some(command) = r.command.map(|c| *c) else {
+            return bad_body(BodyRefusal::Member("command"));
+        };
+        // An address rides with an invitation only (`CommandRequest::email`).
+        let invited = match (&command, r.email) {
+            (_, None) => None,
+            (
+                CellCommand::Tenant(fstp_cell_core::tenant::TenantCommand::IssueInvitation {
+                    token_digest,
+                    ..
+                }),
+                Some(email),
+            ) => Some((*token_digest, email)),
+            (_, Some(_)) => return bad_body(BodyRefusal::Member("email")),
+        };
+        // ADR-025, issue 6 M9, H-01: a session holder puts a text with an owner
+        // and a declared length, which the cell decides on. `PutText` names
+        // neither, so this route refuses it.
+        if matches!(
+            &command,
+            CellCommand::Text(fstp_cell_core::text::TextCommand::PutText { .. })
+        ) {
+            return Reply::refuse(
+                fstp_http::StatusCode::FORBIDDEN,
+                Some(crate::routes::Rule::Spec("ADR-025")),
+                "text",
+            );
+        }
+        // ADR-024: a session holder puts at most `PUT_TEXT_PER_ACCOUNT` texts
+        // per window.
+        if matches!(
+            &command,
+            CellCommand::Text(fstp_cell_core::text::TextCommand::PutOwnedText { .. })
+        ) && !ctx
+            .limits
+            .put_text(caller.row.account, ctx.backend.now().micros())
+        {
+            return Reply::refuse(
+                fstp_http::StatusCode::TOO_MANY_REQUESTS,
+                Some(crate::routes::Rule::Adr024),
+                "rate",
+            );
+        }
+        let blocked = needs_route_input(&command) || runs_no_rerun(&command);
+        let unmask = match &command {
+            CellCommand::Engine(fstp_engine::Command::Core(
+                fstp_domain::command::Command::UnmaskParty {
+                    programme, subject, ..
+                },
+            )) => Some((*programme, *subject)),
+            _ => None,
+        };
+        let creator = match &command {
+            CellCommand::Engine(fstp_engine::Command::Creator(c)) => Some(c.clone()),
+            _ => None,
+        };
+        // I-52: a publication carries the Guide the shell supplies.
+        let published = match &command {
+            CellCommand::Engine(fstp_engine::Command::Core(
+                fstp_domain::command::Command::PublishCall { call, .. },
+            )) => Some(*call),
+            _ => None,
+        };
+        let admitted = match admit(
+            ctx,
+            caller,
+            Action::Command(command),
+            Some(r.command_id),
+            r.stepup,
+        )
+        .await
+        {
+            // A creator command reads the shell's facts (`crate::shell`).
+            Ok((s, a)) => match (&creator, published) {
+                // ADR-027: fresh facts, so the shell runs its probes and reads
+                // the stored texts in this request.
+                (Some(c), _) => a.with_creator(ctx.backend.creator_facts_fresh(&s, c).await),
+                (None, Some(call)) => a.with_creator(fstp_cell_core::creator::CreatorFacts {
+                    guide: ctx.backend.guide_inputs_fresh(&s, call).await,
+                    ..Default::default()
+                }),
+                (None, None) => a,
+            },
+            Err(reply) => return reply,
+        };
+        if blocked {
+            // The batch needs a route input that `decide` cannot take yet
+            // (`fstp_cell_core::RouteInput`), or it is a re-run this cell
+            // cannot run ([`runs_no_rerun`]).
+            return Reply::not_built();
+        }
+        // ADR-023 reading 7: an unmask answers its ticket, so it never
+        // commits on a cell that cannot sign one.
+        if let Some(unmask) = unmask {
+            let Some(key) = ctx.backend.ticket_key() else {
+                return Reply::not_built();
+            };
+            return run_unmask(ctx, admitted, unmask, &key).await;
+        }
+        // The address is kept for the enrolment once the gate admitted the
+        // invitation. A refused invitation leaves a kept address no token
+        // can reach.
+        if let Some((digest, email)) = invited
+            && let Err(f) = ctx.backend.note_invitation_email(digest, email).await
+        {
+            return unavailable(f);
+        }
+        run(ctx, admitted).await
+    }
+
+    /// Whether `command` asks for a re-run of an assessment (issue 6 M3, I-10).
+    ///
+    /// This cell wires no assessor and no API core yet (M7 design section
+    /// 3.4), so nothing would run the re-run, record its result as the system
+    /// and end it. A recorded request would hold the proposal's in-flight slot
+    /// and use one of its `MAX_RERUNS`. So the route answers 501 before the
+    /// engine runs, as the API core answers "unavailable" when its port cannot
+    /// re-run. Interim, until the production cell gets an assessor.
+    fn runs_no_rerun(command: &CellCommand) -> bool {
+        matches!(
+            command,
+            CellCommand::Engine(fstp_engine::Command::Finding(
+                fstp_engine::FindingCommand::RequestRerun { .. }
+            ))
+        )
+    }
+    /// Runs an admitted `UnmaskParty` and answers the `unmask` ticket of the
+    /// party (ADR-023 readings 7 and 8). The ticket names the party's
+    /// account and the programme scope, and no proposal. It is signed only
+    /// once the `PartyUnmasked` record is in the ledger: a retry under the
+    /// same command id finds it there and signs a fresh ticket.
+    async fn run_unmask<B: Backend>(
+        ctx: &Ctx<B>,
+        admitted: fstp_cell_core::gate::Admitted,
+        unmask: (ProgrammeId, fstp_domain::unmask::UnmaskSubject),
+        key: &fstp_crypto::sig::Ed25519SigningKey,
+    ) -> Reply {
+        let (programme, subject) = unmask;
+        match ctx.backend.execute(admitted).await {
+            Err(f) => unavailable(f),
+            Ok(Err(e)) => exec_failed(&e),
+            Ok(Ok(_)) => {
+                let s = match ctx.backend.state().await {
+                    Ok(s) => s,
+                    Err(f) => return unavailable(f),
+                };
+                let Some((_, account)) =
+                    fstp_domain::unmask::party_of(&s.engine().core, programme, subject)
+                else {
+                    return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+                };
+                let nonce = match crate::routes::handle::random::<16>() {
+                    Ok(n) => n,
+                    Err(r) => return r,
+                };
+                let now = ctx.backend.now().micros();
+                let Some(claims) = unmask_claims(ctx.cfg.cell, programme, account, now, nonce)
+                else {
+                    return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+                };
+                signed_reply(ctx, &claims, VaultPage::Release, key)
+            }
+        }
+    }
 }
 
 /// Issues a vault ticket (I-17, R-AU-01, design section 6.5).
@@ -313,6 +407,53 @@ fn vault_origin<B>(ctx: &Ctx<B>) -> String {
     }
 }
 
+/// Why a ticket could not be signed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TicketFault {
+    /// The claims have no canonical form.
+    Encode,
+    /// The key refused to sign.
+    Sign,
+}
+
+/// The ticket of `claims` as hexadecimal: the canonical body followed by
+/// the Ed25519 signature of the cell's `Ticket` key over it (the framing
+/// of `fstp_vault_proto::ticket`).
+pub(crate) fn sign_ticket(
+    claims: &TicketClaims,
+    key: &fstp_crypto::sig::Ed25519SigningKey,
+) -> Result<String, TicketFault> {
+    let mut bytes = claims.canonical().map_err(|_| TicketFault::Encode)?;
+    let signature = key.sign(&bytes).map_err(|_| TicketFault::Sign)?;
+    bytes.extend_from_slice(&signature);
+    Ok(crate::http::body::hex(&bytes))
+}
+
+/// The claims of an `unmask` ticket of cell `cell` for the party
+/// `account` of `programme`, issued at `now` with the random `nonce`
+/// (ADR-023 readings 7 and 8). The ticket names the party's account and
+/// the programme scope, and no proposal. The `PartyUnmasked` record is
+/// the ledger record of the issue, so the nonce is random. `None` when
+/// the lifetime bound overflows.
+pub(crate) fn unmask_claims(
+    cell: [u8; 16],
+    programme: ProgrammeId,
+    account: AccountId,
+    now: i64,
+    nonce: [u8; 16],
+) -> Option<TicketClaims> {
+    Some(TicketClaims {
+        kind: TicketKind::Unmask,
+        cell,
+        account: WireAccount(account.raw()),
+        proposal: None,
+        scope: country_scope(WireProgramme(programme.raw())),
+        issued_at: now,
+        expires_at: now.checked_add(TICKET_LIFETIME_MAX_US)?,
+        nonce,
+    })
+}
+
 /// The signed ticket of `claims`, the canonical body followed by the
 /// Ed25519 signature of the cell's `Ticket` key over it (the framing of
 /// `fstp_vault_proto::ticket`), as the reply
@@ -325,14 +466,13 @@ fn signed_reply<B>(
     page: VaultPage,
     key: &fstp_crypto::sig::Ed25519SigningKey,
 ) -> Reply {
-    let Ok(mut bytes) = claims.canonical() else {
-        return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+    let ticket = match sign_ticket(claims, key) {
+        Ok(t) => t,
+        Err(TicketFault::Encode) => {
+            return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
+        }
+        Err(TicketFault::Sign) => return unavailable(crate::routes::BackendFault::Unavailable),
     };
-    let Ok(signature) = key.sign(&bytes) else {
-        return unavailable(crate::routes::BackendFault::Unavailable);
-    };
-    bytes.extend_from_slice(&signature);
-    let ticket = crate::http::body::hex(&bytes);
     let mut o = Object::with_capacity(4);
     o.insert("expires_at", decimal(claims.expires_at));
     o.insert("kind", Value::String(claims.kind.label()));
@@ -342,54 +482,6 @@ fn signed_reply<B>(
     );
     o.insert("ticket", Value::String(ticket));
     Reply::json(StatusCode::OK, &Value::Object(o))
-}
-
-/// Runs an admitted `UnmaskParty` and answers the `unmask` ticket of the
-/// party (ADR-023 readings 7 and 8). The ticket names the party's
-/// account and the programme scope, and no proposal. It is signed only
-/// once the `PartyUnmasked` record is in the ledger: a retry under the
-/// same command id finds it there and signs a fresh ticket.
-async fn run_unmask<B: Backend>(
-    ctx: &Ctx<B>,
-    admitted: fstp_cell_core::gate::Admitted,
-    unmask: (ProgrammeId, fstp_domain::unmask::UnmaskSubject),
-    key: &fstp_crypto::sig::Ed25519SigningKey,
-) -> Reply {
-    let (programme, subject) = unmask;
-    match ctx.backend.execute(admitted).await {
-        Err(f) => unavailable(f),
-        Ok(Err(e)) => exec_failed(&e),
-        Ok(Ok(_)) => {
-            let s = match ctx.backend.state().await {
-                Ok(s) => s,
-                Err(f) => return unavailable(f),
-            };
-            let Some((_, account)) =
-                fstp_domain::unmask::party_of(&s.engine().core, programme, subject)
-            else {
-                return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
-            };
-            let nonce = match crate::routes::handle::random::<16>() {
-                Ok(n) => n,
-                Err(r) => return r,
-            };
-            let now = ctx.backend.now().micros();
-            let Some(expires_at) = now.checked_add(TICKET_LIFETIME_MAX_US) else {
-                return Reply::refuse(StatusCode::INTERNAL_SERVER_ERROR, None, "internal");
-            };
-            let claims = TicketClaims {
-                kind: TicketKind::Unmask,
-                cell: ctx.cfg.cell,
-                account: WireAccount(account.raw()),
-                proposal: None,
-                scope: country_scope(WireProgramme(programme.raw())),
-                issued_at: now,
-                expires_at,
-                nonce,
-            };
-            signed_reply(ctx, &claims, VaultPage::Release, key)
-        }
-    }
 }
 
 /// The members of a vault ticket request.

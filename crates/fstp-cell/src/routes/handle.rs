@@ -22,11 +22,11 @@
 use std::sync::Arc;
 
 use fstp_auth::{EnabledMethods, SessionView};
+use fstp_cell_core::CellRefusal;
 use fstp_cell_core::CellState;
 use fstp_cell_core::driver::ExecError;
 use fstp_cell_core::gate::{self, Action, Admitted, Deny, LoginPolicy, ReadAction, StepUpView};
 use fstp_cell_core::tenant::P71_DEFAULT_US;
-use fstp_cell_core::{CellCommand, CellRefusal};
 use fstp_http::{HeaderName, HeaderValue, Request, Response, StatusCode};
 use fstp_json::{Object, Value};
 use fstp_webauthn::RelyingParty;
@@ -103,6 +103,12 @@ pub(crate) struct CellCfg {
     /// The organisation port of ADR-021, for a ledger with no tenant part
     /// (`crate::public::OrganisationPort`).
     pub(crate) organisation: crate::public::OrganisationPort,
+    /// Test only (ADR-026 amendment of 2026-11-23): whether
+    /// `POST /api/v1/commands` serves every command the gate admits. A
+    /// production build has no such field, so its route serves break-glass
+    /// approval only.
+    #[cfg(feature = "wide-commands")]
+    pub(crate) wide_commands: bool,
 }
 
 /// What a handler runs against.
@@ -605,10 +611,13 @@ pub(crate) async fn run<B: Backend>(ctx: &Ctx<B>, admitted: Admitted) -> Reply {
 
 /// Whether the batch of `c` needs an input that only a route holds and
 /// that `fstp_cell_core::decide` cannot take yet (`RouteInput`). Such a
-/// command fails closed with 501 before it reaches the engine.
-pub(crate) fn needs_route_input(c: &CellCommand) -> bool {
+/// command fails closed with 501 before it reaches the engine. Only the
+/// test-only wide command route sends one (ADR-026 amendment of
+/// 2026-11-23).
+#[cfg(feature = "wide-commands")]
+pub(crate) fn needs_route_input(c: &fstp_cell_core::CellCommand) -> bool {
     match c {
-        CellCommand::Auth(a) => !fstp_cell_core::route_inputs(a).is_empty(),
+        fstp_cell_core::CellCommand::Auth(a) => !fstp_cell_core::route_inputs(a).is_empty(),
         _ => false,
     }
 }
@@ -712,6 +721,15 @@ fn site_sheet(req: &Request) -> Reply {
     }
 }
 
+/// Whether [`unrouted`] answers `path` as the public surface: a path
+/// under `/p/` (M4 design section 3.10). The front gives that answer the
+/// public header profile (R-PB-04). It refused every path that
+/// percent-encodes an unreserved character first, so `/p/` has one
+/// spelling here (ADR-026 amendment of 2026-11-23, M10 F-083).
+pub(crate) fn unrouted_public(path: &str) -> bool {
+    path.starts_with("/p/")
+}
+
 /// The answer to a path no route matches (lane m4/pubtext), as the web
 /// adapter answers it:
 ///
@@ -726,7 +744,7 @@ fn site_sheet(req: &Request) -> Reply {
 pub(crate) async fn unrouted<B: Backend>(ctx: &Ctx<B>, req: &Request) -> (Response, Outcome) {
     let path = req.target.path();
     let get = req.method == fstp_http::Method::GET || req.method == fstp_http::Method::HEAD;
-    let reply = if path.starts_with("/p/") {
+    let reply = if unrouted_public(path) {
         if let Some(refused) = public_rate_limited(ctx, req) {
             refused
         } else if get && fstp_http::is_page_navigation(req) {

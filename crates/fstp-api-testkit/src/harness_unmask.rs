@@ -366,6 +366,38 @@ fn i78_adr023_unmask_with_a_stale_step_up_is_refused() {
     assert_eq!(records(&seed).len(), 1);
 }
 
+/// M10 F-058 (H01b-1), I-17 as amended, R-AU-01, ADR-023 reading 7: an
+/// unmask that the vault port cannot open leaves no record. The
+/// coordinator's call is refused before the append, with no step-up spent,
+/// so `audit.unmasks` never lists an unmask that showed nothing. Once the
+/// release page opens again, the same call records exactly one unmask.
+#[test]
+fn m10_f058_i17_unmask_leaves_no_record_when_the_vault_page_cannot_open() {
+    let (w, mut seed) = irc_world();
+    let p = programme(&w);
+    let lead = UnmaskSubject::Binding(binding_of(&seed, p, LEAD, Role::Applicant));
+    let b = body(lead, Some(PURPOSE));
+    seed.ports.vault.set_unmask_down(true);
+    for _ in 0..2 {
+        let r = seed.api(COORD, POST, &unmask_path(p), &b);
+        assert!(r.is_err(), "F-058: the unmask answered: {r:?}");
+        assert!(
+            records(&seed).is_empty(),
+            "F-058, I-17: an unmask that showed nothing was recorded"
+        );
+    }
+    let r = raw(&mut seed, COORD, POST, &unmask_path(p), &b);
+    assert!(
+        !matches!(r, Ok(OpResult::StepUpRequired(_))),
+        "F-058: a step-up was asked for an unmask that cannot open: {r:?}"
+    );
+    seed.ports.vault.set_unmask_down(false);
+    seed.api(COORD, POST, &unmask_path(p), &b)
+        .unwrap_or_else(|e| panic!("I-17: the page opens again: {e}"));
+    assert_eq!(records(&seed).len(), 1, "I-17: one record per unmask");
+    assert_eq!(tickets(&seed).len(), 1, "I-17: one ticket per unmask");
+}
+
 // ---------------------------------------------------------------------------
 // Everyone else stays masked
 // ---------------------------------------------------------------------------

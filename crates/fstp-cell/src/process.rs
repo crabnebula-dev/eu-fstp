@@ -577,6 +577,12 @@ pub struct StartOptions {
     /// record of lane L20), which `fstp-admin` writes. `None` shows the
     /// page's host rows as not configured.
     pub host_status: Option<std::path::PathBuf>,
+    /// Test only (ADR-026 amendment of 2026-11-23, M10 F-039, F-040):
+    /// `true` serves the wide form of `POST /api/v1/commands`, as a test
+    /// world drives its cycle through it. The field exists only with the
+    /// test-only feature `wide-commands`. The default is `false`.
+    #[cfg(feature = "wide-commands")]
+    pub wide_commands: bool,
 }
 
 impl Default for StartOptions {
@@ -599,6 +605,8 @@ impl Default for StartOptions {
             keystore_snapshots: None,
             tenant_prober: None,
             host_status: None,
+            #[cfg(feature = "wide-commands")]
+            wide_commands: false,
         }
     }
 }
@@ -660,6 +668,8 @@ where
         keystore_snapshots,
         tenant_prober,
         host_status,
+        #[cfg(feature = "wide-commands")]
+        wide_commands,
     } = options;
     if control_plane.is_some() {
         crate::control::allowed(mode).map_err(CellError::Egress)?;
@@ -785,6 +795,8 @@ where
         enabled: login_methods,
         limits: auth_limits,
         organisation,
+        #[cfg(feature = "wide-commands")]
+        wide_commands,
     };
     // Lane L2 hook (ADR-013 amendment of 2026-11-20): the authorisation
     // server over the `mcp` rows, its `/oauth` routes on the front, and its
