@@ -1122,6 +1122,12 @@ pub const fn class_of(kind: CommandKind) -> RefClass {
         | CommandKind::ReinstateBinding
         | CommandKind::VaultChanged
         | CommandKind::CreateDraft
+        // F-079, ADR-038: the team invitation commands follow the strict
+        // reading, as `AddTeamMember` does.
+        | CommandKind::InviteToTeam
+        | CommandKind::WithdrawTeamInvitation
+        | CommandKind::AcceptTeamInvitation
+        | CommandKind::DeclineTeamInvitation
         | CommandKind::AddTeamMember
         | CommandKind::AddGuardian
         | CommandKind::RecordPlanVersion

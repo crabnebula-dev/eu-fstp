@@ -18,8 +18,8 @@ use crate::grant::IneligibleCost;
 use crate::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CommandId, ContentDigest, ContractId,
     DecisionId, DeliverableId, Handle, KnockOutCriterionId, LineId, LlmConfigId, MilestoneId,
-    OrganisationId, PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, TextRef,
-    VaultEpoch,
+    OrganisationId, PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId,
+    TeamInvitationId, TextRef, VaultEpoch,
 };
 use crate::payment::{CheckPhase, CheckResult, PaymentKind, PaymentLine};
 use crate::policy::activation::ReportDigest;
@@ -780,6 +780,45 @@ pub enum Command {
         /// The purpose, a confidential text of the programme.
         purpose: TextRef,
     },
+    /// The lead invites a person by address to the team, or as guardian
+    /// (F-079, ADR-038). It binds nobody and asks the vault nothing about
+    /// the invitee. `crate::proposal::team`.
+    InviteToTeam {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The new invitation, drawn by the shell.
+        invitation: TeamInvitationId,
+        /// The invited address, a sealed confidential text of the proposal.
+        contact: TextRef,
+        /// Whether the invitation is for the guardian.
+        guardian: bool,
+    },
+    /// The lead withdraws an open invitation (F-079, ADR-038).
+    WithdrawTeamInvitation {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The invitation.
+        invitation: TeamInvitationId,
+    },
+    /// The invitee accepts an open invitation. The actor is the accepting
+    /// account, which the shell matched to the invited address. Only now
+    /// do the Receiving binding's guards run (F-079, ADR-038).
+    AcceptTeamInvitation {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The invitation.
+        invitation: TeamInvitationId,
+        /// The new Receiving binding.
+        binding: BindingId,
+    },
+    /// The invitee declines an open invitation (F-079, ADR-038). The shell
+    /// matched the actor to the invited address.
+    DeclineTeamInvitation {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The invitation.
+        invitation: TeamInvitationId,
+    },
 }
 
 /// The fieldless tag of a [`Command`].
@@ -925,11 +964,19 @@ pub enum CommandKind {
     WithdrawPublicChoice,
     /// [`Command::UnmaskParty`].
     UnmaskParty,
+    /// [`Command::InviteToTeam`].
+    InviteToTeam,
+    /// [`Command::WithdrawTeamInvitation`].
+    WithdrawTeamInvitation,
+    /// [`Command::AcceptTeamInvitation`].
+    AcceptTeamInvitation,
+    /// [`Command::DeclineTeamInvitation`].
+    DeclineTeamInvitation,
 }
 
 impl CommandKind {
     /// Every kind, in declaration order.
-    pub const ALL: [CommandKind; 70] = [
+    pub const ALL: [CommandKind; 74] = [
         CommandKind::CreateProgramme,
         CommandKind::ActivateProgramme,
         CommandKind::EditPolicy,
@@ -1000,6 +1047,10 @@ impl CommandKind {
         CommandKind::SetPublicChoice,
         CommandKind::WithdrawPublicChoice,
         CommandKind::UnmaskParty,
+        CommandKind::InviteToTeam,
+        CommandKind::WithdrawTeamInvitation,
+        CommandKind::AcceptTeamInvitation,
+        CommandKind::DeclineTeamInvitation,
     ];
 
     /// Whether the kind is a high-risk action from the list in
@@ -1131,6 +1182,10 @@ impl Command {
             Command::SetPublicChoice { .. } => CommandKind::SetPublicChoice,
             Command::WithdrawPublicChoice { .. } => CommandKind::WithdrawPublicChoice,
             Command::UnmaskParty { .. } => CommandKind::UnmaskParty,
+            Command::InviteToTeam { .. } => CommandKind::InviteToTeam,
+            Command::WithdrawTeamInvitation { .. } => CommandKind::WithdrawTeamInvitation,
+            Command::AcceptTeamInvitation { .. } => CommandKind::AcceptTeamInvitation,
+            Command::DeclineTeamInvitation { .. } => CommandKind::DeclineTeamInvitation,
         }
     }
 

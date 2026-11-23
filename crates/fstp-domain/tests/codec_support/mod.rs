@@ -50,8 +50,8 @@ use fstp_domain::id::{
     AccountId, ActivityTypeId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ClassId,
     ContentDigest, ContractId, CriterionId, DecisionId, DeliverableId, Handle, HardshipEvidenceId,
     KnockOutCriterionId, LineId, LlmConfigId, MilestoneId, OrganisationId, PlanVersionId,
-    PolicyVersionId, ProgrammeId, ProposalId, ProximityListId, RequestId, RoleInvitationId, TextId,
-    TextRef, VaultEpoch,
+    PolicyVersionId, ProgrammeId, ProposalId, ProximityListId, RequestId, RoleInvitationId,
+    TeamInvitationId, TextId, TextRef, VaultEpoch,
 };
 use fstp_domain::oracle::QueryKind;
 use fstp_domain::payment::{
@@ -746,6 +746,9 @@ pub(crate) enum RecordTag {
     PublicChoiceWithdrawn,
     // ADR-023.
     PartyUnmasked,
+    // F-079, ADR-038.
+    TeamInvited,
+    TeamInvitationClosed,
     // M4 changes D2 and D5.
     ProgrammeActivated,
     CutOffRoundOpened,
@@ -759,7 +762,7 @@ pub(crate) enum RecordTag {
 impl RecordTag {
     /// Every tag: the M2 tags in declaration order of [`Record`], then the
     /// tags of M4 changes D2 and D5, then the Guide record of R-GA-01.
-    pub(crate) const ALL: [RecordTag; 73] = [
+    pub(crate) const ALL: [RecordTag; 75] = [
         RecordTag::ProgrammeCreated,
         RecordTag::PolicyVersionRecorded,
         RecordTag::CallDrafted,
@@ -827,6 +830,8 @@ impl RecordTag {
         RecordTag::PublicChoiceSet,
         RecordTag::PublicChoiceWithdrawn,
         RecordTag::PartyUnmasked,
+        RecordTag::TeamInvited,
+        RecordTag::TeamInvitationClosed,
         RecordTag::ProgrammeActivated,
         RecordTag::CutOffRoundOpened,
         RecordTag::BallotCast,
@@ -940,6 +945,8 @@ impl RecordTag {
             Record::PublicChoiceSet { .. } => RecordTag::PublicChoiceSet,
             Record::PublicChoiceWithdrawn { .. } => RecordTag::PublicChoiceWithdrawn,
             Record::PartyUnmasked { .. } => RecordTag::PartyUnmasked,
+            Record::TeamInvited { .. } => RecordTag::TeamInvited,
+            Record::TeamInvitationClosed { .. } => RecordTag::TeamInvitationClosed,
             Record::ProgrammeActivated(_) => RecordTag::ProgrammeActivated,
             Record::CutOffRoundOpened { .. } => RecordTag::CutOffRoundOpened,
             Record::BallotCast { .. } => RecordTag::BallotCast,
@@ -2009,6 +2016,25 @@ pub(crate) fn command(g: &mut Gen, d: &mut Draw, k: CommandKind) -> G<Command> {
             subject: unmask_subject(g, d),
             purpose: text(g, d),
         },
+        CommandKind::InviteToTeam => Command::InviteToTeam {
+            proposal: id(g, d, ProposalId::from_raw),
+            invitation: id(g, d, TeamInvitationId::from_raw),
+            contact: text(g, d),
+            guardian: g.bool(),
+        },
+        CommandKind::WithdrawTeamInvitation => Command::WithdrawTeamInvitation {
+            proposal: id(g, d, ProposalId::from_raw),
+            invitation: id(g, d, TeamInvitationId::from_raw),
+        },
+        CommandKind::AcceptTeamInvitation => Command::AcceptTeamInvitation {
+            proposal: id(g, d, ProposalId::from_raw),
+            invitation: id(g, d, TeamInvitationId::from_raw),
+            binding: id(g, d, BindingId::from_raw),
+        },
+        CommandKind::DeclineTeamInvitation => Command::DeclineTeamInvitation {
+            proposal: id(g, d, ProposalId::from_raw),
+            invitation: id(g, d, TeamInvitationId::from_raw),
+        },
     })
 }
 
@@ -2430,6 +2456,19 @@ pub(crate) fn record(g: &mut Gen, d: &mut Draw, t: RecordTag) -> G<Record> {
             purpose: text(g, d),
             by: id(g, d, AccountId::from_raw),
             conflict: g.bool(),
+        },
+        RecordTag::TeamInvited => Record::TeamInvited {
+            proposal: id(g, d, ProposalId::from_raw),
+            invitation: id(g, d, TeamInvitationId::from_raw),
+            contact: text(g, d),
+            guardian: g.bool(),
+            by: id(g, d, AccountId::from_raw),
+            expires: ts(g),
+        },
+        RecordTag::TeamInvitationClosed => Record::TeamInvitationClosed {
+            proposal: id(g, d, ProposalId::from_raw),
+            invitation: id(g, d, TeamInvitationId::from_raw),
+            joined: g.bool(),
         },
         RecordTag::CutOffRoundOpened => Record::CutOffRoundOpened {
             round: id(g, d, DecisionId::from_raw),

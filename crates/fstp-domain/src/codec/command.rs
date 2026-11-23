@@ -85,6 +85,10 @@ tagged_enum! {
         SetPublicChoice { proposal, phase, level, title, summary, grantee, deliverables },
         WithdrawPublicChoice { proposal, phase },
         UnmaskParty { programme, subject, purpose },
+        InviteToTeam { proposal, invitation, contact, guardian },
+        WithdrawTeamInvitation { proposal, invitation },
+        AcceptTeamInvitation { proposal, invitation, binding },
+        DeclineTeamInvitation { proposal, invitation },
     }
     money {
         DraftCall { call, programme, opens, deadline, deadline_zone, budget, text },

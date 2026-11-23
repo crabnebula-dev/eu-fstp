@@ -417,6 +417,8 @@ tagged_enum! {
         PublicChoiceSet { proposal, phase, level, title, summary, grantee, deliverables, by },
         PublicChoiceWithdrawn { proposal, phase, by },
         PartyUnmasked { programme, party, subject, purpose, by, conflict },
+        TeamInvited { proposal, invitation, contact, guardian, by, expires },
+        TeamInvitationClosed { proposal, invitation, joined },
     }
     money {
         CallDrafted { call, programme, opens, deadline, deadline_zone, budget, text, author },
