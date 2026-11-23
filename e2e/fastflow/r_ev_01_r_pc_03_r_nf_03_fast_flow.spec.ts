@@ -192,7 +192,7 @@ test.describe('fast flow: criteria and the early decision', () => {
       .poll(
         async () => {
           await door.reload();
-          const row = door.page.locator('#demo-mail li[data-demo-mail]', { hasText: `Proposal ${Z}: status INELIGIBLE` }).filter({ has: door.page.locator('a') });
+          const row = door.page.locator('#demo-mail li[data-demo-mail]', { hasText: `Proposal ${Z}: eligibility check` }).filter({ has: door.page.locator('a') });
           if ((await row.count()) === 0) return false;
           raw = await row.first().locator('a').first().getAttribute('href');
           return raw !== null;
