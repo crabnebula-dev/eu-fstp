@@ -262,3 +262,55 @@ fn m10_f039_raw_route_still_approves_break_glass_with_its_step_up() {
     let state = fstp_rt::future::block_on(fstp_cell::routes::Backend::state(c.backend())).unwrap();
     assert!(state.break_glass_known([0x42; 16]), "no BreakGlassApproved");
 }
+
+/// F-079, TH-07, TH-08, ADR-038 with ADR-026 D8 as amended 2026-11-23: the
+/// retired commands `AddTeamMember` and `AddGuardian` bind an account
+/// without its acceptance. A production cell's raw command route refuses
+/// both with 403 under the rule `ADR-026` before the gate runs, so nothing
+/// is appended and the answer says nothing about the named account.
+#[test]
+fn m10_f079_th07_raw_route_refuses_the_retired_team_binding_commands() {
+    use fstp_domain::command::Command as Core;
+    let c = cell();
+    let session = c.admin_session().unwrap();
+    let before = c.backend().records().len();
+    let retired = [
+        (
+            "core AddTeamMember",
+            Core::AddTeamMember {
+                proposal: ProposalId::from_raw(3),
+                account: fstp_domain::id::AccountId::from_raw(7),
+                binding: BindingId::from_raw(8),
+            },
+        ),
+        (
+            "core AddGuardian",
+            Core::AddGuardian {
+                proposal: ProposalId::from_raw(3),
+                account: fstp_domain::id::AccountId::from_raw(7),
+                binding: BindingId::from_raw(9),
+            },
+        ),
+    ];
+    for (name, core) in retired {
+        let command = CellCommand::Engine(fstp_engine::Command::Core(core));
+        let r = c.serve(request(
+            "/api/v1/commands",
+            &session,
+            &command_body(&command, [0x32; 16], None),
+        ));
+        assert_eq!(
+            r.status.as_u16(),
+            403,
+            "F-079: {name} answered {}",
+            text(&r)
+        );
+        assert_eq!(text(&r), r#"{"error":"command"}"#, "{name}");
+        assert_eq!(last_rule(&c), Some("ADR-026"), "{name}");
+        assert_eq!(
+            c.backend().records().len(),
+            before,
+            "F-079: {name} appended a record"
+        );
+    }
+}
