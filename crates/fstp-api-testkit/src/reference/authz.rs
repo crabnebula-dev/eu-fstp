@@ -2050,6 +2050,14 @@ fn admit(
             who,
             Who::Unbound | Who::Lead | Who::TeamMember | Who::Guardian | Who::OtherProgrammeManager
         )),
+        // F-079, ADR-038: a read of the lead alone, `proposal.team_invitations`,
+        // needs the lead's Receiving binding, which ends when X reaches a
+        // terminal state (`roles-and-sod.md` "Receiving bindings"). The
+        // former lead's read-only view (Daniel, 2026-11-06 and 2026-11-15,
+        // night) names other reads only, and an invitation stands only while
+        // its lead holds the binding. A lead command in a terminal state
+        // still meets a guard on the target, as before.
+        Rule::Lead if op.read => open(who == Who::Lead && !x.is_some_and(StateTag::is_terminal)),
         Rule::Lead => open(who == Who::Lead),
         // Daniel, 2026-11-06: in a terminal state the former lead and team
         // member keep a read-only view. The guardian, whom the decision
