@@ -238,6 +238,11 @@ pub enum Refusal {
     /// The client may not use this chain or key. Each `fstp-keyd` socket
     /// serves a fixed set of chains (ADR-004 part 2, R-NF-08).
     NotPermitted,
+    /// The key is destroyed, but the guard of the off-host key copies is
+    /// not yet replaced, so no receipt goes out yet. A retry finishes it
+    /// once the second custodian answers (ADR-004 record of lane
+    /// `m10/guard-key`, F-018, I-81).
+    GuardPending,
 }
 
 impl Refusal {
@@ -254,6 +259,7 @@ impl Refusal {
             Refusal::LimitReached => 7,
             Refusal::Internal => 8,
             Refusal::NotPermitted => 9,
+            Refusal::GuardPending => 10,
         }
     }
 
@@ -270,6 +276,7 @@ impl Refusal {
             7 => Some(Refusal::LimitReached),
             8 => Some(Refusal::Internal),
             9 => Some(Refusal::NotPermitted),
+            10 => Some(Refusal::GuardPending),
             _ => None,
         }
     }
@@ -285,6 +292,7 @@ impl Refusal {
             Refusal::LimitReached => "the backend reached a limit",
             Refusal::Internal => "the backend failed on its side",
             Refusal::NotPermitted => "the client may not use this chain or key",
+            Refusal::GuardPending => "the guard of the key copies is not yet replaced",
         }
     }
 }

@@ -47,6 +47,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "guard_link_decode"
+path = "fuzz_targets/guard_link_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

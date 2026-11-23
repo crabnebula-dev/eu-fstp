@@ -755,8 +755,11 @@ dependencies = [
  "fstp-crypto",
  "fstp-custody",
  "fstp-obs",
+ "fstp-pgwire",
+ "fstp-pki",
  "fstp-prop",
  "fstp-rt",
+ "fstp-tls",
  "zeroize",
 ]
 

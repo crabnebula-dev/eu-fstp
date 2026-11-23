@@ -54,6 +54,7 @@ use zeroize::{ZeroizeOnDrop, Zeroizing};
 pub mod access;
 pub mod epoch;
 pub mod export;
+pub mod guard;
 pub mod receipt;
 pub mod request;
 pub mod sign_key;
@@ -78,7 +79,10 @@ pub use access::{ClientRole, ClientSocket, SignKeyClass};
 pub use fstp_custody::keyd::Request as KeydRequest;
 pub use receipt::{DestroyStep, Receipt, decode_receipt};
 pub use request::{decode_request, encode_response};
-pub use server::{PassphraseSource, VolumeOrigin, serve, serve_sockets, serve_sockets_from, stop};
+pub use server::{
+    PassphraseSource, VolumeOrigin, serve, serve_sockets, serve_sockets_from,
+    serve_sockets_with_guard, stop,
+};
 pub use table::{
     EpochKey, KeyTable, KeyTableEntry, MIN_ITERATIONS, SignKeyEntry, SignKeyName,
     decode_key_table_body, encode_key_table, open_key_table,
@@ -329,6 +333,9 @@ pub enum KeydError {
     /// Release of an imported volume found no live current epoch: the
     /// copy is older than the last erasure (ADR-004 record of lane L16).
     StaleCopy,
+    /// The second custodian did not serve a guard request (ADR-004 record
+    /// of lane `m10/guard-key`).
+    Guard(guard::GuardFault),
 }
 
 impl std::fmt::Display for KeydError {
@@ -348,6 +355,7 @@ impl std::fmt::Display for KeydError {
             KeydError::StaleCopy => {
                 f.write_str("the copy is older than the last erasure; the hold stays")
             }
+            KeydError::Guard(g) => write!(f, "keyd guard: {g}"),
         }
     }
 }

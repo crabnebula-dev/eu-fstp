@@ -202,7 +202,9 @@ impl SignKeyName {
     fn new(class: u8, name: [u8; SIGN_KEY_NAME_LEN]) -> Option<SignKeyName> {
         matches!(
             class,
-            fstp_custody::keyd::SIGN_KEY_CELL_CA | fstp_custody::keyd::SIGN_KEY_CLUSTER_CA
+            fstp_custody::keyd::SIGN_KEY_CELL_CA
+                | fstp_custody::keyd::SIGN_KEY_CLUSTER_CA
+                | crate::guard::GUARD_CLASS
         )
         .then_some(SignKeyName { class, name })
     }
@@ -1043,6 +1045,29 @@ impl TableStore {
                 self.table
                     .entries
                     .retain(|e| !(e.chain == chain && e.epoch == epoch));
+            }
+        }
+    }
+
+    /// Zeroes and frees the slots of the destroyed sign keys `names`. A
+    /// live one is left alone. The custodian reclaims every destroyed
+    /// guard of an entry but the newest this way (ADR-004 record of lane
+    /// `m10/guard-key`), so its table holds a few slots per entry however
+    /// many rotations ran. A slot whose write fails stays destroyed and is
+    /// tried again after the next rotation.
+    pub(crate) fn reclaim_sign_keys(&mut self, names: &[SignKeyName]) {
+        for name in names {
+            if self.table.sign_key(*name).is_none_or(SignKeyEntry::is_live) {
+                continue;
+            }
+            let Some(ix) = self.slot_index(Slot::Sign(*name)) else {
+                continue;
+            };
+            if write_slot(&self.path, ix, &[0u8; SLOT_LEN]).is_ok() {
+                if let Some(s) = self.slots.get_mut(ix) {
+                    *s = SlotUse::Free;
+                }
+                self.table.sign_keys.retain(|s| s.name != *name);
             }
         }
     }

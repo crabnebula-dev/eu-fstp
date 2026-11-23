@@ -36,11 +36,19 @@
 //! `import <file> <volume>` writes it onto a fresh volume and holds it,
 //! `release <volume> app=<e> vault=<e>` ends the hold, and
 //! `retire-export <volume> <id>` records that a copy is destroyed.
+//!
+//! With a second custodian (ADR-004 record of lane `m10/guard-key`),
+//! `export` seals the copy to the entry's guard and `import` asks the
+//! custodian to open it. `guard-check <volume>` exits 0 when the custodian
+//! answers and no rotation is owed, 3 when one is owed, 4 when the
+//! custodian does not answer and 5 when none is configured.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use fstp_keyd::export::{self, Command};
+use fstp_keyd::guard::link::{GuardSetup, setup_from_env};
+use fstp_keyd::guard::{self, GuardFault};
 use fstp_keyd::{ClientRole, ClientSocket, KeydError, Passphrase, PassphraseSource, VolumeOrigin};
 use fstp_obs::LogEvent;
 use fstp_obs::assurance::{DeploymentMode, HostCheck, deployment_mode_from_env};
@@ -143,10 +151,29 @@ fn run() -> Result<(), KeydError> {
 fn operator(command: &Command) -> Result<(), KeydError> {
     use std::io::Write as _;
     let passphrase = || Passphrase::from_credentials_or_ask();
+    // ADR-004 record of lane `m10/guard-key`: the custodian of a pilot
+    // entry, from the same variables and credentials as a start.
+    let link = || match setup_from_env()? {
+        GuardSetup::Pilot(link) => Ok(Some(link)),
+        GuardSetup::None => Ok(None),
+        GuardSetup::Custodian(_) => Err(KeydError::Volume(
+            "a custodian's key volume is never copied or imported",
+        )),
+    };
+    let development = deployment_mode_from_env()
+        .map(|c| c.mode == DeploymentMode::Development)
+        .unwrap_or(false);
     match command {
-        Command::Serve => Ok(()),
+        Command::Serve | Command::GuardCheck { .. } => Ok(()),
         Command::Export { volume, file } => {
-            let (_, bytes) = export::export_volume(volume, &passphrase()?)?;
+            let bytes = match link()? {
+                Some(link) => export::export_guarded(volume, &passphrase()?, &link)?.1,
+                // In production every copy is guarded (Daniel, 2026-11-23).
+                // Development mode writes a plain copy (I-81 NOTE of
+                // 2026-11-01), which the register reports until retired.
+                None if development => export::export_volume(volume, &passphrase()?)?.1,
+                None => return Err(KeydError::Guard(GuardFault::Unreachable)),
+            };
             let mut out = std::fs::OpenOptions::new();
             out.write(true).create_new(true);
             #[cfg(unix)]
@@ -163,17 +190,41 @@ fn operator(command: &Command) -> Result<(), KeydError> {
         }
         Command::Import { file, volume } => {
             let meta = std::fs::metadata(file).map_err(|_| KeydError::Io("read the copy file"))?;
-            if meta.len() > export::MAX_EXPORT_LEN as u64 {
+            if meta.len() > guard::copy::MAX_GUARDED_LEN as u64 {
                 return Err(KeydError::Malformed("a copy is too long"));
             }
             let bytes = std::fs::read(file).map_err(|_| KeydError::Io("read the copy file"))?;
-            export::import_volume(&bytes, volume, &passphrase()?).map(|_| ())
+            // A plain copy predates the guard. Production refuses it, since
+            // no guard can be destroyed for it (ADR-004, Q-F018-3).
+            if !guard::copy::is_guarded(&bytes) && !development {
+                return Err(KeydError::Guard(GuardFault::Unreachable));
+            }
+            export::import_guarded(&bytes, volume, &passphrase()?, link()?.as_ref()).map(|_| ())
         }
         Command::Release { volume, current } => {
-            export::release_import(volume, &passphrase()?, current)
+            export::release_import_guarded(volume, &passphrase()?, current, link()?)
         }
         Command::Retire { volume, id } => export::retire_export(volume, *id),
     }
+}
+
+/// The exit code of `guard-check` (ADR-028 record of lane
+/// `m10/guard-key`). It reads the guard state without the volume's lock,
+/// so it runs while the entry serves, and asks the custodian for the
+/// current guard, which makes generation 1 at the first ask.
+fn guard_check(volume: &Path) -> u8 {
+    let link = match setup_from_env() {
+        Ok(GuardSetup::Pilot(link)) => link,
+        Ok(GuardSetup::None) => return 5,
+        Ok(GuardSetup::Custodian(_)) | Err(_) => return 1,
+    };
+    let Ok(state) = guard::state::read_state(volume) else {
+        return 1;
+    };
+    if link.client.public(link.entry).is_err() {
+        return 4;
+    }
+    if state.owed.is_some() { 3 } else { 0 }
 }
 
 fn main() -> ExitCode {
@@ -182,6 +233,9 @@ fn main() -> ExitCode {
         Ok(c) => c,
         Err(_) => return ExitCode::from(2),
     };
+    if let Command::GuardCheck { volume } = &command {
+        return ExitCode::from(guard_check(volume));
+    }
     if command != Command::Serve {
         return if operator(&command).is_ok() {
             ExitCode::SUCCESS
