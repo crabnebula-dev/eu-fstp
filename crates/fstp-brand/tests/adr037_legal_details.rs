@@ -129,3 +129,24 @@ fn i70_adr037_legal_page_colours_meet_aa_in_both_themes() {
         }
     }
 }
+
+/// ADR-037 (Daniel, 2026-11-23): the accessibility response time is a
+/// legal detail, a `tenant.*` value only. The governing law is not: no
+/// draft names it, since the terms of use state it themselves.
+#[test]
+fn adr037_accessibility_response_time_is_a_field_and_governing_law_is_not() {
+    assert!(LegalField::KEYS.contains(&"accessibility_response_time"));
+    assert!(!LegalField::KEYS.contains(&"governing_law"));
+    assert!(LegalDetails::from_pairs(&[("governing_law", "Synthetic law")]).is_none());
+    let d = LegalDetails::from_pairs(&[("accessibility_response_time", "10 working days")])
+        .expect("plain text");
+    assert_eq!(
+        d.placeholder("tenant.accessibility_response_time"),
+        Some("10 working days")
+    );
+    assert_eq!(
+        d.placeholder("controller.accessibility_response_time"),
+        None
+    );
+    assert_eq!(d.placeholder("tenant.governing_law"), None);
+}

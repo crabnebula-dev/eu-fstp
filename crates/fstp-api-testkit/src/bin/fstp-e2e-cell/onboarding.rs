@@ -64,7 +64,10 @@ pub(crate) fn provision(
 
 /// The demo tenant's legal details (ADR-037 section 5): CrabNebula Ltd's
 /// values, supplied by Daniel on 2026-11-22 for the demo cell. Shared code
-/// holds no value.
+/// holds no value. The accessibility contact and response time came on
+/// 2026-11-23. The DPO name is an explicit exception to the synthetic
+/// fixtures rule: CrabNebula Ltd's public company contact, kept by
+/// Daniel's decision of 2026-11-23 (ADR-037 section 7).
 pub(crate) const DEMO_LEGAL_DETAILS: &[(&str, &str)] = &[
     ("legal_name", "CrabNebula Ltd"),
     ("address", "27 Triq it-Tramuntana, Birgu BRG1160, Malta"),
@@ -79,10 +82,11 @@ pub(crate) const DEMO_LEGAL_DETAILS: &[(&str, &str)] = &[
         "supervisory_authority",
         "Information and Data Protection Commissioner (IDPC), Malta",
     ),
+    ("accessibility_contact", "privacy@crabnebula.dev"),
+    ("accessibility_response_time", "15 working days"),
     ("company_number", "C 103590"),
     ("vat_number", "MT29710913"),
     ("transparency_register", "3419964101239-38"),
-    ("governing_law", "Maltese law"),
 ];
 
 /// Appends the provisioning record of a SaaS cell whose first tenant
@@ -121,8 +125,7 @@ pub(crate) fn provision_two_admins(
             by: first_admin,
         },
         // ADR-037: the demo tenant's legal details, CrabNebula Ltd's
-        // values as Daniel supplied them on 2026-11-22. No accessibility
-        // contact was supplied, so the pages show it as not set.
+        // values as Daniel supplied them on 2026-11-22 and 2026-11-23.
         fstp_tenant::TenantRecord::LegalDetailsSet {
             details: fstp_brand::legal::LegalDetails::from_pairs(DEMO_LEGAL_DETAILS)
                 .ok_or("the legal details")?,
@@ -265,8 +268,9 @@ mod legal_tests {
     use fstp_brand::legal::LegalDetails;
 
     /// ADR-037 section 5: the demo values are valid legal details and
-    /// fill the imprint; the accessibility contact, which Daniel did not
-    /// supply, shows as not set.
+    /// fill the imprint, which names no governing law. The accessibility
+    /// statement shows the contact and the response time Daniel supplied
+    /// on 2026-11-23.
     #[test]
     fn adr037_demo_legal_details_fill_the_imprint() {
         let d = LegalDetails::from_pairs(DEMO_LEGAL_DETAILS);
@@ -280,7 +284,12 @@ mod legal_tests {
         ] {
             assert!(html.contains(v), "{v}");
         }
+        assert!(!html.contains("Governing law"), "the imprint");
+        assert!(!html.contains("Maltese law"), "the imprint");
         let html = page_html("/legal/accessibility", d.as_ref(), None).unwrap_or_default();
-        assert!(html.contains("[not set: tenant.accessibility_contact]"));
+        assert!(html.contains(">privacy@crabnebula.dev<"), "the contact");
+        assert!(html.contains(">15 working days<"), "the response time");
+        assert!(!html.contains("[not set: tenant.accessibility_contact]"));
+        assert!(!html.contains("[not set: tenant.accessibility_response_time]"));
     }
 }
