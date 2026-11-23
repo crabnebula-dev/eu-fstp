@@ -331,7 +331,6 @@ svg a:focus-visible .node-shape { stroke: var(--color-focus); stroke-width: 4; }
 :root { --funding-card-ground: #ffffff; --funding-card-text: #1f2328; --funding-card-label: #4b5563; }
 .funding-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); flex-basis: 100%; background: var(--funding-card-ground); color: var(--funding-card-text); border: 1px solid var(--funding-card-label); border-radius: 0.5rem; padding: var(--space-2) var(--space-4); }
 .funding-card .eu-emblem { height: 3rem; min-height: 1.08cm; margin: 0.91rem; width: auto; }
-.funding-card-name { margin: 0; font-weight: 600; }
 .funding-card dl { display: grid; grid-template-columns: auto 1fr; gap: 0 var(--space-2); margin: 0; }
 .funding-card dt { color: var(--funding-card-label); }
 .funding-card-label { color: var(--funding-card-label); }

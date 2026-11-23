@@ -30,9 +30,8 @@ fn funding() -> MailFunding {
         png: png(),
         alt: "Funded by the European Union".to_owned(),
         lines: vec![
-            "Synthetic <b>programme</b>".to_owned(),
             "Grant agreement number: SYNTHETIC-000000000".to_owned(),
-            "Coordinator: Synthetic coordinator org".to_owned(),
+            "Coordinator: Synthetic <b>coordinator</b> org".to_owned(),
             "Contact: role@example.org".to_owned(),
         ],
     }
@@ -70,7 +69,7 @@ fn i69_programme_mail_carries_the_funding_card() {
             "{html}"
         );
         prop_assert!(
-            html.contains("Synthetic &lt;b&gt;programme&lt;/b&gt;"),
+            html.contains("Synthetic &lt;b&gt;coordinator&lt;/b&gt; org"),
             "{html}"
         );
         prop_assert!(html.contains("role@example.org"), "{html}");

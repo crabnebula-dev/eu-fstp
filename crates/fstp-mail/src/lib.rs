@@ -128,7 +128,8 @@ pub struct MailFunding {
     pub png: Vec<u8>,
     /// The logo's alternative text.
     pub alt: String,
-    /// The programme name, then each label with its value.
+    /// Each label with its value, then the acknowledgement. No line names
+    /// the programme on its own (ADR-034 Q11).
     pub lines: Vec<String>,
 }
 

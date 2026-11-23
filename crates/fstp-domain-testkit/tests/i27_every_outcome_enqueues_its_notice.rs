@@ -138,7 +138,10 @@ fn cut_off_not_selected_on(b: Backend) {
 fn negotiation_on(b: Backend) {
     let mut s = two(b);
     let cut = in_irc_review(&mut s);
-    assert!(notices(&cut).is_empty(), "IRC_REVIEW is no outcome: {cut:?}");
+    assert!(
+        notices(&cut).is_empty(),
+        "IRC_REVIEW is no outcome: {cut:?}"
+    );
     let mut records = Vec::new();
     for member in [IRC, IRC2] {
         let a = s
@@ -236,4 +239,3 @@ fn i27_q5_negotiation_declined_enqueues_its_notice() {
     negotiation_declined_on(Backend::Production);
     negotiation_declined_on(Backend::Reference);
 }
-

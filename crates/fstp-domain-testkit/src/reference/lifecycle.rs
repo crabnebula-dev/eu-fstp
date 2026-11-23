@@ -3085,8 +3085,7 @@ fn cut_off(cx: &LifeCx<'_>, ask: &LifeAsk<'_>) -> Result<Expect, String> {
             (StateTag::IrcReview, Row::RankedToIrcReview)
         } else {
             exp.terminal.push(*p);
-            exp.wants
-                .push(outcome_notice(*p, StateTag::NotSelected));
+            exp.wants.push(outcome_notice(*p, StateTag::NotSelected));
             (StateTag::NotSelected, Row::RankedToNotSelected)
         };
         exp.transitions.push(transition(

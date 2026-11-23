@@ -172,7 +172,6 @@ pub(crate) fn public_card(
     let c = card(state, programme)?;
     let [(_, grant), (_, coordinator), (_, contact)] = c.lines();
     Some(fstp_public::PublicFunding {
-        programme: c.name.clone(),
         grant_number: grant.to_owned(),
         coordinator: coordinator.to_owned(),
         contact: contact.to_owned(),

@@ -37,7 +37,7 @@ fn card(acknowledgement: Option<&str>) -> FundingCard {
 #[test]
 fn i69_l08_text_lines_end_with_the_acknowledgement() {
     let lines = card(Some(SENTENCE)).text_lines();
-    assert_eq!(lines.len(), 5);
+    assert_eq!(lines.len(), 4);
     assert_eq!(lines.last().map(String::as_str), Some(SENTENCE));
 }
 
@@ -46,7 +46,7 @@ fn i69_l08_text_lines_end_with_the_acknowledgement() {
 #[test]
 fn l08_no_acknowledgement_means_no_line() {
     let lines = card(None).text_lines();
-    assert_eq!(lines.len(), 4);
+    assert_eq!(lines.len(), 3);
     for l in &lines {
         assert!(!l.contains("pending"), "{l}");
         assert!(!l.contains("funded by the European Union"), "{l}");
@@ -116,4 +116,27 @@ fn l08_stylesheets_apply_the_emblem_rules() {
         }
         assert!(!css.contains("min-height: 32px"));
     }
+}
+
+/// ADR-034 Q11 (Daniel, 2026-11-23): the Commission's emblem rules say
+/// not to write the programme's name in conjunction with the EU emblem.
+/// The card's text lines, which follow the logo in PDFs and emails, never
+/// name the programme on a line of their own. The name shows only inside
+/// the acknowledgement sentence, and not at all while it cannot render.
+#[test]
+fn adr034_q11_text_lines_name_the_programme_only_in_the_acknowledgement() {
+    let c = card(Some(SENTENCE));
+    let lines = c.text_lines();
+    let named: Vec<&String> = lines.iter().filter(|l| l.contains(&c.name)).collect();
+    assert_eq!(named, [&SENTENCE.to_owned()], "{lines:?}");
+    assert!(
+        !lines[0].contains(&c.name),
+        "the line after the logo: {lines:?}"
+    );
+    let c = card(None);
+    let lines = c.text_lines();
+    assert!(
+        lines.iter().all(|l| !l.contains(&c.name)),
+        "no sentence, no name: {lines:?}"
+    );
 }
