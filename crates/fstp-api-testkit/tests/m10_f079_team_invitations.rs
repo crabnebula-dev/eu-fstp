@@ -293,3 +293,24 @@ fn m10_f079_no_operation_binds_an_account_by_its_id() {
         .collect();
     assert!(roles.is_empty(), "{roles:?}");
 }
+
+/// F-079, ADR-038, `roles-and-sod.md` "Receiving bindings": the lead reads
+/// the invitations while it leads X. Once X is withdrawn, a terminal
+/// state, the lead's binding has ended, and the read is refused under
+/// R-AC-01, since the former lead's read-only view names other reads only.
+#[test]
+fn m10_f079_r_ac_01_the_former_lead_reads_no_invitation_list() {
+    let c = cell();
+    let lead = c.login(LEAD, LoginMethod::Passkey);
+    invite(&c, &lead, "former-f079@e2e.invalid");
+    assert_eq!(c.lead_team_invitations(&lead, PX).unwrap().len(), 1);
+    let withdrawal = fstp_api_core::decode::decode_route(
+        fstp_api_core::decode::Method::Post,
+        &format!("/proposals/{}/withdrawal", PX.raw()),
+        b"{}",
+    );
+    let r = c.web(&lead, withdrawal);
+    assert_eq!(class(&r), Class::Done, "the withdrawal: {r:?}");
+    let r = c.web(&lead, requests::team_invitations_web(PX));
+    assert_eq!(rule(&r), Some("R-AC-01"), "the former lead read: {r:?}");
+}
