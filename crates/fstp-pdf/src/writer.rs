@@ -416,6 +416,13 @@ fn drawn(i: &Image) -> (i64, i64) {
     }
 }
 
+/// The drawn width and height of `image` in the letterhead band, in
+/// points: the band's height, or less for a very wide image. The
+/// emblem rules of L-08 check the EU logo's size with it (ADR-034).
+pub fn letterhead_size(image: &Image) -> (i64, i64) {
+    drawn(image)
+}
+
 /// The images of `head`, placed in the band at the top of the first page.
 fn place(head: &Letterhead) -> Result<Vec<Placed<'_>>, WriteError> {
     if head.logos.len() > MAX_LOGOS || !head.logos.iter().chain(&head.emblem).all(image_ok) {

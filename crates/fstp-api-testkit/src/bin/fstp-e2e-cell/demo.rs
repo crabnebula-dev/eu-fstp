@@ -13,6 +13,9 @@
 //! - `GET /demo/reset`: the cell at first start, with its first tenant
 //!   admin's link.
 //! - `GET /demo/advance?minutes=<n>`: moves the cell clock forward.
+//! - `GET /demo/inbox`: with `--demo-signin` only, every email the cell
+//!   captured instead of sending, with its link and code (ADR-008 record
+//!   of lane L37).
 //! - `GET /demo/tokens.css` and `GET /demo/front-door.css`: the token
 //!   sheet of lane m4/site (`web/src/auth/tokens.css`, a copy of
 //!   `design/tokens.css`) and the page rules, so the page sits on the
@@ -105,6 +108,9 @@ pub(crate) async fn handle(site: &Site, req: Request) -> Response {
     let path = req.target.path().to_owned();
     let done = match path.as_str() {
         "/demo" | "/demo/" => return page(site),
+        // ADR-008 record of lane L37: the demo inbox, with the demo flag
+        // only.
+        "/demo/inbox" if site.info.demo_signin => return inbox(site),
         "/demo/tokens.css" => {
             return match site.info.auth_assets.file("auth/tokens.css") {
                 Some((kind, bytes)) => style(kind, bytes.to_vec()),
@@ -654,6 +660,15 @@ fn page(site: &Site) -> Response {
             )
         })
         .unwrap_or_default();
+    // ADR-008 record of lane L37: the demo inbox, with the demo flag only.
+    let (inbox_link, inbox_line) = if site.info.demo_signin {
+        (
+            "<a class=\"tool-link\" data-demo-link=\"inbox\" href=\"/demo/inbox\">Demo inbox</a>",
+            "<p><a data-demo-link=\"inbox-line\" href=\"/demo/inbox\">Demo inbox</a>: every email the cell would send, with its link and code, so \"Send me a link\" works without an email server.</p>\n",
+        )
+    } else {
+        ("", "")
+    };
     let how = if site.info.demo_signin {
         "Choose \"Sign in as\" to open the person's home page in one click, with no passkey. Use one browser profile per person, such as a new incognito window each. Pages signed in this way say \"Demo sign-in\" in the top bar. That button switches to another person of the scene in the same tab. The name link enrols a passkey instead, and works once."
     } else {
@@ -665,7 +680,7 @@ fn page(site: &Site) -> Response {
 <title>FSTP demo, cell {name}</title>\
 <link rel=\"stylesheet\" href=\"/demo/tokens.css\"><link rel=\"stylesheet\" href=\"/demo/front-door.css\"></head><body>\n\
 <header class=\"site-header\"><div class=\"topbar\"><span class=\"brand\"><span class=\"brand-mark\" aria-hidden=\"true\">F</span><span>FSTP demo</span></span>\
-<span class=\"topbar-spacer\"></span>{public}<a class=\"tool-link\" href=\"{origin}/app/calls\" target=\"_blank\" rel=\"noopener\">Open calls on the cell</a></div></header>\n\
+<span class=\"topbar-spacer\"></span>{inbox_link}{public}<a class=\"tool-link\" href=\"{origin}/app/calls\" target=\"_blank\" rel=\"noopener\">Open calls on the cell</a></div></header>\n\
 <main id=\"main\">\n\
 <h1>FSTP demo, cell {name}</h1>\n\
 <p id=\"demo-scene\" class=\"scene\">Scene: <strong>{scene}</strong></p>\n{bank}\
@@ -673,7 +688,7 @@ fn page(site: &Site) -> Response {
 Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refresh it</a> to see new messages and links.</p>\n\
 <p>{how}</p>\n\
 <h2>People of this scene</h2>\n<ul class=\"people\">\n{people}</ul>\n\
-<h2>Messages the cell sent</h2>\n<p>An email from the platform carries ids, a time and one link into the platform, never proposal content (I-27). Inside, each person's Mailbox (top bar, and the line on their home page) lists the same work and links to where it happens.</p>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
+<h2>Messages the cell sent</h2>\n{inbox_line}<p>An email from the platform carries ids, a time and one link into the platform, never proposal content (I-27). Inside, each person's Mailbox (top bar, and the line on their home page) lists the same work and links to where it happens.</p>\n<p>Newest first. <a href=\"/demo\">Refresh this page</a> after a sign-up to see its message. To sign up, open {origin}/auth/signup, send a synthetic address such as demo@e2e.invalid, then open its link here.</p>\n<ul>\n{mail}</ul>\n\
 <h2>Scenes</h2>\n<p>Each scene replaces the whole cell state and makes new links.</p>\n\
 <p>Review: {review}</p>\n<p>Applicant: {applicant}</p>\n\
 <p>Programme editor: <a href=\"/demo/setup\">{setup}</a> (programme manager M1 holds a fully built draft: every step validates and the review shows its previews)</p>\n\
@@ -687,6 +702,80 @@ Cell clock: {now} µs. This page never reloads by itself: <a href=\"/demo\">refr
         name = esc(site.info.name),
         setup = scenario::setup::SCENE,
         fast = scenario::fastflow::links_html(),
+    );
+    let mut r = Response::with_body(
+        StatusCode::OK,
+        "text/html; charset=utf-8",
+        body.into_bytes(),
+    );
+    let _ = r.headers.try_insert("cache-control", "no-store");
+    let _ = r.headers.try_insert(
+        "content-security-policy",
+        "default-src 'none'; style-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
+    );
+    let _ = r.headers.try_insert("x-content-type-options", "nosniff");
+    let _ = r.headers.try_insert("referrer-policy", "no-referrer");
+    r
+}
+
+/// What a captured message is, in the words of the demo inbox.
+fn mail_label(kind: &str) -> &str {
+    match kind {
+        "signup" => "Sign-up link",
+        "magic" => "Sign-in link",
+        "passkey_link" => "Passkey link",
+        "admin_invitation" => "Tenant admin invitation",
+        "invitation" => "Role invitation",
+        other => other,
+    }
+}
+
+/// `GET /demo/inbox` (ADR-008 record of lane L37): every message the demo
+/// cell captured instead of sending, newest first, with its link and, for
+/// a registration email, its 6-digit code. A plain page with no script,
+/// on the front door's rules. Only a cell started with `--demo-signin`
+/// serves it.
+fn inbox(site: &Site) -> Response {
+    let inner = site.inner();
+    let mut rows = String::new();
+    for m in lock(&inner.auth).all_messages().iter().rev() {
+        let code = m
+            .code
+            .as_deref()
+            .map(|c| {
+                format!(
+                    "<p>Or type the code <strong data-demo-code>{}</strong> on the sign-up page.</p>\n",
+                    esc(c)
+                )
+            })
+            .unwrap_or_default();
+        rows.push_str(&format!(
+            "<li class=\"card\" data-demo-mail=\"{k}\"><p><strong>{l}</strong> to <span data-demo-to>{t}</span></p>\n\
+<p><a class=\"btn btn--primary\" data-demo-mail-link href=\"{href}\" target=\"_blank\" rel=\"noopener\">Open the link</a></p>\n{code}</li>\n",
+            k = esc(m.kind),
+            l = esc(mail_label(m.kind)),
+            t = esc(&m.to),
+            href = esc(&m.link),
+        ));
+    }
+    if rows.is_empty() {
+        rows.push_str("<li id=\"demo-inbox-empty\">No message yet. Ask for a link on the cell, then refresh this page.</li>\n");
+    }
+    let origin = esc(&site.info.origin);
+    let body = format!(
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+<title>Demo inbox, cell {name}</title>\
+<link rel=\"stylesheet\" href=\"/demo/tokens.css\"><link rel=\"stylesheet\" href=\"/demo/front-door.css\"></head><body>\n\
+<header class=\"site-header\"><div class=\"topbar\"><span class=\"brand\"><span class=\"brand-mark\" aria-hidden=\"true\">F</span><span>FSTP demo</span></span>\
+<span class=\"topbar-spacer\"></span><a class=\"tool-link\" href=\"/demo\">Back to the demo page</a></div></header>\n\
+<main id=\"main\">\n\
+<h1>Demo inbox</h1>\n\
+<p>The demo cell sends no email. Every email it would send lands here instead: a sign-up link and its code, a sign-in link, a passkey link or an invitation. Open a link to go on as the person it was sent to.</p>\n\
+<p>To try it, open <a href=\"{origin}/auth/login\" target=\"_blank\" rel=\"noopener\">the sign-in page</a> or <a href=\"{origin}/auth/signup\" target=\"_blank\" rel=\"noopener\">the sign-up page</a>, give a synthetic address such as demo@e2e.invalid, choose \"Send me a link\", then <a href=\"/demo/inbox\">refresh this page</a>. Newest first.</p>\n\
+<ul id=\"demo-inbox\" class=\"people\">\n{rows}</ul>\n\
+</main>\n</body></html>\n",
+        name = esc(site.info.name),
     );
     let mut r = Response::with_body(
         StatusCode::OK,

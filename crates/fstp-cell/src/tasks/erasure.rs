@@ -1337,7 +1337,9 @@ impl<C: Custody> ErasureRunner<C> {
         stored: &[u8],
     ) -> Result<impl std::ops::Deref<Target = Vec<u8>> + use<C>, OpenRefusal> {
         let dek = DekId(id);
-        if self.chain.refused_for_open(dek) {
+        // ADR-007 section "Built by lane L37": refused from the moment its
+        // erasure request is in the ledger, before the planner runs.
+        if self.chain.refused_for_open(dek) || self.engine.state().erasure(id).is_some() {
             return Err(OpenRefusal::Erased);
         }
         let (g, generation, sealed) = self.store.keys.get(&dek).ok_or(OpenRefusal::Unknown)?;
@@ -1351,6 +1353,53 @@ impl<C: Custody> ErasureRunner<C> {
         let blob = envelope::decode_sealed_blob(stored).map_err(|_| OpenRefusal::Keys)?;
         envelope::open_blob(&dk, &ctx_for(self.store.cell, *g, 0, id), &blob)
             .map_err(|_| OpenRefusal::Keys)
+    }
+
+    /// Requests the erasure of document `id`, the data key id under which
+    /// [`ErasureRunner::seal_document`] sealed it, with `cause` as `by`
+    /// asked (ADR-007 section "Built by lane L37", R-KY-02, I-81).
+    ///
+    /// The ledger record `KeystoreErasureRequested` with the document kind
+    /// is the durable trigger: the next step joins the key to the chain
+    /// state, and step 7 completes the entry with the destroyed epoch. A
+    /// command id fixed per document and the check of an entry already in
+    /// the log make a repeated call append nothing twice. The document
+    /// opens no more once the record is in.
+    ///
+    /// # Errors
+    ///
+    /// An id that names no document key of this runner, an id whose entry
+    /// is not a document's, or a refused record.
+    pub async fn erase_document(
+        &mut self,
+        id: [u8; 16],
+        cause: u16,
+        by: fstp_domain::id::AccountId,
+    ) -> Result<(), CellError> {
+        if let Some(e) = self.engine.state().erasure(id) {
+            return if e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT {
+                Ok(())
+            } else {
+                Err(keys_err("not a document"))
+            };
+        }
+        if self.store.texts.contains_key(&id) || !self.store.keys.contains_key(&DekId(id)) {
+            return Err(keys_err("unknown document"));
+        }
+        let mut suffix = [b'q'; 8];
+        for (d, s) in suffix.iter_mut().skip(1).zip(id.iter()) {
+            *d = *s;
+        }
+        self.record(
+            KeyCommand::RecordKeystoreErasure {
+                ids: vec![id],
+                cause,
+                by,
+                kind: fstp_cell_core::ERASURE_KIND_DOCUMENT,
+            },
+            system_command_id(suffix),
+        )
+        .await
     }
 
     /// Opens text `id` for `state`, or refuses it (design section 3.4).
@@ -1836,14 +1885,28 @@ impl<C: Custody> ErasureRunner<C> {
                 .is_some())
     }
 
+    /// The ids whose erasure request is in the ledger and not yet in the
+    /// chain state: the ledger's texts, and the documents of the erasure
+    /// log (ADR-007 section "Built by lane L37"). A text's and a
+    /// document's data key id is its id.
     fn new_requests(&self) -> Vec<[u8; 16]> {
         let state = self.engine.state();
-        self.store
+        let texts = self
+            .store
             .texts
             .keys()
             .copied()
-            .filter(|id| !self.store.requested.contains(id) && state.erasure(*id).is_some())
-            .collect()
+            .filter(|id| !self.store.requested.contains(id) && state.erasure(*id).is_some());
+        let documents = state
+            .erasures()
+            .filter(|(id, e)| {
+                e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT
+                    && !self.store.requested.contains(id)
+                    && !self.store.texts.contains_key(id)
+                    && self.store.keys.contains_key(&DekId(*id))
+            })
+            .map(|(id, _)| id);
+        texts.chain(documents).collect()
     }
 
     /// Runs steps until the chain is idle.
@@ -1880,12 +1943,12 @@ impl<C: Custody> ErasureRunner<C> {
             let mut durable = self.store.chain_state.clone();
             let mut chain = self.chain.clone();
             for id in &fresh {
-                let dek = self
-                    .store
-                    .texts
-                    .get(id)
-                    .map(|t| t.dek)
-                    .ok_or(keys_err("unknown text"))?;
+                // A document's data key id is its id (lane L37).
+                let dek = match self.store.texts.get(id) {
+                    Some(t) => t.dek,
+                    None if self.store.keys.contains_key(&DekId(*id)) => DekId(*id),
+                    None => return Err(keys_err("unknown text")),
+                };
                 durable
                     .request(dek, seq)
                     .map_err(|_| keys_err("erasure request"))?;
@@ -2420,12 +2483,26 @@ impl<C: Custody> ErasureRunner<C> {
     async fn record_completions(&self, old: u64, erased: &[DekId]) -> Result<(), CellError> {
         let erased: BTreeSet<DekId> = erased.iter().copied().collect();
         let state = self.engine.state();
-        let ids: Vec<[u8; 16]> = self
+        let texts = self
             .store
             .texts
             .iter()
             .filter(|(id, t)| erased.contains(&t.dek) && state.erasure(**id).is_some())
-            .map(|(id, _)| *id)
+            .map(|(id, _)| *id);
+        // ADR-007 section "Built by lane L37": a document's entry is named
+        // by its data key id.
+        let documents = erased
+            .iter()
+            .filter(|d| {
+                state
+                    .erasure(d.0)
+                    .is_some_and(|e| e.kind == fstp_cell_core::ERASURE_KIND_DOCUMENT)
+            })
+            .map(|d| d.0);
+        let ids: Vec<[u8; 16]> = texts
+            .chain(documents)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .collect();
         let epoch = u32::try_from(old)
             .map_err(|_| keys_err("epoch"))?
@@ -2521,6 +2598,12 @@ enum Request {
         stored: Vec<u8>,
         reply: ReplyTx<Result<Plaintext, OpenRefusal>>,
     },
+    EraseDocument {
+        id: [u8; 16],
+        cause: u16,
+        by: fstp_domain::id::AccountId,
+        reply: ReplyTx<Result<(), CellError>>,
+    },
     Keystore {
         reply: ReplyTx<Keystore>,
     },
@@ -2575,6 +2658,7 @@ impl Request {
                 reply.send(Err(keys_err("the erasure task is not running")))
             }
             Request::OpenDocument { reply, .. } => reply.send(Err(OpenRefusal::Keys)),
+            Request::EraseDocument { reply, .. } => reply.send(Err(gone)),
             Request::Signer { reply, .. } => reply.send(Err(gone)),
             Request::RotateSigner { reply, .. } => reply.send(Err(gone)),
             Request::SetLoginEmail { reply, .. } => reply.send(Err(gone)),
@@ -2713,6 +2797,29 @@ impl ErasureHandle {
         self.ask(|reply| Request::OpenDocument { id, stored, reply })
             .await
             .unwrap_or(Err(OpenRefusal::Keys))
+    }
+
+    /// Requests the erasure of document `id` with `cause` as `by` asked
+    /// ([`ErasureRunner::erase_document`], ADR-007 section "Built by lane
+    /// L37"). The task then runs the batch that destroys its key.
+    ///
+    /// # Errors
+    ///
+    /// The runner's refusal, or [`CellError::Keys`] once the task ended.
+    pub async fn erase_document(
+        &self,
+        id: [u8; 16],
+        cause: u16,
+        by: fstp_domain::id::AccountId,
+    ) -> Result<(), CellError> {
+        self.ask(|reply| Request::EraseDocument {
+            id,
+            cause,
+            by,
+            reply,
+        })
+        .await
+        .unwrap_or(Err(keys_err("the erasure task is not running")))
     }
 
     /// A copy of the durable keystore, or `None` once the task ended.
@@ -2998,6 +3105,15 @@ async fn serve<C: Custody>(runner: &mut ErasureRunner<C>, req: Request) {
                 .open_document(id, &stored)
                 .map(|t| Box::new(t) as Plaintext);
             reply.send(opened);
+        }
+        Request::EraseDocument {
+            id,
+            cause,
+            by,
+            reply,
+        } => {
+            let done = runner.erase_document(id, cause, by).await;
+            reply.send(durable(runner, done).await);
         }
         Request::Keystore { reply } => reply.send(runner.keystore().clone()),
         Request::Signer { purpose, reply } => {

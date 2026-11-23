@@ -4,8 +4,40 @@
 // approved or legal text is held here.
 
 export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
-  "admin.branding.title": "Logos and brand colours",
+  "admin.branding.title": "Branding and legal details",
   "admin.branding.colours.heading": "Brand colours",
+  // ADR-037: the legal details that fill the legal pages behind the footer.
+  "admin.branding.legal.heading": "Legal details",
+  "admin.branding.legal.intro":
+    "Every page footer links to your privacy notice, accessibility statement, imprint, terms of use and Data Act information. Those pages fill in the details below. Check them before your portal opens.",
+  "admin.branding.legal.empty": "You can leave a field empty. The pages then show it as not set.",
+  "admin.branding.legal.legal_name": "Organisation's legal name",
+  "admin.branding.legal.legal_name.hint": "The full name in the company register.",
+  "admin.branding.legal.address": "Postal address",
+  "admin.branding.legal.address.hint": "Where people can write to you, on one line with commas.",
+  "admin.branding.legal.registered_address": "Registered address",
+  "admin.branding.legal.registered_address.hint": "The address in the company register. Often the same as the postal address.",
+  "admin.branding.legal.privacy_contact": "Privacy contact",
+  "admin.branding.legal.privacy_contact.hint": "An email address for questions about personal data, such as privacy@example.org.",
+  "admin.branding.legal.dpo_name": "Data Protection Officer (DPO)",
+  "admin.branding.legal.dpo_name.hint": "The name of your DPO, if you have one.",
+  "admin.branding.legal.dpo_contact": "DPO contact",
+  "admin.branding.legal.dpo_contact.hint": "An email or postal address that reaches your DPO.",
+  "admin.branding.legal.supervisory_authority": "Data protection authority",
+  "admin.branding.legal.supervisory_authority.hint": "The data protection authority that supervises your organisation, with its country.",
+  "admin.branding.legal.accessibility_contact": "Accessibility contact",
+  "admin.branding.legal.accessibility_contact.hint": "An email address where people can report that something is hard to use.",
+  "admin.branding.legal.company_number": "Company registration number",
+  "admin.branding.legal.company_number.hint": "As it appears in the company register.",
+  "admin.branding.legal.vat_number": "VAT number",
+  "admin.branding.legal.vat_number.hint": "With its two-letter country prefix.",
+  "admin.branding.legal.transparency_register": "EU Transparency Register number",
+  "admin.branding.legal.transparency_register.hint": "Only if your organisation is registered. Otherwise leave it empty.",
+  "admin.branding.legal.governing_law": "Governing law",
+  "admin.branding.legal.governing_law.hint": "The law that governs your terms, for example Maltese law.",
+  "admin.branding.legal.save": "Save the legal details",
+  "admin.branding.legal.saved": "Saved. The legal pages now show these details.",
+  "admin.branding.legal.invalid": "{field}: use plain text of up to 300 characters, without < or >.",
   // ADR-034: the funding card defaults.
   "admin.branding.funding.heading": "Funding card",
   "admin.branding.funding.intro":
@@ -16,6 +48,15 @@ export const ADMIN_BRANDING_LABELS: Readonly<Record<string, string>> = {
   "admin.branding.funding.save": "Save the funding card defaults",
   "admin.branding.funding.saved": "Saved. New programmes take these values.",
   "admin.branding.funding.invalid": "Fill in both fields with plain text of up to 200 characters, without < or >.",
+  // L-08 (ADR-036): why a programme's funding sentence does not show.
+  "admin.branding.funding.ack.missing":
+    "{name}: the funding sentence is not shown. Missing: {values}. The programme editor asks for these values before activation, so ask your technical administrator to fill them in.",
+  "admin.branding.funding.ack.programme_name": "the programme name (step 2, Programme identity)",
+  "admin.branding.funding.ack.action_number": "the grant agreement number (step 1, Funder and instrument)",
+  "admin.branding.funding.ack.action_acronym": "the acronym (step 1, Funder and instrument)",
+  "admin.branding.funding.ack.and": "and",
+  "admin.branding.funding.ack.profile":
+    "{name}: the funding sentence is not shown. Its funder profile has no approved funding sentence. Ask your technical administrator.",
   "admin.branding.logos.heading": "Logos",
   "admin.branding.logos.programme_title": "Programme logo",
   "admin.branding.logos.loading": "Loading the logos in force.",

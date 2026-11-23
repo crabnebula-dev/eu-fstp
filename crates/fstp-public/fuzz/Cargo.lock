@@ -101,6 +101,7 @@ dependencies = [
 name = "fstp-public-fuzz"
 version = "0.0.0"
 dependencies = [
+ "fstp-html",
  "fstp-public",
  "libfuzzer-sys",
 ]

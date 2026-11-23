@@ -502,6 +502,7 @@ impl WebRouter {
                     None => crate::brand::answer(self.shared.backend.brand(), &req),
                 }
             }
+            Surface::Legal => crate::legal::answer(&self.shared.backend, &self.shared.assets, &req),
             Surface::Adr013 => match &self.shared.mcp {
                 Some(m) => m.answer(req).await,
                 None => reply::adr013(),

@@ -81,6 +81,7 @@ The identity page and the onboarding steps load, but their operations are not se
 1. Choose the applicant scene `OPEN_CALL`.
 2. The demo page names the sign-up address. Open `/auth/signup`, enter a synthetic address such as `demo@e2e.invalid` and send it.
 3. The demo page never reloads by itself, so focus stays where it is. Choose "Refresh this page", then, under "Messages the cell sent", open the sign-up link and create a passkey.
+   With the demo sign-in on, the demo page also links the "Demo inbox" (`/demo/inbox`, lane L37). It lists every email the cell would send, newest first, with its link and the 6-digit code of a sign-up email. "Send me a link" on the sign-in page and on the passkey offer lands its link there too. Refresh the inbox, then open the link.
 4. The home page says that the person holds no role yet and offers "Open calls". Choose it, then the call. The page shows the amounts as server text, the deadline with its zone and the AI disclosure. The public pages show the same call with no sign-in: choose "Public open calls" on the demo page.
 5. Choose "Start a proposal". The workspace autosaves the title, the neutral summary and the narrative as you type (I-21).
 6. Open "Plan", enter one milestone of 1500.50 with a start and a due day, and save. The cell shows the total. A non-canonical amount such as 1500.5 is refused in the page.

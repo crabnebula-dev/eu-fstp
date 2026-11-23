@@ -3,7 +3,7 @@
 // grants whose retention ended and the erasure log, and requests an
 // erasure with its cause through `admin.request_erasure`.
 
-import { ERASURE_CAUSES, dayOf, decodeErasures, requestBody } from "../src/admin/erasures/model.js";
+import { ERASURE_CAUSES, ERASURE_KINDS, dayOf, decodeErasures, requestBody } from "../src/admin/erasures/model.js";
 import { ADMIN_ERASURE_LABELS } from "../src/admin/erasures/messages.en.js";
 import { ADMIN_ERASURE_PAGES } from "../src/admin/erasures/page.js";
 import { OPERATIONS, PAGES, VALIDATORS } from "../src/gen/api.js";
@@ -77,4 +77,18 @@ test("adr007_l33_erasure_kinds_have_labels", () => {
     assert(typeof ADMIN_ERASURE_LABELS[`admin.erasures.kind.${k}`] === "string", `the label of ${k}`);
   }
   assert(typeof ADMIN_ERASURE_LABELS["admin.erasures.log.epoch"] === "string", "the epoch sentence");
+});
+
+/** R-KY-02, I-81, ADR-007 (lane L37): a document erasure is a kind of its own, with a label, and its row decodes. */
+test("adr007_l37_document_kind_has_a_label", () => {
+  assert((ERASURE_KINDS as readonly string[]).includes("document"), "the document kind");
+  eq(ERASURE_KINDS.length, new Set(ERASURE_KINDS).size, "each kind once");
+  for (const k of ERASURE_KINDS) {
+    assert(typeof ADMIN_ERASURE_LABELS[`admin.erasures.kind.${k}`] === "string", `the label of ${k}`);
+  }
+  const row = { ...REPLY.erasures[0], kind: "document", destroyed_epoch: "5" };
+  const r = decodeErasures({ erasures: [row], retention_ended: [] });
+  eq(r?.erasures[0]?.kind, "document", "a document row decodes");
+  const validate = VALIDATORS["admin.erasures"];
+  assert(validate !== undefined && validate({ erasures: [row], retention_ended: [] }), "the generated validator accepts it");
 });

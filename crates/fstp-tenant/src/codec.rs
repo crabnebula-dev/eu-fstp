@@ -174,6 +174,15 @@ fn text_ref(t: &TextRef) -> Value {
     ])
 }
 
+/// The legal details (ADR-037): one member per set field.
+fn legal_details(d: &fstp_brand::legal::LegalDetails) -> Value {
+    let mut o = Object::new();
+    for (f, v) in d.pairs() {
+        o.insert(f.key(), s(v));
+    }
+    Value::Object(o)
+}
+
 /// The funding card defaults (ADR-034).
 fn funding_defaults(d: &fstp_brand::funding::FundingDefaults) -> Value {
     object(vec![("contact", s(d.contact())), ("name", s(d.name()))])
@@ -398,6 +407,9 @@ fn command_value(cmd: &TenantCommand) -> Value {
             "SetFundingDefaults",
             vec![("defaults", funding_defaults(defaults))],
         ),
+        TenantCommand::SetLegalDetails { details } => {
+            tagged("SetLegalDetails", vec![("details", legal_details(details))])
+        }
         TenantCommand::SetGuideNotice { notice } => {
             tagged("SetGuideNotice", vec![("notice", guide_notice(notice))])
         }
@@ -537,6 +549,10 @@ fn record_value(rec: &TenantRecord) -> Value {
                 ("param", s(param_name(value.param()))),
                 ("value", setting(value)),
             ],
+        ),
+        TenantRecord::LegalDetailsSet { details, by } => tagged(
+            "LegalDetailsSet",
+            vec![("by", dec(by.raw())), ("details", legal_details(details))],
         ),
         TenantRecord::FundingDefaultsSet { defaults, by } => tagged(
             "FundingDefaultsSet",
@@ -982,6 +998,22 @@ fn take_text_ref(v: &Value) -> R<TextRef> {
     Ok(TextRef::new(id, digest))
 }
 
+/// The legal details: each member a known field with a set, plain-text
+/// value (I-68, ADR-037). An empty value is never written, so it never
+/// decodes.
+fn take_legal_details(v: &Value) -> R<fstp_brand::legal::LegalDetails> {
+    let o = v.as_object().ok_or(err("expected an object"))?;
+    let mut pairs = Vec::with_capacity(o.len());
+    for (k, v) in o.iter() {
+        let v = str_of(v)?;
+        if v.is_empty() {
+            return Err(err("an empty legal value"));
+        }
+        pairs.push((k, v));
+    }
+    fstp_brand::legal::LegalDetails::from_pairs(&pairs).ok_or_else(|| err("not a legal detail"))
+}
+
 /// The funding card defaults: both values plain text (I-68, ADR-034).
 fn take_funding_defaults(v: &Value) -> R<fstp_brand::funding::FundingDefaults> {
     let f = Fields::of(v, &["contact", "name"])?;
@@ -1222,6 +1254,12 @@ fn take_command(v: &Value) -> R<TenantCommand> {
                 value: take_setting(param, f.get("value")?)?,
             }
         }
+        "SetLegalDetails" => {
+            let f = Fields::of(v, &["details", "kind"])?;
+            TenantCommand::SetLegalDetails {
+                details: take_legal_details(f.get("details")?)?,
+            }
+        }
         "SetFundingDefaults" => {
             let f = Fields::of(v, &["defaults", "kind"])?;
             TenantCommand::SetFundingDefaults {
@@ -1378,6 +1416,13 @@ fn take_record(v: &Value) -> R<TenantRecord> {
             let param = take_param(f.get("param")?)?;
             TenantRecord::SettingChanged {
                 value: take_setting(param, f.get("value")?)?,
+                by: take_account(f.get("by")?)?,
+            }
+        }
+        "LegalDetailsSet" => {
+            let f = Fields::of(v, &["by", "details", "kind"])?;
+            TenantRecord::LegalDetailsSet {
+                details: take_legal_details(f.get("details")?)?,
                 by: take_account(f.get("by")?)?,
             }
         }

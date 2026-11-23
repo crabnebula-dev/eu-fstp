@@ -312,7 +312,7 @@ pub const ERASURE_CAUSES: &[&str] = &[
 ];
 
 /// What an erased text held (ADR-007 section "Built by lane L33").
-pub const ERASURE_KINDS: &[&str] = &["text", "display_name"];
+pub const ERASURE_KINDS: &[&str] = &["text", "display_name", "document"];
 
 /// How one part of the host runs, in the host status file (ADR-028 record
 /// of lane L20).

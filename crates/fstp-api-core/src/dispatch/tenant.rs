@@ -372,6 +372,13 @@ fn build<P: Seams>(
             let n = crate::tenant::notice_request(&op.request)?;
             Ok((n.command(crate::forms::text_ref(0, &n.summary)), None))
         }
+        // ADR-037: the legal details, plain text only.
+        TenantKind::SetLegalDetails => Ok((
+            TenantCommand::SetLegalDetails {
+                details: crate::tenant::legal_details_request(&op.request)?,
+            },
+            None,
+        )),
         // ADR-034: the funding card defaults, plain text only.
         TenantKind::SetFundingDefaults => Ok((
             TenantCommand::SetFundingDefaults {

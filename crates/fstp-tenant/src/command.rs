@@ -102,6 +102,13 @@ pub enum TenantCommand {
         /// The defaults.
         defaults: fstp_brand::funding::FundingDefaults,
     },
+    /// Set the tenant's legal details (`tenant.set_legal_details`,
+    /// ADR-037). The whole set replaces the former one. High-risk by the
+    /// strict reading of settings, so web only.
+    SetLegalDetails {
+        /// The details.
+        details: fstp_brand::legal::LegalDetails,
+    },
     /// Set or clear the tenant's override of the Guide's data protection
     /// texts (R-GA-01; section 15.0 of the M4 design, 2026-11-06). `None`
     /// brings back the platform default. High-risk by the strict reading
@@ -221,6 +228,8 @@ pub enum TenantKind {
     SetGuideNotice,
     /// `tenant.set_funding_defaults` (ADR-034).
     SetFundingDefaults,
+    /// `tenant.set_legal_details` (ADR-037).
+    SetLegalDetails,
     /// `tenant.record_inference_config`.
     RecordInferenceConfig,
     /// `tenant.complete`.
@@ -249,7 +258,7 @@ pub enum TenantKind {
 
 impl TenantKind {
     /// Every kind.
-    pub const ALL: [TenantKind; 26] = [
+    pub const ALL: [TenantKind; 27] = [
         TenantKind::SaveStep,
         TenantKind::InviteAdmin,
         TenantKind::AcceptAdminInvitation,
@@ -264,6 +273,7 @@ impl TenantKind {
         TenantKind::SetSetting(TenantParam::P74),
         TenantKind::SetGuideNotice,
         TenantKind::SetFundingDefaults,
+        TenantKind::SetLegalDetails,
         TenantKind::RecordInferenceConfig,
         TenantKind::Complete,
         TenantKind::GrantSignatory,
@@ -298,6 +308,7 @@ impl TenantKind {
         matches!(
             self,
             TenantKind::InviteAdmin
+                | TenantKind::SetLegalDetails
                 | TenantKind::SetFundingDefaults
                 | TenantKind::RequestSelfGrant
                 | TenantKind::ApproveSelfGrant
@@ -353,6 +364,7 @@ impl TenantCommand {
             TenantCommand::SetSetting { value } => TenantKind::SetSetting(value.param()),
             TenantCommand::SetGuideNotice { .. } => TenantKind::SetGuideNotice,
             TenantCommand::SetFundingDefaults { .. } => TenantKind::SetFundingDefaults,
+            TenantCommand::SetLegalDetails { .. } => TenantKind::SetLegalDetails,
             TenantCommand::RecordInferenceConfig { .. } => TenantKind::RecordInferenceConfig,
             TenantCommand::Complete => TenantKind::Complete,
             TenantCommand::GrantSignatory { .. } => TenantKind::GrantSignatory,
@@ -471,6 +483,13 @@ pub enum TenantRecord {
     FundingDefaultsSet {
         /// The defaults.
         defaults: fstp_brand::funding::FundingDefaults,
+        /// The admin who set them.
+        by: AccountId,
+    },
+    /// The tenant's legal details were set (ADR-037).
+    LegalDetailsSet {
+        /// The details.
+        details: fstp_brand::legal::LegalDetails,
         /// The admin who set them.
         by: AccountId,
     },

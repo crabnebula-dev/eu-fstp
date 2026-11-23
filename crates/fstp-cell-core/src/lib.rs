@@ -164,8 +164,11 @@ pub enum KeyCommand {
 pub const ERASURE_KIND_LEDGER_TEXT: u8 = 1;
 /// The kind of a replaced or cleared display name (SA-11, lane L33).
 pub const ERASURE_KIND_DISPLAY_NAME: u8 = 2;
+/// The kind of a document the blob store sealed, named by its data key id
+/// (ADR-007 section "Built by lane L37").
+pub const ERASURE_KIND_DOCUMENT: u8 = 3;
 /// The kinds a [`KeyCommand::RecordKeystoreErasure`] may name.
-pub const KEYSTORE_ERASURE_KINDS: [u8; 1] = [ERASURE_KIND_DISPLAY_NAME];
+pub const KEYSTORE_ERASURE_KINDS: [u8; 2] = [ERASURE_KIND_DISPLAY_NAME, ERASURE_KIND_DOCUMENT];
 
 /// A key record.
 #[derive(Clone, Debug, PartialEq, Eq)]

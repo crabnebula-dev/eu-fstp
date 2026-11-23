@@ -15,7 +15,8 @@
 //!   reconcile (I-44);
 //! - its `visibility_elements`: keys of the funder visibility elements,
 //!   each with a wording ref whose status is `TODO(legal)` until Daniel
-//!   supplies the approved text (L-08, L-09);
+//!   supplies the approved text (L-08, L-09), then `approved` in a new
+//!   version, with the text in [`crate::wording`] (ADR-036);
 //! - its `reporting_periods`: a reference to the Data Sheet parameter,
 //!   never dates.
 //!
@@ -34,8 +35,20 @@ pub use parse::{MAX_PROFILE_BYTES, ProfileError, parse_profile};
 pub const HORIZON_EUROPE_V1: &[u8] =
     include_bytes!("../../profiles/horizon-europe/profile.v1.json");
 
-/// Every shipped profile file: id, version and bytes.
-const SHIPPED: [(&str, u16, &[u8]); 1] = [("horizon-europe", 1, HORIZON_EUROPE_V1)];
+/// The Horizon Europe profile, version 2, as shipped: version 1 with the
+/// funding acknowledgement approved (ADR-036, L-08; Daniel, 2026-11-22).
+pub const HORIZON_EUROPE_V2: &[u8] =
+    include_bytes!("../../profiles/horizon-europe/profile.v2.json");
+
+/// The key of the funding acknowledgement element (L-08).
+pub const ACKNOWLEDGEMENT_KEY: &str = "acknowledgement";
+
+/// Every shipped profile file: id, version and bytes. A shipped version
+/// never changes (P-53): a new wording is a new version.
+const SHIPPED: [(&str, u16, &[u8]); 2] = [
+    ("horizon-europe", 1, HORIZON_EUROPE_V1),
+    ("horizon-europe", 2, HORIZON_EUROPE_V2),
+];
 
 /// The level a field's figure is taken at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -249,6 +262,10 @@ impl OutputSpec {
 pub enum WordingStatus {
     /// The approved wording is pending. Stored as `TODO(legal)`.
     PendingLegal,
+    /// Daniel approved the wording, and the store
+    /// ([`crate::wording::approved`]) holds its text. Stored as
+    /// `approved` (ADR-036).
+    Approved,
 }
 
 /// A required funder visibility element (I-69, L-08).
@@ -390,6 +407,30 @@ pub fn for_p53_with<'a>(
 /// Every shipped profile.
 pub fn shipped_all() -> Result<Vec<FunderProfile>, ProfileError> {
     SHIPPED.iter().map(|(i, v, _)| shipped(i, *v)).collect()
+}
+
+/// The approved funding acknowledgement for a programme whose P-53 names
+/// the profile `id`: the text of the newest shipped version of `id` whose
+/// `acknowledgement` element is [`WordingStatus::Approved`] (ADR-036
+/// section 4). A card is presentation, not a report, so it pins no
+/// version. `None` for a tenant-owned or unknown id. Interim, pending
+/// Daniel.
+pub fn approved_acknowledgement(id: &str) -> Option<&'static crate::wording::ApprovedWording> {
+    let mut versions: Vec<FunderProfile> = SHIPPED
+        .iter()
+        .filter(|(i, _, _)| *i == id)
+        .filter_map(|(i, v, _)| shipped(i, *v).ok())
+        .collect();
+    versions.sort_by_key(|p| std::cmp::Reverse(p.version));
+    versions
+        .into_iter()
+        .filter_map(|p| {
+            p.visibility
+                .iter()
+                .find(|e| e.key == ACKNOWLEDGEMENT_KEY && e.status == WordingStatus::Approved)
+                .and_then(|e| crate::wording::approved(&e.wording))
+        })
+        .next()
 }
 
 /// The shipped profile the P-53 value `p53_text` pins (R-RP-01). A value

@@ -29,9 +29,11 @@
 //! registration stores the attested COSE public key, and every assertion
 //! verifies its signature over the authenticator data and the SHA-256 of
 //! the client data, through `fstp-crypto` (aws-lc-rs). So a passkey login
-//! and a step-up prove possession of the registered key. Magic
-//! links, recovery and adding a second passkey are not emulated: their
-//! routes answer 404, so the page shows that the action is unavailable.
+//! and a step-up prove possession of the registered key. Without
+//! `--demo-signin`, magic links, recovery and adding a second passkey are
+//! not emulated: their routes answer 404, so the page shows that the
+//! action is unavailable. With it, the demo's email links work
+//! ([`demo_links`], ADR-008 record of lane L37).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,6 +46,8 @@ use fstp_json::{Array, Object, Value};
 
 use crate::wire::{self, b64url, dec, hex, obj, refuse, str_member, unhex};
 use crate::{Inner, SiteInfo, lock};
+
+mod demo_links;
 
 /// The session cookie name (ADR-008 "Sessions").
 const COOKIE: &str = "__Host-fstp";
@@ -77,10 +81,15 @@ const PAGES: [&str; 7] = [
 pub(crate) struct Mail {
     /// The address.
     pub(crate) to: String,
-    /// `admin_invitation`, `invitation` or `signup`.
+    /// `admin_invitation`, `invitation`, `signup`, and with
+    /// `--demo-signin` also `magic` and `passkey_link` (ADR-008 record of
+    /// lane L37).
     pub(crate) kind: &'static str,
     /// The link, with any token in the fragment.
     pub(crate) link: String,
+    /// The 6-digit code a registration email carries beside its link
+    /// (ADR-008 "Registration code"), shown on the demo inbox.
+    pub(crate) code: Option<String>,
 }
 
 /// What a one-time enrolment token is for.
@@ -106,6 +115,9 @@ enum Purpose {
     Signup { token: String },
     /// A passkey login.
     Login,
+    /// A passkey of the recovery case `case` from its enrolment token
+    /// `token` (`demo_links`, lane L37).
+    Recovery { case: String, token: String },
 }
 
 /// One open ceremony challenge.
@@ -139,6 +151,12 @@ pub(crate) struct AuthState {
     demo_tokens: BTreeMap<String, (AccountId, i64)>,
     /// The sessions a demo sign-in opened.
     demo_sessions: BTreeSet<u128>,
+    /// The unused sign-in link tokens, each with its account (`demo_links`,
+    /// lane L37). Empty unless the cell runs with `--demo-signin`.
+    magic: BTreeMap<String, AccountId>,
+    /// The open "email link, then create passkey" cases by case id
+    /// (`demo_links`, lane L37).
+    recoveries: BTreeMap<String, demo_links::Case>,
     /// How many programme role invitations of the accounts port the cell
     /// mailed (J2, `crate::people`).
     mailed_invitations: usize,
@@ -166,6 +184,8 @@ impl AuthState {
             admin_invitations: BTreeMap::new(),
             demo_tokens: BTreeMap::new(),
             demo_sessions: BTreeSet::new(),
+            magic: BTreeMap::new(),
+            recoveries: BTreeMap::new(),
             mailed_invitations: 0,
             accounts: None,
         }
@@ -306,10 +326,22 @@ impl AuthState {
 
     /// Puts a message in the mailbox.
     pub(crate) fn mail(&mut self, to: &str, kind: &'static str, link: String) {
+        self.mail_with_code(to, kind, link, None);
+    }
+
+    /// Puts a message with its code in the mailbox.
+    pub(crate) fn mail_with_code(
+        &mut self,
+        to: &str,
+        kind: &'static str,
+        link: String,
+        code: Option<String>,
+    ) {
         self.mailbox.push(Mail {
             to: to.to_owned(),
             kind,
             link,
+            code,
         });
     }
 
@@ -663,6 +695,23 @@ pub(crate) async fn handle(info: &SiteInfo, inner: &Inner, req: Request) -> Resp
         // ADR-032: the anonymous draft routes.
         (Method::POST, ["auth", "drafts"]) => crate::anondraft::handle(inner, None, &req),
         (Method::POST, ["auth", "drafts", op]) => crate::anondraft::handle(inner, Some(op), &req),
+        // ADR-008 record of lane L37: the email links of the demo, behind
+        // `--demo-signin` only. Without the flag these routes answer 404.
+        (Method::POST, ["auth", "magic", "request"]) if info.demo_signin => {
+            demo_links::magic_request(info, inner, &req)
+        }
+        (Method::POST, ["auth", "magic", "consume"]) if info.demo_signin => {
+            demo_links::magic_consume(inner, &req)
+        }
+        (Method::POST, ["auth", "passkey-link"]) if info.demo_signin => {
+            demo_links::passkey_link(info, inner, &req).await
+        }
+        (Method::POST, ["auth", "recovery", case, "email"]) if info.demo_signin => {
+            demo_links::recovery_email(inner, case, &req)
+        }
+        (Method::POST, ["auth", "recovery", case, "complete"]) if info.demo_signin => {
+            demo_links::recovery_complete(inner, case, &req)
+        }
         _ => wire::not_found(),
     }
 }
@@ -737,15 +786,21 @@ fn signup_options(info: &SiteInfo, inner: &Inner, req: &Request) -> Response {
     if let Some(email) = str_member(&body, "email") {
         // The same reply for every address (M3 design section 8.3).
         if a.account(email).is_none() {
-            let Ok(raw) = wire::random::<16>() else {
+            // A 32-byte proof token, as the cell's own, so the email
+            // carries its 6-digit code too (ADR-008 "Registration code",
+            // lane L37).
+            let Ok(raw) = wire::random::<32>() else {
                 return refuse(StatusCode::SERVICE_UNAVAILABLE, "random");
             };
             let token = hex(&raw);
+            let code =
+                String::from_utf8_lossy(&fstp_auth::ceremony::signup_code(&raw)).into_owned();
             a.signups.insert(token.clone(), email.to_owned());
-            a.mail(
+            a.mail_with_code(
                 email,
                 "signup",
                 format!("{}/auth/signup#{token}", info.origin),
+                Some(code),
             );
         }
         return wire::json(StatusCode::ACCEPTED, &Value::Object(Object::new()));

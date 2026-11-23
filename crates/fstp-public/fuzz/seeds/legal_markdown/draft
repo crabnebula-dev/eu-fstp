@@ -1,0 +1,14 @@
+# Title
+
+## 1. Who
+
+The controller is {{controller.legal_name}}, {{tenant.address}}.
+
+- **Item.** TODO(legal): a point.
+- [NOT BUILT: a rule `x`]
+
+| A | B |
+| --- | --- |
+| {{P-41}} | y |
+
+---

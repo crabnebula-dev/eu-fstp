@@ -121,6 +121,8 @@ fn card() -> FundingCard {
         grant_number: Some("SYNTHETIC-000000000".to_owned()),
         coordinator_name: Some("Synthetic coordinator".to_owned()),
         coordinator_contact: Some("contact@example.org".to_owned()),
+        acknowledgement: None,
+        acknowledgement_missing: Vec::new(),
     }
 }
 

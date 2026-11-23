@@ -10,7 +10,8 @@
 // (I-68). Its logo is the platform's Funded by the European Union logo on
 // a white card in both themes, never recoloured. No brand token reaches
 // it, so branding cannot remove or hide it (I-69).
-// TODO(legal): the acknowledgement wording (L-08) stays the placeholder.
+// The card ends with the approved funding acknowledgement (L-08, ADR-036),
+// as text, or with nothing while a value it names is missing.
 
 import { h, mailtoHref } from "../core/dom.js";
 import { t } from "../creator/i18n.js";
@@ -29,6 +30,10 @@ export interface FundingCard {
   readonly grantNumber: string | null;
   readonly coordinatorName: string | null;
   readonly coordinatorContact: string | null;
+  /** The approved funding acknowledgement, or null while a value it names is missing (L-08). */
+  readonly acknowledgement: string | null;
+  /** What keeps the acknowledgement from showing: `programme_name`, `action_number`, `action_acronym` or `profile`. */
+  readonly acknowledgementMissing: readonly string[];
 }
 
 /** The tenant's defaults for an empty coordinator field. */
@@ -45,6 +50,14 @@ export interface FundingAnswer {
 
 function text(v: unknown): string | null {
   return typeof v === "string" && v.trim() !== "" ? v : null;
+}
+
+/** The codes of `acknowledgement_missing` (ADR-036). */
+export const ACK_MISSING_CODES: readonly string[] = ["programme_name", "action_number", "action_acronym", "profile"];
+
+/** The known codes of an `acknowledgement_missing` member; an absent member names none. */
+export function missingCodes(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && ACK_MISSING_CODES.includes(x)) : [];
 }
 
 /** The `/brand/funding` answer `body`, or null when it is not one. */
@@ -74,6 +87,8 @@ export function decodeFunding(body: unknown): FundingAnswer | null {
       grantNumber: text(r["grant_number"]),
       coordinatorName: text(r["coordinator_name"]),
       coordinatorContact: text(r["coordinator_contact"]),
+      acknowledgement: text(r["acknowledgement"]),
+      acknowledgementMissing: missingCodes(r["acknowledgement_missing"]),
     });
   }
   let defaults: FundingDefaults | null = null;
@@ -120,7 +135,8 @@ export function fundingCard(c: FundingCard): HTMLElement {
         ...pair(t.label("footer.funding.coordinator"), c.coordinatorName),
         ...pair(t.label("footer.funding.contact"), c.coordinatorContact, true),
       ]),
-      h("p", {}, [t.approved("footer.eu_funding")]),
+      // L-08 (ADR-036): the approved sentence as text, or nothing.
+      ...(c.acknowledgement === null ? [] : [h("p", { class: "funding-card-ack" }, [c.acknowledgement])]),
     ]),
   ]);
 }

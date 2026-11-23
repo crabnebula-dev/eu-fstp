@@ -47,6 +47,7 @@ use fstp_html::{
 };
 
 use crate::PublicError;
+use crate::legal::LegalText;
 use crate::view::{GrantStatus, PublicCall, PublicGrant, PublicView};
 
 /// The bytes of one rendered public page: a page of the view, written by
@@ -139,6 +140,9 @@ pub struct PublicFunding {
     pub coordinator: String,
     /// The coordinator's contact.
     pub contact: String,
+    /// The funding acknowledgement (L-08, ADR-036), or `None` while a
+    /// value it names is missing. Shown as text, never a broken sentence.
+    pub acknowledgement: Option<String>,
 }
 
 /// The footer data of a pinned funder profile: its id, its version and
@@ -235,24 +239,37 @@ const ENTRIES: &[EntrySource<'static>] = &[
     label("public.status.granted", "Granted"),
     label("public.status.in_execution", "In execution"),
     label("public.status.completed", "Completed"),
-    // TODO(legal): the privacy notice, the accessibility statement, the
-    // Data Act information and the funder visibility elements (I-69, L-08,
-    // L-09). Daniel supplies the approved wording. The platform
-    // attribution (P-68) is a plain label.
+    // ADR-037 (Daniel, 2026-11-22, Q6): the privacy notice, the
+    // accessibility statement, the imprint, the terms of use and the Data
+    // Act information link to their pages under `/legal/`. Each page shows
+    // the draft banner until Daniel approves its text. The names are those
+    // of `legal/15-footer-texts.md`. TODO(legal): the funder visibility
+    // elements (L-08, L-09). The platform attribution (P-68) is a plain
+    // label.
     EntrySource {
         id: "public.footer.privacy",
         kind: MessageKind::Approved,
-        message: "Privacy notice: the approved wording is pending.",
+        message: "Privacy notice",
     },
     EntrySource {
         id: "public.footer.accessibility",
         kind: MessageKind::Approved,
-        message: "Accessibility statement: the approved wording is pending.",
+        message: "Accessibility statement",
+    },
+    EntrySource {
+        id: "public.footer.imprint",
+        kind: MessageKind::Approved,
+        message: "Imprint",
+    },
+    EntrySource {
+        id: "public.footer.terms",
+        kind: MessageKind::Approved,
+        message: "Terms of use",
     },
     EntrySource {
         id: "public.footer.data_act",
         kind: MessageKind::Approved,
-        message: "Data Act information for tenants: the approved wording is pending.",
+        message: "Data Act information",
     },
     EntrySource {
         id: "public.footer.funder",
@@ -273,14 +290,9 @@ const ENTRIES: &[EntrySource<'static>] = &[
         message: "Funder visibility element {element} of funder profile {profile} version {version}: the approved wording is pending.",
     },
     label("public.footer.attribution", "Runs on the FSTP platform."),
-    // TODO(legal): the EU funding acknowledgement beside the emblem slot
-    // and the emblem's alternative text (L-08, ADR-030). Daniel supplies
-    // the approved wording and the emblem file.
-    EntrySource {
-        id: "public.footer.eu_funding",
-        kind: MessageKind::Approved,
-        message: "EU funding acknowledgement: the approved wording is pending.",
-    },
+    // L-08 (ADR-036): the funding acknowledgement is the programme's
+    // approved sentence from `fstp_report::wording`, approved by Daniel,
+    // 2026-11-22. It is not a catalogue entry.
     // ADR-034: the words the Funded by the EU logo shows (R-NF-04).
     label(
         "public.footer.eu_emblem_alt",
@@ -503,6 +515,13 @@ fn header(
     ))
 }
 
+/// Whether the funding card carries the funder visibility element `key`
+/// of the pinned profile, so the footer shows no separate placeholder for
+/// it: the `acknowledgement` (lane L35, lead note of 2026-11-22).
+pub fn card_carries(key: &str) -> bool {
+    key == "acknowledgement"
+}
+
 /// The footer of every page: one element per mandatory element (I-69).
 /// It is built from platform data after the brand is applied, so no
 /// brand token can name, hide, size or reorder an element (M9 design
@@ -524,6 +543,15 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
         };
         Element::new("li").child(span)
     };
+    // ADR-037: a legal text's element is a link to its page.
+    let legal = |t: LegalText, id: &str| -> Result<Element, PublicError> {
+        Ok(Element::new("li").child(
+            Element::new("a")
+                .attr("data-mandatory", t.mandatory_key())
+                .attr_url("href", url(t.path())?)
+                .approved(&ApprovedText::new(id), &[]),
+        ))
+    };
     let mut visibility = Element::new("li").child(
         Element::new("span")
             .attr("data-mandatory", "funder_visibility")
@@ -531,7 +559,10 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
     );
     if let Some(f) = funder {
         let version = f.version.to_string();
-        for key in &f.elements {
+        // The funding card carries the approved acknowledgement (lane
+        // L35, lead note of 2026-11-22), so the profile's acknowledgement
+        // element adds no placeholder of its own. The emblem element stays.
+        for key in f.elements.iter().filter(|k| !card_carries(k)) {
             visibility = visibility.child(Node::text(" ")).child(
                 Element::new("span")
                     .attr("data-mandatory", &format!("funder_visibility.{key}"))
@@ -547,9 +578,7 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
         }
     }
     // ADR-030: the fixed slot for the EU emblem and the funding
-    // acknowledgement, from platform data only. The emblem shows once
-    // Daniel supplies the file. TODO(legal): the acknowledgement wording
-    // and the emblem usage rules (L-08).
+    // acknowledgement, from platform data only.
     //
     // ADR-034: with the programme's funding card, the slot is a labelled
     // region keyed `funding_card`, whose logo sits on a white card in both
@@ -564,8 +593,6 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
         ),
         None => None,
     };
-    let acknowledgement =
-        Element::new("span").approved(&ApprovedText::new("public.footer.eu_funding"), &[]);
     let funding = match &logos.funding {
         Some(card) => {
             let pair = |dl: Element, id: &str, value: &str| {
@@ -595,24 +622,28 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
             if let Some(img) = logo {
                 section = section.child(img);
             }
-            section.child(
-                Element::new("div")
-                    .attr("class", "funding-card-text")
-                    .child(
-                        Element::new("p")
-                            .attr("class", "funding-card-name")
-                            .text(&card.programme),
-                    )
-                    .child(dl)
-                    .child(Element::new("p").child(acknowledgement)),
-            )
+            let text = Element::new("div")
+                .attr("class", "funding-card-text")
+                .child(
+                    Element::new("p")
+                        .attr("class", "funding-card-name")
+                        .text(&card.programme),
+                )
+                .child(dl);
+            // L-08 (ADR-036): the approved sentence as text, or nothing
+            // while a value it names is missing (I-68).
+            let text = match &card.acknowledgement {
+                Some(s) => text.child(Element::new("p").attr("class", "funding-card-ack").text(s)),
+                None => text,
+            };
+            section.child(text)
         }
         None => {
             let mut div = Element::new("div").attr("class", "eu-funding");
             if let Some(img) = logo {
                 div = div.child(img);
             }
-            div.child(acknowledgement)
+            div
         }
     };
     Ok(Element::new("footer").attr("class", "site-footer").child(
@@ -623,13 +654,14 @@ fn footer(funder: Option<&FunderFooter>, logos: &PublicLogos) -> Result<Element,
                 Element::new("ul")
                     .child(visibility)
                     .child(item("ai_disclosure", "public.footer.ai", true))
-                    .child(item("privacy_notice", "public.footer.privacy", true))
-                    .child(item(
-                        "accessibility_statement",
+                    .child(legal(LegalText::Privacy, "public.footer.privacy")?)
+                    .child(legal(
+                        LegalText::Accessibility,
                         "public.footer.accessibility",
-                        true,
-                    ))
-                    .child(item("data_act_information", "public.footer.data_act", true))
+                    )?)
+                    .child(legal(LegalText::Imprint, "public.footer.imprint")?)
+                    .child(legal(LegalText::Terms, "public.footer.terms")?)
+                    .child(legal(LegalText::DataAct, "public.footer.data_act")?)
                     .child(item(
                         "platform_attribution",
                         "public.footer.attribution",

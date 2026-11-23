@@ -295,6 +295,9 @@ pub enum TenantKind {
     /// `TenantCommand::SetFundingDefaults`: the tenant's default
     /// coordinator name and contact for the funding card (ADR-034).
     SetFundingDefaults,
+    /// `TenantCommand::SetLegalDetails`: the tenant's legal details for
+    /// the legal pages (ADR-037).
+    SetLegalDetails,
     /// `TenantCommand::RecordInferenceConfig`, saved with the Inference
     /// onboarding step.
     RecordInferenceConfig,
@@ -1280,6 +1283,17 @@ pub const OPS: &[OpSpec] = &[
         OpKind::Tenant(TenantKind::SetFundingDefaults),
         Put,
         "/admin/settings/funding-defaults",
+    )
+    .hr()
+    .acting(ADMIN),
+    // ADR-037: the tenant's legal details, which fill the legal pages
+    // behind the footer. A tenant setting, so high-risk by the strict
+    // reading and web only (interim, pending Daniel).
+    OpSpec::new(
+        "tenant.set_legal_details",
+        OpKind::Tenant(TenantKind::SetLegalDetails),
+        Put,
+        "/admin/settings/legal-details",
     )
     .hr()
     .acting(ADMIN),
@@ -2960,6 +2974,8 @@ pub const STRICT_EXTRA_HIGH_RISK: &[OpKind] = &[
     OpKind::Tenant(TenantKind::SetGuideNotice),
     // ADR-034: the funding card defaults are a tenant setting too.
     OpKind::Tenant(TenantKind::SetFundingDefaults),
+    // ADR-037: the legal details are a tenant setting too.
+    OpKind::Tenant(TenantKind::SetLegalDetails),
     OpKind::Tenant(TenantKind::SetBranding),
     // ADR-030: a logo slot, as the brand tokens.
     OpKind::Tenant(TenantKind::SetLogo),

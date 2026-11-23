@@ -281,6 +281,10 @@ pub fn decide(
                 by,
             }])
         }
+        TenantCommand::SetLegalDetails { details } => Ok(vec![TenantRecord::LegalDetailsSet {
+            details: details.clone(),
+            by,
+        }]),
         TenantCommand::SetGuideNotice { notice } => {
             // R-GA-01: only an https address stands in the Guide.
             if notice

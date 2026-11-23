@@ -30,7 +30,7 @@ fn r_rp_01_p53_pins_the_shipped_profile_version() {
 #[test]
 fn r_rp_01_unshipped_p53_resolves_to_nothing() {
     for bad in [
-        r#"{"profile":"horizon-europe","version":2}"#,
+        r#"{"profile":"horizon-europe","version":3}"#,
         r#"{"profile":"synthetic-funder","version":3}"#,
         r#""synthetic funder profile""#,
         "",

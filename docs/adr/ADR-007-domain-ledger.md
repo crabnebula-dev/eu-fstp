@@ -208,3 +208,23 @@ Until this lane the production cell served no erasure log. `CellTexts::erasures`
 | Documents | A document's data key has no text id, so a document erasure gets no entry here. `DocumentErased` stays with its own lane |
 
 Tests, written before the code: `r_ky_02_i81_keystore_erasure_is_logged_then_completed_by_its_epoch`, `adr007_ledger_text_gains_its_destroyed_epoch`, `adr007_keystore_erasure_refusals`, `i81_completion_needs_a_destroyed_epoch_and_an_open_entry` and `i24_erasure_log_records_round_trip` (`crates/fstp-cell-core/tests/adr007_erasure_log.rs`); `r_ky_02_i81_erasure_log_names_requests_and_destroyed_epochs` (`crates/fstp-cell/tests/keystore_tables.rs`); `r_ky_02_i81_production_cell_keeps_an_erasure_log` (the production cell over PostgreSQL, `crates/fstp-celltest/tests/adr007_erasure_log_pg.rs`); `adr007_p41_erasures_reply_decodes_strictly` and `adr007_l33_erasure_kinds_have_labels` (`web/test/admin_erasures.test.ts`). The `admin.erasures` reply gains `kind` (`text` or `display_name`) and `destroyed_epoch`.
+
+## Built by lane L37 `prod/erasure-docs-demo-link`, 2026-11-22: document erasures in the erasure log
+
+Daniel approved on 2026-11-22: a document erasure gets its own entry in the erasure log, with its own kind, so `admin.erasures` lists it. Written before the code. Every row is interim, pending Daniel, unless it says otherwise.
+
+Before this lane no production path erased a document. `doc.blob` is append-only, `BlobStore` has no erase call, and the erasure runner only requested texts and display names. The document erasure that ADR-004 part 2 and design section 3.6 describe (`DocumentErasureRequested`, `DocumentErased`) existed in the test world's Vault chain only (R-ID-03, `fstp-celltest`). So this lane builds the erasure itself in the runner, and logs it.
+
+| Topic | Reading |
+| --- | --- |
+| Entry id | A document's data key id. The blob store draws it at random when it seals the document (ADR-026 record of lane L5), and a text's data key id is its text id, so one 16-byte id space names both. The row above that said a document's key has no text id is replaced by this one |
+| Request | The new runner call `erase_document(id, cause, by)` appends `KeystoreErasureRequested { ids: [id], cause, by, kind: 3 }` as the system task `ErasureRunner`, under a fixed command id per document. Kind 3 is a document. It holds no content, no owner and no digest. The fold refuses an id that the ledger names as a text, or that has an entry already, as for a display name |
+| Trigger | The ledger record is the durable trigger, as `TextErasureRequested` is for a ledger text. On its next step the runner joins every document entry whose key it holds to the chain state. A crash between the record and the join loses nothing |
+| Open | A document opens no more from the moment its request is in the ledger, before the planner runs (I-81, design section 3.4) |
+| Completion | Step 7 names the document in `ErasuresCompleted` with the destroyed epoch, as for a text. `completed_at` is that instant |
+| Authoriser and cause | The caller names both. The closed list of causes is unchanged |
+| Caller | Interim, pending Daniel: no operation calls `erase_document` yet. The runner call and the log are the seam. Which operation should erase a document (an import removal, the end of a retention period, an identity document at verification on the App chain) is an open question. An import is stored after a fresh salt (`salted.rs`), so the same document can be uploaded again after its erasure, as a new blob under a new key. A brand asset is stored without a salt, so after its erasure the same logo cannot be stored again, since one digest holds one row (ADR-026 record of lane L5) |
+| Blob row | The sealed `doc.blob` row stays, since the table is append-only. Its key is destroyed with the root epoch, so the row is unrecoverable (I-81). Deleting the row is unchanged: the `keys` role's DELETE grant on erased blob rows stays unused |
+| `admin.erasures` | The reply's `kind` gains `document`. `CellTexts::erasures` maps each kind code it knows and fails the read closed on any other |
+
+Tests, written before the code: `r_ky_02_i81_document_erasure_is_logged_then_completed_by_its_epoch`, `adr007_document_erasure_refusals` and `i24_document_erasure_round_trips` (`crates/fstp-cell-core/tests/adr007_document_erasure.rs`); `r_ky_02_i81_production_cell_logs_a_document_erasure` (the production cell over PostgreSQL, `crates/fstp-celltest/tests/adr007_document_erasure_pg.rs`); `adr007_l37_document_kind_has_a_label` (`web/test/admin_erasures.test.ts`).

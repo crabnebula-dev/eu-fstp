@@ -26,6 +26,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "wording_text_parse"
+path = "fuzz_targets/wording_text_parse.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

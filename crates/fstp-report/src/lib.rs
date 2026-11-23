@@ -35,6 +35,7 @@ pub mod profile;
 mod record;
 mod snapshot;
 mod time;
+pub mod wording;
 
 pub use books::Mismatch;
 pub use fstp_report_core::{

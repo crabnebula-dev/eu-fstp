@@ -57,13 +57,13 @@ Daniel's instruction of 2026-11-21: "I want you to draft all the legal texts, bu
 
 **Q3. The Guide's privacy statement address. Answered by Daniel, 2026-11-21.** `PLATFORM_PRIVACY_STATEMENT_URL` stays the address of the platform privacy notice. The Guide sentence is reworded to name the platform notice. The Funding & Tenders Portal Privacy Statement gets a separate sentence where Horizon Europe requires it: section 12 of the Horizon Europe Guide and the two R-NG-06 notices. Its address stays TODO(legal) (L-09).
 
-**Q4. Tenant values.** The privacy notice and the accessibility statement need tenant values: the controller identity of Q1, the tenant's legal name and address, and the accessibility contact. No setting holds them today. A tenant setting, or a profile field, is needed before wiring.
+**Q4. Tenant values. Answered by Daniel, 2026-11-22.** A tenant setting, "Legal details", which the non-technical operator fills on the admin branding page. It holds the controller's legal name, address, registered address, privacy contact, DPO name and contact, supervisory authority, accessibility contact, company registration number, VAT number, EU Transparency Register number and governing law. These fill the `{{controller.*}}` and `{{tenant.*}}` placeholders. Built by lane L36 (`docs/adr/ADR-037-tenant-legal-details-and-legal-pages.md`, operation `tenant.set_legal_details`). The demo cell seeds CrabNebula Ltd's values. `06-imprint.md` gained a section "This programme portal" with these placeholders.
 
-**Q5. Outcome emails.** One template serves every outcome today. W10 asks for a wording per outcome. Keep one neutral template (draft A0), or add a template id per outcome (A1 to A4)?
+**Q5. Outcome emails. Answered by Daniel, 2026-11-22.** One template per outcome. The code has the template ids `outcome-selected`, `outcome-not-selected`, `outcome-ineligible` and `outcome-declined`, wired to drafts A1 to A4 of `09-emails.md` (ADR-036 section 7). The wording stays a draft, pending Daniel's approval.
 
-**Q6. Footer links.** Each footer element is a plain text span with no page behind it. Approving the texts also needs pages and links for the privacy notice, accessibility statement, imprint, terms of use and Data Act information.
+**Q6. Footer links. Answered by Daniel, 2026-11-22.** Each footer element links to a real page: `/legal/privacy`, `/legal/accessibility`, `/legal/imprint`, `/legal/terms` and `/legal/data-act`. Each page renders the matching draft with the tenant values. Unset values show as "[not set: ...]", and each `TODO(legal)` and `[NOT BUILT]` line shows as a visible marker. Every page carries the banner "Draft, not yet approved" until Daniel approves that text in `page-approvals.json` (ADR-037 section 3: the date and the SHA-256 of the approved draft file, no code change). Built by lane L36.
 
-**Q7. Funder profile wording store.** The report profile stores a wording ref and the status `TODO(legal)` only. Approved wording needs a store behind each ref, a second status value and a new profile version.
+**Q7. Funder profile wording store. Answered by Daniel, 2026-11-22.** Built by ADR-036: a store of approved texts behind the wording refs, the status `approved`, and profile `horizon-europe` version 2. Version 1 never changes.
 
 **Q8. The drafted Guide still holds markers.** `funder-profiles/horizon-europe/guide.v1.md` keeps one `TODO(legal)` line in each of sections 9 and 11. Each asks Daniel to verify the drafted text against the signed grant agreement. Section 12 holds a third marker, for the Portal Privacy Statement address (Q3). With these markers, `LegalWordingPending` still fails, as it should. Once Daniel clears all three, the file passes I-66.
 
@@ -200,7 +200,7 @@ Legal readings and citations:
 24. L-04: Data Act transitional and retrieval periods; pre-contract information; pilot before export.
 25. L-06: the funder retention period and the records it covers; deferred erasure; the skeleton as anonymous data.
 26. L-07: opt-in as the basis for publication, including for natural persons and group teams.
-27. L-08: the EU funding acknowledgement wording and emblem rules.
+27. L-08: the EU funding acknowledgement wording, approved by Daniel, 2026-11-22, with no disclaimer. The emblem rules were applied from the official guidelines cited in ADR-034 section 1a. Open: the interim readings listed there.
 28. L-09: the Portal Privacy Statement address; the address of the published platform privacy notice; the data passed to the granting authority; reporting fields.
 29. L-11: hardship contributions as eligible costs.
 30. L-12: the flow-down obligations and contract clauses against the signed grant agreement.
