@@ -95,6 +95,21 @@ test("adr007_l37_document_kind_has_a_label", () => {
 });
 
 /**
+ * F-017 (ADR-026 section "Written by the M10 fix lane"): an erased
+ * workspace is a log row of its own kind, which names its grant. The page
+ * labels it, the model decodes it and the generated validator accepts it.
+ */
+test("adr026_m10_f017_workspace_kind_has_a_label", () => {
+  assert((ERASURE_KINDS as readonly string[]).includes("workspace"), "the workspace kind");
+  assert(typeof ADMIN_ERASURE_LABELS["admin.erasures.kind.workspace"] === "string", "its label");
+  const row = { ...REPLY.erasures[0], kind: "workspace", grant: "41", destroyed_epoch: "6" };
+  const r = decodeErasures({ erasures: [row], retention_ended: [], documents: [] });
+  eq(r?.erasures[0]?.kind, "workspace", "a workspace row decodes");
+  const validate = VALIDATORS["admin.erasures"];
+  assert(validate !== undefined && validate({ erasures: [row], retention_ended: [], documents: [] }), "the generated validator accepts it");
+});
+
+/**
  * ADR-007 (Daniel, 2026-11-23, decisions 1c and 3; lane L39): the reply
  * lists the import documents a tenant admin may erase, each row of the
  * log names whether the system or an account authorised it (never which

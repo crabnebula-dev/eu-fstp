@@ -133,27 +133,39 @@ fn i85_pending_rows_round_trip_sealed() {
     assert_eq!(closed.closed, Some(AT + 1));
 }
 
-/// I-21, ADR-026: a workspace slot holds the sealed bytes it was given,
-/// and a second put replaces them and counts a revision.
+/// A workspace value of `proposal` sealed in the form the cell's erasure
+/// task gives (F-017): an `FSB1` blob under a data key of its own.
+fn sealed_value(cell: [u8; 16], proposal: [u8; 16], plain: &[u8]) -> Vec<u8> {
+    use fstp_keys::envelope::{DataKey, SealContext, encode_sealed_blob, seal_blob};
+    use fstp_keys::{CellId, Chain, GroupId, ObjectId, Purpose};
+    let key = DataKey::generate().unwrap();
+    let ctx = SealContext {
+        cell: CellId(cell),
+        chain: Chain::App,
+        purpose: Purpose::Text,
+        group: GroupId([0x61; 16]),
+        generation: 0,
+        object: ObjectId(proposal),
+    };
+    let blob = seal_blob(&key, &ctx, plain).unwrap();
+    encode_sealed_blob(&blob).unwrap()
+}
+
+/// I-21, ADR-026, F-017: a workspace slot holds the sealed bytes it was
+/// given, and a second put replaces them and counts a revision. The store
+/// refuses a value that is not a sealed blob, so no clear text rests.
 #[test]
 fn i21_workspace_rows_hold_sealed_bytes_only() {
     let (db, _w, _s) = world();
     let api = api_store(&db);
-    let keys = common::ledger_keys_reusing_last(db.cell);
     let proposal = fresh16();
-    let first =
-        fstp_pgstore::seal_workspace(&keys, &db.cell, &proposal, b"synthetic-draft-one").unwrap();
-    let second =
-        fstp_pgstore::seal_workspace(&keys, &db.cell, &proposal, b"synthetic-draft-two").unwrap();
+    let first = sealed_value(db.cell, proposal, b"synthetic-draft-one");
+    let second = sealed_value(db.cell, proposal, b"synthetic-draft-two");
     assert_eq!(block_on(api.workspace(proposal, "draft")).unwrap(), None);
     block_on(api.put_workspace(proposal, "draft", &first, AT)).unwrap();
     block_on(api.put_workspace(proposal, "draft", &second, AT + 1)).unwrap();
     let got = block_on(api.workspace(proposal, "draft")).unwrap().unwrap();
     assert_eq!(got, second);
-    assert_eq!(
-        fstp_pgstore::open_workspace(&keys, &db.cell, &proposal, &got).unwrap(),
-        b"synthetic-draft-two"
-    );
     assert_eq!(db.count("SELECT revision FROM workspace.drafts;"), 2);
     let raw = db
         .psql("SELECT encode(sealed, 'escape') FROM workspace.drafts;")
@@ -163,6 +175,8 @@ fn i21_workspace_rows_hold_sealed_bytes_only() {
         "I-21: a clear value at rest"
     );
     assert!(block_on(api.put_workspace(proposal, "draft", b"clear", AT)).is_err());
+    let clear = [b"synthetic clear workspace value ".as_slice(); 4].concat();
+    assert!(block_on(api.put_workspace(proposal, "draft", &clear, AT)).is_err());
 }
 
 /// ADR-032, R-NF-08, R-NF-02: an anonymous draft rests sealed under its

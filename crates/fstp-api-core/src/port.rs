@@ -898,6 +898,15 @@ pub trait Vault: AsyncIdentityOracle {
         let _ = a;
         std::future::ready(false)
     }
+    /// Whether [`Vault::begin_verification`] can open the release page of
+    /// an unmask now (ADR-023 reading 7, ADR-026 amendment of
+    /// 2026-11-23, M10 F-058). The API core asks it before the step-up
+    /// and the append of `UnmaskParty`, so no unmask is recorded that
+    /// would show nothing. The default answers no, so a port that serves
+    /// no unmask fails closed.
+    fn releases_unmask(&self) -> impl Future<Output = bool> + Send {
+        std::future::ready(false)
+    }
     /// Whether the vault knows every P-13 class (Q35).
     fn classes_defined(
         &self,
@@ -1206,6 +1215,23 @@ pub trait TextStore: Send + Sync {
         r: PublicTextRef,
     ) -> impl Future<Output = Result<Vec<u8>, PortError>> + Send;
 
+    /// Whether the confidential text `r` of a proposal, stored in the
+    /// salted form of [`crate::salted::stored`], is exactly `candidate`
+    /// after its salt (F-079, ADR-038). It answers one bit and releases no
+    /// text, so it needs no read clearance. The API core asks it only with
+    /// the caller's own login email, to match a team invitation's address
+    /// before the caller is on the proposal. Any other text answers
+    /// `false`. The default is the seam of a store that cannot compare: it
+    /// fails closed.
+    fn text_equals(
+        &self,
+        r: TextRef,
+        candidate: &[u8],
+    ) -> impl Future<Output = Result<bool, PortError>> + Send {
+        let _ = (r, candidate);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
     /// The erasure log, oldest first: one row per erased text (ADR-007,
     /// lane m5/retention). The default is the seam of a store that keeps
     /// no log: it fails closed.
@@ -1270,6 +1296,20 @@ pub trait TextStore: Send + Sync {
         clearance: &ReadClearance,
     ) -> impl Future<Output = Result<BTreeMap<AccountId, String>, PortError>> + Send {
         let _ = (accounts, clearance);
+        std::future::ready(Err(PortError::Unavailable))
+    }
+
+    /// The display names of those of `accounts` that have one, for the
+    /// name mask alone (M10 F-006, ADR-033, Daniel 2026-11-23). The API
+    /// core passes the accounts of one proposal's team and turns the names
+    /// into mask handles. No read model carries them, so the release rule
+    /// of [`TextStore::display_names`] stands (SA-11, I-17). The default
+    /// fails closed.
+    fn mask_handles(
+        &self,
+        accounts: Vec<AccountId>,
+    ) -> impl Future<Output = Result<BTreeMap<AccountId, String>, PortError>> + Send {
+        let _ = accounts;
         std::future::ready(Err(PortError::Unavailable))
     }
 }
@@ -1376,14 +1416,18 @@ pub enum ErasureKind {
     /// A document the blob store sealed (ADR-007 section "Built by lane
     /// L37").
     Document,
+    /// Every slot of a proposal's workspace, under the proposal's own key
+    /// (F-017, ADR-026 section "Written by the M10 fix lane").
+    Workspace,
 }
 
 impl ErasureKind {
     /// Every kind.
-    pub const ALL: [ErasureKind; 3] = [
+    pub const ALL: [ErasureKind; 4] = [
         ErasureKind::Text,
         ErasureKind::DisplayName,
         ErasureKind::Document,
+        ErasureKind::Workspace,
     ];
 
     /// The wire name (`fstp_access::ERASURE_KINDS`).
@@ -1392,6 +1436,7 @@ impl ErasureKind {
             ErasureKind::Text => "text",
             ErasureKind::DisplayName => "display_name",
             ErasureKind::Document => "document",
+            ErasureKind::Workspace => "workspace",
         }
     }
 }
@@ -1682,6 +1727,21 @@ pub trait Workspaces: Send + Sync {
         proposal: ProposalId,
         slot: WorkspaceSlot,
     ) -> impl Future<Output = Result<Option<Sealed>, PortError>> + Send;
+    /// Requests the erasure of every slot of `proposal`, with `cause`, as
+    /// tenant admin `by` asked (F-017, ADR-026 section "Written by the M10
+    /// fix lane"). `false` when the store holds no workspace of the
+    /// proposal. A store that seals each proposal under a key of its own
+    /// destroys that key first and deletes the rows after it. A repeated
+    /// request is `true` and does nothing more. The default fails closed.
+    fn erase(
+        &self,
+        proposal: ProposalId,
+        cause: ErasureCause,
+        by: AccountId,
+    ) -> impl Future<Output = Result<bool, PortError>> + Send {
+        let _ = (proposal, cause, by);
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// Records vault answers that commit no command, as a query digest and the

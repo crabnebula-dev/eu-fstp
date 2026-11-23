@@ -912,6 +912,24 @@ fn plan_receiving(
                 ctx.binds_tenant_admin,
             )
         }
+        // F-079, ADR-038: the accepting account binds itself, with the
+        // role its invitation names. As for `CreateDraft`, the actor is
+        // the bound account, so either attestation names it (SoD-03).
+        Command::AcceptTeamInvitation {
+            proposal, binding, ..
+        } => {
+            let invitation = crate::proposal::team::accepted(state, cmd).ok_or_else(unknown)?;
+            let call =
+                crate::proposal::draft::proposal_call(state, *proposal).ok_or_else(unknown)?;
+            (
+                *proposal,
+                call,
+                crate::policy::actor_account(ctx)?,
+                invitation.role(),
+                *binding,
+                ctx.binds_tenant_admin || ctx.tenant_admin,
+            )
+        }
         _ => return Ok(None),
     };
     let granted_by = crate::policy::actor_account(ctx)?;

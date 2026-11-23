@@ -201,6 +201,15 @@ impl ContentStore {
         self.submitted.insert(proposal, w);
     }
 
+    /// Forgets the draft and every submitted content of `proposal`, as an
+    /// erasure of its workspace asks (F-017). Its reads then go to the
+    /// workspace port, which refuses an erased workspace.
+    pub(crate) fn forget(&mut self, proposal: ProposalId) {
+        self.known.remove(&proposal);
+        self.workspace.remove(&proposal);
+        self.submitted.remove(&proposal);
+    }
+
     /// The content `proposal` was submitted with, if it was submitted
     /// through this core.
     pub(crate) fn submitted(&self, proposal: ProposalId) -> Option<&Workspace> {
@@ -307,6 +316,24 @@ mod tests {
         assert_eq!(s.title_of(p), None);
         s.freeze(p);
         assert_eq!(s.submitted(p), None);
+    }
+
+    /// F-017, I-81: an erased workspace leaves the process memory. Neither
+    /// its draft, nor its submitted content, nor its title is served from
+    /// there afterwards. Another proposal keeps its content.
+    #[test]
+    fn m10_f017_an_erased_workspace_leaves_the_memory_copy() {
+        let mut s = ContentStore::default();
+        let p = ProposalId::from_raw(1);
+        let q = ProposalId::from_raw(2);
+        assert_eq!(s.save(p, w("erased")), Ok(()));
+        s.freeze(p);
+        assert_eq!(s.save(q, w("live")), Ok(()));
+        s.forget(p);
+        assert_eq!(s.workspace(p), None);
+        assert_eq!(s.submitted(p), None);
+        assert_eq!(s.title_of(p), None);
+        assert_eq!(s.title_of(q), Some("live".to_owned()));
     }
     /// I-21, lane W6: a workspace seals as the canonical object of its
     /// three sections and reads back to itself. Bytes with a missing, an

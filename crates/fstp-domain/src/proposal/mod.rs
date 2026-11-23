@@ -22,6 +22,7 @@ pub(crate) mod intake;
 pub(crate) mod life;
 pub(crate) mod score;
 pub(crate) mod stage2;
+pub mod team;
 
 use fstp_money::PosAmount;
 
@@ -115,6 +116,8 @@ pub struct ProposalStore {
     life: life::Lives,
     /// Copy requests and submission instants, from `copy` (M6 lane L6-API).
     copies: copy::Copies,
+    /// Team invitations, from `team` (F-079, ADR-038).
+    team: team::Invitations,
 }
 
 impl ProposalStore {
@@ -125,6 +128,7 @@ impl ProposalStore {
             intake: intake::Intake::genesis(),
             life: life::Lives::genesis(),
             copies: copy::Copies::genesis(),
+            team: team::Invitations::genesis(),
         }
     }
 }
@@ -156,6 +160,9 @@ pub(crate) fn queries(
     }
     if copy::is_copy_command(cmd) {
         return Ok(Vec::new());
+    }
+    if team::is_team_command(cmd) {
+        return team::queries(state, cmd, ctx);
     }
     // The dispatcher sends no other command here.
     Err(life::wrong_state())
@@ -196,6 +203,9 @@ pub(crate) fn decide(
     if copy::is_copy_command(cmd) {
         return copy::decide(state, cmd, ctx);
     }
+    if team::is_team_command(cmd) {
+        return team::decide(state, cmd, ctx, answers);
+    }
     // The dispatcher sends no other command here.
     Err(life::wrong_state())
 }
@@ -223,6 +233,7 @@ pub(crate) fn apply(
         _ if intake::is_intake_record(record) => intake::apply(state, record),
         _ if stage2::is_stage2_record(record) => stage2::apply(state, record),
         _ if deferral::is_deferral_record(record) => deferral::apply(state, record),
+        _ if team::is_team_record(record) => team::apply(state, record),
         _ => Err(crate::engine::FoldError::Inconsistent),
     }
 }
@@ -283,6 +294,9 @@ pub(crate) fn governing_policy(
     }
     if intake::is_intake_command(cmd) {
         return intake::governing_policy(state, cmd);
+    }
+    if team::is_team_command(cmd) {
+        return team::governing_policy(state, cmd);
     }
     let proposal = match cmd {
         Command::RecordScore { key, .. } | Command::CorrectScore { key, .. } => state

@@ -1310,6 +1310,14 @@ pub const ACTOR_RULES: &[(CommandKind, ActorRule)] = &[
     // programme unmasks its parties. The unmask lane checks the active
     // coordinator binding of the named programme.
     (K::UnmaskParty, COORDINATOR),
+    // F-079, ADR-038: the lead invites and withdraws. Any account answers
+    // an invitation, since the invitee holds no binding yet. The shell
+    // attests that the account's login email is the invited address, and
+    // the proposal lane checks the invitation.
+    (K::InviteToTeam, ActorRule::Lead),
+    (K::WithdrawTeamInvitation, ActorRule::Lead),
+    (K::AcceptTeamInvitation, ActorRule::AnyAccount),
+    (K::DeclineTeamInvitation, ActorRule::AnyAccount),
 ];
 
 /// The actor rule of `kind`, from [`ACTOR_RULES`].

@@ -272,6 +272,15 @@ impl TextStore for FakeTexts {
         self.display_names_now(&accounts, clearance)
     }
 
+    /// M10 F-006 (ADR-033): the display names of one proposal's team, for
+    /// the name mask alone.
+    async fn mask_handles(
+        &self,
+        accounts: Vec<AccountId>,
+    ) -> Result<BTreeMap<AccountId, String>, PortError> {
+        self.mask_handles_now(&accounts)
+    }
+
     async fn put(
         &self,
         class: TextClass,
@@ -293,6 +302,17 @@ impl TextStore for FakeTexts {
             Some((TextClass::Public, _, b)) => Ok(b.clone()),
             Some(_) | None => Err(PortError::Refused),
         }
+    }
+
+    /// F-079, ADR-038: one bit for a confidential text of a proposal, as
+    /// the cell's store answers it.
+    async fn text_equals(&self, r: TextRef, candidate: &[u8]) -> Result<bool, PortError> {
+        Ok(match lock(&self.state).rows.get(&r.0) {
+            Some((TextClass::Confidential, TextOwner::Proposal(_), b)) => {
+                fstp_api_core::salted::holds(b, candidate)
+            }
+            Some(_) | None => false,
+        })
     }
 
     async fn erasures(&self) -> Result<Vec<ErasureRow>, PortError> {
@@ -414,11 +434,37 @@ impl FakeTexts {
             if !clears(TextClass::Confidential, TextOwner::Account(*a), clearance) {
                 return Err(PortError::Refused);
             }
-            let Some((_, _, b)) = s.display.get(a).and_then(|r| s.rows.get(&r.text)) else {
+            let Some(name) = Self::display_name_of(&s, *a)? else {
                 continue;
             };
-            let name = String::from_utf8(b.clone()).map_err(|_| PortError::Refused)?;
             out.insert(*a, name);
+        }
+        Ok(out)
+    }
+
+    /// The display name of `a`, if it set one.
+    fn display_name_of(s: &Texts, a: AccountId) -> Result<Option<String>, PortError> {
+        let Some((_, _, b)) = s.display.get(&a).and_then(|r| s.rows.get(&r.text)) else {
+            return Ok(None);
+        };
+        String::from_utf8(b.clone())
+            .map(Some)
+            .map_err(|_| PortError::Refused)
+    }
+
+    /// M10 F-006 (ADR-033): the display names of one proposal's team, for
+    /// the name mask alone. No clearance opens them, since no read model
+    /// carries them.
+    fn mask_handles_now(
+        &self,
+        accounts: &[AccountId],
+    ) -> Result<BTreeMap<AccountId, String>, PortError> {
+        let s = lock(&self.state);
+        let mut out = BTreeMap::new();
+        for a in accounts {
+            if let Some(name) = Self::display_name_of(&s, *a)? {
+                out.insert(*a, name);
+            }
         }
         Ok(out)
     }
@@ -566,6 +612,8 @@ type WorkspaceRows = BTreeMap<(ProposalId, WorkspaceSlot), Sealed>;
 #[derive(Clone, Debug, Default)]
 pub struct FakeWorkspaces {
     rows: Arc<Mutex<WorkspaceRows>>,
+    /// The proposals whose workspace was erased (F-017).
+    erased: Arc<Mutex<std::collections::BTreeSet<ProposalId>>>,
     /// Whether every call fails as unavailable, for a test of a port that
     /// cannot answer.
     down: Arc<Mutex<bool>>,
@@ -577,6 +625,8 @@ impl FakeWorkspaces {
     pub fn copy_from(&self, from: &FakeWorkspaces) {
         let rows = lock(&from.rows).clone();
         *lock(&self.rows) = rows;
+        let erased = lock(&from.erased).clone();
+        *lock(&self.erased) = erased;
     }
 
     /// The slots stored for `proposal`, in order.
@@ -610,6 +660,11 @@ impl Workspaces for FakeWorkspaces {
         sealed: Sealed,
     ) -> Result<(), PortError> {
         self.up()?;
+        // F-017: an erased workspace takes no new value, as the cell's
+        // sealer refuses one.
+        if lock(&self.erased).contains(&proposal) {
+            return Err(PortError::Unavailable);
+        }
         lock(&self.rows).insert((proposal, slot), sealed);
         Ok(())
     }
@@ -621,6 +676,27 @@ impl Workspaces for FakeWorkspaces {
     ) -> Result<Option<Sealed>, PortError> {
         self.up()?;
         Ok(lock(&self.rows).get(&(proposal, slot)).cloned())
+    }
+
+    /// F-017: every slot of `proposal` leaves at once. The fake holds no
+    /// keys, so the rows going stands in for the key's destruction. A
+    /// proposal erased before answers `true` again.
+    async fn erase(
+        &self,
+        proposal: ProposalId,
+        cause: ErasureCause,
+        by: AccountId,
+    ) -> Result<bool, PortError> {
+        let _ = (cause, by);
+        self.up()?;
+        let mut erased = lock(&self.erased);
+        let mut rows = lock(&self.rows);
+        let before = rows.len();
+        rows.retain(|(p, _), _| *p != proposal);
+        if rows.len() != before {
+            erased.insert(proposal);
+        }
+        Ok(erased.contains(&proposal))
     }
 }
 
@@ -798,5 +874,30 @@ mod tests {
                 .count();
             assert_eq!(named, 1, "round {round}");
         }
+    }
+
+    /// F-017: erasing a workspace removes every slot of that proposal and
+    /// no other, refuses a later save of it, and answers `true` again on a
+    /// repeat. A proposal with no workspace answers `false`.
+    #[test]
+    fn m10_f017_fake_workspace_erase_removes_every_slot() {
+        let w = FakeWorkspaces::default();
+        let p = ProposalId::from_raw(17);
+        let q = ProposalId::from_raw(18);
+        let plan = fstp_domain::id::PlanVersionId::from_raw(3);
+        for (proposal, slot) in [
+            (p, WorkspaceSlot::Draft),
+            (p, WorkspaceSlot::Submitted(plan)),
+            (q, WorkspaceSlot::Draft),
+        ] {
+            block_on(w.put(proposal, slot, Sealed(b"sealed".to_vec()))).unwrap();
+        }
+        let erase = |x| block_on(w.erase(x, ErasureCause::RetentionExpiry, ANNA));
+        assert_eq!(erase(ProposalId::from_raw(19)), Ok(false));
+        assert_eq!(erase(p), Ok(true));
+        assert!(w.slots(p).is_empty());
+        assert_eq!(w.slots(q), vec![WorkspaceSlot::Draft]);
+        assert_eq!(erase(p), Ok(true), "a repeat");
+        assert!(block_on(w.put(p, WorkspaceSlot::Draft, Sealed(b"late".to_vec()))).is_err());
     }
 }

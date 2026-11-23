@@ -279,3 +279,16 @@ Open questions for Daniel, each recorded above as interim:
 1. Identity documents: no production path stores one, so 1a erases nothing today. Should the vault document upload be built, with its erasure at `record_verification`?
 2. `TODO(legal)`: the retention period of an import document (kind 5).
 3. The reason limit of 500 characters, and whether the page should name which tenant admin erased a document.
+
+## Written by the M10 fix lane `m10/erasure`, 2026-11-23: the workspace kind
+
+Finding F-017 (ADR-026 section "Written by the M10 fix lane"). Each row is a lane reading, pending Daniel.
+
+| Topic | Reading |
+| --- | --- |
+| Kind | `KeystoreErasureRequested` gains kind 4, a workspace: every `workspace.drafts` row of one proposal, under one key whose id is the proposal id. `KEYSTORE_ERASURE_KINDS` holds kinds 2, 3 and 4. The fold rules are those of a document: an id the ledger names as a text, or one with an entry already, is refused |
+| Request | The erasure task appends the record as the system task `ErasureRunner`, for the tenant admin that `admin.request_erasure` names, with that call's cause and no reason. Its command id is fixed per proposal, so a repeated request appends nothing twice |
+| Completion | Step 7 names the proposal in `ErasuresCompleted`, as for a document. Then the keystore batch deletes the rows (migration 15), and each start deletes them again |
+| `admin.erasures` | The reply's `kind` gains `workspace`, and the row's `grant` names the proposal |
+
+Tests: `m10_f017_th30_an_erased_draft_text_has_no_live_key_at_any_crash_point` (`crates/fstp-cell/tests/keystore_tables.rs`) and `m10_f017_workspace_kind_is_a_keystore_kind` (`crates/fstp-cell-core/tests/adr007_document_erasure.rs`).

@@ -1699,8 +1699,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     RefOp::act("proposal.precheck", T::Proposal, R::DraftingTeam),
     RefOp::read("proposal.precheck_runs", T::Proposal, R::DraftingTeam),
     RefOp::act("proposal.record_plan", T::Proposal, R::Lead).tool("fstp_record_plan_version"),
+    // F-079, ADR-038: the lead invites by address and withdraws; web only.
     RefOp::act("proposal.add_member", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.add_guardian", T::Proposal, R::Lead).binding(),
+    RefOp::read("proposal.team_invitations", T::Proposal, R::Lead),
+    RefOp::act("proposal.withdraw_team_invitation", T::Proposal, R::Lead).binding(),
     RefOp::act("proposal.state_country", T::Proposal, R::Lead),
     // ADR-032 (Daniel, 2026-11-22): web only, the lead claims an
     // anonymous draft into its own draft.
@@ -1854,6 +1857,11 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // Lane m6/mailbox: any account reads its own mailbox, web only, with
     // no tool (MB-D5, I-86).
     RefOp::read("me.mailbox", T::None, R::AnyAccount),
+    // F-079, ADR-038: any account reads and answers the invitations
+    // addressed to its login email; the address match is a guard.
+    RefOp::read("me.team_invitations", T::None, R::AnyAccount),
+    RefOp::act("me.accept_team_invitation", T::None, R::AnyAccount).binding(),
+    RefOp::act("me.decline_team_invitation", T::None, R::AnyAccount).binding(),
     RefOp::act("me.end_session", T::None, R::AnyAccount),
     // SA-11: "Each account may set its own display name on its account
     // page, and clear it." Reading: any account reads and sets its own,
@@ -2042,6 +2050,14 @@ fn admit(
             who,
             Who::Unbound | Who::Lead | Who::TeamMember | Who::Guardian | Who::OtherProgrammeManager
         )),
+        // F-079, ADR-038: a read of the lead alone, `proposal.team_invitations`,
+        // needs the lead's Receiving binding, which ends when X reaches a
+        // terminal state (`roles-and-sod.md` "Receiving bindings"). The
+        // former lead's read-only view (Daniel, 2026-11-06 and 2026-11-15,
+        // night) names other reads only, and an invitation stands only while
+        // its lead holds the binding. A lead command in a terminal state
+        // still meets a guard on the target, as before.
+        Rule::Lead if op.read => open(who == Who::Lead && !x.is_some_and(StateTag::is_terminal)),
         Rule::Lead => open(who == Who::Lead),
         // Daniel, 2026-11-06: in a terminal state the former lead and team
         // member keep a read-only view. The guardian, whom the decision
@@ -2341,9 +2357,15 @@ fn journey_position(who: Who, x: Option<StateTag>, policy: &Policy) -> Result<()
 ///   Q39).
 ///
 /// Through MCP, a reader outside the team is refused unless P-75 is on.
+/// Through MCP the team's read of its draft is not exposed (M10 F-005,
+/// I-86, Daniel 2026-11-23): the team reads its drafts in the web, so the
+/// vault mask never answers a text the team can still change.
 fn content(who: Who, x: Option<StateTag>, policy: &Policy, mcp: bool) -> Result<(), AuthClass> {
     use AuthClass::{Conflict, Visibility};
     if former_team_reads(who, x) {
+        if mcp && x == Some(StateTag::Draft) {
+            return Err(AuthClass::NotExposed);
+        }
         return Ok(());
     }
     if who.conflicted_in(x) {

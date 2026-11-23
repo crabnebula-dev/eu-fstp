@@ -6,7 +6,10 @@
 //!   client. Its intake (country, affiliations, birth date) and the two
 //!   Q35 queries are not built, so each fails as `OracleDown`. The start
 //!   of an identity verification records a request that staff record on
-//!   the vault origin (ADR-026 record of lane L24).
+//!   the vault origin (ADR-026 record of lane L24). The coordinator
+//!   unmask opens the vault origin's release page with an `unmask` ticket
+//!   that the cell's `Ticket` key signs (ADR-023, ADR-026 amendment of
+//!   2026-11-23).
 
 //! - No pre-check provider. The prober is `super::tenant`'s.
 //! - No break-glass approval through the API core: the request's staff
@@ -36,6 +39,60 @@ pub(crate) const IDENTITY_PAGE: &str = "/app/me/identity";
 
 /// The vault port.
 pub(crate) struct CellVault<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
+
+impl<R: Runtime, V> CellVault<R, V> {
+    /// The vault origin's release page with a signed `unmask` ticket for
+    /// the party `subject` of `programme` (ADR-023 readings 7 and 8, ADR-026
+    /// amendment of 2026-11-23, M10 F-058). The ticket names the party's
+    /// account and the programme scope, and no proposal, as the raw command
+    /// route signed it. The ticket travels in the fragment, which the
+    /// browser never sends to a server. A cell with no `Ticket` key answers
+    /// `OracleDown`, and [`Vault::releases_unmask`] said so before the
+    /// record.
+    fn unmask_page(
+        &self,
+        programme: ProgrammeId,
+        subject: AccountId,
+    ) -> Result<VerificationRedirect, OracleDown> {
+        use crate::routes::Backend as _;
+        let key = self.0.backend.ticket_key().ok_or(OracleDown)?;
+        let nonce = fstp_crypto::random_array::<16>().map_err(|_| OracleDown)?;
+        let unmask = Unmask {
+            cell: self.0.cell,
+            host: &self.0.host,
+            programme,
+            subject,
+        };
+        unmask_redirect(&unmask, self.0.now().micros(), nonce, &key)
+    }
+}
+
+/// One unmask the vault port opens a page for.
+struct Unmask<'a> {
+    cell: [u8; 16],
+    host: &'a str,
+    programme: ProgrammeId,
+    subject: AccountId,
+}
+
+/// The release page of the vault origin `https://id.<host>` with the
+/// `unmask` ticket of `u`, issued at `now` with `nonce` and signed with
+/// `key`, in its fragment (ADR-009 "Vault origin", ADR-023 readings 7
+/// and 8).
+fn unmask_redirect(
+    u: &Unmask<'_>,
+    now: i64,
+    nonce: [u8; 16],
+    key: &fstp_crypto::sig::Ed25519SigningKey,
+) -> Result<VerificationRedirect, OracleDown> {
+    let claims = crate::routes::unmask_claims(u.cell, u.programme, u.subject, now, nonce)
+        .ok_or(OracleDown)?;
+    let ticket = crate::routes::sign_ticket(&claims, key).map_err(|_| OracleDown)?;
+    Ok(VerificationRedirect(format!(
+        "https://id.{}/r#{ticket}",
+        u.host
+    )))
+}
 
 impl<R: Runtime, V: VaultClient> AsyncIdentityOracle for CellVault<R, V> {
     async fn answer(&self, q: &Query) -> Result<Answer, OracleDown> {
@@ -95,6 +152,11 @@ impl<R: Runtime, V: VaultClient> Vault for CellVault<R, V> {
             VerificationPurpose::Applicant
             | VerificationPurpose::AdminIdentity
             | VerificationPurpose::ProgrammeRole => {}
+            // ADR-023 readings 7 and 8, ADR-026 amendment of 2026-11-23
+            // (M10 F-058): the API core recorded `PartyUnmasked` first.
+            VerificationPurpose::Unmask {
+                programme, subject, ..
+            } => return self.unmask_page(programme, subject),
             _ => return Err(OracleDown),
         }
         let state = self.0.engine.state();
@@ -125,6 +187,13 @@ impl<R: Runtime, V: VaultClient> Vault for CellVault<R, V> {
 
     async fn verification_requested(&self, a: AccountId) -> bool {
         self.0.engine.state().verification_requested(a)
+    }
+
+    /// The cell opens an unmask page only with its `Ticket` key (ADR-026
+    /// amendment of 2026-11-23, M10 F-058).
+    async fn releases_unmask(&self) -> bool {
+        use crate::routes::Backend as _;
+        self.0.backend.ticket_key().is_some()
     }
 
     async fn classes_defined(
@@ -193,5 +262,53 @@ impl BreakGlass for ClosedBreakGlass {
     ) -> Result<(), PortError> {
         let _ = (approver, b, approve, proof);
         Err(PortError::Unavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M10 F-058, ADR-023 readings 7 and 8, I-17 as amended: the vault
+    /// port answers the vault origin's release page with an `unmask`
+    /// ticket in its fragment. The cell's `Ticket` key signs it, and it
+    /// names the party's account and the programme scope, and no
+    /// proposal, within the ADR-009 lifetime bound.
+    #[test]
+    fn m10_f058_adr023_unmask_ticket_is_signed_for_the_vault_release_page() {
+        use fstp_vault_proto::{TicketClaims, TicketKind, WireAccount, WireProgramme};
+        let key = fstp_crypto::sig::Ed25519SigningKey::generate().expect("a key");
+        let u = Unmask {
+            cell: [0xB5; 16],
+            host: "tenant-u.fstp.test",
+            programme: ProgrammeId::from_raw(41),
+            subject: AccountId::from_raw(4_242),
+        };
+        let now = 1_800_000_000_000_000;
+        let VerificationRedirect(to) =
+            unmask_redirect(&u, now, [7; 16], &key).expect("the release page");
+        let ticket = to
+            .strip_prefix("https://id.tenant-u.fstp.test/r#")
+            .unwrap_or_else(|| panic!("I-17: not the vault origin's release page: {to}"));
+        let bytes = crate::http::body::hex_vec(ticket, fstp_vault_proto::MAX_TICKET_LEN)
+            .expect("a hex ticket");
+        let framed = fstp_vault_proto::ticket::decode_ticket(&bytes).expect("a framed ticket");
+        fstp_crypto::sig::ed25519_verify(&key.public_key(), framed.body(), framed.signature())
+            .expect("the cell's Ticket key signed it");
+        let claims = TicketClaims::parse(framed.body()).expect("the claims");
+        assert_eq!(claims.kind, TicketKind::Unmask);
+        assert_eq!(claims.cell, u.cell);
+        assert_eq!(claims.account, WireAccount(4_242));
+        assert_eq!(claims.proposal, None);
+        assert_eq!(
+            claims.scope,
+            fstp_vault_proto::country_scope(WireProgramme(41))
+        );
+        assert_eq!(claims.issued_at, now);
+        assert_eq!(
+            claims.expires_at,
+            now + fstp_vault_proto::TICKET_LIFETIME_MAX_US
+        );
+        assert_eq!(claims.nonce, [7; 16]);
     }
 }

@@ -163,6 +163,7 @@ const FULL: &[Privilege] = &[
     Privilege::Delete,
 ];
 const SD: &[Privilege] = &[Privilege::Select, Privilege::Delete];
+const SIU: &[Privilege] = &[Privilege::Select, Privilege::Insert, Privilege::Update];
 
 /// The schema part of `schema.table`.
 pub fn schema_of(object: &str) -> &str {
@@ -220,6 +221,10 @@ pub fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             // rows. The confirmations are the writer's insert-only rows
             // (ADR-026, ADR-007), so the app role only reads them.
             "api" if object == "api.pending_confirmed" => S,
+            // F-017 (migration 15, ADR-026 section "Written by the M10 fix
+            // lane"): the app role saves and replaces workspace rows, and
+            // only the keys role deletes one, once its key is gone.
+            "workspace" if object == "workspace.drafts" => SIU,
             "api" | "workspace" => FULL,
             _ => &[],
         },
@@ -229,6 +234,8 @@ pub fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             // ADR-007 (Daniel, 2026-11-23, decision 2; lane L39): the keys
             // role deletes an erased document's sealed row.
             "doc" => SD,
+            // F-017 (migration 15): the rows of an erased workspace.
+            "workspace" if object == "workspace.drafts" => SD,
             _ => &[],
         },
         RoleName::Auditor => match schema {

@@ -432,6 +432,14 @@ fn addresses(s: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
+/// The byte spans of `text` where one of `team` stands as a whole word,
+/// case folded in ASCII, by the rule of the pattern stage's handles. A
+/// span takes a leading `@` with it. The agent's content view masks the
+/// cell-held names of a team with it (M10 F-006, ADR-033).
+pub fn handle_spans(text: &str, team: &[String]) -> Vec<(usize, usize)> {
+    handles(text, team)
+}
+
 fn handles(text: &str, team: &[String]) -> Vec<(usize, usize)> {
     let lower = text.to_ascii_lowercase();
     let b = text.as_bytes();

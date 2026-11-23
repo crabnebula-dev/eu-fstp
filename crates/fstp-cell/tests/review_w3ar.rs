@@ -198,6 +198,9 @@ fn review_i17_vault_ticket_501_commits_no_issue_record() {
             },
             limits: fstp_cell::routes::AuthLimits::default(),
             organisation: fstp_cell::public::OrganisationPort::default(),
+            // The test-only wide command route (ADR-026 amendment of
+            // 2026-11-23): this test drives its commands through it.
+            wide_commands: true,
         },
         Arc::clone(&spy),
         Arc::new(MemoryLog::default()),
@@ -300,6 +303,9 @@ fn issue6_m3_i10_production_cell_never_records_a_rerun_it_cannot_run() {
             },
             limits: fstp_cell::routes::AuthLimits::default(),
             organisation: fstp_cell::public::OrganisationPort::default(),
+            // The test-only wide command route (ADR-026 amendment of
+            // 2026-11-23): this test drives its commands through it.
+            wide_commands: true,
         },
         Arc::clone(&spy),
         Arc::new(MemoryLog::default()),

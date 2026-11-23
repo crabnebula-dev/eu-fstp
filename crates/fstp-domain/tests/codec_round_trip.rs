@@ -149,6 +149,8 @@ record_round_trip! {
     r_ev_09_codec_round_trip_record_ballot_cast => BallotCast,
     r_ev_09_codec_round_trip_record_vote_delegated => VoteDelegated,
     r_ga_01_codec_round_trip_record_guide_published => GuidePublished,
+    m10_f079_codec_round_trip_record_team_invited => TeamInvited,
+    m10_f079_codec_round_trip_record_team_invitation_closed => TeamInvitationClosed,
 }
 
 witness_round_trip! {
@@ -222,6 +224,10 @@ command_round_trip! {
     th26_codec_round_trip_command_propose_amendment => ProposeAmendment,
     th26_codec_round_trip_command_route_amendment => RouteAmendment,
     th26_codec_round_trip_command_activate_amendment => ActivateAmendment,
+    m10_f079_codec_round_trip_command_invite_to_team => InviteToTeam,
+    m10_f079_codec_round_trip_command_withdraw_team_invitation => WithdrawTeamInvitation,
+    m10_f079_codec_round_trip_command_accept_team_invitation => AcceptTeamInvitation,
+    m10_f079_codec_round_trip_command_decline_team_invitation => DeclineTeamInvitation,
 }
 
 /// I-23, I-12, ADR-007: a generated policy version survives encode,

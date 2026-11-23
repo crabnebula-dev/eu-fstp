@@ -364,6 +364,10 @@ fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             // ADR-026: the app role reads the confirmations the writer
             // inserts, and keeps the pending actions and workspaces.
             "api" if object == "api.pending_confirmed" => S,
+            // F-017 (migration 15, ADR-026 section "Written by the M10 fix
+            // lane"): the app role saves and replaces workspace rows, and
+            // only the keys role deletes one, once its key is gone.
+            "workspace" if object == "workspace.drafts" => SIU,
             "api" | "workspace" => FULL,
             // Lane L2, M4 design section 4.3 "Roles": the authorisation
             // server registers, rotates, revokes and purges its rows.
@@ -379,6 +383,8 @@ fn app_privileges(role: RoleName, object: &str) -> &'static [Privilege] {
             // row of an erased document. Migration 14 lets this role alone
             // delete one, once its data key row is gone.
             "doc" => SD,
+            // F-017 (migration 15): the rows of an erased workspace.
+            "workspace" if object == "workspace.drafts" => SD,
             _ => &[],
         },
         RoleName::Auditor => match schema {

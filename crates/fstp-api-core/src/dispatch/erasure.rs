@@ -81,6 +81,40 @@ pub(super) fn check_grant<P: Seams>(call: &Call<'_, P>, grant: ProposalId) -> Re
     }
 }
 
+/// `admin.request_erasure` once the API core checked the admin, the step-up
+/// and the end of the grant's retention (P-41, ADR-007; F-017, ADR-026
+/// section "Written by the M10 fix lane"):
+///
+/// 1. the workspace port erases every slot of the grant's workspace,
+///    under its own key;
+/// 2. this core forgets its memory copy of the grant's draft and
+///    submitted content, so no read serves it from there;
+/// 3. the text store erases every text the grant owns, as before.
+///
+/// The call succeeds when either store erased something. A text store that
+/// cannot answer still fails the call after the workspace was erased: the
+/// erasure log then names the workspace only.
+pub(super) async fn request_erasure<P: Seams>(
+    call: &Call<'_, P>,
+    by: AccountId,
+    cause: crate::port::ErasureCause,
+    grant: ProposalId,
+    proof: crate::port::StepUpProof,
+) -> Result<(), crate::port::PortError> {
+    use crate::port::Workspaces as _;
+    let workspace = call.ports.workspaces().erase(grant, cause, by).await?;
+    super::lock(&call.st.content).forget(grant);
+    match call
+        .ports
+        .texts()
+        .request_erasure(by, cause, grant, call.now, proof)
+        .await
+    {
+        Err(crate::port::PortError::Refused) if workspace => Ok(()),
+        other => other,
+    }
+}
+
 /// The programme and blob of import document `document`, or a refusal
 /// naming ADR-007 when no such document exists (lane L39).
 pub(super) fn import_document<P: Seams>(

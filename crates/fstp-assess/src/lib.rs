@@ -36,6 +36,7 @@ pub use rubric::{RUBRIC_V1, Rubric};
 pub use span::SpanMap;
 pub use strip::{
     Hit, MaskUnavailable, NameMask, NameSpan, PiiClass, Placeholders, SyntheticNameMask, detect,
+    handle_spans,
 };
 pub use validate::{
     MAX_EVIDENCE, MAX_FINDINGS, MAX_STATEMENT_BYTES, OutputError, RawFinding, Stage, decode_output,

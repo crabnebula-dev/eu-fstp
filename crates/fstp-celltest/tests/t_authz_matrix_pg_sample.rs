@@ -353,10 +353,6 @@ fn s(x: &str) -> Value {
     Value::String(x.to_owned())
 }
 
-fn dec(x: u128) -> Value {
-    Value::String(x.to_string())
-}
-
 fn send(cell: &CellHandle, req: HttpRequest) -> HttpReply {
     cell.request(&req.header("host", cell.host()))
         .unwrap_or_else(|e| panic!("{e}"))
@@ -1153,6 +1149,53 @@ fn p09_wording(cell: &CellHandle, client: &AuthClient<'_>) {
     );
 }
 
+/// F-079 (ADR-038): `model` joins draft `raw` in two steps. The lead
+/// invites the login email the cell bound to `model` at its enrolment,
+/// through `route` (`team` or `guardian`), and `model` reads its
+/// invitation and accepts it.
+fn join(w: &mut Pg<'_>, lead: AccountId, raw: u128, model: AccountId, route: &str) {
+    let email = w.cell().login_email(model);
+    w.api(
+        lead,
+        "POST",
+        &format!("/proposals/{raw}/{route}"),
+        &obj(vec![("email", s(&email))]),
+    );
+    let session = w.session(model);
+    let r = web(
+        w.cell(),
+        "GET",
+        "/api/v1/me/team-invitations",
+        Some(&session),
+        b"",
+    );
+    assert!(
+        r.ok(),
+        "F-079: the invitation read: {} {}",
+        r.status,
+        text(&r)
+    );
+    let mine = json(&r);
+    let proposal = raw.to_string();
+    let invitation = mine
+        .get("invitations")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|r| r.get("proposal").and_then(Value::as_str) == Some(proposal.as_str()))
+        })
+        .and_then(|r| r.get("invitation"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("F-079: {} sees no invitation to {raw}", model.raw()))
+        .to_owned();
+    w.api(
+        model,
+        "POST",
+        &format!("/me/team-invitations/{invitation}/accept"),
+        &obj(vec![]),
+    );
+}
+
 /// A draft of `lead` in `c` through the web API, with its team, plan and
 /// workspace, as the test kit's harness drafts: its id and plan.
 fn draft(
@@ -1172,20 +1215,8 @@ fn draft(
         .and_then(|x| x.parse().ok())
         .unwrap_or_else(|| panic!("proposal.create gave {}", body.to_compact()));
     if team {
-        let t = w.id(TEAM).raw();
-        let g = w.id(GUARDIAN).raw();
-        w.api(
-            lead,
-            "POST",
-            &format!("/proposals/{raw}/team"),
-            &obj(vec![("account", dec(t))]),
-        );
-        w.api(
-            lead,
-            "POST",
-            &format!("/proposals/{raw}/guardian"),
-            &obj(vec![("account", dec(g))]),
-        );
+        join(w, lead, raw, TEAM, "team");
+        join(w, lead, raw, GUARDIAN, "guardian");
     }
     let start = deadline + 10 * DAY;
     let plan_body = obj(vec![

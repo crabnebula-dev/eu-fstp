@@ -55,7 +55,7 @@ use fstp_api_core::port::{self, CellPorts};
 use fstp_cell_core::gate::AgentGrant;
 use fstp_domain::id::AccountId;
 use fstp_domain::time::Timestamp;
-use fstp_pgstore::{ApiStore, LedgerKeys};
+use fstp_pgstore::ApiStore;
 use fstp_rt::Runtime;
 
 use crate::engine::{CellEngine, VaultClient};
@@ -88,8 +88,6 @@ pub(crate) struct ApiParts<R: Runtime, V> {
     pub backend: Arc<PgBackend<R>>,
     /// The API core's tables over the app role.
     pub store: ApiStore<R>,
-    /// The ledger key generations, which seal workspaces.
-    pub keys: Arc<LedgerKeys>,
     /// The cell's vault client.
     pub vault: V,
     /// The erasure task, which holds the text store.
@@ -123,7 +121,6 @@ pub(crate) struct Inner<R: Runtime, V> {
     engine: CellEngine,
     backend: Arc<PgBackend<R>>,
     store: ApiStore<R>,
-    keys: Arc<LedgerKeys>,
     vault: V,
     erasure: ErasureHandle,
     organisation: OrganisationPort,
@@ -186,7 +183,6 @@ where
         engine,
         backend,
         store,
-        keys,
         vault,
         erasure,
         organisation,
@@ -206,7 +202,6 @@ where
         engine,
         backend,
         store,
-        keys,
         vault,
         erasure,
         organisation,

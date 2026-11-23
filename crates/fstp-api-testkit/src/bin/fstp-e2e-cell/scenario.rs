@@ -960,14 +960,10 @@ async fn draft(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
             s.minor,
         ))?;
         if s.minor {
-            // A minor lead's draft gets its guardian (state-machine NOTE 14).
-            seed.step(&roster::add_member(
-                s.lead,
-                s.proposal,
-                GUARDIAN,
-                BindingId::from_raw(4_500u128.saturating_add(i)),
-                true,
-            ))?;
+            // A minor lead's draft gets its guardian (state-machine NOTE
+            // 14). F-079 (ADR-038): the lead invites the guardian's address
+            // and the guardian accepts, both through the API.
+            invite_guardian(seed, s).await?;
         }
         let milestone = Milestone {
             id: MilestoneId::from_raw(s.proposal.raw().saturating_add(6_000)),
@@ -1008,6 +1004,50 @@ async fn draft(seed: &mut Seeder<'_>, which: &[Seeded]) -> Result<(), String> {
         )
         .await?;
     }
+    Ok(())
+}
+
+/// F-079 (ADR-038): the two steps by which the guardian joins the draft of
+/// `s`. The lead invites a synthetic address, which becomes the guardian's
+/// login email, and the guardian reads its invitation and accepts it. The
+/// demo's final guardian address is drawn again later, as before.
+async fn invite_guardian(seed: &mut Seeder<'_>, s: &Seeded) -> Result<(), String> {
+    let mail = email("guardian")?;
+    seed.inner.ports.accounts.set_login_email(GUARDIAN, &mail);
+    let id = s.proposal.raw().to_string();
+    seed.api(
+        s.lead,
+        ApiMethod::Post,
+        &format!("/proposals/{id}/guardian"),
+        &obj(vec![("email", mail.as_str().into())]),
+    )
+    .await?;
+    let mine = seed
+        .api(
+            GUARDIAN,
+            ApiMethod::Get,
+            "/me/team-invitations",
+            &Value::Null,
+        )
+        .await?;
+    let invitation = mine
+        .get("invitations")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|r| r.get("proposal").and_then(Value::as_str) == Some(id.as_str()))
+        })
+        .and_then(|r| r.get("invitation"))
+        .and_then(Value::as_str)
+        .ok_or("F-079: the guardian sees no invitation")?
+        .to_owned();
+    seed.api(
+        GUARDIAN,
+        ApiMethod::Post,
+        &format!("/me/team-invitations/{invitation}/accept"),
+        &obj(vec![]),
+    )
+    .await?;
     Ok(())
 }
 

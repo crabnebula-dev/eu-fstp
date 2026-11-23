@@ -171,6 +171,45 @@ impl std::fmt::Debug for ExternalCell {
     }
 }
 
+/// The stderr lines of one serving start, as the binary wrote them.
+type Lines = std::sync::Arc<Mutex<Vec<String>>>;
+
+/// Copies the piped stderr of `child` to this process's stderr, line by
+/// line, as the inherited stream showed it before, and keeps each line,
+/// so a start that fails names what the binary wrote (test harness only).
+fn tee_stderr(child: &mut Child) -> (Lines, Option<std::thread::JoinHandle<()>>) {
+    let lines: Lines = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let Some(err) = child.stderr.take() else {
+        return (lines, None);
+    };
+    let kept = std::sync::Arc::clone(&lines);
+    let tee = std::thread::spawn(move || {
+        use std::io::BufRead as _;
+        for line in std::io::BufReader::new(err).lines() {
+            let Ok(line) = line else { break };
+            let _ = writeln!(std::io::stderr(), "{line}");
+            kept.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(line);
+        }
+    });
+    (lines, Some(tee))
+}
+
+/// The stderr lines of a binary that exited or was killed, once its copy
+/// thread read to the end of the stream.
+fn collected(lines: Lines, tee: Option<std::thread::JoinHandle<()>>) -> String {
+    if let Some(t) = tee {
+        let _ = t.join();
+    }
+    let lines = lines.lock().unwrap_or_else(PoisonError::into_inner);
+    if lines.is_empty() {
+        "(nothing)".to_owned()
+    } else {
+        lines.join(" | ")
+    }
+}
+
 fn free_port() -> Result<SocketAddr, WorldError> {
     let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|e| fail("a free port", &e))?;
     l.local_addr().map_err(|e| fail("a free port", &e))
@@ -443,11 +482,19 @@ impl ExternalCell {
         if slot.is_some() {
             return Err(fail("start", &"the cell runs already"));
         }
-        let mut child = self.command().spawn().map_err(|e| fail("fstp-cell", &e))?;
+        let mut child = self
+            .command()
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| fail("fstp-cell", &e))?;
+        let (lines, tee) = tee_stderr(&mut child);
         let begun = Instant::now();
         loop {
             if let Ok(Some(status)) = child.try_wait() {
-                return Err(fail("fstp-cell exited before ready", &status));
+                return Err(fail(
+                    "fstp-cell exited before ready",
+                    &format!("{status}; its stderr: {}", collected(lines, tee)),
+                ));
             }
             if healthz(self.health) {
                 break;
@@ -455,7 +502,10 @@ impl ExternalCell {
             if begun.elapsed() > START_TIMEOUT {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(fail("fstp-cell", &"not ready in time"));
+                return Err(fail(
+                    "fstp-cell",
+                    &format!("not ready in time; its stderr: {}", collected(lines, tee)),
+                ));
             }
             std::thread::sleep(Duration::from_millis(200));
         }

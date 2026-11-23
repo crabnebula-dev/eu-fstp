@@ -990,8 +990,10 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
             ("title", s("SYNTHETIC TITLE")),
         ]),
         "proposal.record_plan" => ids.plan_body.clone(),
+        // F-079, ADR-038: an invitation names a synthetic address, never an
+        // account.
         "proposal.add_member" | "proposal.add_guardian" => {
-            obj(vec![("account", dec(ids.team_candidate))])
+            obj(vec![("email", s("matrix-invitee@e2e.invalid"))])
         }
         "proposal.state_country" => obj(vec![("country", s("BE"))]),
         // ADR-032: a well-formed token no world holds, so the call ends
@@ -3205,18 +3207,8 @@ fn draft_proposal(
         .ok_or_else(|| format!("proposal.create gave {}", body.to_compact()))?;
     let x = ProposalId::from_raw(raw);
     if team {
-        seed.api(
-            lead,
-            ApiMethod::Post,
-            &format!("/proposals/{raw}/team"),
-            &obj(vec![("account", dec(TEAM.raw()))]),
-        )?;
-        seed.api(
-            lead,
-            ApiMethod::Post,
-            &format!("/proposals/{raw}/guardian"),
-            &obj(vec![("account", dec(GUARDIAN.raw()))]),
-        )?;
+        join(seed, lead, raw, TEAM, "team")?;
+        join(seed, lead, raw, GUARDIAN, "guardian")?;
     }
     let plan = seed.api(
         lead,
@@ -3238,6 +3230,51 @@ fn draft_proposal(
         ]),
     )?;
     Ok((x, plan_id))
+}
+
+/// F-079 (ADR-038): `account` joins proposal `raw` in two steps. The lead
+/// invites its synthetic login email through `route` (`team` or
+/// `guardian`), and `account` reads its invitation and accepts it.
+fn join(
+    seed: &mut Seeder,
+    lead: AccountId,
+    raw: u128,
+    account: AccountId,
+    route: &str,
+) -> Result<(), String> {
+    let email = crate::fake::requests::synthetic_email(account);
+    seed.ports.base.accounts.set_login_email(account, &email);
+    seed.api(
+        lead,
+        ApiMethod::Post,
+        &format!("/proposals/{raw}/{route}"),
+        &obj(vec![("email", s(&email))]),
+    )?;
+    let mine = seed.api(
+        account,
+        ApiMethod::Get,
+        "/me/team-invitations",
+        &Value::Null,
+    )?;
+    let proposal = raw.to_string();
+    let invitation = mine
+        .get("invitations")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .find(|r| r.get("proposal").and_then(Value::as_str) == Some(proposal.as_str()))
+        })
+        .and_then(|r| r.get("invitation"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("F-079: {account:?} sees no invitation to {raw}"))?
+        .to_owned();
+    seed.api(
+        account,
+        ApiMethod::Post,
+        &format!("/me/team-invitations/{invitation}/accept"),
+        &obj(vec![]),
+    )?;
+    Ok(())
 }
 
 /// Submits `x` through the API.

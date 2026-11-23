@@ -2,7 +2,9 @@
 //! `workspace` schemas (lane L1).
 //!
 //! The app role keeps the pending actions and the workspaces, with
-//! SELECT, INSERT, UPDATE and DELETE. The ledger writer inserts the one
+//! SELECT, INSERT, UPDATE and DELETE, except DELETE on `workspace.drafts`:
+//! since F-017 only the keys role deletes a draft row, once its key is
+//! gone (migration 15). The ledger writer inserts the one
 //! confirmation of a pending action inside its append, so it holds
 //! INSERT and SELECT on `api.pending_confirmed`, and nothing else in
 //! these schemas. The app role only reads that table. No other role holds
@@ -22,6 +24,8 @@ const FULL: [Privilege; 4] = [
     Privilege::Update,
     Privilege::Delete,
 ];
+
+const SIU: [Privilege; 3] = [Privilege::Select, Privilege::Insert, Privilege::Update];
 
 fn api_or_workspace(object: &str) -> bool {
     matches!(
@@ -65,10 +69,14 @@ fn i82_role_plan_grants_api_and_workspace_to_app_only() {
                 fstp_prop::prop_assert_eq!(row.database, CellDatabase::App, "{row:?}");
                 let want: &[Privilege] = match (row.role, row.object) {
                     (RoleName::App, "api.pending_confirmed") => &[Privilege::Select],
+                    // F-017: the app role saves and replaces a draft only.
+                    (RoleName::App, "workspace.drafts") => &SIU,
                     (RoleName::App, _) => &FULL,
                     (RoleName::Writer, "api.pending_confirmed") => {
                         &[Privilege::Select, Privilege::Insert]
                     }
+                    // F-017: the keys role deletes an erased workspace's rows.
+                    (RoleName::Keys, "workspace.drafts") => &[Privilege::Select, Privilege::Delete],
                     _ => return Err(format!("I-82: an unexpected grant {row:?}")),
                 };
                 fstp_prop::prop_assert_eq!(row.privileges.as_slice(), want, "{row:?}");
@@ -112,4 +120,62 @@ fn t_db_app_role_has_no_ledger_update() {
         }
         Ok(())
     });
+}
+
+/// F-017, I-82, I-81 (ADR-026 section "Written by the M10 fix lane",
+/// migration 15): only the keys role may delete a `workspace.drafts` row,
+/// with exactly SELECT and DELETE there. The app role saves and replaces
+/// drafts with exactly SELECT, INSERT and UPDATE. No other role holds a
+/// grant on the table, and the anonymous drafts keep the app role's full
+/// rights, since a claim or a sweep deletes them.
+#[test]
+fn m10_f017_i82_only_the_keys_role_deletes_draft_rows() {
+    fstp_prop::check(
+        "m10_f017_i82_only_the_keys_role_deletes_draft_rows",
+        |g: &mut Gen| {
+            let b = g.bytes(16..=16);
+            let cell = CellId(b.try_into().unwrap_or([0; 16]));
+            let plan = cell_role_plan(cell).map_err(|e| format!("{e:?}"))?;
+            let drafts: Vec<_> = plan
+                .grants
+                .iter()
+                .filter(|r| r.object == "workspace.drafts")
+                .collect();
+            let mut roles = BTreeSet::new();
+            for row in &drafts {
+                fstp_prop::prop_assert_eq!(row.database, CellDatabase::App, "{row:?}");
+                let want: &[Privilege] = match row.role {
+                    RoleName::App => &SIU,
+                    RoleName::Keys => &[Privilege::Select, Privilege::Delete],
+                    _ => return Err(format!("I-82: an unexpected grant {row:?}")),
+                };
+                fstp_prop::prop_assert_eq!(row.privileges.as_slice(), want, "{row:?}");
+                roles.insert(row.role);
+            }
+            fstp_prop::prop_assert_eq!(
+                roles,
+                [RoleName::App, RoleName::Keys]
+                    .into_iter()
+                    .collect::<BTreeSet<_>>(),
+                "F-017: the app role saves and the keys role deletes"
+            );
+            for row in plan
+                .grants
+                .iter()
+                .filter(|r| r.privileges.contains(&Privilege::Delete))
+                .filter(|r| r.object == "workspace.drafts")
+            {
+                fstp_prop::prop_assert_eq!(row.role, RoleName::Keys, "{row:?}");
+            }
+            for row in plan
+                .grants
+                .iter()
+                .filter(|r| r.object == "workspace.anonymous_drafts")
+            {
+                fstp_prop::prop_assert_eq!(row.role, RoleName::App, "{row:?}");
+                fstp_prop::prop_assert_eq!(row.privileges.as_slice(), &FULL[..], "{row:?}");
+            }
+            Ok(())
+        },
+    );
 }

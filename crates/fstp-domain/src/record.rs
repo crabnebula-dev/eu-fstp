@@ -29,8 +29,8 @@ use crate::grant::{GrantDecided, IneligibleCost};
 use crate::id::{
     AccountId, AmendmentId, AssignmentId, BindingId, CallId, CallSeq, ContentDigest, ContractId,
     DecisionId, DeliverableId, Handle, LineId, LlmConfigId, MilestoneId, OrganisationId,
-    PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, RoleInvitationId, TextRef,
-    VaultEpoch,
+    PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, RequestId, RoleInvitationId,
+    TeamInvitationId, TextRef, VaultEpoch,
 };
 use crate::oracle::QueryKind;
 use crate::payment::{CheckPhase, CheckResult, PaymentKind, PaymentLine, PaymentReleased};
@@ -990,5 +990,33 @@ pub enum Record {
         /// `false` for a subject that rests on no proposal, such as staff
         /// (ADR-023 decision 2, Daniel, 2026-11-15).
         conflict: bool,
+    },
+    /// The lead invited a person by address to the team of a proposal, or
+    /// as its guardian (F-079, ADR-038). It names no account of the
+    /// invitee: the address is a sealed text (ADR-007).
+    TeamInvited {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The invitation.
+        invitation: TeamInvitationId,
+        /// The invited address, a sealed confidential text of the proposal.
+        contact: TextRef,
+        /// Whether the invitation is for the guardian.
+        guardian: bool,
+        /// The lead.
+        by: AccountId,
+        /// When the invitation expires.
+        expires: Timestamp,
+    },
+    /// An invitation closed (F-079, ADR-038): `joined` when the invitee
+    /// accepted and was bound, otherwise declined or withdrawn. The entry
+    /// names the actor.
+    TeamInvitationClosed {
+        /// The proposal.
+        proposal: ProposalId,
+        /// The invitation.
+        invitation: TeamInvitationId,
+        /// Whether the invitee joined.
+        joined: bool,
     },
 }

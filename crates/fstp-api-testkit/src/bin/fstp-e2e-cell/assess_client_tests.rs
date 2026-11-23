@@ -1208,6 +1208,74 @@ fn m7_q4_i17_vault_masks_team_names_before_text_leaves_for_an_agent() {
     assert!(text.contains("[PERSON-1]"), "{text}");
 }
 
+/// M10 F-006, I-17, TH-13, TH-62 (Daniel 2026-11-23, ADR-033): a team
+/// with no verified identity has nothing in the vault to mask. The cell
+/// then masks the names it holds for the team itself: the lead's display
+/// name and its parts are handles of the pattern stage in the assessment
+/// input, and masked in the agent's content view of the coordinator.
+/// The synthetic display name holds a word of the corpus narrative, so
+/// the text holds it. The vault holds no name for the team.
+#[test]
+fn m10_h07_i17_an_unverified_team_is_masked_by_cell_held_names() {
+    crate::assess::set_test_p75(true);
+    let (inner, _) = scene();
+    crate::assess::set_test_p75(false);
+    let x: u128 = 1001;
+    let lead = lead_of(&inner, x);
+    web(
+        &inner,
+        lead,
+        fstp_api_core::decode::Method::Post,
+        "/me/display-name",
+        r#"{"display_name":"Oskvy Vynaezor"}"#,
+    )
+    .unwrap();
+    declare(&inner, x);
+    let web_view = web(
+        &inner,
+        COORDINATOR,
+        fstp_api_core::decode::Method::Get,
+        &format!("/proposals/{x}/content"),
+        "",
+    )
+    .unwrap();
+    assert!(
+        s(&web_view, "text").contains("Vynaezor"),
+        "the corpus text names the contact, and the web shows it as submitted: {}",
+        s(&web_view, "text")
+    );
+
+    let t = token(&inner, COORDINATOR, &[Scope::AssessRun]);
+    let input = tool(
+        &inner,
+        &t,
+        "fstp_assessment_get_input",
+        &format!(r#"{{"proposal":"{x}"}}"#),
+    )
+    .unwrap();
+    let n = narrative(&input).to_lowercase();
+    assert!(
+        !n.contains("vynaezor"),
+        "the input masks the cell-held name: {n}"
+    );
+    assert!(n.contains("[handle-"), "{n}");
+
+    let r = token(&inner, COORDINATOR, &[Scope::ReviewRead]);
+    let agent_view = tool(
+        &inner,
+        &r,
+        "fstp_get_proposal_content",
+        &format!(r#"{{"proposal":"{x}"}}"#),
+    )
+    .unwrap();
+    let text = s(&agent_view, "text");
+    assert!(
+        !text.to_lowercase().contains("vynaezor"),
+        "the agent view masks the cell-held name: {text}"
+    );
+    assert!(text.contains("[PERSON-"), "{text}");
+}
+
 /// M7 Q4, NOTE 2 of `overview.md`: a vault that cannot mask fails the
 /// assessment input and the agent's content view closed. No text leaves.
 #[test]

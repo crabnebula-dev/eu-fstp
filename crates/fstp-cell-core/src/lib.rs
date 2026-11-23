@@ -171,8 +171,16 @@ pub const ERASURE_KIND_DISPLAY_NAME: u8 = 2;
 /// The kind of a document the blob store sealed, named by its data key id
 /// (ADR-007 section "Built by lane L37").
 pub const ERASURE_KIND_DOCUMENT: u8 = 3;
+/// The kind of a proposal's workspace: every `workspace.drafts` row of one
+/// proposal, under one key whose id is the proposal id (F-017, ADR-026
+/// section "Written by the M10 fix lane").
+pub const ERASURE_KIND_WORKSPACE: u8 = 4;
 /// The kinds a [`KeyCommand::RecordKeystoreErasure`] may name.
-pub const KEYSTORE_ERASURE_KINDS: [u8; 2] = [ERASURE_KIND_DISPLAY_NAME, ERASURE_KIND_DOCUMENT];
+pub const KEYSTORE_ERASURE_KINDS: [u8; 3] = [
+    ERASURE_KIND_DISPLAY_NAME,
+    ERASURE_KIND_DOCUMENT,
+    ERASURE_KIND_WORKSPACE,
+];
 
 /// The authoriser a system cause names (ADR-007, Daniel 2026-11-23,
 /// question 3; lane L39): the id whose bytes are `fstp:st:erasure` and a

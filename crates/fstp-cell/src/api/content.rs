@@ -5,10 +5,12 @@
 //!   key of its own, with its class and owner sealed in front of it. A
 //!   read checks the class and owner against the read's clearance before
 //!   it releases the text, as the test kit's store does.
-//! - `Sealer` seals a workspace value under the current ledger key
-//!   generation, bound to the cell and the proposal
-//!   (`fstp_pgstore::seal_workspace`). `Workspaces` keeps the sealed bytes
-//!   in `workspace.drafts` and opens nothing.
+//! - `Sealer` seals a workspace value in the erasure task, under the
+//!   proposal's own workspace key, bound to the cell and the proposal
+//!   (F-017, ADR-026 section "Written by the M10 fix lane"). `Workspaces`
+//!   keeps the sealed bytes in `workspace.drafts` and opens nothing. Its
+//!   erasure destroys the key first, and the keys role deletes the rows
+//!   after it.
 //! - `PendingActions` keeps each action in `api.pending_actions`, its
 //!   request sealed. A confirmation is the `api.pending_confirmed` row the
 //!   engine writes in the executing append.
@@ -148,6 +150,17 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
         }
     }
 
+    /// F-079, ADR-038: one bit for a confidential text of a proposal,
+    /// such as a team invitation's address. No text leaves the store.
+    async fn text_equals(&self, r: TextRef, candidate: &[u8]) -> Result<bool, PortError> {
+        match self.open(r.0).await? {
+            (TextClass::Confidential, TextOwner::Proposal(_), body) => {
+                Ok(fstp_api_core::salted::holds(&body, candidate))
+            }
+            _ => Ok(false),
+        }
+    }
+
     async fn get_public(&self, r: PublicTextRef) -> Result<Vec<u8>, PortError> {
         match self.open(r.0).await? {
             (TextClass::Public, _, body) => Ok(body),
@@ -168,7 +181,9 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
                 Ok(ErasureRow {
                     text: TextRef(u128::from_be_bytes(id)),
                     cause: ErasureCause::from_code(e.cause).ok_or(PortError::Unavailable)?,
-                    grant: None,
+                    // F-017: a workspace's entry id is its proposal id.
+                    grant: (e.kind == fstp_cell_core::ERASURE_KIND_WORKSPACE)
+                        .then(|| ProposalId::from_raw(u128::from_be_bytes(id))),
                     requested_at: e.requested_at,
                     completed_at: e.destroyed_at.or(e.completed_at),
                     // Lane L37: every kind code maps, and any other
@@ -177,6 +192,7 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
                         fstp_cell_core::ERASURE_KIND_LEDGER_TEXT => ErasureKind::Text,
                         fstp_cell_core::ERASURE_KIND_DISPLAY_NAME => ErasureKind::DisplayName,
                         fstp_cell_core::ERASURE_KIND_DOCUMENT => ErasureKind::Document,
+                        fstp_cell_core::ERASURE_KIND_WORKSPACE => ErasureKind::Workspace,
                         _ => return Err(PortError::Unavailable),
                     },
                     destroyed_epoch: e.destroyed_epoch,
@@ -229,27 +245,40 @@ impl<R: Runtime, V: Send + Sync> TextStore for CellTexts<R, V> {
             .await
             .map_err(|_| PortError::Unavailable)
     }
+
+    /// M10 F-006 (ADR-033): the display names of one proposal's team, for
+    /// the name mask alone. The API core never puts them in a read model.
+    async fn mask_handles(
+        &self,
+        accounts: Vec<AccountId>,
+    ) -> Result<std::collections::BTreeMap<AccountId, String>, PortError> {
+        self.0
+            .erasure
+            .display_names(accounts)
+            .await
+            .map_err(|_| PortError::Unavailable)
+    }
 }
 
-/// The sealer of workspace values.
+/// The sealer of workspace values: the erasure task seals each one under
+/// its proposal's own workspace key (F-017). An erased workspace neither
+/// seals nor opens.
 pub(crate) struct CellSealer<R: Runtime, V>(pub(super) Arc<Inner<R, V>>);
 
 impl<R: Runtime, V: Send + Sync> Sealer for CellSealer<R, V> {
     async fn seal(&self, owner: SealOwner, plaintext: &[u8]) -> Result<Sealed, PortError> {
         let SealOwner::Workspace(p) = owner;
-        fstp_pgstore::seal_workspace(
-            &self.0.keys,
-            &self.0.cell,
-            &p.raw().to_be_bytes(),
-            plaintext,
-        )
-        .map(Sealed)
-        .map_err(|_| PortError::Unavailable)
+        self.0
+            .erasure
+            .seal_workspace(p.raw().to_be_bytes(), plaintext.to_vec())
+            .await
+            .map(Sealed)
+            .map_err(|_| PortError::Unavailable)
     }
 
-    /// Opens a value sealed for the same proposal. The AAD binds it, so a
-    /// value of another proposal does not open. The clearance is the
-    /// read's, which the API core checked before it asked.
+    /// Opens a value sealed for the same proposal. The seal context binds
+    /// it, so a value of another proposal does not open. The clearance is
+    /// the read's, which the API core checked before it asked.
     async fn open(
         &self,
         owner: SealOwner,
@@ -258,13 +287,12 @@ impl<R: Runtime, V: Send + Sync> Sealer for CellSealer<R, V> {
     ) -> Result<Vec<u8>, PortError> {
         let _ = clearance;
         let SealOwner::Workspace(p) = owner;
-        fstp_pgstore::open_workspace(
-            &self.0.keys,
-            &self.0.cell,
-            &p.raw().to_be_bytes(),
-            &sealed.0,
-        )
-        .map_err(|_| PortError::Refused)
+        self.0
+            .erasure
+            .open_workspace(p.raw().to_be_bytes(), sealed.0.clone())
+            .await
+            .map(|t| t.to_vec())
+            .map_err(|_| PortError::Refused)
     }
 }
 
@@ -308,6 +336,22 @@ impl<R: Runtime, V: Send + Sync> Workspaces for CellWorkspaces<R, V> {
             .workspace(proposal.raw().to_be_bytes(), &slot_name(slot))
             .await
             .map(|o| o.map(Sealed))
+            .map_err(|_| PortError::Unavailable)
+    }
+
+    /// F-017 (ADR-026 section "Written by the M10 fix lane"): the erasure
+    /// task records the request, destroys the workspace key in its batch,
+    /// then deletes the rows through the keys role.
+    async fn erase(
+        &self,
+        proposal: ProposalId,
+        cause: ErasureCause,
+        by: AccountId,
+    ) -> Result<bool, PortError> {
+        self.0
+            .erasure
+            .erase_workspace(proposal.raw().to_be_bytes(), cause.code(), by)
+            .await
             .map_err(|_| PortError::Unavailable)
     }
 }

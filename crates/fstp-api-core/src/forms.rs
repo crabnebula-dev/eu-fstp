@@ -713,6 +713,16 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::M3Port(PortKind::MarkMailboxRead) => BodyRule::Exactly(&["message"]),
         // ADR-030: the caller's own theme choice.
         OpKind::M3Port(PortKind::SetTheme) => BodyRule::Exactly(&["theme"]),
+        // F-079, ADR-038: the invited address, and nothing about an account.
+        OpKind::M3Port(PortKind::InviteTeamMember | PortKind::InviteGuardian) => {
+            BodyRule::Exactly(&["email"])
+        }
+        // F-079, ADR-038: the invitation is named by its path only.
+        OpKind::M3Port(
+            PortKind::WithdrawTeamInvitation
+            | PortKind::AcceptTeamInvitation
+            | PortKind::DeclineTeamInvitation,
+        ) => BodyRule::Empty,
         OpKind::M3Port(PortKind::AcknowledgeNegotiationNotice) => {
             BodyRule::Exactly(&["notice_version"])
         }

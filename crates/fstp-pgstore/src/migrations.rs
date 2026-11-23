@@ -91,6 +91,13 @@ pub const MIGRATIONS: &[Migration] = &[
         "doc_blob_erasure",
         include_str!("../migrations/app/0014_doc_blob_erasure.sql"),
     ),
+    // M10 fix lane (F-017, ADR-026): per-workspace erasure keys. The keys
+    // role deletes an erased workspace's rows.
+    Migration::new(
+        15,
+        "workspace_erasure",
+        include_str!("../migrations/app/0015_workspace_erasure.sql"),
+    ),
 ];
 
 #[cfg(test)]

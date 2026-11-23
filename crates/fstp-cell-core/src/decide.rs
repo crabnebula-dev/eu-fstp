@@ -288,14 +288,16 @@ impl Attest {
 
 /// The account an M2 command binds: `GrantRole::account`,
 /// `AddTeamMember::account` or `AddGuardian::account`, and the actor for
-/// `CreateDraft` (`fstp_domain::Ctx::binds_tenant_admin`).
+/// `CreateDraft` and `AcceptTeamInvitation` (`fstp_domain::Ctx::binds_tenant_admin`).
 fn bound_account(actor: AccountId, cmd: &fstp_engine::Command) -> Option<AccountId> {
     use fstp_domain::Command as C;
     match cmd {
         fstp_engine::Command::Core(C::GrantRole { account, .. })
         | fstp_engine::Command::Core(C::AddTeamMember { account, .. })
         | fstp_engine::Command::Core(C::AddGuardian { account, .. }) => Some(*account),
-        fstp_engine::Command::Core(C::CreateDraft { .. }) => Some(actor),
+        // F-079, ADR-038: the accepting account binds itself.
+        fstp_engine::Command::Core(C::CreateDraft { .. })
+        | fstp_engine::Command::Core(C::AcceptTeamInvitation { .. }) => Some(actor),
         _ => None,
     }
 }

@@ -169,6 +169,8 @@ mod publicity;
 mod tenant;
 // SA-11: the team and member pages and the display name.
 pub(crate) mod team;
+// F-079, ADR-038: team invitations the invitee accepts.
+pub(crate) mod team_invite;
 // ADR-023: the coordinator unmask, its parties read and its audit read.
 mod unmask;
 
@@ -693,7 +695,8 @@ fn binds_admin<P: CellPorts>(
             | Core::AddTeamMember { account, .. }
             | Core::AddGuardian { account, .. },
         ) => *account,
-        Command::Core(Core::CreateDraft { .. }) => actor,
+        // F-079, ADR-038: the accepting account binds itself.
+        Command::Core(Core::CreateDraft { .. } | Core::AcceptTeamInvitation { .. }) => actor,
         _ => return false,
     };
     tenant::holds_tenant_operations(ports, state, bound)
@@ -1415,6 +1418,14 @@ async fn command<P: Seams>(
     // Step 6.
     if verdict == ChannelVerdict::Prepare {
         return prepare(call, op, account).await;
+    }
+    // ADR-023 reading 7, M10 F-058: an unmask is recorded only when the
+    // vault port can open its release page, so `audit.unmasks` lists no
+    // unmask that showed nothing, and no step-up is spent on one.
+    if form.kind == fstp_domain::command::CommandKind::UnmaskParty
+        && !call.ports.vault().releases_unmask().await
+    {
+        return Err(call.refuse(ApiError::refused(ErrorCode::Unavailable, "oracle")));
     }
     // Step 7.
     let proof = if call.spec.high_risk && call.caller.via() == Via::Web {
@@ -2282,6 +2293,21 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
         }
         // Lane inv, J2: the invitation landing, by its link token only.
         ReadKind::GetInvitation => ReadModel::Invitation(people::landing(call, op).await?),
+        // F-079, ADR-038: the lead's team invitations, and the caller's own
+        // open ones. Addresses reach the web only (I-86).
+        ReadKind::ListTeamInvitations | ReadKind::ListMyTeamInvitations => {
+            let Some(a) = account else {
+                return Err(call.refuse(ApiError::refused(ErrorCode::Unauthenticated, "actor")));
+            };
+            if call.caller.via() != Via::Web {
+                return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-86")));
+            }
+            ReadModel::TeamInvitations(if kind == ReadKind::ListTeamInvitations {
+                team_invite::lead_list(call, op, &clearance).await?
+            } else {
+                team_invite::own_list(call, a).await?
+            })
+        }
         // Lane j4, ADR-015 amendment of 2026-11-06 (section 8.1, O-58, I-97).
         ReadKind::GetRouteMap => {
             let p = proposal_param(call, op)?;
@@ -2780,6 +2806,16 @@ async fn m3_port<P: Seams>(
         PortKind::BeginInvitationVerification => {
             return people::begin_verification(call, op, account).await;
         }
+        // F-079, ADR-038: team invitations and their answers.
+        PortKind::InviteTeamMember => return team_invite::invite(call, op, account, false).await,
+        PortKind::InviteGuardian => return team_invite::invite(call, op, account, true).await,
+        PortKind::WithdrawTeamInvitation => return team_invite::withdraw(call, op, account).await,
+        PortKind::AcceptTeamInvitation => {
+            return team_invite::answer(call, op, account, true).await;
+        }
+        PortKind::DeclineTeamInvitation => {
+            return team_invite::answer(call, op, account, false).await;
+        }
         _ => {}
     }
     let id = |name: &str| {
@@ -3018,7 +3054,12 @@ async fn m3_port<P: Seams>(
         // Served before the step-up, above.
         PortKind::AcceptInvitation
         | PortKind::RequestPrecheck
-        | PortKind::BeginInvitationVerification => {
+        | PortKind::BeginInvitationVerification
+        | PortKind::InviteTeamMember
+        | PortKind::InviteGuardian
+        | PortKind::WithdrawTeamInvitation
+        | PortKind::AcceptTeamInvitation
+        | PortKind::DeclineTeamInvitation => {
             return Err(call.refuse(ApiError::refused(ErrorCode::Refused, "R-AC-01")));
         }
     };
@@ -3084,16 +3125,10 @@ async fn m3_port<P: Seams>(
                 .await,
             "SoD-08",
         ),
-        PortCall::RequestErasure(cause, grant) => {
-            use crate::port::TextStore as _;
-            done(
-                call.ports
-                    .texts()
-                    .request_erasure(account, cause, grant, call.now, proof_of(proof))
-                    .await,
-                "ADR-007",
-            )
-        }
+        PortCall::RequestErasure(cause, grant) => done(
+            erasure::request_erasure(call, account, cause, grant, proof_of(proof)).await,
+            "ADR-007",
+        ),
         PortCall::EraseDocument(p, blob, reason) => done(
             erasure::erase_document(call, account, p, blob, &reason).await,
             "ADR-007",
@@ -3561,13 +3596,103 @@ async fn mask_spans<P: Seams>(
     .await
 }
 
+/// The words of a display name that the mask treats as handles (M10
+/// F-006, ADR-033, Daniel 2026-11-23): the name whole, and each word of
+/// two characters or more. A word in lowercase letters only is no handle
+/// when another word has a capital letter, so a particle such as "van"
+/// masks nothing alone. Interim, pending Daniel.
+pub(crate) fn name_handles(name: &str) -> Vec<String> {
+    let name = name.trim();
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 2)
+        .collect();
+    let capital = words.iter().any(|w| w.chars().any(char::is_uppercase));
+    let mut out: Vec<String> = Vec::new();
+    if !name.is_empty() {
+        out.push(name.to_owned());
+    }
+    for w in words {
+        if capital && w.chars().all(char::is_lowercase) {
+            continue;
+        }
+        if !out.iter().any(|h| h == w) {
+            out.push(w.to_owned());
+        }
+    }
+    out
+}
+
+/// The handles of each account of `team`, in team order (M10 F-006,
+/// ADR-033): the words of the display name the cell holds for it, none
+/// for an account without one. They come from the team's own accounts
+/// and never reach a reader. A store that cannot answer fails the caller
+/// closed, so no text leaves the cell.
+async fn team_handles<P: Seams>(
+    call: &Call<'_, P>,
+    team: &[AccountId],
+) -> Result<Vec<Vec<String>>, ApiError> {
+    if team.is_empty() {
+        return Ok(Vec::new());
+    }
+    let names = call
+        .ports
+        .texts()
+        .mask_handles(team.to_vec())
+        .await
+        .map_err(|_| ApiError::refused(ErrorCode::Unavailable, "I-17"))?;
+    Ok(team
+        .iter()
+        .map(|a| names.get(a).map(|n| name_handles(n)).unwrap_or_default())
+        .collect())
+}
+
+/// `spans` with the spans of the cell-held `handles` of `text` added, in
+/// text order, overlaps joined into one span (M10 F-006, ADR-033). A
+/// handle span names its account's place in the team, as a vault span
+/// does. `None` when a span does not fit the wire offsets, so the caller
+/// fails closed.
+fn with_handles(
+    text: &str,
+    spans: Vec<crate::port::NameMaskSpan>,
+    handles: &[Vec<String>],
+) -> Option<Vec<crate::port::NameMaskSpan>> {
+    let mut all = spans;
+    for (i, hs) in handles.iter().enumerate() {
+        if hs.is_empty() {
+            continue;
+        }
+        let person = u32::try_from(i).ok()?;
+        for (a, b) in fstp_assess::handle_spans(text, hs) {
+            all.push(crate::port::NameMaskSpan {
+                start: u32::try_from(a).ok()?,
+                end: u32::try_from(b).ok()?,
+                person,
+                birth_date: false,
+            });
+        }
+    }
+    all.sort_by_key(|s| (s.start, std::cmp::Reverse(s.end)));
+    let mut out: Vec<crate::port::NameMaskSpan> = Vec::with_capacity(all.len());
+    for s in all {
+        match out.last_mut() {
+            Some(last) if s.start < last.end => last.end = last.end.max(s.end),
+            _ => out.push(s),
+        }
+    }
+    Some(out)
+}
+
 /// `texts` with the team's verified names and dates of birth replaced by
 /// `[PERSON-n]` and `[BIRTHDATE-n]`, `n` the person's place in the team
 /// counted from one, the same in every text (M7 Q4, ADR-033 record of lane
 /// L31). It runs before any text leaves the cell for an agent. A vault
 /// that cannot mask refuses the call, so no text leaves the cell. The
 /// refusal is not audited again: the content read that precedes it
-/// carries the call's one audit entry.
+/// carries the call's one audit entry. The names the cell holds for the
+/// team are masked as `[PERSON-n]` too (M10 F-006). Only Judging and
+/// Operations readers reach it: the applicant side never asks the vault
+/// (M10 F-005).
 async fn mask_for_agent<P: Seams>(
     call: &Call<'_, P>,
     p: ProposalId,
@@ -3577,8 +3702,13 @@ async fn mask_for_agent<P: Seams>(
     let spans = mask_spans(call.ports, &team, &texts)
         .await
         .map_err(|()| ApiError::refused(ErrorCode::Unavailable, "I-17"))?;
+    // M10 F-006: a team with no verified identity gives the vault nothing
+    // to mask, so the names the cell holds for it are masked too.
+    let handles = team_handles(call, &team).await?;
     let mut out = Vec::with_capacity(texts.len());
     for (t, spans) in texts.iter().zip(spans) {
+        let spans = with_handles(t, spans, &handles)
+            .ok_or_else(|| ApiError::refused(ErrorCode::Unavailable, "I-17"))?;
         let mut masked = String::with_capacity(t.len());
         let mut at = 0usize;
         for s in spans {
@@ -3602,6 +3732,24 @@ fn state_name(state: &EngineState, p: ProposalId) -> &'static str {
     fstp_domain::view::proposal_state(&state.core, p).map_or("UNKNOWN", |t| t.spec_name())
 }
 
+/// Whether the caller reads `p` from the applicant side (M10 F-005,
+/// I-86): the read rule admitted it as the team or the former team, or it
+/// holds a Receiving binding on `p`. Such a read never asks the vault to
+/// mask.
+fn receiving_reader<P: Seams>(
+    call: &Call<'_, P>,
+    p: ProposalId,
+    clearance: &fstp_access::ReadClearance,
+) -> bool {
+    use fstp_access::ReadRule;
+    matches!(
+        clearance.rule(),
+        ReadRule::Team | ReadRule::FormerTeam | ReadRule::FormerAuthor | ReadRule::Lead
+    ) || call
+        .account()
+        .is_some_and(|a| team_of(&call.state, p).contains(&a))
+}
+
 /// A content read (R-AU-01, R-AC-01, I-03): the domain `ReadContent`
 /// appends a `ContentRead` and re-runs every guard, then the submitted
 /// content is returned. The append carries the call's one audit entry.
@@ -3620,6 +3768,15 @@ async fn content_read<P: Seams>(
     // team reads its latest workspace (R-AC-01).
     let draft = fstp_domain::view::proposal_state(&call.state.core, p)
         == Some(fstp_domain::StateTag::Draft);
+    // M10 F-005 (I-86, I-17, TH-07; Daniel 2026-11-23): the applicant side
+    // never reads through the vault mask, or a team member could write
+    // candidates into the text and learn a teammate's verified attributes
+    // from the answer. Through MCP its draft read is refused, and the team
+    // reads its drafts in the web. Its other reads are served unmasked.
+    let applicant_side = receiving_reader(call, p, clearance);
+    if draft && applicant_side && call.caller.via() == Via::Mcp {
+        return Err(call.refuse(ApiError::refused(ErrorCode::NotExposed, "I-86")));
+    }
     let content = if draft {
         workspace_of(call, p, clearance)
             .await
@@ -3635,7 +3792,14 @@ async fn content_read<P: Seams>(
     // of the domain, so the vault is asked only for a read that happens. A
     // vault that cannot mask then refuses the call, and no text leaves.
     let seq = append_content_read(call, p).await?;
-    let (title, text) = if call.caller.via() == Via::Mcp {
+    let (title, text) = if call.caller.via() == Via::Mcp && applicant_side {
+        // M10 F-005: the team reads its own text, neutralised for its
+        // agent, and the vault is never asked.
+        (
+            integrity::for_agent(content.title),
+            integrity::for_agent(content.narrative),
+        )
+    } else if call.caller.via() == Via::Mcp {
         let masked = mask_for_agent(
             call,
             p,
@@ -4903,6 +5067,56 @@ mod tests {
 
     use super::*;
     use fstp_json::ToJson;
+
+    /// M10 F-006, I-17 (ADR-033): a display name is a handle whole and by
+    /// each word of two characters or more. A lowercase particle beside a
+    /// capitalised word is no handle. Synthetic names only.
+    #[test]
+    fn m10_h07_i17_a_display_name_gives_its_words_as_handles() {
+        assert_eq!(
+            name_handles(" Maradiné van Velinorra-Quíst "),
+            [
+                "Maradiné van Velinorra-Quíst",
+                "Maradiné",
+                "Velinorra",
+                "Quíst"
+            ]
+        );
+        assert_eq!(
+            name_handles("oskvy vynaezor"),
+            ["oskvy vynaezor", "oskvy", "vynaezor"]
+        );
+        assert_eq!(name_handles("J Oskvy"), ["J Oskvy", "Oskvy"]);
+        assert!(name_handles("  ").is_empty());
+    }
+
+    /// M10 F-006, I-17 (ADR-033): the cell-held handles add `[PERSON-n]`
+    /// spans of the account's place in the team beside the vault's, in
+    /// text order, and an overlap becomes one span, so no part of either
+    /// stays unmasked.
+    #[test]
+    fn m10_h07_i17_handle_spans_join_the_vault_spans() {
+        let text = "Lead Oskvy Vynaezor, with Isrenne.";
+        let vault = vec![crate::port::NameMaskSpan {
+            start: 11,
+            end: 19,
+            person: 0,
+            birth_date: false,
+        }];
+        let handles = vec![Vec::new(), name_handles("Isrenne"), name_handles("Oskvy")];
+        let out = with_handles(text, vault, &handles).unwrap();
+        let got: Vec<(u32, u32, u32)> = out.iter().map(|s| (s.start, s.end, s.person)).collect();
+        assert_eq!(got, [(5, 10, 2), (11, 19, 0), (26, 33, 1)]);
+        let overlap = vec![crate::port::NameMaskSpan {
+            start: 8,
+            end: 19,
+            person: 0,
+            birth_date: false,
+        }];
+        let out = with_handles(text, overlap, &handles).unwrap();
+        let got: Vec<(u32, u32, u32)> = out.iter().map(|s| (s.start, s.end, s.person)).collect();
+        assert_eq!(got, [(5, 19, 2), (26, 33, 1)]);
+    }
 
     /// R-EV-05, P-11 (lane m4/author-reads): each entry of a stage 2 thread
     /// is placed after the questions asked before it. Two answers after

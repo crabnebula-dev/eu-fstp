@@ -1551,6 +1551,11 @@ fn receiving_target(state: &State, cmd: &Command, ctx: &Ctx) -> Option<(AccountI
         | Command::AddGuardian {
             proposal, account, ..
         } => crate::proposal::draft::proposal_call(state, *proposal).map(|c| (*account, c)),
+        // F-079, ADR-038: the accepting account binds itself.
+        Command::AcceptTeamInvitation { proposal, .. } => {
+            let account = crate::policy::actor_account(ctx).ok()?;
+            crate::proposal::draft::proposal_call(state, *proposal).map(|c| (account, c))
+        }
         _ => None,
     }
 }
@@ -1793,22 +1798,12 @@ fn plan_rechecks(state: &State, cmd: &Command, ctx: &Ctx) -> Rechecks {
         }
         | Command::AddGuardian {
             proposal, account, ..
-        } => {
-            let mut team = state.roster.receiving_accounts(*proposal);
-            team.insert(*account);
-            plan.conflicts = tracked_pairs(state)
-                .into_iter()
-                .filter(|(_, p)| p == proposal)
-                .map(|(a, p)| {
-                    let q = Query::HasConflict {
-                        reviewer: a,
-                        team: team.clone(),
-                    };
-                    (a, p, q)
-                })
-                .collect();
-            plan.proximity =
-                live_proximity_checks(state, |_| team.clone(), Some(*proposal), ctx.now);
+        } => joining(state, *proposal, *account, ctx, &mut plan),
+        // F-079, ADR-038: the accepting account joins the team.
+        Command::AcceptTeamInvitation { proposal, .. } => {
+            if let Ok(account) = crate::policy::actor_account(ctx) {
+                joining(state, *proposal, account, ctx, &mut plan);
+            }
         }
         Command::EditPolicy { .. } => {
             if let Some(change) = crate::policy::live_change(state, cmd)
@@ -1831,6 +1826,33 @@ fn plan_rechecks(state: &State, cmd: &Command, ctx: &Ctx) -> Rechecks {
         _ => {}
     }
     plan
+}
+
+/// The rechecks of `account` joining the team of `proposal`: the tracked
+/// pairs and reviewer assignments of the proposal against the team with
+/// the new account. `AddTeamMember`, `AddGuardian` and, since F-079,
+/// `AcceptTeamInvitation` share it.
+fn joining(
+    state: &State,
+    proposal: ProposalId,
+    account: AccountId,
+    ctx: &Ctx,
+    plan: &mut Rechecks,
+) {
+    let mut team = state.roster.receiving_accounts(proposal);
+    team.insert(account);
+    plan.conflicts = tracked_pairs(state)
+        .into_iter()
+        .filter(|(_, p)| *p == proposal)
+        .map(|(a, p)| {
+            let q = Query::HasConflict {
+                reviewer: a,
+                team: team.clone(),
+            };
+            (a, p, q)
+        })
+        .collect();
+    plan.proximity = live_proximity_checks(state, |_| team.clone(), Some(proposal), ctx.now);
 }
 
 /// The account and proposal of every Receiving binding that `batch` voids under I-06.

@@ -163,6 +163,7 @@ fn put_all(r: &KeystoreRows) -> KeystoreChanges {
         requested: r.requested.iter().copied().map(Change::Put).collect(),
         displays: r.displays.iter().copied().map(Change::Put).collect(),
         blobs: Vec::new(),
+        workspaces: Vec::new(),
     }
 }
 
