@@ -152,7 +152,9 @@ fn adr007_document_erasure_refusals() {
             ids: vec![DOC_2],
             cause: 2,
             by: ADMIN,
-            kind: 4,
+            // Kind 4 is a workspace since the M10 fix lane (F-017), so the
+            // kind outside the closed list is 9.
+            kind: 9,
             reason: None,
         },
     ] {
@@ -201,4 +203,83 @@ fn i24_document_erasure_round_trips() {
     assert_eq!(decode_cell_record(&encode_cell_record(&r)).unwrap(), r);
     let c = CellCommand::Key(document(vec![DOC]));
     assert_eq!(decode_cell_command(&encode_cell_command(&c)).unwrap(), c);
+}
+
+/// F-017, R-KY-02, I-81, ADR-007 (M10 fix lane): a workspace is a keystore
+/// kind of its own. The erasure runner records its request with the
+/// proposal id, the destruction of its epoch completes it, and the same
+/// refusals hold as for a document: a ledger text, a second request and
+/// any decider but the runner. The kind round trips through the codec.
+#[test]
+fn m10_f017_workspace_kind_is_a_keystore_kind() {
+    use fstp_cell_core::ERASURE_KIND_WORKSPACE;
+    const PROPOSAL: [u8; 16] = [0xF1; 16];
+    assert_eq!(ERASURE_KIND_WORKSPACE, 4);
+    assert!(KEYSTORE_ERASURE_KINDS.contains(&ERASURE_KIND_WORKSPACE));
+    assert!(
+        ![
+            ERASURE_KIND_LEDGER_TEXT,
+            ERASURE_KIND_DISPLAY_NAME,
+            ERASURE_KIND_DOCUMENT
+        ]
+        .contains(&ERASURE_KIND_WORKSPACE),
+        "a kind of its own"
+    );
+    let workspace = |ids: Vec<[u8; 16]>| KeyCommand::RecordKeystoreErasure {
+        ids,
+        cause: 1,
+        by: ADMIN,
+        kind: ERASURE_KIND_WORKSPACE,
+        reason: None,
+    };
+    let s = state(vec![]);
+    let records = decide_runner(&s, workspace(vec![PROPOSAL]), at(5)).unwrap();
+    assert_eq!(
+        records,
+        vec![CellRecord::Key(KeyRecord::KeystoreErasureRequested {
+            ids: vec![PROPOSAL],
+            cause: 1,
+            by: ADMIN,
+            kind: ERASURE_KIND_WORKSPACE,
+            reason: None,
+        })]
+    );
+    let r = records[0].clone();
+    assert_eq!(decode_cell_record(&encode_cell_record(&r)).unwrap(), r);
+    let s = state(vec![(at(5), cid(3), records.clone())]);
+    let e = s.erasure(PROPOSAL).expect("the entry");
+    assert_eq!((e.kind, e.completed_at), (ERASURE_KIND_WORKSPACE, None));
+    assert!(decide_runner(&s, workspace(vec![PROPOSAL]), at(6)).is_err());
+    assert!(decide_runner(&s, workspace(vec![LEDGER_TEXT]), at(6)).is_err());
+    let account = CellCtx {
+        actor: ADMIN,
+        at: at(6).micros(),
+    };
+    let cmd = CellCommand::Key(workspace(vec![[0xF2; 16]]));
+    assert!(decide(&s, &cmd, &account, &Answers::new()).is_err());
+    let destroyed = (
+        at(9),
+        cid(4),
+        vec![CellRecord::Key(KeyRecord::EpochDestroyed {
+            epoch: 3,
+            receipt: [0xF3; 32],
+        })],
+    );
+    let s = state(vec![(at(5), cid(3), records.clone()), destroyed.clone()]);
+    let completed = decide_runner(
+        &s,
+        KeyCommand::RecordErasuresCompleted {
+            epoch: 3,
+            ids: vec![PROPOSAL],
+        },
+        at(9),
+    )
+    .unwrap();
+    let s = state(vec![
+        (at(5), cid(3), records),
+        destroyed,
+        (at(9), cid(5), completed),
+    ]);
+    let e = s.erasure(PROPOSAL).unwrap();
+    assert_eq!((e.destroyed_epoch, e.completed_at), (Some(3), Some(at(9))));
 }

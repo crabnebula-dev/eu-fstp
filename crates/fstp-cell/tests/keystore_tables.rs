@@ -215,6 +215,9 @@ struct Tables {
     displays: BTreeMap<[u8; 16], DisplayNameRow>,
     /// The `doc.blob` rows deleted, by data key, in write order (lane L39).
     blob_deletes: Vec<[u8; 16]>,
+    /// The proposals whose `workspace.drafts` rows were deleted, in write
+    /// order (F-017, M10 fix lane).
+    workspace_deletes: Vec<[u8; 16]>,
 }
 
 fn apply_to<K: Ord + Clone, R: Clone>(
@@ -277,6 +280,7 @@ impl Tables {
             }
         }
         self.blob_deletes.extend(c.blobs.iter().copied());
+        self.workspace_deletes.extend(c.workspaces.iter().copied());
     }
 
     fn rows(&self) -> KeystoreRows {
@@ -1211,4 +1215,208 @@ fn i81_l39_blob_row_deleted_after_completion_and_again_at_start() {
         c.runner.run_until_idle().await.unwrap();
         assert_eq!(c.sink.tables().blob_deletes, vec![DOC, DOC]);
     });
+}
+
+// ---------------------------------------------------------------------------
+// F-017 (M10 fix lane, ADR-026 section "Written by the M10 fix lane"): the
+// workspace of a proposal under a key of its own.
+
+/// The synthetic proposal whose workspace the F-017 test erases, and a
+/// live one beside it.
+const ERASED_PROPOSAL: [u8; 16] = [0x17; 16];
+const LIVE_PROPOSAL: [u8; 16] = [0x18; 16];
+const FIRST_SAVE: &[u8] = b"synthetic draft text of F-017, first save";
+const SECOND_SAVE: &[u8] = b"synthetic draft text of F-017, second save";
+const LIVE_SAVE: &[u8] = b"synthetic draft text of a live proposal";
+
+/// The sealed workspace value `stored` of `proposal` as an image text:
+/// its data key id and its object are the proposal id, and its blob's
+/// context names generation 0, as a document's does.
+fn workspace_text(proposal: [u8; 16], stored: &[u8]) -> snapshot::ImageText {
+    snapshot::ImageText {
+        id: proposal,
+        dek: proposal,
+        generation: 0,
+        blob: stored.to_vec(),
+    }
+}
+
+/// What a holder of the rows of `images` opens of `stored`, with every
+/// seal key that custody still unwraps from their root rows: a backup of
+/// the keystore tables beside the live custody (TH-30).
+async fn open_from_rows(
+    sim: &Custodian,
+    images: &[&snapshot::KeystoreImage],
+    proposal: [u8; 16],
+    stored: &[u8],
+) -> Option<Vec<u8>> {
+    let mut seals = Vec::new();
+    for image in images {
+        for r in &image.roots {
+            if let Ok(s) = sim
+                .unwrap(
+                    &root_ref(CELL, r),
+                    &wrapped_of(r),
+                    &seal_key_aad(CELL, r.epoch),
+                )
+                .await
+            {
+                seals.push(s);
+            }
+        }
+    }
+    snapshot::open_text(CELL, images, &seals, &workspace_text(proposal, stored))
+}
+
+/// The checks of one durable state of the F-017 test, after a restart.
+async fn check_workspace_state(c: &Cell, backup: &snapshot::KeystoreImage, saves: &[Vec<u8>], k: usize) {
+    let state = c.engine.state();
+    let entry = state
+        .erasure(ERASED_PROPOSAL)
+        .unwrap_or_else(|| panic!("F-017: no log entry after step {k}"));
+    assert_eq!(
+        entry.kind,
+        fstp_cell_core::ERASURE_KIND_WORKSPACE,
+        "after step {k}"
+    );
+    for stored in saves {
+        assert!(
+            matches!(
+                c.runner.open_workspace(ERASED_PROPOSAL, stored),
+                Err(OpenRefusal::Erased)
+            ),
+            "F-017: the workspace opened after its request, step {k}"
+        );
+    }
+    let deleted = c
+        .sink
+        .tables()
+        .workspace_deletes
+        .contains(&ERASED_PROPOSAL);
+    if deleted {
+        assert!(
+            entry.destroyed_epoch.is_some(),
+            "I-81: the rows went before the key died, step {k}"
+        );
+    }
+    if entry.destroyed_epoch.is_some() || entry.completed_at.is_some() {
+        // Reported done: neither the live rows nor the backup open any
+        // save with any key that custody still gives (TH-30, I-81).
+        let now = c.runner.keystore().image().unwrap();
+        for stored in saves {
+            assert_eq!(
+                open_from_rows(&c.sim, &[backup, &now], ERASED_PROPOSAL, stored).await,
+                None,
+                "TH-30: a draft text with a live key after step {k}"
+            );
+        }
+        assert!(deleted, "F-017: the rows stayed after the restart, step {k}");
+    }
+    assert!(
+        !c.sink.tables().workspace_deletes.contains(&LIVE_PROPOSAL),
+        "a live workspace lost its rows, step {k}"
+    );
+}
+
+/// F-017, TH-30, I-81, R-KY-02 (ADR-026 section "Written by the M10 fix
+/// lane"): a proposal's workspace is sealed under a key of its own. Its
+/// erasure is recorded first, after which nothing seals or opens it. The
+/// batch destroys its key, `ErasuresCompleted` reports it done, and only
+/// then are its rows deleted, again at each start. The process stops
+/// after every step of the batch. At each such point, once the log
+/// reports the erasure done, neither the live rows nor a backup taken
+/// before the erasure open any save with a key that custody still gives.
+/// A live workspace beside it keeps its key and its rows.
+#[test]
+fn m10_f017_th30_an_erased_draft_text_has_no_live_key_at_any_crash_point() {
+    for k in 0..=BATCH_STEPS {
+        block_on(|rt| async move {
+            let mut c = cell(&rt).await;
+            let first = c
+                .runner
+                .seal_workspace(ERASED_PROPOSAL, FIRST_SAVE)
+                .await
+                .unwrap();
+            let second = c
+                .runner
+                .seal_workspace(ERASED_PROPOSAL, SECOND_SAVE)
+                .await
+                .unwrap();
+            let live = c
+                .runner
+                .seal_workspace(LIVE_PROPOSAL, LIVE_SAVE)
+                .await
+                .unwrap();
+            c.runner.run_until_idle().await.unwrap();
+            assert_ne!(first, second, "a fresh nonce for each save");
+            assert_eq!(
+                c.runner
+                    .open_workspace(ERASED_PROPOSAL, &first)
+                    .unwrap()
+                    .as_slice(),
+                FIRST_SAVE
+            );
+            assert!(
+                c.runner.open_workspace(LIVE_PROPOSAL, &first).is_err(),
+                "a value of another proposal opened"
+            );
+            let backup = c.runner.keystore().image().unwrap();
+            // Teeth: before the erasure, the rows and a live root open it.
+            assert_eq!(
+                open_from_rows(&c.sim, &[&backup], ERASED_PROPOSAL, &first)
+                    .await
+                    .as_deref(),
+                Some(FIRST_SAVE)
+            );
+            assert!(
+                !c.runner
+                    .erase_workspace([0x19; 16], 2, ADMIN)
+                    .await
+                    .unwrap(),
+                "a proposal with no workspace"
+            );
+            assert!(
+                c.runner
+                    .erase_workspace(ERASED_PROPOSAL, 2, ADMIN)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                c.runner
+                    .seal_workspace(ERASED_PROPOSAL, b"synthetic late save")
+                    .await
+                    .is_err(),
+                "F-017: a save after the request"
+            );
+            for _ in 0..k {
+                if c.runner.step().await.unwrap().is_none() {
+                    break;
+                }
+            }
+            // The process stops here, and a new one loads the tables.
+            c.restart().await;
+            let saves = vec![first.clone(), second.clone()];
+            check_workspace_state(&c, &backup, &saves, k).await;
+            c.runner.run_until_idle().await.unwrap();
+            check_workspace_state(&c, &backup, &saves, k).await;
+            let entry = c.engine.state().erasure(ERASED_PROPOSAL).unwrap();
+            assert!(entry.destroyed_epoch.is_some(), "R-KY-02: after step {k}");
+            assert_eq!(c.sim.live_roots(), 1, "I-81: after step {k}");
+            // A repeated request is a no-op that still answers true.
+            assert!(
+                c.runner
+                    .erase_workspace(ERASED_PROPOSAL, 2, ADMIN)
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(
+                c.runner
+                    .open_workspace(LIVE_PROPOSAL, &live)
+                    .unwrap()
+                    .as_slice(),
+                LIVE_SAVE,
+                "a live workspace after step {k}"
+            );
+        });
+    }
 }
