@@ -61,8 +61,9 @@ test.describe('mail through the dispatcher', () => {
   test('i27_irc_concern_mail_holds_ids_and_a_link_only', async ({ browser }) => {
     const { cell, door } = await scene(browser, '/demo/applicant?at=DEFERRED_AFTER_CONCERN');
     // Q5 (2026-11-23): the scene's other outcomes send their own mails too,
-    // so the concern mail is picked by its template.
-    const concern = (x: { text: string; phase: string }): boolean => x.phase === 'SENT' && x.text.includes('template irc-concern');
+    // so the concern mail is picked by its subject (the demo list names a
+    // template by its numeric code, not its id).
+    const concern = (x: { text: string; phase: string }): boolean => x.phase === 'SENT' && x.text.includes(': a notice is waiting');
     const rows = await untilRows(door.page, cell, 'the concern mail is sent', (r) => r.some(concern));
     const sent = rows.find(concern);
     expect(sent?.raw, 'the row links the raw message').toBeTruthy();

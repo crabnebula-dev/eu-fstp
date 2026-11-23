@@ -6,7 +6,9 @@
 //! - `compile` never panics, and a refusal formats;
 //! - `compile` is deterministic;
 //! - an accepted spec round-trips: `decompile` of what `compile` returned
-//!   is the spec again;
+//!   is the spec again, except that a P-53 pin of a version the profile
+//!   replaces comes back as the profile's own pin (ADR-036 section 8:
+//!   v1 in, v2 out), and no compiled P-53 names a replaced version;
 //! - gaps round-trip: with any further fields unset, the decompiled spec
 //!   compiles, names exactly those fields as unset, and decompiles back.
 
@@ -18,7 +20,8 @@ use std::sync::OnceLock;
 use fstp_domain::id::{PolicyVersionId, ProgrammeId};
 use fstp_json::{Value, parse_str, to_compact};
 use fstp_programme::{
-    CompileIds, FIELDS, FieldId, FunderProfile, ProgrammeSpec, compile, decode_spec, decompile,
+    CompileIds, FIELDS, Field, FieldId, FunderProfile, ProgrammeSpec, compile, decode_spec,
+    decompile,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -178,8 +181,22 @@ fuzz_target!(|data: &[u8]| {
         Some(&compiled),
         "compile is not deterministic"
     );
+    // ADR-036 section 8: a pin of a replaced version compiles to the
+    // profile's own pin, and nothing else about the spec changes.
+    let mut want = spec.clone();
+    if let Field::Set(p) = &want.funder.p53_funder_profile
+        && profile.replaces(p)
+    {
+        want.funder.p53_funder_profile = Field::Set(profile.reference());
+    }
     let back = decompile(&compiled.policy, &compiled.artefacts, &compiled.unset);
-    assert_eq!(back, spec, "decompile does not invert compile");
+    assert_eq!(back, want, "decompile does not invert compile");
+    if let Field::Set(p) = &back.funder.p53_funder_profile {
+        assert!(
+            !profile.replaces(p),
+            "a compiled P-53 names a replaced version"
+        );
+    }
 
     let mut unset: BTreeSet<FieldId> = compiled.unset.clone();
     for f in FIELDS {
