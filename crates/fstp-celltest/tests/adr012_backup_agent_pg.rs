@@ -488,6 +488,15 @@ fn run_scenario() -> Report {
         fstp_backup::index::newest(&cfg.state_dir, cluster_id).unwrap(),
         entry
     );
+    // ADR-012 record of lane m10/backup-format, row "Start segment": the
+    // index line names the start segment read from the real tar stream's
+    // `backup_label`, which pruning needs.
+    let line = *fstp_backup::index::read_lines(&cfg.state_dir)
+        .unwrap()
+        .last()
+        .unwrap();
+    assert!(line.start.is_some(), "no start segment in the index line");
+    assert!(line.parts.is_some());
 
     // Copy A: the archive up to now.
     let head_a = live_head(&world);

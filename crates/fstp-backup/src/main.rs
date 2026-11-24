@@ -8,7 +8,8 @@
 //!   root, through the `fstp-keyd` console socket;
 //! - `upgrade-keys`: turn a version 1 key file into version 2, bound to a
 //!   writer key, as root, through the console socket;
-//! - `base-backup`: one base backup, from a timer;
+//! - `base-backup`: one base backup, from a timer, then pruning when the
+//!   configuration names a retention;
 //! - `wal-archive <path> <name>`: `archive_command`, `%p %f`;
 //! - `wal-restore <name> <path>`: `restore_command`, `%f %p`;
 //! - `restore <data dir> [<backup id> <size>]`: a restore, as root;

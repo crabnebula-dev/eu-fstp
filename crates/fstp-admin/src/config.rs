@@ -16,6 +16,7 @@
 //!   "tls": {"cert": "...fullchain.pem", "key": "...privkey.pem"},
 //!   "backup": {"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra",
 //!              "bucket": "fstp-backups", "port": 443,
+//!              "keep_days": 35, "keep_min": 5,               interim defaults
 //!              "copies": [{"endpoint": "s3.fr-par.scw.cloud",   at most two
 //!                          "region": "fr-par", "bucket": "fstp-copy"}]},
 //!   "paths": {"bin": "/usr/local/bin", "share": "/usr/share/fstp",
@@ -106,7 +107,18 @@ pub struct Backup {
     /// The further object stores, in order (`backup.copies`). Each gets
     /// every container too (ADR-012 record of lane m10/backup-format).
     pub copies: Vec<BackupStore>,
+    /// Days a base backup is kept at least (`backup.keep_days`).
+    pub keep_days: u32,
+    /// Base backups kept at least, whatever their age
+    /// (`backup.keep_min`).
+    pub keep_min: u32,
 }
+
+/// The default of `backup.keep_days`. Interim, pending Daniel (ADR-012
+/// record of lane m10/backup-format).
+pub const DEFAULT_KEEP_DAYS: u32 = 35;
+/// The default of `backup.keep_min`. Interim, pending Daniel.
+pub const DEFAULT_KEEP_MIN: u32 = 5;
 
 /// One further object store of `backup.copies`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -218,6 +230,8 @@ pub enum Problem {
     BadAgreements,
     /// `backup.copies` is not a list of one or two stores.
     BadCopies,
+    /// `backup.keep_days` or `backup.keep_min` is out of range.
+    BadRetention,
 }
 
 /// A refused configuration: the member, as a dotted path, and what is
@@ -320,6 +334,20 @@ fn optional_path(obj: &Object, name: &str, field: &str) -> Result<Option<PathBuf
     match text(obj, name, field)? {
         None => Ok(None),
         Some(_) => path(Some(obj), name, field, "").map(Some),
+    }
+}
+
+/// A retention value of `backup`: a whole number from 1 to `max`, or
+/// `default` when absent.
+fn retention(b: &Object, name: &str, default: u32, max: u64) -> Result<u32, ConfigError> {
+    match b.get(name) {
+        None => Ok(default),
+        Some(v) => match v.as_u64().filter(|n| (1..=max).contains(n)) {
+            Some(n) => {
+                u32::try_from(n).or_else(|_| err(&format!("backup.{name}"), Problem::BadRetention))
+            }
+            None => err(&format!("backup.{name}"), Problem::BadRetention),
+        },
     }
 }
 
@@ -473,11 +501,13 @@ const MAIL: [&str; 6] = [
     "username",
 ];
 const TLS: [&str; 2] = ["cert", "key"];
-const BACKUP: [&str; 7] = [
+const BACKUP: [&str; 9] = [
     "access_key_file",
     "bucket",
     "copies",
     "endpoint",
+    "keep_days",
+    "keep_min",
     "port",
     "region",
     "secret_key_file",
@@ -631,6 +661,8 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
                 access_key_file: first.access_key_file,
                 secret_key_file: first.secret_key_file,
                 copies,
+                keep_days: retention(b, "keep_days", DEFAULT_KEEP_DAYS, 3650)?,
+                keep_min: retention(b, "keep_min", DEFAULT_KEEP_MIN, 1000)?,
             })
         }
     };
@@ -847,6 +879,42 @@ mod tests {
             assert_eq!(
                 problem(&with(&format!(r#""backup":{{{first},"copies":{extra}}}"#))),
                 want,
+                "{extra}"
+            );
+        }
+    }
+
+    /// ADR-012 and ADR-028 records of lane m10/backup-format: retention
+    /// defaults to 35 days and at least 5 base backups, interim, and
+    /// `backup.keep_days` and `backup.keep_min` change it in range.
+    #[test]
+    fn adr028_backup_retention_has_defaults_and_ranges() {
+        let first = r#""endpoint":"s3.gra.io.cloud.ovh.net","region":"gra","bucket":"fstp-b""#;
+        let b = decode(with(&format!(r#""backup":{{{first}}}"#)).as_bytes())
+            .unwrap()
+            .backup
+            .unwrap();
+        assert_eq!((b.keep_days, b.keep_min), (35, 5));
+        let b = decode(
+            with(&format!(
+                r#""backup":{{{first},"keep_days":90,"keep_min":2}}"#
+            ))
+            .as_bytes(),
+        )
+        .unwrap()
+        .backup
+        .unwrap();
+        assert_eq!((b.keep_days, b.keep_min), (90, 2));
+        for (extra, field) in [
+            (r#""keep_days":0"#, "backup.keep_days"),
+            (r#""keep_days":3651"#, "backup.keep_days"),
+            (r#""keep_days":"35""#, "backup.keep_days"),
+            (r#""keep_min":0"#, "backup.keep_min"),
+            (r#""keep_min":1001"#, "backup.keep_min"),
+        ] {
+            assert_eq!(
+                problem(&with(&format!(r#""backup":{{{first},{extra}}}"#))),
+                (field.into(), Problem::BadRetention),
                 "{extra}"
             );
         }

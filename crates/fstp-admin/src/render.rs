@@ -287,12 +287,14 @@ pub fn backup(l: &Layout, c: Cluster, cluster_id: &str) -> Option<String> {
     Some(format!(
         "{{\"cluster\":\"{cluster_id}\",\"credentials_dir\":{},\"database\":{{\"host\":\"127.0.0.1\",\"port\":{}}},\
          \"keyd_socket\":{},\"object_stores\":[{}],\
-         \"pg_bindir\":{},\"state_dir\":{}}}\n",
+         \"pg_bindir\":{},\"retention\":{{\"keep_days\":{},\"keep_min\":{}}},\"state_dir\":{}}}\n",
         p(&l.creds(&format!("backup-{}", c.name()))),
         l.pg_port(c),
         p(&l.keyd_socket(entry, "console")),
         stores.join(","),
         p(&l.cfg.paths.pg_bin),
+        b.keep_days,
+        b.keep_min,
         p(&l.backup_state(c)),
     ))
 }
@@ -329,7 +331,8 @@ mod tests {
     }
 
     /// Q25, ADR-012 record of lane m10/backup-format: the backup agent's
-    /// configuration names every store in order, the first one first.
+    /// configuration names every store in order, the first one first, and
+    /// the retention.
     #[test]
     fn adr012_backup_config_names_every_store() {
         let l = Layout::new(
@@ -354,6 +357,9 @@ mod tests {
                 let second = list.get(1).unwrap().as_object().unwrap();
                 assert_eq!(second.get("port").unwrap().as_u64(), Some(8443));
             }
+            let r = o.get("retention").unwrap().as_object().unwrap();
+            assert_eq!(r.get("keep_days").unwrap().as_u64(), Some(35));
+            assert_eq!(r.get("keep_min").unwrap().as_u64(), Some(5));
         }
     }
 

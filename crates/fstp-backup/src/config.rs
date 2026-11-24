@@ -14,6 +14,9 @@
 //!   m10/backup-format). Exactly one of the two is given.
 //! - `keyd_socket`: optional, absolute. The `fstp-keyd` console socket,
 //!   for `init-keys` and the restore commands only.
+//! - `retention`: optional, `keep_days` (1 to 3650) and `keep_min` (1 to
+//!   1000), both required in it. Without it the agent prunes nothing
+//!   (ADR-012 record of lane m10/backup-format).
 //!
 //! An unknown member, a member given twice or a missing required member is
 //! refused, so a typo never falls back to a default. No secret is in the
@@ -37,7 +40,7 @@ pub const MAX_FILE_LEN: usize = 4096;
 /// The longest path.
 pub const MAX_PATH_LEN: usize = 1024;
 
-const MEMBERS: [&str; 8] = [
+const MEMBERS: [&str; 9] = [
     "cluster",
     "credentials_dir",
     "state_dir",
@@ -46,6 +49,7 @@ const MEMBERS: [&str; 8] = [
     "object_store",
     "object_stores",
     "keyd_socket",
+    "retention",
 ];
 
 /// The most object stores a configuration names (ADR-012 record of lane
@@ -81,6 +85,19 @@ pub struct FileConfig {
     pub more_stores: Vec<Endpoint>,
     /// The `fstp-keyd` console socket, if any.
     pub keyd_socket: Option<PathBuf>,
+    /// The retention, if the agent prunes.
+    pub retention: Option<Retention>,
+}
+
+/// How long base backups are kept (ADR-012 record of lane
+/// m10/backup-format). A base backup is pruned only when it is older than
+/// `keep_days` and not among the newest `keep_min`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    /// Days a base backup is kept at least.
+    pub keep_days: u32,
+    /// Base backups kept at least, whatever their age.
+    pub keep_min: u32,
 }
 
 fn cfg(rule: &'static str) -> BackupError {
@@ -239,6 +256,24 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
             "keyd_socket",
         )?),
     };
+    let retention = match o.get("retention") {
+        None => None,
+        Some(v) => {
+            let r = v.as_object().ok_or(cfg("retention"))?;
+            members(r, &["keep_days", "keep_min"], "retention")?;
+            let num = |name: &str, max: u64| {
+                r.get(name)
+                    .and_then(fstp_json::Value::as_u64)
+                    .filter(|n| (1..=max).contains(n))
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or(cfg("retention"))
+            };
+            Some(Retention {
+                keep_days: num("keep_days", 3650)?,
+                keep_min: num("keep_min", 1000)?,
+            })
+        }
+    };
     Ok(FileConfig {
         cluster,
         credentials_dir,
@@ -248,6 +283,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         object_store,
         more_stores,
         keyd_socket,
+        retention,
     })
 }
 
@@ -497,6 +533,34 @@ mod tests {
             "\"object_stores\": [{\"endpoint\": \"10.0.0.1\", \"region\": \"gra\", \"bucket\": \"abc\"}],".to_owned(),
         ] {
             assert!(decode_file(with(&bad).as_bytes()).is_err(), "{bad}");
+        }
+    }
+
+    /// ADR-012 record of lane m10/backup-format: `retention` takes
+    /// `keep_days` and `keep_min` in range, both, and nothing else.
+    #[test]
+    fn adr012_config_takes_retention() {
+        assert_eq!(decode_file(GOOD.as_bytes()).unwrap().retention, None);
+        let with = |r: &str| GOOD.replacen("{\n", &format!("{{\n \"retention\": {r},\n"), 1);
+        let c = decode_file(with(r#"{"keep_days": 35, "keep_min": 5}"#).as_bytes()).unwrap();
+        assert_eq!(
+            c.retention,
+            Some(Retention {
+                keep_days: 35,
+                keep_min: 5
+            })
+        );
+        for bad in [
+            r#"{"keep_days": 35}"#,
+            r#"{"keep_days": 0, "keep_min": 5}"#,
+            r#"{"keep_days": 3651, "keep_min": 5}"#,
+            r#"{"keep_days": 35, "keep_min": 0}"#,
+            r#"{"keep_days": 35, "keep_min": 1001}"#,
+            r#"{"keep_days": 35, "keep_min": 5, "keep_years": 1}"#,
+            r#"{"keep_days": "35", "keep_min": 5}"#,
+            "35",
+        ] {
+            assert!(decode_file(with(bad).as_bytes()).is_err(), "{bad}");
         }
     }
 

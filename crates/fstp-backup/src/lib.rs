@@ -24,6 +24,7 @@ pub mod s3;
 mod seal;
 pub mod sigv4;
 pub mod snapshot;
+pub mod tar;
 mod wal;
 pub mod writer;
 pub mod xml;
@@ -376,7 +377,15 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
             | Command::UpgradeKeys
             | Command::CustodianInit
             | Command::CustodianEscrow { .. } => Ok(()),
-            Command::BaseBackup => agent.base_backup(&cfg).await.map(|_| ()),
+            Command::BaseBackup => {
+                agent.base_backup(&cfg).await?;
+                // ADR-012 record of lane m10/backup-format: pruning follows
+                // a successful base backup and never fails it.
+                if let Some(r) = &cfg.retention {
+                    let _ = agent.prune(r, agent::now_unix()).await;
+                }
+                Ok(())
+            }
             Command::WalArchive { path, name } => agent.archive(path, name).await.map(|_| ()),
             Command::WalRestore { name, path } => {
                 let secret = open_group_secret(&agent, &cfg).await?;

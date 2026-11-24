@@ -29,10 +29,10 @@ use fstp_crypto::hybrid_kem::HybridSecretKey;
 use fstp_custody::Custody;
 use fstp_rt::Runtime;
 
-use crate::config::{self, FileConfig};
-use crate::index::{self, IndexEntry};
+use crate::config::{self, FileConfig, Retention};
+use crate::index::{self, IndexEntry, IndexLine};
 use crate::keyfile::{self, KeyFile};
-use crate::s3::S3Client;
+use crate::s3::{Deleted, S3Client};
 use crate::sigv4::hex;
 use crate::wal::{self, ArchiveName};
 use crate::writer::{WRITER_FILE, WriterKey};
@@ -351,21 +351,28 @@ impl<R: Runtime> Agent<R> {
     ///
     /// The errors of the read, the seal, the store and the index.
     pub async fn base_backup_from(&self, tar: &mut impl Read) -> Result<IndexEntry, BackupError> {
-        let (backup, size) = self.stage_parts(tar).await?;
-        self.record(backup, size)
+        let staged = self.stage_parts(tar).await?;
+        self.record(&staged)
     }
 
     /// Appends the index line of a completed base backup.
-    fn record(&self, backup: [u8; 16], size: u64) -> Result<IndexEntry, BackupError> {
+    /// With its part count and start segment (record of lane
+    /// m10/backup-format).
+    fn record(&self, staged: &Staged) -> Result<IndexEntry, BackupError> {
         let entry = IndexEntry {
             cluster: self.key.cluster,
-            backup,
-            at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-            size,
+            backup: staged.backup,
+            at: now_unix(),
+            size: staged.size,
         };
-        index::append(&self.state_dir, &entry)?;
+        index::append_line(
+            &self.state_dir,
+            &IndexLine {
+                entry,
+                parts: Some(staged.parts),
+                start: staged.start,
+            },
+        )?;
         Ok(entry)
     }
 
@@ -393,24 +400,25 @@ impl<R: Runtime> Agent<R> {
         let status = child
             .wait()
             .map_err(|_| BackupError::Tool("pg_basebackup"))?;
-        let (backup, size) = staged?;
+        let staged = staged?;
         if !status.success() {
             return Err(BackupError::Tool("pg_basebackup"));
         }
-        self.record(backup, size)
+        self.record(&staged)
     }
 
     /// Seals and uploads the parts of `tar` under a new backup id, without
     /// the index line. The id and the plaintext size. Each part says
     /// whether it is the last (F-043): the agent reads one byte ahead to
     /// know, since it cuts the stream as it reads.
-    async fn stage_parts(&self, tar: &mut impl Read) -> Result<([u8; 16], u64), BackupError> {
+    async fn stage_parts(&self, tar: &mut impl Read) -> Result<Staged, BackupError> {
         let backup =
             fstp_crypto::random_array::<16>().map_err(|_| BackupError::Seal("backup id"))?;
         let mut buf = vec![0u8; self.limits.base_part.max(1)];
         let mut size = 0u64;
         let mut part = 0u32;
         let mut carry: Option<u8> = None;
+        let mut start = None;
         loop {
             let n = match (carry.take(), buf.split_first_mut()) {
                 (Some(b), Some((first, rest))) => {
@@ -427,6 +435,13 @@ impl<R: Runtime> Agent<R> {
             }
             let last = carry.is_none();
             let body = buf.get(..n).ok_or(BackupError::Io("read"))?;
+            if part == 0 {
+                // The start segment, from `backup_label` at the head of
+                // the tar stream, for pruning. None when it is not there.
+                start = crate::tar::backup_label(body)
+                    .and_then(crate::backup_label_start)
+                    .ok();
+            }
             let ident = ObjectIdent::Base { backup, part, last };
             self.seal_and_store(
                 &ident,
@@ -437,7 +452,12 @@ impl<R: Runtime> Agent<R> {
             .await?;
             size = size.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
             if last {
-                return Ok((backup, size));
+                return Ok(Staged {
+                    backup,
+                    size,
+                    parts: part.saturating_add(1),
+                    start,
+                });
             }
             part = part
                 .checked_add(1)
@@ -723,6 +743,169 @@ impl<R: Runtime> Agent<R> {
             last_segment,
         })
     }
+}
+
+/// The WAL segment size pruning assumes: PostgreSQL's default, which
+/// `fstp-admin setup` keeps (ADR-012 record of lane m10/backup-format).
+/// With another size, the names pruning tries miss, and the WAL stays.
+pub const PRUNE_SEGMENT_SIZE: u64 = 16 * 1024 * 1024;
+/// The most WAL names pruning tries for one base backup. A longer range
+/// is left alone.
+pub const MAX_PRUNE_SEGMENTS: u64 = 1_000_000;
+
+/// What [`Agent::prune`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pruned {
+    /// Base backups whose objects are gone from every store, and whose
+    /// index lines were removed.
+    pub removed: u32,
+    /// Base backups due for pruning that a store still holds, such as
+    /// under an object lock, or whose delete failed. Their lines stay,
+    /// and the next prune tries again.
+    pub held: u32,
+    /// Base backups of the cluster that the retention keeps.
+    pub kept: u32,
+}
+
+/// The names of the WAL segments from `from` up to, not including, `to`,
+/// on each timeline from `from`'s to `to`'s, for segments of
+/// [`PRUNE_SEGMENT_SIZE`]. Empty when the range is empty or longer than
+/// [`MAX_PRUNE_SEGMENTS`] per timeline.
+#[must_use]
+pub fn wal_between(from: WalName, to: WalName) -> Vec<String> {
+    let mut out = Vec::new();
+    if to.timeline < from.timeline {
+        return out;
+    }
+    for timeline in from.timeline..=to.timeline {
+        let mut seg = WalName {
+            timeline,
+            segment: from.segment,
+        };
+        let mut names = Vec::new();
+        while seg.segment < to.segment {
+            if u64::try_from(names.len()).unwrap_or(u64::MAX) >= MAX_PRUNE_SEGMENTS {
+                return Vec::new();
+            }
+            names.push(seg.file_name());
+            match seg.next(PRUNE_SEGMENT_SIZE) {
+                Some(n) => seg = n,
+                None => break,
+            }
+        }
+        out.extend(names);
+    }
+    out
+}
+
+impl<R: Runtime> Agent<R> {
+    /// Deletes `object` in every store. Whether it is gone from all.
+    async fn delete_everywhere(&self, object: &str) -> bool {
+        let mut gone = true;
+        for s in &self.s3 {
+            if !matches!(s.delete_object(object).await, Ok(Deleted::Gone)) {
+                gone = false;
+            }
+        }
+        gone
+    }
+
+    /// Prunes old base backups after a successful one (ADR-012 record of
+    /// lane m10/backup-format, row "Prune rule"), driven by the local
+    /// index, never by a listing. The candidates are the cluster's index
+    /// lines older than `keep_days` at `now` (Unix seconds) and not among
+    /// the newest `keep_min`, taken from the oldest while each one is a
+    /// candidate. So the newest base backup is never one. For each, the
+    /// parts go from every store, then the WAL from its start segment up
+    /// to the next line's start segment. Timeline history files stay. A
+    /// line leaves the index only when every delete succeeded in every
+    /// store. Erasure never waits on any of this (I-81).
+    ///
+    /// # Errors
+    ///
+    /// [`BackupError::Index`] when the index cannot be read or rewritten.
+    /// A refused or failed delete is no error: it is counted as held.
+    pub async fn prune(&self, retention: &Retention, now: u64) -> Result<Pruned, BackupError> {
+        let lines = index::read_lines(&self.state_dir)?;
+        let mine: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.entry.cluster == self.key.cluster)
+            .map(|(i, _)| i)
+            .collect();
+        let n = mine.len();
+        let keep_min = usize::try_from(retention.keep_min).unwrap_or(usize::MAX);
+        let max_age = u64::from(retention.keep_days).saturating_mul(86_400);
+        let mut candidates = 0usize;
+        for (k, &i) in mine.iter().enumerate() {
+            let old = lines
+                .get(i)
+                .is_some_and(|l| l.entry.at.saturating_add(max_age) < now);
+            if k.saturating_add(keep_min) < n && old {
+                candidates = k.saturating_add(1);
+            } else {
+                break;
+            }
+        }
+        let mut removed = std::collections::BTreeSet::new();
+        let mut out = Pruned::default();
+        for k in 0..candidates {
+            let (Some(line), Some(next)) = (
+                mine.get(k).and_then(|&i| lines.get(i)),
+                mine.get(k.saturating_add(1)).and_then(|&i| lines.get(i)),
+            ) else {
+                break;
+            };
+            let parts = line.parts.unwrap_or_else(|| {
+                let per = u64::try_from(BASE_PART).unwrap_or(u64::MAX);
+                u32::try_from(line.entry.size.div_ceil(per).max(1)).unwrap_or(u32::MAX)
+            });
+            let mut gone = true;
+            for p in 0..parts {
+                gone &= self
+                    .delete_everywhere(&self.base_object(line.entry.backup, p))
+                    .await;
+            }
+            if let (Some(from), Some(to)) = (line.start, next.start) {
+                for name in wal_between(from, to) {
+                    gone &= self.delete_everywhere(&self.wal_object(&name)).await;
+                }
+            }
+            if gone {
+                removed.extend(mine.get(k).copied());
+                out.removed = out.removed.saturating_add(1);
+            } else {
+                out.held = out.held.saturating_add(1);
+            }
+        }
+        out.kept = u32::try_from(n.saturating_sub(candidates)).unwrap_or(u32::MAX);
+        if !removed.is_empty() {
+            let rest: Vec<IndexLine> = lines
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !removed.contains(i))
+                .map(|(_, l)| *l)
+                .collect();
+            index::rewrite(&self.state_dir, &rest)?;
+        }
+        Ok(out)
+    }
+}
+
+/// What [`Agent::stage_parts`] uploaded.
+struct Staged {
+    backup: [u8; 16],
+    size: u64,
+    parts: u32,
+    start: Option<WalName>,
+}
+
+/// The time in Unix seconds.
+#[must_use]
+pub fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// The `pg_basebackup` command of `cfg` (ADR-012 record of lane L10): the

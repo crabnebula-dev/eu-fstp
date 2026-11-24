@@ -604,3 +604,198 @@ fn q25_archive_succeeds_only_when_every_store_holds_it() {
     second.stop(&s.rt);
     s.fake.stop(&s.rt);
 }
+
+/// A synthetic base backup tar stream whose first member is a
+/// `backup_label` naming the start segment `start`, then `len` bytes.
+fn tar_stream(start: &str, len: usize) -> Vec<u8> {
+    let label =
+        format!("START WAL LOCATION: 0/1000028 (file {start})\nCHECKPOINT LOCATION: 0/1000060\n");
+    let mut out = fstp_backup::tar::header("backup_label", label.len()).to_vec();
+    out.extend_from_slice(label.as_bytes());
+    out.resize(out.len().div_ceil(512) * 512, 0);
+    out.extend((0..len).map(|i| (i % 253) as u8));
+    out
+}
+
+/// Sets the time of every index line to `at[i]`, in order.
+fn set_times(state: &std::path::Path, at: &[u64]) {
+    let mut lines = fstp_backup::index::read_lines(state).unwrap();
+    for (l, t) in lines.iter_mut().zip(at) {
+        l.entry.at = *t;
+    }
+    fstp_backup::index::rewrite(state, &lines).unwrap();
+}
+
+const DAY: u64 = 86_400;
+const T0: u64 = 1_800_000_000;
+
+/// ADR-012 record of lane m10/backup-format "Prune rule": with 35 days
+/// and at least 5 backups, nothing younger than 35 days goes, the newest
+/// 5 always stay, and the newest one stays whatever the values. Pruned
+/// lines leave the index, and their parts leave the store.
+#[test]
+fn adr012_prune_keeps_the_newest_and_the_minimum() {
+    let s = setup();
+    let mut entries = Vec::new();
+    for i in 0..7u8 {
+        let e =
+            s.rt.block_on(s.agent.base_backup_from(&mut &vec![i; 4 * 1024 * 1024][..]))
+                .unwrap();
+        entries.push(e);
+    }
+    let at: Vec<u64> = (0..7).map(|i| T0 + i * DAY).collect();
+    set_times(&s.state, &at);
+    let keep = fstp_backup::config::Retention {
+        keep_days: 35,
+        keep_min: 5,
+    };
+    // Day 30 after the first: everything is younger than 35 days.
+    let p = s.rt.block_on(s.agent.prune(&keep, T0 + 30 * DAY)).unwrap();
+    assert_eq!((p.removed, p.held, p.kept), (0, 0, 7));
+    // Day 100: all are old, so the newest 5 stay.
+    let p = s.rt.block_on(s.agent.prune(&keep, T0 + 100 * DAY)).unwrap();
+    assert_eq!((p.removed, p.held, p.kept), (2, 0, 5));
+    let left: Vec<[u8; 16]> = fstp_backup::index::read_lines(&s.state)
+        .unwrap()
+        .iter()
+        .map(|l| l.entry.backup)
+        .collect();
+    let want: Vec<[u8; 16]> = entries[2..].iter().map(|e| e.backup).collect();
+    assert_eq!(left, want);
+    let objects = s.fake.state.objects.lock().unwrap().clone();
+    for (i, e) in entries.iter().enumerate() {
+        for p in 0..2 {
+            assert_eq!(
+                objects.contains_key(&s.agent.base_object(e.backup, p)),
+                i >= 2,
+                "backup {i} part {p}"
+            );
+        }
+    }
+    // keep_min 1 and keep_days 1: only the newest stays.
+    let one = fstp_backup::config::Retention {
+        keep_days: 1,
+        keep_min: 1,
+    };
+    let p = s.rt.block_on(s.agent.prune(&one, T0 + 100 * DAY)).unwrap();
+    assert_eq!((p.removed, p.kept), (4, 1));
+    let newest = fstp_backup::index::newest(&s.state, CLUSTER).unwrap();
+    assert_eq!(newest.backup, entries[6].backup);
+    let secret = s.rt.block_on(s.agent.open_secret(&s.custody)).unwrap();
+    assert_eq!(
+        s.rt.block_on(s.agent.restore_base(&secret, &newest, &mut Vec::new())),
+        Ok(2)
+    );
+    let _ = std::fs::remove_dir_all(&s.state);
+    s.fake.stop(&s.rt);
+}
+
+/// ADR-012 record of lane m10/backup-format "Prune rule": a pruned base
+/// backup takes its WAL with it, from its start segment up to the next
+/// backup's start segment, in every store. The kept backup's WAL and the
+/// timeline history file stay, and a backup with no known start segment
+/// leaves the WAL alone.
+#[test]
+fn adr012_prune_deletes_parts_and_wal_of_old_backups() {
+    let s = setup();
+    let second = FakeS3::start(&s.rt, AK, SK, REGION, BUCKET);
+    let agent = agent_over(&s, vec![client(&s.rt, &s.fake), client(&s.rt, &second)]);
+    let dir = temp_dir("wal");
+    std::fs::write(dir.join("w"), vec![9u8; 4096]).unwrap();
+    std::fs::write(dir.join("h"), b"1\t0/3000000\tno recovery target\n").unwrap();
+    let names: Vec<String> = (1..=8u64)
+        .map(|n| format!("0000000100000000{n:08X}"))
+        .collect();
+    s.rt.block_on(async {
+        for n in &names {
+            agent.archive(&dir.join("w"), n).await.unwrap();
+        }
+        agent
+            .archive(&dir.join("h"), "00000002.history")
+            .await
+            .unwrap();
+        // Backup A starts at segment 2, B at segment 5, C has no label.
+        agent
+            .base_backup_from(&mut &tar_stream(&names[1], 1000)[..])
+            .await
+            .unwrap();
+        agent
+            .base_backup_from(&mut &tar_stream(&names[4], 1000)[..])
+            .await
+            .unwrap();
+        agent.base_backup_from(&mut &[7u8; 3000][..]).await.unwrap();
+    });
+    let lines = fstp_backup::index::read_lines(&s.state).unwrap();
+    assert_eq!(lines[0].start.unwrap().file_name(), names[1]);
+    assert_eq!(lines[1].start.unwrap().file_name(), names[4]);
+    assert_eq!((lines[1].parts, lines[2].start), (Some(1), None));
+    set_times(&s.state, &[T0, T0 + DAY, T0 + 2 * DAY]);
+    let keep = fstp_backup::config::Retention {
+        keep_days: 1,
+        keep_min: 1,
+    };
+    let p = s.rt.block_on(agent.prune(&keep, T0 + 50 * DAY)).unwrap();
+    assert_eq!((p.removed, p.held, p.kept), (2, 0, 1));
+    for store in [&s.fake, &second] {
+        let objects = store.state.objects.lock().unwrap().clone();
+        for (i, n) in names.iter().enumerate() {
+            // Segments 2 to 4 belonged to A only. Segment 1 is older than
+            // every backup the index knows. B has no next start segment
+            // that is known, since C has none, so its WAL stays.
+            let gone = (1..4).contains(&i);
+            assert_eq!(!objects.contains_key(&agent.wal_object(n)), gone, "{n}");
+        }
+        assert!(objects.contains_key(&agent.wal_object("00000002.history")));
+        for l in &lines[..2] {
+            assert!(!objects.contains_key(&agent.base_object(l.entry.backup, 0)));
+        }
+        assert!(objects.contains_key(&agent.base_object(lines[2].entry.backup, 0)));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&s.state);
+    second.stop(&s.rt);
+    s.fake.stop(&s.rt);
+}
+
+/// ADR-012 record of lane m10/backup-format "Index after pruning": an
+/// object a store holds under an object lock is no failure. Its backup's
+/// line stays, so the next prune tries again, and goes once the lock
+/// ends. A prune never touches the newest backup.
+#[test]
+fn adr012_held_delete_keeps_the_index_line() {
+    let s = setup();
+    let a =
+        s.rt.block_on(s.agent.base_backup_from(&mut &[1u8; 10][..]))
+            .unwrap();
+    let b =
+        s.rt.block_on(s.agent.base_backup_from(&mut &[2u8; 10][..]))
+            .unwrap();
+    set_times(&s.state, &[T0, T0 + DAY]);
+    let locked = s.agent.base_object(a.backup, 0);
+    s.fake.state.locked.lock().unwrap().insert(locked.clone());
+    let keep = fstp_backup::config::Retention {
+        keep_days: 1,
+        keep_min: 1,
+    };
+    let p = s.rt.block_on(s.agent.prune(&keep, T0 + 50 * DAY)).unwrap();
+    assert_eq!((p.removed, p.held, p.kept), (0, 1, 1));
+    assert_eq!(fstp_backup::index::read_lines(&s.state).unwrap().len(), 2);
+    assert!(s.fake.state.objects.lock().unwrap().contains_key(&locked));
+    s.fake.state.locked.lock().unwrap().clear();
+    let p = s.rt.block_on(s.agent.prune(&keep, T0 + 50 * DAY)).unwrap();
+    assert_eq!((p.removed, p.held, p.kept), (1, 0, 1));
+    let lines = fstp_backup::index::read_lines(&s.state).unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].entry.backup, b.backup);
+    assert!(
+        !s.fake
+            .state
+            .deletes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|k| k.contains(&fstp_backup::sigv4::hex(&b.backup)))
+    );
+    let _ = std::fs::remove_dir_all(&s.state);
+    s.fake.stop(&s.rt);
+}

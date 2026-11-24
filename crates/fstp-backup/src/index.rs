@@ -5,8 +5,14 @@
 //! backup, appended after its last part is uploaded:
 //!
 //! ```text
-//! line = cluster (32 lowercase hex) SP backup id (32 lowercase hex) SP unix seconds SP plaintext bytes LF
+//! line = cluster (32 lowercase hex) SP backup id (32 lowercase hex) SP unix seconds SP plaintext bytes
+//!        [SP part count SP (start segment | "-")] LF
 //! ```
+//!
+//! The two last fields came with lane m10/backup-format ([`IndexLine`]):
+//! the part count and the WAL start segment of the backup, or `-` when
+//! it is not known. Pruning reads them. Lines of four fields, written
+//! before that lane, stay readable.
 //!
 //! Numbers are decimal without leading zeros. The decoder admits exactly
 //! this form and is fuzzed (`backup_index_decode`). A refusal names its
@@ -14,8 +20,8 @@
 
 use std::path::Path;
 
-use crate::BackupError;
 use crate::sigv4::hex;
+use crate::{BackupError, WalName};
 
 /// The index file's name in the state directory.
 pub const INDEX_FILE: &str = "base-backups.index";
@@ -83,13 +89,48 @@ pub fn encode_line(e: &IndexEntry) -> String {
     )
 }
 
-/// Decodes an index file. Fuzzed (`backup_index_decode`).
+/// One line of the index: the entry, and for a line of six fields its
+/// part count and its start segment (record of lane m10/backup-format).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndexLine {
+    /// The entry.
+    pub entry: IndexEntry,
+    /// The part count, `None` for a line of four fields.
+    pub parts: Option<u32>,
+    /// The WAL start segment, when known.
+    pub start: Option<WalName>,
+}
+
+/// The text of `l`: four fields when it has no part count, else six.
+#[must_use]
+pub fn encode_index_line(l: &IndexLine) -> String {
+    let mut s = encode_line(&l.entry);
+    if let Some(parts) = l.parts {
+        s.pop();
+        let start = l.start.map_or_else(|| "-".to_owned(), |w| w.file_name());
+        s.push_str(&format!(" {parts} {start}\n"));
+    }
+    s
+}
+
+/// Decodes an index file into its entries. Fuzzed
+/// (`backup_index_decode`).
 ///
 /// # Errors
 ///
 /// [`BackupError::Index`] for a line of any other form, or a last line
 /// without its line end.
 pub fn decode(bytes: &[u8]) -> Result<Vec<IndexEntry>, BackupError> {
+    Ok(decode_lines(bytes)?.into_iter().map(|l| l.entry).collect())
+}
+
+/// Decodes an index file into its lines, of four or six fields. Fuzzed
+/// (`backup_index_decode`).
+///
+/// # Errors
+///
+/// As [`decode`].
+pub fn decode_lines(bytes: &[u8]) -> Result<Vec<IndexLine>, BackupError> {
     if bytes.len() > MAX_INDEX_LEN {
         return Err(bad("length"));
     }
@@ -99,20 +140,94 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<IndexEntry>, BackupError> {
     }
     let mut out = Vec::new();
     for line in text.split_terminator('\n') {
-        let mut f = line.split(' ');
-        let (Some(c), Some(b), Some(at), Some(size), None) =
-            (f.next(), f.next(), f.next(), f.next(), f.next())
-        else {
-            return Err(bad("fields"));
+        let f: Vec<&str> = line.split(' ').collect();
+        let (c, b, at, size) = match f.as_slice() {
+            [c, b, at, size] | [c, b, at, size, _, _] => (*c, *b, *at, *size),
+            _ => return Err(bad("fields")),
         };
-        out.push(IndexEntry {
+        let entry = IndexEntry {
             cluster: parse_hex16(c)?,
             backup: parse_hex16(b)?,
             at: decimal(at)?,
             size: decimal(size)?,
+        };
+        let (parts, start) = match f.as_slice() {
+            [_, _, _, _, parts, start] => {
+                let parts = u32::try_from(decimal(parts)?)
+                    .ok()
+                    .filter(|p| *p != 0)
+                    .ok_or(bad("part count"))?;
+                let start = match *start {
+                    "-" => None,
+                    s => Some(crate::wal::parse(s).map_err(|_| bad("start segment"))?),
+                };
+                (Some(parts), start)
+            }
+            _ => (None, None),
+        };
+        out.push(IndexLine {
+            entry,
+            parts,
+            start,
         });
     }
     Ok(out)
+}
+
+/// The lines of the index of `state_dir`, or none when it does not exist.
+///
+/// # Errors
+///
+/// [`BackupError::Index`] when the file cannot be read or decoded.
+pub fn read_lines(state_dir: &Path) -> Result<Vec<IndexLine>, BackupError> {
+    match std::fs::read(state_dir.join(INDEX_FILE)) {
+        Ok(bytes) => decode_lines(&bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(_) => Err(bad("read")),
+    }
+}
+
+/// Replaces the index of `state_dir` with `lines`, through a temporary
+/// file, a sync and a rename, so a crash leaves the old or the new index.
+///
+/// # Errors
+///
+/// [`BackupError::Index`] when a step fails.
+pub fn rewrite(state_dir: &Path, lines: &[IndexLine]) -> Result<(), BackupError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let tmp = state_dir.join(format!("{INDEX_FILE}.new"));
+    let _ = std::fs::remove_file(&tmp);
+    let text: String = lines.iter().map(encode_index_line).collect();
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|_| bad("open"))?;
+    f.write_all(text.as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|_| bad("write"))?;
+    std::fs::rename(&tmp, state_dir.join(INDEX_FILE)).map_err(|_| bad("rename"))
+}
+
+/// Appends the line `l` to the index of `state_dir` and syncs it.
+///
+/// # Errors
+///
+/// [`BackupError::Index`] when a step fails.
+pub fn append_line(state_dir: &Path, l: &IndexLine) -> Result<(), BackupError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .mode(0o600)
+        .open(state_dir.join(INDEX_FILE))
+        .map_err(|_| bad("open"))?;
+    f.write_all(encode_index_line(l).as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|_| bad("write"))
 }
 
 /// The newest entry of `cluster` in the index of `state_dir`.
@@ -208,6 +323,69 @@ mod tests {
         assert_eq!(newest(&dir, [1; 16]).unwrap(), c);
         assert_eq!(find(&dir, [1; 16], [2; 16]).unwrap(), a);
         assert_eq!(newest(&dir, [9; 16]).unwrap_err(), BackupError::NotFound);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// ADR-012 record of lane m10/backup-format: lines of four and of six
+    /// fields read side by side, round trip, and a rewrite keeps each form.
+    /// A part count of 0, a bad start segment and five fields are refused.
+    #[test]
+    fn adr012_index_reads_both_line_forms() {
+        let e = IndexEntry {
+            cluster: [1; 16],
+            backup: [2; 16],
+            at: 5,
+            size: 6,
+        };
+        let old = IndexLine {
+            entry: e,
+            parts: None,
+            start: None,
+        };
+        let new = IndexLine {
+            entry: IndexEntry {
+                backup: [3; 16],
+                ..e
+            },
+            parts: Some(2),
+            start: Some(crate::parse_wal_name("00000001000000000000000A").unwrap()),
+        };
+        let unknown = IndexLine {
+            parts: Some(1),
+            start: None,
+            ..new
+        };
+        let text: String = [old, new, unknown].iter().map(encode_index_line).collect();
+        assert!(text.contains(" 2 00000001000000000000000A\n"));
+        assert!(text.ends_with(" 1 -\n"));
+        assert_eq!(
+            decode_lines(text.as_bytes()).unwrap(),
+            vec![old, new, unknown]
+        );
+        assert_eq!(decode(text.as_bytes()).unwrap().len(), 3);
+        let good = encode_index_line(&new);
+        for bad in [
+            good.replace(" 2 0", " 0 0"),
+            good.replace(" 2 0", " 02 0"),
+            good.replace("0000000A", "0000000a"),
+            good.replace(" 2 0", " 2  0"),
+            good.replace(" 2 00000001000000000000000A", " 2"),
+            good.replace("\n", " -\n"),
+        ] {
+            assert!(decode_lines(bad.as_bytes()).is_err(), "{bad:?}");
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "fstp-backup-index2-{}",
+            hex(&fstp_crypto::random_array::<8>().unwrap())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(read_lines(&dir).unwrap().is_empty());
+        append(&dir, &e).unwrap();
+        append_line(&dir, &new).unwrap();
+        assert_eq!(read_lines(&dir).unwrap(), vec![old, new]);
+        rewrite(&dir, &[new]).unwrap();
+        assert_eq!(read_lines(&dir).unwrap(), vec![new]);
+        assert_eq!(newest(&dir, [1; 16]).unwrap(), new.entry);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
