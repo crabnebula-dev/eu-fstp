@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! {"app_snapshot_failed":false,"backups_configured":true,"certificate_days":5,
-//!  "custodian":"linked","guard_owed":false,
+//!  "custodian":"linked","guard_copy_owed":false,"guard_owed":false,
 //!  "last_app_snapshot":1795000000,"last_backup":1795000000,
 //!  "last_key_copy":null,"last_vault_erasure":null,
 //!  "last_vault_snapshot":1795000000,"next":"nothing",
@@ -177,6 +177,9 @@ pub enum Next {
     Custodian,
     /// No second custodian is paired, or its pairing nears its end.
     PairCustodian,
+    /// A fresh copy is owed to the second custodian: the last try failed
+    /// (ADR-004 "The custodian's copy").
+    CustodianCopy,
     /// The route's pins differ from the current certificates.
     RenewRoute,
     /// A certificate is near its end.
@@ -202,7 +205,7 @@ pub enum Next {
 
 impl Next {
     /// Every value.
-    pub const ALL: [Next; 14] = [
+    pub const ALL: [Next; 15] = [
         Self::RunSetup,
         Self::StartService,
         Self::Custodian,
@@ -212,6 +215,7 @@ impl Next {
         Self::PublicCertificate,
         Self::ConfigureBackups,
         Self::Backup,
+        Self::CustodianCopy,
         Self::KeystoreSnapshot,
         Self::WebAdmins,
         Self::VerifyAdmins,
@@ -227,6 +231,7 @@ impl Next {
             Self::StartService => "start_service",
             Self::Custodian => "custodian",
             Self::PairCustodian => "pair_custodian",
+            Self::CustodianCopy => "custodian_copy",
             Self::RenewRoute => "renew_route",
             Self::Renew => "renew",
             Self::PublicCertificate => "public_certificate",
@@ -281,6 +286,8 @@ pub struct HostStatus {
     pub custodian: CustodianState,
     /// A guard rotation is owed, so an erasure waits.
     pub guard_owed: bool,
+    /// A fresh copy is owed to the custodian.
+    pub guard_copy_owed: bool,
 }
 
 /// Why a file was refused. Names a rule, never the input (R-NF-02).
@@ -318,11 +325,12 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 18] = [
+const MEMBERS: [&str; 19] = [
     "app_snapshot_failed",
     "backups_configured",
     "certificate_days",
     "custodian",
+    "guard_copy_owed",
     "guard_owed",
     "last_app_snapshot",
     "last_backup",
@@ -352,7 +360,7 @@ pub fn encode(s: &HostStatus) -> String {
     let p = &s.parts;
     format!(
         "{{\"app_snapshot_failed\":{},\"backups_configured\":{},\"certificate_days\":{},\
-         \"custodian\":\"{}\",\"guard_owed\":{},\
+         \"custodian\":\"{}\",\"guard_copy_owed\":{},\"guard_owed\":{},\
          \"last_app_snapshot\":{},\"last_backup\":{},\"last_key_copy\":{},\
          \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
@@ -362,6 +370,7 @@ pub fn encode(s: &HostStatus) -> String {
         s.backups_configured,
         opt(s.certificate_days),
         s.custodian.word(),
+        s.guard_copy_owed,
         s.guard_owed,
         opt(s.last_app_snapshot),
         opt(s.last_backup),
@@ -499,5 +508,6 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
             "custodian",
         )?,
         guard_owed: flag(o, "guard_owed")?,
+        guard_copy_owed: flag(o, "guard_copy_owed")?,
     })
 }

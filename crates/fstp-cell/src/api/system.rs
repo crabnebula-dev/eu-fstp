@@ -73,6 +73,7 @@ fn report(s: &HostStatus) -> Option<HostReport> {
             host_status::CustodianState::NotUsed => CustodianState::NotUsed,
         },
         guard_owed: s.guard_owed,
+        guard_copy_owed: s.guard_copy_owed,
     })
 }
 
@@ -131,6 +132,7 @@ mod tests {
             next: Next::CopyKeys,
             custodian: host_status::CustodianState::Unpaired,
             guard_owed: false,
+            guard_copy_owed: false,
         }
     }
 

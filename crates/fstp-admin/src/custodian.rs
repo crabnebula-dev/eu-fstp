@@ -384,8 +384,11 @@ pub fn pair(layout: &Layout, config: &Path, target: &str) -> Result<(), Fail> {
 /// lane `m10/guard-key`, row "Status").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Link {
-    /// The custodian answers and no rotation is owed.
+    /// The custodian answers and nothing is owed.
     Linked,
+    /// The custodian answers, but a fresh copy is owed to it: the last try
+    /// failed (ADR-004 "The custodian's copy").
+    CopyOwed,
     /// A rotation is owed: an erasure waits.
     Owed,
     /// The custodian does not answer.
@@ -400,6 +403,7 @@ impl Link {
     pub fn of_exit(code: Option<i32>) -> Link {
         match code {
             Some(0) => Link::Linked,
+            Some(6) => Link::CopyOwed,
             Some(3) => Link::Owed,
             Some(5) => Link::Unpaired,
             _ => Link::Unreachable,
@@ -411,9 +415,10 @@ impl Link {
     pub fn worse(self, other: Link) -> Link {
         let rank = |l: Link| match l {
             Link::Linked => 0,
-            Link::Unpaired => 1,
-            Link::Owed => 2,
-            Link::Unreachable => 3,
+            Link::CopyOwed => 1,
+            Link::Unpaired => 2,
+            Link::Owed => 3,
+            Link::Unreachable => 4,
         };
         if rank(other) > rank(self) {
             other
@@ -594,6 +599,276 @@ pub fn install(file: &Path) -> Result<(), Fail> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Restore after the loss of the host (ADR-028 record of lane
+// `m10/guard-key`, part 2; decided by Daniel on 2026-11-24, Q-F018-5).
+
+/// Where `restore-keys` takes the copy of one entry from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CopySource {
+    /// `<dir>/<entry>.fkx`, a copy the operator kept.
+    File(PathBuf),
+    /// The custodian's held copy, which it keeps fresh after each erasure.
+    Custodian,
+}
+
+/// The copy of entry `e`: the file in `dir` when there is one, or else the
+/// custodian's.
+#[must_use]
+pub fn copy_source(dir: &Path, e: Entry) -> CopySource {
+    let file = dir.join(format!("{}.fkx", e.name()));
+    if file.is_file() {
+        CopySource::File(file)
+    } else {
+        CopySource::Custodian
+    }
+}
+
+/// The old host's passphrase of entry `e`, when `dir` holds one.
+#[must_use]
+pub fn passphrase_in(dir: &Path, e: Entry) -> Option<PathBuf> {
+    let p = dir.join(format!("{}.passphrase", e.name()));
+    p.is_file().then_some(p)
+}
+
+/// Runs `fstp-keyd <args>` for entry `e` with its passphrase and guard
+/// credentials staged, and returns the exit code.
+fn keyd_with_credentials(
+    layout: &Layout,
+    e: Entry,
+    args: &[&std::ffi::OsStr],
+) -> Result<Option<i32>, Fail> {
+    let step = "restore keys";
+    let io = |_| Fail::Step(step, Cause::Io);
+    let Some((host, port)) = &layout.cfg.custodian else {
+        return Err(Fail::Waits(
+            "the second custodian: run fstp-admin pair-custodian <host> first",
+        ));
+    };
+    let creds = layout
+        .admin_dir()
+        .join(format!("restore-credential-{}", e.name()));
+    let _ = std::fs::remove_dir_all(&creds);
+    std::fs::create_dir_all(&creds).map_err(io)?;
+    let staged = stage_credentials(layout, e, &creds).and_then(|()| {
+        let pass = std::fs::read(layout.keyd_passphrase(e))?;
+        write_atomic(&creds.join("fstp-keyd-passphrase"), &pass, 0o600)
+    });
+    let r = staged.map_err(io).and_then(|()| {
+        let mut c = Command::new(layout.bin("fstp-keyd"));
+        c.env("CREDENTIALS_DIRECTORY", &creds)
+            .env("FSTP_KEYD_GUARD", target_text(host, *port))
+            .env("FSTP_KEYD_GUARD_ENTRY", e.name())
+            .args(args);
+        run_logged(&mut c, &Manager::new(layout).log()).map_err(|f| Fail::Step(step, f.into()))
+    });
+    let _ = std::fs::remove_dir_all(&creds);
+    r
+}
+
+fn exit_fail(layout: &Layout, code: Option<i32>) -> Fail {
+    Fail::Step(
+        "restore keys",
+        Cause::Run(RunFail::Exit(layout.bin("fstp-keyd"), code)),
+    )
+}
+
+/// `fstp-admin restore-keys <dir>` on a new host, after `setup` and the
+/// pairing: puts each `fstp-keyd` entry's keys back from its copy, held
+/// until `fstp-admin restore` releases it. Every copy is found first, so a
+/// missing one changes nothing. Each volume it replaces is moved aside,
+/// never deleted.
+///
+/// # Errors
+///
+/// [`Fail::Waits`] before the pairing, [`Fail::Missing`] for an entry
+/// with no copy in `dir` and none at the custodian, and [`Fail::Step`]
+/// when a step fails. The services then stay stopped.
+pub fn restore_keys(layout: &Layout, dir: &Path) -> Result<(), Fail> {
+    let step = "restore keys";
+    let io = |_| Fail::Step(step, Cause::Io);
+    if layout.cfg.custodian.is_none() {
+        return Err(Fail::Waits(
+            "the second custodian: run fstp-admin pair-custodian <host> first",
+        ));
+    }
+    let staging = layout.admin_dir().join("restore-keys");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(io)?;
+    let mut copies = Vec::new();
+    for e in guarded_entries() {
+        let file = match copy_source(dir, e) {
+            CopySource::File(f) => f,
+            CopySource::Custodian => {
+                let f = staging.join(format!("{}.fgc", e.name()));
+                match keyd_with_credentials(layout, e, &["fetch-copy".as_ref(), f.as_os_str()])? {
+                    Some(0) => f,
+                    Some(7) => {
+                        return Err(Fail::Missing(
+                            dir.join(format!("{}.fkx", e.name())),
+                            "a key copy of this entry: there is none here and none at the second custodian",
+                        ));
+                    }
+                    code => return Err(exit_fail(layout, code)),
+                }
+            }
+        };
+        copies.push((e, file));
+    }
+    crate::ops::stop(layout)?;
+    let m = Manager::new(layout);
+    let stamp = crate::pki::now();
+    for (e, file) in &copies {
+        if let Some(old) = passphrase_in(dir, *e) {
+            let current = layout.keyd_passphrase(*e);
+            let aside = current.with_extension(format!("passphrase.before-restore-{stamp}"));
+            if current.is_file() {
+                std::fs::rename(&current, &aside).map_err(io)?;
+            }
+            write_atomic(&current, &std::fs::read(old).map_err(io)?, 0o600).map_err(io)?;
+        }
+        let volume = layout.keyd_volume(*e);
+        let aside = volume.with_file_name(format!(
+            "{}.before-restore-{stamp}",
+            volume
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("keyd")
+        ));
+        if volume.exists() {
+            std::fs::rename(&volume, &aside).map_err(io)?;
+        }
+        let mut builder = std::fs::DirBuilder::new();
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&volume).map_err(io)?;
+        match keyd_with_credentials(
+            layout,
+            *e,
+            &["import".as_ref(), file.as_os_str(), volume.as_os_str()],
+        )? {
+            Some(0) => {}
+            code => return Err(exit_fail(layout, code)),
+        }
+        if layout.cfg.services == crate::config::Services::Systemd {
+            let owner = format!("{0}:{0}", crate::stack::KEYD_USER);
+            let mut c = Command::new("chown");
+            c.arg("-R").arg(&owner).arg(&volume);
+            run(step, &mut c, &m.log())?;
+        }
+        out(&[
+            Part::T("  done     keys of the "),
+            Part::T(e.name()),
+            Part::T(match copy_source(dir, *e) {
+                CopySource::File(_) => " entry, from the directory",
+                CopySource::Custodian => " entry, from the second custodian",
+            }),
+        ]);
+    }
+    for e in guarded_entries() {
+        for s in crate::stack::keyd(layout, e) {
+            m.ensure(&s).map_err(|f| Fail::Step(step, f.into()))?;
+        }
+    }
+    let _ = std::fs::remove_dir_all(&staging);
+    out(&[Part::T(
+        "Next: run fstp-admin restore. It restores both databases and then releases these keys.",
+    )]);
+    Ok(())
+}
+
+/// The newest live epoch of `chain` (1 App, 2 Vault) in the one cell
+/// database of cluster `c` whose name starts with `prefix`, or 0.
+fn current_epoch(
+    layout: &Layout,
+    c: crate::layout::Cluster,
+    prefix: &str,
+    chain: u8,
+) -> Result<u64, Fail> {
+    let pg = |e| Fail::Step("restore", Cause::Pg(e));
+    let db = crate::pg::psql(
+        layout,
+        c,
+        "postgres",
+        &format!(
+            "SELECT datname FROM pg_database WHERE datname LIKE '{prefix}\\_%' ORDER BY datname LIMIT 1;"
+        ),
+        "the cell database",
+    )
+    .map_err(pg)?;
+    if db.is_empty() || !db.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return Ok(0);
+    }
+    let text = crate::pg::psql(
+        layout,
+        c,
+        &db,
+        &format!(
+            "SELECT coalesce(max(epoch), 0) FROM keystore.root WHERE state = 1 AND chain = {chain};"
+        ),
+        "the current key epoch",
+    )
+    .map_err(pg)?;
+    text.trim()
+        .parse()
+        .map_err(|_| Fail::Step("restore", Cause::Io))
+}
+
+/// The `release` arguments of entry `e`: the cell's newest live App epoch
+/// and the vault's newest live Vault epoch from the restored databases.
+/// Every other entry holds no erasable chain.
+#[must_use]
+pub fn release_args(e: Entry, app: u64, vault: u64) -> Vec<String> {
+    match (e, app, vault) {
+        (Entry::Cell, a, _) if a > 0 => vec![format!("app={a}")],
+        (Entry::Vault, _, v) if v > 0 => vec![format!("vault={v}")],
+        _ => Vec::new(),
+    }
+}
+
+/// Releases every held entry after `fstp-admin restore` restored the
+/// databases (ADR-004 record of lane L16, rule 3). Each entry stops for
+/// its release and starts again. Nothing happens on a host whose entries
+/// are not held.
+///
+/// # Errors
+///
+/// [`Fail::Step`] naming the entry whose release refused: its copy is
+/// older than the last erasure, or the custodian does not answer.
+pub fn release_held(layout: &Layout, m: &Manager) -> Result<(), Fail> {
+    let held: Vec<Entry> = guarded_entries()
+        .into_iter()
+        .filter(|e| layout.keyd_volume(*e).join("import.hold").exists())
+        .collect();
+    if held.is_empty() {
+        return Ok(());
+    }
+    let app = current_epoch(layout, crate::layout::Cluster::App, "c", 1)?;
+    let vault = current_epoch(layout, crate::layout::Cluster::Vault, "v", 2)?;
+    for e in held {
+        let services = crate::stack::keyd(layout, e);
+        for s in &services {
+            m.stop(s).map_err(|f| Fail::Step("restore", f.into()))?;
+        }
+        let volume = layout.keyd_volume(e);
+        let rest = release_args(e, app, vault);
+        let mut args: Vec<&std::ffi::OsStr> = vec!["release".as_ref(), volume.as_os_str()];
+        args.extend(rest.iter().map(|a| std::ffi::OsStr::new(a.as_str())));
+        let code = keyd_with_credentials(layout, e, &args)?;
+        for s in &services {
+            m.ensure(s).map_err(|f| Fail::Step("restore", f.into()))?;
+        }
+        if code != Some(0) {
+            return Err(exit_fail(layout, code));
+        }
+        out(&[
+            Part::T("  done     released the keys of the "),
+            Part::T(e.name()),
+            Part::T(" entry"),
+        ]);
+    }
+    Ok(())
+}
+
 /// Days until the custodian's server certificate ends, if paired.
 #[must_use]
 pub fn pairing_days(layout: &Layout) -> Option<i64> {
@@ -704,6 +979,44 @@ mod tests {
             assert!(guard.join(format!("client-{}.key", e.name())).is_file());
         }
         assert!(pairing_days(&layout).is_some_and(|d| d > 700));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, part 2 (Q-F018-5, decided by
+    /// Daniel on 2026-11-24), F-018: `restore-keys` takes each entry's copy
+    /// from the directory when it holds one and from the custodian
+    /// otherwise, takes the old passphrase only from the directory, refuses
+    /// before the pairing, and releases the cell and the vault with their
+    /// own current epochs only.
+    #[test]
+    fn adr028_guard_restore_keys_takes_each_copy_from_the_directory_or_the_custodian() {
+        let dir = std::env::temp_dir().join(format!("fstp-admin-restore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cell.fkx"), b"FGC1").unwrap();
+        std::fs::write(dir.join("vault.passphrase"), b"old\n").unwrap();
+        assert_eq!(
+            copy_source(&dir, Entry::Cell),
+            CopySource::File(dir.join("cell.fkx"))
+        );
+        assert_eq!(copy_source(&dir, Entry::Vault), CopySource::Custodian);
+        assert_eq!(
+            passphrase_in(&dir, Entry::Vault),
+            Some(dir.join("vault.passphrase"))
+        );
+        assert_eq!(passphrase_in(&dir, Entry::Cell), None);
+        assert_eq!(release_args(Entry::Cell, 7, 3), vec!["app=7".to_owned()]);
+        assert_eq!(release_args(Entry::Vault, 7, 3), vec!["vault=3".to_owned()]);
+        assert!(release_args(Entry::CellKeys, 7, 3).is_empty());
+        assert!(release_args(Entry::Cell, 0, 3).is_empty());
+        let unpaired = Layout::new(
+            crate::config::decode(
+                br#"{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+                "mail":{"relay":"smtp.example.eu","username":"cell"}}"#,
+            )
+            .unwrap(),
+        );
+        assert!(matches!(restore_keys(&unpaired, &dir), Err(Fail::Waits(_))));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

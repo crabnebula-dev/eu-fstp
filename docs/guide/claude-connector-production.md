@@ -52,7 +52,9 @@ Decided by Daniel on 2026-11-23: the second custodian is required. Each key copy
 
 While the custodian does not answer, erasures wait: the data is unreadable on the host at once, but the erasure is reported complete only once the custodian answered. `status` and the page **System** then show the custodian in red. Keep the custodian on.
 
-If the pilot host is lost, set up the new host, run steps 1 to 4 again with the same custodian, then restore. If the custodian machine is lost, pair a new one the same way, then run `fstp-admin backup-keys` at once: the old copies no longer open. The custodian's certificate lasts two years, and `status` asks for a new pairing a month before it ends.
+After each erasure, each key custody entry sends a fresh copy of its keys to the custodian by itself. If that copy does not arrive, `status` and the page **System** say so, and the host retries every ten minutes.
+
+If the pilot host is lost, set up the new host and run steps 1 to 4 again with the same custodian. Put the old host's passphrases into a directory as `<entry>.passphrase` (for example `cell.passphrase`), with any copies you kept as `<entry>.fkx`. Then run `sudo fstp-admin restore-keys <that directory>`: it takes each copy from the directory or else from the custodian. Then run `sudo fstp-admin restore`. If the custodian machine is lost, pair a new one the same way, then run `fstp-admin backup-keys` at once: the old copies no longer open. The custodian's certificate lasts two years, and `status` asks for a new pairing a month before it ends.
 
 ## 3. Open the organisation
 
@@ -78,6 +80,7 @@ The web admin sees the same on the page **System** (`https://<domain>/app/admin/
 | `fstp-admin verify` | Step 3 of part 3. `fstp-admin admins` only lists the accounts |
 | `fstp-admin backup-keys /media/usb/fstp-keys` | Once after setup and pairing, and after each erasure. Keep the stick apart from the passphrases. It needs the second custodian, which seals each copy |
 | `fstp-admin pair-custodian <host>` | Once, part 2a. Again after the loss of either machine, and when `status` asks |
+| `fstp-admin restore-keys <dir>` | After the loss of the host, before `restore` (part 2a). It moves each key volume it replaces aside and never deletes it |
 | `fstp-admin backup` | A backup now. A timer runs it daily |
 | `fstp-admin restore` | After data loss. It restores both databases from their newest backups, then the cell's and the vault's keys |
 | `fstp-admin renew` | Only when `status` asks. A daily timer renews certificates and updates the route |

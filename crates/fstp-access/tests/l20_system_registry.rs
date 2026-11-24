@@ -74,6 +74,7 @@ fn fstp_obs_words() -> Vec<&'static str> {
         "public_certificate",
         "configure_backups",
         "backup",
+        "custodian_copy",
         "keystore_snapshot",
         "web_admins",
         "verify_admins",

@@ -251,6 +251,10 @@ fn restore_keystores(layout: &Layout, m: &Manager) -> Result<(), Fail> {
         m.ensure(&crate::pg::service(layout, c))
             .map_err(|e| Fail::Step("restore", e.into()))?;
     }
+    // After `restore-keys` (ADR-028 record of lane `m10/guard-key`, part
+    // 2): each held entry is released with the epochs of the restored
+    // databases, before any keystore opens.
+    crate::custodian::release_held(layout, m)?;
     for (step, user, bin, env, service) in [
         (
             "fstp-vault restore-keystore",

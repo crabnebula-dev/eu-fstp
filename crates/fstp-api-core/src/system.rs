@@ -76,7 +76,7 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 14] = [
+pub const HOST_NEXT: [&str; 15] = [
     "run_setup",
     "start_service",
     "custodian",
@@ -86,6 +86,7 @@ pub const HOST_NEXT: [&str; 14] = [
     "public_certificate",
     "configure_backups",
     "backup",
+    "custodian_copy",
     "keystore_snapshot",
     "web_admins",
     "verify_admins",
@@ -177,6 +178,8 @@ pub struct HostReport {
     pub custodian: CustodianState,
     /// A guard rotation is owed, so an erasure waits.
     pub guard_owed: bool,
+    /// A fresh copy is owed to the custodian (Q-F018-4).
+    pub guard_copy_owed: bool,
 }
 
 /// What the cell found of the host status file.
@@ -328,6 +331,7 @@ fn report_json(r: &HostReport) -> Value {
     put(&mut o, "next", Value::from(r.next.wire()));
     put(&mut o, "custodian", Value::from(r.custodian.wire()));
     put(&mut o, "guard_owed", Value::Bool(r.guard_owed));
+    put(&mut o, "guard_copy_owed", Value::Bool(r.guard_copy_owed));
     Value::Object(o)
 }
 

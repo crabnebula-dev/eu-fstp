@@ -32,6 +32,9 @@ pub enum Next {
     ConfigureBackups,
     /// The newest base backup is old or missing.
     Backup,
+    /// A fresh copy is owed to the second custodian: the last try failed
+    /// (ADR-028 record of lane `m10/guard-key`, part 2).
+    CustodianCopy,
     /// A keystore snapshot failed, or none verified in a day and a half.
     KeystoreSnapshot,
     /// The web admins must enrol and invite the second admin first.
@@ -120,6 +123,8 @@ pub fn next(f: &Findings) -> Next {
         Next::ConfigureBackups
     } else if f.backup_age_hours.is_none_or(|h| h > 36) {
         Next::Backup
+    } else if f.custodian == Some(crate::custodian::Link::CopyOwed) {
+        Next::CustodianCopy
     } else if f.snapshot_failed || f.snapshot_age_hours.is_none_or(|h| h > 36) {
         Next::KeystoreSnapshot
     } else if f.custodian == Some(crate::custodian::Link::Unpaired)
@@ -157,6 +162,9 @@ fn next_text(n: Next) -> &'static str {
             "add \"backup\" with your object store to fstp.json, put its two key files in place, then run fstp-admin setup."
         }
         Next::Backup => "run fstp-admin backup. The newest backup is older than a day and a half.",
+        Next::CustodianCopy => {
+            "the second custodian answers, but the fresh key copy after the last erasure did not reach it. fstp-keyd tries again every ten minutes. Check the free disk space on the custodian machine and its log (journalctl -u fstp-keyd-custodian), then run fstp-admin status again."
+        }
         Next::KeystoreSnapshot => {
             "the daily keystore snapshot failed or did not run. Read the log of fstp-cell and fstp-vault (journalctl -u <its name>), fix what it names, then run fstp-admin start: each service takes a snapshot a minute after it starts."
         }
@@ -367,6 +375,7 @@ pub fn next_word(n: Next) -> HostNext {
         Next::PublicCertificate => HostNext::PublicCertificate,
         Next::ConfigureBackups => HostNext::ConfigureBackups,
         Next::Backup => HostNext::Backup,
+        Next::CustodianCopy => HostNext::CustodianCopy,
         Next::KeystoreSnapshot => HostNext::KeystoreSnapshot,
         Next::WebAdmins => HostNext::WebAdmins,
         Next::VerifyAdmins => HostNext::VerifyAdmins,
@@ -418,14 +427,17 @@ pub fn host_status(
         },
         next: next_word(next(f)),
         custodian: match f.custodian {
-            Some(crate::custodian::Link::Linked | crate::custodian::Link::Owed) => {
-                host_status::CustodianState::Linked
-            }
+            Some(
+                crate::custodian::Link::Linked
+                | crate::custodian::Link::Owed
+                | crate::custodian::Link::CopyOwed,
+            ) => host_status::CustodianState::Linked,
             Some(crate::custodian::Link::Unreachable) => host_status::CustodianState::Unreachable,
             Some(crate::custodian::Link::Unpaired) => host_status::CustodianState::Unpaired,
             None => host_status::CustodianState::NotUsed,
         },
         guard_owed: f.custodian == Some(crate::custodian::Link::Owed),
+        guard_copy_owed: f.custodian == Some(crate::custodian::Link::CopyOwed),
     }
 }
 
@@ -543,6 +555,9 @@ pub fn run(layout: &Layout) -> u8 {
     }
     out(&[Part::T(match f.custodian {
         Some(crate::custodian::Link::Linked) => "  custodian  linked, guard current",
+        Some(crate::custodian::Link::CopyOwed) => {
+            "  custodian  linked, a fresh copy is owed (retried every ten minutes)"
+        }
         Some(crate::custodian::Link::Owed) => {
             "  custodian  A GUARD IS STILL TO BE REPLACED: erasures wait"
         }
@@ -625,6 +640,28 @@ mod tests {
             custodian: Some(crate::custodian::Link::Linked),
             pairing_days: Some(700),
         }
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, part 2 (Q-F018-4), F-018:
+    /// an owed fresh copy is named after the backups, and the host status
+    /// file carries it with the custodian still linked.
+    #[test]
+    fn adr028_guard_status_names_an_owed_copy() {
+        use crate::custodian::Link;
+        let mut f = healthy();
+        f.custodian = Some(Link::CopyOwed);
+        assert_eq!(next(&f), Next::CustodianCopy);
+        f.backup_age_hours = Some(40);
+        assert_eq!(next(&f), Next::Backup);
+        f.backup_age_hours = Some(2);
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.custodian, host_status::CustodianState::Linked);
+        assert!(s.guard_copy_owed && !s.guard_owed);
+        assert_eq!(s.next, HostNext::CustodianCopy);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
     }
 
     /// ADR-028 record of lane `m10/guard-key`, I-81: an unreachable

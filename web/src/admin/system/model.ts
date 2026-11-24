@@ -35,6 +35,7 @@ export const HOST_NEXT = [
   "public_certificate",
   "configure_backups",
   "backup",
+  "custodian_copy",
   "keystore_snapshot",
   "web_admins",
   "verify_admins",
@@ -70,6 +71,8 @@ export interface HostReport {
   readonly custodian: "linked" | "unreachable" | "unpaired" | "not_used";
   /** A guard rotation is owed, so an erasure waits. */
   readonly guardOwed: boolean;
+  /** A fresh copy is owed to the custodian: the last try failed. */
+  readonly guardCopyOwed: boolean;
 }
 
 /** The `tenant.system` reply. */
@@ -121,6 +124,7 @@ function host(v: unknown): HostReport | null {
     "next",
     "custodian",
     "guard_owed",
+    "guard_copy_owed",
   ];
   if (o === null || !closed(o, names)) return null;
   const p = record(o["parts"]);
@@ -153,6 +157,8 @@ function host(v: unknown): HostReport | null {
   const { custodian, guard_owed: guardOwed } = o;
   if (!oneOf(custodian, ["linked", "unreachable", "unpaired", "not_used"] as const)) return null;
   if (typeof guardOwed !== "boolean") return null;
+  const guardCopyOwed = o["guard_copy_owed"];
+  if (typeof guardCopyOwed !== "boolean") return null;
   return Object.freeze({
     writtenAt,
     setupDone,
@@ -171,6 +177,7 @@ function host(v: unknown): HostReport | null {
     next,
     custodian,
     guardOwed,
+    guardCopyOwed,
   });
 }
 
@@ -312,6 +319,8 @@ function hostRows(r: SystemReply): Row[] {
     out.push(row("keys", "red", "custodian_down", {}, "host", "system.tell.custodian"));
   } else if (h.custodian === "unpaired") {
     out.push(row("keys", "amber", "custodian_unpaired", {}, "host", "system.tell.pair_custodian"));
+  } else if (h.guardCopyOwed) {
+    out.push(row("keys", "amber", "custodian_copy_owed", {}, "host", "system.tell.custodian_copy"));
   } else if (h.lastKeyCopy === null) out.push(row("keys", "amber", "never", {}, "host", "system.tell.copy_keys"));
   else if (erased !== null && erased > h.lastKeyCopy) {
     out.push(

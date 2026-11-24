@@ -39,6 +39,7 @@ fn sample() -> HostStatus {
         next: Next::RenewRoute,
         custodian: CustodianState::Unreachable,
         guard_owed: true,
+        guard_copy_owed: false,
     }
 }
 
@@ -91,6 +92,7 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         next: pick(g, &Next::ALL),
         custodian: pick(g, &CustodianState::ALL),
         guard_owed: g.bool(),
+        guard_copy_owed: g.bool(),
     }
 }
 
@@ -220,6 +222,15 @@ fn r_nf_02_host_status_refuses_bad_input() {
         (
             swap("\"guard_owed\":true,", ""),
             HostStatusError::MissingMember("guard_owed"),
+        ),
+        // Part 2 (Q-F018-4): an owed fresh copy for the custodian.
+        (
+            swap("\"guard_copy_owed\":false,", "\"guard_copy_owed\":0,"),
+            HostStatusError::Invalid("guard_copy_owed"),
+        ),
+        (
+            swap("\"guard_copy_owed\":false,", ""),
+            HostStatusError::MissingMember("guard_copy_owed"),
         ),
         (
             format!("{good}{}", " ".repeat(MAX_LEN)),
