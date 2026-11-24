@@ -799,3 +799,23 @@ fn adr012_held_delete_keeps_the_index_line() {
     let _ = std::fs::remove_dir_all(&s.state);
     s.fake.stop(&s.rt);
 }
+
+/// F-044, ADR-012 record of lane m10/backup-format, row "Custody AAD":
+/// a version 2 key file carries both public keys in its AAD, more than
+/// `fstp-keyd` takes. Custody sees a labelled digest of it instead, so
+/// `init-keys` works against the real console socket, and the wrap still
+/// opens only for this exact header.
+#[test]
+fn f044_bound_key_file_gives_custody_an_aad_keyd_takes() {
+    let rt = rt();
+    let custody = MemCustody::default();
+    let created = rt.block_on(keyfile::create(&custody, CLUSTER)).unwrap();
+    let f = keyfile::decode(&created.key_file).unwrap();
+    assert!(f.aad().len() > fstp_custody::keyd::MAX_AAD_LEN);
+    assert!(f.custody_aad().len() <= fstp_custody::keyd::MAX_AAD_LEN);
+    assert!(f.custody_aad().starts_with(keyfile::CUSTODY_AAD_LABEL));
+    rt.block_on(keyfile::open(&custody, &f)).unwrap();
+    let mut other = f.clone();
+    other.generation = other.generation.wrapping_add(1);
+    assert!(rt.block_on(keyfile::open(&custody, &other)).is_err());
+}

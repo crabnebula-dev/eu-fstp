@@ -268,10 +268,17 @@ fn adr012_pitr_restores_to_a_time_and_follows_the_new_timeline() {
         format!("{SK}\n").as_bytes(),
     );
     write_private(&creds.join("s3-ca.pem"), fake_s3::CA_PEM);
-    let key_file = rt
+    let created = rt
         .block_on(fstp_backup::keyfile::create(&custody, cluster_id))
         .unwrap();
-    write_private(&creds.join(fstp_backup::keyfile::KEY_FILE), &key_file);
+    write_private(
+        &creds.join(fstp_backup::keyfile::KEY_FILE),
+        &created.key_file,
+    );
+    write_private(
+        &creds.join(fstp_backup::writer::WRITER_FILE),
+        &created.writer_key,
+    );
     let cfg_text = format!(
         r#"{{"cluster": "{}", "credentials_dir": "{}", "state_dir": "{}", "pg_bindir": "{}",
             "database": {{"host": "127.0.0.1", "port": {}}},

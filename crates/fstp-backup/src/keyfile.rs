@@ -60,6 +60,10 @@ pub const MAGIC_V1: &[u8; 22] = b"fstp-cluster-backup-v1";
 pub const CUSTODIAN_MAGIC: &[u8; 22] = b"fstp-backup-custodian1";
 /// The file's name in the credentials directory.
 pub const KEY_FILE: &str = "cluster-backup.key";
+
+/// The label before the digest in [`KeyFile::custody_aad`] of a bound key
+/// file (ADR-012 record of lane m10/backup-format, row "Custody AAD").
+pub const CUSTODY_AAD_LABEL: &[u8] = b"fstp-backup-key-custody-aad-v2";
 /// The magic of the App chain's snapshot key file `cell-snapshot.key`
 /// (ADR-004 record of lane L17).
 pub const CELL_SNAPSHOT_MAGIC: &[u8; 22] = b"fstp-cell-snapshots-v1";
@@ -225,6 +229,21 @@ impl KeyFile {
             out.extend_from_slice(&b.writer[..]);
         }
         out
+    }
+
+    /// The AAD custody sees for the wrap of the seal key. `fstp-keyd`
+    /// takes at most 1,024 bytes of AAD, and a version 2 group key file
+    /// carries both public keys in [`KeyFile::aad`]. So a bound file gives
+    /// custody `CUSTODY_AAD_LABEL || SHA-256(aad)`, which still binds the
+    /// wrap to every byte of it. A file without a binding gives its
+    /// [`KeyFile::aad`] as before, so existing wraps still open.
+    #[must_use]
+    pub fn custody_aad(&self) -> Vec<u8> {
+        let aad = self.aad();
+        if self.binding.is_none() {
+            return aad;
+        }
+        [CUSTODY_AAD_LABEL, &fstp_crypto::sha256(&aad)[..]].concat()
     }
 
     /// The group key the writer seals to.
@@ -585,7 +604,7 @@ async fn seal_file<C: Custody>(
     let seal = SealKey::generate().map_err(|_| BackupError::Seal("seal key"))?;
     let aad = file.aad();
     let wrapped = custody
-        .wrap(root, &seal, &Aad(aad.clone()))
+        .wrap(root, &seal, &Aad(file.custody_aad()))
         .await
         .map_err(|_| BackupError::Custody("wrap"))?;
     file.wrapped = wrapped.0;
@@ -648,7 +667,7 @@ pub async fn open<C: Custody>(custody: &C, f: &KeyFile) -> Result<HybridSecretKe
         .unwrap(
             &f.root(),
             &WrappedSealKey(f.wrapped.clone()),
-            &Aad(aad.clone()),
+            &Aad(f.custody_aad()),
         )
         .await
         .map_err(|_| BackupError::Custody("unwrap"))?;

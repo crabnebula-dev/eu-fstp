@@ -820,7 +820,6 @@ mod tests {
         assert_eq!(c.agreements, "1,1,1");
     }
 
-<<<<<<< HEAD
     /// ADR-012 record of lane m10/backup-health: a development host in
     /// direct mode may name `localhost` as its object store, for the
     /// end-to-end test's fake; a production host may not.
@@ -842,7 +841,8 @@ mod tests {
                 problem: Problem::BadHost
             })
         );
-=======
+    }
+
     /// Q25, ADR-012 and ADR-028 records of lane m10/backup-format:
     /// `backup.copies` names one or two further object stores, whose key
     /// files default to `<etc>/s3-<n>-...`. One store, as before, stays
@@ -946,7 +946,6 @@ mod tests {
                 "{extra}"
             );
         }
->>>>>>> origin/m10/backup-format
     }
 
     /// ADR-028 record of lane `m10/guard-key`: the member `custodian`

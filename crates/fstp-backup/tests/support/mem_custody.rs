@@ -1,6 +1,7 @@
 //! A minimal in-memory custody for the backup tests: roots are random
 //! AES-256-GCM keys in a map, and `destroy` removes one. It stands in for
-//! the `fstp-keyd` console socket. Shared through `#[path]` with
+//! the `fstp-keyd` console socket, and refuses an AAD above its limit
+//! (`fstp_custody::keyd::MAX_AAD_LEN`). Shared through `#[path]` with
 //! `crates/fstp-celltest/tests/adr012_backup_agent_pg.rs`.
 
 #![allow(dead_code, unreachable_pub, clippy::unwrap_used)]
@@ -67,6 +68,10 @@ impl Custody for MemCustody {
         key: &SealKey,
         aad: &Aad,
     ) -> impl Future<Output = Result<WrappedSealKey, CustodyError>> + Send {
+        // As `fstp-keyd`: an AAD above its frame limit is refused.
+        if aad.0.len() > fstp_custody::keyd::MAX_AAD_LEN {
+            return std::future::ready(Err(gone()));
+        }
         let out = self
             .roots
             .lock()
@@ -90,6 +95,9 @@ impl Custody for MemCustody {
         w: &WrappedSealKey,
         aad: &Aad,
     ) -> impl Future<Output = Result<SealKey, CustodyError>> + Send {
+        if aad.0.len() > fstp_custody::keyd::MAX_AAD_LEN {
+            return std::future::ready(Err(gone()));
+        }
         let out = self
             .roots
             .lock()
