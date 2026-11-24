@@ -30,8 +30,10 @@ use fstp_rt::tokio::TokioRuntime;
 use fstp_rt::{IoExt as _, Listener as _, Runtime as _};
 
 use super::copy::HEADER_LEN;
-use super::store::{answer_open, answer_public, answer_rotate};
-use super::wire::{GuardRequest, MAX_REQUEST_LEN, MAX_RESPONSE_LEN};
+use super::store::{answer_fetch, answer_open, answer_public, answer_put, answer_rotate};
+use super::wire::{
+    GuardRequest, MAX_REQUEST_LEN, MAX_RESPONSE_LEN, MAX_SMALL_REQUEST_LEN, MAX_SMALL_RESPONSE_LEN,
+};
 use super::{
     CUSTODIAN_CN, DEFAULT_PORT, GuardClient, GuardEntry, GuardFault, GuardLink, Rotated, fresh_id,
 };
@@ -44,6 +46,9 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the server waits for the handshake and the request.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a `put` or a `fetch` may take on either side: a copy is up to
+/// 160 MiB (ADR-004 "The custodian's copy").
+pub const COPY_TIMEOUT: Duration = Duration::from_secs(300);
 /// The most connections the custodian serves at once.
 pub const MAX_CONNECTIONS: usize = 16;
 /// How often the listener looks at its stop flag.
@@ -141,6 +146,15 @@ impl TlsGuard {
     }
 
     fn exchange(&self, request: &[u8]) -> Result<Vec<u8>, GuardFault> {
+        self.exchange_with(request, EXCHANGE_TIMEOUT, MAX_SMALL_RESPONSE_LEN)
+    }
+
+    fn exchange_with(
+        &self,
+        request: &[u8],
+        limit: Duration,
+        max_reply: usize,
+    ) -> Result<Vec<u8>, GuardFault> {
         let rt = TokioRuntime::new_current_thread().map_err(|_| GuardFault::Unreachable)?;
         let run = async {
             let addrs = rt.resolve(&self.host, self.port).await?;
@@ -162,10 +176,10 @@ impl TlsGuard {
             tls.flush().await?;
             tls.shutdown().await?;
             let mut reply = Vec::new();
-            tls.read_to_end(&mut reply, MAX_RESPONSE_LEN).await?;
+            tls.read_to_end(&mut reply, max_reply).await?;
             Ok::<Vec<u8>, std::io::Error>(reply)
         };
-        match rt.block_on(fstp_rt::timeout(&rt, EXCHANGE_TIMEOUT, run)) {
+        match rt.block_on(fstp_rt::timeout(&rt, limit, run)) {
             Ok(Ok(reply)) => Ok(reply),
             _ => Err(GuardFault::Unreachable),
         }
@@ -202,6 +216,29 @@ impl GuardClient for TlsGuard {
         };
         let reply = self.exchange(&request.encode())?;
         answer_open(id, &reply)
+    }
+
+    fn put(&self, entry: GuardEntry, copy: &[u8]) -> Result<u32, GuardFault> {
+        let id = fresh_id()?;
+        let generation = super::copy::decode_guarded(copy)
+            .map_err(|_| GuardFault::Refused(fstp_custody::Refusal::BadRequest))?
+            .0
+            .generation;
+        let request = GuardRequest::Put {
+            id,
+            entry,
+            generation,
+            copy: copy.to_vec(),
+        };
+        let reply = self.exchange_with(&request.encode(), COPY_TIMEOUT, MAX_SMALL_RESPONSE_LEN)?;
+        answer_put(id, &reply)
+    }
+
+    fn fetch(&self, entry: GuardEntry) -> Result<Vec<u8>, GuardFault> {
+        let id = fresh_id()?;
+        let request = GuardRequest::Fetch { id, entry }.encode();
+        let reply = self.exchange_with(&request, COPY_TIMEOUT, MAX_RESPONSE_LEN)?;
+        answer_fetch(id, entry, &reply)
     }
 }
 
@@ -288,18 +325,24 @@ pub(crate) fn run_listener(
             let conn_rt = rt.clone();
             drop(rt.spawn(async move {
                 let _place = place;
-                let read = async {
-                    let mut stream = fstp_tls::accept(&tls, conn).await?;
-                    let mut request = Zeroizing::new(Vec::new());
-                    stream.read_to_end(&mut request, MAX_REQUEST_LEN).await?;
-                    Ok::<_, std::io::Error>((stream, request))
-                };
-                let Ok(Ok((mut stream, request))) =
-                    fstp_rt::timeout(&conn_rt, READ_TIMEOUT, read).await
+                let Ok(Ok(mut stream)) =
+                    fstp_rt::timeout(&conn_rt, READ_TIMEOUT, fstp_tls::accept(&tls, conn)).await
                 else {
                     return;
                 };
+                // Only a peer that names a pilot entry may send a copy: any
+                // other gets 1183 bytes and 10 seconds (ADR-004 "The
+                // custodian's copy", row "Size").
                 let peer = stream.peer_end_entity_der().and_then(peer_entry);
+                let (limit, max) = match peer {
+                    Some(_) => (COPY_TIMEOUT, MAX_REQUEST_LEN),
+                    None => (READ_TIMEOUT, MAX_SMALL_REQUEST_LEN),
+                };
+                let mut request = Zeroizing::new(Vec::new());
+                let read = stream.read_to_end(&mut request, max);
+                if !matches!(fstp_rt::timeout(&conn_rt, limit, read).await, Ok(Ok(_))) {
+                    return;
+                }
                 let reply = {
                     let mut s = server.lock().unwrap_or_else(PoisonError::into_inner);
                     s.guard_serve(peer, &request)
@@ -309,7 +352,7 @@ pub(crate) fn run_listener(
                     stream.flush().await?;
                     stream.shutdown().await
                 };
-                let _ = fstp_rt::timeout(&conn_rt, READ_TIMEOUT, write).await;
+                let _ = fstp_rt::timeout(&conn_rt, limit, write).await;
             }));
         }
         Ok(())

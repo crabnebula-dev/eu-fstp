@@ -15,6 +15,17 @@
 //!   0xff refused: refusal code u8                                 23 bytes
 //! ```
 //!
+//! Since 2026-11-24 (Q-F018-4), the custodian's copy:
+//!
+//! ```text
+//!   kind 4 put:    generation u32 | len u32 | guarded copy        31 + len
+//!   kind 5 fetch:  nothing                                        23 bytes
+//!   0x84 stored:  generation u32                                  26 bytes
+//!   0x85 copy:    generation u32 | len u32 | guarded copy         30 + len
+//! ```
+//!
+//! A copy is 1 to [`MAX_GUARDED_LEN`] bytes.
+//!
 //! Each kind has one length, and every byte has one meaning, so each
 //! decoder accepts exactly what its encoder writes. Fuzzed
 //! (`guard_link_decode`).
@@ -25,20 +36,25 @@ use fstp_crypto::hybrid_kem::{CIPHERTEXT_LEN, PUBLIC_KEY_LEN};
 use fstp_custody::Refusal;
 
 use super::GuardEntry;
-use super::copy::HEADER_LEN;
+use super::copy::{HEADER_LEN, MAX_GUARDED_LEN};
 use crate::KeydError;
 
 /// The magic of every frame.
 pub const LINK_MAGIC: [u8; 4] = *b"FGL1";
 /// The one version of the link.
 pub const LINK_VERSION: u8 = 1;
-/// The longest request: an `open`.
-pub const MAX_REQUEST_LEN: usize = REQUEST_HEAD_LEN + 4 + HEADER_LEN + CIPHERTEXT_LEN;
+/// The longest request but a `put`: an `open`. The custodian reads no more
+/// from a peer whose certificate names no pilot entry.
+pub const MAX_SMALL_REQUEST_LEN: usize = REQUEST_HEAD_LEN + 4 + HEADER_LEN + CIPHERTEXT_LEN;
+/// The longest request: a `put` of the longest copy.
+pub const MAX_REQUEST_LEN: usize = REQUEST_HEAD_LEN + 8 + MAX_GUARDED_LEN;
 /// The longest receipt a rotation carries.
 pub const MAX_RECEIPT_LEN: usize = 64;
-/// The longest response: a rotation with the longest receipt.
-pub const MAX_RESPONSE_LEN: usize =
+/// The longest response but a copy: a rotation with the longest receipt.
+pub const MAX_SMALL_RESPONSE_LEN: usize =
     RESPONSE_HEAD_LEN + 4 + 4 + PUBLIC_KEY_LEN + 2 + MAX_RECEIPT_LEN;
+/// The longest response: the longest copy.
+pub const MAX_RESPONSE_LEN: usize = RESPONSE_HEAD_LEN + 8 + MAX_GUARDED_LEN;
 
 const REQUEST_HEAD_LEN: usize = 23;
 const RESPONSE_HEAD_LEN: usize = 22;
@@ -46,6 +62,10 @@ const RESPONSE_HEAD_LEN: usize = 22;
 const KIND_PUBLIC: u8 = 1;
 const KIND_ROTATE: u8 = 2;
 const KIND_OPEN: u8 = 3;
+const KIND_PUT: u8 = 4;
+const KIND_FETCH: u8 = 5;
+const KIND_STORED: u8 = 0x84;
+const KIND_COPY: u8 = 0x85;
 const KIND_PUBLIC_REPLY: u8 = 0x81;
 const KIND_ROTATED: u8 = 0x82;
 const KIND_OPENED: u8 = 0x83;
@@ -83,6 +103,24 @@ pub enum GuardRequest {
         /// The hybrid ciphertext of the copy.
         ciphertext: Box<[u8; CIPHERTEXT_LEN]>,
     },
+    /// Store `copy` as the entry's held copy (Q-F018-4).
+    Put {
+        /// The request id.
+        id: [u8; 16],
+        /// The pilot entry.
+        entry: GuardEntry,
+        /// The guard generation the copy is sealed to.
+        generation: u32,
+        /// The guarded copy.
+        copy: Vec<u8>,
+    },
+    /// The entry's held copy.
+    Fetch {
+        /// The request id.
+        id: [u8; 16],
+        /// The pilot entry.
+        entry: GuardEntry,
+    },
 }
 
 impl std::fmt::Debug for GuardRequest {
@@ -100,6 +138,8 @@ impl GuardRequest {
             GuardRequest::Public { .. } => KIND_PUBLIC,
             GuardRequest::Rotate { .. } => KIND_ROTATE,
             GuardRequest::Open { .. } => KIND_OPEN,
+            GuardRequest::Put { .. } => KIND_PUT,
+            GuardRequest::Fetch { .. } => KIND_FETCH,
         }
     }
 
@@ -109,7 +149,9 @@ impl GuardRequest {
         match self {
             GuardRequest::Public { entry, .. }
             | GuardRequest::Rotate { entry, .. }
-            | GuardRequest::Open { entry, .. } => *entry,
+            | GuardRequest::Open { entry, .. }
+            | GuardRequest::Put { entry, .. }
+            | GuardRequest::Fetch { entry, .. } => *entry,
         }
     }
 
@@ -119,14 +161,16 @@ impl GuardRequest {
         match self {
             GuardRequest::Public { id, .. }
             | GuardRequest::Rotate { id, .. }
-            | GuardRequest::Open { id, .. } => *id,
+            | GuardRequest::Open { id, .. }
+            | GuardRequest::Put { id, .. }
+            | GuardRequest::Fetch { id, .. } => *id,
         }
     }
 
     /// The request bytes.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(MAX_REQUEST_LEN);
+        let mut out = Vec::with_capacity(MAX_SMALL_REQUEST_LEN);
         out.extend_from_slice(&LINK_MAGIC);
         out.extend_from_slice(&[LINK_VERSION, self.kind(), self.entry().code()]);
         out.extend_from_slice(&self.id());
@@ -143,6 +187,15 @@ impl GuardRequest {
                 out.extend_from_slice(&header[..]);
                 out.extend_from_slice(&ciphertext[..]);
             }
+            GuardRequest::Put {
+                generation, copy, ..
+            } => {
+                out.extend_from_slice(&generation.to_be_bytes());
+                let len = u32::try_from(copy.len()).unwrap_or(u32::MAX);
+                out.extend_from_slice(&len.to_be_bytes());
+                out.extend_from_slice(copy);
+            }
+            GuardRequest::Fetch { .. } => {}
         }
         out
     }
@@ -180,6 +233,22 @@ pub enum GuardResponse {
         /// The key.
         kek: Zeroizing<[u8; 32]>,
     },
+    /// The custodian stored the copy.
+    Stored {
+        /// The request id.
+        id: [u8; 16],
+        /// The generation the copy is sealed to.
+        generation: u32,
+    },
+    /// The entry's held copy.
+    Copy {
+        /// The request id.
+        id: [u8; 16],
+        /// The generation it is sealed to.
+        generation: u32,
+        /// The guarded copy.
+        copy: Vec<u8>,
+    },
     /// A refusal.
     Refused {
         /// The request id, or zeros when the request did not decode.
@@ -206,6 +275,10 @@ impl std::fmt::Debug for GuardResponse {
                 .field("generation", generation)
                 .finish_non_exhaustive(),
             GuardResponse::Opened { .. } => f.debug_struct("Opened").finish_non_exhaustive(),
+            GuardResponse::Stored { generation, .. } | GuardResponse::Copy { generation, .. } => f
+                .debug_struct("Copy")
+                .field("generation", generation)
+                .finish_non_exhaustive(),
             GuardResponse::Refused { refusal, .. } => f
                 .debug_struct("Refused")
                 .field("refusal", refusal)
@@ -221,12 +294,14 @@ impl GuardResponse {
     ///
     /// Refuses a receipt above [`MAX_RECEIPT_LEN`].
     pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>, KeydError> {
-        let mut out = Zeroizing::new(Vec::with_capacity(MAX_RESPONSE_LEN));
+        let mut out = Zeroizing::new(Vec::with_capacity(MAX_SMALL_RESPONSE_LEN));
         out.extend_from_slice(&LINK_MAGIC);
         let (kind, id) = match self {
             GuardResponse::Public { id, .. } => (KIND_PUBLIC_REPLY, id),
             GuardResponse::Rotated { id, .. } => (KIND_ROTATED, id),
             GuardResponse::Opened { id, .. } => (KIND_OPENED, id),
+            GuardResponse::Stored { id, .. } => (KIND_STORED, id),
+            GuardResponse::Copy { id, .. } => (KIND_COPY, id),
             GuardResponse::Refused { id, .. } => (KIND_REFUSED, id),
         };
         out.extend_from_slice(&[LINK_VERSION, kind]);
@@ -257,6 +332,20 @@ impl GuardResponse {
                 out.extend_from_slice(receipt);
             }
             GuardResponse::Opened { kek, .. } => out.extend_from_slice(&kek[..]),
+            GuardResponse::Stored { generation, .. } => {
+                out.extend_from_slice(&generation.to_be_bytes());
+            }
+            GuardResponse::Copy {
+                generation, copy, ..
+            } => {
+                if copy.is_empty() || copy.len() > MAX_GUARDED_LEN {
+                    return Err(bad("a held copy is out of bounds"));
+                }
+                out.extend_from_slice(&generation.to_be_bytes());
+                let len = u32::try_from(copy.len()).map_err(|_| bad("a held copy is too long"))?;
+                out.extend_from_slice(&len.to_be_bytes());
+                out.extend_from_slice(copy);
+            }
             GuardResponse::Refused { refusal, .. } => out.push(refusal.code()),
         }
         Ok(out)
@@ -287,6 +376,16 @@ impl<'a> Reader<'a> {
 
     fn u32(&mut self) -> Result<u32, KeydError> {
         Ok(u32::from_be_bytes(self.array()?))
+    }
+
+    /// A copy: its length as `u32`, 1 to [`MAX_GUARDED_LEN`], then its
+    /// bytes.
+    fn copy(&mut self) -> Result<&'a [u8], KeydError> {
+        let len = usize::try_from(self.u32()?).map_err(|_| bad("a held copy is too long"))?;
+        if len == 0 || len > MAX_GUARDED_LEN {
+            return Err(bad("a held copy is out of bounds"));
+        }
+        self.take(len)
     }
 
     fn end(&self) -> Result<(), KeydError> {
@@ -346,6 +445,17 @@ pub fn decode_guard_request(bytes: &[u8]) -> Result<GuardRequest, KeydError> {
             header: Box::new(r.array()?),
             ciphertext: Box::new(r.array()?),
         },
+        KIND_PUT => {
+            let generation = generation(r.u32()?)?;
+            let copy = r.copy()?.to_vec();
+            GuardRequest::Put {
+                id,
+                entry,
+                generation,
+                copy,
+            }
+        }
+        KIND_FETCH => GuardRequest::Fetch { id, entry },
         _ => return Err(bad("a guard request has an unknown kind")),
     };
     r.end()?;
@@ -396,6 +506,19 @@ pub fn decode_guard_response(bytes: &[u8]) -> Result<GuardResponse, KeydError> {
             id,
             kek: Zeroizing::new(r.array()?),
         },
+        KIND_STORED => GuardResponse::Stored {
+            id,
+            generation: generation(r.u32()?)?,
+        },
+        KIND_COPY => {
+            let generation = generation(r.u32()?)?;
+            let copy = r.copy()?.to_vec();
+            GuardResponse::Copy {
+                id,
+                generation,
+                copy,
+            }
+        }
         KIND_REFUSED => {
             let [code] = r.array::<1>()?;
             GuardResponse::Refused {
@@ -447,7 +570,7 @@ mod tests {
             long.push(0);
             assert!(decode_guard_request(&long).is_err());
         }
-        assert_eq!(requests[2].encode().len(), MAX_REQUEST_LEN);
+        assert_eq!(requests[2].encode().len(), MAX_SMALL_REQUEST_LEN);
         let responses = [
             GuardResponse::Public {
                 id: [1; 16],
@@ -475,6 +598,51 @@ mod tests {
             assert_eq!(&decode_guard_response(&b).unwrap(), s);
             assert!(decode_guard_response(&b[..b.len() - 1]).is_err());
         }
-        assert_eq!(responses[1].encode().unwrap().len(), MAX_RESPONSE_LEN);
+        assert_eq!(responses[1].encode().unwrap().len(), MAX_SMALL_RESPONSE_LEN);
+    }
+
+    /// ADR-004 "The custodian's copy" (Q-F018-4): the `put`, `fetch`,
+    /// `stored` and `copy` frames decode back in one spelling, and an
+    /// empty copy or a length that does not match is refused.
+    #[test]
+    fn adr004_guard_copy_frames_round_trip_in_one_spelling() {
+        for q in [
+            GuardRequest::Put {
+                id: [1; 16],
+                entry: GuardEntry::Vault,
+                generation: 3,
+                copy: vec![9; 70],
+            },
+            GuardRequest::Fetch {
+                id: [2; 16],
+                entry: GuardEntry::Cell,
+            },
+        ] {
+            let b = q.encode();
+            assert_eq!(decode_guard_request(&b).unwrap(), q);
+            assert!(decode_guard_request(&b[..b.len() - 1]).is_err());
+        }
+        for s in [
+            GuardResponse::Stored {
+                id: [3; 16],
+                generation: 4,
+            },
+            GuardResponse::Copy {
+                id: [4; 16],
+                generation: 4,
+                copy: vec![8; 33],
+            },
+        ] {
+            let b = s.encode().unwrap();
+            assert_eq!(decode_guard_response(&b).unwrap(), s);
+            assert!(decode_guard_response(&b[..b.len() - 1]).is_err());
+        }
+        let empty = GuardRequest::Put {
+            id: [1; 16],
+            entry: GuardEntry::Cell,
+            generation: 1,
+            copy: Vec::new(),
+        };
+        assert!(decode_guard_request(&empty.encode()).is_err());
     }
 }

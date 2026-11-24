@@ -3,14 +3,16 @@
 //!
 //! ```text
 //! guard.state = "FGS1" | version u8 = 1 | generation u32 | rotated u64
-//!               | owed u8 | event 16                              34 bytes
+//!               | owed u8 | event 16 | copy u8 | copied u64          43 bytes
 //! ```
 //!
 //! `generation` is the guard generation the custodian last named, 0 before
 //! the first answer. `rotated` is the time of the last rotation in Unix
 //! seconds, 0 before the first. `owed` is 1 while a rotation is owed for
 //! `event`, the request id of the destroy that caused it, and 0 with 16
-//! zero bytes otherwise. It holds no key bytes. The file is written to a
+//! zero bytes otherwise. `copy` is 1 while a fresh copy is owed to
+//! the custodian, and `copied` the time of the last one it stored (ADR-004
+//! "The custodian's copy"). It holds no key bytes. The file is written to a
 //! temporary file, synced and renamed, so a crash leaves the old state or
 //! the new one. The decoder is fuzzed (`guard_link_decode`).
 
@@ -26,7 +28,7 @@ pub const STATE_MAGIC: [u8; 4] = *b"FGS1";
 /// The version.
 pub const STATE_VERSION: u8 = 1;
 /// The length of the file.
-pub const STATE_LEN: usize = 34;
+pub const STATE_LEN: usize = 43;
 
 /// The guard state of a pilot entry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -37,6 +39,10 @@ pub struct GuardState {
     pub rotated: u64,
     /// The owed event, while a rotation is owed.
     pub owed: Option<[u8; 16]>,
+    /// A fresh copy is owed to the custodian.
+    pub copy_owed: bool,
+    /// When the custodian last stored a fresh copy, Unix seconds, 0 before.
+    pub copied: u64,
 }
 
 impl GuardState {
@@ -44,13 +50,15 @@ impl GuardState {
     #[must_use]
     pub fn encode(&self) -> [u8; STATE_LEN] {
         let mut out = [0u8; STATE_LEN];
-        let parts: [&[u8]; 6] = [
+        let parts: [&[u8]; 8] = [
             &STATE_MAGIC,
             &[STATE_VERSION],
             &self.generation.to_be_bytes(),
             &self.rotated.to_be_bytes(),
             &[u8::from(self.owed.is_some())],
             &self.owed.unwrap_or([0u8; 16]),
+            &[u8::from(self.copy_owed)],
+            &self.copied.to_be_bytes(),
         ];
         let mut at = 0usize;
         for p in parts {
@@ -88,8 +96,15 @@ pub fn decode_state(bytes: &[u8]) -> Result<GuardState, KeydError> {
     }
     let (generation, rest) = rest.split_at(4);
     let (rotated, rest) = rest.split_at(8);
-    let (flag, event) = rest.split_at(1);
+    let (flag, rest) = rest.split_at(1);
+    let (event, rest) = rest.split_at(16);
+    let (copy, copied) = rest.split_at(1);
     let event: [u8; 16] = event.try_into().map_err(|_| bad("cut short"))?;
+    let copy_owed = match copy {
+        [0] => false,
+        [1] => true,
+        _ => return Err(bad("a guard state has a bad copy flag")),
+    };
     let owed = match flag {
         [0] if event == [0u8; 16] => None,
         [1] => Some(event),
@@ -99,6 +114,8 @@ pub fn decode_state(bytes: &[u8]) -> Result<GuardState, KeydError> {
         generation: u32::from_be_bytes(generation.try_into().map_err(|_| bad("cut short"))?),
         rotated: u64::from_be_bytes(rotated.try_into().map_err(|_| bad("cut short"))?),
         owed,
+        copy_owed,
+        copied: u64::from_be_bytes(copied.try_into().map_err(|_| bad("cut short"))?),
     })
 }
 
@@ -161,6 +178,8 @@ mod tests {
                 generation: 4,
                 rotated: 77,
                 owed: Some([9; 16]),
+                copy_owed: true,
+                copied: 5,
             },
         ] {
             assert_eq!(decode_state(&s.encode()).unwrap(), s);

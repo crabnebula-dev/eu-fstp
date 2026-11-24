@@ -32,7 +32,8 @@ use fstp_custody::{
     WrappedSealKey,
 };
 use fstp_keyd::export::{
-    HOLD_FILE, export_guarded, import_guarded, import_volume, release_import_guarded,
+    HOLD_FILE, export_guarded, export_volume, import_copy, import_guarded, import_volume,
+    release_import_guarded,
 };
 use fstp_keyd::guard::copy::{self, HEADER_LEN};
 use fstp_keyd::guard::link::{GuardListener, GuardSetup, TlsGuard};
@@ -40,6 +41,7 @@ use fstp_keyd::guard::state::read_state;
 use fstp_keyd::guard::store::LocalCustodian;
 use fstp_keyd::guard::{GuardClient, GuardEntry, GuardFault, GuardLink, Rotated};
 use fstp_keyd::{ClientRole, ClientSocket, KeydError, Passphrase, PassphraseSource};
+use fstp_obs::assurance::DeploymentMode;
 use fstp_rt::future::block_on;
 use zeroize::Zeroizing;
 
@@ -61,6 +63,8 @@ fn label(chain: Chain, epoch: u64) -> RootLabel {
 struct Shared {
     custodian: Arc<LocalCustodian>,
     down: Arc<AtomicBool>,
+    /// Makes only `put` fail, as a full custodian disk would.
+    put_down: Arc<AtomicBool>,
 }
 
 impl Shared {
@@ -68,6 +72,7 @@ impl Shared {
         Shared {
             custodian: Arc::new(LocalCustodian::open(volume, &pass()).unwrap()),
             down: Arc::new(AtomicBool::new(false)),
+            put_down: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -107,6 +112,19 @@ impl GuardClient for Shared {
     ) -> Result<Zeroizing<[u8; 32]>, GuardFault> {
         self.up()?;
         self.custodian.open(entry, generation, header, ciphertext)
+    }
+
+    fn put(&self, entry: GuardEntry, copy: &[u8]) -> Result<u32, GuardFault> {
+        self.up()?;
+        if self.put_down.load(Ordering::SeqCst) {
+            return Err(GuardFault::Unreachable);
+        }
+        self.custodian.put(entry, copy)
+    }
+
+    fn fetch(&self, entry: GuardEntry) -> Result<Vec<u8>, GuardFault> {
+        self.up()?;
+        self.custodian.fetch(entry)
     }
 }
 
@@ -329,6 +347,203 @@ fn m10_f018_a_key_copy_does_not_open_without_the_custodian() {
     assert!(std::fs::read_dir(b.volume()).unwrap().next().is_none());
     guard.down.store(false, Ordering::SeqCst);
     import_guarded(&guarded, b.volume(), &pass(), Some(&guard.link())).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// The custodian's copy (ADR-004, "The custodian's copy", Q-F018-4).
+
+/// The guard generation a guarded copy is sealed to.
+fn generation_of(copy: &[u8]) -> u32 {
+    copy::decode_guarded(copy).unwrap().0.generation
+}
+
+/// The held copies on a custodian's key volume.
+fn held_files(volume: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(volume)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("held-"))
+        .collect();
+    v.sort();
+    v
+}
+
+/// F-018, I-81, Q-F018-4: right after a rotation the custodian holds a
+/// fresh copy of the entry, sealed to the new guard. It restores the live
+/// state on a fresh volume, and the epoch that rotation erased is not in
+/// it.
+#[test]
+fn m10_f018_i81_after_a_rotation_the_custodian_holds_a_copy_that_opens_with_the_new_guard() {
+    let cust = custodian_volume("f018-held-custodian");
+    let guard = Shared::new(&cust.volume);
+    // Setup's link check made generation 1 (ADR-028 record of lane `m10/guard-key`).
+    guard.public(GuardEntry::Cell).unwrap();
+    let a = Pilot::new("f018-held-a");
+    let (console, cell) = a.start(&guard);
+    create(&console, Chain::ClusterBackup, 1);
+    let app1 = create(&cell, Chain::App, 1);
+    let old_row = wrap(&cell, &app1, 0x71);
+    let app2 = create(&cell, Chain::App, 2);
+    let new_row = wrap(&cell, &app2, 0x72);
+    block_on(cell.destroy(&app1)).unwrap();
+    a.stop();
+    let st = read_state(a.volume()).unwrap();
+    assert!(!st.copy_owed && st.copied > 0, "no fresh copy was stored");
+    let held = guard.custodian.fetch(GuardEntry::Cell).unwrap();
+    assert_eq!(generation_of(&held), 2);
+    assert_eq!(guard.custodian.live_generations(GuardEntry::Cell), vec![2]);
+
+    let b = Pilot::new("f018-held-b");
+    import_guarded(&held, b.volume(), &pass(), Some(&guard.link())).unwrap();
+    release_import_guarded(
+        b.volume(),
+        &pass(),
+        &[(Chain::App, Epoch(2))],
+        Some(guard.link()),
+    )
+    .unwrap();
+    let (_, cell) = b.start(&guard);
+    assert_eq!(unwrap(&cell, &app2, &new_row, 0x72).unwrap(), [0x72; 32]);
+    assert!(
+        unwrap(&cell, &app1, &old_row, 0x71).is_err(),
+        "an erased row opened"
+    );
+}
+
+/// F-018, TH-30, I-81, Q-F018-4: the custodian never holds a copy that
+/// opens data a rotation erased. After the next rotation it keeps one copy
+/// only, sealed to the newest guard, and a copy fetched before no longer
+/// opens anywhere.
+#[test]
+fn m10_f018_th30_the_custodian_holds_no_copy_that_opens_erased_data() {
+    let cust = custodian_volume("f018-noheld-custodian");
+    let guard = Shared::new(&cust.volume);
+    // Setup's link check made generation 1 (ADR-028 record of lane `m10/guard-key`).
+    guard.public(GuardEntry::Cell).unwrap();
+    let a = Pilot::new("f018-noheld-a");
+    let (_, cell) = a.start(&guard);
+    let app1 = create(&cell, Chain::App, 1);
+    let app2 = create(&cell, Chain::App, 2);
+    block_on(cell.destroy(&app1)).unwrap();
+    let fetched = guard.custodian.fetch(GuardEntry::Cell).unwrap();
+    assert_eq!(generation_of(&fetched), 2);
+    create(&cell, Chain::App, 3);
+    block_on(cell.destroy(&app2)).unwrap();
+    a.stop();
+    assert_eq!(held_files(&cust.volume), vec!["held-cell.fgc".to_owned()]);
+    assert_eq!(
+        generation_of(&guard.custodian.fetch(GuardEntry::Cell).unwrap()),
+        3
+    );
+    let b = Pilot::new("f018-noheld-b");
+    assert_eq!(
+        import_guarded(&fetched, b.volume(), &pass(), Some(&guard.link())).map(|_| ()),
+        Err(KeydError::Guard(GuardFault::Refused(Refusal::Destroyed)))
+    );
+}
+
+/// F-018, I-81, Q-F018-4: a fresh copy that does not reach the custodian
+/// holds back no receipt, since the old guard is already destroyed. It
+/// stays owed and is sent at the next start.
+#[test]
+fn m10_f018_i81_a_failed_copy_write_does_not_hold_back_completion_and_is_retried() {
+    let cust = custodian_volume("f018-retry-custodian");
+    let guard = Shared::new(&cust.volume);
+    // Setup's link check made generation 1 (ADR-028 record of lane `m10/guard-key`).
+    guard.public(GuardEntry::Cell).unwrap();
+    let a = Pilot::new("f018-retry-a");
+    let (_, cell) = a.start(&guard);
+    let app1 = create(&cell, Chain::App, 1);
+    create(&cell, Chain::App, 2);
+    guard.put_down.store(true, Ordering::SeqCst);
+    block_on(cell.destroy(&app1)).unwrap();
+    assert_eq!(guard.custodian.live_generations(GuardEntry::Cell), vec![2]);
+    a.stop();
+    assert!(
+        read_state(a.volume()).unwrap().copy_owed,
+        "the copy is not owed"
+    );
+    assert_eq!(
+        guard.custodian.fetch(GuardEntry::Cell).map(|_| ()),
+        Err(GuardFault::Refused(Refusal::UnknownRoot))
+    );
+    guard.put_down.store(false, Ordering::SeqCst);
+    a.start(&guard);
+    a.stop();
+    assert!(
+        !read_state(a.volume()).unwrap().copy_owed,
+        "the copy is still owed"
+    );
+    assert_eq!(
+        generation_of(&guard.custodian.fetch(GuardEntry::Cell).unwrap()),
+        2
+    );
+}
+
+/// F-018, I-81, Q-F018-4: the custodian stores a copy only when it is
+/// sealed to the entry's newest live guard. A copy sealed to a destroyed
+/// generation is refused, so no stored copy opens erased data.
+#[test]
+fn m10_f018_i81_the_custodian_refuses_a_copy_for_another_generation() {
+    let cust = custodian_volume("f018-oldput-custodian");
+    let guard = Shared::new(&cust.volume);
+    let a = Pilot::new("f018-oldput-a");
+    let (_, cell) = a.start(&guard);
+    let app1 = create(&cell, Chain::App, 1);
+    create(&cell, Chain::App, 2);
+    a.stop();
+    let (_, old) = export_guarded(a.volume(), &pass(), &guard.link()).unwrap();
+    assert_eq!(generation_of(&old), 1);
+    let (_, cell) = a.start(&guard);
+    block_on(cell.destroy(&app1)).unwrap();
+    a.stop();
+    assert_eq!(
+        guard.custodian.put(GuardEntry::Cell, &old),
+        Err(GuardFault::Refused(Refusal::Destroyed))
+    );
+    assert_eq!(
+        generation_of(&guard.custodian.fetch(GuardEntry::Cell).unwrap()),
+        2
+    );
+    assert_eq!(
+        guard.custodian.put(GuardEntry::Vault, &old),
+        Err(GuardFault::Refused(Refusal::BadRequest)),
+        "a copy of another entry"
+    );
+}
+
+/// F-018, I-81, Q-F018-3 (decided by Daniel on 2026-11-24): production
+/// refuses a plain pre-guard copy, since no guard can be destroyed for it.
+/// Development mode still admits one.
+#[test]
+fn m10_f018_i81_production_refuses_a_plain_pre_guard_copy() {
+    let cust = custodian_volume("f018-plain-custodian");
+    let guard = Shared::new(&cust.volume);
+    let a = Pilot::new("f018-plain-a");
+    let (console, _) = a.start(&guard);
+    create(&console, Chain::ClusterBackup, 1);
+    a.stop();
+    let (_, plain) = export_volume(a.volume(), &pass()).unwrap();
+    let b = Pilot::new("f018-plain-b");
+    assert!(
+        import_copy(
+            &plain,
+            b.volume(),
+            &pass(),
+            Some(&guard.link()),
+            DeploymentMode::Production
+        )
+        .is_err()
+    );
+    assert!(std::fs::read_dir(b.volume()).unwrap().next().is_none());
+    import_copy(
+        &plain,
+        b.volume(),
+        &pass(),
+        Some(&guard.link()),
+        DeploymentMode::Development,
+    )
+    .unwrap();
 }
 
 // ---------------------------------------------------------------------------

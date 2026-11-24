@@ -36,6 +36,9 @@ const CONNECTION_TIMEOUT_SECS: u64 = 5;
 const MAX_CONNECTIONS_PER_SOCKET: usize = 16;
 /// How often the accept loop looks at its stop flag, in milliseconds.
 const POLL_MILLIS: u64 = 10;
+/// How often a pilot entry tries again to send an owed fresh copy to its
+/// custodian (ADR-004 "The custodian's copy").
+const COPY_RETRY: Duration = Duration::from_secs(600);
 /// How long [`stop`] waits for a server to end, in seconds.
 const STOP_WAIT_SECS: u64 = 30;
 
@@ -89,6 +92,10 @@ pub(crate) struct Server {
     /// The guard of this entry's key copies, on a pilot entry with a
     /// second custodian (ADR-004 record of lane `m10/guard-key`).
     pub(crate) guard: Option<crate::guard::GuardLink>,
+    /// The passphrase, kept in wiped memory on a pilot entry with a
+    /// custodian, so the entry can make the custodian's fresh copy after
+    /// each rotation (ADR-004 "The custodian's copy").
+    pub(crate) copy_passphrase: Option<Passphrase>,
     /// The exclusive lock of the volume, held for the server's lifetime.
     _lock: crate::export::VolumeLock,
 }
@@ -148,6 +155,7 @@ impl Server {
             rate_max: usage::USAGE_RECORDS_PER_CLIENT_MINUTE,
             held: crate::export::is_held(volume),
             guard: None,
+            copy_passphrase: None,
             _lock: lock,
         })
     }
@@ -431,6 +439,7 @@ impl Server {
         let mut st =
             crate::guard::state::read_state(&self.volume).map_err(|_| Refusal::Internal)?;
         let Some(event) = st.owed else {
+            self.retry_copy();
             return Ok(());
         };
         let rotated = link
@@ -440,7 +449,59 @@ impl Server {
         st.generation = rotated.generation;
         st.rotated = crate::guard::state::now();
         st.owed = None;
-        crate::guard::state::write_state(&self.volume, &st).map_err(|_| Refusal::Internal)
+        st.copy_owed = true;
+        crate::guard::state::write_state(&self.volume, &st).map_err(|_| Refusal::Internal)?;
+        // The fresh copy is a follow-up, never part of completion: the old
+        // guard is destroyed already (ADR-004 "The custodian's copy").
+        if let Ok(public) = fstp_crypto::hybrid_kem::HybridPublicKey::from_bytes(&rotated.public) {
+            self.send_copy(rotated.generation, &public);
+        }
+        Ok(())
+    }
+
+    /// Sends a fresh copy owed to the custodian, if one is owed. A failure
+    /// leaves it owed for the next try.
+    pub(crate) fn retry_copy(&mut self) {
+        let Some(link) = self.guard.as_ref() else {
+            return;
+        };
+        let owed = crate::guard::state::read_state(&self.volume)
+            .is_ok_and(|s| s.copy_owed && s.owed.is_none());
+        if !owed {
+            return;
+        }
+        if let Ok((generation, public)) = link.client.public(link.entry) {
+            self.send_copy(generation, &public);
+        }
+    }
+
+    /// Makes a copy of this volume under the lock the server holds, seals
+    /// it to the guard `generation` with `public`, and sends it to the
+    /// custodian. On success the copy is no longer owed.
+    fn send_copy(&mut self, generation: u32, public: &fstp_crypto::hybrid_kem::HybridPublicKey) {
+        let (Some(link), Some(pass)) = (self.guard.as_ref(), self.copy_passphrase.as_ref()) else {
+            return;
+        };
+        let Ok((header, inner, _)) = crate::export::make_copy(&self.volume, pass) else {
+            return;
+        };
+        let guarded = crate::guard::copy::GuardedHeader {
+            entry: link.entry,
+            generation,
+            id: header.id,
+            created: header.created,
+        };
+        let Ok(outer) = crate::guard::copy::seal(&guarded, public, &inner) else {
+            return;
+        };
+        if link.client.put(link.entry, &outer).is_err() {
+            return;
+        }
+        if let Ok(mut st) = crate::guard::state::read_state(&self.volume) {
+            st.copy_owed = false;
+            st.copied = crate::guard::state::now();
+            let _ = crate::guard::state::write_state(&self.volume, &st);
+        }
     }
 }
 
@@ -789,7 +850,6 @@ fn serve_guarded(
     // H-22: owner and mode of the volume, before any key file is read.
     crate::volume::check_private_volume(key_volume, choice.mode == DeploymentMode::Development)?;
     let mut server = Server::open(key_volume, &passphrase)?;
-    drop(passphrase);
     // ADR-004 record of lane `m10/guard-key`: a pilot entry names its
     // custodian, and the custodian names its listen address.
     let mut listener = None;
@@ -797,8 +857,10 @@ fn serve_guarded(
         crate::guard::link::GuardSetup::None => false,
         crate::guard::link::GuardSetup::Pilot(link) => {
             server.guard = Some(link);
-            // A rotation owed from before a restart is tried at once. A
-            // failure is not fatal: the next destroy retries it.
+            server.copy_passphrase = Some(Passphrase::from_bytes(passphrase.bytes())?);
+            // A rotation or a fresh copy owed from before a restart is
+            // tried at once. A failure is not fatal: the next destroy and
+            // the ten-minute retry try again.
             let _ = server.settle_guard();
             true
         }
@@ -807,6 +869,7 @@ fn serve_guarded(
             true
         }
     };
+    drop(passphrase);
     // ADR-004 record of lane L16 rule 4: a copy that holds a key since
     // destroyed lowers a full assurance. A volume reason stays first.
     let assurance = match (
@@ -982,8 +1045,17 @@ fn accept_loop(
             .map_err(|_| KeydError::Io("configure the socket"))?;
         listeners.push((listener, s.role, AtomicUsize::new(0)));
     }
+    let mut last_copy_try = Instant::now();
     std::thread::scope(|scope| {
         while !flag.load(Ordering::SeqCst) {
+            // ADR-004 "The custodian's copy": an owed fresh copy is tried
+            // again every ten minutes, when no request holds the server.
+            if last_copy_try.elapsed() >= COPY_RETRY {
+                last_copy_try = Instant::now();
+                if let Ok(mut s) = server.try_lock() {
+                    s.retry_copy();
+                }
+            }
             let mut idle = true;
             for (listener, role, active) in &listeners {
                 let Ok((stream, _)) = listener.accept() else {

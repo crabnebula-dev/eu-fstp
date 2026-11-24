@@ -767,7 +767,7 @@ pub fn export_guarded(
 /// The header, bytes and held keys of a new copy of `volume`. The caller
 /// holds the volume's lock. A custodian's volume, which holds a guard, is
 /// never copied: a copy of the guard would outlive its destroy.
-fn make_copy(
+pub(crate) fn make_copy(
     volume: &Path,
     passphrase: &Passphrase,
 ) -> Result<(ExportHeader, Vec<u8>, Vec<HeldKey>), KeydError> {
@@ -927,6 +927,30 @@ pub fn import_guarded(
     import_volume(&inner, volume, passphrase)
 }
 
+/// Imports a copy as the binary does in `mode` (ADR-004, Q-F018-3,
+/// decided by Daniel on 2026-11-24): a guarded copy through its custodian,
+/// and a plain pre-guard copy in development mode only. In production a
+/// plain copy is refused, since no guard can be destroyed for it.
+///
+/// # Errors
+///
+/// As [`import_guarded`], and [`KeydError::Guard`] with
+/// [`crate::guard::GuardFault::Unreachable`] for a plain copy in
+/// production. Nothing is written then.
+pub fn import_copy(
+    copy: &[u8],
+    volume: &Path,
+    passphrase: &Passphrase,
+    link: Option<&crate::guard::GuardLink>,
+    mode: fstp_obs::assurance::DeploymentMode,
+) -> Result<ExportId, KeydError> {
+    use fstp_obs::assurance::DeploymentMode;
+    if !crate::guard::copy::is_guarded(copy) && mode == DeploymentMode::Production {
+        return Err(KeydError::Guard(crate::guard::GuardFault::Unreachable));
+    }
+    import_guarded(copy, volume, passphrase, link)
+}
+
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), KeydError> {
     let mut f = crate::volume::private(std::fs::OpenOptions::new().write(true).create_new(true))
         .open(path)
@@ -1058,6 +1082,12 @@ pub enum Command {
         /// The pilot key volume.
         volume: std::path::PathBuf,
     },
+    /// `fetch-copy <file>`: the custodian's held copy of this entry
+    /// (ADR-004 "The custodian's copy").
+    FetchCopy {
+        /// The new copy file.
+        file: std::path::PathBuf,
+    },
 }
 
 fn chain_epoch(arg: &str) -> Option<(Chain, Epoch)> {
@@ -1101,6 +1131,7 @@ pub fn parse_command(args: &[String]) -> Result<Command, KeydError> {
             id: ExportId::parse(id).ok_or(usage)?,
         }),
         [c, v] if c == "guard-check" => Ok(Command::GuardCheck { volume: p(v) }),
+        [c, f] if c == "fetch-copy" => Ok(Command::FetchCopy { file: p(f) }),
         _ => Err(usage),
     }
 }

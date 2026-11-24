@@ -257,7 +257,8 @@ pub fn decode_event(bytes: &[u8]) -> Result<GuardEvent, KeydError> {
 pub struct LogRecord {
     /// When, in Unix seconds.
     pub time: u64,
-    /// 1 public, 2 rotate, 3 open, 0 a request that did not decode.
+    /// 1 public, 2 rotate, 3 open, 4 put, 5 fetch, 0 a request that did
+    /// not decode.
     pub op: u8,
     /// The entry code the request named, 0 when none.
     pub entry: u8,
@@ -319,7 +320,7 @@ pub fn decode_log(bytes: &[u8]) -> Result<Vec<LogRecord>, KeydError> {
             return Err(bad("a guard log record fails its check"));
         }
         let at = |i: usize| body.get(i).copied().unwrap_or(0);
-        if at(0) != LOG_TAG || at(9) > 3 {
+        if at(0) != LOG_TAG || at(9) > 5 {
             return Err(bad("a guard log record has a wrong tag or op"));
         }
         let arr =
@@ -532,6 +533,10 @@ impl Server {
             write_event(&self.volume, entry, &GuardEvent { done: true, ..ev })
                 .map_err(|_| Refusal::Internal)?;
         }
+        // ADR-004 "The custodian's copy": a held copy sealed to an older
+        // generation goes with it. A failed unlink leaves a file sealed to
+        // a destroyed guard, which no key opens, and is tried again later.
+        let _ = self.drop_held_below(entry, ev.to);
         let secret = self.open_guard(entry, ev.to)?;
         let receipt = if ev.from == 0 {
             Vec::new()
@@ -546,6 +551,73 @@ impl Server {
             public: secret.public().to_bytes(),
             receipt,
         })
+    }
+
+    /// The path of `entry`'s held copy.
+    fn held_path(&self, entry: GuardEntry) -> PathBuf {
+        self.volume.join(format!("held-{}.fgc", entry.name()))
+    }
+
+    /// Unlinks `entry`'s held copy when it is sealed to a generation below
+    /// `generation`, or does not decode, and syncs the directory.
+    fn drop_held_below(&self, entry: GuardEntry, generation: u32) -> Result<(), KeydError> {
+        let path = self.held_path(entry);
+        let Ok(bytes) = std::fs::read(&path) else {
+            return Ok(());
+        };
+        let old = copy::decode_guarded(&bytes).map_or(true, |(h, _, _)| h.generation < generation);
+        if old {
+            std::fs::remove_file(&path).map_err(|_| KeydError::Io("unlink a held copy"))?;
+            crate::epoch::sync_dir(&self.volume)?;
+        }
+        Ok(())
+    }
+
+    /// Stores `copy` as `entry`'s held copy (ADR-004 "The custodian's
+    /// copy"). It must be a guarded copy of `entry` sealed to `generation`,
+    /// and that must be the entry's newest live generation.
+    fn put_for(&mut self, entry: GuardEntry, generation: u32, bytes: &[u8]) -> Result<(), Refusal> {
+        let (header, _, _) = copy::decode_guarded(bytes).map_err(|_| Refusal::BadRequest)?;
+        if header.entry != entry || header.generation != generation {
+            return Err(Refusal::BadRequest);
+        }
+        let (live, newest) = generations(self, entry);
+        match live.last() {
+            Some(g) if *g == generation => {}
+            _ if generation <= newest => return Err(Refusal::Destroyed),
+            _ => return Err(Refusal::BadRequest),
+        }
+        let path = self.held_path(entry);
+        let tmp = path.with_extension("fgc.new");
+        let _ = std::fs::remove_file(&tmp);
+        let written =
+            crate::volume::private(std::fs::OpenOptions::new().write(true).create_new(true))
+                .open(&tmp)
+                .and_then(|mut f| f.write_all(bytes).and_then(|()| f.sync_all()))
+                .and_then(|()| std::fs::rename(&tmp, &path));
+        if written.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(Refusal::Internal);
+        }
+        crate::epoch::sync_dir(&self.volume).map_err(|_| Refusal::Internal)
+    }
+
+    /// `entry`'s held copy and its generation, when it is sealed to a live
+    /// generation. A copy left by a failed unlink is unlinked now.
+    fn fetch_for(&self, entry: GuardEntry) -> Result<(u32, Vec<u8>), Refusal> {
+        let (live, _) = generations(self, entry);
+        let newest = live.last().copied().unwrap_or(0);
+        let _ = self.drop_held_below(entry, newest);
+        let bytes = match std::fs::read(self.held_path(entry)) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Refusal::UnknownRoot),
+            Err(_) => return Err(Refusal::Internal),
+        };
+        let (header, _, _) = copy::decode_guarded(&bytes).map_err(|_| Refusal::Internal)?;
+        if !live.contains(&header.generation) {
+            return Err(Refusal::UnknownRoot);
+        }
+        Ok((header.generation, bytes))
     }
 
     /// Serves one request of the guard link from the pilot entry `peer`,
@@ -563,6 +635,8 @@ impl Server {
             Ok(GuardRequest::Public { id, entry }) => (1, entry.code(), *id),
             Ok(GuardRequest::Rotate { entry, event, .. }) => (2, entry.code(), *event),
             Ok(GuardRequest::Open { id, entry, .. }) => (3, entry.code(), *id),
+            Ok(GuardRequest::Put { id, entry, .. }) => (4, entry.code(), *id),
+            Ok(GuardRequest::Fetch { id, entry }) => (5, entry.code(), *id),
             Err(_) => (0, 0, [0u8; 16]),
         };
         let reply_id = request.as_ref().map_or([0u8; 16], GuardRequest::id);
@@ -617,6 +691,27 @@ impl Server {
                     Err(e) => (Err(e), generation, 0),
                 }
             }
+            Ok(GuardRequest::Put {
+                id,
+                entry,
+                generation,
+                copy,
+            }) => match self.put_for(entry, generation, &copy) {
+                Ok(()) => (Ok(GuardResponse::Stored { id, generation }), generation, 0),
+                Err(e) => (Err(e), generation, 0),
+            },
+            Ok(GuardRequest::Fetch { id, entry }) => match self.fetch_for(entry) {
+                Ok((generation, copy)) => (
+                    Ok(GuardResponse::Copy {
+                        id,
+                        generation,
+                        copy,
+                    }),
+                    generation,
+                    0,
+                ),
+                Err(e) => (Err(e), 0, 0),
+            },
         };
         let outcome = match &response {
             Ok(_) => OUTCOME_SERVED,
@@ -745,6 +840,43 @@ pub(crate) fn answer_open(sent: [u8; 16], reply: &[u8]) -> Result<Zeroizing<[u8;
     }
 }
 
+/// Reads the answer to a `put` request.
+pub(crate) fn answer_put(sent: [u8; 16], reply: &[u8]) -> Result<u32, GuardFault> {
+    match decode_guard_response(reply).map_err(|_| GuardFault::Unreachable)? {
+        GuardResponse::Stored { id, generation } => {
+            check_id(sent, id)?;
+            Ok(generation)
+        }
+        GuardResponse::Refused { refusal, .. } => Err(GuardFault::Refused(refusal)),
+        _ => Err(GuardFault::Unreachable),
+    }
+}
+
+/// Reads the answer to a `fetch` request: the held copy, checked to be a
+/// guarded copy of `entry` sealed to the generation the answer names.
+pub(crate) fn answer_fetch(
+    sent: [u8; 16],
+    entry: GuardEntry,
+    reply: &[u8],
+) -> Result<Vec<u8>, GuardFault> {
+    match decode_guard_response(reply).map_err(|_| GuardFault::Unreachable)? {
+        GuardResponse::Copy {
+            id,
+            generation,
+            copy: bytes,
+        } => {
+            check_id(sent, id)?;
+            let (h, _, _) = copy::decode_guarded(&bytes).map_err(|_| GuardFault::Unreachable)?;
+            if h.entry != entry || h.generation != generation {
+                return Err(GuardFault::Unreachable);
+            }
+            Ok(bytes)
+        }
+        GuardResponse::Refused { refusal, .. } => Err(GuardFault::Refused(refusal)),
+        _ => Err(GuardFault::Unreachable),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The custodian in process.
 
@@ -822,6 +954,25 @@ impl GuardClient for LocalCustodian {
         };
         let reply = self.serve_as(Some(entry), &request.encode());
         answer_open(id, &reply)
+    }
+
+    fn put(&self, entry: GuardEntry, copy: &[u8]) -> Result<u32, GuardFault> {
+        let id = fresh_id()?;
+        let generation = copy::decode_guarded(copy).map_or(1, |(h, _, _)| h.generation);
+        let request = GuardRequest::Put {
+            id,
+            entry,
+            generation,
+            copy: copy.to_vec(),
+        };
+        let reply = self.serve_as(Some(entry), &request.encode());
+        answer_put(id, &reply)
+    }
+
+    fn fetch(&self, entry: GuardEntry) -> Result<Vec<u8>, GuardFault> {
+        let id = fresh_id()?;
+        let reply = self.serve_as(Some(entry), &GuardRequest::Fetch { id, entry }.encode());
+        answer_fetch(id, entry, &reply)
     }
 }
 

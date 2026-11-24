@@ -190,6 +190,24 @@ pub trait GuardClient: Send + Sync {
         header: &[u8; copy::HEADER_LEN],
         ciphertext: &[u8; fstp_crypto::hybrid_kem::CIPHERTEXT_LEN],
     ) -> Result<Zeroizing<[u8; 32]>, GuardFault>;
+
+    /// Stores `copy`, a guarded copy of `entry`, as the custodian's held
+    /// copy (ADR-004 "The custodian's copy"), and answers its generation.
+    ///
+    /// # Errors
+    ///
+    /// [`GuardFault::Refused`] with [`Refusal::Destroyed`] for a copy sealed
+    /// to a destroyed generation, [`Refusal::BadRequest`] for one of another
+    /// entry or generation, and [`GuardFault::Unreachable`].
+    fn put(&self, entry: GuardEntry, copy: &[u8]) -> Result<u32, GuardFault>;
+
+    /// The custodian's held copy of `entry`.
+    ///
+    /// # Errors
+    ///
+    /// [`GuardFault::Refused`] with [`Refusal::UnknownRoot`] when none is
+    /// held, and [`GuardFault::Unreachable`].
+    fn fetch(&self, entry: GuardEntry) -> Result<Vec<u8>, GuardFault>;
 }
 
 /// The guard of one pilot entry: the entry and how to reach its
