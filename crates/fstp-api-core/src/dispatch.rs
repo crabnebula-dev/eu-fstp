@@ -2368,11 +2368,11 @@ async fn read<P: Seams>(call: &Call<'_, P>, op: &Op, kind: ReadKind) -> Result<O
                     .map(|r| r.completed_at.unwrap_or(r.requested_at))
                     .max()
             });
-            ReadModel::System(crate::system::SystemView {
+            ReadModel::System(Box::new(crate::system::SystemView {
                 now: call.now,
                 facts,
                 last_cell_erasure,
-            })
+            }))
         }
         // SA-11 (Daniel, 2026-11-15, night): the team and member pages and
         // the caller's own display name. The read rule admitted the caller.

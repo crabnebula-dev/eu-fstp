@@ -192,7 +192,8 @@ pub enum ReadModel {
     ClientAssessment(crate::assess::ClientModel),
     /// `tenant.system`: the facts of the System page (ADR-028 record of
     /// lane L20). Instants, counts, flags and closed words only.
-    System(crate::system::SystemView),
+    /// Boxed: the host report makes it the largest read model.
+    System(Box<crate::system::SystemView>),
 }
 
 /// The Guide of a published call as its publication stored it, with its
@@ -2549,12 +2550,12 @@ pub(crate) mod reply_shape_tests {
             }]),
             // ADR-028 record of lane L20: a cell with no host file, and
             // one with a full report.
-            ReadModel::System(crate::system::SystemView {
+            ReadModel::System(Box::new(crate::system::SystemView {
                 now: fstp_domain::time::Timestamp::from_micros(1_795_000_000_000_000),
                 last_cell_erasure: None,
                 facts: crate::system::SystemFacts::default(),
-            }),
-            ReadModel::System(crate::system::SystemView {
+            })),
+            ReadModel::System(Box::new(crate::system::SystemView {
                 now: fstp_domain::time::Timestamp::from_micros(1_795_000_000_000_000),
                 last_cell_erasure: Some(fstp_domain::time::Timestamp::from_micros(
                     1_794_960_000_000_000,
@@ -2601,9 +2602,12 @@ pub(crate) mod reply_shape_tests {
                         last_wal_archived: Some(fstp_domain::time::Timestamp::from_micros(
                             1_794_970_000_000_000,
                         )),
+                        last_drill_passed: None,
+                        drill_step: crate::system::DrillStep::Keystore,
+                        drill_seconds: Some(412),
                     }),
                 },
-            }),
+            })),
             ReadModel::MailRelay(crate::views::MailRelayView { relay: None }),
             ReadModel::MailRelay(crate::views::MailRelayView {
                 relay: Some(("relay.fund.test".to_owned(), true)),

@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+use fstp_obs::drill_status::Step as DrillStep;
 use fstp_obs::host_status::{
     CustodianState, HostStatus, HostStatusError, MAX_LEN, Next, PartState, Parts, RouteState,
     WalArchive, decode, encode,
@@ -42,6 +43,9 @@ fn sample() -> HostStatus {
         guard_copy_owed: false,
         wal_archive: WalArchive::Late,
         last_wal_archived: Some(1_794_999_000),
+        last_drill_passed: Some(1_794_000_000),
+        drill_step: Some(DrillStep::Recovery),
+        drill_seconds: Some(412),
     }
 }
 
@@ -97,6 +101,17 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         guard_copy_owed: g.bool(),
         wal_archive: pick(g, &WalArchive::ALL),
         last_wal_archived: opt_time(g),
+        last_drill_passed: opt_time(g),
+        drill_step: if g.bool() {
+            None
+        } else {
+            Some(pick(g, &DrillStep::ALL))
+        },
+        drill_seconds: if g.bool() {
+            None
+        } else {
+            Some(g.i64_in(1..=9_999_999))
+        },
     }
 }
 
@@ -251,6 +266,27 @@ fn r_nf_02_host_status_refuses_bad_input() {
                 "\"last_wal_archived\":\"1794999000\"",
             ),
             HostStatusError::Invalid("last_wal_archived"),
+        ),
+        // The restore drill.
+        (
+            swap("\"drill_step\":\"recovery\"", "\"drill_step\":\"later\""),
+            HostStatusError::Invalid("drill_step"),
+        ),
+        (
+            swap("\"drill_step\":\"recovery\"", "\"drill_step\":null"),
+            HostStatusError::Invalid("drill_step"),
+        ),
+        (
+            swap("\"drill_seconds\":412", "\"drill_seconds\":0"),
+            HostStatusError::Invalid("drill_seconds"),
+        ),
+        (
+            swap("\"drill_seconds\":412", "\"drill_seconds\":10000000"),
+            HostStatusError::Invalid("drill_seconds"),
+        ),
+        (
+            swap("\"last_drill_passed\":1794000000,", ""),
+            HostStatusError::MissingMember("last_drill_passed"),
         ),
         (
             format!("{good}{}", " ".repeat(MAX_LEN)),

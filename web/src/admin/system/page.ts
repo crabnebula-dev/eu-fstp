@@ -109,7 +109,7 @@ function adminsSection(t: I18n, admins: readonly AdminRow[] | null): HTMLElement
 export function systemBody(t: I18n, r: SystemReply, admins: readonly AdminRow[] | null): Child[] {
   const all = rows(r);
   const top = all.filter((x) => ["report", "cell", "vault", "services", "edge", "mail"].includes(x.id));
-  const care = all.filter((x) => ["backups", "archive", "keys", "snapshots", "certificates"].includes(x.id));
+  const care = all.filter((x) => ["backups", "archive", "drill", "keys", "snapshots", "certificates"].includes(x.id));
   const light = overall(all);
   const out: Child[] = [
     h("p", {}, [t.label("system.intro")]),

@@ -8,8 +8,10 @@
 //!
 //! ```text
 //! {"app_snapshot_failed":false,"backups_configured":true,"certificate_days":5,
-//!  "custodian":"linked","guard_copy_owed":false,"guard_owed":false,
+//!  "custodian":"linked","drill_seconds":412,"drill_step":"none",
+//!  "guard_copy_owed":false,"guard_owed":false,
 //!  "last_app_snapshot":1795000000,"last_backup":1795000000,
+//!  "last_drill_passed":1795000000,
 //!  "last_key_copy":null,"last_vault_erasure":null,
 //!  "last_vault_snapshot":1795000000,"last_wal_archived":1795000000,
 //!  "next":"nothing",
@@ -28,6 +30,8 @@
 use std::fmt;
 
 use fstp_json::{Object, ParseLimits, Value};
+
+use crate::drill_status::{self, Step as DrillStep};
 
 /// The grammar version this module reads and writes.
 pub const VERSION: u64 = 1;
@@ -236,6 +240,9 @@ pub enum Next {
     WalArchive,
     /// The newest backup is old or missing.
     Backup,
+    /// No restore drill passed in 35 days, or the last one failed (ADR-012
+    /// record of lane m10/backup-health).
+    RestoreDrill,
     /// The web admins enrol and invite the second admin.
     WebAdmins,
     /// The host admin verifies the admins in person.
@@ -251,7 +258,7 @@ pub enum Next {
 
 impl Next {
     /// Every value.
-    pub const ALL: [Next; 16] = [
+    pub const ALL: [Next; 17] = [
         Self::RunSetup,
         Self::StartService,
         Self::Custodian,
@@ -262,6 +269,7 @@ impl Next {
         Self::ConfigureBackups,
         Self::WalArchive,
         Self::Backup,
+        Self::RestoreDrill,
         Self::CustodianCopy,
         Self::KeystoreSnapshot,
         Self::WebAdmins,
@@ -285,6 +293,7 @@ impl Next {
             Self::ConfigureBackups => "configure_backups",
             Self::WalArchive => "wal_archive",
             Self::Backup => "backup",
+            Self::RestoreDrill => "restore_drill",
             Self::KeystoreSnapshot => "keystore_snapshot",
             Self::WebAdmins => "web_admins",
             Self::VerifyAdmins => "verify_admins",
@@ -342,6 +351,13 @@ pub struct HostStatus {
     /// The older of the two clusters' last archived segments, in Unix
     /// seconds.
     pub last_wal_archived: Option<i64>,
+    /// When a restore drill last passed, in Unix seconds.
+    pub last_drill_passed: Option<i64>,
+    /// Where the last restore drill failed, `None` when it passed or none
+    /// ran.
+    pub drill_step: Option<DrillStep>,
+    /// The restore duration of the last passed drill, in seconds.
+    pub drill_seconds: Option<i64>,
 }
 
 /// Why a file was refused. Names a rule, never the input (R-NF-02).
@@ -379,15 +395,18 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 21] = [
+const MEMBERS: [&str; 24] = [
     "app_snapshot_failed",
     "backups_configured",
     "certificate_days",
     "custodian",
+    "drill_seconds",
+    "drill_step",
     "guard_copy_owed",
     "guard_owed",
     "last_app_snapshot",
     "last_backup",
+    "last_drill_passed",
     "last_key_copy",
     "last_vault_erasure",
     "last_vault_snapshot",
@@ -416,8 +435,9 @@ pub fn encode(s: &HostStatus) -> String {
     let p = &s.parts;
     format!(
         "{{\"app_snapshot_failed\":{},\"backups_configured\":{},\"certificate_days\":{},\
-         \"custodian\":\"{}\",\"guard_copy_owed\":{},\"guard_owed\":{},\
-         \"last_app_snapshot\":{},\"last_backup\":{},\"last_key_copy\":{},\
+         \"custodian\":\"{}\",\"drill_seconds\":{},\"drill_step\":\"{}\",\
+         \"guard_copy_owed\":{},\"guard_owed\":{},\
+         \"last_app_snapshot\":{},\"last_backup\":{},\"last_drill_passed\":{},\"last_key_copy\":{},\
          \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"last_wal_archived\":{},\
          \"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
@@ -428,10 +448,13 @@ pub fn encode(s: &HostStatus) -> String {
         s.backups_configured,
         opt(s.certificate_days),
         s.custodian.word(),
+        opt(s.drill_seconds),
+        s.drill_step.map_or("none", DrillStep::word),
         s.guard_copy_owed,
         s.guard_owed,
         opt(s.last_app_snapshot),
         opt(s.last_backup),
+        opt(s.last_drill_passed),
         opt(s.last_key_copy),
         opt(s.last_vault_erasure),
         opt(s.last_vault_snapshot),
@@ -576,5 +599,21 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
             "wal_archive",
         )?,
         last_wal_archived: opt_int(o, "last_wal_archived", 0, MAX_INSTANT)?,
+        last_drill_passed: opt_int(o, "last_drill_passed", 0, MAX_INSTANT)?,
+        drill_step: match member(o, "drill_step")?.as_str() {
+            Some("none") => None,
+            _ => Some(word(
+                member(o, "drill_step")?,
+                &DrillStep::ALL,
+                DrillStep::word,
+                "drill_step",
+            )?),
+        },
+        drill_seconds: opt_int(
+            o,
+            "drill_seconds",
+            1,
+            i64::try_from(drill_status::MAX_SECONDS).unwrap_or(i64::MAX),
+        )?,
     })
 }

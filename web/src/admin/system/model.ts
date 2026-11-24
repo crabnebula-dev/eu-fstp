@@ -39,6 +39,7 @@ export const HOST_NEXT = [
   "configure_backups",
   "wal_archive",
   "backup",
+  "restore_drill",
   "custodian_copy",
   "keystore_snapshot",
   "web_admins",
@@ -51,6 +52,11 @@ export type HostNext = (typeof HOST_NEXT)[number];
 
 const PARTS = ["cell", "vault", "witness", "edge", "databases", "keys"] as const;
 type PartName = (typeof PARTS)[number];
+
+/** Where a restore drill failed (ADR-012 record of lane m10/backup-health). */
+export const DRILL_STEPS = ["none", "space", "restore", "recovery", "database", "keystore", "cleanup"] as const;
+/** One drill step. */
+export type DrillStep = (typeof DRILL_STEPS)[number];
 
 /** The host status report, as the cell read it. */
 export interface HostReport {
@@ -81,6 +87,12 @@ export interface HostReport {
   readonly walArchive: "ok" | "late" | "failing" | "unknown";
   /** The older of the two clusters' last archived segments. */
   readonly lastWalArchived: bigint | null;
+  /** When a restore drill last passed. */
+  readonly lastDrillPassed: bigint | null;
+  /** Where the last restore drill failed, `none` when it passed or none ran. */
+  readonly drillStep: DrillStep;
+  /** The restore duration of the last passed drill, in seconds. */
+  readonly drillSeconds: number | null;
 }
 
 /** The `tenant.system` reply. */
@@ -135,6 +147,9 @@ function host(v: unknown): HostReport | null {
     "guard_copy_owed",
     "wal_archive",
     "last_wal_archived",
+    "last_drill_passed",
+    "drill_step",
+    "drill_seconds",
   ];
   if (o === null || !closed(o, names)) return null;
   const p = record(o["parts"]);
@@ -173,6 +188,12 @@ function host(v: unknown): HostReport | null {
   if (!oneOf(walArchive, ["ok", "late", "failing", "unknown"] as const)) return null;
   const lastWalArchived = o["last_wal_archived"] === null ? null : instant(o["last_wal_archived"]);
   if (o["last_wal_archived"] !== null && lastWalArchived === null) return null;
+  const lastDrillPassed = o["last_drill_passed"] === null ? null : instant(o["last_drill_passed"]);
+  if (o["last_drill_passed"] !== null && lastDrillPassed === null) return null;
+  const drillStep = o["drill_step"];
+  if (!oneOf(drillStep, DRILL_STEPS)) return null;
+  const drillSeconds = o["drill_seconds"];
+  if (drillSeconds !== null && !(typeof drillSeconds === "number" && Number.isSafeInteger(drillSeconds) && drillSeconds >= 1)) return null;
   return Object.freeze({
     writtenAt,
     setupDone,
@@ -194,6 +215,9 @@ function host(v: unknown): HostReport | null {
     guardCopyOwed,
     walArchive,
     lastWalArchived,
+    lastDrillPassed,
+    drillStep,
+    drillSeconds,
   });
 }
 
@@ -235,6 +259,7 @@ export const ROW_IDS = [
   "mail",
   "backups",
   "archive",
+  "drill",
   "keys",
   "snapshots",
   "certificates",
@@ -264,6 +289,8 @@ export const BACKUP_LATE = 36n * HOUR;
 export const BACKUP_MISSING = 72n * HOUR;
 /** The keystore snapshot age that `fstp-admin status` calls late (ADR-028 record of lane L27). */
 export const SNAPSHOT_LATE = 36n * HOUR;
+/** The age of the last passed restore drill after which the next is late: 35 days (ADR-012 record of lane m10/backup-health). */
+export const DRILL_LATE = 35n * 24n * HOUR;
 
 /** An age in plain words: the label id and its count. */
 export function ageOf(micros: bigint): { readonly label: string; readonly n: string } {
@@ -313,7 +340,7 @@ export function lastErasure(r: SystemReply): bigint | null {
 function hostRows(r: SystemReply): Row[] {
   const h = r.host;
   if (h === null) {
-    return (["services", "edge", "backups", "archive", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
+    return (["services", "edge", "backups", "archive", "drill", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
   }
   const out: Row[] = [];
   const others = [h.parts.witness, h.parts.databases, h.parts.keys];
@@ -338,6 +365,7 @@ function hostRows(r: SystemReply): Row[] {
     else out.push(row("backups", "green", "fresh", params));
   }
   out.push(archiveRow(r, h));
+  out.push(drillRow(r, h));
   // The runbook asks for a new key copy after each erasure: an older copy
   // still holds the erased key (ADR-028 record of lane L20).
   const erased = lastErasure(r);
@@ -401,6 +429,22 @@ function archiveRow(r: SystemReply, h: HostReport): Row {
   if (h.lastWalArchived === null) return row("archive", "green", "none_yet");
   const age = ageOf(r.now - h.lastWalArchived);
   return row("archive", "green", "fresh", { age: age.n, unit: age.label });
+}
+
+/**
+ * The restore drill (ADR-012 and ADR-028 records of lane
+ * `m10/backup-health`): red when the last one failed, naming the step;
+ * amber when none passed in 35 days; green with its date and duration.
+ */
+function drillRow(r: SystemReply, h: HostReport): Row {
+  const tell = "system.tell.drill";
+  if (!h.backupsConfigured) return row("drill", "green", "off");
+  if (h.drillStep !== "none") return row("drill", "red", `failed_${h.drillStep}`, {}, "host", tell);
+  if (h.lastDrillPassed === null) return row("drill", "amber", "never", {}, "host", tell);
+  const date = dayOf(h.lastDrillPassed);
+  if (r.now - h.lastDrillPassed > DRILL_LATE) return row("drill", "amber", "late", { date }, "host", tell);
+  const minutes = String(Math.max(1, Math.ceil((h.drillSeconds ?? 60) / 60)));
+  return row("drill", "green", "passed", { date, minutes });
 }
 
 /** Every row of the page, in `ROW_IDS` order. */

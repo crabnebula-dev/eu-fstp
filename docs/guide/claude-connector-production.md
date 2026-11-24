@@ -83,6 +83,7 @@ The web admin sees the same on the page **System** (`https://<domain>/app/admin/
 | `fstp-admin restore-keys <dir>` | After the loss of the host, before `restore` (part 2a). It moves each key volume it replaces aside and never deletes it |
 | `fstp-admin backup` | A backup now. A timer runs it daily |
 | `fstp-admin restore` | After data loss. It restores both databases from their newest backups, then the cell's and the vault's keys |
+| `fstp-admin drill` | A restore test into a scratch copy, on this host. A timer runs it monthly. `status` and the page **System** show the last result, and the time a restore took. It needs free disk space of about one and a half times the larger database, plus 2 GiB |
 | `fstp-admin renew` | Only when `status` asks. A daily timer renews certificates and updates the route |
 | `fstp-admin report` | Rarely. It writes the status file of the page System. A timer runs it every 15 minutes |
 | `fstp-admin erase-identity <account>` | When a person's identity must be erased from the vault |

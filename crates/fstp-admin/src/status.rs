@@ -37,6 +37,9 @@ pub enum Next {
     WalArchive,
     /// The newest base backup is old or missing.
     Backup,
+    /// No restore drill passed in 35 days, or the last one failed (ADR-012
+    /// record of lane m10/backup-health).
+    RestoreDrill,
     /// A fresh copy is owed to the second custodian: the last try failed
     /// (ADR-028 record of lane `m10/guard-key`, part 2).
     CustodianCopy,
@@ -96,6 +99,11 @@ pub struct Findings {
     pub wal_archive: WalArchive,
     /// The older of the two clusters' last archived segments.
     pub wal_last: Option<i64>,
+    /// The restore drill status file.
+    pub drill: fstp_obs::drill_status::DrillStatus,
+    /// A restore drill is due: none passed in 35 days, or the last one
+    /// failed.
+    pub drill_due: bool,
 }
 
 /// Whether the newest key copy is older than the last vault erasure, so
@@ -135,6 +143,8 @@ pub fn next(f: &Findings) -> Next {
         Next::WalArchive
     } else if f.backup_age_hours.is_none_or(|h| h > 36) {
         Next::Backup
+    } else if f.drill_due {
+        Next::RestoreDrill
     } else if f.custodian == Some(crate::custodian::Link::CopyOwed) {
         Next::CustodianCopy
     } else if f.snapshot_failed || f.snapshot_age_hours.is_none_or(|h| h > 36) {
@@ -177,6 +187,9 @@ fn next_text(n: Next) -> &'static str {
             "the WAL archive does not keep up, so the backups miss the newest changes. Read the log of the database named above (journalctl -u fstp-postgres-app or fstp-postgres-vault) for the archive command's error, often the object store or its key files. Fix it, then run fstp-admin status."
         }
         Next::Backup => "run fstp-admin backup. The newest backup is older than a day and a half.",
+        Next::RestoreDrill => {
+            "run fstp-admin drill. It restores both databases into a scratch copy and checks that they open. No drill passed in 35 days, or the last one failed: its line above names the step."
+        }
         Next::CustodianCopy => {
             "the second custodian answers, but the fresh key copy after the last erasure did not reach it. fstp-keyd tries again every ten minutes. Check the free disk space on the custodian machine and its log (journalctl -u fstp-keyd-custodian), then run fstp-admin status again."
         }
@@ -336,6 +349,7 @@ fn survey(layout: &Layout, state: &State) -> Survey {
     let now = crate::pki::now();
     let snapshots = snapshot_status(layout);
     let archives = crate::archive::read_all(layout);
+    let drill = fstp_obs::drill_status::read(&layout.admin_dir());
     let findings = Findings {
         setup_done: state.done("first-admin") && cell.is_some(),
         all_running,
@@ -356,6 +370,8 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         pairing_days: crate::custodian::pairing_days(layout),
         wal_archive: crate::archive::host_state(&archives, now),
         wal_last: crate::archive::oldest_last_archived(&archives),
+        drill,
+        drill_due: drill.due(u64::try_from(now).unwrap_or(0)),
     };
     let last_key_copy = findings.keys_copied_at;
     Survey {
@@ -397,6 +413,7 @@ pub fn next_word(n: Next) -> HostNext {
         Next::ConfigureBackups => HostNext::ConfigureBackups,
         Next::WalArchive => HostNext::WalArchive,
         Next::Backup => HostNext::Backup,
+        Next::RestoreDrill => HostNext::RestoreDrill,
         Next::CustodianCopy => HostNext::CustodianCopy,
         Next::KeystoreSnapshot => HostNext::KeystoreSnapshot,
         Next::WebAdmins => HostNext::WebAdmins,
@@ -466,6 +483,17 @@ pub fn host_status(
             WalArchive::Unknown
         },
         last_wal_archived: f.wal_last.map(|t| t.clamp(0, host_status::MAX_INSTANT)),
+        last_drill_passed: f.drill.last_pass.map(|t| {
+            i64::try_from(t)
+                .unwrap_or(i64::MAX)
+                .clamp(0, host_status::MAX_INSTANT)
+        }),
+        drill_step: f.drill.failed,
+        drill_seconds: f
+            .drill
+            .seconds
+            .and_then(|s| i64::try_from(s).ok())
+            .filter(|s| *s >= 1),
     }
 }
 
@@ -549,6 +577,36 @@ fn archive_line(c: Cluster, a: Option<&crate::archive::Archiver>, now: i64) {
     }
 }
 
+/// The `restore drill` line of the status screen (ADR-028 record of lane
+/// `m10/backup-health`).
+fn drill_line(d: &fstp_obs::drill_status::DrillStatus, now: i64) {
+    let head = Part::T("  restore drill  ");
+    let days = |t: u64| {
+        now.saturating_sub(i64::try_from(t).unwrap_or(i64::MAX))
+            .max(0)
+            .unsigned_abs()
+            / 86_400
+    };
+    if let Some(step) = d.failed {
+        out(&[
+            head,
+            Part::T("FAILED: "),
+            Part::T(crate::drill::step_text(step)),
+        ]);
+    } else if let Some(t) = d.last_pass {
+        out(&[
+            head,
+            Part::T("last passed "),
+            Part::N(days(t)),
+            Part::T(" days ago; restoring both databases took "),
+            Part::N(d.seconds.unwrap_or(0)),
+            Part::T(" seconds"),
+        ]);
+    } else {
+        out(&[head, Part::T("never run")]);
+    }
+}
+
 /// Prints the status screen and returns the exit code. It also writes the
 /// host status file.
 #[must_use]
@@ -626,6 +684,7 @@ pub fn run(layout: &Layout) -> u8 {
         for (c, a) in &s.archives {
             archive_line(*c, a.as_ref(), now);
         }
+        drill_line(&f.drill, now);
     }
     out(&[Part::T(match f.custodian {
         Some(crate::custodian::Link::Linked) => "  custodian  linked, guard current",
@@ -715,6 +774,8 @@ mod tests {
             pairing_days: Some(700),
             wal_archive: WalArchive::Ok,
             wal_last: Some(1_700_000_000),
+            drill: fstp_obs::drill_status::DrillStatus::default().after_pass(1_700_000_000, 300),
+            drill_due: false,
         }
     }
 
@@ -856,6 +917,7 @@ mod tests {
             Next::ConfigureBackups,
             Next::WalArchive,
             Next::Backup,
+            Next::RestoreDrill,
             Next::KeystoreSnapshot,
             Next::WebAdmins,
             Next::VerifyAdmins,
@@ -1030,6 +1092,17 @@ mod tests {
         f.wal_archive = WalArchive::Failing;
         f.backups = false;
         assert_eq!(next(&f), Next::ConfigureBackups);
+        // The drill: due after a failure or 35 days without a pass, named
+        // right after the backup and before the keystore snapshots.
+        let mut f = healthy();
+        f.drill_due = true;
+        assert_eq!(next(&f), Next::RestoreDrill);
+        f.snapshot_failed = true;
+        assert_eq!(next(&f), Next::RestoreDrill);
+        f.backup_age_hours = None;
+        assert_eq!(next(&f), Next::Backup);
+        f.wal_archive = WalArchive::Failing;
+        assert_eq!(next(&f), Next::WalArchive);
     }
 
     /// ADR-028 record of lane `m10/backup-health`, row "Host status
@@ -1051,5 +1124,25 @@ mod tests {
         f.backups = false;
         let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
         assert_eq!(s.wal_archive, WalArchive::Unknown);
+        // The drill: its last pass, its duration and a failed step.
+        use fstp_obs::drill_status::Step;
+        let mut f = healthy();
+        f.drill = f.drill.after_fail(1_700_100_000, Step::Keystore);
+        f.drill_due = true;
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.last_drill_passed, Some(1_700_000_000));
+        assert_eq!(s.drill_seconds, Some(300));
+        assert_eq!(s.drill_step, Some(Step::Keystore));
+        assert_eq!(s.next, HostNext::RestoreDrill);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        f.drill = fstp_obs::drill_status::DrillStatus::default();
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(
+            (s.last_drill_passed, s.drill_step, s.drill_seconds),
+            (None, None, None)
+        );
     }
 }

@@ -40,6 +40,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "df_available_decode"
+path = "fuzz_targets/df_available_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]
