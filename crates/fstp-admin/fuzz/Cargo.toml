@@ -33,6 +33,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "archiver_row_decode"
+path = "fuzz_targets/archiver_row_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

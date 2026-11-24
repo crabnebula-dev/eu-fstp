@@ -60,6 +60,8 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
       custodian: "linked",
       guard_owed: false,
       guard_copy_owed: false,
+      wal_archive: "ok",
+      last_wal_archived: (NOW - 2n * MIN).toString(),
       ...hostOver,
     },
     ...over,
@@ -174,7 +176,7 @@ test("adr028_l20_old_or_missing_report_is_shown", () => {
     const report = rowOf(r, "report");
     eq(report.light, "amber", file);
     eq(report.actor, "host", file);
-    for (const id of ["services", "edge", "backups", "keys", "snapshots", "certificates"]) {
+    for (const id of ["services", "edge", "backups", "archive", "keys", "snapshots", "certificates"]) {
       eq(rowOf(r, id).light, "unknown", `${id} without a report`);
     }
     eq(rowOf(r, "mail").light, "green", "the cell's own facts stay");
@@ -198,6 +200,8 @@ test("adr028_l20_every_label_exists", () => {
     decoded({}, { custodian: "unpaired" }),
     decoded({}, { guard_owed: true }),
     decoded({}, { guard_copy_owed: true }),
+    ...(["ok", "late", "failing", "unknown"] as const).map((w) => decoded({}, { wal_archive: w })),
+    decoded({}, { last_wal_archived: null }),
     ...["not_configured", "missing", "unreadable"].map((f) => decoded({ host_file: f, host: null })),
     ...HOST_NEXT.map((n) => decoded({}, { next: n })),
   ];
@@ -370,6 +374,30 @@ test("adr028_guard_key_copy_row_shows_an_owed_copy", () => {
   eq(rowOf(decoded({}, { guard_copy_owed: true, custodian: "unreachable" }), "keys").light, "red", "unreachable wins");
   eq(hostNext(decoded({}, { next: "custodian_copy" }))?.actor, "host", "the host admin acts");
   for (const bad of [wire({}, { guard_copy_owed: "yes" }), wire({}, { guard_copy_owed: undefined })]) {
+    eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
+  }
+});
+
+/** ADR-012 and ADR-028 records of lane `m10/backup-health` (Daniel, 2026-11-24: backup is mission critical): the backup of recent changes is red while the WAL archive fails, amber while it is late, not known when the host cannot read it, and green with the age of the last saved change; the host admin acts, and the reply refuses the facts out of their grammar. */
+test("adr028_bh_archive_and_drill_rows", () => {
+  const healthy = rowOf(decoded(), "archive");
+  eq(healthy.light, "green", "an archive that keeps up");
+  eq(healthy.text, "system.row.archive.fresh", "the sentence");
+  eq(healthy.params["age"], "2", "two minutes ago");
+  const failing = rowOf(decoded({}, { wal_archive: "failing" }), "archive");
+  eq(failing.light, "red", "a failing archive");
+  eq(failing.actor, "host", "the host admin acts");
+  eq(failing.tell, "system.tell.wal_archive", "what to tell");
+  eq(rowOf(decoded({}, { wal_archive: "late" }), "archive").light, "amber", "a late archive");
+  eq(rowOf(decoded({}, { wal_archive: "unknown" }), "archive").light, "unknown", "not known");
+  eq(rowOf(decoded({}, { last_wal_archived: null }), "archive").text, "system.row.archive.none_yet", "nothing saved yet");
+  eq(rowOf(decoded({}, { backups_configured: false, wal_archive: "unknown" }), "archive").text, "system.row.archive.off", "starts with backups");
+  eq(hostNext(decoded({}, { next: "wal_archive" }))?.actor, "host", "the host admin acts");
+  for (const bad of [
+    wire({}, { wal_archive: "stuck" }),
+    wire({}, { wal_archive: undefined }),
+    wire({}, { last_wal_archived: 5 }),
+  ]) {
     eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
   }
 });

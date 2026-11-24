@@ -11,11 +11,12 @@
 //!  "custodian":"linked","guard_copy_owed":false,"guard_owed":false,
 //!  "last_app_snapshot":1795000000,"last_backup":1795000000,
 //!  "last_key_copy":null,"last_vault_erasure":null,
-//!  "last_vault_snapshot":1795000000,"next":"nothing",
+//!  "last_vault_snapshot":1795000000,"last_wal_archived":1795000000,
+//!  "next":"nothing",
 //!  "parts":{"cell":"running","databases":"running","edge":"running",
 //!           "keys":"running","vault":"running","witness":"running"},
 //!  "route":"current","self_signed":false,"setup_done":true,
-//!  "vault_snapshot_failed":false,"version":1,
+//!  "vault_snapshot_failed":false,"version":1,"wal_archive":"ok",
 //!  "written_at":1795000000}
 //! ```
 //!
@@ -166,6 +167,48 @@ impl CustodianState {
     }
 }
 
+/// The state of the WAL archive of both clusters, the worse of the two
+/// (ADR-012 record of lane m10/backup-health).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum WalArchive {
+    /// Every finished segment reached the object store in time.
+    Ok,
+    /// A finished segment has waited too long for its upload.
+    Late,
+    /// The last upload failed, and none succeeded since.
+    Failing,
+    /// No backups, or a cluster did not answer.
+    #[default]
+    Unknown,
+}
+
+impl WalArchive {
+    /// Every state.
+    pub const ALL: [WalArchive; 4] = [Self::Ok, Self::Late, Self::Failing, Self::Unknown];
+
+    /// The word in the file.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Late => "late",
+            Self::Failing => "failing",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// The worse of two states: failing, then late, then unknown.
+    #[must_use]
+    pub const fn worst(self, other: WalArchive) -> WalArchive {
+        match (self, other) {
+            (Self::Failing, _) | (_, Self::Failing) => Self::Failing,
+            (Self::Late, _) | (_, Self::Late) => Self::Late,
+            (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
+            _ => Self::Ok,
+        }
+    }
+}
+
 /// The one next thing `fstp-admin status` names (ADR-028 "Status").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Next {
@@ -188,6 +231,9 @@ pub enum Next {
     PublicCertificate,
     /// No object store for backups is configured.
     ConfigureBackups,
+    /// The WAL archive fails, or a finished segment waits too long for
+    /// its upload (ADR-012 record of lane m10/backup-health).
+    WalArchive,
     /// The newest backup is old or missing.
     Backup,
     /// The web admins enrol and invite the second admin.
@@ -205,7 +251,7 @@ pub enum Next {
 
 impl Next {
     /// Every value.
-    pub const ALL: [Next; 15] = [
+    pub const ALL: [Next; 16] = [
         Self::RunSetup,
         Self::StartService,
         Self::Custodian,
@@ -214,6 +260,7 @@ impl Next {
         Self::Renew,
         Self::PublicCertificate,
         Self::ConfigureBackups,
+        Self::WalArchive,
         Self::Backup,
         Self::CustodianCopy,
         Self::KeystoreSnapshot,
@@ -236,6 +283,7 @@ impl Next {
             Self::Renew => "renew",
             Self::PublicCertificate => "public_certificate",
             Self::ConfigureBackups => "configure_backups",
+            Self::WalArchive => "wal_archive",
             Self::Backup => "backup",
             Self::KeystoreSnapshot => "keystore_snapshot",
             Self::WebAdmins => "web_admins",
@@ -288,6 +336,12 @@ pub struct HostStatus {
     pub guard_owed: bool,
     /// A fresh copy is owed to the custodian.
     pub guard_copy_owed: bool,
+    /// The state of the WAL archive (ADR-012 record of lane
+    /// m10/backup-health).
+    pub wal_archive: WalArchive,
+    /// The older of the two clusters' last archived segments, in Unix
+    /// seconds.
+    pub last_wal_archived: Option<i64>,
 }
 
 /// Why a file was refused. Names a rule, never the input (R-NF-02).
@@ -325,7 +379,7 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 19] = [
+const MEMBERS: [&str; 21] = [
     "app_snapshot_failed",
     "backups_configured",
     "certificate_days",
@@ -337,6 +391,7 @@ const MEMBERS: [&str; 19] = [
     "last_key_copy",
     "last_vault_erasure",
     "last_vault_snapshot",
+    "last_wal_archived",
     "next",
     "parts",
     "route",
@@ -344,6 +399,7 @@ const MEMBERS: [&str; 19] = [
     "setup_done",
     "vault_snapshot_failed",
     "version",
+    "wal_archive",
     "written_at",
 ];
 
@@ -362,10 +418,12 @@ pub fn encode(s: &HostStatus) -> String {
         "{{\"app_snapshot_failed\":{},\"backups_configured\":{},\"certificate_days\":{},\
          \"custodian\":\"{}\",\"guard_copy_owed\":{},\"guard_owed\":{},\
          \"last_app_snapshot\":{},\"last_backup\":{},\"last_key_copy\":{},\
-         \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
+         \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"last_wal_archived\":{},\
+         \"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
          \"witness\":\"{}\"}},\"route\":\"{}\",\"self_signed\":{},\"setup_done\":{},\
-         \"vault_snapshot_failed\":{},\"version\":{VERSION},\"written_at\":{}}}\n",
+         \"vault_snapshot_failed\":{},\"version\":{VERSION},\"wal_archive\":\"{}\",\
+         \"written_at\":{}}}\n",
         s.app_snapshot_failed,
         s.backups_configured,
         opt(s.certificate_days),
@@ -377,6 +435,7 @@ pub fn encode(s: &HostStatus) -> String {
         opt(s.last_key_copy),
         opt(s.last_vault_erasure),
         opt(s.last_vault_snapshot),
+        opt(s.last_wal_archived),
         s.next.word(),
         p.cell.word(),
         p.databases.word(),
@@ -388,6 +447,7 @@ pub fn encode(s: &HostStatus) -> String {
         s.self_signed,
         s.setup_done,
         s.vault_snapshot_failed,
+        s.wal_archive.word(),
         s.written_at,
     )
 }
@@ -509,5 +569,12 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
         )?,
         guard_owed: flag(o, "guard_owed")?,
         guard_copy_owed: flag(o, "guard_copy_owed")?,
+        wal_archive: word(
+            member(o, "wal_archive")?,
+            &WalArchive::ALL,
+            WalArchive::word,
+            "wal_archive",
+        )?,
+        last_wal_archived: opt_int(o, "last_wal_archived", 0, MAX_INSTANT)?,
     })
 }

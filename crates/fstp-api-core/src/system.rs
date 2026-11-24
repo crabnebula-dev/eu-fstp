@@ -76,7 +76,7 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 15] = [
+pub const HOST_NEXT: [&str; 16] = [
     "run_setup",
     "start_service",
     "custodian",
@@ -85,6 +85,7 @@ pub const HOST_NEXT: [&str; 15] = [
     "renew",
     "public_certificate",
     "configure_backups",
+    "wal_archive",
     "backup",
     "custodian_copy",
     "keystore_snapshot",
@@ -139,6 +140,33 @@ impl CustodianState {
     }
 }
 
+/// The state of the WAL archive of both clusters (ADR-012 record of lane
+/// m10/backup-health).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchiveState {
+    /// Every finished segment reached the object store in time.
+    Ok,
+    /// A finished segment has waited too long for its upload.
+    Late,
+    /// The last upload failed.
+    Failing,
+    /// No backups, or a cluster did not answer.
+    Unknown,
+}
+
+impl ArchiveState {
+    /// The wire word.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Late => "late",
+            Self::Failing => "failing",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// The host's last report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostReport {
@@ -180,6 +208,10 @@ pub struct HostReport {
     pub guard_owed: bool,
     /// A fresh copy is owed to the custodian (Q-F018-4).
     pub guard_copy_owed: bool,
+    /// The state of the WAL archive.
+    pub wal_archive: ArchiveState,
+    /// The older of the two clusters' last archived segments.
+    pub last_wal_archived: Option<Timestamp>,
 }
 
 /// What the cell found of the host status file.
@@ -332,6 +364,12 @@ fn report_json(r: &HostReport) -> Value {
     put(&mut o, "custodian", Value::from(r.custodian.wire()));
     put(&mut o, "guard_owed", Value::Bool(r.guard_owed));
     put(&mut o, "guard_copy_owed", Value::Bool(r.guard_copy_owed));
+    put(&mut o, "wal_archive", Value::from(r.wal_archive.wire()));
+    put(
+        &mut o,
+        "last_wal_archived",
+        r.last_wal_archived.map_or(Value::Null, instant),
+    );
     Value::Object(o)
 }
 

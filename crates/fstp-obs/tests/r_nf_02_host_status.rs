@@ -9,7 +9,7 @@
 
 use fstp_obs::host_status::{
     CustodianState, HostStatus, HostStatusError, MAX_LEN, Next, PartState, Parts, RouteState,
-    decode, encode,
+    WalArchive, decode, encode,
 };
 use fstp_prop::{Gen, check};
 
@@ -40,6 +40,8 @@ fn sample() -> HostStatus {
         custodian: CustodianState::Unreachable,
         guard_owed: true,
         guard_copy_owed: false,
+        wal_archive: WalArchive::Late,
+        last_wal_archived: Some(1_794_999_000),
     }
 }
 
@@ -93,6 +95,8 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         custodian: pick(g, &CustodianState::ALL),
         guard_owed: g.bool(),
         guard_copy_owed: g.bool(),
+        wal_archive: pick(g, &WalArchive::ALL),
+        last_wal_archived: opt_time(g),
     }
 }
 
@@ -232,6 +236,22 @@ fn r_nf_02_host_status_refuses_bad_input() {
             swap("\"guard_copy_owed\":false,", ""),
             HostStatusError::MissingMember("guard_copy_owed"),
         ),
+        // ADR-012 record of lane m10/backup-health: the WAL archive.
+        (
+            swap("\"wal_archive\":\"late\"", "\"wal_archive\":\"stuck\""),
+            HostStatusError::Invalid("wal_archive"),
+        ),
+        (
+            swap("\"wal_archive\":\"late\",", ""),
+            HostStatusError::MissingMember("wal_archive"),
+        ),
+        (
+            swap(
+                "\"last_wal_archived\":1794999000",
+                "\"last_wal_archived\":\"1794999000\"",
+            ),
+            HostStatusError::Invalid("last_wal_archived"),
+        ),
         (
             format!("{good}{}", " ".repeat(MAX_LEN)),
             HostStatusError::TooLong,
@@ -259,5 +279,23 @@ fn r_nf_02_host_status_errors_never_quote_bytes() {
         let e = decode(text.as_bytes()).unwrap_err();
         let shown = format!("{e} {e:?}");
         assert!(!shown.contains("canary"), "{shown}");
+    }
+}
+
+/// ADR-012 record of lane m10/backup-health, row "WAL archive rule": the
+/// host shows the worse of the two clusters, failing before late before
+/// unknown.
+#[test]
+fn adr012_bh_wal_archive_takes_the_worse_cluster() {
+    use WalArchive::{Failing, Late, Ok, Unknown};
+    for (a, b, want) in [
+        (Ok, Ok, Ok),
+        (Ok, Unknown, Unknown),
+        (Unknown, Late, Late),
+        (Late, Failing, Failing),
+        (Failing, Ok, Failing),
+    ] {
+        assert_eq!(a.worst(b), want, "{a:?} {b:?}");
+        assert_eq!(b.worst(a), want, "{b:?} {a:?}");
     }
 }

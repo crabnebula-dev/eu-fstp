@@ -18,6 +18,9 @@
 // after 36 hours on a host with backups, as `fstp-admin status` reads it,
 // and a failed last try is a problem (ADR-028 records of lanes L27 and
 // L26).
+// The WAL archive is a problem while it fails, and late while a finished
+// segment waits over 10 minutes, as `fstp-admin status` reads it (ADR-012
+// record of lane m10/backup-health).
 
 /** A part's state in the host report. */
 export const PART_STATES = ["running", "unhealthy", "stopped"] as const;
@@ -34,6 +37,7 @@ export const HOST_NEXT = [
   "renew",
   "public_certificate",
   "configure_backups",
+  "wal_archive",
   "backup",
   "custodian_copy",
   "keystore_snapshot",
@@ -73,6 +77,10 @@ export interface HostReport {
   readonly guardOwed: boolean;
   /** A fresh copy is owed to the custodian: the last try failed. */
   readonly guardCopyOwed: boolean;
+  /** The WAL archive of both clusters: ok, late, failing, or unknown without backups. */
+  readonly walArchive: "ok" | "late" | "failing" | "unknown";
+  /** The older of the two clusters' last archived segments. */
+  readonly lastWalArchived: bigint | null;
 }
 
 /** The `tenant.system` reply. */
@@ -125,6 +133,8 @@ function host(v: unknown): HostReport | null {
     "custodian",
     "guard_owed",
     "guard_copy_owed",
+    "wal_archive",
+    "last_wal_archived",
   ];
   if (o === null || !closed(o, names)) return null;
   const p = record(o["parts"]);
@@ -159,6 +169,10 @@ function host(v: unknown): HostReport | null {
   if (typeof guardOwed !== "boolean") return null;
   const guardCopyOwed = o["guard_copy_owed"];
   if (typeof guardCopyOwed !== "boolean") return null;
+  const walArchive = o["wal_archive"];
+  if (!oneOf(walArchive, ["ok", "late", "failing", "unknown"] as const)) return null;
+  const lastWalArchived = o["last_wal_archived"] === null ? null : instant(o["last_wal_archived"]);
+  if (o["last_wal_archived"] !== null && lastWalArchived === null) return null;
   return Object.freeze({
     writtenAt,
     setupDone,
@@ -178,6 +192,8 @@ function host(v: unknown): HostReport | null {
     custodian,
     guardOwed,
     guardCopyOwed,
+    walArchive,
+    lastWalArchived,
   });
 }
 
@@ -210,7 +226,19 @@ export type Light = "green" | "amber" | "red" | "unknown";
 export type Actor = "host" | "you";
 
 /** The rows of the page, in order. */
-export const ROW_IDS = ["report", "cell", "vault", "services", "edge", "mail", "backups", "keys", "snapshots", "certificates"] as const;
+export const ROW_IDS = [
+  "report",
+  "cell",
+  "vault",
+  "services",
+  "edge",
+  "mail",
+  "backups",
+  "archive",
+  "keys",
+  "snapshots",
+  "certificates",
+] as const;
 /** One row id. */
 export type RowId = (typeof ROW_IDS)[number];
 
@@ -285,7 +313,7 @@ export function lastErasure(r: SystemReply): bigint | null {
 function hostRows(r: SystemReply): Row[] {
   const h = r.host;
   if (h === null) {
-    return (["services", "edge", "backups", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
+    return (["services", "edge", "backups", "archive", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
   }
   const out: Row[] = [];
   const others = [h.parts.witness, h.parts.databases, h.parts.keys];
@@ -309,6 +337,7 @@ function hostRows(r: SystemReply): Row[] {
     else if (a > BACKUP_LATE) out.push(row("backups", "amber", "late", params, "host", "system.tell.backup"));
     else out.push(row("backups", "green", "fresh", params));
   }
+  out.push(archiveRow(r, h));
   // The runbook asks for a new key copy after each erasure: an older copy
   // still holds the erased key (ADR-028 record of lane L20).
   const erased = lastErasure(r);
@@ -355,6 +384,23 @@ function snapshotRow(r: SystemReply, h: HostReport): Row {
   return r.now - oldest > SNAPSHOT_LATE
     ? row("snapshots", "amber", "late", params, "host", tell)
     : row("snapshots", "green", "fresh", params);
+}
+
+/**
+ * The WAL archive, the backup of recent changes (ADR-012 and ADR-028
+ * records of lane `m10/backup-health`): red while it fails, amber while a
+ * finished segment waits too long, green with the age of the last saved
+ * change. Without backups the backups row already asks for them.
+ */
+function archiveRow(r: SystemReply, h: HostReport): Row {
+  const tell = "system.tell.wal_archive";
+  if (!h.backupsConfigured) return row("archive", "green", "off");
+  if (h.walArchive === "failing") return row("archive", "red", "failing", {}, "host", tell);
+  if (h.walArchive === "late") return row("archive", "amber", "late", {}, "host", tell);
+  if (h.walArchive === "unknown") return row("archive", "unknown", "unknown");
+  if (h.lastWalArchived === null) return row("archive", "green", "none_yet");
+  const age = ageOf(r.now - h.lastWalArchived);
+  return row("archive", "green", "fresh", { age: age.n, unit: age.label });
 }
 
 /** Every row of the page, in `ROW_IDS` order. */

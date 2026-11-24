@@ -336,6 +336,7 @@ pub const HOST_NEXT: &[&str] = &[
     "renew",
     "public_certificate",
     "configure_backups",
+    "wal_archive",
     "backup",
     "custodian_copy",
     "keystore_snapshot",
@@ -2037,6 +2038,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     ),
                     m("guard_owed", Shape::Bool),
                     m("guard_copy_owed", Shape::Bool),
+                    // ADR-028 record of lane `m10/backup-health`: the WAL archive.
+                    m(
+                        "wal_archive",
+                        Shape::Enum(&["ok", "late", "failing", "unknown"]),
+                    ),
+                    m("last_wal_archived", Shape::Nullable(&Shape::Id)),
                 ])),
             ),
         ]),

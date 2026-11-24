@@ -22,6 +22,7 @@
 //! `--config <path>` or `FSTP_ADMIN_CONFIG` names another configuration
 //! file. Exit codes: [`fail`].
 
+pub mod archive;
 pub mod cellcmd;
 pub mod config;
 pub mod custodian;

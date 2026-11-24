@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use fstp_api_core::system::{
-    CustodianState, HostFile, HostNext, HostParts, HostReport, PartState, RouteState,
+    ArchiveState, CustodianState, HostFile, HostNext, HostParts, HostReport, PartState, RouteState,
 };
 use fstp_domain::time::Timestamp;
 use fstp_obs::host_status::{self, HostStatus};
@@ -74,6 +74,13 @@ fn report(s: &HostStatus) -> Option<HostReport> {
         },
         guard_owed: s.guard_owed,
         guard_copy_owed: s.guard_copy_owed,
+        wal_archive: match s.wal_archive {
+            host_status::WalArchive::Ok => ArchiveState::Ok,
+            host_status::WalArchive::Late => ArchiveState::Late,
+            host_status::WalArchive::Failing => ArchiveState::Failing,
+            host_status::WalArchive::Unknown => ArchiveState::Unknown,
+        },
+        last_wal_archived: s.last_wal_archived.map(instant),
     })
 }
 
@@ -133,6 +140,8 @@ mod tests {
             custodian: host_status::CustodianState::Unpaired,
             guard_owed: false,
             guard_copy_owed: false,
+            wal_archive: host_status::WalArchive::Failing,
+            last_wal_archived: Some(1_794_998_000),
         }
     }
 
@@ -179,6 +188,12 @@ mod tests {
         assert!(r.vault_snapshot_failed);
         assert_eq!(r.certificate_days, Some(4));
         assert!(r.self_signed);
+        // ADR-028 record of lane `m10/backup-health`: the WAL archive.
+        assert_eq!(r.wal_archive, ArchiveState::Failing);
+        assert_eq!(
+            r.last_wal_archived,
+            Some(Timestamp::from_micros(1_794_998_000_000_000))
+        );
         assert_eq!(r.next.wire(), "copy_keys");
         for n in Next::ALL {
             assert_eq!(HostNext::of(n.word()).map(HostNext::wire), Some(n.word()));

@@ -36,6 +36,7 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.name.edge": "Public address",
   "system.name.mail": "Outgoing mail",
   "system.name.backups": "Backups",
+  "system.name.archive": "Backup of recent changes",
   "system.name.keys": "Key copy",
   "system.name.snapshots": "Key store snapshots",
   "system.name.certificates": "Certificates",
@@ -67,6 +68,14 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.backups.none": "No backup has run yet.",
   "system.row.backups.not_configured": "Backups are not set up. A lost server would lose all data.",
   "system.row.backups.unknown": "Not known until the host reports.",
+  "system.row.archive.fresh": "Recent changes are saved off the host as they happen. The last one was saved {age} ago.",
+  "system.row.archive.none_yet": "Recent changes are saved off the host as they happen. None needed saving yet.",
+  "system.row.archive.late":
+    "Recent changes wait longer than usual to be saved off the host. A lost server now would lose them.",
+  "system.row.archive.failing":
+    "Recent changes are not reaching the backup store. A lost server now would lose every change since the last one saved.",
+  "system.row.archive.off": "Recent changes are saved off the host once backups are set up.",
+  "system.row.archive.unknown": "Not known: the host could not read it. Running fstp-admin status shows why.",
   "system.row.keys.copied": "The keys were last copied off the host on {date}.",
   "system.row.keys.never":
     "The keys have never been copied off the host. Without a copy, the backups cannot be opened after a lost server.",
@@ -106,6 +115,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.tell.configure_backups":
     "Please add an object store under backup in /etc/fstp/fstp.json, then run fstp-admin setup.",
   "system.tell.backup": "Please run fstp-admin backup, and check that its nightly timer runs.",
+  "system.tell.wal_archive":
+    "Please run fstp-admin status. It names the database whose changes are not saved; read that database's log, fix the object store or its keys, then run fstp-admin status again.",
   "system.tell.custodian":
     "Please check that the second custodian machine is on and reachable, then run fstp-admin status. Erasures wait until it answers.",
   "system.tell.custodian_copy":
@@ -129,6 +140,7 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.next.renew": "The host admin runs fstp-admin renew: a certificate ends soon.",
   "system.next.public_certificate": "The host admin gets a public certificate for the domain.",
   "system.next.configure_backups": "The host admin sets up backups.",
+  "system.next.wal_archive": "The host admin checks why recent changes are not reaching the backup store.",
   "system.next.backup": "The host admin runs a backup with fstp-admin backup.",
   "system.next.custodian_copy": "The host admin checks why the fresh key copy did not reach the second custodian.",
   "system.next.keystore_snapshot":

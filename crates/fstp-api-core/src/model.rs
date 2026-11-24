@@ -2597,6 +2597,10 @@ pub(crate) mod reply_shape_tests {
                         custodian: crate::system::CustodianState::Unreachable,
                         guard_owed: true,
                         guard_copy_owed: false,
+                        wal_archive: crate::system::ArchiveState::Failing,
+                        last_wal_archived: Some(fstp_domain::time::Timestamp::from_micros(
+                            1_794_970_000_000_000,
+                        )),
                     }),
                 },
             }),
