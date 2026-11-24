@@ -162,3 +162,16 @@ Written before the code. Daniel decided on 2026-11-23 that the second custodian 
 | System page | The host status file gains `custodian` (`linked`, `unreachable`, `unpaired`, or `not_used` in direct mode) and `guard_owed` (a boolean). The next words `custodian` and `pair_custodian` join the closed list. The row "Key copies" turns red while the custodian is unreachable or a rotation is owed, since erasures then wait, and amber while it is unpaired. Who acts: the host admin | Record of lane L20, row "Key copies" |
 
 Tests: `adr028_guard_pairing_file_round_trips`, `adr028_guard_pair_custodian_writes_one_file_and_the_member`, `adr028_guard_custodian_unit_carries_its_credentials`, `adr028_guard_config_takes_the_custodian_member`, `adr028_guard_keyd_units_carry_the_guard_credentials` and `adr028_guard_status_reads_guard_check` in `fstp-admin`; the custodian cases of `r_nf_02_host_status_round_trips` and `r_nf_02_host_status_refuses_bad_input` in `fstp-obs`; `adr028_guard_key_copy_row_shows_the_custodian` in `web/test/l20_system_page.test.ts`; and the fuzz target `custodian_pairing_decode`.
+
+### Part 2, 2026-11-24: the custodian's copy and `restore-keys`
+
+Written before the code, after Daniel's answers of 2026-11-24 (ADR-004, "Decided by Daniel on 2026-11-24"). Each row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| No new step | Each `fstp-keyd` entry sends its fresh copy to the custodian by itself after each erasure. `backup-keys` stays for copies the operator keeps offline | Decided by Daniel on 2026-11-24 (Q-F018-4) |
+| Restore the keys | `fstp-admin restore-keys <dir>` on the new host, after `setup` and the pairing. For each entry it takes `<dir>/<entry>.fkx`, or else fetches the custodian's copy (`fstp-keyd fetch-copy`). It takes the old host's passphrase from `<dir>/<entry>.passphrase` when present, and keeps the current one otherwise. It stops the services, moves each volume aside as `<volume>.before-restore-<time>`, never deletes it, imports the copy, and starts the entries again. Each line says `done` or names the entry and the fix. It ends with "Next: run fstp-admin restore" | Decided by Daniel on 2026-11-24 (Q-F018-5) |
+| Release in `restore` | `fstp-admin restore`, after the databases are back and before the keystores, releases every held entry: the cell's with the newest live App epoch of the restored `c_` database, the vault's with the newest live Vault epoch of the `v_` database, every other with none. A release that refuses stops the restore with the entry named. The services stay stopped then | ADR-004 record of lane L16, rule 3 |
+| Copy owed | `fstp-keyd guard-check` exits 6 while a fresh copy is owed to the custodian. `status` shows `custodian  linked, a fresh copy is owed (retried every ten minutes)` and names it as the next thing after the backups. The host status file gains `guard_copy_owed`, the next word `custodian_copy`, and the System page shows the key copy row amber with the host admin to act | Usability rule of 2026-11-21 |
+
+Tests: `adr028_guard_restore_keys_takes_each_copy_from_the_directory_or_the_custodian` and `adr028_guard_status_names_an_owed_copy` in `fstp-admin`; the copy cases of `r_nf_02_host_status_round_trips` in `fstp-obs`; `adr028_guard_key_copy_row_shows_an_owed_copy` in `web/test/l20_system_page.test.ts`.

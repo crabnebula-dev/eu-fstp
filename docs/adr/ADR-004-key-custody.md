@@ -951,13 +951,45 @@ Options B (the guard in OKMS) and C (the pilot reading) were not taken. This rec
 
 **Tests.** `m10_f018_th30_an_old_key_copy_and_an_old_backup_do_not_open_later_erased_data`, `m10_f018_i81_an_erasure_is_not_complete_while_the_old_guard_lives`, `m10_f018_a_key_copy_does_not_open_without_the_custodian` and `m10_f018_r_nf_09_a_peer_without_the_right_certificate_cannot_open_or_destroy` in `crates/fstp-keyd/tests/guard.rs`, with the unit tests of `fstp_keyd::guard`.
 
-**Questions for Daniel.**
+**Questions for Daniel.** All five were answered on 2026-11-24, below.
 
 - **Q-F018-1.** While the custodian is unreachable, the erasure waits, because the I-81 note does not cover this case. Confirm, or name a reduced-assurance completion with a visible state instead.
 - **Q-F018-2.** A lost custodian is replaced by pairing again. Its old volume holds guards sealed under a passphrase on the same machine. Should the custodian's passphrase come from the operator at each start, as `systemd-ask-password` allows, so a stolen custodian disk alone opens nothing?
 - **Q-F018-3.** Copies made before this change are plain `"FKX1"` copies. In production `import` refuses them, since no guard can be destroyed for them. The runbook retires them after the first guarded copy. Confirm.
 - **Q-F018-4.** After each erasure the old copies of that entry stop opening at once. A host loss before the next `backup-keys` then loses the keystore snapshots of that entry. An old copy already failed to open the App or Vault data after an erasure, since it lacks the new epoch. The cluster backups still restore through the custodian's escrow (ADR-012 record of lane L16). `status` and the System page name the new copy as the next thing to do. Should `fstp-keyd` write a fresh guarded copy to the custodian after each rotation, so no gap remains?
 - **Q-F018-5.** The import of a guarded copy after the loss of the host is still a command by hand, with the guard variables and credentials beside the passphrase (`docs/guide/production-reference.md`). Should `fstp-admin` gain a `restore-keys <dir>` that stages them, as `backup-keys` does?
+
+
+#### Decided by Daniel on 2026-11-24: the answers to Q-F018-1 to Q-F018-5
+
+| Question | Decision |
+| --- | --- |
+| Q-F018-1 | Decided by Daniel on 2026-11-24: while the custodian is unreachable, the erasure waits. The key is gone on the pilot at once, and the completion waits for the guard rotation, as built |
+| Q-F018-2 | Decided by Daniel on 2026-11-24: the custodian's passphrase stays on the custodian machine, as built, so it starts unattended. Residual risk, accepted: a stolen custodian disk holds both the guards and the passphrase that seals them. Whoever also holds an old pilot copy, its passphrase and a database backup of the same age can then open data erased since. Four separate things must be stolen. Pairing a new custodian after a loss is the operator's statement that the old disk is destroyed |
+| Q-F018-3 | Decided by Daniel on 2026-11-24: in production `fstp-keyd import` refuses a plain pre-guard `"FKX1"` copy, as built, since no guard can be destroyed for it. Development mode still admits one. The runbook retires plain copies once the first guarded copy exists |
+| Q-F018-4 | Decided by Daniel on 2026-11-24: after each guard rotation the pilot entry sends a fresh guarded copy to the custodian by itself. The operator has no step. Built as "The custodian's copy" below |
+| Q-F018-5 | Decided by Daniel on 2026-11-24: `fstp-admin restore-keys <dir>` stages the guarded import after a host loss in one command. Built as recorded in ADR-028 (record of lane `m10/guard-key`, part 2) |
+
+#### The custodian's copy (Q-F018-4)
+
+Written by lane `m10/guard-key` before its code. Interim, pending Daniel, unless a row says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| What the custodian stores | For each pilot entry at most one copy, the file `held-<entry>.fgc` on its key volume. It is a guarded copy (`"FGC1"`) of that entry, sealed to the entry's newest live guard generation. A new copy replaces the old one: written to a temporary file, synced and renamed | Q-F018-4 |
+| The custodian cannot open it | The outer seal opens with the guard, which the custodian holds. The inner `"FKX1"` copy is sealed under a key derived from the pilot entry's passphrase, which never leaves the pilot and the operator's password manager. So the custodian alone opens no root (I-80) | I-80 |
+| Which generations it keeps | One: the copy sealed to the newest live generation. A `put` for any other generation is refused with `Destroyed` when that generation is gone and `BadRequest` otherwise, so the custodian never stores a copy that a destroyed guard sealed | I-81 |
+| When it deletes the old one | In the same `rotate` that destroys the old generations, after their destroy has read back, the custodian unlinks every held copy of the entry sealed to an older generation and syncs the directory. If the unlink fails, the file stays sealed to a destroyed guard. No key opens it, so it cannot reopen F-018. The next `rotate` or `put` tries the unlink again | I-81, TH-30 |
+| No erased key in it | The pilot makes the copy after the rotation, so after its own destroy has read back. Rule 1 of the record of lane L16 then keeps every destroyed key out of it | I-81 |
+| When the pilot sends it | Right after each rotation answers, inside the same destroy request: the pilot builds the copy under the lock it already holds, seals it to the new public half the rotation returned, and sends `put`. It needs the passphrase, which the pilot entry now keeps in wiped memory for its lifetime, as it already keeps the table key | Q-F018-4 |
+| Completion does not wait for it | The receipt goes out once the rotation answered, whether the copy reached the custodian or not. I-81 needs only the old guard destroyed. The fresh copy serves availability. Tying it to completion would let a full disk or a slow link hold back erasures that are already safe | I-81; Q-F018-1 |
+| When the write fails | `guard.state` marks the copy owed. The pilot retries at its next start, at every destroy, and every ten minutes while it serves. `fstp-keyd guard-check` exits 6 while a copy is owed, and `status` and the System page show it amber, with the host admin to act | Usability rule of 2026-11-21 |
+| Not in the register | Held copies are not recorded in `exports.log`. The custodian deletes each at the next rotation, and each dies with its guard. Recording one per erasure would grow the register without end | Rule 4 of the record of lane L16 |
+| Size | A copy is at most the bound of a guarded copy: 160 MiB of inner copy plus the outer seal. The custodian reads a request body only after the TLS peer names a pilot entry. A peer of the right CA with another CN can send 1183 bytes at most. `put` and `fetch` allow 300 seconds, every other exchange 10 seconds | R-NF-08 |
+| Wire | Request kind 4 `put`: `generation u32 \| len u32 \| copy`; kind 5 `fetch`: nothing. Response `0x84` stored: `generation u32`; `0x85` copy: `generation u32 \| len u32 \| copy`. A `fetch` with nothing held answers `UnknownRoot`. The guard log records op 4 put and op 5 fetch. Fuzzed in `guard_link_decode` | CLAUDE.md fuzz rule |
+| Pilot guard state | `guard.state` gains `copy u8 \| copied u64` after the event: 1 while a copy is owed, and the time of the last copy the custodian stored. The branch never shipped the shorter form, so the version stays 1 | R-NF-02 |
+
+Tests: `m10_f018_i81_after_a_rotation_the_custodian_holds_a_copy_that_opens_with_the_new_guard`, `m10_f018_th30_the_custodian_holds_no_copy_that_opens_erased_data`, `m10_f018_i81_a_failed_copy_write_does_not_hold_back_completion_and_is_retried`, `m10_f018_i81_the_custodian_refuses_a_copy_for_another_generation` and `m10_f018_i81_production_refuses_a_plain_pre_guard_copy` in `crates/fstp-keyd/tests/guard.rs`.
 
 ### Copies of sealed key files (Q-L16-3)
 
