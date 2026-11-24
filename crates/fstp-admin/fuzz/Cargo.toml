@@ -33,6 +33,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "restore_time_parse"
+path = "fuzz_targets/restore_time_parse.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

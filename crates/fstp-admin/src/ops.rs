@@ -7,7 +7,7 @@ use std::process::Command;
 use fstp_pki::cert::CertKind;
 
 use crate::config::Services;
-use crate::fail::{Cause, Fail};
+use crate::fail::{Cause, Fail, TimeRefusal};
 use crate::layout::{Cluster, Entry, Layout};
 use crate::pki::{Leaf, random_hex, write_pair};
 use crate::say::{Part, out};
@@ -175,21 +175,146 @@ pub fn last_backup(layout: &Layout, c: Cluster) -> Option<i64> {
     line.split_whitespace().nth(2)?.parse().ok()
 }
 
-/// `fstp-admin restore`: both clusters from their newest base backups,
-/// with the services stopped. The old data directories stay beside the
-/// new ones.
-/// Then each process keeps the newest copy of its keys that opens
-/// (ADR-028 record of lane L27).
+/// The exit status of `fstp-backup restore` when the archive holds no
+/// change after the target (ADR-012 record of lane `m10/backup-pitr`).
+pub const ARCHIVE_ENDS_FIRST: i32 = 3;
+
+/// How long a restored cluster may take to replay and promote.
+const PROMOTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// The completion times of the base backups of `c`, from the agent's
+/// index, in line order.
+#[must_use]
+pub fn backup_times(layout: &Layout, c: Cluster) -> Vec<u64> {
+    std::fs::read_to_string(layout.backup_state(c).join("base-backups.index"))
+        .map(|t| crate::pitr::index_times(&t))
+        .unwrap_or_default()
+}
+
+/// Checks the target `t` against the clock and the base backups of both
+/// clusters (ADR-028 record of lane `m10/backup-pitr`, row "Refusals").
 ///
 /// # Errors
 ///
-/// [`Fail::Step`] when a part fails. The services start again, unless
-/// the keys of the vault or the cell open from no copy.
-pub fn restore(layout: &Layout) -> Result<(), Fail> {
+/// [`Fail::Time`] with the reason.
+pub fn check_target(layout: &Layout, t: u64, now: u64) -> Result<(), Fail> {
+    if t > now {
+        return Err(Fail::Time(TimeRefusal::Future));
+    }
+    // Each cluster needs a base backup that finished before the target,
+    // so the oldest usable time is the later of the two oldest backups.
+    let mut first_ok = 0u64;
+    for c in Cluster::ALL {
+        let Some(oldest) = backup_times(layout, c).into_iter().min() else {
+            return Err(Fail::Time(TimeRefusal::NoBackup));
+        };
+        first_ok = first_ok.max(oldest.saturating_add(1));
+    }
+    if t < first_ok {
+        return Err(Fail::Time(TimeRefusal::BeforeOldest(first_ok)));
+    }
+    Ok(())
+}
+
+/// Prints the window a restore to `t` loses and what the witness makes of
+/// it, and asks for `yes` (ADR-012 record of lane `m10/backup-pitr`, "What
+/// a restored cell does at the witness").
+fn confirm_loss(t: u64, now: u64) -> Result<(), Fail> {
+    let (from, to) = (crate::pitr::format_time(t), crate::pitr::format_time(now));
+    out(&[
+        Part::T("Restoring to "),
+        Part::Name(&from),
+        Part::T(" loses every change from then until now, "),
+        Part::Name(&to),
+        Part::T(", in both databases."),
+    ]);
+    out(&[Part::T(
+        "The audit witness holds receipts for the entries of that window. Today the cell and the vault refuse to start while receipted entries are missing, until a declared restore is built (ADR-012).",
+    )]);
+    out(&[Part::T(
+        "Tenant admins see nothing of the lost window yet. Tell them yourself, with the two times above.",
+    )]);
+    out(&[Part::T(
+        "Both databases are restored, or neither, and the current ones are kept beside them.",
+    )]);
+    match crate::say::ask("Type yes to go on: ").as_deref() {
+        Some("yes") => Ok(()),
+        _ => Err(Fail::Time(TimeRefusal::NotConfirmed)),
+    }
+}
+
+/// Waits until cluster `c` has finished its recovery and promoted, then
+/// resets the recovery settings, so no later standby inherits them
+/// (ADR-028 record of lane `m10/backup-pitr`, row "Start").
+fn await_promotion(layout: &Layout, c: Cluster) -> Result<(), Fail> {
+    let begun = std::time::Instant::now();
+    loop {
+        match crate::pg::psql(
+            layout,
+            c,
+            "postgres",
+            "SELECT pg_is_in_recovery();\n",
+            "the recovery check",
+        ) {
+            Ok(s) if s == "f" => break,
+            _ if begun.elapsed() > PROMOTION_TIMEOUT => {
+                return Err(Fail::Step(
+                    "restore",
+                    Cause::Run(RunFail::NotReady(crate::pg::service(layout, c).name)),
+                ));
+            }
+            _ => std::thread::sleep(std::time::Duration::from_secs(5)),
+        }
+    }
+    crate::pg::psql(
+        layout,
+        c,
+        "postgres",
+        "ALTER SYSTEM RESET restore_command;\nALTER SYSTEM RESET recovery_target;\n\
+         ALTER SYSTEM RESET recovery_target_time;\nALTER SYSTEM RESET recovery_target_timeline;\n\
+         ALTER SYSTEM RESET recovery_target_action;\nALTER SYSTEM RESET hot_standby;\n\
+         SELECT pg_reload_conf();\n",
+        "the reset of the recovery settings",
+    )
+    .map_err(|e| Fail::Step("restore", e.into()))?;
+    Ok(())
+}
+
+/// The arguments of `fstp-backup restore` for `fresh` and `target`.
+#[must_use]
+pub fn restore_args(fresh: &Path, target: Option<u64>) -> Vec<std::ffi::OsString> {
+    let mut a: Vec<std::ffi::OsString> = vec!["restore".into(), fresh.into()];
+    if let Some(t) = target {
+        a.push("--to".into());
+        a.push(t.to_string().into());
+    }
+    a
+}
+
+/// `fstp-admin restore [--to <time>]`: both clusters to the newest point,
+/// or to the time `target` (ADR-028 records of lanes L27 and
+/// `m10/backup-pitr`). With the services stopped, both clusters are
+/// restored and checked in fresh directories. Only when both succeed are
+/// both swapped in, and the old ones stay beside them. Then each restored
+/// cluster promotes, each process keeps the newest copy of its keys that
+/// opens, the services start, and a fresh base backup of both runs.
+///
+/// # Errors
+///
+/// [`Fail::Time`] for a refused target, [`Fail::Step`] when a part fails.
+/// When a restore fails, nothing is swapped and the services start again.
+/// When the keys of the vault or the cell open from no copy, the services
+/// stay stopped.
+pub fn restore(layout: &Layout, target: Option<u64>) -> Result<(), Fail> {
     if layout.cfg.backup.is_none() {
         return Err(Fail::Waits(
             "restore needs \"backup\" in the configuration file",
         ));
+    }
+    if let Some(t) = target {
+        let now = u64::try_from(crate::pki::now()).unwrap_or(0);
+        check_target(layout, t, now)?;
+        confirm_loss(t, now)?;
     }
     let m = Manager::new(layout);
     for s in [
@@ -200,40 +325,121 @@ pub fn restore(layout: &Layout) -> Result<(), Fail> {
         m.stop(&s).map_err(|e| Fail::Step("restore", e.into()))?;
     }
     let stamp = crate::pki::now();
-    let mut result = Ok(());
+    let fresh = |c: Cluster| {
+        layout
+            .pg_data(c)
+            .with_file_name(format!("{}.restored-{stamp}", c.name()))
+    };
+    // Decided by Daniel on 2026-11-24: both clusters are restored and
+    // checked first, and neither is swapped unless both succeed.
+    let mut failed = None;
     for c in Cluster::ALL {
-        let pg = crate::pg::service(layout, c);
-        m.stop(&pg).map_err(|e| Fail::Step("restore", e.into()))?;
-        let data = layout.pg_data(c);
-        let fresh = data.with_file_name(format!("{}.restored-{stamp}", c.name()));
+        m.stop(&crate::pg::service(layout, c))
+            .map_err(|e| Fail::Step("restore", e.into()))?;
         let mut cmd = Command::new(layout.bin("fstp-backup"));
         let (k, v) = backup_env(layout, c);
-        cmd.env(k, v).arg("restore").arg(&fresh);
-        if let Err(e) = run_ok(&mut cmd, &m.log()) {
-            result = Err(Fail::Step("restore", e.into()));
-            break;
+        cmd.env(k, v).args(restore_args(&fresh(c), target));
+        match run_logged(&mut cmd, &m.log()) {
+            Ok(Some(0)) => out(&[
+                Part::T("  done     restored and checked the "),
+                Part::T(c.name()),
+                Part::T(" database in "),
+                Part::P(&fresh(c)),
+            ]),
+            Ok(Some(ARCHIVE_ENDS_FIRST)) => {
+                failed = Some(Fail::Time(TimeRefusal::ArchiveEndsFirst));
+                break;
+            }
+            Ok(code) => {
+                failed = Some(Fail::Step(
+                    "restore",
+                    Cause::Run(RunFail::Exit(layout.bin("fstp-backup"), code)),
+                ));
+                break;
+            }
+            Err(e) => {
+                failed = Some(Fail::Step("restore", e.into()));
+                break;
+            }
         }
-        let old = data.with_file_name(format!("{}.before-restore-{stamp}", c.name()));
-        std::fs::rename(&data, &old).map_err(io("restore"))?;
-        std::fs::rename(&fresh, &data).map_err(io("restore"))?;
+    }
+    if let Some(f) = failed {
+        for c in Cluster::ALL {
+            let _ = std::fs::remove_dir_all(fresh(c));
+        }
+        out(&[Part::T(
+            "  skipped  the swap: the current databases are unchanged",
+        )]);
+        start(layout)?;
+        return Err(f);
+    }
+    if let Err(e) = swap_both(layout, &m, stamp, &fresh) {
+        start(layout)?;
+        return Err(e);
+    }
+    restore_keystores(layout, &m)?;
+    let started = start(layout);
+    // Decided by Daniel on 2026-11-24: a fresh base backup of both
+    // clusters right after the restore, so the next restore starts on the
+    // new timeline.
+    match backup(layout) {
+        Ok(()) => {}
+        Err(e) => {
+            crate::fail::report(&e);
+            out(&[Part::T(
+                "  The restore stands. Run fstp-admin backup once the cause is fixed.",
+            )]);
+        }
+    }
+    started
+}
+
+/// Swaps both fresh directories in, each live one moved to
+/// `<cluster>.before-restore-<stamp>`. When a rename fails, every swap
+/// done so far is put back.
+fn swap_both(
+    layout: &Layout,
+    m: &Manager,
+    stamp: i64,
+    fresh: &dyn Fn(Cluster) -> PathBuf,
+) -> Result<(), Fail> {
+    let old = |c: Cluster| {
+        layout
+            .pg_data(c)
+            .with_file_name(format!("{}.before-restore-{stamp}", c.name()))
+    };
+    let mut done: Vec<Cluster> = Vec::new();
+    for c in Cluster::ALL {
+        let data = layout.pg_data(c);
+        let swapped = std::fs::rename(&data, old(c)).is_ok()
+            && (std::fs::rename(fresh(c), &data).is_ok() || {
+                let _ = std::fs::rename(old(c), &data);
+                false
+            });
+        if !swapped {
+            for d in done.iter().rev() {
+                let _ = std::fs::rename(layout.pg_data(*d), fresh(*d));
+                let _ = std::fs::rename(old(*d), layout.pg_data(*d));
+            }
+            return Err(Fail::Step("restore", Cause::Io));
+        }
+        done.push(c);
+    }
+    for c in Cluster::ALL {
+        let data = layout.pg_data(c);
         if layout.cfg.services == Services::Systemd {
             let mut g = Command::new("chown");
             g.arg("-R").arg("postgres:postgres").arg(&data);
             run_ok(&mut g, &m.log()).map_err(|e| Fail::Step("restore", e.into()))?;
         }
         out(&[
-            Part::T("  done     restored the "),
+            Part::T("  done     swapped in the "),
             Part::T(c.name()),
             Part::T(" database; the old one is in "),
-            Part::P(&old),
+            Part::P(&old(c)),
         ]);
     }
-    if result.is_err() {
-        start(layout)?;
-        return result;
-    }
-    restore_keystores(layout, &m)?;
-    start(layout)
+    Ok(())
 }
 
 /// After the clusters are restored (ADR-028 record of lane L27, row
@@ -250,6 +456,9 @@ fn restore_keystores(layout: &Layout, m: &Manager) -> Result<(), Fail> {
     for c in Cluster::ALL {
         m.ensure(&crate::pg::service(layout, c))
             .map_err(|e| Fail::Step("restore", e.into()))?;
+        // ADR-028 record of lane `m10/backup-pitr`: the restored cluster
+        // replays and promotes before any key step reads it.
+        await_promotion(layout, c)?;
     }
     // After `restore-keys` (ADR-028 record of lane `m10/guard-key`, part
     // 2): each held entry is released with the epochs of the restored
@@ -545,6 +754,78 @@ pub fn stop(layout: &Layout) -> Result<(), Fail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-028 record of lane `m10/backup-pitr`: `restore` takes an
+    /// optional `--to <time>`. A malformed time is refused before any
+    /// configuration is read, with exit status 2. The target reaches
+    /// `fstp-backup restore` as Unix seconds after the other arguments.
+    #[test]
+    fn adr028_pitr_restore_takes_an_optional_target() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        for bad in ["2026-11-24", "2026-11-24T10:00:00+01:00", "yesterday"] {
+            let args = s(&["--config", "/nonexistent/fstp.json", "restore", "--to", bad]);
+            assert_eq!(crate::main_with(&args), crate::fail::USAGE, "{bad}");
+        }
+        assert_eq!(
+            restore_args(Path::new("/x/app.restored-1"), Some(1_795_514_400)),
+            vec![
+                std::ffi::OsString::from("restore"),
+                "/x/app.restored-1".into(),
+                "--to".into(),
+                "1795514400".into()
+            ]
+        );
+        assert_eq!(restore_args(Path::new("/x/d"), None).len(), 2);
+    }
+
+    /// ADR-028 record of lane `m10/backup-pitr`, row "Refusals": a time in
+    /// the future, a time not after the oldest backup of either database,
+    /// and a database with no backup are refused, each with its reason.
+    /// The earliest time that works is the later of the two oldest
+    /// backups, plus one second.
+    #[test]
+    fn adr012_pitr_time_refusals_name_the_earliest_time() {
+        let tag = fstp_crypto::random_array::<6>().unwrap_or([7; 6]);
+        let dir = std::env::temp_dir().join(format!(
+            "fstp-pitr-admin-{}",
+            tag.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        ));
+        let cfg = format!(
+            r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{{"relay":"smtp.example.eu","username":"cell"}},
+            "services":"direct",
+            "paths":{{"state":"{s}","etc":"{e}"}}}}"#,
+            s = dir.join("state").display(),
+            e = dir.join("etc").display(),
+        );
+        let layout = Layout::new(crate::config::decode(cfg.as_bytes()).expect("config"));
+        let now = 1_795_514_400;
+        assert_eq!(
+            check_target(&layout, now, now),
+            Err(Fail::Time(TimeRefusal::NoBackup))
+        );
+        let id = "ab".repeat(16);
+        for (c, times) in [(Cluster::App, [100u64, 300]), (Cluster::Vault, [200, 400])] {
+            let d = layout.backup_state(c);
+            std::fs::create_dir_all(&d).expect("dir");
+            let text: String = times.iter().map(|t| format!("{id} {id} {t} 5\n")).collect();
+            std::fs::write(d.join("base-backups.index"), text).expect("index");
+        }
+        assert_eq!(backup_times(&layout, Cluster::Vault), vec![200, 400]);
+        assert_eq!(
+            check_target(&layout, now + 1, now),
+            Err(Fail::Time(TimeRefusal::Future))
+        );
+        assert_eq!(
+            check_target(&layout, 200, now),
+            Err(Fail::Time(TimeRefusal::BeforeOldest(201)))
+        );
+        assert_eq!(check_target(&layout, 201, now), Ok(()));
+        assert_eq!(check_target(&layout, now, now), Ok(()));
+        assert_eq!(Fail::Time(TimeRefusal::BeforeOldest(201)).code(), 2);
+        assert_eq!(Fail::Time(TimeRefusal::ArchiveEndsFirst).code(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// ADR-004 record of lane L16: the copy id stands in bytes 26 to 41 of
     /// the clear header.
