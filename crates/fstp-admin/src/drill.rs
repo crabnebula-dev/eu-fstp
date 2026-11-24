@@ -255,6 +255,15 @@ fn one(s: &mut Scratch<'_>, c: Cluster, cell: &[u8; 16]) -> Result<u64, Step> {
     step_done("restored", c);
     let port = port(layout, c);
     if !port_free(port) {
+        // Never talk to whatever holds the port (ADR-012 record of lane
+        // m10/backup-health, row "Throwaway server").
+        out(&[
+            Part::T("The restore drill needs the free port "),
+            Part::N(u64::from(port)),
+            Part::T(
+                " on 127.0.0.1 for its scratch copy, and something else listens there. Stop that program or wait for the other drill to end, then run fstp-admin drill again.",
+            ),
+        ]);
         return Err(Step::Recovery);
     }
     let log = std::fs::OpenOptions::new()
@@ -343,10 +352,10 @@ fn one(s: &mut Scratch<'_>, c: Cluster, cell: &[u8; 16]) -> Result<u64, Step> {
     Ok(started.elapsed().as_secs())
 }
 
-fn step_done(what: &str, c: Cluster) {
+fn step_done(what: &'static str, c: Cluster) {
     out(&[
         Part::T("  done     "),
-        Part::Name(what),
+        Part::T(what),
         Part::T(" the "),
         Part::T(c.name()),
         Part::T(" copy"),
