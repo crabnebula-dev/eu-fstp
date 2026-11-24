@@ -2608,6 +2608,16 @@ pub(crate) mod reply_shape_tests {
                         witness_copy: crate::system::ArchiveState::Late,
                         last_witness_copied: None,
                     }),
+                    findings: vec![crate::system::Finding {
+                        id: [0xAB; 32],
+                        kind: crate::system::FindingKind::LostInRestore,
+                        chain: crate::system::FindingChain::Vault,
+                        from: 4,
+                        to: 9,
+                        acknowledged_at: Some(fstp_domain::time::Timestamp::from_micros(
+                            1_794_990_000_000_000,
+                        )),
+                    }],
                 },
             })),
             ReadModel::MailRelay(crate::views::MailRelayView { relay: None }),

@@ -632,6 +632,30 @@ impl<R: Runtime> Shared<R> {
         })
     }
 
+    /// Every restore declaration of both chains of `cell`, for the cell or
+    /// the vault of that cell (ADR-012 record of lane m10/declared-restore).
+    async fn declarations(&self, sender: Sender, cell: CellId) -> WireReply {
+        let own = match sender {
+            Sender::CellWitness { cell: c } | Sender::VaultWitness { cell: c } => c == cell,
+            Sender::ControlPlane => false,
+        };
+        if !own {
+            return WireReply::Refused;
+        }
+        let mut core = self.core.lock().await;
+        let mut out = Vec::new();
+        for chain in [ChainId::App, ChainId::Vault] {
+            let Ok(c) = self.chain(&mut core, cell, chain).await else {
+                return WireReply::Refused;
+            };
+            out.extend(c.log.iter().filter_map(|r| match r {
+                WitnessRecord::RestoreDeclared(d) => Some((chain, d.clone())),
+                _ => None,
+            }));
+        }
+        WireReply::Declarations(out)
+    }
+
     async fn handle(&self, sender: Sender, req: WireRequest) -> WireReply {
         if self.refuses(sender).await {
             return WireReply::Refused;
@@ -670,6 +694,7 @@ impl<R: Runtime> Shared<R> {
             WireRequest::LogAfter { cell, chain, after } => {
                 self.log_page(sender, cell, chain, after).await
             }
+            WireRequest::Declarations { cell } => self.declarations(sender, cell).await,
         }
     }
 }

@@ -195,7 +195,7 @@ pub fn sign_anchor(
 /// context `ctx` by one key of `keys` (I-90: both halves verify). A
 /// signature or key of another length never verifies, and nothing
 /// panics on one.
-fn signed_by_any(keys: &[Vec<u8>], message: &[u8], ctx: &[u8], sig: &[u8]) -> bool {
+pub(crate) fn signed_by_any(keys: &[Vec<u8>], message: &[u8], ctx: &[u8], sig: &[u8]) -> bool {
     sig.len() == SIGNATURE_LEN
         && keys
             .iter()

@@ -27,7 +27,13 @@
 //!    alert row that was deleted is raised again at the next start.
 //! 4. The engine replays the ledger (design section 5.5).
 //! 5. The chain verifies against the witness log (`fstp_audit::verify`).
-//!    A chain that fails keeps the cell from serving.
+//!    A chain that fails keeps the cell from serving. After a declared
+//!    restore it verifies with its lost windows listed. Each window, of the
+//!    App chain and of the Vault chain's declarations, is recorded once as
+//!    an event and an `ops.outbox` row before the engine takes the store,
+//!    and the System page lists it (ADR-012 record of lane
+//!    m10/declared-restore). Without a declaration the start refuses, as
+//!    before.
 //! 6. The listeners bind: the tunnel port, the internal mTLS port and the
 //!    loopback health port (design section 2.3).
 //! 7. The system tasks start, each a participant of the cell's
@@ -51,10 +57,11 @@ use std::net::SocketAddr;
 
 use fstp_audit::anchorer::Resolution;
 use fstp_audit::verify::ChainView;
-use fstp_audit::witness::WitnessRecord;
+use fstp_audit::witness::{Declaration, WitnessRecord, declaration_signature_verifies};
 use fstp_audit::{CellId, ChainId};
 use fstp_custody::Custody;
 use fstp_obs::LogEvent;
+use fstp_pgstore::OwnRow;
 use fstp_rt::{Listener as _, Runtime, Shutdown};
 
 use super::pg::PgCellStore;
@@ -312,6 +319,12 @@ pub struct StartedCell<R: Runtime, S> {
     /// Where the timeline reads session rows for `EndSessionsAtBindingEnd`.
     /// The process sets it to its route backend once that exists.
     pub sessions: timeline::SessionSlot,
+    /// Every integrity finding the start-up found, for the System page:
+    /// each possible deletion and each window a declared restore lost, of
+    /// the App and the Vault chain (ADR-012 record of lane
+    /// m10/declared-restore). Each is recorded in the audit chain and
+    /// `ops.outbox` before the cell serves.
+    pub findings: Vec<fstp_api_core::system::Finding>,
 }
 
 /// What the start-up path needs of a cell's anchoring store, beyond the
@@ -339,6 +352,21 @@ pub trait StartStore: CellStore {
     fn raise_possible_deletions(
         &mut self,
         heads: &[(u64, fstp_audit::Link)],
+    ) -> impl Future<Output = Result<(), StartRefusal>> + Send;
+
+    /// Every restore declaration of both chains of the cell (ADR-012
+    /// record of lane m10/declared-restore).
+    fn declarations(
+        &self,
+    ) -> impl Future<Output = Result<Vec<(ChainId, Declaration)>, StartRefusal>> + Send;
+
+    /// Records each lost window of `losses` once, at `at`: an event of the
+    /// App chain and an `ops.outbox` row in one anchored transaction. A
+    /// window recorded before changes nothing.
+    fn raise_restore_losses(
+        &mut self,
+        at: i64,
+        losses: &[OwnRow],
     ) -> impl Future<Output = Result<(), StartRefusal>> + Send;
 }
 
@@ -369,6 +397,28 @@ impl<D: Database, L: WitnessLink> StartStore for AnchoredStore<D, WitnessClient<
         AnchoredStore::raise_possible_deletions(self, heads)
             .await
             .map_err(|_| StartRefusal::Store)
+    }
+
+    async fn declarations(&self) -> Result<Vec<(ChainId, Declaration)>, StartRefusal> {
+        self.witness()
+            .declarations()
+            .await
+            .map_err(|_| StartRefusal::Witness)
+    }
+
+    /// The in-memory store keeps no event rows, so it refuses any loss
+    /// rather than drop it.
+    async fn raise_restore_losses(
+        &mut self,
+        at: i64,
+        losses: &[OwnRow],
+    ) -> Result<(), StartRefusal> {
+        let _ = at;
+        if losses.is_empty() {
+            Ok(())
+        } else {
+            Err(StartRefusal::Store)
+        }
     }
 }
 
@@ -424,6 +474,38 @@ impl<R: Runtime, L: WitnessLink> StartStore for PgCellStore<R, WitnessClient<L>>
             .await
             .map_err(|_| StartRefusal::Store)
     }
+
+    async fn declarations(&self) -> Result<Vec<(ChainId, Declaration)>, StartRefusal> {
+        self.inner()
+            .witness()
+            .declarations()
+            .await
+            .map_err(|_| StartRefusal::Witness)
+    }
+
+    async fn raise_restore_losses(
+        &mut self,
+        at: i64,
+        losses: &[OwnRow],
+    ) -> Result<(), StartRefusal> {
+        let cell = self.inner().cell();
+        for loss in losses {
+            let recorded = self
+                .inner()
+                .outbox_has(&loss.idem(&cell))
+                .await
+                .map_err(|_| StartRefusal::Store)?;
+            if recorded {
+                continue;
+            }
+            let event = lost_in_restore_event(loss).ok_or(StartRefusal::Store)?;
+            self.inner_mut()
+                .append_events_with(at, vec![event], std::slice::from_ref(loss))
+                .await
+                .map_err(|_| StartRefusal::Store)?;
+        }
+        Ok(())
+    }
 }
 
 /// The `InDoubtAbsent` records of the witness log, as `(n, link)`, in
@@ -434,9 +516,129 @@ fn in_doubt_absent(log: &[WitnessRecord]) -> Vec<(u64, fstp_audit::Link)> {
     log.iter()
         .filter_map(|w| match w {
             WitnessRecord::InDoubtAbsent { n, link } => Some((*n, *link)),
-            WitnessRecord::Prepare(_) | WitnessRecord::Abort { .. } => None,
+            WitnessRecord::Prepare(_)
+            | WitnessRecord::Abort { .. }
+            | WitnessRecord::RestoreDeclared(_) => None,
         })
         .collect()
+}
+
+/// The event of a lost window (ADR-012 record of lane m10/declared-restore):
+/// canonical JSON of the chain, the rows, the job and the finding id.
+/// Ids, digests and numbers only.
+pub(crate) fn lost_in_restore_event(loss: &OwnRow) -> Option<Vec<u8>> {
+    use fstp_json::{Object, Value};
+    let OwnRow::LostInRestore {
+        chain,
+        from,
+        to,
+        job,
+    } = loss
+    else {
+        return None;
+    };
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let mut o = Object::new();
+    let _ = o.insert("kind", Value::from("lost_in_restore"));
+    let _ = o.insert(
+        "chain",
+        Value::from(if *chain == ChainId::Vault.byte() {
+            "vault"
+        } else {
+            "app"
+        }),
+    );
+    let _ = o.insert("from", Value::String(from.to_string()));
+    let _ = o.insert("to", Value::String(to.to_string()));
+    let _ = o.insert("job", Value::String(hex(job)));
+    fstp_json::to_canonical(&Value::Object(o))
+        .ok()
+        .map(String::into_bytes)
+}
+
+/// The lost windows a start records (ADR-012 record of lane
+/// m10/declared-restore): those the verifier listed for the App chain, and
+/// those the declarations of the Vault chain name. The vault has no
+/// outbox, so the cell raises its windows. A Vault declaration whose
+/// signature does not verify under the pinned witness keys refuses the
+/// start, so no window is taken on trust.
+///
+/// # Errors
+///
+/// [`StartRefusal::Witness`] for a declaration that does not verify.
+pub(crate) fn restore_losses(
+    cell: CellId,
+    app: &[fstp_audit::LostInRestore],
+    declarations: &[(ChainId, Declaration)],
+    witness_keys: &[Vec<u8>],
+) -> Result<Vec<OwnRow>, StartRefusal> {
+    let mut out: Vec<OwnRow> = app
+        .iter()
+        .map(|l| OwnRow::LostInRestore {
+            chain: ChainId::App.byte(),
+            from: l.from,
+            to: l.to,
+            job: l.job,
+        })
+        .collect();
+    for (chain, d) in declarations {
+        if *chain != ChainId::Vault {
+            continue;
+        }
+        if !declaration_signature_verifies(cell, ChainId::Vault, d, witness_keys) {
+            return Err(StartRefusal::Witness);
+        }
+        if let Some((from, to)) = d.fields.lost() {
+            out.push(OwnRow::LostInRestore {
+                chain: ChainId::Vault.byte(),
+                from,
+                to,
+                job: d.fields.job,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// The System page's findings of a start: each possible deletion, then
+/// each lost window.
+fn findings_of(
+    cell: [u8; 16],
+    in_doubt: &[(u64, fstp_audit::Link)],
+    losses: &[OwnRow],
+) -> Vec<fstp_api_core::system::Finding> {
+    use fstp_api_core::system::{Finding, FindingChain, FindingKind};
+    let mut out: Vec<Finding> = in_doubt
+        .iter()
+        .map(|(n, link)| Finding {
+            id: fstp_pgstore::possible_deletion_idem(&cell, *n, link),
+            kind: FindingKind::PossibleDeletion,
+            chain: FindingChain::App,
+            from: *n,
+            to: *n,
+            acknowledged_at: None,
+        })
+        .collect();
+    for loss in losses {
+        if let OwnRow::LostInRestore {
+            chain, from, to, ..
+        } = loss
+        {
+            out.push(Finding {
+                id: loss.idem(&cell),
+                kind: FindingKind::LostInRestore,
+                chain: if *chain == ChainId::Vault.byte() {
+                    FindingChain::Vault
+                } else {
+                    FindingChain::App
+                },
+                from: *from,
+                to: *to,
+                acknowledged_at: None,
+            });
+        }
+    }
+    out
 }
 
 /// The parts every start path shares, after its store parts are taken.
@@ -630,14 +832,11 @@ where
         report(StartPhase::PossibleDeletionRaised);
     }
     let chain = crate::process::step(|| store.stored_chain()).await?;
-    let shutdown = Shutdown::new();
-    let (engine, engine_task) = crate::process::step(|| {
-        CellEngine::start(rt, store, parts.vault, &shutdown, super::DEFAULT_QUEUE)
-    })
-    .await
-    .map_err(|_| StartRefusal::Store)?;
-    let engine = engine.with_clock(std::sync::Arc::clone(&parts.clock));
-    report(StartPhase::LedgerReplayed);
+    let declarations = crate::process::step(|| store.declarations()).await?;
+    // The chain is verified before the engine takes the store, so that a
+    // declared restore's lost windows are recorded first (ADR-012 record of
+    // lane m10/declared-restore). A chain that fails still refuses the
+    // start, once the ledger is replayed, as before.
     let view = ChainView {
         cell: CellId(cell),
         chain: ChainId::App,
@@ -648,7 +847,32 @@ where
         anchor_keys: std::slice::from_ref(&anchor_key),
         witness_keys: &witness_keys,
     };
-    if fstp_audit::verify::verify(&view).is_err() {
+    let verdict = fstp_audit::verify::verify(&view);
+    let findings = match &verdict {
+        Ok(v) => {
+            let losses = restore_losses(
+                CellId(cell),
+                &v.lost_in_restore,
+                &declarations,
+                &witness_keys,
+            )?;
+            if !losses.is_empty() {
+                let at = (parts.clock)();
+                crate::process::step(|| store.raise_restore_losses(at, &losses)).await?;
+            }
+            findings_of(cell, &in_doubt, &losses)
+        }
+        Err(_) => Vec::new(),
+    };
+    let shutdown = Shutdown::new();
+    let (engine, engine_task) = crate::process::step(|| {
+        CellEngine::start(rt, store, parts.vault, &shutdown, super::DEFAULT_QUEUE)
+    })
+    .await
+    .map_err(|_| StartRefusal::Store)?;
+    let engine = engine.with_clock(std::sync::Arc::clone(&parts.clock));
+    report(StartPhase::LedgerReplayed);
+    if verdict.is_err() {
         shutdown.trigger();
         return Err(StartRefusal::ChainTamper);
     }
@@ -724,5 +948,103 @@ where
         release: view,
         engine_task,
         sessions,
+        findings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test code asserts on known-good values"
+    )]
+
+    use fstp_audit::Link;
+    use fstp_audit::witness::{DeclarationFields, sign_declaration};
+
+    use super::*;
+
+    const CELL: [u8; 16] = [3; 16];
+
+    fn declared(
+        key: &fstp_audit::CompositeSigningKey,
+        head: u64,
+        lost_to: u64,
+    ) -> (ChainId, Declaration) {
+        let fields = DeclarationFields {
+            head: (head, Link([1; 32])),
+            lost_to,
+            job: [8; 16],
+            witness_seq: 4,
+            witness_link: Link([2; 32]),
+            received_at: 9,
+        };
+        (
+            ChainId::Vault,
+            sign_declaration(key, CellId(CELL), ChainId::Vault, &fields).unwrap(),
+        )
+    }
+
+    /// I-24, ADR-012 record of lane m10/declared-restore: the start records
+    /// each App window the verifier listed and each Vault window a signed
+    /// declaration names. A declaration that lost nothing adds nothing, an
+    /// App declaration is left to the verifier, and a Vault declaration
+    /// whose signature fails refuses the start.
+    #[test]
+    fn adr012_declared_restore_losses_of_both_chains_are_recorded() {
+        let key = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![key.public_key().to_bytes().to_vec()];
+        let app = [fstp_audit::LostInRestore {
+            from: 4,
+            to: 6,
+            job: [8; 16],
+        }];
+        let mut app_decl = declared(&key, 3, 6);
+        app_decl.0 = ChainId::App;
+        let decls = vec![declared(&key, 10, 12), declared(&key, 12, 12), app_decl];
+        let losses = restore_losses(CellId(CELL), &app, &decls, &keys).unwrap();
+        assert_eq!(
+            losses,
+            vec![
+                OwnRow::LostInRestore {
+                    chain: ChainId::App.byte(),
+                    from: 4,
+                    to: 6,
+                    job: [8; 16]
+                },
+                OwnRow::LostInRestore {
+                    chain: ChainId::Vault.byte(),
+                    from: 11,
+                    to: 12,
+                    job: [8; 16]
+                },
+            ]
+        );
+        let findings = findings_of(CELL, &[(2, Link([5; 32]))], &losses);
+        assert_eq!(findings.len(), 3);
+        assert_eq!(
+            findings[0].kind,
+            fstp_api_core::system::FindingKind::PossibleDeletion
+        );
+        assert_eq!(
+            findings[2].chain,
+            fstp_api_core::system::FindingChain::Vault
+        );
+        assert_eq!(findings[2].id, losses[1].idem(&CELL));
+        let event = String::from_utf8(lost_in_restore_event(&losses[1]).unwrap()).unwrap();
+        assert_eq!(
+            event,
+            format!(
+                "{{\"chain\":\"vault\",\"from\":\"11\",\"job\":\"{}\",\"kind\":\"lost_in_restore\",\"to\":\"12\"}}",
+                "08".repeat(16)
+            )
+        );
+        let mut bad = declared(&key, 10, 12);
+        bad.1.signature[3] ^= 1;
+        assert_eq!(
+            restore_losses(CellId(CELL), &[], &[bad], &keys),
+            Err(StartRefusal::Witness)
+        );
+    }
 }

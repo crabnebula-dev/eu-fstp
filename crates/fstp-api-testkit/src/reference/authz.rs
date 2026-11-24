@@ -1466,6 +1466,9 @@ pub const REFERENCE_OPS: &[RefOp] = &[
     // erases a chosen import document with a reason. No erasure is in the
     // high-risk table, so no step-up, and no tool, so web only.
     RefOp::act("admin.erase_document", T::None, R::TenantAdmin),
+    // ADR-012 record of lane m10/declared-restore: a tenant admin
+    // acknowledges an integrity finding. No step-up, no tool.
+    RefOp::act("tenant.acknowledge_finding", T::None, R::TenantAdmin),
     // Lane m4reg, the Administrators step: the tenant's admins and whether
     // each verified identity, since onboarding finishes only with two
     // verified admins (J0, SoD-07).

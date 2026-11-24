@@ -25,7 +25,9 @@
 //! Its record content is the interim layout of ADR-010 "Self-hosted
 //! witness": a prepare record is the witness message and its encoded
 //! receipt, and an abort or in-doubt record is the witness message,
-//! `be64(received_at)` and the witness link. Loading a chain replays its
+//! `be64(received_at)` and the witness link. A restore declaration record is
+//! [`crate::message::encode_declaration_record`] (ADR-012 record of lane
+//! m10/declared-restore). Loading a chain replays its
 //! records from [`fstp_audit::witness::witness_genesis`] and refuses any
 //! break, as the database store does.
 //!
@@ -44,7 +46,8 @@ use fstp_audit::{CellId, ChainId, DecodeError, Invalid, Link};
 use crate::WitnessError;
 use crate::chain_witness::Withdrawal;
 use crate::message::{
-    MAX_MESSAGE_LEN, TAG_PREPARE, WitnessMessage, decode_witness_message, encode_witness_message,
+    MAX_MESSAGE_LEN, TAG_PREPARE, TAG_RESTORE_DECLARED, WitnessMessage, decode_declaration_record,
+    decode_witness_message, encode_declaration_record, encode_witness_message,
 };
 use crate::store::{LoadedChain, RegisteredCell, StoreError, Stored, replay};
 
@@ -198,6 +201,16 @@ fn read_chain_record(
 ) -> Result<Stored, StoreError> {
     let tag = record.bytes.get(1).copied();
     let seq = record.witness_seq;
+    if tag == Some(TAG_RESTORE_DECLARED) {
+        // ADR-012 record of lane m10/declared-restore: the one place the
+        // chain record reader learns tag 4. The framing is unchanged.
+        let (c, ch, declaration) =
+            decode_declaration_record(&record.bytes).map_err(|_| corrupt("declaration record"))?;
+        if (c, ch) != (cell, chain) || declaration.fields.witness_seq != seq {
+            return Err(corrupt("declaration record"));
+        }
+        return Ok(Stored::Declared { seq, declaration });
+    }
     if tag == Some(TAG_PREPARE) {
         let cut = record
             .bytes
@@ -499,6 +512,24 @@ impl FileStore {
         bytes.extend_from_slice(&received_at.to_be_bytes());
         bytes.extend_from_slice(&w.witness_link.0);
         self.append_chain(cell, chain, w.witness_seq, bytes)
+    }
+
+    /// Appends the declared restore `d` of `cell`'s `chain` (ADR-012 record
+    /// of lane m10/declared-restore). The witness must be stopped: the
+    /// console command is the only writer then.
+    ///
+    /// # Errors
+    ///
+    /// As [`FileStore::append_prepare`].
+    pub fn append_declaration(
+        &self,
+        cell: CellId,
+        chain: ChainId,
+        d: &fstp_audit::witness::Declaration,
+    ) -> Result<(), StoreError> {
+        let bytes =
+            encode_declaration_record(cell, chain, d).map_err(|_| corrupt("declaration record"))?;
+        self.append_chain(cell, chain, d.fields.witness_seq, bytes)
     }
 
     fn append_chain(

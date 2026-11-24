@@ -113,6 +113,9 @@ pub(crate) struct ApiParts<R: Runtime, V> {
     /// The host status file of the System page (ADR-028 record of lane
     /// L20), if the configuration names one.
     pub host_status: Option<std::path::PathBuf>,
+    /// The integrity findings the start-up found (ADR-012 record of lane
+    /// m10/declared-restore).
+    pub findings: Vec<fstp_api_core::system::Finding>,
 }
 
 /// The shared state of every port of one cell.
@@ -134,6 +137,9 @@ pub(crate) struct Inner<R: Runtime, V> {
     rt: R,
     host_status: Option<std::path::PathBuf>,
     probe: Option<Arc<dyn crate::shell::probe::TenantProbe>>,
+    // ADR-012 record of lane m10/declared-restore: the System page's
+    // integrity findings.
+    findings: Vec<fstp_api_core::system::Finding>,
 }
 
 impl<R: Runtime, V> Inner<R, V> {
@@ -193,6 +199,7 @@ where
         prober,
         rt,
         host_status,
+        findings,
     } = parts;
     let facts = facts.unwrap_or_else(|| Arc::new(facts::BackendFacts(Arc::clone(&backend))));
     let anon = crate::routes::Backend::anonymous_drafts(backend.as_ref());
@@ -213,6 +220,7 @@ where
         rt,
         host_status,
         probe: prober.clone(),
+        findings,
     });
     let tokens = Arc::new(tokens);
     let ports = Ports {

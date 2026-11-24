@@ -20,6 +20,10 @@ pub enum WitnessFail {
     Keys(Option<i32>),
     /// `fstp-witness register` failed: the store refused the cell.
     Register(Option<i32>),
+    /// `fstp-witness declare-restore` failed: the store refused the
+    /// declaration, for example a head the witness never receipted (ADR-012
+    /// record of lane m10/declared-restore).
+    Declare(Option<i32>),
     /// A file did not read or write, or a public key file is malformed.
     Io,
     /// `fstp-backup witness-archive` failed with this status (ADR-028
@@ -283,5 +287,21 @@ pub fn copy(layout: &Layout) -> Result<(), crate::fail::Fail> {
             Err(Fail::Refused("fstp-backup witness-archive", c))
         }
         Err(_) => Err(Fail::Refused("fstp-backup witness-archive", None)),
+    }
+}
+
+/// Records a declared restore of one chain at the stopped witness:
+/// `fstp-witness declare-restore <args>` as the witness's OS user (ADR-012
+/// record of lane m10/declared-restore, `crate::declare`).
+///
+/// # Errors
+///
+/// [`WitnessFail::Declare`] when the witness refuses.
+pub fn declare_restore(layout: &Layout, args: &[String]) -> Result<(), WitnessFail> {
+    let mut all: Vec<&std::ffi::OsStr> = vec!["declare-restore".as_ref()];
+    all.extend(args.iter().map(|a| std::ffi::OsStr::new(a.as_str())));
+    match run(layout, &all)? {
+        Some(0) => Ok(()),
+        code => Err(WitnessFail::Declare(code)),
     }
 }

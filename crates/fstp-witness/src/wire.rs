@@ -13,6 +13,8 @@
 //!   tag 3  : log          cell (16) || chain (1)          the first page
 //!   tag 4  : log after    cell (16) || chain (1) || be64(after)
 //!                         the page after record `after`, after >= 1
+//!   tag 5  : declarations cell (16)     every restore declaration of
+//!                         both chains of the cell
 //! reply    = version (1) || tag (1) || body
 //!   tag 1  : receipt      fstp_audit::anchor::encode_receipt
 //!   tag 2  : recorded
@@ -22,9 +24,14 @@
 //!   tag 6  : outstanding  be64(n) || link (32)
 //!   tag 7  : log page     be32(count) || more (1) || record*
 //!                         more is 0 or 1; a page with more is not empty
+//!   tag 8  : declarations be32(count) || (chain (1) || declaration)*
+//!                         count <= 2 * MAX_DECLARATIONS
 //! record   = 1 || encode_anchor || encode_receipt
 //!          | 2 || be64(n) || link (32)              an abort
 //!          | 3 || be64(n) || link (32)              an in-doubt record
+//!          | 4 || declaration                       a declared restore
+//! declaration = fstp_audit::witness::put_declaration (ADR-012 record of
+//!               lane m10/declared-restore)
 //! ```
 //!
 //! Each value has one spelling. A log page holds at most
@@ -40,7 +47,10 @@ use fstp_audit::anchor::{
     encode_anchor, encode_receipt,
 };
 use fstp_audit::codec::Reader;
-use fstp_audit::witness::WitnessRecord;
+use fstp_audit::witness::{
+    DECLARATION_BODY_LEN, Declaration, MAX_DECLARATIONS, WitnessRecord, put_declaration,
+    read_declaration,
+};
 use fstp_audit::{AuditError, CellId, ChainId, DecodeError, Invalid, Link};
 use fstp_rt::{AsyncRead, AsyncWrite, IoExt};
 
@@ -64,8 +74,18 @@ const MAX_LOG_RECORD: usize = 1 + ANCHOR_ENCODED_LEN + RECEIPT_ENCODED_LEN;
 pub const MAX_FRAME: usize = {
     let log = 2 + 4 + 1 + MAX_LOG_RECORDS * MAX_LOG_RECORD;
     let request = 2 + MAX_MESSAGE_LEN;
-    if log > request { log } else { request }
+    let declarations = 2 + 4 + MAX_DECLARATION_REPLY * (1 + DECLARATION_BODY_LEN);
+    let most = if log > request { log } else { request };
+    if most > declarations {
+        most
+    } else {
+        declarations
+    }
 };
+
+/// The most declarations one reply holds: every declaration of both chains
+/// of a cell.
+pub const MAX_DECLARATION_REPLY: usize = 2 * MAX_DECLARATIONS;
 
 /// A request to the witness.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +117,13 @@ pub enum WireRequest {
         /// How many records the client holds.
         after: u64,
     },
+    /// Every restore declaration of both chains of a cell (ADR-012 record
+    /// of lane m10/declared-restore). The cell raises the vault's lost
+    /// windows from them, since the vault has no outbox.
+    Declarations {
+        /// The cell.
+        cell: CellId,
+    },
 }
 
 /// One page of a witness log.
@@ -124,12 +151,16 @@ pub enum WireReply {
     Outstanding(Option<(u64, Link)>),
     /// A page of the witness log, in witness order.
     Log(LogPage),
+    /// Every restore declaration of both chains of a cell, each chain in
+    /// witness order, App first. At most [`MAX_DECLARATION_REPLY`].
+    Declarations(Vec<(ChainId, Declaration)>),
 }
 
 const REQ_MESSAGE: u8 = 1;
 const REQ_OUTSTANDING: u8 = 2;
 const REQ_LOG: u8 = 3;
 const REQ_LOG_AFTER: u8 = 4;
+const REQ_DECLARATIONS: u8 = 5;
 
 const REP_RECEIPT: u8 = 1;
 const REP_RECORDED: u8 = 2;
@@ -138,10 +169,12 @@ const REP_UNKNOWN: u8 = 4;
 const REP_NONE: u8 = 5;
 const REP_OUTSTANDING: u8 = 6;
 const REP_LOG: u8 = 7;
+const REP_DECLARATIONS: u8 = 8;
 
 const REC_PREPARE: u8 = 1;
 const REC_ABORT: u8 = 2;
 const REC_IN_DOUBT: u8 = 3;
+const REC_DECLARED: u8 = 4;
 
 fn audit(e: AuditError) -> WitnessError {
     match e {
@@ -194,6 +227,10 @@ pub fn encode_request(req: &WireRequest) -> Result<Vec<u8>, WitnessError> {
             put_chain(&mut out, *cell, *chain);
             out.extend_from_slice(&after.to_be_bytes());
         }
+        WireRequest::Declarations { cell } => {
+            out.push(REQ_DECLARATIONS);
+            out.extend_from_slice(&cell.0);
+        }
     }
     Ok(out)
 }
@@ -231,6 +268,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<WireRequest, WitnessError> {
             }
             WireRequest::LogAfter { cell, chain, after }
         }
+        REQ_DECLARATIONS => WireRequest::Declarations {
+            cell: CellId(r.array()?),
+        },
         other => return Err(DecodeError::UnknownTag(u16::from(other)).into()),
     };
     r.finish()?;
@@ -297,7 +337,23 @@ pub fn encode_reply(rep: &WireReply) -> Result<Vec<u8>, WitnessError> {
                     WitnessRecord::InDoubtAbsent { n, link } => {
                         put_withdrawn(&mut out, REC_IN_DOUBT, *n, link)?;
                     }
+                    WitnessRecord::RestoreDeclared(d) => {
+                        out.push(REC_DECLARED);
+                        put_declaration(&mut out, d)?;
+                    }
                 }
+            }
+        }
+        WireReply::Declarations(list) => {
+            if list.len() > MAX_DECLARATION_REPLY {
+                return Err(Invalid::BodyTooLong.into());
+            }
+            let count = u32::try_from(list.len()).map_err(|_| Invalid::BodyTooLong)?;
+            out.push(REP_DECLARATIONS);
+            out.extend_from_slice(&count.to_be_bytes());
+            for (chain, d) in list {
+                out.push(chain.byte());
+                put_declaration(&mut out, d)?;
             }
         }
     }
@@ -359,11 +415,32 @@ pub fn decode_reply(bytes: &[u8]) -> Result<WireReply, WitnessError> {
                         let (n, link) = read_withdrawn(&mut r)?;
                         WitnessRecord::InDoubtAbsent { n, link }
                     }
+                    REC_DECLARED => WitnessRecord::RestoreDeclared(read_declaration(&mut r)?),
                     other => return Err(DecodeError::UnknownTag(u16::from(other)).into()),
                 };
                 records.push(rec);
             }
             WireReply::Log(LogPage { records, more })
+        }
+        REP_DECLARATIONS => {
+            let count = usize::try_from(r.be32()?).map_err(|_| DecodeError::TooLong)?;
+            if count > MAX_DECLARATION_REPLY {
+                return Err(DecodeError::TooLong.into());
+            }
+            // Bounded allocation: each entry takes its full length.
+            if count
+                .checked_mul(1 + DECLARATION_BODY_LEN)
+                .is_none_or(|need| need > r.remaining())
+            {
+                return Err(DecodeError::Truncated.into());
+            }
+            let mut out = Vec::with_capacity(count);
+            for _ in 0..count {
+                let b = r.u8()?;
+                let chain = ChainId::from_byte(b).ok_or(DecodeError::UnknownTag(u16::from(b)))?;
+                out.push((chain, read_declaration(&mut r)?));
+            }
+            WireReply::Declarations(out)
         }
         other => return Err(DecodeError::UnknownTag(u16::from(other)).into()),
     };

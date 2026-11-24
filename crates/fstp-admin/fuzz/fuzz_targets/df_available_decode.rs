@@ -12,7 +12,11 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
     if let Ok(text) = std::str::from_utf8(data) {
         let first = fstp_admin::drill::parse_df(text);
-        assert_eq!(first, fstp_admin::drill::parse_df(text), "not deterministic");
+        assert_eq!(
+            first,
+            fstp_admin::drill::parse_df(text),
+            "not deterministic"
+        );
         if let Some(n) = first {
             assert!(
                 text.split_whitespace().any(|f| f == n.to_string()),

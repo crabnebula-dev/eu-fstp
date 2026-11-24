@@ -100,6 +100,20 @@ export interface HostReport {
   readonly lastWitnessCopied: bigint | null;
 }
 
+/** One integrity finding (ADR-012 record of lane m10/declared-restore). */
+export interface Finding {
+  /** The id to acknowledge it by. */
+  readonly id: string;
+  /** Rows a declared restore lost, or a row the cell could not tell from a deletion. */
+  readonly kind: "lost_in_restore" | "possible_deletion";
+  /** The platform's audit log or the identity vault's. */
+  readonly chain: "app" | "vault";
+  readonly from: bigint;
+  readonly to: bigint;
+  /** When a tenant admin acknowledged it, or null. It stays listed either way. */
+  readonly acknowledgedAt: bigint | null;
+}
+
 /** The `tenant.system` reply. */
 export interface SystemReply {
   readonly now: bigint;
@@ -109,6 +123,8 @@ export interface SystemReply {
   readonly lastCellErasure: bigint | null;
   readonly hostFile: "present" | "not_configured" | "missing" | "unreadable";
   readonly host: HostReport | null;
+  /** Every integrity finding, acknowledged or not. */
+  readonly findings: readonly Finding[];
 }
 
 const ID = /^(0|[1-9][0-9]{0,38})$/;
@@ -234,10 +250,43 @@ function host(v: unknown): HostReport | null {
   });
 }
 
+function finding(v: unknown): Finding | null {
+  const o = record(v);
+  if (o === null || !closed(o, ["id", "kind", "chain", "from", "to", "acknowledged_at"])) return null;
+  const { id, kind, chain } = o;
+  const from = instant(o["from"]);
+  const to = instant(o["to"]);
+  const acknowledgedAt = o["acknowledged_at"] === null ? null : instant(o["acknowledged_at"]);
+  if (typeof id !== "string" || !ID.test(id)) return null;
+  if (!oneOf(kind, ["lost_in_restore", "possible_deletion"] as const)) return null;
+  if (!oneOf(chain, ["app", "vault"] as const)) return null;
+  if (from === null || to === null || to < from) return null;
+  if (o["acknowledged_at"] !== null && acknowledgedAt === null) return null;
+  return Object.freeze({ id, kind, chain, from, to, acknowledgedAt });
+}
+
+/** The body of `tenant.acknowledge_finding` for the finding `id`. */
+export function acknowledgeBody(id: string): Readonly<Record<string, string>> {
+  return Object.freeze({ finding: id });
+}
+
+/** The findings a tenant admin has not acknowledged yet. */
+export function openFindings(r: SystemReply): readonly Finding[] {
+  return r.findings.filter((f) => f.acknowledgedAt === null);
+}
+
 /** The `tenant.system` reply, or null when it has another shape. */
 export function decodeSystem(v: unknown): SystemReply | null {
   const o = record(v);
-  if (o === null || !closed(o, ["now", "vault", "mail", "last_cell_erasure", "host_file", "host"])) return null;
+  if (o === null || !closed(o, ["now", "vault", "mail", "last_cell_erasure", "host_file", "host", "findings"])) return null;
+  const raw = o["findings"];
+  if (!Array.isArray(raw)) return null;
+  const findings: Finding[] = [];
+  for (const x of raw) {
+    const f = finding(x);
+    if (f === null) return null;
+    findings.push(f);
+  }
   const now = instant(o["now"]);
   const lastCellErasure = o["last_cell_erasure"] === null ? null : instant(o["last_cell_erasure"]);
   if (o["last_cell_erasure"] !== null && lastCellErasure === null) return null;
@@ -249,7 +298,7 @@ export function decodeSystem(v: unknown): SystemReply | null {
   const report = o["host"] === null ? null : host(o["host"]);
   if (o["host"] !== null && report === null) return null;
   if ((hostFile === "present") !== (report !== null)) return null;
-  return Object.freeze({ now, vault, mail, lastCellErasure, hostFile, host: report });
+  return Object.freeze({ now, vault, mail, lastCellErasure, hostFile, host: report, findings: Object.freeze(findings) });
 }
 
 // ---------------------------------------------------------------------------

@@ -260,6 +260,9 @@ fn cause_line(cause: &Cause) {
         Cause::Witness(WitnessFail::Register(_)) => err(&[Part::T(
             "  fstp-witness register failed. Is the witness stopped, and was the cell registered with other keys before?",
         )]),
+        Cause::Witness(WitnessFail::Declare(_)) => err(&[Part::T(
+            "  fstp-witness declare-restore failed, so the cell and the vault will refuse to start. See admin/logs/fstp-admin.log, and keep the old databases beside the restored ones.",
+        )]),
         Cause::Witness(WitnessFail::Io) => err(&[Part::T(
             "  A witness or public key file could not be read or written.",
         )]),

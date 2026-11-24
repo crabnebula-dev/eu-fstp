@@ -95,8 +95,9 @@ pub use seal::{
 };
 pub use store::{
     AnchorSigner, ChainRows, Clock, Committed, Decode, MAX_EVENT_PLAIN, MAX_EVENTS,
-    OUTBOX_POSSIBLE_DELETION, PendingConfirm, PgRecordStore, SESSION_END_BY_RECORD,
-    SESSION_END_CREDENTIAL_DISABLED, SessionEnd, SideEffects, StepUpUse, StoredCommit,
+    OUTBOX_FINDING_ACK, OUTBOX_LOST_IN_RESTORE, OUTBOX_POSSIBLE_DELETION, OwnRow, PendingConfirm,
+    PgRecordStore, SESSION_END_BY_RECORD, SESSION_END_CREDENTIAL_DISABLED, SessionEnd, SideEffects,
+    StepUpUse, StoredCommit, finding_ack_idem, lost_in_restore_idem, outbox_written,
     possible_deletion_idem, system_clock,
 };
 pub use stored::{

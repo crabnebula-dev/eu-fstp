@@ -1999,6 +1999,22 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("vault", Shape::Enum(&["answers", "silent"])),
             m("mail", Shape::Enum(&["works", "fails", "not_configured"])),
             m("last_cell_erasure", Shape::Nullable(&Shape::Id)),
+            // ADR-012 record of lane m10/declared-restore: every integrity
+            // finding of the cell and its vault, acknowledged or not.
+            m(
+                "findings",
+                Shape::Array(&Shape::Object(&[
+                    m("id", Shape::Id),
+                    m(
+                        "kind",
+                        Shape::Enum(&["lost_in_restore", "possible_deletion"]),
+                    ),
+                    m("chain", Shape::Enum(&["app", "vault"])),
+                    m("from", Shape::Id),
+                    m("to", Shape::Id),
+                    m("acknowledged_at", Shape::Nullable(&Shape::Id)),
+                ])),
+            ),
             m(
                 "host_file",
                 Shape::Enum(&["present", "not_configured", "missing", "unreadable"]),

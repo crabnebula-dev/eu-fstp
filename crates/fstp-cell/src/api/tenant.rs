@@ -84,8 +84,79 @@ impl<R: Runtime, V: crate::engine::VaultClient> TenantConfig for CellTenant<R, V
             vault_answers,
             mail,
             host: super::system::read_host_file(i.host_status.as_deref()),
+            findings: findings_now(i).await,
         }
     }
+
+    /// ADR-012 record of lane m10/declared-restore: one anchored events
+    /// transaction holds the event naming the finding and the account,
+    /// and the acknowledgement row keyed by the finding. The finding stays.
+    /// A second acknowledgement of the same finding writes nothing.
+    async fn acknowledge_finding(
+        &self,
+        account: AccountId,
+        finding: u128,
+    ) -> Result<(), PortError> {
+        let i = &self.0;
+        let Some(f) = i.findings.iter().find(|f| f.wire_id() == finding) else {
+            return Err(PortError::Refused);
+        };
+        let ack = fstp_pgstore::finding_ack_idem(&i.cell, &f.id);
+        let done = fstp_pgstore::outbox_written(&i.app, &[ack])
+            .await
+            .map_err(|_| PortError::Unavailable)?;
+        if done.first().is_some_and(Option::is_some) {
+            return Ok(());
+        }
+        let event = acknowledgement_event(finding, account).ok_or(PortError::Refused)?;
+        let row = fstp_pgstore::OwnRow::FindingAck {
+            finding: f.id,
+            actor: account.raw().to_be_bytes(),
+        };
+        i.engine
+            .append_events_with(i.engine.now(), vec![event], vec![row])
+            .await
+            .map_err(|_| PortError::Unavailable)
+    }
+}
+
+/// The findings of the start-up, each with the time of its acknowledgement
+/// if a tenant admin gave one (ADR-012 record of lane m10/declared-restore).
+/// A store that cannot be read shows every finding as unacknowledged.
+async fn findings_now<R: Runtime, V>(i: &Inner<R, V>) -> Vec<fstp_api_core::system::Finding> {
+    let acks: Vec<[u8; 32]> = i
+        .findings
+        .iter()
+        .map(|f| fstp_pgstore::finding_ack_idem(&i.cell, &f.id))
+        .collect();
+    let written = fstp_pgstore::outbox_written(&i.app, &acks)
+        .await
+        .unwrap_or_default();
+    i.findings
+        .iter()
+        .enumerate()
+        .map(|(k, f)| fstp_api_core::system::Finding {
+            acknowledged_at: written
+                .get(k)
+                .copied()
+                .flatten()
+                .map(Timestamp::from_micros),
+            ..*f
+        })
+        .collect()
+}
+
+/// The event of an acknowledgement: the finding's wire id and the
+/// account, as canonical JSON of ids only.
+fn acknowledgement_event(finding: u128, account: AccountId) -> Option<Vec<u8>> {
+    use fstp_json::{Object, Value};
+    let mut o = Object::new();
+    let _ = o.insert("kind", Value::from("finding_acknowledged"));
+    let _ = o.insert("finding", Value::String(finding.to_string()));
+    let _ = o.insert("actor", Value::String(account.raw().to_string()));
+    fstp_json::to_canonical(&Value::Object(o))
+        .ok()
+        .map(String::into_bytes)
 }
 
 /// The most delivery rows one page holds.

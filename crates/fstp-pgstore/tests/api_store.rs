@@ -286,3 +286,68 @@ fn i24_audit_events_commit_with_their_batch_and_alone() {
     // The verifier of ADR-010 reads the event rows as it reads entries.
     common::verify_production(&db, &w, &s).unwrap();
 }
+
+/// I-24, ADR-012 record of lane m10/declared-restore: a lost window and
+/// its event commit in one anchored events transaction, as the store's own
+/// outbox kind -1, keyed by the finding id. A second write of the same
+/// finding adds the event only. An acknowledgement is kind -2, keyed by
+/// the finding, and leaves the finding row in place. The app role reads
+/// when each was written from the plain idem alone.
+#[test]
+fn adr012_declared_restore_finding_and_acknowledgement_rows() {
+    let (db, _w, mut s) = world();
+    let lost = fstp_pgstore::OwnRow::LostInRestore {
+        chain: 1,
+        from: 4,
+        to: 9,
+        job: [7; 16],
+    };
+    let finding = lost.idem(&db.cell);
+    assert_eq!(
+        finding,
+        fstp_pgstore::lost_in_restore_idem(&db.cell, 1, 4, 9, &[7; 16])
+    );
+    assert!(!s.outbox_has(&finding));
+    s.append_events_with(
+        AT,
+        vec![b"{\"kind\":\"lost_in_restore\"}".to_vec()],
+        &[lost],
+    )
+    .unwrap();
+    assert!(s.outbox_has(&finding));
+    s.append_events_with(AT + 1, vec![b"again".to_vec()], &[lost])
+        .unwrap();
+    let ack = fstp_pgstore::OwnRow::FindingAck {
+        finding,
+        actor: [0xAC; 16],
+    };
+    s.append_events_with(
+        AT + 2,
+        vec![b"{\"kind\":\"finding_acknowledged\"}".to_vec()],
+        &[ack],
+    )
+    .unwrap();
+    let rows = db
+        .psql("SELECT kind || ':' || created_at FROM ops.outbox ORDER BY created_at;")
+        .unwrap();
+    assert_eq!(
+        rows.lines().collect::<Vec<_>>(),
+        vec![format!("-1:{AT}"), format!("-2:{}", AT + 2)]
+    );
+    let raw = db
+        .psql("SELECT encode(body, 'hex') FROM ops.outbox;")
+        .unwrap();
+    let job_hex = "07".repeat(16);
+    assert!(!raw.contains(&job_hex), "R-NF-08: a clear finding body");
+    let app = common::pool_of(&db, "app");
+    let ack_idem = fstp_pgstore::finding_ack_idem(&db.cell, &finding);
+    assert_eq!(
+        block_on(fstp_pgstore::outbox_written(
+            &app,
+            &[finding, ack_idem, [0; 32]]
+        ))
+        .unwrap(),
+        vec![Some(AT), Some(AT + 2), None]
+    );
+    assert_eq!(s.read_chain_rows().rows.len(), 3, "one event row each");
+}

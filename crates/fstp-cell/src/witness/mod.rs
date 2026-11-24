@@ -107,6 +107,19 @@ pub trait WitnessLink: Send + Sync + 'static {
         cell: CellId,
         chain: ChainId,
     ) -> impl Future<Output = Result<Vec<WitnessRecord>, WitnessFault>> + Send;
+
+    /// Every restore declaration of both chains of `cell` (ADR-012 record
+    /// of lane m10/declared-restore). The cell raises the vault's lost
+    /// windows from them. The default is a link that knows of no
+    /// declaration, as the in-memory links of the tests.
+    fn declarations(
+        &self,
+        cell: CellId,
+    ) -> impl Future<Output = Result<Vec<(ChainId, fstp_audit::witness::Declaration)>, WitnessFault>>
+    + Send {
+        let _ = cell;
+        std::future::ready(Ok(Vec::new()))
+    }
 }
 
 /// The witness client of one chain of one cell.
@@ -174,6 +187,19 @@ impl<L: WitnessLink> WitnessClient<L> {
     pub async fn log(&self) -> Result<Vec<WitnessRecord>, WitnessFault> {
         self.authenticate().await?;
         self.link.log(self.cell, self.chain).await
+    }
+
+    /// Every restore declaration of both chains of the cell, after
+    /// authentication (ADR-012 record of lane m10/declared-restore).
+    ///
+    /// # Errors
+    ///
+    /// The link's fault.
+    pub async fn declarations(
+        &self,
+    ) -> Result<Vec<(ChainId, fstp_audit::witness::Declaration)>, WitnessFault> {
+        self.authenticate().await?;
+        self.link.declarations(self.cell).await
     }
 
     async fn withdraw(&self, message: WitnessMessage) -> Result<(), WitnessFault> {

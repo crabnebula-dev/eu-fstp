@@ -29,7 +29,10 @@ use std::collections::BTreeSet;
 
 use fstp_audit::anchor::ReceiptFields;
 use fstp_audit::chain::genesis;
-use fstp_audit::witness::{Prepare, RecordKind, witness_genesis, witness_link};
+use fstp_audit::witness::{
+    DeclarationFields, Live, MAX_DECLARATIONS, Prepare, RecordKind, WitnessRecord,
+    declaration_link, witness_genesis, witness_link,
+};
 use fstp_audit::{CellId, ChainId, Link};
 
 /// Who sends a message to the witness, by client certificate (ADR-009
@@ -346,5 +349,213 @@ impl ChainWitness {
         link: &Link,
     ) -> Result<Withdrawal, Refusal> {
         self.withdraw(sender, RecordKind::InDoubtAbsent, n, link)
+    }
+}
+
+/// Why the witness refused a restore declaration (ADR-012 record of lane
+/// m10/declared-restore). A refused declaration changes nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DeclareRefusal {
+    /// The head is neither genesis nor a live receipted prepare.
+    NotLive,
+    /// The chain holds [`MAX_DECLARATIONS`] declarations already.
+    TooMany,
+    /// The witness sequence is at `u64::MAX`.
+    Exhausted,
+}
+
+impl ChainWitness {
+    /// Records a declared restore of this chain to `head` by `job`,
+    /// received at `received_at`, over `log`, the chain's witness log
+    /// before it (ADR-012 record of lane m10/declared-restore). It
+    /// returns the fields to sign.
+    ///
+    /// `head` must be genesis or a live prepare of `log`
+    /// ([`Live::accepts`]). The lost window runs to the highest live row
+    /// beyond it. Afterwards `head` is the confirmed head and nothing is
+    /// outstanding, so the next prepare must extend `head`. The withdrawn
+    /// set stays, so a withdrawn link is never receipted again.
+    ///
+    /// The caller is root through the console command. No [`Sender`]
+    /// stands for it, since no connection carries a declaration.
+    ///
+    /// # Errors
+    ///
+    /// The [`DeclareRefusal`]. The state is unchanged.
+    pub fn declare_restore(
+        &mut self,
+        log: &[WitnessRecord],
+        head: (u64, Link),
+        job: [u8; 16],
+        received_at: i64,
+    ) -> Result<DeclarationFields, DeclareRefusal> {
+        let live = Live::of(self.cell, self.chain, log);
+        if !live.accepts(&head) {
+            return Err(DeclareRefusal::NotLive);
+        }
+        let declared = log
+            .iter()
+            .filter(|r| matches!(r, WitnessRecord::RestoreDeclared(_)))
+            .count();
+        if declared >= MAX_DECLARATIONS {
+            return Err(DeclareRefusal::TooMany);
+        }
+        let lost_to = live.lost_to(&head);
+        let seq = self
+            .state
+            .seq
+            .checked_add(1)
+            .ok_or(DeclareRefusal::Exhausted)?;
+        let witness_head = declaration_link(
+            &self.state.head,
+            self.cell,
+            self.chain,
+            seq,
+            &head,
+            lost_to,
+            &job,
+        );
+        self.state.confirmed = head;
+        self.state.outstanding = None;
+        self.state.seq = seq;
+        self.state.head = witness_head;
+        self.held = None;
+        Ok(DeclarationFields {
+            head,
+            lost_to,
+            job,
+            witness_seq: seq,
+            witness_link: witness_head,
+            received_at,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "test code asserts on known-good values"
+    )]
+
+    use fstp_audit::anchor::{Anchor, AnchorRow, Receipt};
+    use fstp_audit::chain::link_of;
+    use fstp_audit::witness::Declaration;
+
+    use super::*;
+
+    const CELL: CellId = CellId([4; 16]);
+
+    fn prepare_of(prev: (u64, Link), rows: u64) -> Prepare {
+        let stored_hashes = (0..rows)
+            .map(|i| [u8::try_from(i).unwrap(); 32])
+            .collect::<Vec<_>>();
+        let mut head = prev;
+        for sh in &stored_hashes {
+            head = (
+                head.0 + 1,
+                link_of(&head.1, CELL, ChainId::App, head.0 + 1, sh),
+            );
+        }
+        Prepare {
+            prev,
+            stored_hashes,
+            anchor: Anchor {
+                cell: CELL,
+                chain: ChainId::App,
+                n: head.0,
+                link: head.1,
+                at: 0,
+                signature: Vec::new(),
+            },
+        }
+    }
+
+    fn record(p: &Prepare, f: ReceiptFields) -> WitnessRecord {
+        WitnessRecord::Prepare(AnchorRow {
+            anchor: p.anchor.clone(),
+            receipt: Receipt {
+                cell: CELL,
+                chain: ChainId::App,
+                fields: f,
+                signature: Vec::new(),
+            },
+        })
+    }
+
+    /// I-24, ADR-012 record of lane m10/declared-restore: a declaration of
+    /// a live head records the lost window and clears the outstanding
+    /// prepare. The next prepare must extend the declared head, and a
+    /// prepare from the lost tail is refused.
+    #[test]
+    fn i24_declaration_resets_the_head_the_next_prepare_extends() {
+        let writer = Sender::writer(CELL, ChainId::App);
+        let mut w = ChainWitness::genesis(CELL, ChainId::App);
+        let mut log = Vec::new();
+        let p1 = prepare_of(w.state().confirmed, 2);
+        let f1 = w.prepare(writer, &p1, 1).unwrap();
+        log.push(record(&p1, f1));
+        let p2 = prepare_of((f1.n, f1.link), 3);
+        let f2 = w.prepare(writer, &p2, 2).unwrap();
+        log.push(record(&p2, f2));
+        let p3 = prepare_of((f2.n, f2.link), 1);
+        let f3 = w.prepare(writer, &p3, 3).unwrap();
+        log.push(record(&p3, f3));
+        assert_eq!(
+            w.clone()
+                .declare_restore(&log, (2, Link([0; 32])), [1; 16], 9),
+            Err(DeclareRefusal::NotLive)
+        );
+        let before = w.state().clone();
+        let d = w
+            .declare_restore(&log, (f1.n, f1.link), [1; 16], 9)
+            .unwrap();
+        assert_eq!((d.head, d.lost_to, d.witness_seq), ((2, f1.link), 6, 4));
+        assert_eq!(d.lost(), Some((3, 6)));
+        assert_eq!(w.state().confirmed, (2, f1.link));
+        assert_eq!(w.state().outstanding, None);
+        assert_ne!(w.state().head, before.head);
+        assert_eq!(
+            w.prepare(writer, &p3, 10),
+            Err(Refusal::NotExtending),
+            "the lost tail extends nothing"
+        );
+        let p4 = prepare_of((f1.n, f1.link), 1);
+        let f4 = w.prepare(writer, &p4, 11).unwrap();
+        assert_eq!((f4.n, f4.witness_seq), (3, 5));
+    }
+
+    /// I-24, ADR-012: a declaration of the outstanding head loses nothing,
+    /// genesis may be declared, and the witness refuses the declaration
+    /// after the last one a chain may hold.
+    #[test]
+    fn i24_declaration_of_genesis_and_the_declaration_limit() {
+        let writer = Sender::writer(CELL, ChainId::App);
+        let mut w = ChainWitness::genesis(CELL, ChainId::App);
+        let p1 = prepare_of(w.state().confirmed, 1);
+        let f1 = w.prepare(writer, &p1, 1).unwrap();
+        let log = vec![record(&p1, f1)];
+        let d = w
+            .clone()
+            .declare_restore(&log, (f1.n, f1.link), [2; 16], 2)
+            .unwrap();
+        assert_eq!(d.lost(), None);
+        let g = (0, fstp_audit::chain::genesis(CELL, ChainId::App));
+        let d = w.clone().declare_restore(&log, g, [2; 16], 2).unwrap();
+        assert_eq!(d.lost(), Some((1, 1)));
+        let full: Vec<WitnessRecord> = (0..MAX_DECLARATIONS)
+            .map(|_| {
+                WitnessRecord::RestoreDeclared(Declaration {
+                    fields: DeclarationFields { lost_to: 0, ..d },
+                    signature: Vec::new(),
+                })
+            })
+            .collect();
+        assert_eq!(
+            w.declare_restore(&full, g, [2; 16], 2),
+            Err(DeclareRefusal::TooMany)
+        );
     }
 }

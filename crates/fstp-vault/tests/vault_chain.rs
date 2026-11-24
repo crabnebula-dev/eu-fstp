@@ -858,3 +858,70 @@ fn i81_vault_stops_serving_when_another_process_takes_the_lock() {
     block_on(other.close()).unwrap();
     v.stop();
 }
+
+/// I-24, ADR-012 record of lane m10/declared-restore: once a restore to an
+/// earlier point is declared at the stopped witness, the vault starts
+/// (an undeclared one refuses, as
+/// `i24_vault_restart_verifies_its_chain_against_the_witness` shows), records the lost window once as a sealed kind 2 event of
+/// its own chain, and writes again from the declared head. A second start
+/// records nothing new.
+#[test]
+fn adr012_declared_restore_lets_the_vault_start_and_records_the_window() {
+    let mut s = Setup::new();
+    let v = s.vault(true).unwrap();
+    for seq in [5, 6, 7] {
+        assert_eq!(
+            v.call("/v1/ask", &relationship(seq)),
+            (200, Some(VaultResponse::Acked))
+        );
+    }
+    v.stop();
+    s.psql(
+        "ALTER TABLE vault_audit.anchor DISABLE TRIGGER ALL;\n\
+         ALTER TABLE vault_audit.chain DISABLE TRIGGER ALL;\n\
+         DELETE FROM vault_audit.anchor WHERE n > 1;\n\
+         DELETE FROM vault_audit.chain WHERE n > 1;\n\
+         ALTER TABLE vault_audit.chain ENABLE TRIGGER ALL;\n\
+         ALTER TABLE vault_audit.anchor ENABLE TRIGGER ALL;",
+    );
+    let hex = s.psql("SELECT encode(link, 'hex') FROM vault_audit.chain WHERE n = 1");
+    let link: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    s.stop_witness();
+    let store = fstp_witness::file_store::FileStore::open(&s.store.0).unwrap();
+    let key = CompositeSigningKey::from_bytes(&s.witness_key).unwrap();
+    let d = fstp_witness::declare::declare(
+        &store,
+        &key,
+        &fstp_witness::declare::DeclareArgs {
+            cell: CellId(s.cell),
+            chain: ChainId::Vault,
+            head: (1, fstp_audit::Link(link.try_into().unwrap())),
+            job: [0x5E; 16],
+        },
+        1,
+    )
+    .unwrap();
+    assert_eq!(d.fields.lost(), Some((2, 3)));
+    drop(store);
+    s.start_witness();
+    let v = s.vault(true).unwrap();
+    assert_eq!(
+        s.psql("SELECT string_agg(n || ':' || kind, ',' ORDER BY n) FROM vault_audit.chain"),
+        "1:1,2:2"
+    );
+    assert_eq!(
+        v.call("/v1/ask", &relationship(8)),
+        (200, Some(VaultResponse::Acked))
+    );
+    v.stop();
+    let v = s.vault(true).unwrap();
+    v.stop();
+    assert_eq!(
+        s.psql("SELECT string_agg(n || ':' || kind, ',' ORDER BY n) FROM vault_audit.chain"),
+        "1:1,2:2,3:1",
+        "a second start recorded the window again"
+    );
+}

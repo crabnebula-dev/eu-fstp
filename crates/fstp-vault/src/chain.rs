@@ -24,6 +24,10 @@
 //! [`VaultChain::open`] runs at start-up, before the vault serves. It
 //! resolves the witness's outstanding prepare, then verifies the whole
 //! chain, its anchors and the witness log with `fstp_audit::verify`.
+//! After a declared restore it verifies with the lost windows listed, and
+//! [`VaultChain::record_restore_losses`] records each once as a sealed
+//! kind 2 event before the vault serves (ADR-012 record of lane
+//! m10/declared-restore). Without a declaration it refuses, as before.
 //!
 //! Interim reading of this lane, pending Daniel: the vault has no alert
 //! store for `PossibleDeletion`. A prepare whose row is missing after an
@@ -40,7 +44,7 @@ use fstp_audit::anchorer::{AfterCommit, Anchorer, CommitOutcome, Resolution, Ste
 use fstp_audit::chain::{ChainRow, ChainWriter, RowKind, StoredEntry, StoredRow, genesis};
 use fstp_audit::verify::{ChainView, verify};
 use fstp_audit::witness::{Prepare, WitnessRecord};
-use fstp_audit::{CellId, ChainId, CompositeSigningKey, Link};
+use fstp_audit::{CellId, ChainId, CompositeSigningKey, Link, LostInRestore};
 use fstp_pgwire::Client;
 use fstp_rt::Runtime;
 use fstp_witness::lock::AsyncMutex;
@@ -133,6 +137,30 @@ fn entry_plain(digests: &[[u8; 32]]) -> Vec<u8> {
         out.extend_from_slice(d);
     }
     out
+}
+
+/// The AAD of a kind 2 event body at row `n` (ADR-012 record of lane
+/// m10/declared-restore).
+fn event_aad(n: u64) -> Vec<u8> {
+    [&b"vault_audit.chain.event|"[..], &n.to_be_bytes()].concat()
+}
+
+/// The plain body of the event that records a lost window: a label, the
+/// rows and the job (ADR-012 record of lane m10/declared-restore).
+fn lost_plain(l: &LostInRestore) -> Vec<u8> {
+    let mut out = b"lost_in_restore|".to_vec();
+    out.extend_from_slice(&l.from.to_be_bytes());
+    out.extend_from_slice(&l.to.to_be_bytes());
+    out.extend_from_slice(&l.job);
+    out
+}
+
+/// One row [`VaultChain::commit_row`] writes.
+enum Planned<'a> {
+    /// A kind 1 entry over the journal.
+    Entries(&'a [JournalEntry]),
+    /// A kind 2 event whose plain body this is.
+    Event(Vec<u8>),
 }
 
 /// The AAD of an entry body.
@@ -283,6 +311,9 @@ pub struct VaultChain<R: Runtime> {
     anchorer: Anchorer,
     /// An unknown COMMIT outcome stops writes until the next start.
     stopped: bool,
+    /// The windows a declared restore lost, as the start-up verification
+    /// listed them (ADR-012 record of lane m10/declared-restore).
+    lost: Vec<LostInRestore>,
 }
 
 impl<R: Runtime> std::fmt::Debug for VaultChain<R> {
@@ -462,7 +493,7 @@ impl<R: Runtime> VaultChain<R> {
             anchor_keys: &anchor_keys,
             witness_keys: &parts.witness_keys,
         };
-        verify(&view).map_err(|_| TAMPERED)?;
+        let verified = verify(&view).map_err(|_| TAMPERED)?;
         let head = stored
             .rows
             .last()
@@ -480,7 +511,61 @@ impl<R: Runtime> VaultChain<R> {
             next_seq,
             anchorer: Anchorer::new(),
             stopped: false,
+            lost: verified.lost_in_restore,
         })
+    }
+
+    /// The windows a declared restore lost, as the start-up verification
+    /// listed them. The vault starts with them (ADR-012 record of lane
+    /// m10/declared-restore).
+    #[must_use]
+    pub fn lost_in_restore(&self) -> &[LostInRestore] {
+        &self.lost
+    }
+
+    /// Records each lost window of the start-up once, as a kind 2 event of
+    /// the Vault chain, anchored at the witness (ADR-012 record of lane
+    /// m10/declared-restore). Its body is sealed. A window that an event
+    /// already records is skipped, so a second start records nothing new.
+    /// The cell raises the same windows to tenant admins from the
+    /// declarations, since the vault has no outbox.
+    ///
+    /// # Errors
+    ///
+    /// As [`VaultChain::commit`], and [`VaultError::Unavailable`] when the
+    /// event rows cannot be read.
+    pub async fn record_restore_losses(
+        &mut self,
+        client: &mut Client<R>,
+        sealer: &dyn Sealer,
+        now: i64,
+    ) -> Result<(), VaultError> {
+        if self.lost.is_empty() {
+            return Ok(());
+        }
+        let rows = client
+            .query("SELECT n, body FROM vault_audit.chain WHERE kind = 2", &[])
+            .await
+            .map_err(db)?;
+        let mut have = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let bad = |_| VaultError::Malformed("a vault chain event");
+            let n = uint(r.get::<i64>(0).map_err(bad)?)?;
+            let body: Vec<u8> = r.get(1).map_err(bad)?;
+            if let Ok(plain) = sealer.open(&event_aad(n), &body) {
+                have.push(plain);
+            }
+        }
+        for l in self.lost.clone() {
+            let plain = lost_plain(&l);
+            if have.contains(&plain) {
+                continue;
+            }
+            self.commit_row(client, sealer, Planned::Event(plain.clone()), now)
+                .await?;
+            have.push(plain);
+        }
+        Ok(())
     }
 
     /// Commits `entries` with their kind 1 row, anchored at the witness,
@@ -503,6 +588,23 @@ impl<R: Runtime> VaultChain<R> {
         entries: &[JournalEntry],
         now: i64,
     ) -> Result<(), VaultError> {
+        self.commit_row(client, sealer, Planned::Entries(entries), now)
+            .await
+    }
+
+    /// [`VaultChain::commit`] of one planned row: a kind 1 entry of a
+    /// journal, or a kind 2 event of a sealed plain body.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the strict tail D, step by step, as ADR-010 lists it"
+    )]
+    async fn commit_row(
+        &mut self,
+        client: &mut Client<R>,
+        sealer: &dyn Sealer,
+        planned: Planned<'_>,
+        now: i64,
+    ) -> Result<(), VaultError> {
         if self.stopped {
             return Err(NO_WITNESS);
         }
@@ -512,57 +614,92 @@ impl<R: Runtime> VaultChain<R> {
         for step in [Step::Lock, Step::CommandCheck, Step::HeadCheck] {
             a.step_done(step).map_err(|_| NO_WITNESS)?;
         }
-        let digests = persist_in(&mut tx, sealer, entries).await?;
-        a.step_done(Step::SealLedger).map_err(|_| NO_WITNESS)?;
         let seq = self.next_seq;
-        let body = sealer.seal(&entry_aad(seq), &entry_plain(&digests))?;
-        let command =
-            fstp_crypto::random_array::<16>().map_err(|_| VaultError::Unavailable("randomness"))?;
-        let schema = entry_schema(entries);
-        let entry = StoredEntry {
-            seq,
-            at: now,
-            command,
-            schema: u16::try_from(schema).map_err(|_| TAMPERED)?,
-            key_ix: 0,
-            body: body.bytes.clone(),
-        };
         let mut writer = ChainWriter::resume(self.head.0, self.head.1);
-        let row = writer
-            .append(
-                self.cell,
-                ChainId::Vault,
-                now,
-                RowKind::Ledger { seq },
-                Some(&entry),
-            )
-            .map_err(|_| VaultError::Malformed("a vault chain row"))?;
-        let epoch = entries
-            .iter()
-            .filter_map(|e| match e {
-                JournalEntry::Written { epoch, .. } => Some(*epoch),
-                _ => None,
-            })
-            .max()
-            .map(int)
-            .transpose()?;
-        tx.execute(
-            "INSERT INTO vault_audit.chain (n, at, kind, epoch, stored_hash, body, link, entry_seq, entry_command, entry_schema) \
-             VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)",
-            &[
-                &int(row.row.n)?,
-                &now,
-                &epoch,
-                &row.row.stored_hash.to_vec(),
-                &body.bytes,
-                &row.link.0.to_vec(),
-                &int(seq)?,
-                &command.to_vec(),
-                &schema,
-            ],
-        )
-        .await
-        .map_err(db)?;
+        let (row, next_seq) = match planned {
+            Planned::Entries(entries) => {
+                let digests = persist_in(&mut tx, sealer, entries).await?;
+                a.step_done(Step::SealLedger).map_err(|_| NO_WITNESS)?;
+                let body = sealer.seal(&entry_aad(seq), &entry_plain(&digests))?;
+                let command = fstp_crypto::random_array::<16>()
+                    .map_err(|_| VaultError::Unavailable("randomness"))?;
+                let schema = entry_schema(entries);
+                let entry = StoredEntry {
+                    seq,
+                    at: now,
+                    command,
+                    schema: u16::try_from(schema).map_err(|_| TAMPERED)?,
+                    key_ix: 0,
+                    body: body.bytes.clone(),
+                };
+                let row = writer
+                    .append(
+                        self.cell,
+                        ChainId::Vault,
+                        now,
+                        RowKind::Ledger { seq },
+                        Some(&entry),
+                    )
+                    .map_err(|_| VaultError::Malformed("a vault chain row"))?;
+                let epoch = entries
+                    .iter()
+                    .filter_map(|e| match e {
+                        JournalEntry::Written { epoch, .. } => Some(*epoch),
+                        _ => None,
+                    })
+                    .max()
+                    .map(int)
+                    .transpose()?;
+                tx.execute(
+                    "INSERT INTO vault_audit.chain (n, at, kind, epoch, stored_hash, body, link, entry_seq, entry_command, entry_schema) \
+                     VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)",
+                    &[
+                        &int(row.row.n)?,
+                        &now,
+                        &epoch,
+                        &row.row.stored_hash.to_vec(),
+                        &body.bytes,
+                        &row.link.0.to_vec(),
+                        &int(seq)?,
+                        &command.to_vec(),
+                        &schema,
+                    ],
+                )
+                .await
+                .map_err(db)?;
+                (row, seq.checked_add(1).ok_or(TAMPERED)?)
+            }
+            Planned::Event(plain) => {
+                a.step_done(Step::SealLedger).map_err(|_| NO_WITNESS)?;
+                let n = self.head.0.checked_add(1).ok_or(TAMPERED)?;
+                let body = sealer.seal(&event_aad(n), &plain)?;
+                let row = writer
+                    .append(
+                        self.cell,
+                        ChainId::Vault,
+                        now,
+                        RowKind::Event {
+                            body: body.bytes.clone(),
+                        },
+                        None,
+                    )
+                    .map_err(|_| VaultError::Malformed("a vault chain row"))?;
+                tx.execute(
+                    "INSERT INTO vault_audit.chain (n, at, kind, stored_hash, body, link) \
+                     VALUES ($1, $2, 2, $3, $4, $5)",
+                    &[
+                        &int(row.row.n)?,
+                        &now,
+                        &row.row.stored_hash.to_vec(),
+                        &body.bytes,
+                        &row.link.0.to_vec(),
+                    ],
+                )
+                .await
+                .map_err(db)?;
+                (row, seq)
+            }
+        };
         a.step_done(Step::InsertChain).map_err(|_| NO_WITNESS)?;
         a.step_done(Step::SideEffects).map_err(|_| NO_WITNESS)?;
         let head = (row.row.n, row.link);
@@ -632,7 +769,7 @@ impl<R: Runtime> VaultChain<R> {
         match a.outcome(outcome).map_err(|_| NO_WITNESS)? {
             AfterCommit::Done => {
                 self.head = head;
-                self.next_seq = seq.checked_add(1).ok_or(TAMPERED)?;
+                self.next_seq = next_seq;
                 self.anchorer = a;
                 Ok(())
             }

@@ -244,7 +244,7 @@ pub fn open_pool(
 }
 
 /// A pool of `suffix` for the cell of `db`.
-fn pool_of(db: &CellDb, suffix: &str) -> Pool<TokioRuntime> {
+pub fn pool_of(db: &CellDb, suffix: &str) -> Pool<TokioRuntime> {
     block_on(Pool::open(
         rt().clone(),
         db.cell,
@@ -694,6 +694,22 @@ impl Store {
         events: Vec<Vec<u8>>,
     ) -> Result<fstp_pgstore::Committed, fstp_pgstore::AppendFault> {
         block_on(self.store.append_events(at, events))
+    }
+
+    /// `PgRecordStore::append_events_with` (ADR-012 record of lane
+    /// m10/declared-restore).
+    pub fn append_events_with(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+        own: &[fstp_pgstore::OwnRow],
+    ) -> Result<fstp_pgstore::Committed, fstp_pgstore::AppendFault> {
+        block_on(self.store.append_events_with(at, events, own))
+    }
+
+    /// `PgRecordStore::outbox_has`.
+    pub fn outbox_has(&self, idem: &[u8; 32]) -> bool {
+        block_on(self.store.outbox_has(idem)).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// `PgRecordStore::stored_commit`.

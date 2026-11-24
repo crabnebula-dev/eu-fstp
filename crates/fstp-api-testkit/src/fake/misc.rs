@@ -319,7 +319,19 @@ impl TenantConfig for FakeTenant {
             vault_answers: true,
             mail: fstp_api_core::system::MailState::Works,
             host: fstp_api_core::system::HostFile::NotConfigured,
+            findings: Vec::new(),
         }
+    }
+
+    /// ADR-012 record of lane m10/declared-restore: the fake cell records
+    /// every acknowledgement and holds no finding store to check it with.
+    async fn acknowledge_finding(
+        &self,
+        account: AccountId,
+        finding: u128,
+    ) -> Result<(), PortError> {
+        let _ = (account, finding);
+        Ok(())
     }
 }
 
