@@ -410,3 +410,88 @@ fn i24_adr012_wc_witness_copy_and_rebuild_over_real_postgres() {
     h.expect_ok(&["start"]);
     s3.stop(&rt);
 }
+
+/// I-24, ADR-012 record of lane m10/witness-copy, lead answer 1 of
+/// 2026-11-24: after `restore-keys` on a new host, `restore` moves a
+/// witness store that differs from its copies aside, keeps it, and
+/// rebuilds the store from the copies with no manual step.
+///
+/// Direct mode has no paired custodian and no `fstp-keyd`, so
+/// `restore-keys` cannot run here. The test stands in for the new host by
+/// the store a new host's `setup` writes: the old store is lost and the
+/// cell is registered afresh in an empty one. It sets the marker through
+/// `fstp_admin::custodian::mark_host_loss`, the function `restore-keys`
+/// calls.
+#[test]
+fn i24_adr012_wc_host_loss_restore_moves_a_diverged_store_aside() {
+    let rt = TokioRuntime::new_multi_thread(2).unwrap();
+    let s3 = FakeS3::start(&rt, AK, SK, REGION, BUCKET);
+    let h = host(s3.port());
+    let first = h.expect_ok(&["setup"]);
+    assert!(first.contains("Setup is complete."), "{first}");
+    let l = h.layout();
+    let store = l.witness_store();
+    h.expect_ok(&["backup"]);
+    fstp_admin::svc::Manager::new(&l)
+        .stop(&fstp_admin::stack::witness(&l))
+        .unwrap();
+    h.expect_ok(&["witness-copy"]);
+    let lost = store_files(&store);
+
+    // The host is lost with its witness store. The new host's setup
+    // registers the cell in a fresh store, which differs from the copies.
+    std::fs::remove_dir_all(&store).unwrap();
+    let state = fstp_admin::state::State::load(&l.admin_dir().join("state")).unwrap();
+    let cell = state.get("cell").unwrap().to_owned();
+    fstp_admin::witness::register(&l, &cell, &l.public_dir()).unwrap();
+    let fresh = store_files(&store);
+    assert_ne!(fresh.get("registry"), lost.get("registry"), "diverged");
+
+    // Without the marker of restore-keys, the restore stops.
+    let refused = h.admin(&["restore"]);
+    assert!(!refused.status.success(), "{}", Host::text(&refused));
+    assert_eq!(
+        store_files(&store).get("registry"),
+        fresh.get("registry"),
+        "left as found"
+    );
+    fstp_admin::svc::Manager::new(&l)
+        .stop(&fstp_admin::stack::witness(&l))
+        .unwrap();
+    let fresh = store_files(&store);
+
+    // After restore-keys, one restore moves it aside and rebuilds.
+    fstp_admin::custodian::mark_host_loss(&l).unwrap();
+    assert!(fstp_admin::custodian::host_loss_pending(&l));
+    let restored = h.expect_ok(&["restore"]);
+    assert!(
+        restored.contains("done     moved the witness store that differs from its copies aside to"),
+        "{restored}"
+    );
+    let after = store_files(&store);
+    for (name, bytes) in &lost {
+        let now = after.get(name).unwrap_or_else(|| panic!("{name} is lost"));
+        assert!(now.starts_with(bytes), "{name}");
+    }
+    let aside: Vec<PathBuf> = std::fs::read_dir(store.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("witness.before-restore-"))
+        })
+        .collect();
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(store_files(&aside[0]), fresh, "the moved store is kept");
+    assert!(!fstp_admin::custodian::host_loss_pending(&l), "marker gone");
+    let text = Host::text(&h.admin(&["status"]));
+    assert!(
+        !text.contains("STOPPED") && !text.contains("UNHEALTHY"),
+        "{text}\n{}",
+        h.logs()
+    );
+    h.expect_ok(&["witness-copy"]);
+    s3.stop(&rt);
+}

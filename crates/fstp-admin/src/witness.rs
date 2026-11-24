@@ -154,7 +154,10 @@ pub const DIVERGED: i32 = 5;
 
 /// Rebuilds the witness store from its copies where it is missing or
 /// behind, then checks that it loads (ADR-012 record of lane
-/// m10/witness-copy, row "Rebuild in `restore`"). The witness must be
+/// m10/witness-copy, row "Rebuild in `restore`"). After `restore-keys`, a store
+/// that differs from its copies moves aside as
+/// `<store>.before-restore-<time>` and is rebuilt (lead answer 1).
+/// Without that marker it stops the restore. The witness must be
 /// stopped. A store with no copies stays as it is.
 ///
 /// # Errors
@@ -167,14 +170,35 @@ pub fn rebuild(layout: &Layout) -> Result<(), crate::fail::Fail> {
     use crate::say::{Part, out};
     let step = |e: WitnessFail| Fail::Step("restore", Cause::Witness(e));
     let store = layout.witness_store();
-    match backup_tool(layout, &["witness-restore".as_ref(), store.as_os_str()]).map_err(step)? {
+    let restore = || backup_tool(layout, &["witness-restore".as_ref(), store.as_os_str()]);
+    let mut code = restore().map_err(step)?;
+    // Lead answer 1 of 2026-11-24 (ADR-012 record of lane m10/witness-copy):
+    // after restore-keys, a diverged store is the new host's own, so it
+    // moves aside, kept, and the store comes back from the copies.
+    if code == Some(DIVERGED) && crate::custodian::host_loss_pending(layout) {
+        let aside = store.with_file_name(format!(
+            "{}.before-restore-{}",
+            store
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("witness"),
+            crate::pki::now()
+        ));
+        std::fs::rename(&store, &aside).map_err(|_| step(WitnessFail::Io))?;
+        out(&[
+            Part::T("  done     moved the witness store that differs from its copies aside to "),
+            Part::P(&aside),
+        ]);
+        code = restore().map_err(step)?;
+    }
+    match code {
         Some(0) => {}
         Some(DIVERGED) => {
             out(&[
                 Part::T("The witness store "),
                 Part::P(&store),
                 Part::T(
-                    " differs from its copies in the object store, so the restore stopped before any change. If this host replaces a lost one, move that directory aside, then run fstp-admin restore again.",
+                    " differs from its copies in the object store, so the restore stopped before any change. It may be evidence of tampering. If this host replaces a lost one, run fstp-admin restore-keys first: the restore after it keeps this store aside and rebuilds it.",
                 ),
             ]);
             return Err(Fail::Refused("fstp-backup witness-restore", Some(DIVERGED)));
@@ -196,6 +220,7 @@ pub fn rebuild(layout: &Layout) -> Result<(), crate::fail::Fail> {
     out(&[Part::T(
         "  done     checked the witness store: every record loads and every link recomputes",
     )]);
+    crate::custodian::clear_host_loss(layout);
     Ok(())
 }
 
