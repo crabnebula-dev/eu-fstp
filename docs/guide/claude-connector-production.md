@@ -12,6 +12,7 @@ Two people run a host. The **technical admin** uses a terminal over SSH, and par
 - An account on a mail relay for sign-in mail. Put its password in `/etc/fstp/mail.password`.
 - A second machine that stays on: the **second custodian**. It guards the copies of the keys (part 2a). A small Linux machine with systemd is enough. The pilot host must reach it on TCP port 7460.
 - Optional: a versioned object storage bucket for backups and the daily key snapshots, with its two key files in `/etc/fstp/s3-access-key-id` and `/etc/fstp/s3-secret-access-key`.
+  The bucket also keeps the copies of the audit witness under `<cluster>/witness/`. If you set lifecycle rules that delete old objects, they must keep that prefix (ADR-012, record of lane m10/witness-copy).
 
 Install the release: the binaries into `/usr/local/bin`, and its `migrations/` and `web/` directories into `/usr/share/fstp`.
 
