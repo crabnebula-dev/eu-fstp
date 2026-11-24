@@ -95,7 +95,9 @@ pub struct Restored {
 
 /// The agent of one cluster.
 pub struct Agent<R: Runtime> {
-    s3: S3Client<R>,
+    /// The object stores, in order, never empty (ADR-012 record of lane
+    /// m10/backup-format).
+    s3: Vec<S3Client<R>>,
     key: KeyFile,
     writer: Option<WriterKey>,
     state_dir: PathBuf,
@@ -174,7 +176,7 @@ impl<R: Runtime> Agent<R> {
             key.check_writer(w)?;
         }
         Ok(Agent {
-            s3,
+            s3: vec![s3],
             key,
             writer,
             state_dir: state_dir.to_path_buf(),
@@ -191,9 +193,21 @@ impl<R: Runtime> Agent<R> {
     /// the errors of [`Agent::new`].
     pub fn from_config(rt: R, cfg: &FileConfig) -> Result<Agent<R>, BackupError> {
         let dir = &cfg.credentials_dir;
-        let credentials = config::s3_credentials(dir)?;
-        let ca = config::s3_ca(dir)?;
-        let s3 = S3Client::new(rt, cfg.object_store.clone(), credentials, ca.as_deref())?;
+        let mut stores = Vec::new();
+        for (n, endpoint) in std::iter::once(&cfg.object_store)
+            .chain(&cfg.more_stores)
+            .enumerate()
+        {
+            let (credentials, ca) = config::store_credentials(dir, n)?;
+            stores.push(S3Client::new(
+                rt.clone(),
+                endpoint.clone(),
+                credentials,
+                ca.as_deref(),
+            )?);
+        }
+        let mut stores = stores.into_iter();
+        let s3 = stores.next().ok_or(BackupError::Config("object_store"))?;
         let key = config::read_credential(dir, keyfile::KEY_FILE)?;
         // A restore-only host holds no writer key (record of lane
         // m10/backup-format).
@@ -202,13 +216,23 @@ impl<R: Runtime> Agent<R> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => return Err(BackupError::Config(WRITER_FILE)),
         };
-        Agent::new(
+        Ok(Agent::new(
             s3,
             cfg.cluster,
             &key,
             writer.as_deref().map(Vec::as_slice),
             &cfg.state_dir,
-        )
+        )?
+        .with_stores(stores.collect()))
+    }
+
+    /// The agent with the further object stores `more`, after the first:
+    /// every container goes to every store, and a fetch tries them in order
+    /// (ADR-012 record of lane m10/backup-format).
+    #[must_use]
+    pub fn with_stores(mut self, more: Vec<S3Client<R>>) -> Agent<R> {
+        self.s3.extend(more);
+        self
     }
 
     /// The agent with other sizes.
@@ -242,30 +266,48 @@ impl<R: Runtime> Agent<R> {
     }
 
     /// Seals `plaintext` as the `FBC2` container of `ident`, signed by the
-    /// writer key, and stores it as `object` (F-043).
+    /// writer key (F-043), and stores the same bytes as `object` in each
+    /// store of `stores` (ADR-012 record of lane m10/backup-format).
     async fn seal_and_store(
         &self,
         ident: &ObjectIdent,
         object: &str,
         plaintext: &[u8],
+        stores: &[&S3Client<R>],
     ) -> Result<(), BackupError> {
         // F-044: the key file is checked before every seal.
         let writer = self.writer()?;
         self.key.check_writer(writer)?;
         let public = self.key.public_key()?;
         let sealed = seal_object(&public, writer, &self.key.group_ref(), ident, plaintext)?;
-        self.s3
-            .store(
-                object,
-                sealed,
-                self.limits.single_put_max,
-                self.limits.upload_part,
-            )
-            .await
+        // Every store is tried, so one refusing store does not keep the
+        // copy from the others. The first error is the result.
+        let mut first = None;
+        for s in stores {
+            if let Err(e) = s
+                .store(
+                    object,
+                    sealed.clone(),
+                    self.limits.single_put_max,
+                    self.limits.upload_part,
+                )
+                .await
+            {
+                first.get_or_insert(e);
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    /// Every store, in order.
+    fn every_store(&self) -> Vec<&S3Client<R>> {
+        self.s3.iter().collect()
     }
 
     /// `archive_command`: seals the file at `path`, handed over as `name`,
-    /// and uploads it, unless the store holds it already.
+    /// and uploads it to each store that does not hold it yet. It succeeds
+    /// only when every store holds it (ADR-012 record of lane
+    /// m10/backup-format).
     ///
     /// # Errors
     ///
@@ -276,7 +318,15 @@ impl<R: Runtime> Agent<R> {
             return Ok(Archived::Skipped);
         }
         let object = self.wal_object(name);
-        if self.s3.head_object(&object).await? {
+        // A store that does not answer counts as missing the file: the
+        // upload to it then fails, and so does the archive.
+        let mut missing = Vec::new();
+        for s in &self.s3 {
+            if !matches!(s.head_object(&object).await, Ok(true)) {
+                missing.push(s);
+            }
+        }
+        if missing.is_empty() {
             return Ok(Archived::Present);
         }
         let len = std::fs::metadata(path).map_err(io("WAL file"))?.len();
@@ -284,8 +334,13 @@ impl<R: Runtime> Agent<R> {
             return Err(BackupError::Malformed("WAL file size"));
         }
         let bytes = std::fs::read(path).map_err(io("WAL file"))?;
-        self.seal_and_store(&ObjectIdent::Wal(name.to_owned()), &object, &bytes)
-            .await?;
+        self.seal_and_store(
+            &ObjectIdent::Wal(name.to_owned()),
+            &object,
+            &bytes,
+            &missing,
+        )
+        .await?;
         Ok(Archived::Uploaded)
     }
 
@@ -373,8 +428,13 @@ impl<R: Runtime> Agent<R> {
             let last = carry.is_none();
             let body = buf.get(..n).ok_or(BackupError::Io("read"))?;
             let ident = ObjectIdent::Base { backup, part, last };
-            self.seal_and_store(&ident, &self.base_object(backup, part), body)
-                .await?;
+            self.seal_and_store(
+                &ident,
+                &self.base_object(backup, part),
+                body,
+                &self.every_store(),
+            )
+            .await?;
             size = size.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
             if last {
                 return Ok((backup, size));
@@ -389,9 +449,15 @@ impl<R: Runtime> Agent<R> {
     /// m10/backup-format): fetches `object`, opens it as an `FBC2`
     /// container signed by the key file's writer key, and checks that it
     /// is of this cluster and names the object `want` accepts. `want`
-    /// gives the part's last flag, or `None` to refuse the object. The
-    /// plaintext and the last flag, or `None` when the object does not
-    /// exist.
+    /// gives the part's last flag, or `None` to refuse the object.
+    ///
+    /// It tries the stores in order and takes the first copy that passes.
+    /// A missing object, a failed request and a refused copy fall through to
+    /// the next store. When no copy passes, the answer is `None` if some
+    /// store said the object is absent and no store held a refused copy.
+    /// Otherwise it is the first error, so a refused copy is never taken
+    /// for the end of the archive, and one dead store does not stop a
+    /// restore.
     async fn fetch_checked(
         &self,
         secret: &HybridSecretKey,
@@ -399,15 +465,40 @@ impl<R: Runtime> Agent<R> {
         want: impl Fn(&ObjectIdent) -> Option<bool>,
     ) -> Result<Option<(Vec<u8>, bool)>, BackupError> {
         let writer = self.key.check_binding()?;
-        let Some(bytes) = self.s3.get_object(object).await? else {
-            return Ok(None);
-        };
-        let opened = open_object(secret, &writer.writer[..], &bytes)?;
-        if opened.owner != self.key.cluster {
-            return Err(BackupError::Malformed("restored container"));
+        let mut absent = false;
+        let mut refused = false;
+        let mut first: Option<BackupError> = None;
+        for s in &self.s3 {
+            let bytes = match s.get_object(object).await {
+                Ok(Some(b)) => b,
+                Ok(None) => {
+                    absent = true;
+                    continue;
+                }
+                Err(e) => {
+                    first.get_or_insert(e);
+                    continue;
+                }
+            };
+            let checked = open_object(secret, &writer.writer[..], &bytes).and_then(|o| {
+                if o.owner != self.key.cluster {
+                    return Err(BackupError::Malformed("restored container"));
+                }
+                let last = want(&o.ident).ok_or(BackupError::Malformed("restored container"))?;
+                Ok((o.plaintext, last))
+            });
+            match checked {
+                Ok(v) => return Ok(Some(v)),
+                Err(e) => {
+                    refused = true;
+                    first.get_or_insert(e);
+                }
+            }
         }
-        let last = want(&opened.ident).ok_or(BackupError::Malformed("restored container"))?;
-        Ok(Some((opened.plaintext, last)))
+        match first {
+            Some(e) if refused || !absent => Err(e),
+            _ => Ok(None),
+        }
     }
 
     /// Fetches and opens part `part` of base backup `backup`, with its

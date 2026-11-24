@@ -430,3 +430,177 @@ fn f043_last_part_is_flagged_for_every_stream_length() {
     let _ = std::fs::remove_dir_all(&s.state);
     s.fake.stop(&s.rt);
 }
+
+/// A client of `fake` that signs with a wrong secret, so every request
+/// fails: a store that is down or refuses.
+fn broken_client(rt: &TokioRuntime, fake: &FakeS3) -> S3Client<TokioRuntime> {
+    S3Client::with_tls(
+        rt.clone(),
+        Endpoint {
+            host: "localhost".to_owned(),
+            port: fake.port(),
+            region: REGION.to_owned(),
+            bucket: BUCKET.to_owned(),
+        },
+        Credentials::new(AK, "wrong/secret").unwrap(),
+        fstp_tls::ClientConfig::new(fake_s3::CA_PEM).unwrap(),
+    )
+}
+
+/// An agent of `s` over the stores `stores`, in order.
+fn agent_over(s: &Setup, mut stores: Vec<S3Client<TokioRuntime>>) -> Agent<TokioRuntime> {
+    let first = stores.remove(0);
+    Agent::new(first, CLUSTER, &s.key_file, Some(&s.writer_key), &s.state)
+        .unwrap()
+        .with_limits(SMALL)
+        .with_stores(stores)
+}
+
+/// Q25, ADR-012 "Copies and the second provider": with two stores, every
+/// WAL file and every base backup part goes to both with the same bytes,
+/// and the index line is written once both hold every part.
+#[test]
+fn q25_every_store_gets_the_same_bytes() {
+    let s = setup();
+    let second = FakeS3::start(&s.rt, AK, SK, REGION, BUCKET);
+    let agent = agent_over(&s, vec![client(&s.rt, &s.fake), client(&s.rt, &second)]);
+    let dir = temp_dir("wal");
+    std::fs::write(dir.join("s"), vec![5u8; 70_000]).unwrap();
+    let base = vec![6u8; 7 * 1024 * 1024];
+    let entry = s.rt.block_on(async {
+        agent
+            .archive(&dir.join("s"), "000000010000000000000009")
+            .await
+            .unwrap();
+        agent.base_backup_from(&mut &base[..]).await.unwrap()
+    });
+    let a = s.fake.state.objects.lock().unwrap().clone();
+    let b = second.state.objects.lock().unwrap().clone();
+    assert_eq!(a.len(), 1 + 3);
+    assert_eq!(a, b, "the same objects with the same bytes");
+    assert_eq!(
+        fstp_backup::index::newest(&s.state, CLUSTER).unwrap(),
+        entry
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&s.state);
+    second.stop(&s.rt);
+    s.fake.stop(&s.rt);
+}
+
+/// Q25, ADR-012 record of lane m10/backup-format "Fetch from the
+/// stores": a restore takes the first copy that verifies. A missing,
+/// refused or unreachable first store falls through to the second. A
+/// file missing everywhere is absent, and a refused copy with no good
+/// one is an error, never the end of the archive.
+#[test]
+fn q25_fetch_falls_through_to_the_next_store() {
+    let s = setup();
+    let second = FakeS3::start(&s.rt, AK, SK, REGION, BUCKET);
+    let agent = agent_over(&s, vec![client(&s.rt, &s.fake), client(&s.rt, &second)]);
+    let dir = temp_dir("wal");
+    let (n1, n2) = ("000000010000000000000001", "000000010000000000000002");
+    std::fs::write(dir.join("s1"), vec![1u8; 5000]).unwrap();
+    std::fs::write(dir.join("s2"), vec![2u8; 5000]).unwrap();
+    let secret = s.rt.block_on(async {
+        agent.archive(&dir.join("s1"), n1).await.unwrap();
+        agent.archive(&dir.join("s2"), n2).await.unwrap();
+        agent.open_secret(&s.custody).await.unwrap()
+    });
+    let fetch = |a: &Agent<TokioRuntime>, n: &str| s.rt.block_on(a.fetch_wal(&secret, n));
+    // Missing in the first store.
+    s.fake
+        .state
+        .objects
+        .lock()
+        .unwrap()
+        .remove(&agent.wal_object(n1));
+    assert_eq!(fetch(&agent, n1).unwrap().unwrap(), vec![1u8; 5000]);
+    // A copy in the first store that names another segment.
+    {
+        let mut objects = s.fake.state.objects.lock().unwrap();
+        let moved = objects[&agent.wal_object(n2)].clone();
+        objects.insert(agent.wal_object(n1), moved);
+    }
+    assert_eq!(fetch(&agent, n1).unwrap().unwrap(), vec![1u8; 5000]);
+    // The first store refuses every request.
+    let down = agent_over(
+        &s,
+        vec![broken_client(&s.rt, &s.fake), client(&s.rt, &second)],
+    );
+    assert_eq!(fetch(&down, n2).unwrap().unwrap(), vec![2u8; 5000]);
+    // Missing everywhere: absent, also with one store down.
+    assert_eq!(fetch(&agent, "000000010000000000000003").unwrap(), None);
+    assert_eq!(fetch(&down, "000000010000000000000003").unwrap(), None);
+    // A refused copy and no good one: an error.
+    second
+        .state
+        .objects
+        .lock()
+        .unwrap()
+        .remove(&agent.wal_object(n1));
+    assert_eq!(
+        fetch(&agent, n1),
+        Err(BackupError::Malformed("restored container"))
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&s.state);
+    second.stop(&s.rt);
+    s.fake.stop(&s.rt);
+}
+
+/// Q25, ADR-012 "A container counts as backed up only when every
+/// configured copy is complete": a WAL file that one store refuses is not
+/// archived, so PostgreSQL keeps it and retries. The retry uploads only
+/// to the store that lacks it. A base backup that one store refuses
+/// writes no index line.
+#[test]
+fn q25_archive_succeeds_only_when_every_store_holds_it() {
+    let s = setup();
+    let second = FakeS3::start(&s.rt, AK, SK, REGION, BUCKET);
+    let failing = agent_over(
+        &s,
+        vec![client(&s.rt, &s.fake), broken_client(&s.rt, &second)],
+    );
+    let dir = temp_dir("wal");
+    let name = "00000001000000000000000A";
+    std::fs::write(dir.join("s"), vec![7u8; 5000]).unwrap();
+    assert!(
+        s.rt.block_on(failing.archive(&dir.join("s"), name))
+            .is_err()
+    );
+    assert!(
+        s.rt.block_on(failing.base_backup_from(&mut &[1u8; 10][..]))
+            .is_err()
+    );
+    assert!(fstp_backup::index::newest(&s.state, CLUSTER).is_err());
+    let healthy = agent_over(&s, vec![client(&s.rt, &s.fake), client(&s.rt, &second)]);
+    let first_copy = s.fake.state.objects.lock().unwrap()[&healthy.wal_object(name)].clone();
+    assert_eq!(
+        s.rt.block_on(healthy.archive(&dir.join("s"), name))
+            .unwrap(),
+        fstp_backup::agent::Archived::Uploaded
+    );
+    assert_eq!(
+        s.fake.state.objects.lock().unwrap()[&healthy.wal_object(name)],
+        first_copy,
+        "the store that held it is not written again"
+    );
+    assert!(
+        second
+            .state
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&healthy.wal_object(name))
+    );
+    assert_eq!(
+        s.rt.block_on(healthy.archive(&dir.join("s"), name))
+            .unwrap(),
+        fstp_backup::agent::Archived::Present
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&s.state);
+    second.stop(&s.rt);
+    s.fake.stop(&s.rt);
+}

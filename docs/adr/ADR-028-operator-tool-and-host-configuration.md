@@ -175,3 +175,13 @@ Written before the code, after Daniel's answers of 2026-11-24 (ADR-004, "Decided
 | Copy owed | `fstp-keyd guard-check` exits 6 while a fresh copy is owed to the custodian. `status` shows `custodian  linked, a fresh copy is owed (retried every ten minutes)` and names it as the next thing after the backups. The host status file gains `guard_copy_owed`, the next word `custodian_copy`, and the System page shows the key copy row amber with the host admin to act | Usability rule of 2026-11-21 |
 
 Tests: `adr028_guard_restore_keys_takes_each_copy_from_the_directory_or_the_custodian` and `adr028_guard_status_names_an_owed_copy` in `fstp-admin`; the copy cases of `r_nf_02_host_status_round_trips` in `fstp-obs`; `adr028_guard_key_copy_row_shows_an_owed_copy` in `web/test/l20_system_page.test.ts`.
+
+## Record of lane m10/backup-format, 2026-11-24: backup copies, retention and the writer key
+
+Written before the code. Daniel decided on 2026-11-24 that backups go to every configured object store and that retention comes from `fstp.json` (ADR-012 record of lane m10/backup-format). The member names and defaults are this lane's, interim, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Further stores | `backup.copies`: a list of one or two further object stores, each with `endpoint`, `region`, `bucket`, and optionally `port` (443), `access_key_file` and `secret_key_file`. Copy `n` from 1 takes its key files from `<etc>/s3-<n>-access-key-id` and `<etc>/s3-<n>-secret-access-key` by default. Without `copies`, the one store of `backup` is the only one, as before | ADR-012 "Copies and the second provider" |
+| Agent configuration | `setup` writes `object_stores`, the list of every store in order, into `backup-<cluster>.json`, and copies each store's key files into the agent's credentials directory, store `n` as `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`. The cell's and the vault's keystore snapshots keep the first store only | ADR-012 record of lane m10/backup-format |
+| Writer key | `setup` runs `fstp-backup init-keys`, which now also writes `cluster-backup-writer.key`. When a key file exists without a writer key, `setup` runs `fstp-backup upgrade-keys` and then a base backup at once. Both key files are `root:postgres`, mode 0640 | F-043; F-044 |

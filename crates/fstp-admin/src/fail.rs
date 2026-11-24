@@ -164,6 +164,10 @@ fn problem_text(p: Problem) -> (&'static str, &'static str) {
             "is not three agreement versions",
             "write the versions of the SaaS terms, the data processing agreement and the sub-processor list, like \"1,1,1\"",
         ),
+        Problem::BadCopies => (
+            "is not a list of one or two further object stores",
+            "write \"copies\": [{\"endpoint\": ..., \"region\": ..., \"bucket\": ...}], or leave it out",
+        ),
     }
 }
 

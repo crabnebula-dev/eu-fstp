@@ -9,7 +9,9 @@
 //! - `credentials_dir`, `state_dir`, `pg_bindir`: absolute paths.
 //! - `database`: `host`, a loopback address literal, and `port`.
 //! - `object_store`: `endpoint` (a host name), `port` (optional, 443),
-//!   `region` and `bucket`.
+//!   `region` and `bucket`. Or `object_stores`, a list of one to
+//!   [`MAX_STORES`] such stores, in order (ADR-012 record of lane
+//!   m10/backup-format). Exactly one of the two is given.
 //! - `keyd_socket`: optional, absolute. The `fstp-keyd` console socket,
 //!   for `init-keys` and the restore commands only.
 //!
@@ -35,15 +37,20 @@ pub const MAX_FILE_LEN: usize = 4096;
 /// The longest path.
 pub const MAX_PATH_LEN: usize = 1024;
 
-const MEMBERS: [&str; 7] = [
+const MEMBERS: [&str; 8] = [
     "cluster",
     "credentials_dir",
     "state_dir",
     "pg_bindir",
     "database",
     "object_store",
+    "object_stores",
     "keyd_socket",
 ];
+
+/// The most object stores a configuration names (ADR-012 record of lane
+/// m10/backup-format).
+pub const MAX_STORES: usize = 3;
 
 /// The loopback database login of `pg_basebackup`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,8 +74,11 @@ pub struct FileConfig {
     pub pg_bindir: PathBuf,
     /// The database.
     pub database: DatabaseConfig,
-    /// The object store.
+    /// The first object store.
     pub object_store: Endpoint,
+    /// The further object stores, in order: each container goes to every
+    /// store (ADR-012 record of lane m10/backup-format).
+    pub more_stores: Vec<Endpoint>,
     /// The `fstp-keyd` console socket, if any.
     pub keyd_socket: Option<PathBuf>,
 }
@@ -80,8 +90,8 @@ fn cfg(rule: &'static str) -> BackupError {
 fn limits() -> ParseLimits {
     ParseLimits::default()
         .with_max_input_bytes(MAX_FILE_LEN)
-        .with_max_depth(2)
-        .with_max_container_len(8)
+        .with_max_depth(3)
+        .with_max_container_len(10)
         .with_max_string_bytes(MAX_PATH_LEN)
 }
 
@@ -205,11 +215,23 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         return Err(cfg("database.host"));
     }
     let port = port_of(db.get("port"), None, "database.port")?;
-    let os = o
-        .get("object_store")
-        .and_then(|v| v.as_object())
-        .ok_or(cfg("object_store"))?;
-    let object_store = decode_object_store(os)?;
+    let mut stores = match (o.get("object_store"), o.get("object_stores")) {
+        (Some(v), None) => vec![decode_object_store(
+            v.as_object().ok_or(cfg("object_store"))?,
+        )?],
+        (None, Some(v)) => {
+            let list = v.as_array().ok_or(cfg("object_stores"))?;
+            if list.is_empty() || list.len() > MAX_STORES {
+                return Err(cfg("object_stores"));
+            }
+            list.iter()
+                .map(|s| decode_object_store(s.as_object().ok_or(cfg("object_stores"))?))
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        _ => return Err(cfg("object_store")),
+    };
+    let object_store = stores.remove(0);
+    let more_stores = stores;
     let keyd_socket = match o.get("keyd_socket") {
         None => None,
         Some(v) => Some(path_of(
@@ -224,6 +246,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         pg_bindir,
         database: DatabaseConfig { host, port },
         object_store,
+        more_stores,
         keyd_socket,
     })
 }
@@ -327,6 +350,46 @@ pub fn s3_credentials(dir: &Path) -> Result<Credentials, BackupError> {
     Credentials::new(&id, &secret)
 }
 
+/// The credential file names of store `n` from 1 (ADR-012 record of lane
+/// m10/backup-format): access key id, secret access key and CA.
+const MORE_STORE_FILES: [[&str; 3]; MAX_STORES - 1] = [
+    [
+        "s3-1-access-key-id",
+        "s3-1-secret-access-key",
+        "s3-1-ca.pem",
+    ],
+    [
+        "s3-2-access-key-id",
+        "s3-2-secret-access-key",
+        "s3-2-ca.pem",
+    ],
+];
+
+/// The credentials and the optional pinned CA of store `n`: store 0 takes
+/// the files of the record of lane L10, store `n` from 1 takes
+/// `s3-<n>-access-key-id`, `s3-<n>-secret-access-key` and optionally
+/// `s3-<n>-ca.pem`.
+///
+/// # Errors
+///
+/// [`BackupError::Config`] naming the file.
+pub fn store_credentials(
+    dir: &Path,
+    n: usize,
+) -> Result<(Credentials, Option<Vec<u8>>), BackupError> {
+    let Some(i) = n.checked_sub(1) else {
+        return Ok((s3_credentials(dir)?, s3_ca(dir)?));
+    };
+    let [id, secret, ca] = *MORE_STORE_FILES.get(i).ok_or(cfg("object_stores"))?;
+    let credentials = Credentials::new(&read_secret(dir, id)?, &read_secret(dir, secret)?)?;
+    let ca = match std::fs::read(dir.join(ca)) {
+        Ok(pem) => Some(pem),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(cfg(ca)),
+    };
+    Ok((credentials, ca))
+}
+
 /// The optional pinned CA of the object store.
 ///
 /// # Errors
@@ -401,6 +464,40 @@ mod tests {
         assert!(decode_file(twice.as_bytes()).is_err());
         assert!(decode_file(b"[]").is_err());
         assert!(decode_file(&vec![b' '; MAX_FILE_LEN + 1]).is_err());
+    }
+
+    /// Q25, ADR-012 record of lane m10/backup-format: `object_stores` takes
+    /// one to three stores in order, one entry stays valid, and the single
+    /// `object_store` still reads. Both together, none, an empty list and
+    /// four stores are refused.
+    #[test]
+    fn adr012_config_takes_a_list_of_stores() {
+        let one = r#"{"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra", "bucket": "fstp-pilot-backups"}"#;
+        let two = r#"{"endpoint": "s3.fr-par.scw.cloud", "port": 8443, "region": "fr-par", "bucket": "fstp-copy"}"#;
+        let single = format!("\"object_store\": {one},");
+        let with = |member: &str| GOOD.replacen(&single, member, 1);
+        assert_ne!(with("X"), GOOD);
+        let c =
+            decode_file(with(&format!("\"object_stores\": [{one}, {two}],")).as_bytes()).unwrap();
+        assert_eq!(c.object_store.bucket, "fstp-pilot-backups");
+        assert_eq!(c.more_stores.len(), 1);
+        assert_eq!(
+            (c.more_stores[0].port, c.more_stores[0].region.as_str()),
+            (8443, "fr-par")
+        );
+        let c = decode_file(with(&format!("\"object_stores\": [{one}],")).as_bytes()).unwrap();
+        assert!(c.more_stores.is_empty());
+        assert_eq!(c, decode_file(GOOD.as_bytes()).unwrap());
+        for bad in [
+            format!("{single} \"object_stores\": [{one}],"),
+            String::new(),
+            "\"object_stores\": [],".to_owned(),
+            format!("\"object_stores\": [{one}, {one}, {one}, {one}],"),
+            format!("\"object_stores\": {one},"),
+            "\"object_stores\": [{\"endpoint\": \"10.0.0.1\", \"region\": \"gra\", \"bucket\": \"abc\"}],".to_owned(),
+        ] {
+            assert!(decode_file(with(&bad).as_bytes()).is_err(), "{bad}");
+        }
     }
 
     /// R-NF-02: a refused configuration never quotes its bytes, and a

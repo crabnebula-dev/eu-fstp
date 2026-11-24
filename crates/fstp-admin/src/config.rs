@@ -15,7 +15,9 @@
 //!            "address": "192.0.2.7:465"},
 //!   "tls": {"cert": "...fullchain.pem", "key": "...privkey.pem"},
 //!   "backup": {"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra",
-//!              "bucket": "fstp-backups", "port": 443},
+//!              "bucket": "fstp-backups", "port": 443,
+//!              "copies": [{"endpoint": "s3.fr-par.scw.cloud",   at most two
+//!                          "region": "fr-par", "bucket": "fstp-copy"}]},
 //!   "paths": {"bin": "/usr/local/bin", "share": "/usr/share/fstp",
 //!             "etc": "/etc/fstp", "state": "/var/lib/fstp",
 //!             "pg_bin": "/usr/lib/postgresql/16/bin", "token_dir": "/root"},
@@ -89,6 +91,26 @@ pub struct Tls {
 /// The object store for backups.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Backup {
+    /// The endpoint host name.
+    pub endpoint: String,
+    /// The region.
+    pub region: String,
+    /// The bucket.
+    pub bucket: String,
+    /// The port.
+    pub port: u16,
+    /// The file that holds the access key id.
+    pub access_key_file: PathBuf,
+    /// The file that holds the secret access key.
+    pub secret_key_file: PathBuf,
+    /// The further object stores, in order (`backup.copies`). Each gets
+    /// every container too (ADR-012 record of lane m10/backup-format).
+    pub copies: Vec<BackupStore>,
+}
+
+/// One further object store of `backup.copies`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackupStore {
     /// The endpoint host name.
     pub endpoint: String,
     /// The region.
@@ -194,6 +216,8 @@ pub enum Problem {
     TlsNeedsBoth,
     /// Not three agreement versions like `1,1,1`.
     BadAgreements,
+    /// `backup.copies` is not a list of one or two stores.
+    BadCopies,
 }
 
 /// A refused configuration: the member, as a dotted path, and what is
@@ -299,6 +323,74 @@ fn optional_path(obj: &Object, name: &str, field: &str) -> Result<Option<PathBuf
     }
 }
 
+/// The most further object stores `backup.copies` names (ADR-012 record
+/// of lane m10/backup-format).
+pub const MAX_COPIES: usize = 2;
+
+/// One object store of `backup`: the first store's members in `backup`
+/// itself, or one entry of `backup.copies`. Store `n` from 1 takes its
+/// key files from `<etc>/s3-<n>-access-key-id` and
+/// `<etc>/s3-<n>-secret-access-key` by default.
+fn store(
+    b: &Object,
+    prefix: &str,
+    etc: &std::path::Path,
+    n: usize,
+) -> Result<BackupStore, ConfigError> {
+    let f = |name: &str| format!("{prefix}.{name}");
+    let endpoint = required(b, "endpoint", &f("endpoint"))?;
+    if !is_host_name(endpoint) {
+        return err(&f("endpoint"), Problem::BadHost);
+    }
+    let region = required(b, "region", &f("region"))?;
+    if region.is_empty()
+        || region.len() > 64
+        || !region
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    {
+        return err(&f("region"), Problem::NotText);
+    }
+    let bucket = required(b, "bucket", &f("bucket"))?;
+    if bucket.len() < 3
+        || bucket.len() > 63
+        || !bucket
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'.')
+    {
+        return err(&f("bucket"), Problem::NotText);
+    }
+    let (ak, sk) = if n == 0 {
+        (
+            etc.join("s3-access-key-id"),
+            etc.join("s3-secret-access-key"),
+        )
+    } else {
+        (
+            etc.join(format!("s3-{n}-access-key-id")),
+            etc.join(format!("s3-{n}-secret-access-key")),
+        )
+    };
+    Ok(BackupStore {
+        endpoint: endpoint.to_owned(),
+        region: region.to_owned(),
+        bucket: bucket.to_owned(),
+        port: port(b, "port", &f("port"), 443)?,
+        access_key_file: path(
+            Some(b),
+            "access_key_file",
+            &f("access_key_file"),
+            &ak.to_string_lossy(),
+        )?,
+        secret_key_file: path(
+            Some(b),
+            "secret_key_file",
+            &f("secret_key_file"),
+            &sk.to_string_lossy(),
+        )?,
+    })
+}
+
 /// Whether `name` is a lowercase DNS name of at least two labels: letters,
 /// digits and hyphens, no label starting or ending with a hyphen, at most
 /// 253 characters.
@@ -381,7 +473,16 @@ const MAIL: [&str; 6] = [
     "username",
 ];
 const TLS: [&str; 2] = ["cert", "key"];
-const BACKUP: [&str; 6] = [
+const BACKUP: [&str; 7] = [
+    "access_key_file",
+    "bucket",
+    "copies",
+    "endpoint",
+    "port",
+    "region",
+    "secret_key_file",
+];
+const STORE: [&str; 6] = [
     "access_key_file",
     "bucket",
     "endpoint",
@@ -500,47 +601,36 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
         None => None,
         Some(b) => {
             closed(b, "backup", &BACKUP)?;
-            let endpoint = required(b, "endpoint", "backup.endpoint")?;
-            if !is_host_name(endpoint) {
-                return err("backup.endpoint", Problem::BadHost);
-            }
-            let region = required(b, "region", "backup.region")?;
-            if region.is_empty()
-                || region.len() > 64
-                || !region
-                    .bytes()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-            {
-                return err("backup.region", Problem::NotText);
-            }
-            let bucket = required(b, "bucket", "backup.bucket")?;
-            if bucket.len() < 3
-                || bucket.len() > 63
-                || !bucket
-                    .bytes()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'.')
-            {
-                return err("backup.bucket", Problem::NotText);
-            }
-            let ak = paths.etc.join("s3-access-key-id");
-            let sk = paths.etc.join("s3-secret-access-key");
+            let first = store(b, "backup", &paths.etc, 0)?;
+            // ADR-012 record of lane m10/backup-format: further stores get
+            // every container too.
+            let copies = match b.get("copies") {
+                None => Vec::new(),
+                Some(v) => {
+                    let list = match v.as_array() {
+                        Some(l) if !l.is_empty() && l.len() <= MAX_COPIES => l,
+                        _ => return err("backup.copies", Problem::BadCopies),
+                    };
+                    let mut out = Vec::new();
+                    for (i, c) in list.iter().enumerate() {
+                        let prefix = format!("backup.copies.{}", i.saturating_add(1));
+                        let Some(c) = c.as_object() else {
+                            return err(&prefix, Problem::NotObject);
+                        };
+                        closed(c, &prefix, &STORE)?;
+                        out.push(store(c, &prefix, &paths.etc, i.saturating_add(1))?);
+                    }
+                    out
+                }
+            };
             Some(Backup {
-                endpoint: endpoint.to_owned(),
-                region: region.to_owned(),
-                bucket: bucket.to_owned(),
-                port: port(b, "port", "backup.port", 443)?,
-                access_key_file: path(
-                    Some(b),
-                    "access_key_file",
-                    "backup.access_key_file",
-                    &ak.to_string_lossy(),
-                )?,
-                secret_key_file: path(
-                    Some(b),
-                    "secret_key_file",
-                    "backup.secret_key_file",
-                    &sk.to_string_lossy(),
-                )?,
+                endpoint: first.endpoint,
+                region: first.region,
+                bucket: first.bucket,
+                port: first.port,
+                access_key_file: first.access_key_file,
+                secret_key_file: first.secret_key_file,
+                copies,
             })
         }
     };
@@ -691,6 +781,75 @@ mod tests {
         assert_eq!(c.services, Services::Systemd);
         assert!(c.tls.is_none() && c.backup.is_none());
         assert_eq!(c.agreements, "1,1,1");
+    }
+
+    /// Q25, ADR-012 and ADR-028 records of lane m10/backup-format:
+    /// `backup.copies` names one or two further object stores, whose key
+    /// files default to `<etc>/s3-<n>-...`. One store, as before, stays
+    /// valid. An empty list, three copies and an unknown member are
+    /// refused, and each refusal names the member.
+    #[test]
+    fn adr028_backup_takes_further_stores_as_copies() {
+        let first = r#""endpoint":"s3.gra.io.cloud.ovh.net","region":"gra","bucket":"fstp-b""#;
+        let copy = r#"{"endpoint":"s3.fr-par.scw.cloud","region":"fr-par","bucket":"fstp-c"}"#;
+        let b = decode(with(&format!(r#""backup":{{{first}}}"#)).as_bytes())
+            .unwrap()
+            .backup
+            .unwrap();
+        assert!(b.copies.is_empty());
+        let b = decode(
+            with(&format!(
+                r#""backup":{{{first},"copies":[{copy},{{"endpoint":"s3.eu-central-1.ionoscloud.com","region":"de","bucket":"fstp-d","port":8443,"access_key_file":"/k/a","secret_key_file":"/k/s"}}]}}"#
+            ))
+            .as_bytes(),
+        )
+        .unwrap()
+        .backup
+        .unwrap();
+        assert_eq!(b.copies.len(), 2);
+        assert_eq!(b.copies[0].bucket, "fstp-c");
+        assert_eq!(b.copies[0].port, 443);
+        assert!(b.copies[0].access_key_file.ends_with("s3-1-access-key-id"));
+        assert!(
+            b.copies[0]
+                .secret_key_file
+                .ends_with("s3-1-secret-access-key")
+        );
+        assert_eq!(b.copies[1].port, 8443);
+        assert_eq!(b.copies[1].access_key_file, PathBuf::from("/k/a"));
+        for (extra, want) in [
+            (
+                "[]".to_owned(),
+                ("backup.copies".into(), Problem::BadCopies),
+            ),
+            (
+                format!("[{copy},{copy},{copy}]"),
+                ("backup.copies".into(), Problem::BadCopies),
+            ),
+            (
+                copy.to_owned(),
+                ("backup.copies".into(), Problem::BadCopies),
+            ),
+            (
+                "[1]".to_owned(),
+                ("backup.copies.1".into(), Problem::NotObject),
+            ),
+            (
+                r#"[{"endpoint":"x.example.eu","region":"r","bucket":"abc","copies":[]}]"#
+                    .to_owned(),
+                ("backup.copies.1.copies".into(), Problem::Unknown),
+            ),
+            (
+                r#"[{"region":"r","bucket":"abc"}]"#.to_owned(),
+                ("backup.copies.1.endpoint".into(), Problem::Missing),
+            ),
+        ] {
+            assert_eq!(
+                problem(&with(&format!(r#""backup":{{{first},"copies":{extra}}}"#))),
+                want,
+                "{extra}"
+            );
+        }
     }
 
     /// ADR-028 record of lane `m10/guard-key`: the member `custodian`

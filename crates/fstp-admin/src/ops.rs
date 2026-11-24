@@ -56,10 +56,21 @@ pub fn setup_backups(
         let dir = layout.creds(&format!("backup-{}", c.name()));
         std::fs::create_dir_all(&dir).map_err(io(step))?;
         std::fs::create_dir_all(layout.backup_state(c)).map_err(io(step))?;
-        for (from, to) in [
-            (&b.access_key_file, "s3-access-key-id"),
-            (&b.secret_key_file, "s3-secret-access-key"),
-        ] {
+        // ADR-012 record of lane m10/backup-format: store `n` from 1 takes
+        // `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`.
+        let mut files = vec![
+            (b.access_key_file.clone(), "s3-access-key-id".to_owned()),
+            (b.secret_key_file.clone(), "s3-secret-access-key".to_owned()),
+        ];
+        for (i, s) in b.copies.iter().enumerate() {
+            let n = i.saturating_add(1);
+            files.push((s.access_key_file.clone(), format!("s3-{n}-access-key-id")));
+            files.push((
+                s.secret_key_file.clone(),
+                format!("s3-{n}-secret-access-key"),
+            ));
+        }
+        for (from, to) in &files {
             let bytes = std::fs::read(from).map_err(io(step))?;
             write_atomic(&dir.join(to), &bytes, 0o640).map_err(io(step))?;
         }
