@@ -97,14 +97,29 @@ pub(crate) fn abandon_stale_reruns(inner: &Inner, now: Timestamp) -> Result<(), 
     Ok(())
 }
 
-/// Records the checks each waiting payment request awaits.
+/// The most passes of one `run_checks_now`. A request needs at most two
+/// runs, so this bound is reached only if requests keep arriving.
+const MAX_PASSES: usize = 8;
+
+/// Records the checks each waiting payment request awaits (I-32).
+///
+/// Submission first, then acceptance, as the runner is asked in turn.
+/// Each pass reads the state afresh, and the passes repeat until no
+/// request waits. A request submitted between two passes then gets both
+/// runs in this call. With a fixed two passes it got only its submission
+/// run, and its acceptance run waited a whole tick (F-068).
 pub(crate) fn run_checks_now(inner: &Inner, now: Timestamp) -> Result<(), String> {
-    // Submission first, then acceptance, as the runner is asked in turn.
-    run_phase(inner, now)?;
-    run_phase(inner, now)
+    for _ in 0..MAX_PASSES {
+        if run_phase(inner, now)? == 0 {
+            break;
+        }
+    }
+    Ok(())
 }
 
-fn run_phase(inner: &Inner, now: Timestamp) -> Result<(), String> {
+/// Records one run for each request that awaits one, and returns how
+/// many it recorded.
+fn run_phase(inner: &Inner, now: Timestamp) -> Result<usize, String> {
     let state = inner.ports.engine.state();
     let waiting: Vec<_> = state
         .core
@@ -117,6 +132,7 @@ fn run_phase(inner: &Inner, now: Timestamp) -> Result<(), String> {
                     && !s.acceptance_passed)
         })
         .collect();
+    let recorded = waiting.len();
     for s in waiting {
         let phase = if s.submission_passed {
             CheckPhase::Acceptance
@@ -166,7 +182,7 @@ fn run_phase(inner: &Inner, now: Timestamp) -> Result<(), String> {
             )
             .map_err(|e| format!("checks: {e}"))?;
     }
-    Ok(())
+    Ok(recorded)
 }
 
 /// One tick: the sweep, then the checks, at the cell clock.
