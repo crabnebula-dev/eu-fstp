@@ -662,6 +662,12 @@ pub trait DailySnapshot: Send + Sync {
     /// Records a try that failed before it had rows to snapshot: the
     /// keystore rows did not read from the vault's database.
     fn failed(&self);
+    /// Whether a request file asks for a snapshot now, which this takes
+    /// (ADR-012 record of lane m10/store-reconnect, row "Snapshot
+    /// request"). None by default.
+    fn requested(&self) -> bool {
+        false
+    }
 }
 
 /// The daily snapshot over `custody`, writing the status file in
@@ -695,6 +701,12 @@ impl<C: Custody + Send + Sync> DailySnapshot for Daily<C> {
             SnapshotTrigger::Daily,
             Some(SnapshotFailure::Database),
         );
+    }
+
+    fn requested(&self) -> bool {
+        self.status_dir
+            .as_deref()
+            .is_some_and(fstp_obs::snapshot_status::take_request)
     }
 }
 

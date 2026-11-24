@@ -1272,3 +1272,47 @@ fn json_with_duplicate_keys_is_a_decode_error() {
         assert_eq!(v, fstp_json::parse(br#"{"a":2}"#).unwrap());
     });
 }
+
+/// ADR-005 record of lane m10/store-reconnect: `Client::ping` answers
+/// over a live session in one round trip and leaves it idle, and it fails
+/// on a session the server ended, which is then broken. A pool pings an
+/// idle client before it hands it out.
+#[test]
+fn adr005_ping_detects_a_session_the_server_ended() {
+    let (_db, cfg) = fresh();
+    let mut c = connect(&cfg);
+    block_on(c.ping()).unwrap();
+    assert!(!c.is_broken());
+    assert_eq!(c.transaction_status(), TransactionStatus::Idle);
+    let pid: i32 = block_on(c.query_one("SELECT pg_backend_pid()", &[]))
+        .unwrap()
+        .get(0)
+        .unwrap();
+    let mut other = connect(&cfg);
+    let ended: bool = block_on(other.query_one("SELECT pg_terminate_backend($1)", &[&pid]))
+        .unwrap()
+        .get(0)
+        .unwrap();
+    assert!(ended);
+    // The server sends FATAL 57P01 and closes; wait until it did.
+    let start = Instant::now();
+    loop {
+        let left: i64 = block_on(other.query_one(
+            "SELECT count(*) FROM pg_stat_activity WHERE pid = $1",
+            &[&pid],
+        ))
+        .unwrap()
+        .get(0)
+        .unwrap();
+        if left == 0 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "the backend lives"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(block_on(c.ping()).is_err());
+    assert!(c.is_broken());
+}

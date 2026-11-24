@@ -374,6 +374,38 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
         let bytes = std::fs::read(l.creds(service).join(name)).unwrap();
         assert_eq!(&bytes[..22], magic, "{service}");
     }
+    // ADR-005 record of lane m10/store-reconnect, I-81: both PostgreSQL
+    // clusters restart under the running cell and vault, as a crash, an
+    // OS update or an operator would restart them. Nothing restarts the
+    // services. The cell and the vault reconnect by themselves: a
+    // keystore snapshot of each, asked for after the restart, verifies.
+    // The cell's one runs a key record command through its engine and
+    // appends it through its store, and the vault's reads its keystore
+    // over a new keys connection that took the keystore lock again.
+    // Status then names nothing.
+    let restarted = restart_clusters_under_the_services(&l);
+    let snaps = wait_for_snapshots_since(&h, &l, restarted);
+    assert!(
+        !snaps.app.failing() && !snaps.vault.failing(),
+        "a keystore snapshot after the database restart failed: {snaps:?}\n{}",
+        h.logs()
+    );
+    for s in [snaps.app, snaps.vault] {
+        assert!(s.last_verified.is_some_and(|t| t >= restarted), "{snaps:?}");
+    }
+    let status = h.admin(&["status"]);
+    let text = Host::text(&status);
+    assert_eq!(status.status.code(), Some(0), "{text}\n{}", h.logs());
+    assert!(
+        !text.contains("STOPPED") && !text.contains("UNHEALTHY") && !text.contains("FAILED"),
+        "{text}"
+    );
+    for name in ["cell ", "vault"] {
+        assert!(
+            text.contains(&format!("snapshots  {name} last verified")),
+            "{name}: {text}"
+        );
+    }
 
     // A marker before the base backup, one after it that only the WAL
     // archive carries, and the WAL switched and uploaded.
@@ -417,7 +449,7 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
     // restarted PostgreSQL to turn archiving on after the cell had
     // started, so the cell's store stayed unavailable and every snapshot
     // after setup failed.
-    let snaps = wait_for_daily_snapshots(&h, &l, setup_done);
+    let snaps = wait_for_snapshots_since(&h, &l, setup_done);
     assert!(
         !snaps.app.failing() && !snaps.vault.failing(),
         "{snaps:?}\n{}",
@@ -595,11 +627,35 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
     s3.stop(&rt);
 }
 
+/// Restarts both PostgreSQL clusters the way `setup` does, with SIGINT
+/// and a start, while the cell and the vault keep running, and returns
+/// the instant both were back (ADR-005 record of lane m10/store-reconnect).
+/// It then asks both processes for a keystore snapshot now, with the
+/// request file of `fstp_obs::snapshot_status::REQUEST`, since the next
+/// daily one may be a day away.
+fn restart_clusters_under_the_services(l: &Layout) -> u64 {
+    let m = fstp_admin::svc::Manager::new(l);
+    for c in Cluster::ALL {
+        let s = fstp_admin::pg::service(l, c);
+        m.stop(&s).unwrap_or_else(|e| panic!("stop {c:?}: {e:?}"));
+        m.ensure(&s)
+            .unwrap_or_else(|e| panic!("start {c:?}: {e:?}"));
+    }
+    for c in [fstp_admin::stack::cell(l), fstp_admin::stack::vault(l)] {
+        assert!(m.running(&c), "{} stopped with its database", c.name);
+    }
+    let back = fstp_obs::snapshot_status::now();
+    for name in ["cell", "vault"] {
+        std::fs::write(l.creds(name).join(fstp_obs::snapshot_status::REQUEST), b"").unwrap();
+    }
+    back
+}
+
 /// Waits until the cell and the vault each recorded a daily keystore
-/// snapshot, verified or failed, at or after `since`, the end of setup,
-/// at most three minutes, and returns both status files (ADR-012 record of lane L27, row "Status
-/// file").
-fn wait_for_daily_snapshots(h: &Host, l: &Layout, since: u64) -> fstp_admin::status::Snapshots {
+/// snapshot, verified or failed, at or after `since`, at most three
+/// minutes, and returns both status files (ADR-012 record of lane L27,
+/// row "Status file").
+fn wait_for_snapshots_since(h: &Host, l: &Layout, since: u64) -> fstp_admin::status::Snapshots {
     let start = Instant::now();
     loop {
         let s = fstp_admin::status::snapshot_status(l);
@@ -613,7 +669,7 @@ fn wait_for_daily_snapshots(h: &Host, l: &Layout, since: u64) -> fstp_admin::sta
         }
         assert!(
             start.elapsed() < Duration::from_secs(180),
-            "no daily keystore snapshot ran: {s:?}\n{}",
+            "no daily keystore snapshot ran after the restart: {s:?}\n{}",
             h.logs()
         );
         std::thread::sleep(Duration::from_millis(500));

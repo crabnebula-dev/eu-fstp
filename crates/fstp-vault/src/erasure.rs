@@ -1608,7 +1608,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
     /// the keystore lock, which lives as long as its session (ADR-004
     /// record of lane L13b, row "Watch").
     pub async fn keys_alive(&mut self) -> bool {
-        self.client.query("SELECT 1", &[]).await.is_ok()
+        self.client.ping().await.is_ok()
     }
 
     /// Takes the keystore lock again on the new keys connection `client`

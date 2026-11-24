@@ -24,13 +24,18 @@
 //!
 //! [`due`] says when the next daily snapshot runs: a minute after the
 //! start, then every [`DAILY`] seconds, and [`RETRY`] seconds after a
-//! failure.
+//! failure. An empty file [`REQUEST`] in the same directory asks for one
+//! now ([`take_request`]).
 
 use std::io::Write as _;
 use std::path::Path;
 
 /// The file's name in a credentials directory.
 pub const FILE: &str = "keystore-snapshot.status";
+
+/// The name of the snapshot request file in a credentials directory
+/// ([`take_request`]).
+pub const REQUEST: &str = "keystore-snapshot.request";
 
 /// The longest file accepted, in bytes.
 pub const MAX_LEN: usize = 64;
@@ -205,6 +210,16 @@ pub fn due(started: u64, last_try: Option<(u64, bool)>, now: u64) -> bool {
     }
 }
 
+/// Takes the snapshot request of `dir`: whether [`REQUEST`] was there,
+/// removing it. A process that finds one takes its daily snapshot now,
+/// whatever [`due`] says, unless a rotation runs (ADR-012 record of lane
+/// m10/store-reconnect, row "Snapshot request"). Its content is never
+/// read.
+#[must_use]
+pub fn take_request(dir: &Path) -> bool {
+    std::fs::remove_file(dir.join(REQUEST)).is_ok()
+}
+
 /// The current time in Unix seconds.
 #[must_use]
 pub fn now() -> u64 {
@@ -332,6 +347,26 @@ mod tests {
         let s = read(&dir);
         assert_eq!((s.last_verified, s.last_failed), (Some(100), Some(200)));
         assert!(s.failing());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// ADR-005 and ADR-012 records of lane m10/store-reconnect, row
+    /// "Snapshot request": a request file makes one snapshot due now. It is
+    /// taken once, and a directory without one requests nothing.
+    #[test]
+    fn adr012_snapshot_request_file_is_taken_once() {
+        let dir = std::env::temp_dir().join(format!(
+            "fstp-obs-snaprequest-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!take_request(&dir));
+        std::fs::write(dir.join(REQUEST), b"").unwrap();
+        assert!(take_request(&dir));
+        assert!(!dir.join(REQUEST).exists());
+        assert!(!take_request(&dir));
+        assert!(!take_request(&dir.join("missing")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

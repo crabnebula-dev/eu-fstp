@@ -2654,14 +2654,20 @@ impl<C: Custody> ErasureRunner<C> {
     }
 
     /// Whether a daily snapshot is due now: an object store is configured
-    /// and the schedule of `fstp_obs::snapshot_status::due` says so.
+    /// and the schedule of `fstp_obs::snapshot_status::due` says so, or a
+    /// request file waits in the status directory, which this takes
+    /// (ADR-012 record of lane m10/store-reconnect, row "Snapshot
+    /// request").
     pub fn daily_due(&self) -> bool {
         self.snapshots.is_some()
-            && fstp_obs::snapshot_status::due(
+            && (fstp_obs::snapshot_status::due(
                 self.daily_started,
                 self.daily_last,
                 fstp_obs::snapshot_status::now(),
-            )
+            ) || self
+                .snapshot_status
+                .as_deref()
+                .is_some_and(fstp_obs::snapshot_status::take_request))
     }
 
     /// Writes the snapshot status file into `dir` after each snapshot
