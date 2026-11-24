@@ -187,6 +187,9 @@ pub enum DrillStep {
     Keystore,
     /// The scratch copy did not stop or go.
     Cleanup,
+    /// The witness copies did not fetch, load or match (ADR-028 record of
+    /// lane `m10/witness-copy`).
+    Witness,
 }
 
 impl DrillStep {
@@ -201,6 +204,7 @@ impl DrillStep {
             Self::Database => "database",
             Self::Keystore => "keystore",
             Self::Cleanup => "cleanup",
+            Self::Witness => "witness",
         }
     }
 }

@@ -2052,7 +2052,7 @@ pub const REPLIES: &[(&str, Shape)] = &[
                         "drill_step",
                         Shape::Enum(&[
                             "none", "space", "restore", "recovery", "database", "keystore",
-                            "cleanup",
+                            "cleanup", "witness",
                         ]),
                     ),
                     m("drill_seconds", Shape::Nullable(&Shape::Int)),
