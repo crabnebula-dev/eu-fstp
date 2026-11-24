@@ -682,9 +682,16 @@ pub fn run(layout: &Layout) -> u8 {
                 out(&parts);
             };
             match (sn.failing(), sn.last_verified) {
-                (true, _) => line(&[Part::T(
-                    " FAILED: the last keystore snapshot did not verify",
-                )]),
+                // ADR-012 record of lane m10/backup-followups, row "Failure
+                // reason": the step that failed, one word of a closed list.
+                (true, _) => line(&[
+                    Part::T(" FAILED: the last keystore snapshot did not verify (step: "),
+                    Part::T(
+                        sn.reason
+                            .map_or("unknown", fstp_obs::SnapshotFailure::as_str),
+                    ),
+                    Part::T(")"),
+                ]),
                 (false, Some(t)) => line(&[
                     Part::T(" last verified "),
                     Part::N(
@@ -1070,10 +1077,10 @@ mod tests {
         g.snapshot_age_hours = None;
         assert_eq!(next(&g), Next::KeystoreSnapshot);
         let s = Snapshots {
-            app: fstp_obs::snapshot_status::SnapshotStatus::default().after(true, 100),
+            app: fstp_obs::snapshot_status::SnapshotStatus::default().after(None, 100),
             vault: fstp_obs::snapshot_status::SnapshotStatus::default()
-                .after(true, 50)
-                .after(false, 60),
+                .after(None, 50)
+                .after(Some(fstp_obs::SnapshotFailure::Fetch), 60),
         };
         assert!(s.failing());
         assert_eq!(s.oldest_verified(), Some(50));
@@ -1087,10 +1094,10 @@ mod tests {
     fn adr028_l26_snapshots_reach_the_host_status_file() {
         use fstp_obs::snapshot_status::SnapshotStatus;
         let snaps = Snapshots {
-            app: SnapshotStatus::default().after(true, 1_700_000_000),
+            app: SnapshotStatus::default().after(None, 1_700_000_000),
             vault: SnapshotStatus::default()
-                .after(true, 1_699_990_000)
-                .after(false, 1_700_000_050),
+                .after(None, 1_699_990_000)
+                .after(Some(fstp_obs::SnapshotFailure::Fetch), 1_700_000_050),
         };
         let mut f = healthy();
         f.snapshot_failed = snaps.failing();

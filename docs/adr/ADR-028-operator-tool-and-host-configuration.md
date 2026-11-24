@@ -237,3 +237,10 @@ Written before the code. Daniel decided on 2026-11-24 that backup is mission cri
 | TLS in the drill | The drill puts the live `tls` files into its scratch copy before it starts the throwaway server, so the keystore checks meet the server key they pin | ADR-012 record of lane m10/backup-followups, row "TLS files in the drill" |
 
 Tests, written before the code: `adr012_bf_status_names_an_owed_custodian_key_copy`, `adr012_bf_restore_puts_the_live_tls_files_in_place`, `adr012_bf_setup_restarts_a_service_with_a_version_1_snapshot_key` and `adr012_bf_snapshot_config_names_every_store` in `fstp-admin`, and the end-to-end test `crates/fstp-celltest/tests/adr012_backup_health_e2e.rs` with a renewed server certificate before the drill.
+
+Added after the code, 2026-11-24 (ADR-012 record of lane m10/backup-followups, part "Found after the code"). Interim, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Restart after archiving is turned on | When `setup` restarts a database cluster to turn archiving on, it then stops and starts the vault, the cell and the edge, in start order. Before, the cell kept a dead database connection and every keystore snapshot and erasure step 5 failed until its next start | I-81 |
+| Snapshot step in `status` | A failed keystore snapshot line ends with `(step: <word>)`, the step the service recorded in its status file | R-NF-02 |

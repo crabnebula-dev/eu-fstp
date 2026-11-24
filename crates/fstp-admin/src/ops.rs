@@ -52,6 +52,7 @@ pub fn setup_backups(
     };
     let step = "backups";
     let mut did = false;
+    let mut restarted = false;
     for (c, ca) in [(Cluster::App, &cas.app_db), (Cluster::Vault, &cas.vault_db)] {
         let dir = layout.creds(&format!("backup-{}", c.name()));
         std::fs::create_dir_all(&dir).map_err(io(step))?;
@@ -164,6 +165,7 @@ pub fn setup_backups(
             m.stop(&s).map_err(|e| Fail::Step(step, e.into()))?;
             m.ensure(&s).map_err(|e| Fail::Step(step, e.into()))?;
             did = true;
+            restarted = true;
         }
         if fresh_base {
             let mut cmd = Command::new(layout.bin("fstp-backup"));
@@ -179,6 +181,12 @@ pub fn setup_backups(
         // ADR-012 record of lane m10/backup-followups: the second custodian
         // reads the version 2 key file from the stores.
         publish_key_if_owed(layout, m, c);
+    }
+    // ADR-012 record of lane m10/backup-followups, row "Database restart":
+    // the services that held connections to a restarted cluster start
+    // again, so the cell's store and the vault's keys login are fresh.
+    if restarted {
+        restart_database_clients(layout, m).map_err(|e| Fail::Step(step, e.into()))?;
     }
     m.timer(
         "fstp-admin-backup",
@@ -197,6 +205,39 @@ pub fn setup_backups(
     )
     .map_err(|e| Fail::Step(step, e.into()))?;
     Ok(Some(did))
+}
+
+/// The services that hold connections to the two database clusters, in
+/// start order: the vault, the cell, and the edge, whose unit requires the
+/// cell (ADR-012 record of lane m10/backup-followups, row "Database
+/// restart").
+#[must_use]
+pub fn database_clients(layout: &Layout) -> Vec<crate::svc::Service> {
+    vec![
+        stack::vault(layout),
+        stack::cell(layout),
+        stack::edge(layout),
+    ]
+}
+
+/// Stops and starts every service of [`database_clients`] after a
+/// database cluster restarted under it. The cell's store does not
+/// reconnect, so without this every key record, and with it every
+/// keystore snapshot and erasure step 5, failed until the next start. On
+/// a systemd host the stop of a cluster already stopped the units that
+/// require it, and only this starts them again.
+fn restart_database_clients(layout: &Layout, m: &Manager) -> Result<(), RunFail> {
+    let services = database_clients(layout);
+    for s in services.iter().rev() {
+        m.stop(s)?;
+    }
+    for s in &services {
+        m.ensure(s)?;
+    }
+    out(&[Part::T(
+        "  done     restarted the vault and the cell after the database restart",
+    )]);
+    Ok(())
 }
 
 /// `fstp-admin backup`: a base backup of both clusters now.
@@ -928,6 +969,36 @@ pub fn stop(layout: &Layout) -> Result<(), Fail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// I-81, ADR-012 record of lane m10/backup-followups, row "Database
+    /// restart": the services restarted after a database cluster restart
+    /// are the vault, the cell and the edge, in start order, each after the
+    /// units it needs.
+    #[test]
+    fn adr012_bf_database_clients_restart_in_start_order() {
+        let cfg = r#"{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{"relay":"smtp.example.eu","username":"cell"},"services":"direct"}"#;
+        let layout =
+            Layout::new(crate::config::decode(cfg.as_bytes()).unwrap_or_else(|_| panic!("config")));
+        let names: Vec<String> = database_clients(&layout)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["fstp-vault", "fstp-cell", "fstp-edge"]);
+        let clients = database_clients(&layout);
+        assert!(
+            clients[0]
+                .after
+                .contains(&crate::pg::service(&layout, Cluster::Vault).name)
+        );
+        assert!(
+            clients[1]
+                .after
+                .contains(&crate::pg::service(&layout, Cluster::App).name)
+        );
+        assert!(clients[1].after.iter().any(|a| a == "fstp-vault"));
+        assert!(clients[2].after.iter().any(|a| a == "fstp-cell"));
+    }
 
     /// I-83, ADR-012 record of lane m10/backup-followups, row "TLS files
     /// after a restore": the live server certificate, its expiry, its key
