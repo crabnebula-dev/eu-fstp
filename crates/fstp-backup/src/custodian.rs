@@ -23,7 +23,21 @@
 //! ```
 //!
 //! The second host opens the escrow through its own custody ([`open`]).
-//! Every plain copy of a secret here sits in `Zeroizing` storage (ADR-001
+//! Since lane m10/backup-followups the escrow is an `FBC2` container that
+//! names the custodian id and carries the cluster writer key's signature,
+//! so the second host verifies it under the version 2 key file.
+//!
+//! That key file reaches the second host through the object stores with
+//! no operator step ([`publish`], [`adopt_published`]):
+//!
+//! ```text
+//! published = "FBK1" | version u8 = 1 | len u16 | key file | tag 32
+//! tag       = HMAC-SHA256(HKDF-SHA256(group secret, salt = cluster,
+//!             info = "fstp-backup-key-file-tag-v1"), key file)
+//! ```
+//!
+//! Only a holder of the group secret makes or checks the tag: the first
+//! host through its root, the second through its escrow. Every plain copy of a secret here sits in `Zeroizing` storage (ADR-001
 //! record of 2026-11-21).
 
 use fstp_crypto::hybrid_kem::{self, HybridPublicKey, HybridSecretKey};
@@ -32,7 +46,10 @@ use fstp_keys::GroupId;
 use zeroize::Zeroizing;
 
 use crate::keyfile::{self, KeyFile};
-use crate::{BackupError, ContainerKind, GroupRef, open_container, seal_container};
+use crate::object::{ObjectIdent, open_object, seal_object};
+use crate::snapshot::{ObjectStore, first_good};
+use crate::writer::WriterKey;
+use crate::{BackupError, ContainerKind, GroupRef, open_container};
 
 /// The custodian key file in the second host's credentials directory.
 pub const CUSTODIAN_KEY_FILE: &str = "custodian.key";
@@ -178,21 +195,27 @@ pub async fn init<C: Custody>(
 
 /// `fstp-backup custodian-escrow`, on the first host: opens the group
 /// secret of `key` through `custody` and seals it to the custodian key of
-/// `request`. Returns the escrow container.
+/// `request`, as an `FBC2` container of kind 4 that names the custodian id
+/// and carries the signature of the cluster's writer key `writer`
+/// (ADR-012 record of lane m10/backup-followups, row "Escrow, version 2").
+/// Returns the escrow container.
 ///
 /// # Errors
 ///
 /// [`BackupError::KeyFile`] for a request of another cluster or one that
-/// does not decode, and the errors of [`keyfile::open`] and the seal.
+/// does not decode, a writer key that is not the key file's, and the
+/// errors of [`keyfile::open`] and the seal.
 pub async fn escrow<C: Custody>(
     custody: &C,
     key: &KeyFile,
+    writer: &WriterKey,
     request: &[u8],
 ) -> Result<Vec<u8>, BackupError> {
     let req = decode_request(request)?;
     if req.cluster != key.cluster || key.kind != keyfile::FileKind::ClusterBackup {
         return Err(bad("another cluster"));
     }
+    key.check_writer(writer)?;
     let to = HybridPublicKey::from_bytes(&req.public).map_err(|_| bad("request public key"))?;
     let secret = keyfile::open(custody, key).await?;
     let mut plain = Zeroizing::new(Vec::with_capacity(ESCROW_PLAIN_LEN));
@@ -205,7 +228,13 @@ pub async fn escrow<C: Custody>(
         group: GroupId(req.custodian),
         generation: keyfile::GENERATION,
     };
-    seal_container(&to, ContainerKind::CustodianEscrow, &group, 0, &plain)
+    seal_object(
+        &to,
+        writer,
+        &group,
+        &ObjectIdent::Escrow(req.custodian),
+        &plain,
+    )
 }
 
 /// Opens the group secret of `key` on the second host: the custodian key
@@ -216,7 +245,7 @@ pub async fn escrow<C: Custody>(
 ///
 /// [`BackupError::KeyFile`] for a custodian key file of another cluster,
 /// an escrow of another kind, cluster or group key, and the errors of
-/// [`keyfile::open`] and [`open_container`].
+/// [`keyfile::open`] and of the container's opener.
 pub async fn open<C: Custody>(
     custody: &C,
     custodian_key: &[u8],
@@ -227,21 +256,199 @@ pub async fn open<C: Custody>(
     if ck.cluster != key.cluster || key.kind != keyfile::FileKind::ClusterBackup {
         return Err(bad("another cluster"));
     }
+    let custodian_secret = keyfile::open(custody, &ck).await?;
+    open_with(&custodian_secret, ck.group, escrow, key)
+}
+
+/// Opens `escrow` under the opened custodian key of custodian `id`. An
+/// `FBC2` escrow (record of lane m10/backup-followups) must verify under
+/// the writer public key of `key` before anything opens, and name `id`.
+/// An `FBC1` escrow, made before that lane and carried by hand, opens as
+/// the record of lane L16 says. Either must name the group, generation
+/// and public key of `key`.
+fn open_with(
+    custodian_secret: &HybridSecretKey,
+    id: [u8; 16],
+    escrow: &[u8],
+    key: &KeyFile,
+) -> Result<HybridSecretKey, BackupError> {
     if escrow.len() > MAX_ESCROW_LEN {
         return Err(bad("escrow length"));
     }
-    let custodian_secret = keyfile::open(custody, &ck).await?;
-    let opened = open_container(&custodian_secret, escrow)?;
-    let plain = Zeroizing::new(opened.plaintext);
-    if opened.kind != ContainerKind::CustodianEscrow
-        || opened.owner != key.cluster
-        || opened.part != 0
-    {
-        return Err(bad("escrow container"));
-    }
+    let plain = if escrow.get(..4) == Some(&b"FBC2"[..]) {
+        let writer = key.check_binding()?;
+        let o = open_object(custodian_secret, &writer.writer[..], escrow)?;
+        let plain = Zeroizing::new(o.plaintext);
+        if o.owner != key.cluster || o.ident != ObjectIdent::Escrow(id) {
+            return Err(bad("escrow container"));
+        }
+        plain
+    } else {
+        let opened = open_container(custodian_secret, escrow)?;
+        let plain = Zeroizing::new(opened.plaintext);
+        if opened.kind != ContainerKind::CustodianEscrow
+            || opened.owner != key.cluster
+            || opened.part != 0
+        {
+            return Err(bad("escrow container"));
+        }
+        plain
+    };
     let p = decode_escrow_plain(&plain)?;
     if p.group != key.group || p.generation != key.generation || p.public != key.public {
         return Err(bad("escrow names another group key"));
     }
     Ok(p.secret)
+}
+
+/// The object name of the published key file of `cluster` (ADR-012 record
+/// of lane m10/backup-followups, row "Published key file").
+#[must_use]
+pub fn published_name(cluster: [u8; 16]) -> String {
+    format!("{}/keys/{}", crate::sigv4::hex(&cluster), keyfile::KEY_FILE)
+}
+
+/// The tag of the version 2 key file `key_file` of `cluster` under the
+/// group secret `secret`: HMAC-SHA256 over the key file under
+/// HKDF-SHA256(input: the secret key bytes, salt: the cluster id, info:
+/// [`TAG_INFO`]). Only a holder of the group secret makes or checks it.
+///
+/// # Errors
+///
+/// [`BackupError::Seal`] when the key derivation fails.
+pub fn key_file_tag(
+    secret: &HybridSecretKey,
+    cluster: [u8; 16],
+    key_file: &[u8],
+) -> Result<[u8; 32], BackupError> {
+    let mut k = Zeroizing::new([0u8; 32]);
+    let ikm = secret.to_bytes();
+    fstp_crypto::kdf::hkdf_sha256(&cluster, &ikm[..], TAG_INFO, &mut k[..])
+        .map_err(|_| BackupError::Seal("key file tag"))?;
+    Ok(fstp_crypto::hmac_sha256(&k[..], key_file))
+}
+
+/// Encodes the published key file: `"FBK1" | version u8 = 1 | len u16 |
+/// key file | tag 32`.
+///
+/// # Errors
+///
+/// [`BackupError::KeyFile`] for a key file longer than a `u16` counts.
+pub fn encode_published(key_file: &[u8], tag: &[u8; 32]) -> Result<Vec<u8>, BackupError> {
+    let len = u16::try_from(key_file.len()).map_err(|_| bad("published length"))?;
+    let mut out = Vec::with_capacity(key_file.len().saturating_add(39));
+    out.extend_from_slice(&PUBLISHED_MAGIC);
+    out.push(PUBLISHED_VERSION);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(key_file);
+    out.extend_from_slice(tag);
+    Ok(out)
+}
+
+/// Decodes a published key file into the key file bytes and the tag, in
+/// one spelling. Nothing here checks the tag or decodes the key file.
+/// Fuzzed (`backup_custodian_decode`).
+///
+/// # Errors
+///
+/// [`BackupError::KeyFile`] for another magic or version, a length that
+/// does not match, or a body above [`MAX_PUBLISHED_LEN`].
+pub fn decode_published(bytes: &[u8]) -> Result<(&[u8], [u8; 32]), BackupError> {
+    let e = bad("published key file");
+    if bytes.len() > MAX_PUBLISHED_LEN {
+        return Err(e);
+    }
+    let (magic, rest) = bytes.split_first_chunk::<4>().ok_or(e)?;
+    let (&[version], rest) = rest.split_first_chunk::<1>().ok_or(e)?;
+    let (len, rest) = rest.split_first_chunk::<2>().ok_or(e)?;
+    if *magic != PUBLISHED_MAGIC || version != PUBLISHED_VERSION {
+        return Err(e);
+    }
+    let (key_file, tag) = rest
+        .split_at_checked(usize::from(u16::from_be_bytes(*len)))
+        .ok_or(e)?;
+    let tag: [u8; 32] = tag.try_into().map_err(|_| e)?;
+    Ok((key_file, tag))
+}
+
+/// The magic of a published key file.
+pub const PUBLISHED_MAGIC: [u8; 4] = *b"FBK1";
+/// The version of a published key file.
+pub const PUBLISHED_VERSION: u8 = 1;
+/// The longest published key file read.
+pub const MAX_PUBLISHED_LEN: usize = 64 * 1024;
+/// The HKDF info of the key file tag.
+pub const TAG_INFO: &[u8] = b"fstp-backup-key-file-tag-v1";
+
+/// The published key file of `key_file` for its cluster, tagged under the
+/// group secret that `custody` opens (`fstp-backup publish-key`, ADR-012
+/// record of lane m10/backup-followups, row "Publishing"). The key file
+/// must be version 2 with a binding that verifies.
+///
+/// # Errors
+///
+/// [`BackupError::KeyFile`] for a key file that is not version 2 or whose
+/// binding fails, and the errors of [`keyfile::open`] and the tag.
+pub async fn publish<C: Custody>(custody: &C, key_file: &[u8]) -> Result<Vec<u8>, BackupError> {
+    let key = keyfile::decode(key_file)?;
+    key.check_binding()?;
+    let secret = keyfile::open(custody, &key).await?;
+    encode_published(key_file, &key_file_tag(&secret, key.cluster, key_file)?)
+}
+
+/// On the second host, the version 2 key file of `cluster` from the first
+/// of `stores` whose published copy is good (ADR-012 record of lane
+/// m10/backup-followups, row "On the second host"): its binding verifies,
+/// `escrow` opens under the custodian key that `custody` opens, the
+/// escrow names its group, generation and group public key, the local
+/// version 1 file `local`, if any, names the same, and the tag verifies
+/// under the escrow's secret. Returns the key file bytes.
+///
+/// # Errors
+///
+/// [`BackupError::NotFound`] when no store holds a copy, otherwise the
+/// first refusal, and the errors of [`keyfile::open`] for the custodian
+/// key.
+pub async fn adopt_published<C: Custody>(
+    custody: &C,
+    stores: &[&dyn ObjectStore],
+    cluster: [u8; 16],
+    local: Option<&[u8]>,
+    custodian_key: &[u8],
+    escrow: &[u8],
+) -> Result<Vec<u8>, BackupError> {
+    let ck = keyfile::decode_custodian(custodian_key)?;
+    if ck.cluster != cluster {
+        return Err(bad("another cluster"));
+    }
+    let pin = match local {
+        None => None,
+        Some(b) => Some(
+            keyfile::decode_kind(b, keyfile::FileKind::ClusterBackupV1)
+                .or_else(|_| keyfile::decode(b))?,
+        ),
+    };
+    let custodian_secret = keyfile::open(custody, &ck).await?;
+    let got = first_good(stores, &published_name(cluster), |bytes| {
+        let (file, tag) = decode_published(&bytes)?;
+        let key = keyfile::decode(file)?;
+        if key.cluster != cluster {
+            return Err(bad("another cluster"));
+        }
+        key.check_binding()?;
+        if let Some(p) = &pin
+            && (p.cluster, p.group, p.generation, p.public)
+                != (key.cluster, key.group, key.generation, key.public)
+        {
+            return Err(bad("published key file names another group key"));
+        }
+        let secret = open_with(&custodian_secret, ck.group, escrow, &key)?;
+        let want = key_file_tag(&secret, cluster, file)?;
+        if !fstp_crypto::constant_time_eq(&want, &tag) {
+            return Err(bad("published key file tag"));
+        }
+        Ok(file.to_vec())
+    })
+    .await?;
+    got.ok_or(BackupError::NotFound)
 }

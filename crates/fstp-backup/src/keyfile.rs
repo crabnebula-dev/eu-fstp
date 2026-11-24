@@ -25,10 +25,14 @@
 //! field is the custodian id, and its secret is the custodian key.
 //!
 //! The snapshot key files `cell-snapshot.key` and `vault-snapshot.key`
-//! have the version 1 layout under their own magics ([`FileKind`],
-//! ADR-004 record of lane L17). Their owner field holds the cell, and
-//! their root is `{cell, CellBackup or VaultBackup, epoch 1}` in the
-//! process's own custody entry.
+//! have the version 2 layout above under their own magics ([`FileKind`],
+//! ADR-012 record of lane m10/backup-followups): their sealed part holds
+//! the process's snapshot writer key after the group secret, so the
+//! writer key opens only through custody ([`open_writer`]). Their owner
+//! field holds the cell, and their root is `{cell, CellBackup or
+//! VaultBackup, epoch 1}` in the process's own custody entry (ADR-004
+//! record of lane L17). Their version 1 form is read only by
+//! [`upgrade_snapshot`].
 //!
 //! The writer reads the public key only, so it cannot open what it wrote
 //! (ADR-012 "Writer"). Opening the secret needs the custody root, which
@@ -46,7 +50,7 @@ use fstp_custody::{
 use fstp_keys::GroupId;
 use zeroize::Zeroizing;
 
-use crate::writer::{self, SIGNATURE_LEN, WRITER_PUBLIC_LEN, WriterKey};
+use crate::writer::{self, SIGNATURE_LEN, WRITER_PRIVATE_LEN, WRITER_PUBLIC_LEN, WriterKey};
 use crate::{BackupError, GroupRef};
 
 /// The magic of the version 2 group key file (record of lane
@@ -64,12 +68,19 @@ pub const KEY_FILE: &str = "cluster-backup.key";
 /// The label before the digest in [`KeyFile::custody_aad`] of a bound key
 /// file (ADR-012 record of lane m10/backup-format, row "Custody AAD").
 pub const CUSTODY_AAD_LABEL: &[u8] = b"fstp-backup-key-custody-aad-v2";
-/// The magic of the App chain's snapshot key file `cell-snapshot.key`
-/// (ADR-004 record of lane L17).
-pub const CELL_SNAPSHOT_MAGIC: &[u8; 22] = b"fstp-cell-snapshots-v1";
-/// The magic of the vault's snapshot key file `vault-snapshot.key`
-/// (ADR-004 record of lane L17).
-pub const VAULT_SNAPSHOT_MAGIC: &[u8; 22] = b"fstp-vault-snapshot-v1";
+/// The magic of the App chain's snapshot key file `cell-snapshot.key`,
+/// version 2, bound to the cell's snapshot writer key (ADR-012 record of
+/// lane m10/backup-followups).
+pub const CELL_SNAPSHOT_MAGIC: &[u8; 22] = b"fstp-cell-snapshots-v2";
+/// The magic of the vault's snapshot key file `vault-snapshot.key`,
+/// version 2 (ADR-012 record of lane m10/backup-followups).
+pub const VAULT_SNAPSHOT_MAGIC: &[u8; 22] = b"fstp-vault-snapshot-v2";
+/// The magic of `cell-snapshot.key`, version 1 (ADR-004 record of lane
+/// L17). Only the upgrade reads it.
+pub const CELL_SNAPSHOT_MAGIC_V1: &[u8; 22] = b"fstp-cell-snapshots-v1";
+/// The magic of `vault-snapshot.key`, version 1 (ADR-004 record of lane
+/// L17). Only the upgrade reads it.
+pub const VAULT_SNAPSHOT_MAGIC_V1: &[u8; 22] = b"fstp-vault-snapshot-v1";
 /// The App chain's snapshot key file name in the cell's credentials
 /// directory.
 pub const CELL_SNAPSHOT_KEY_FILE: &str = "cell-snapshot.key";
@@ -89,22 +100,31 @@ pub enum FileKind {
     ClusterBackupV1,
     /// `custodian.key`: a second custodian's key (record of lane L16).
     Custodian,
-    /// `cell-snapshot.key`: the CellBackup group of a cell's App chain
-    /// keystore snapshots (record of lane L17).
+    /// `cell-snapshot.key`, version 2: the CellBackup group of a cell's App
+    /// chain keystore snapshots (record of lane L17), bound to the cell's
+    /// snapshot writer key, whose private half it seals beside the group
+    /// secret (record of lane m10/backup-followups).
     CellSnapshot,
-    /// `vault-snapshot.key`: the VaultBackup group of a vault's keystore
-    /// snapshots (record of lane L17).
+    /// `vault-snapshot.key`, version 2: the VaultBackup group of a vault's
+    /// keystore snapshots (record of lane L17), bound and sealed as
+    /// [`FileKind::CellSnapshot`].
     VaultSnapshot,
+    /// `cell-snapshot.key`, version 1. Read only by [`upgrade_snapshot`].
+    CellSnapshotV1,
+    /// `vault-snapshot.key`, version 1. Read only by [`upgrade_snapshot`].
+    VaultSnapshotV1,
 }
 
 impl FileKind {
     /// Every kind.
-    pub const ALL: [FileKind; 5] = [
+    pub const ALL: [FileKind; 7] = [
         FileKind::ClusterBackup,
         FileKind::ClusterBackupV1,
         FileKind::Custodian,
         FileKind::CellSnapshot,
         FileKind::VaultSnapshot,
+        FileKind::CellSnapshotV1,
+        FileKind::VaultSnapshotV1,
     ];
 
     /// The magic of the kind.
@@ -116,6 +136,8 @@ impl FileKind {
             FileKind::Custodian => CUSTODIAN_MAGIC,
             FileKind::CellSnapshot => CELL_SNAPSHOT_MAGIC,
             FileKind::VaultSnapshot => VAULT_SNAPSHOT_MAGIC,
+            FileKind::CellSnapshotV1 => CELL_SNAPSHOT_MAGIC_V1,
+            FileKind::VaultSnapshotV1 => VAULT_SNAPSHOT_MAGIC_V1,
         }
     }
 
@@ -126,8 +148,8 @@ impl FileKind {
             FileKind::ClusterBackup | FileKind::ClusterBackupV1 | FileKind::Custodian => {
                 Chain::ClusterBackup
             }
-            FileKind::CellSnapshot => Chain::CellBackup,
-            FileKind::VaultSnapshot => Chain::VaultBackup,
+            FileKind::CellSnapshot | FileKind::CellSnapshotV1 => Chain::CellBackup,
+            FileKind::VaultSnapshot | FileKind::VaultSnapshotV1 => Chain::VaultBackup,
         }
     }
 
@@ -135,14 +157,52 @@ impl FileKind {
     /// the cluster keys name no cell.
     #[must_use]
     pub const fn per_cell(self) -> bool {
-        matches!(self, FileKind::CellSnapshot | FileKind::VaultSnapshot)
+        matches!(
+            self,
+            FileKind::CellSnapshot
+                | FileKind::VaultSnapshot
+                | FileKind::CellSnapshotV1
+                | FileKind::VaultSnapshotV1
+        )
     }
 
     /// Whether the file holds a writer public key and its binding: the
-    /// version 2 group key file only.
+    /// version 2 group key file and the version 2 snapshot key files.
     #[must_use]
     pub const fn bound(self) -> bool {
-        matches!(self, FileKind::ClusterBackup)
+        matches!(
+            self,
+            FileKind::ClusterBackup | FileKind::CellSnapshot | FileKind::VaultSnapshot
+        )
+    }
+
+    /// Whether the sealed part holds the writer's private key after the
+    /// group secret: the version 2 snapshot key files (record of lane
+    /// m10/backup-followups, row "Where the writer key lives").
+    #[must_use]
+    pub const fn seals_writer(self) -> bool {
+        matches!(self, FileKind::CellSnapshot | FileKind::VaultSnapshot)
+    }
+
+    /// The length of the sealed part.
+    #[must_use]
+    pub const fn sealed_len(self) -> usize {
+        if self.seals_writer() {
+            SEALED_LEN + WRITER_PRIVATE_LEN
+        } else {
+            SEALED_LEN
+        }
+    }
+
+    /// The version 1 kind a version 2 snapshot kind upgrades from, and the
+    /// reverse.
+    #[must_use]
+    pub const fn snapshot_v1(self) -> Option<FileKind> {
+        match self {
+            FileKind::CellSnapshot => Some(FileKind::CellSnapshotV1),
+            FileKind::VaultSnapshot => Some(FileKind::VaultSnapshotV1),
+            _ => None,
+        }
     }
 }
 /// The epoch of the root at genesis.
@@ -299,7 +359,7 @@ impl KeyFile {
     ///
     /// [`BackupError::KeyFile`] naming the check that failed.
     pub fn check_binding(&self) -> Result<&Binding, BackupError> {
-        if self.kind != FileKind::ClusterBackup {
+        if !self.kind.bound() {
             return Err(bad("version 1 key file, run upgrade-keys"));
         }
         let b = self.binding.as_ref().ok_or(bad("binding"))?;
@@ -339,7 +399,7 @@ fn put16(out: &mut Vec<u8>, field: &[u8]) -> Result<(), BackupError> {
 /// [`BackupError::KeyFile`] for an empty or overlong field, a sealed
 /// secret of another length, or a binding on a kind without one.
 pub fn encode(f: &KeyFile) -> Result<Vec<u8>, BackupError> {
-    if f.sealed.len() != SEALED_LEN {
+    if f.sealed.len() != f.kind.sealed_len() {
         return Err(bad("sealed length"));
     }
     if f.kind.bound() != f.binding.is_some() {
@@ -444,7 +504,7 @@ pub fn decode_kind(bytes: &[u8], kind: FileKind) -> Result<KeyFile, BackupError>
     let handle = r.field()?;
     let wrapped = r.field()?;
     let nonce = r.array::<{ aead::NONCE_LEN }>()?;
-    let sealed = r.take(SEALED_LEN)?.to_vec();
+    let sealed = r.take(kind.sealed_len())?.to_vec();
     if !r.rest.is_empty() {
         return Err(bad("trailing bytes"));
     }
@@ -609,7 +669,11 @@ async fn seal_file<C: Custody>(
         .map_err(|_| BackupError::Custody("wrap"))?;
     file.wrapped = wrapped.0;
     let key = aead::Key::from_bytes(seal.expose()).map_err(|_| BackupError::Seal("seal key"))?;
-    let plain = secret.to_bytes();
+    let mut plain = Zeroizing::new(secret.to_bytes().to_vec());
+    if file.kind.seals_writer() {
+        let w = writer.ok_or(bad("writer key"))?;
+        plain.extend_from_slice(&w.private_bytes()?[..]);
+    }
     let sealed = aead::seal(&key, &aad, &plain[..]).map_err(|_| BackupError::Seal("group key"))?;
     file.nonce = sealed.nonce;
     file.sealed = sealed.body;
@@ -619,8 +683,10 @@ async fn seal_file<C: Custody>(
 /// As [`create`], for a key file of `kind` owned by `owner`: a cluster, or
 /// the cell of a snapshot key (ADR-004 record of lane L17). It creates the
 /// root of the kind's chain at epoch 1, labelled with the cell for a
-/// snapshot key, and no other. A version 2 group key file needs its
-/// writer key, so it comes from [`create`] only.
+/// snapshot key, and no other. A version 2 snapshot key file draws its
+/// writer key and seals it beside the group secret (ADR-012 record of
+/// lane m10/backup-followups). A version 2 group key file keeps its
+/// writer key in a file of its own, so it comes from [`create`] only.
 ///
 /// # Errors
 ///
@@ -631,11 +697,16 @@ pub async fn create_kind<C: Custody>(
     owner: [u8; 16],
     kind: FileKind,
 ) -> Result<Vec<u8>, BackupError> {
-    if kind.bound() {
+    if kind == FileKind::ClusterBackup {
         return Err(bad("a group key file comes from create"));
     }
     let secret = hybrid_kem::generate().map_err(|_| BackupError::Seal("group key"))?;
     let group = fstp_crypto::random_array::<16>().map_err(|_| BackupError::Seal("group id"))?;
+    let writer = if kind.seals_writer() {
+        Some(WriterKey::generate(owner)?)
+    } else {
+        None
+    };
     let root = new_root(custody, owner, kind).await?;
     let file = KeyFile {
         cluster: owner,
@@ -650,18 +721,17 @@ pub async fn create_kind<C: Custody>(
         sealed: Vec::new(),
         kind,
     };
-    seal_file(custody, &root, file, &secret, None).await
+    seal_file(custody, &root, file, &secret, writer.as_ref()).await
 }
 
-/// Opens the group secret of `f` through `custody`. The secret's public
-/// half must be the file's public key.
-///
-/// # Errors
-///
-/// [`BackupError::Custody`] when custody refuses the unwrap, and
-/// [`BackupError::KeyFile`] when the secret does not open or does not
-/// match.
-pub async fn open<C: Custody>(custody: &C, f: &KeyFile) -> Result<HybridSecretKey, BackupError> {
+/// Opens the sealed part of `f` through `custody`: the group secret, and
+/// for a version 2 snapshot key file the writer key. The secret's public
+/// half must be the file's public key, and the writer key's public half
+/// the file's writer public key.
+async fn open_parts<C: Custody>(
+    custody: &C,
+    f: &KeyFile,
+) -> Result<(HybridSecretKey, Option<WriterKey>), BackupError> {
     let aad = f.aad();
     let seal = custody
         .unwrap(
@@ -673,9 +743,82 @@ pub async fn open<C: Custody>(custody: &C, f: &KeyFile) -> Result<HybridSecretKe
         .map_err(|_| BackupError::Custody("unwrap"))?;
     let key = aead::Key::from_bytes(seal.expose()).map_err(|_| bad("seal key"))?;
     let plain = aead::open(&key, &f.nonce, &aad, &f.sealed).map_err(|_| bad("open"))?;
-    let secret = HybridSecretKey::from_bytes(&plain).map_err(|_| bad("secret key"))?;
+    let (secret, private) = plain
+        .split_at_checked(hybrid_kem::SECRET_KEY_LEN)
+        .ok_or(bad("secret key"))?;
+    let secret = HybridSecretKey::from_bytes(secret).map_err(|_| bad("secret key"))?;
     if secret.public().to_bytes() != f.public {
         return Err(bad("public key mismatch"));
     }
-    Ok(secret)
+    let writer = if f.kind.seals_writer() {
+        let w = WriterKey::from_private(f.cluster, private)?;
+        if Some(&w.public()) != f.writer_public() {
+            return Err(bad("writer key mismatch"));
+        }
+        Some(w)
+    } else if private.is_empty() {
+        None
+    } else {
+        return Err(bad("secret key"));
+    };
+    Ok((secret, writer))
+}
+
+/// Opens the group secret of `f` through `custody`. The secret's public
+/// half must be the file's public key.
+///
+/// # Errors
+///
+/// [`BackupError::Custody`] when custody refuses the unwrap, and
+/// [`BackupError::KeyFile`] when the secret does not open or does not
+/// match.
+pub async fn open<C: Custody>(custody: &C, f: &KeyFile) -> Result<HybridSecretKey, BackupError> {
+    open_parts(custody, f).await.map(|(s, _)| s)
+}
+
+/// Opens the writer key sealed in a version 2 snapshot key file through
+/// `custody` (ADR-012 record of lane m10/backup-followups, row "Where the
+/// writer key lives"). Its public half must be the file's writer public
+/// key.
+///
+/// # Errors
+///
+/// As [`open`], and [`BackupError::KeyFile`] for a kind that seals no
+/// writer key.
+pub async fn open_writer<C: Custody>(custody: &C, f: &KeyFile) -> Result<WriterKey, BackupError> {
+    open_parts(custody, f)
+        .await?
+        .1
+        .ok_or(bad("no sealed writer key"))
+}
+
+/// The upgrade of a version 1 snapshot key file to version 2 of `kind`
+/// (ADR-012 record of lane m10/backup-followups, row "Upgrade"): opens the
+/// group secret of `v1` through `custody`, draws a writer key, and seals
+/// both under a fresh `S` wrapped under the same root, with the same
+/// owner, group, generation and group key.
+///
+/// # Errors
+///
+/// [`BackupError::KeyFile`] for a `kind` that is not a version 2
+/// snapshot kind or a file that is not its version 1, and the errors of
+/// [`open`] and the seal.
+pub async fn upgrade_snapshot<C: Custody>(
+    custody: &C,
+    v1: &[u8],
+    kind: FileKind,
+) -> Result<Vec<u8>, BackupError> {
+    let old_kind = kind.snapshot_v1().ok_or(bad("not a snapshot key file"))?;
+    let old = decode_kind(v1, old_kind)?;
+    let secret = open(custody, &old).await?;
+    let writer = WriterKey::generate(old.cluster)?;
+    let root = old.root();
+    let file = KeyFile {
+        kind,
+        binding: None,
+        wrapped: Vec::new(),
+        sealed: Vec::new(),
+        ..old
+    };
+    seal_file(custody, &root, file, &secret, Some(&writer)).await
 }

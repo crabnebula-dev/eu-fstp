@@ -46,6 +46,10 @@ pub enum Next {
     /// A fresh copy is owed to the second custodian: the last try failed
     /// (ADR-028 record of lane `m10/guard-key`, part 2).
     CustodianCopy,
+    /// The copy of a cluster's backup key file for the second custodian is
+    /// not in the object stores yet (ADR-012 record of lane
+    /// m10/backup-followups, row "Owed").
+    CustodianKeyCopy,
     /// A keystore snapshot failed, or none verified in a day and a half.
     KeystoreSnapshot,
     /// The web admins must enrol and invite the second admin first.
@@ -112,6 +116,10 @@ pub struct Findings {
     /// A restore drill is due: none passed in 35 days, or the last one
     /// failed.
     pub drill_due: bool,
+    /// The copy of a cluster's backup key file for the second custodian is
+    /// owed: its `key-published` mark does not name the key file (ADR-012
+    /// record of lane m10/backup-followups, row "Owed").
+    pub custodian_key_owed: bool,
 }
 
 /// Whether the newest key copy is older than the last vault erasure, so
@@ -157,6 +165,8 @@ pub fn next(f: &Findings) -> Next {
         Next::RestoreDrill
     } else if f.custodian == Some(crate::custodian::Link::CopyOwed) {
         Next::CustodianCopy
+    } else if f.custodian_key_owed {
+        Next::CustodianKeyCopy
     } else if f.snapshot_failed || f.snapshot_age_hours.is_none_or(|h| h > 36) {
         Next::KeystoreSnapshot
     } else if f.custodian == Some(crate::custodian::Link::Unpaired)
@@ -205,6 +215,9 @@ fn next_text(n: Next) -> &'static str {
         }
         Next::CustodianCopy => {
             "the second custodian answers, but the fresh key copy after the last erasure did not reach it. fstp-keyd tries again every ten minutes. Check the free disk space on the custodian machine and its log (journalctl -u fstp-keyd-custodian), then run fstp-admin status again."
+        }
+        Next::CustodianKeyCopy => {
+            "the copy of the backup key file for the second custodian is not in the object stores yet, so a restore on the custodian could not read the newest backups. Run fstp-admin backup, which sends it. If this stays, read admin/logs/fstp-admin.log for the object store's error, fix it, then run fstp-admin backup again."
         }
         Next::KeystoreSnapshot => {
             "the daily keystore snapshot failed or did not run. Read the log of fstp-cell and fstp-vault (journalctl -u <its name>), fix what it names, then run fstp-admin start: each service takes a snapshot a minute after it starts."
@@ -388,6 +401,10 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         witness_copied: copy.last_success.and_then(|t| i64::try_from(t).ok()),
         drill,
         drill_due: drill.due(u64::try_from(now).unwrap_or(0)),
+        custodian_key_owed: layout.cfg.backup.is_some()
+            && Cluster::ALL
+                .iter()
+                .any(|c| crate::ops::key_copy_owed(layout, *c)),
     };
     let last_key_copy = findings.keys_copied_at;
     Survey {
@@ -432,6 +449,7 @@ pub fn next_word(n: Next) -> HostNext {
         Next::Backup => HostNext::Backup,
         Next::RestoreDrill => HostNext::RestoreDrill,
         Next::CustodianCopy => HostNext::CustodianCopy,
+        Next::CustodianKeyCopy => HostNext::CustodianCopy,
         Next::KeystoreSnapshot => HostNext::KeystoreSnapshot,
         Next::WebAdmins => HostNext::WebAdmins,
         Next::VerifyAdmins => HostNext::VerifyAdmins,
@@ -493,7 +511,8 @@ pub fn host_status(
             None => host_status::CustodianState::NotUsed,
         },
         guard_owed: f.custodian == Some(crate::custodian::Link::Owed),
-        guard_copy_owed: f.custodian == Some(crate::custodian::Link::CopyOwed),
+        guard_copy_owed: f.custodian == Some(crate::custodian::Link::CopyOwed)
+            || f.custodian_key_owed,
         wal_archive: if f.backups {
             f.wal_archive
         } else {
@@ -711,9 +730,16 @@ pub fn run(layout: &Layout) -> u8 {
                 out(&parts);
             };
             match (sn.failing(), sn.last_verified) {
-                (true, _) => line(&[Part::T(
-                    " FAILED: the last keystore snapshot did not verify",
-                )]),
+                // ADR-012 record of lane m10/backup-followups, row "Failure
+                // reason": the step that failed, one word of a closed list.
+                (true, _) => line(&[
+                    Part::T(" FAILED: the last keystore snapshot did not verify (step: "),
+                    Part::T(
+                        sn.reason
+                            .map_or("unknown", fstp_obs::SnapshotFailure::as_str),
+                    ),
+                    Part::T(")"),
+                ]),
                 (false, Some(t)) => line(&[
                     Part::T(" last verified "),
                     Part::N(
@@ -747,6 +773,11 @@ pub fn run(layout: &Layout) -> u8 {
         Some(crate::custodian::Link::Unpaired) => "  custodian  not paired",
         None => "  custodian  not used in direct mode",
     })]);
+    if f.custodian_key_owed {
+        out(&[Part::T(
+            "  custodian  the backup key copy for the custodian is OWED (fstp-admin backup sends it)",
+        )]);
+    }
     out(&[Part::T(if key_copy_stale(f) {
         "  key copy   OLDER THAN THE LAST ERASURE: make a new copy"
     } else if f.keys_copied {
@@ -827,7 +858,41 @@ mod tests {
             witness_copied: Some(1_700_000_000),
             drill: fstp_obs::drill_status::DrillStatus::default().after_pass(1_700_000_000, 300),
             drill_due: false,
+            custodian_key_owed: false,
         }
+    }
+
+    /// F-044, ADR-012 record of lane m10/backup-followups, row "Owed": an
+    /// owed copy of the backup key file for the custodian is named after
+    /// the backups and an owed key entry copy, and reaches the host status
+    /// file as `guard_copy_owed` with the next word `custodian_copy`, with
+    /// no new member.
+    #[test]
+    fn adr012_bf_status_names_an_owed_custodian_key_copy() {
+        use crate::custodian::Link;
+        let mut f = healthy();
+        f.custodian_key_owed = true;
+        assert_eq!(next(&f), Next::CustodianKeyCopy);
+        assert!(next_text(Next::CustodianKeyCopy).contains("fstp-admin backup"));
+        f.custodian = Some(Link::CopyOwed);
+        assert_eq!(next(&f), Next::CustodianCopy);
+        f.custodian = Some(Link::Linked);
+        f.backup_age_hours = Some(40);
+        assert_eq!(next(&f), Next::Backup);
+        f.backup_age_hours = Some(2);
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.custodian, host_status::CustodianState::Linked);
+        assert!(s.guard_copy_owed && !s.guard_owed);
+        assert_eq!(s.next, HostNext::CustodianCopy);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        f.custodian_key_owed = false;
+        assert!(
+            !host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2)
+                .guard_copy_owed
+        );
     }
 
     /// ADR-028 record of lane `m10/guard-key`, part 2 (Q-F018-4), F-018:
@@ -1063,10 +1128,10 @@ mod tests {
         g.snapshot_age_hours = None;
         assert_eq!(next(&g), Next::KeystoreSnapshot);
         let s = Snapshots {
-            app: fstp_obs::snapshot_status::SnapshotStatus::default().after(true, 100),
+            app: fstp_obs::snapshot_status::SnapshotStatus::default().after(None, 100),
             vault: fstp_obs::snapshot_status::SnapshotStatus::default()
-                .after(true, 50)
-                .after(false, 60),
+                .after(None, 50)
+                .after(Some(fstp_obs::SnapshotFailure::Fetch), 60),
         };
         assert!(s.failing());
         assert_eq!(s.oldest_verified(), Some(50));
@@ -1080,10 +1145,10 @@ mod tests {
     fn adr028_l26_snapshots_reach_the_host_status_file() {
         use fstp_obs::snapshot_status::SnapshotStatus;
         let snaps = Snapshots {
-            app: SnapshotStatus::default().after(true, 1_700_000_000),
+            app: SnapshotStatus::default().after(None, 1_700_000_000),
             vault: SnapshotStatus::default()
-                .after(true, 1_699_990_000)
-                .after(false, 1_700_000_050),
+                .after(None, 1_699_990_000)
+                .after(Some(fstp_obs::SnapshotFailure::Fetch), 1_700_000_050),
         };
         let mut f = healthy();
         f.snapshot_failed = snaps.failing();

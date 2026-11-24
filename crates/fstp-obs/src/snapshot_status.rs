@@ -3,11 +3,18 @@
 //! Each serving process that takes keystore snapshots, `fstp-cell` and
 //! `fstp-vault`, rewrites `keystore-snapshot.status` in its credentials
 //! directory after each snapshot, step 5 of a rotation included.
-//! `fstp-admin status` reads it. It holds two instants and nothing else:
+//! `fstp-admin status` reads it. It holds two instants and, since lane
+//! m10/backup-followups (ADR-012, row "Failure reason"), the step at
+//! which the last failure failed:
 //!
 //! ```text
 //! file = "v1" SP <last verified> SP <last failed> LF
+//!      / "v2" SP <last verified> SP <last failed> SP <reason> LF
 //! ```
+//!
+//! `<reason>` is one word of [`crate::SnapshotFailure`]. A file whose last
+//! failure has no reason, or that never failed, keeps the `v1` form, so
+//! each state has one spelling.
 //!
 //! Each instant is Unix seconds in decimal, with no sign and no leading
 //! zero, and `0` means never. [`decode`] admits exactly this spelling, so
@@ -47,6 +54,8 @@ pub struct SnapshotStatus {
     pub last_verified: Option<u64>,
     /// When a snapshot last failed, in Unix seconds, if ever.
     pub last_failed: Option<u64>,
+    /// The step at which the last failure failed, if known.
+    pub reason: Option<crate::SnapshotFailure>,
 }
 
 impl SnapshotStatus {
@@ -60,10 +69,11 @@ impl SnapshotStatus {
         }
     }
 
-    /// The status after one more try at `now`.
+    /// The status after one more try at `now`: verified when `failure` is
+    /// `None`, else failed at that step.
     #[must_use]
-    pub fn after(self, verified: bool, now: u64) -> SnapshotStatus {
-        if verified {
+    pub fn after(self, failure: Option<crate::SnapshotFailure>, now: u64) -> SnapshotStatus {
+        if failure.is_none() {
             SnapshotStatus {
                 last_verified: Some(now),
                 ..self
@@ -71,6 +81,7 @@ impl SnapshotStatus {
         } else {
             SnapshotStatus {
                 last_failed: Some(now),
+                reason: failure,
                 ..self
             }
         }
@@ -109,28 +120,43 @@ pub fn decode(bytes: &[u8]) -> Result<SnapshotStatus, StatusError> {
     let text = std::str::from_utf8(bytes).map_err(|_| StatusError("text"))?;
     let line = text.strip_suffix('\n').ok_or(StatusError("line end"))?;
     let mut parts = line.split(' ');
-    if parts.next() != Some("v1") {
-        return Err(StatusError("version"));
-    }
+    let v2 = match parts.next() {
+        Some("v1") => false,
+        Some("v2") => true,
+        _ => return Err(StatusError("version")),
+    };
     let verified = instant(parts.next().ok_or(StatusError("fields"))?)?;
     let failed = instant(parts.next().ok_or(StatusError("fields"))?)?;
+    let reason = if v2 {
+        let word = parts.next().ok_or(StatusError("fields"))?;
+        let r = crate::SnapshotFailure::from_word(word).ok_or(StatusError("reason"))?;
+        // A reason names a failure that happened.
+        if failed.is_none() {
+            return Err(StatusError("reason"));
+        }
+        Some(r)
+    } else {
+        None
+    };
     if parts.next().is_some() {
         return Err(StatusError("fields"));
     }
     Ok(SnapshotStatus {
         last_verified: verified,
         last_failed: failed,
+        reason,
     })
 }
 
 /// Encodes a status file.
 #[must_use]
 pub fn encode(s: &SnapshotStatus) -> String {
-    format!(
-        "v1 {} {}\n",
-        s.last_verified.unwrap_or(0).min(MAX_INSTANT),
-        s.last_failed.unwrap_or(0).min(MAX_INSTANT)
-    )
+    let verified = s.last_verified.unwrap_or(0).min(MAX_INSTANT);
+    let failed = s.last_failed.unwrap_or(0).min(MAX_INSTANT);
+    match s.reason {
+        Some(r) if failed != 0 => format!("v2 {verified} {failed} {}\n", r.as_str()),
+        _ => format!("v1 {verified} {failed}\n"),
+    }
 }
 
 /// Reads the status file of `dir`. A missing or refused file reads as
@@ -149,9 +175,13 @@ pub fn read(dir: &Path) -> SnapshotStatus {
 /// # Errors
 ///
 /// The I/O error of the write or the rename.
-pub fn record(dir: &Path, verified: bool, now: u64) -> std::io::Result<()> {
+pub fn record(
+    dir: &Path,
+    failure: Option<crate::SnapshotFailure>,
+    now: u64,
+) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt as _;
-    let next = read(dir).after(verified, now);
+    let next = read(dir).after(failure, now);
     let tmp = dir.join(format!("{FILE}.tmp"));
     let _ = std::fs::remove_file(&tmp);
     let mut f = std::fs::OpenOptions::new()
@@ -189,6 +219,8 @@ mod tests {
 
     use super::*;
 
+    const F: Option<crate::SnapshotFailure> = Some(crate::SnapshotFailure::Fetch);
+
     /// ADR-012 record of lane L27, row "Status file": the file round trips
     /// in one spelling, and every other spelling is refused.
     #[test]
@@ -198,10 +230,17 @@ mod tests {
             SnapshotStatus {
                 last_verified: Some(1_795_000_000),
                 last_failed: None,
+                reason: None,
             },
             SnapshotStatus {
                 last_verified: Some(5),
                 last_failed: Some(MAX_INSTANT),
+                reason: None,
+            },
+            SnapshotStatus {
+                last_verified: Some(5),
+                last_failed: Some(7),
+                reason: Some(crate::SnapshotFailure::Database),
             },
         ] {
             let text = encode(&s);
@@ -224,11 +263,44 @@ mod tests {
         ] {
             assert!(decode(bad.as_bytes()).is_err(), "{bad:?}");
         }
-        let failing = SnapshotStatus::default().after(true, 10).after(false, 20);
+        let failing = SnapshotStatus::default().after(None, 10).after(F, 20);
         assert!(failing.failing());
-        assert!(!failing.after(true, 30).failing());
-        assert!(SnapshotStatus::default().after(false, 1).failing());
+        assert!(!failing.after(None, 30).failing());
+        assert!(SnapshotStatus::default().after(F, 1).failing());
         assert!(!SnapshotStatus::default().failing());
+    }
+
+    /// R-NF-02, ADR-012 record of lane m10/backup-followups, row "Failure
+    /// reason": a failure records its step as one word of a closed list,
+    /// in the `v2` form; a file with no reason keeps the `v1` form, so each
+    /// state has one spelling. A verified try keeps the last failure's
+    /// reason, and an unknown word or a reason without a failure is
+    /// refused.
+    #[test]
+    fn adr012_bf_snapshot_status_names_the_failed_step() {
+        for f in crate::SnapshotFailure::ALL {
+            let s = SnapshotStatus::default().after(None, 10).after(Some(f), 20);
+            let text = encode(&s);
+            assert_eq!(text, format!("v2 10 20 {}\n", f.as_str()));
+            assert_eq!(decode(text.as_bytes()), Ok(s));
+            let later = s.after(None, 30);
+            assert!(!later.failing());
+            assert_eq!(later.reason, Some(f));
+        }
+        assert_eq!(
+            encode(&SnapshotStatus::default().after(None, 3)),
+            "v1 3 0\n"
+        );
+        for bad in [
+            "v2 1 2\n",
+            "v2 1 2 none\n",
+            "v2 1 2 Fetch\n",
+            "v2 1 0 fetch\n",
+            "v2 1 2 fetch x\n",
+            "v1 1 2 fetch\n",
+        ] {
+            assert!(decode(bad.as_bytes()).is_err(), "{bad:?}");
+        }
     }
 
     /// ADR-012 record of lane L27, row "Daily snapshot": the first a
@@ -255,8 +327,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(read(&dir), SnapshotStatus::default());
-        record(&dir, true, 100).unwrap();
-        record(&dir, false, 200).unwrap();
+        record(&dir, None, 100).unwrap();
+        record(&dir, F, 200).unwrap();
         let s = read(&dir);
         assert_eq!((s.last_verified, s.last_failed), (Some(100), Some(200)));
         assert!(s.failing());

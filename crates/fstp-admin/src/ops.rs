@@ -52,6 +52,7 @@ pub fn setup_backups(
     };
     let step = "backups";
     let mut did = false;
+    let mut restarted = false;
     for (c, ca) in [(Cluster::App, &cas.app_db), (Cluster::Vault, &cas.vault_db)] {
         let dir = layout.creds(&format!("backup-{}", c.name()));
         std::fs::create_dir_all(&dir).map_err(io(step))?;
@@ -164,6 +165,7 @@ pub fn setup_backups(
             m.stop(&s).map_err(|e| Fail::Step(step, e.into()))?;
             m.ensure(&s).map_err(|e| Fail::Step(step, e.into()))?;
             did = true;
+            restarted = true;
         }
         if fresh_base {
             let mut cmd = Command::new(layout.bin("fstp-backup"));
@@ -176,6 +178,15 @@ pub fn setup_backups(
                 Part::T(" database in the new backup format"),
             ]);
         }
+        // ADR-012 record of lane m10/backup-followups: the second custodian
+        // reads the version 2 key file from the stores.
+        publish_key_if_owed(layout, m, c);
+    }
+    // ADR-012 record of lane m10/backup-followups, row "Database restart":
+    // the services that held connections to a restarted cluster start
+    // again, so the cell's store and the vault's keys login are fresh.
+    if restarted {
+        restart_database_clients(layout, m).map_err(|e| Fail::Step(step, e.into()))?;
     }
     m.timer(
         "fstp-admin-backup",
@@ -210,6 +221,39 @@ pub fn setup_backups(
     Ok(Some(did))
 }
 
+/// The services that hold connections to the two database clusters, in
+/// start order: the vault, the cell, and the edge, whose unit requires the
+/// cell (ADR-012 record of lane m10/backup-followups, row "Database
+/// restart").
+#[must_use]
+pub fn database_clients(layout: &Layout) -> Vec<crate::svc::Service> {
+    vec![
+        stack::vault(layout),
+        stack::cell(layout),
+        stack::edge(layout),
+    ]
+}
+
+/// Stops and starts every service of [`database_clients`] after a
+/// database cluster restarted under it. The cell's store does not
+/// reconnect, so without this every key record, and with it every
+/// keystore snapshot and erasure step 5, failed until the next start. On
+/// a systemd host the stop of a cluster already stopped the units that
+/// require it, and only this starts them again.
+fn restart_database_clients(layout: &Layout, m: &Manager) -> Result<(), RunFail> {
+    let services = database_clients(layout);
+    for s in services.iter().rev() {
+        m.stop(s)?;
+    }
+    for s in &services {
+        m.ensure(s)?;
+    }
+    out(&[Part::T(
+        "  done     restarted the vault and the cell after the database restart",
+    )]);
+    Ok(())
+}
+
 /// `fstp-admin backup`: a base backup of both clusters now.
 ///
 /// # Errors
@@ -233,8 +277,55 @@ pub fn backup(layout: &Layout) -> Result<(), Fail> {
             Part::T(c.name()),
             Part::T(" database"),
         ]);
+        publish_key_if_owed(layout, &m, c);
     }
     Ok(())
+}
+
+/// The mark of the key file last published for the second custodian, in
+/// the agent's state directory (ADR-012 record of lane
+/// m10/backup-followups, row "Publishing").
+const PUBLISHED_MARK: &str = "key-published";
+
+/// Whether the copy of `c`'s backup key file for the second custodian is
+/// owed: the key file exists and the agent's `key-published` mark does
+/// not hold its SHA-256 (ADR-012 record of lane m10/backup-followups, row
+/// "Owed").
+#[must_use]
+pub fn key_copy_owed(layout: &Layout, c: Cluster) -> bool {
+    let Ok(key) = std::fs::read(layout.creds(&format!("backup-{}", c.name())).join(KEY_FILE))
+    else {
+        return false;
+    };
+    let want = format!("{}\n", crate::pki::hex(&fstp_crypto::sha256(&key)));
+    std::fs::read_to_string(layout.backup_state(c).join(PUBLISHED_MARK)).map_or(true, |m| m != want)
+}
+
+/// Sends the copy of `c`'s backup key file for the second custodian with
+/// `fstp-backup publish-key` when it is owed. A failure is reported and
+/// does not fail the caller: the copy stays owed, and `status` names it
+/// (ADR-028 record of lane `m10/backup-followups`, row "The custodian's
+/// key copy").
+fn publish_key_if_owed(layout: &Layout, m: &Manager, c: Cluster) {
+    if !key_copy_owed(layout, c) {
+        return;
+    }
+    let mut cmd = Command::new(layout.bin("fstp-backup"));
+    let (k, v) = backup_env(layout, c);
+    cmd.env(k, v).arg("publish-key");
+    match run_ok(&mut cmd, &m.log()) {
+        Ok(()) => out(&[
+            Part::T("  done     the backup key copy of the "),
+            Part::T(c.name()),
+            Part::T(" database for the custodian"),
+        ]),
+        Err(e) => {
+            crate::fail::report(&Fail::Step("custodian key copy", e.into()));
+            out(&[Part::T(
+                "  The copy stays owed. fstp-admin backup sends it again.",
+            )]);
+        }
+    }
 }
 
 /// The time of the newest base backup of `c`, from the agent's index.
@@ -455,6 +546,20 @@ pub fn restore(layout: &Layout, target: Option<u64>) -> Result<(), Fail> {
         start(layout)?;
         return Err(f);
     }
+    // ADR-012 record of lane m10/backup-followups: the current TLS files go
+    // into each restored directory before PostgreSQL starts on it.
+    let tls = renew_server_tls_if_due(layout).and_then(|()| {
+        Cluster::ALL
+            .iter()
+            .try_for_each(|c| put_current_tls(layout, *c, &fresh(*c)))
+    });
+    if let Err(e) = tls {
+        for c in Cluster::ALL {
+            let _ = std::fs::remove_dir_all(fresh(c));
+        }
+        start(layout)?;
+        return Err(e);
+    }
     if let Err(e) = swap_both(layout, &m, stamp, &fresh) {
         start(layout)?;
         return Err(e);
@@ -494,6 +599,60 @@ fn declare_restore(layout: &Layout, m: &Manager) -> Result<(), Fail> {
         .map_err(|_| Fail::Step("declare restore", Cause::Io))?;
     let cell = crate::setup::cell_id(&mut state)?;
     crate::declare::declare_both(layout, m, &cell)
+}
+
+/// The TLS files of a cluster, in `<data>/tls` (ADR-028 "PostgreSQL"):
+/// the server certificate, its expiry sidecar, its key and the CA.
+pub const TLS_FILES: [&str; 4] = ["server.pem", "server.pem.expires", "server.key", "ca.pem"];
+
+/// Puts the live TLS files of cluster `c` into the restored data
+/// directory `restored`, before any PostgreSQL starts on it (ADR-012
+/// record of lane m10/backup-followups, rows "TLS files after a restore"
+/// and "TLS files in the drill"). A base backup carries the files of its
+/// own time, and the cell and the vault pin the live server key (I-83).
+///
+/// # Errors
+///
+/// [`Fail::Step`] when a live file is missing or a copy fails.
+pub fn put_current_tls(layout: &Layout, c: Cluster, restored: &Path) -> Result<(), Fail> {
+    let step = "restore";
+    let live = layout.pg_data(c).join("tls");
+    let to = restored.join("tls");
+    std::fs::create_dir_all(&to).map_err(io(step))?;
+    for name in TLS_FILES {
+        let bytes = std::fs::read(live.join(name)).map_err(io(step))?;
+        write_atomic(&to.join(name), &bytes, 0o600).map_err(io(step))?;
+    }
+    out(&[
+        Part::T("  done     put the current TLS files into the restored "),
+        Part::T(c.name()),
+        Part::T(" database"),
+    ]);
+    Ok(())
+}
+
+/// Before a restore copies the live TLS files: when a live server
+/// certificate needs a new issue (`pki::needs_issue`), issues it from the
+/// database CA, records its key and writes the service configurations
+/// again, as `renew` does, so the restored directories get current files
+/// (ADR-028 record of lane `m10/backup-followups`, row "TLS after a
+/// restore"). The services are stopped then, and the restore starts them.
+fn renew_server_tls_if_due(layout: &Layout) -> Result<(), Fail> {
+    let due = Cluster::ALL
+        .iter()
+        .any(|c| crate::pki::needs_issue(&layout.pg_data(*c).join("tls").join("server.pem")));
+    if !due {
+        return Ok(());
+    }
+    let mut state = State::load(&layout.admin_dir().join("state")).map_err(io("restore"))?;
+    let cell = crate::setup::cell_id(&mut state)?;
+    let cas = crate::setup::cas(layout)?;
+    let facts = crate::setup::credentials(layout, &mut state, &cas, cell)?;
+    crate::setup::write_configs(layout, &facts)?;
+    out(&[Part::T(
+        "  done     renewed the database server certificates before the restore",
+    )]);
+    Ok(())
 }
 
 /// Swaps both fresh directories in, each live one moved to
@@ -856,6 +1015,84 @@ pub fn stop(layout: &Layout) -> Result<(), Fail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// I-81, ADR-012 record of lane m10/backup-followups, row "Database
+    /// restart": the services restarted after a database cluster restart
+    /// are the vault, the cell and the edge, in start order, each after the
+    /// units it needs.
+    #[test]
+    fn adr012_bf_database_clients_restart_in_start_order() {
+        let cfg = r#"{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{"relay":"smtp.example.eu","username":"cell"},"services":"direct"}"#;
+        let layout =
+            Layout::new(crate::config::decode(cfg.as_bytes()).unwrap_or_else(|_| panic!("config")));
+        let names: Vec<String> = database_clients(&layout)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["fstp-vault", "fstp-cell", "fstp-edge"]);
+        let clients = database_clients(&layout);
+        assert!(
+            clients[0]
+                .after
+                .contains(&crate::pg::service(&layout, Cluster::Vault).name)
+        );
+        assert!(
+            clients[1]
+                .after
+                .contains(&crate::pg::service(&layout, Cluster::App).name)
+        );
+        assert!(clients[1].after.iter().any(|a| a == "fstp-vault"));
+        assert!(clients[2].after.iter().any(|a| a == "fstp-cell"));
+    }
+
+    /// I-83, ADR-012 record of lane m10/backup-followups, row "TLS files
+    /// after a restore": the live server certificate, its expiry, its key
+    /// and the CA replace the ones a restored directory carries from backup
+    /// time, with mode 0600. A missing live file stops the step, so no
+    /// restored directory starts with old files.
+    #[test]
+    fn adr012_bf_restore_puts_the_live_tls_files_in_place() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = std::env::temp_dir().join(format!(
+            "fstp-admin-bf-tls-{}",
+            crate::pki::random_hex(8).unwrap_or_default()
+        ));
+        let cfg = format!(
+            r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{{"relay":"smtp.example.eu","username":"cell"}},
+            "services":"direct",
+            "paths":{{"state":"{0}/state","etc":"{0}/etc","bin":"{0}/bin"}}}}"#,
+            root.display()
+        );
+        let layout =
+            Layout::new(crate::config::decode(cfg.as_bytes()).unwrap_or_else(|_| panic!("config")));
+        for c in Cluster::ALL {
+            let live = layout.pg_data(c).join("tls");
+            let restored = root.join(format!("{}.restored", c.name()));
+            std::fs::create_dir_all(&live).unwrap();
+            std::fs::create_dir_all(restored.join("tls")).unwrap();
+            for name in TLS_FILES {
+                std::fs::write(live.join(name), format!("current {name}")).unwrap();
+                std::fs::write(restored.join("tls").join(name), format!("old {name}")).unwrap();
+            }
+            put_current_tls(&layout, c, &restored).unwrap();
+            for name in TLS_FILES {
+                let p = restored.join("tls").join(name);
+                assert_eq!(
+                    std::fs::read_to_string(&p).unwrap(),
+                    format!("current {name}")
+                );
+                assert_eq!(
+                    std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+            std::fs::remove_file(live.join("server.key")).unwrap();
+            assert!(put_current_tls(&layout, c, &restored).is_err());
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// ADR-028 record of lane `m10/backup-pitr`: `restore` takes an
     /// optional `--to <time>`. A malformed time is refused before any

@@ -244,3 +244,25 @@ Written before the code. Daniel decided on 2026-11-24 that the local witness sto
 Tests: `adr028_wc_status_names_the_witness_copy`, `adr028_wc_witness_copy_reaches_the_host_status_file` and `adr028_wc_copy_timer_runs_every_minute` in `fstp-admin`; the new cases of `r_nf_02_host_status_round_trips` and `r_nf_02_host_status_refuses_bad_input` in `fstp-obs`; `adr028_l20_host_status_read_states` in `fstp-cell`; `adr028_wc_witness_copy_row` in `web/test/l20_system_page.test.ts`.
 
 Lead answers of 2026-11-24 for this lane, interim pending Daniel (ADR-012, record of lane m10/witness-copy). After a host loss, `restore-keys` leaves the marker `<state>/admin/host-loss-restore`. The next `restore` then moves a witness store that differs from its copies aside as `<store>.before-restore-<time>`, with one `done` line, and rebuilds it, so the host-loss flow has no manual step. Without the marker, a diverged store still stops the restore. The operator guide says that bucket lifecycle rules must keep the `<cluster>/witness/` prefix.
+
+## Record of lane `m10/backup-followups`, 2026-11-24: snapshots to every store, the custodian's key copy, TLS after a restore
+
+Written before the code. Daniel decided on 2026-11-24 that backup is mission critical (ADR-012, record of lane m10/backup-followups). Each row is interim, pending Daniel, unless it says otherwise. The rows "Agent configuration" of the record of lane m10/backup-format and "Turned on with backups" of the record of lane L27 are amended.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Snapshots to every store | With `backup.copies`, `setup` writes `object_stores`, the list of every store in order, into `cell.json` and `vault.json`, and copies each copy's key files into the cell's and the vault's credentials directories as `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`. With one store, both files keep `object_store` as before | Q25 |
+| Snapshot key upgrade | When the cell's or the vault's credentials directory holds a version 1 snapshot key file, `setup` restarts that service. The service upgrades the file at its start and takes a fresh snapshot a minute later. `fstp-admin` reads only the file's 22-byte magic. It still reaches no custody | ADR-012 record of lane m10/backup-followups, row "Upgrade" |
+| The custodian's key copy | `setup` runs `fstp-backup publish-key` for each cluster after `init-keys` or `upgrade-keys`, and whenever the agent's `key-published` file does not hold the SHA-256 of `cluster-backup.key`. `fstp-admin backup` runs it too while that holds. A failure is reported and does not fail the backup | ADR-012 record of lane m10/backup-followups, row "Publishing" |
+| Status | While a cluster's key copy is owed, `status` shows `custodian  ..., the backup key copy for the custodian is owed (fstp-admin backup sends it)`, and the host status file sets `guard_copy_owed` with the next word `custodian_copy`, as for an owed copy of a key entry. No new member, so the System page needs no change | ADR-028 record of lane `m10/guard-key`, part 2 |
+| TLS after a restore | After both restores succeed and before the swap, `restore` puts the live `tls` files of each cluster into its restored directory. When the live server certificate needs a new issue, it issues one from the database CA, records the new key, and writes the service configurations again, as `renew` does. The step is its own function, before any PostgreSQL start on a restored directory | ADR-012 record of lane m10/backup-followups, row "TLS files after a restore" |
+| TLS in the drill | The drill puts the live `tls` files into its scratch copy before it starts the throwaway server, so the keystore checks meet the server key they pin | ADR-012 record of lane m10/backup-followups, row "TLS files in the drill" |
+
+Tests, written before the code: `adr012_bf_status_names_an_owed_custodian_key_copy`, `adr012_bf_restore_puts_the_live_tls_files_in_place`, `adr012_bf_setup_restarts_a_service_with_a_version_1_snapshot_key` and `adr012_bf_snapshot_config_names_every_store` in `fstp-admin`, and the end-to-end test `crates/fstp-celltest/tests/adr012_backup_health_e2e.rs` with a renewed server certificate before the drill.
+
+Added after the code, 2026-11-24 (ADR-012 record of lane m10/backup-followups, part "Found after the code"). Interim, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Restart after archiving is turned on | When `setup` restarts a database cluster to turn archiving on, it then stops and starts the vault, the cell and the edge, in start order. Before, the cell kept a dead database connection and every keystore snapshot and erasure step 5 failed until its next start | I-81 |
+| Snapshot step in `status` | A failed keystore snapshot line ends with `(step: <word>)`, the step the service recorded in its status file | R-NF-02 |

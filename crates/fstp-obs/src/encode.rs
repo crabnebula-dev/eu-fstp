@@ -237,11 +237,16 @@ pub fn encode_log(event: &LogEvent) -> Result<String, ObsError> {
         LogEvent::KeystoreSnapshot {
             chain,
             trigger,
-            verified,
-        } => Line::new("keystore_snapshot")
-            .text("chain", chain.as_str())
-            .text("trigger", trigger.as_str())
-            .text("outcome", if verified { "verified" } else { "failed" }),
+            failure,
+        } => {
+            let line = Line::new("keystore_snapshot")
+                .text("chain", chain.as_str())
+                .text("trigger", trigger.as_str());
+            match failure {
+                None => line.text("outcome", "verified"),
+                Some(f) => line.text("outcome", "failed").text("reason", f.as_str()),
+            }
+        }
     };
     Ok(line.finish())
 }
@@ -384,7 +389,7 @@ mod tests {
             LogEvent::KeystoreSnapshot {
                 chain: crate::SnapshotChain::Vault,
                 trigger: crate::SnapshotTrigger::Daily,
-                verified: false,
+                failure: Some(crate::SnapshotFailure::Fetch),
             },
         ]
     }
@@ -408,13 +413,32 @@ mod tests {
         let line = encode_log(&LogEvent::KeystoreSnapshot {
             chain: crate::SnapshotChain::App,
             trigger: crate::SnapshotTrigger::Rotation,
-            verified: true,
+            failure: None,
         })
         .unwrap();
         assert_eq!(
             line,
             "{\"event\":\"keystore_snapshot\",\"chain\":\"app\",\"trigger\":\"rotation\",\"outcome\":\"verified\"}\n"
         );
+        // ADR-012 record of lane m10/backup-followups: a failure names its
+        // step, one word of a closed list.
+        for f in crate::SnapshotFailure::ALL {
+            let line = encode_log(&LogEvent::KeystoreSnapshot {
+                chain: crate::SnapshotChain::Vault,
+                trigger: crate::SnapshotTrigger::Daily,
+                failure: Some(f),
+            })
+            .unwrap();
+            assert_eq!(
+                line,
+                format!(
+                    "{{\"event\":\"keystore_snapshot\",\"chain\":\"vault\",\"trigger\":\"daily\",\"outcome\":\"failed\",\"reason\":\"{}\"}}\n",
+                    f.as_str()
+                )
+            );
+            assert_eq!(crate::SnapshotFailure::from_word(f.as_str()), Some(f));
+        }
+        assert_eq!(crate::SnapshotFailure::from_word("none"), None);
     }
 
     /// R-NF-02: a request event logs the route template, not a path.

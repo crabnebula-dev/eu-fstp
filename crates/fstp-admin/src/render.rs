@@ -51,18 +51,32 @@ fn registered(f: &Facts) -> String {
     )
 }
 
-/// The `object_store` member of `cell.json` and `vault.json`, with its
+/// The object store member of `cell.json` and `vault.json`, with its
 /// trailing comma: the backups' bucket, when `fstp.json` names one
-/// (ADR-028 record of lane L27, row "Turned on with backups").
+/// (ADR-028 record of lane L27, row "Turned on with backups"). With
+/// `backup.copies` it is `object_stores`, every store in order, so each
+/// keystore snapshot goes to every store (ADR-028 record of lane
+/// `m10/backup-followups`, row "Snapshots to every store").
 fn object_store(l: &Layout) -> String {
-    l.cfg.backup.as_ref().map_or_else(String::new, |b| {
+    let store = |bucket: &str, endpoint: &str, port: u16, region: &str| {
         format!(
-            "\"object_store\":{{\"bucket\":{},\"endpoint\":{},\"port\":{},\"region\":{}}},",
-            quote(&b.bucket),
-            quote(&b.endpoint),
-            b.port,
-            quote(&b.region)
+            "{{\"bucket\":{},\"endpoint\":{},\"port\":{},\"region\":{}}}",
+            quote(bucket),
+            quote(endpoint),
+            port,
+            quote(region)
         )
+    };
+    l.cfg.backup.as_ref().map_or_else(String::new, |b| {
+        let first = store(&b.bucket, &b.endpoint, b.port, &b.region);
+        if b.copies.is_empty() {
+            return format!("\"object_store\":{first},");
+        }
+        let mut all = vec![first];
+        for s in &b.copies {
+            all.push(store(&s.bucket, &s.endpoint, s.port, &s.region));
+        }
+        format!("\"object_stores\":[{}],", all.join(","))
     })
 }
 
@@ -394,6 +408,41 @@ mod tests {
         let mut g = facts();
         g.ticket_key = None;
         assert!(vault(&l, &g).is_none());
+    }
+
+    /// Q25, ADR-028 record of lane `m10/backup-followups`, row "Snapshots to
+    /// every store": with `backup.copies`, `cell.json` and `vault.json`
+    /// name every store in order as `object_stores`, and the vault's file
+    /// stays canonical.
+    #[test]
+    fn adr012_bf_snapshot_config_names_every_store() {
+        let l = Layout::new(
+            decode(
+                br#"{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+                "mail":{"relay":"smtp.example.eu","username":"cell"},
+                "backup":{"endpoint":"s3.gra.io.cloud.ovh.net","region":"gra","bucket":"fstp-b",
+                  "copies":[{"endpoint":"s3.fr-par.scw.cloud","region":"fr-par","bucket":"fstp-c","port":8443}]}}"#,
+            )
+            .unwrap(),
+        );
+        let f = facts();
+        let v = vault(&l, &f).unwrap();
+        for text in [cell(&l, &f), v.clone()] {
+            let j = fstp_json::parse(text.as_bytes()).unwrap();
+            assert!(j.get("object_store").is_none());
+            let list = j.get("object_stores").unwrap().as_array().unwrap();
+            let buckets: Vec<&str> = list
+                .iter()
+                .map(|s| s.get("bucket").and_then(|b| b.as_str()).unwrap())
+                .collect();
+            assert_eq!(buckets, ["fstp-b", "fstp-c"]);
+            assert_eq!(list[1].get("port").and_then(|p| p.as_u64()), Some(8443));
+        }
+        let canonical = fstp_json::parse(v.as_bytes())
+            .unwrap()
+            .to_canonical()
+            .unwrap();
+        assert_eq!(v.trim_end(), canonical);
     }
 
     /// ADR-028 record of lane L27, row "Turned on with backups": with a

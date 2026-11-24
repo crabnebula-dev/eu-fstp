@@ -222,7 +222,7 @@ pub(crate) const V2_SIGNATURE_LEN: usize = crate::writer::SIGNATURE_LEN;
 /// A decoded version 2 container (ADR-012 record of lane
 /// m10/backup-format).
 pub(crate) struct DecodedV2<'a> {
-    /// The kind, 1 or 2.
+    /// The kind, 1 to 5.
     pub(crate) kind: crate::ContainerKind,
     /// The owner: the cluster.
     pub(crate) owner: [u8; 16],
@@ -249,8 +249,8 @@ pub(crate) struct DecodedV2<'a> {
 ///
 /// # Errors
 ///
-/// As [`decode`], and [`BackupError::Malformed`] for a kind other than 1,
-/// 2 or 6, an `ident` that does not name an object of its kind, or bytes
+/// As [`decode`], and [`BackupError::Malformed`] for an unknown kind, an
+/// `ident` that does not name an object of its kind, or bytes
 /// after the signature.
 pub(crate) fn decode_v2(bytes: &[u8]) -> Result<DecodedV2<'_>, BackupError> {
     let mut r = Reader { rest: bytes };
@@ -263,13 +263,10 @@ pub(crate) fn decode_v2(bytes: &[u8]) -> Result<DecodedV2<'_>, BackupError> {
     if r.u16()? != AEAD_AES_256_GCM {
         return Err(BackupError::Malformed("aead"));
     }
-    let kind = match crate::ContainerKind::from_code(r.u8()?) {
-        Some(
-            k @ (crate::ContainerKind::BaseBackup
-            | crate::ContainerKind::WalSegment
-            | crate::ContainerKind::WitnessCopy),
-        ) => k,
-        _ => return Err(BackupError::Malformed("kind")),
+    // Every kind since lane m10/backup-followups: the keystore snapshots
+    // and the custodian escrow are writer-signed too.
+    let Some(kind) = crate::ContainerKind::from_code(r.u8()?) else {
+        return Err(BackupError::Malformed("kind"));
     };
     let chain = match Chain::from_code(r.u8()?) {
         Some(c) if c == kind.chain() => c,

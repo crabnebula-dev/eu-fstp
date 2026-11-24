@@ -15,6 +15,11 @@
 //! must fail the drill at the step `restore`, and the status and the host
 //! status file must say so.
 //!
+//! Lane m10/backup-followups adds: setup publishes each cluster's key
+//! file for the second custodian and the services write version 2
+//! snapshot key files, and a server certificate renewed after the base
+//! backup reaches the drill's restored copy before its server starts.
+//!
 //! The host runs in `direct` mode with the custody simulator in place of
 //! `fstp-keyd`, as in `l19_admin_setup_e2e.rs`. Every value is synthetic.
 
@@ -336,8 +341,39 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
     let s3 = FakeS3::start(&rt, AK, SK, REGION, BUCKET);
     let h = host(s3.port());
     let first = h.expect_ok(&["setup"]);
+    let setup_done = fstp_obs::snapshot_status::now();
     assert!(first.contains("Setup is complete."), "{first}");
     let l = h.layout();
+
+    // ADR-012 record of lane m10/backup-followups: setup published each
+    // cluster's version 2 key file for the second custodian, so no copy
+    // is owed, and the services wrote version 2 snapshot key files.
+    {
+        let objects = s3.state.objects.lock().unwrap();
+        let published: Vec<&String> = objects
+            .keys()
+            .filter(|k| k.ends_with("/keys/cluster-backup.key"))
+            .collect();
+        assert_eq!(published.len(), 2, "{:?}", objects.keys());
+        for k in published {
+            assert_eq!(&objects[k][..4], b"FBK1", "{k}");
+        }
+        for (k, v) in objects.iter() {
+            if k.contains("/keystore/") && !k.contains("latest") {
+                assert_eq!(&v[..4], b"FBC2", "{k}");
+            }
+        }
+    }
+    for c in Cluster::ALL {
+        assert!(!fstp_admin::ops::key_copy_owed(&l, c), "{c:?}");
+    }
+    for (service, name, magic) in [
+        ("cell", "cell-snapshot.key", &b"fstp-cell-snapshots-v2"[..]),
+        ("vault", "vault-snapshot.key", b"fstp-vault-snapshot-v2"),
+    ] {
+        let bytes = std::fs::read(l.creds(service).join(name)).unwrap();
+        assert_eq!(&bytes[..22], magic, "{service}");
+    }
 
     // A marker before the base backup, one after it that only the WAL
     // archive carries, and the WAL switched and uploaded.
@@ -374,9 +410,71 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
     );
     assert_eq!(*s3.state.bad_signatures.lock().unwrap(), 0);
 
+    // ADR-012 records of lanes L27 and m10/backup-followups, I-81: the
+    // daily keystore snapshot of the cell and of the vault verifies on
+    // this host, a minute after the services last started, and status
+    // names no failed snapshot. Before lane m10/backup-followups, setup
+    // restarted PostgreSQL to turn archiving on after the cell had
+    // started, so the cell's store stayed unavailable and every snapshot
+    // after setup failed.
+    let snaps = wait_for_daily_snapshots(&h, &l, setup_done);
+    assert!(
+        !snaps.app.failing() && !snaps.vault.failing(),
+        "{snaps:?}\n{}",
+        h.logs()
+    );
+    let status = Host::text(&h.admin(&["status"]));
+    assert!(
+        !status.contains("FAILED: the last keystore snapshot"),
+        "{status}"
+    );
+    for name in ["cell ", "vault"] {
+        assert!(
+            status.contains(&format!("snapshots  {name} last verified")),
+            "{name}: {status}"
+        );
+    }
+    let file = host_file(&l);
+    assert!(!file.app_snapshot_failed && !file.vault_snapshot_failed);
+    assert!(file.last_app_snapshot.is_some() && file.last_vault_snapshot.is_some());
+    assert_ne!(file.next, host_status::Next::KeystoreSnapshot);
+    {
+        let objects = s3.state.objects.lock().unwrap();
+        for owner in ["latest-app", "latest-vault"] {
+            let pointer = objects
+                .iter()
+                .find(|(k, _)| k.ends_with(owner))
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("no {owner} pointer: {:?}", objects.keys()));
+            assert_eq!(&pointer[..4], b"FKP1", "{owner}");
+        }
+    }
+
+    // ADR-012 record of lane m10/backup-followups, row "TLS files after a
+    // restore": the application database's server certificate is renewed
+    // after the base backup, so the backup carries the old one, whose key
+    // the cell no longer pins (I-83). The drill must put the live files in
+    // place, or the cell's keystore check refuses the server.
+    let spki_before = fstp_admin::state::State::load(&l.admin_dir().join("state"))
+        .unwrap()
+        .get("server-spki.app")
+        .map(str::to_owned);
+    std::fs::remove_file(l.pg_data(Cluster::App).join("tls/server.pem.expires")).unwrap();
+    let renew = h.expect_ok(&["renew"]);
+    assert!(renew.contains("certificates renewed"), "{renew}");
+    let spki_after = fstp_admin::state::State::load(&l.admin_dir().join("state"))
+        .unwrap()
+        .get("server-spki.app")
+        .map(str::to_owned);
+    assert!(spki_after.is_some() && spki_after != spki_before);
+
     // The drill passes and records a duration.
     let drill = h.expect_ok(&["drill"]);
     assert!(drill.contains("The restore drill passed."), "{drill}");
+    assert!(
+        drill.contains("put the current TLS files into the restored app database"),
+        "{drill}"
+    );
     assert!(drill.contains("opened the keys of the app copy"), "{drill}");
     assert!(
         drill.contains("opened the keys of the vault copy"),
@@ -495,4 +593,29 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
         fstp_admin::status::Next::Nothing
     );
     s3.stop(&rt);
+}
+
+/// Waits until the cell and the vault each recorded a daily keystore
+/// snapshot, verified or failed, at or after `since`, the end of setup,
+/// at most three minutes, and returns both status files (ADR-012 record of lane L27, row "Status
+/// file").
+fn wait_for_daily_snapshots(h: &Host, l: &Layout, since: u64) -> fstp_admin::status::Snapshots {
+    let start = Instant::now();
+    loop {
+        let s = fstp_admin::status::snapshot_status(l);
+        let tried = |x: &fstp_obs::snapshot_status::SnapshotStatus| {
+            x.last_verified
+                .max(x.last_failed)
+                .is_some_and(|t| t >= since)
+        };
+        if tried(&s.app) && tried(&s.vault) {
+            return s;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(180),
+            "no daily keystore snapshot ran: {s:?}\n{}",
+            h.logs()
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }

@@ -358,48 +358,48 @@ fn listen_of(cfg: &FileConfig) -> Listen {
 /// The App chain's keystore snapshot writer of `cfg`, or `None` when the
 /// file names no object store (ADR-012 record of lane L17, row
 /// "Fallback"). The snapshot key file `cell-snapshot.key` is created
-/// through the cell's own `fstp-keyd` entry when it is missing, so no
-/// operator step is needed (ADR-004 record of lane L17, row "Genesis").
-/// The object store credentials come from the credentials directory by
-/// fixed name, as for `fstp-backup`.
+/// through the cell's own `fstp-keyd` entry when it is missing (ADR-004
+/// record of lane L17, row "Genesis"), and a version 1 file is upgraded
+/// through it (ADR-012 record of lane m10/backup-followups, row
+/// "Upgrade"), so no operator step is needed. Each store's credentials
+/// come from the credentials directory by fixed name, as for
+/// `fstp-backup`, and every store gets each snapshot.
 ///
 /// # Errors
 ///
 /// [`CellError::Config`] for a credential or key file that does not read,
 /// write or decode, and [`CellError::Keys`] when custody refuses the
-/// create.
+/// create or the upgrade.
 pub async fn keystore_snapshots(
     rt: &TokioRuntime,
     cfg: &FileConfig,
 ) -> Result<Option<fstp_backup::Snapshots>, CellError> {
-    use fstp_backup::snapshot::{SnapshotKey, SnapshotOwner};
-    let Some(endpoint) = cfg.object_store.clone() else {
+    use fstp_backup::BackupError;
+    use fstp_backup::snapshot::{self, SnapshotOwner};
+    let Some(first) = cfg.object_store.clone() else {
         return Ok(None);
     };
     let dir = &cfg.credentials_dir;
-    let credentials =
-        fstp_backup::config::s3_credentials(dir).map_err(|_| cfg_err("s3-access-key-id"))?;
-    let ca = fstp_backup::config::s3_ca(dir).map_err(|_| cfg_err("s3-ca.pem"))?;
-    let client = fstp_backup::s3::S3Client::new(rt.clone(), endpoint, credentials, ca.as_deref())
-        .map_err(|_| cfg_err("s3-ca.pem"))?;
+    let endpoints: Vec<_> = std::iter::once(first)
+        .chain(cfg.more_stores.iter().cloned())
+        .collect();
+    let stores =
+        snapshot::s3_stores(rt, dir, &endpoints).map_err(|_| cfg_err("s3-access-key-id"))?;
     let owner = SnapshotOwner::App;
     let name = fstp_backup::keyfile::CELL_SNAPSHOT_KEY_FILE;
-    let path = dir.join(name);
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let custody = fstp_custody::KeydCustody::new(&cfg.keyd_socket)
-                .map_err(|_| cfg_err("keyd_socket"))?;
-            let b = SnapshotKey::create(&custody, cfg.core.cell.0, owner)
-                .await
-                .map_err(|_| CellError::Keys("the cell snapshot key"))?;
-            write_new(&path, &b)?;
-            b
-        }
-        Err(_) => return Err(cfg_err(name)),
-    };
-    let key = SnapshotKey::decode(&bytes, cfg.core.cell.0, owner).map_err(|_| cfg_err(name))?;
-    Ok(Some(fstp_backup::Snapshots::new(Arc::new(client), key)))
+    let custody =
+        fstp_custody::KeydCustody::new(&cfg.keyd_socket).map_err(|_| cfg_err("keyd_socket"))?;
+    let key = snapshot::load_key(&custody, &dir.join(name), cfg.core.cell.0, owner)
+        .await
+        .map_err(|e| match e {
+            BackupError::Custody(_) | BackupError::Seal(_) => {
+                CellError::Keys("the cell snapshot key")
+            }
+            _ => cfg_err(name),
+        })?;
+    fstp_backup::Snapshots::with_stores(stores, key)
+        .map(Some)
+        .map_err(|_| cfg_err("object_stores"))
 }
 
 /// The registered cluster server keys of `cfg`, as the start checks them.

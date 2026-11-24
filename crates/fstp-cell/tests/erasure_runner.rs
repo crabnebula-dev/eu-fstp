@@ -216,6 +216,11 @@ impl CustodyBackend for Custodian {
             if self.fails(Call::Wrap) {
                 return Err(DOWN);
             }
+            // As `fstp-keyd`: an AAD above its frame limit is refused (ADR-012
+            // record of lane m10/backup-followups, row "Custody doubles").
+            if aad.0.len() > fstp_custody::keyd::MAX_AAD_LEN {
+                return Err(CustodyError::Refused(Refusal::BadRequest));
+            }
             let k = self.root(root)?;
             let s = aead::seal(&k, &aad.0, key.expose()).map_err(CustodyError::Crypto)?;
             let mut out = s.nonce.to_vec();
@@ -235,6 +240,9 @@ impl CustodyBackend for Custodian {
         let r = (|| {
             if self.fails(Call::Unwrap) {
                 return Err(DOWN);
+            }
+            if aad.0.len() > fstp_custody::keyd::MAX_AAD_LEN {
+                return Err(CustodyError::Refused(Refusal::BadRequest));
             }
             let k = self.root(root)?;
             let (nonce, body) = w.0.split_at(aead::NONCE_LEN);

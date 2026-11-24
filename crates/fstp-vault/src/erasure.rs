@@ -843,7 +843,14 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
                 let mut c = self.chain.clone();
                 plan::apply(&mut c, &step).map_err(planner)?;
                 self.persist(&c, now).await?;
-                self.take_snapshot().await?;
+                if let Err((step, err)) = self.take_snapshot().await {
+                    crate::snapshot::note(
+                        self.snapshot_status.as_deref(),
+                        fstp_obs::SnapshotTrigger::Rotation,
+                        Some(step),
+                    );
+                    return Err(err);
+                }
                 ErasureEvent::SnapshotTaken { epoch: e.0 }
             }
             Step::VerifySnapshot(e) => self.verify_snapshot(*e, &step, now).await?,
@@ -1152,16 +1159,21 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
     /// are sealed into a snapshot container and uploaded (ADR-012 record
     /// of lane L17). Without one, the rows read back are the snapshot
     /// (record of lane L11).
-    async fn take_snapshot(&mut self) -> Result<(), VaultError> {
+    async fn take_snapshot(&mut self) -> Result<(), crate::snapshot::Failed> {
+        use fstp_obs::SnapshotFailure as F;
         let rows = keystore::read_rows(&mut self.client)
-            .await?
-            .ok_or(bad("the snapshot"))?;
+            .await
+            .map_err(|e| (F::Database, e))?
+            .ok_or((F::Database, bad("the snapshot")))?;
         if let Some(s) = &self.snapshots {
-            let image = crate::snapshot::encode_image(&self.cell, &rows)?;
-            let id = s
-                .upload(&image)
-                .await
-                .map_err(|_| VaultError::Unavailable("the keystore snapshot upload"))?;
+            let image =
+                crate::snapshot::encode_image(&self.cell, &rows).map_err(|e| (F::Image, e))?;
+            let id = s.upload(self.custody, &image).await.map_err(|e| {
+                (
+                    crate::snapshot::upload_failure(&e),
+                    VaultError::Unavailable("the keystore snapshot upload"),
+                )
+            })?;
             self.work.snapshot_id = Some(id);
         }
         self.work.snapshot = Some(rows);
@@ -1187,9 +1199,9 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
             crate::snapshot::note(
                 self.snapshot_status.as_deref(),
                 fstp_obs::SnapshotTrigger::Rotation,
-                checked.is_ok(),
+                checked.as_ref().err().map(|(step, _)| *step),
             );
-            checked?
+            checked.map_err(|(_, err)| err)?
         } else {
             let snap = match self.work.snapshot.take() {
                 Some(s) => s,
@@ -1214,7 +1226,9 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         &mut self,
         s: &Snapshots,
         e: Epoch,
-    ) -> Result<KeystoreRows, VaultError> {
+    ) -> Result<KeystoreRows, crate::snapshot::Failed> {
+        use fstp_obs::SnapshotFailure as F;
+        let check = |e: VaultError| (F::Check, e);
         let id = match self.work.snapshot_id.take() {
             Some(id) => id,
             None => {
@@ -1222,22 +1236,32 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
                 // committed rows.
                 self.take_snapshot().await?;
                 self.work.snapshot = None;
-                self.work.snapshot_id.take().ok_or(bad("the snapshot"))?
+                self.work
+                    .snapshot_id
+                    .take()
+                    .ok_or((F::Upload, bad("the snapshot")))?
             }
         };
-        let image = s
-            .fetch(self.custody, id)
-            .await
-            .map_err(|_| VaultError::Unavailable("the keystore snapshot fetch"))?;
-        let (cell, rows) = crate::snapshot::decode_image(&image)?;
+        let image = s.fetch(self.custody, id).await.map_err(|e| {
+            (
+                crate::snapshot::fetch_failure(&e),
+                VaultError::Unavailable("the keystore snapshot fetch"),
+            )
+        })?;
+        let (cell, rows) = crate::snapshot::decode_image(&image).map_err(check)?;
         if cell != self.cell {
-            return Err(bad("the snapshot cell"));
+            return Err(check(bad("the snapshot cell")));
         }
-        check_epoch(&rows, e)?;
-        check_rows(self.custody, &self.cell, &rows).await?;
-        s.publish(id)
+        check_epoch(&rows, e).map_err(check)?;
+        check_rows(self.custody, &self.cell, &rows)
             .await
-            .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))?;
+            .map_err(check)?;
+        s.publish(self.custody, id).await.map_err(|e| {
+            (
+                crate::snapshot::pointer_failure(&e),
+                VaultError::Unavailable("the keystore snapshot pointer"),
+            )
+        })?;
         Ok(rows)
     }
 

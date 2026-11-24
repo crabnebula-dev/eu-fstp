@@ -268,6 +268,10 @@ pub enum Command {
     /// 2 bound to a writer key (record of lane m10/backup-format). A
     /// version 2 file is left as it is.
     UpgradeKeys,
+    /// `publish-key`: write the tagged copy of the version 2 key file to
+    /// every store, for the second custodian, and mark it published
+    /// (ADR-012 record of lane m10/backup-followups, row "Publishing").
+    PublishKey,
     /// `base-backup`: one base backup.
     BaseBackup,
     /// `wal-archive <path> <name>`, for `archive_command` (`%p %f`).
@@ -338,6 +342,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
     match args {
         [c] if c == "init-keys" => Ok(Command::InitKeys),
         [c] if c == "upgrade-keys" => Ok(Command::UpgradeKeys),
+        [c] if c == "publish-key" => Ok(Command::PublishKey),
         [c] if c == "base-backup" => Ok(Command::BaseBackup),
         [c, path, name] if c == "wal-archive" => Ok(Command::WalArchive {
             path: PathBuf::from(path),
@@ -426,6 +431,15 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
     if *command == Command::UpgradeKeys {
         return upgrade_keys(&rt, &cfg);
     }
+    if *command == Command::PublishKey {
+        return publish_key(&rt, &cfg);
+    }
+    if matches!(
+        command,
+        Command::Restore { .. } | Command::WalRestore { .. }
+    ) {
+        adopt_key_file(&rt, &cfg)?;
+    }
     if *command == Command::CustodianInit {
         let key_path = cfg.credentials_dir.join(custodian::CUSTODIAN_KEY_FILE);
         let req_path = cfg.credentials_dir.join(custodian::REQUEST_FILE);
@@ -446,7 +460,13 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
             keyfile::KEY_FILE,
         )?)?;
         let custody = console(&cfg)?;
-        let escrow = rt.block_on(custodian::escrow(&custody, &key, &request))?;
+        // ADR-012 record of lane m10/backup-followups: the escrow is signed
+        // by the cluster writer key, which root reads here.
+        let writer = writer::WriterKey::decode(&zeroize::Zeroizing::new(config::read_credential(
+            &cfg.credentials_dir,
+            writer::WRITER_FILE,
+        )?))?;
+        let escrow = rt.block_on(custodian::escrow(&custody, &key, &writer, &request))?;
         return write_key_file(out, &escrow);
     }
     let agent = agent::Agent::from_config(rt.clone(), &cfg)?;
@@ -454,6 +474,7 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
         match command {
             Command::InitKeys
             | Command::UpgradeKeys
+            | Command::PublishKey
             | Command::CustodianInit
             | Command::CustodianEscrow { .. } => Ok(()),
             Command::BaseBackup => {
@@ -559,6 +580,95 @@ fn upgrade_keys(
     std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))
 }
 
+/// The file in the state directory that names the key file last
+/// published for the second custodian: its SHA-256 in 64 lowercase hex
+/// digits and a line feed (ADR-012 record of lane m10/backup-followups,
+/// row "Publishing").
+pub const PUBLISHED_MARK: &str = "key-published";
+
+/// The text of [`PUBLISHED_MARK`] for the key file `key_file`.
+#[must_use]
+pub fn published_mark(key_file: &[u8]) -> String {
+    format!("{}\n", sigv4::hex(&fstp_crypto::sha256(key_file)))
+}
+
+/// `publish-key` (ADR-012 record of lane m10/backup-followups): the
+/// tagged copy of the version 2 key file goes to every store, then the
+/// mark names it. A failed upload leaves the mark as it was, so the copy
+/// stays owed and `fstp-admin` tries again.
+fn publish_key(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<(), BackupError> {
+    let key_file = config::read_credential(&cfg.credentials_dir, keyfile::KEY_FILE)?;
+    let custody = console(cfg)?;
+    let body = rt.block_on(custodian::publish(&custody, &key_file))?;
+    let stores = config_stores(rt, cfg)?;
+    let name = custodian::published_name(cfg.cluster);
+    rt.block_on(async {
+        for s in &stores {
+            s.put(&name, body.clone()).await?;
+        }
+        Ok::<(), BackupError>(())
+    })?;
+    let mark = cfg.state_dir.join(PUBLISHED_MARK);
+    let tmp = cfg.state_dir.join(format!("{PUBLISHED_MARK}.tmp"));
+    let _ = std::fs::remove_file(&tmp);
+    write_key_file(&tmp, published_mark(&key_file).as_bytes())?;
+    std::fs::rename(&tmp, mark).map_err(|_| BackupError::Io("publish mark"))
+}
+
+/// Every store of `cfg`, in order, with its credentials.
+fn config_stores(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<Vec<std::sync::Arc<dyn ObjectStore>>, BackupError> {
+    let endpoints: Vec<s3::Endpoint> = std::iter::once(cfg.object_store.clone())
+        .chain(cfg.more_stores.iter().cloned())
+        .collect();
+    snapshot::s3_stores(rt, &cfg.credentials_dir, &endpoints)
+}
+
+/// On a second custodian, whose credentials directory holds the escrow,
+/// before `restore` or `wal-restore` (ADR-012 record of lane
+/// m10/backup-followups, row "On the second host"): when the local key
+/// file is not version 2, the published one that the escrow vouches for
+/// replaces it, through a temporary file and a rename. Nothing happens on
+/// a host without an escrow or with a version 2 key file.
+fn adopt_key_file(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<(), BackupError> {
+    let dir = &cfg.credentials_dir;
+    let escrow = dir.join(custodian::ESCROW_FILE);
+    if std::fs::symlink_metadata(&escrow).is_err() {
+        return Ok(());
+    }
+    let local = match std::fs::read(dir.join(keyfile::KEY_FILE)) {
+        Ok(b) if keyfile::decode(&b).is_ok() => return Ok(()),
+        Ok(b) => Some(b),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(BackupError::Config(keyfile::KEY_FILE)),
+    };
+    let escrow = read_small(&escrow, custodian::MAX_ESCROW_LEN)?;
+    let custodian_key = config::read_credential(dir, custodian::CUSTODIAN_KEY_FILE)?;
+    let custody = console(cfg)?;
+    let stores = config_stores(rt, cfg)?;
+    let refs: Vec<&dyn ObjectStore> = stores.iter().map(|s| &**s as &dyn ObjectStore).collect();
+    let adopted = rt.block_on(custodian::adopt_published(
+        &custody,
+        &refs,
+        cfg.cluster,
+        local.as_deref(),
+        &custodian_key,
+        &escrow,
+    ))?;
+    let tmp = dir.join(format!("{}.adopt", keyfile::KEY_FILE));
+    let _ = std::fs::remove_file(&tmp);
+    write_key_file(&tmp, &adopted)?;
+    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))
+}
+
 /// Reads a file of at most `max` bytes.
 fn read_small(path: &std::path::Path, max: usize) -> Result<Vec<u8>, BackupError> {
     let meta = std::fs::metadata(path).map_err(|_| BackupError::Io("read a ceremony file"))?;
@@ -593,10 +703,14 @@ mod tests {
         v.iter().map(|x| (*x).to_owned()).collect()
     }
 
-    /// ADR-012 records of lanes L10, L16 and m10/backup-format: the eight
-    /// command forms, and no other.
+    /// ADR-012 records of lanes L10, L16, m10/backup-format and
+    /// m10/backup-followups: the nine command forms, and no other.
     #[test]
-    fn adr012_binary_takes_eight_command_forms() {
+    fn adr012_binary_takes_nine_command_forms() {
+        assert_eq!(
+            parse_args(&s(&["publish-key"])).unwrap(),
+            Command::PublishKey
+        );
         assert_eq!(
             parse_args(&s(&["upgrade-keys"])).unwrap(),
             Command::UpgradeKeys
@@ -651,6 +765,7 @@ mod tests {
             &["custodian-init", "x"],
             &["custodian-escrow", "/r"],
             &["upgrade-keys", "x"],
+            &["publish-key", "x"],
         ] {
             assert_eq!(
                 parse_args(&s(bad)).unwrap_err(),
