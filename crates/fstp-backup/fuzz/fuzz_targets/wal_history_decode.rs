@@ -45,9 +45,10 @@ fuzz_target!(|data: &[u8]| {
                 continue;
             }
             for name in recovery::NAMES {
-                let owned = t.get(..name.len()).is_some_and(|h| h.eq_ignore_ascii_case(name))
-                    && t
-                        .get(name.len()..)
+                let owned = t
+                    .get(..name.len())
+                    .is_some_and(|h| h.eq_ignore_ascii_case(name))
+                    && t.get(name.len()..)
                         .and_then(|r| r.chars().next())
                         .is_none_or(|c| c == '=' || c.is_whitespace());
                 assert!(!owned, "a recovery setting survived the rewrite");
