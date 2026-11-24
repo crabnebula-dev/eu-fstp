@@ -607,12 +607,12 @@ fn findings_of(
     in_doubt: &[(u64, fstp_audit::Link)],
     losses: &[OwnRow],
 ) -> Vec<fstp_api_core::system::Finding> {
-    use fstp_api_core::system::{Finding, FindingChain, FindingKind};
+    use fstp_api_core::system::{Finding, FindingChain, IntegrityFindingKind};
     let mut out: Vec<Finding> = in_doubt
         .iter()
         .map(|(n, link)| Finding {
             id: fstp_pgstore::possible_deletion_idem(&cell, *n, link),
-            kind: FindingKind::PossibleDeletion,
+            kind: IntegrityFindingKind::PossibleDeletion,
             chain: FindingChain::App,
             from: *n,
             to: *n,
@@ -626,7 +626,7 @@ fn findings_of(
         {
             out.push(Finding {
                 id: loss.idem(&cell),
-                kind: FindingKind::LostInRestore,
+                kind: IntegrityFindingKind::LostInRestore,
                 chain: if *chain == ChainId::Vault.byte() {
                     FindingChain::Vault
                 } else {
@@ -1025,7 +1025,7 @@ mod tests {
         assert_eq!(findings.len(), 3);
         assert_eq!(
             findings[0].kind,
-            fstp_api_core::system::FindingKind::PossibleDeletion
+            fstp_api_core::system::IntegrityFindingKind::PossibleDeletion
         );
         assert_eq!(
             findings[2].chain,

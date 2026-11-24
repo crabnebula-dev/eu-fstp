@@ -311,14 +311,14 @@ impl MailState {
 /// What an integrity finding names (ADR-012 record of lane
 /// m10/declared-restore, ADR-010 "In doubt").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FindingKind {
+pub enum IntegrityFindingKind {
     /// Receipted rows that a declared restore lost.
     LostInRestore,
     /// A prepared row the cell could not tell from a deletion.
     PossibleDeletion,
 }
 
-impl FindingKind {
+impl IntegrityFindingKind {
     /// The wire word.
     #[must_use]
     pub const fn wire(self) -> &'static str {
@@ -357,7 +357,7 @@ pub struct Finding {
     /// The finding id: the idem of its `ops.outbox` row.
     pub id: [u8; 32],
     /// What it names.
-    pub kind: FindingKind,
+    pub kind: IntegrityFindingKind,
     /// The chain.
     pub chain: FindingChain,
     /// The first row it names.
@@ -604,7 +604,7 @@ mod tests {
                 findings: vec![
                     Finding {
                         id: [0xAB; 32],
-                        kind: FindingKind::LostInRestore,
+                        kind: IntegrityFindingKind::LostInRestore,
                         chain: FindingChain::Vault,
                         from: 4,
                         to: 9,
@@ -612,7 +612,7 @@ mod tests {
                     },
                     Finding {
                         id: [1; 32],
-                        kind: FindingKind::PossibleDeletion,
+                        kind: IntegrityFindingKind::PossibleDeletion,
                         chain: FindingChain::App,
                         from: 3,
                         to: 3,

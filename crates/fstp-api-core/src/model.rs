@@ -2610,7 +2610,7 @@ pub(crate) mod reply_shape_tests {
                     }),
                     findings: vec![crate::system::Finding {
                         id: [0xAB; 32],
-                        kind: crate::system::FindingKind::LostInRestore,
+                        kind: crate::system::IntegrityFindingKind::LostInRestore,
                         chain: crate::system::FindingChain::Vault,
                         from: 4,
                         to: 9,
