@@ -1032,6 +1032,8 @@ Written by lane L17 before its code. Decided by Daniel on 2026-11-21: ADR-012 "K
 
 Tests, written before the code: `r_nf_08_vault_socket_reaches_vault_backup_and_never_app_chains` in `crates/fstp-keyd/tests/serve.rs`; `adr004_vault_backup_chain_code_is_six` in `fstp-keys`; `r_nf_08_snapshot_keys_never_open_each_other` and `adr004_snapshot_key_files_decode_only_under_their_magic` in `crates/fstp-backup/tests/keystore_snapshots.rs`; `r_sw_02_cell_erasure_destroys_vault_backup_roots` in `fstp-control`. Also `i81_held_volume_serves_vault_backup_unwrap_only` in `fstp_keyd::export`. Built by lane L17 on 2026-11-21 as written above.
 
+**Amended by lane m10/backup-followups, 2026-11-24.** Interim, pending Daniel (ADR-012 record of lane m10/backup-followups). The rows "Vault snapshot key" and "App snapshot key" above describe version 1. Each snapshot key file now has a version 2 form under the magics `"fstp-vault-snapshot-v2"` and `"fstp-cell-snapshots-v2"`. It carries the process's composite writer public key and a binding signature, and its sealed part holds the writer's private key after the group secret. The wrap of `S` gives custody `"fstp-backup-key-custody-aad-v2" || SHA-256(header)`, so the AAD stays within the 1,024 bytes of `fstp-keyd`. The root, the chain, the group and the separation are unchanged. A process that starts with a version 1 file upgrades it through its own entry under the same root. No new custody call and no new socket permission is needed: the upgrade unwraps and wraps on the snapshot root, as genesis and step 5 already do.
+
 ## Built by lane L21 `prod/unicode-normaliser`, 2026-11-22: the normaliser in the tuple
 
 Decided by Daniel on 2026-11-21: NFKC + case fold (ADR-029). Every other reading is the lead's, pending Daniel.

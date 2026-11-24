@@ -222,3 +222,18 @@ Written before the code. Daniel decided on 2026-11-24 that backup is mission cri
 | Time parser | `fstp_admin::pitr::parse_time`, in-house, fuzzed as `restore_time_parse` in the fuzz project of `fstp-admin` | CLAUDE.md fuzz rule |
 
 Tests, written before the code: `adr012_pitr_time_*` and `adr028_pitr_restore_takes_an_optional_target` in `fstp-admin`.
+
+## Record of lane `m10/backup-followups`, 2026-11-24: snapshots to every store, the custodian's key copy, TLS after a restore
+
+Written before the code. Daniel decided on 2026-11-24 that backup is mission critical (ADR-012, record of lane m10/backup-followups). Each row is interim, pending Daniel, unless it says otherwise. The rows "Agent configuration" of the record of lane m10/backup-format and "Turned on with backups" of the record of lane L27 are amended.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Snapshots to every store | With `backup.copies`, `setup` writes `object_stores`, the list of every store in order, into `cell.json` and `vault.json`, and copies each copy's key files into the cell's and the vault's credentials directories as `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`. With one store, both files keep `object_store` as before | Q25 |
+| Snapshot key upgrade | When the cell's or the vault's credentials directory holds a version 1 snapshot key file, `setup` restarts that service. The service upgrades the file at its start and takes a fresh snapshot a minute later. `fstp-admin` reads only the file's 22-byte magic. It still reaches no custody | ADR-012 record of lane m10/backup-followups, row "Upgrade" |
+| The custodian's key copy | `setup` runs `fstp-backup publish-key` for each cluster after `init-keys` or `upgrade-keys`, and whenever the agent's `key-published` file does not hold the SHA-256 of `cluster-backup.key`. `fstp-admin backup` runs it too while that holds. A failure is reported and does not fail the backup | ADR-012 record of lane m10/backup-followups, row "Publishing" |
+| Status | While a cluster's key copy is owed, `status` shows `custodian  ..., the backup key copy for the custodian is owed (fstp-admin backup sends it)`, and the host status file sets `guard_copy_owed` with the next word `custodian_copy`, as for an owed copy of a key entry. No new member, so the System page needs no change | ADR-028 record of lane `m10/guard-key`, part 2 |
+| TLS after a restore | After both restores succeed and before the swap, `restore` puts the live `tls` files of each cluster into its restored directory. When the live server certificate needs a new issue, it issues one from the database CA, records the new key, and writes the service configurations again, as `renew` does. The step is its own function, before any PostgreSQL start on a restored directory | ADR-012 record of lane m10/backup-followups, row "TLS files after a restore" |
+| TLS in the drill | The drill puts the live `tls` files into its scratch copy before it starts the throwaway server, so the keystore checks meet the server key they pin | ADR-012 record of lane m10/backup-followups, row "TLS files in the drill" |
+
+Tests, written before the code: `adr012_bf_status_names_an_owed_custodian_key_copy`, `adr012_bf_restore_puts_the_live_tls_files_in_place`, `adr012_bf_setup_restarts_a_service_with_a_version_1_snapshot_key` and `adr012_bf_snapshot_config_names_every_store` in `fstp-admin`, and the end-to-end test `crates/fstp-celltest/tests/adr012_backup_health_e2e.rs` with a renewed server certificate before the drill.
