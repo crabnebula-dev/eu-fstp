@@ -179,7 +179,8 @@ jobs:
           - { part: celltest-sessions, packages: -p fstp-celltest --test r_lg_04_sessions_and_devices --test i78_stepup --test i38_egress --test r_nf_m3, timeout: 60 }
           # Every other binary, the unit tests and the doc tests: about
           # 1,160 s. slice_devstack runs in the devstack part. The skips
-          # leave the isolation tests to the isolation part.
+          # leave the isolation tests to the isolation part, and the backup
+          # end-to-end test to the devstack part, which builds its binaries.
           - part: celltest
             packages: >-
               -p fstp-celltest --lib --bins
@@ -204,7 +205,7 @@ jobs:
               --test sa11_display_names_pg --test adr007_erasure_log_pg
               --test l24_verification_request_pg
               ; -p fstp-celltest --doc
-            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross t_iso_public_rate_limit_keys_are_per_cell
+            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross t_iso_public_rate_limit_keys_are_per_cell adr012_bh_backup_wal_archive_and_drill_over_real_postgres
             timeout: 60
           # I-19, I-20, I-80, I-82, I-83, I-87: the isolation (multi-cell) job of
           # m3-design sections 14.4 and 14.8, as a part of its own. It runs
