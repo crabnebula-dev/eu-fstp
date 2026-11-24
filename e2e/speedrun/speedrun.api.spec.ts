@@ -128,15 +128,17 @@ test.describe('speedrun at the wire', () => {
     );
     expect(failed.length).toBeGreaterThan(0);
     await lead.ok('POST', `/payment-requests/${first}/resubmission`, body);
+    // I-32: UNDER_REVIEW follows the submission run. The decision that makes the
+    // request ACCEPTED also needs the acceptance run, which the checks runner
+    // records after it. So the test waits for both before the reviewer decides.
+    const ready = (r: Json): boolean => r.status === 'UNDER_REVIEW' && r.acceptance_checks === true;
     const reviewing = await until(
-      'the resubmitted request is under review',
+      'the resubmitted request is under review with its acceptance checks passed',
       () => requests(lead),
-      (rows) => rows.some((r) => r.status === 'UNDER_REVIEW'),
+      (rows) => rows.some(ready),
     );
-    const request = String(reviewing.find((r) => r.status === 'UNDER_REVIEW')?.request);
-    const line = String(
-      ((reviewing.find((r) => r.status === 'UNDER_REVIEW')?.lines as Json[] | undefined) ?? [])[0]?.line,
-    );
+    const request = String(reviewing.find(ready)?.request);
+    const line = String(((reviewing.find(ready)?.lines as Json[] | undefined) ?? [])[0]?.line);
 
     // Row 11: line review, payment approval, release, paid (I-05, I-31, I-33).
     await lead.refused('POST', `/payment-requests/${request}/lines/${line}/decision`, {
