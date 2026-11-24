@@ -40,7 +40,6 @@ use crate::keystore::{self, IdentityKeys, VaultKeys};
 use crate::origin::Vault;
 use crate::service::{self, VaultHandle, VaultParts};
 use fstp_backup::keyfile;
-use fstp_backup::s3::S3Client;
 use fstp_backup::snapshot::{SnapshotKey, SnapshotOwner, Snapshots};
 use fstp_keys::erasure::Phase;
 
@@ -371,37 +370,36 @@ pub async fn resume_keystore<R: Runtime, C: Custody>(
 
 /// The vault's snapshot key file `vault-snapshot.key` in the credentials
 /// directory of `cfg`, created through `custody` when it is missing
-/// (ADR-004 record of lane L17, row "Genesis"): no operator step.
+/// (ADR-004 record of lane L17, row "Genesis") and upgraded through it
+/// when it is version 1 (ADR-012 record of lane m10/backup-followups, row
+/// "Upgrade"): no operator step.
 ///
 /// # Errors
 ///
-/// [`VaultError::Unavailable`] when custody refuses the create, and
-/// [`VaultError::Config`] for a file that does not read, write or decode.
+/// [`VaultError::Unavailable`] when custody refuses the create or the
+/// upgrade, and [`VaultError::Config`] for a file that does not read,
+/// write or decode.
 pub async fn snapshot_key<C: Custody>(
     cfg: &VaultConfig,
     custody: &C,
 ) -> Result<SnapshotKey, VaultError> {
     let owner = SnapshotOwner::Vault;
     let path = cfg.credentials_dir.join(owner.key_file_name());
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let b = SnapshotKey::create(custody, cfg.cell, owner)
-                .await
-                .map_err(|_| VaultError::Unavailable("the vault snapshot key"))?;
-            write_new(&path, &b)?;
-            b
-        }
-        Err(_) => return Err(cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE)),
-    };
-    SnapshotKey::decode(&bytes, cfg.cell, owner)
-        .map_err(|_| cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE))
+    fstp_backup::snapshot::load_key(custody, &path, cfg.cell, owner)
+        .await
+        .map_err(|e| match e {
+            fstp_backup::BackupError::Custody(_) | fstp_backup::BackupError::Seal(_) => {
+                VaultError::Unavailable("the vault snapshot key")
+            }
+            _ => cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE),
+        })
 }
 
 /// The keystore snapshot writer of `cfg`, or `None` when no object store
-/// is configured (ADR-012 record of lane L17, row "Fallback"). The
-/// object store credentials come from the credentials directory by fixed
-/// name, as for `fstp-backup`.
+/// is configured (ADR-012 record of lane L17, row "Fallback"). Each
+/// store's credentials come from the credentials directory by fixed name,
+/// as for `fstp-backup`, and every store gets each snapshot (record of
+/// lane m10/backup-followups, row "Every store").
 ///
 /// # Errors
 ///
@@ -412,17 +410,18 @@ pub async fn snapshots_of<R: Runtime, C: Custody>(
     cfg: &VaultConfig,
     custody: &C,
 ) -> Result<Option<Snapshots>, VaultError> {
-    let Some(endpoint) = cfg.object_store.clone() else {
+    let Some(first) = cfg.object_store.clone() else {
         return Ok(None);
     };
-    let dir = &cfg.credentials_dir;
-    let credentials =
-        fstp_backup::config::s3_credentials(dir).map_err(|_| cfg_err("s3-access-key-id"))?;
-    let ca = fstp_backup::config::s3_ca(dir).map_err(|_| cfg_err("s3-ca.pem"))?;
-    let client = S3Client::new(rt.clone(), endpoint, credentials, ca.as_deref())
-        .map_err(|_| cfg_err("s3-ca.pem"))?;
+    let endpoints: Vec<_> = std::iter::once(first)
+        .chain(cfg.more_stores.iter().cloned())
+        .collect();
+    let stores = fstp_backup::snapshot::s3_stores(rt, &cfg.credentials_dir, &endpoints)
+        .map_err(|_| cfg_err("s3-access-key-id"))?;
     let key = snapshot_key(cfg, custody).await?;
-    Ok(Some(Snapshots::new(Arc::new(client), key)))
+    Snapshots::with_stores(stores, key)
+        .map(Some)
+        .map_err(|_| cfg_err("object_stores"))
 }
 
 /// The runner of `client` with the snapshot writer of `cfg`, if any.

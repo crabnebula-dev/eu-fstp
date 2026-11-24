@@ -42,6 +42,12 @@ pub const SIGNATURE_LEN: usize = composite::SIGNATURE_LEN;
 pub const BINDING_CONTEXT: &[u8] = b"fstp-backup-key-binding-v1";
 /// The context of a container signature (F-043).
 pub const CONTAINER_CONTEXT: &[u8] = b"fstp-backup-container-v1";
+/// The context of a keystore snapshot pointer signature (ADR-012 record
+/// of lane m10/backup-followups, row "Pointer, version 2").
+pub const POINTER_CONTEXT: &[u8] = b"fstp-backup-snapshot-pointer-v1";
+/// The length of the private key a snapshot key file seals beside its
+/// group secret (ADR-012 record of lane m10/backup-followups).
+pub const WRITER_PRIVATE_LEN: usize = composite::PRIVATE_KEY_LEN;
 
 fn bad(rule: &'static str) -> BackupError {
     BackupError::KeyFile(rule)
@@ -131,6 +137,41 @@ impl WriterKey {
         Ok(WriterKey { cluster, key })
     }
 
+    /// The raw composite private key, which a snapshot key file seals
+    /// beside its group secret. Wiped on drop.
+    ///
+    /// # Errors
+    ///
+    /// [`BackupError::Seal`] when the key does not export.
+    pub(crate) fn private_bytes(&self) -> Result<Zeroizing<[u8; WRITER_PRIVATE_LEN]>, BackupError> {
+        self.key
+            .to_bytes()
+            .map_err(|_| BackupError::Seal("writer key"))
+    }
+
+    /// The writer key of `owner` from its raw composite private key, as a
+    /// snapshot key file seals it.
+    ///
+    /// # Errors
+    ///
+    /// [`BackupError::KeyFile`] for a key that does not load.
+    pub(crate) fn from_private(owner: [u8; 16], private: &[u8]) -> Result<WriterKey, BackupError> {
+        let key = CompositeSigningKey::from_bytes(private).map_err(|_| bad("writer key"))?;
+        Ok(WriterKey {
+            cluster: owner,
+            key,
+        })
+    }
+
+    /// Signs the snapshot pointer bytes `body` under [`POINTER_CONTEXT`].
+    ///
+    /// # Errors
+    ///
+    /// [`BackupError::Seal`] when a half fails.
+    pub fn sign_pointer(&self, body: &[u8]) -> Result<[u8; SIGNATURE_LEN], BackupError> {
+        sign_pointer(&self.key, body)
+    }
+
     /// Signs the key file bytes `message` under [`BINDING_CONTEXT`].
     ///
     /// # Errors
@@ -182,6 +223,27 @@ pub fn sign_container(
     body: &[u8],
 ) -> Result<[u8; SIGNATURE_LEN], BackupError> {
     sign(key, CONTAINER_CONTEXT, body)
+}
+
+/// The pointer signature of `key` over the pointer bytes `body` (ADR-012
+/// record of lane m10/backup-followups).
+///
+/// # Errors
+///
+/// [`BackupError::Seal`] when a half fails.
+pub fn sign_pointer(
+    key: &CompositeSigningKey,
+    body: &[u8],
+) -> Result<[u8; SIGNATURE_LEN], BackupError> {
+    sign(key, POINTER_CONTEXT, body)
+}
+
+/// Whether `signature` is the pointer signature of the writer key
+/// `public` over the pointer bytes `body` (ADR-012 record of lane
+/// m10/backup-followups).
+#[must_use]
+pub fn pointer_signature_verifies(public: &[u8], body: &[u8], signature: &[u8]) -> bool {
+    verifies(public, POINTER_CONTEXT, body, signature)
 }
 
 /// The one composite verification of this crate: both halves under

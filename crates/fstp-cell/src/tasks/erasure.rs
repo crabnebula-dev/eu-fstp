@@ -2473,7 +2473,7 @@ impl<C: Custody> ErasureRunner<C> {
         let rows = self.store.table_rows(&self.work.current)?;
         let image =
             rows_image::encode(self.store.cell.0, &rows).map_err(|_| keys_err("snapshot image"))?;
-        s.upload(&image)
+        s.upload(&self.custody, &image)
             .await
             .map_err(|_| keys_err("snapshot upload"))
     }
@@ -2514,7 +2514,7 @@ impl<C: Custody> ErasureRunner<C> {
             .ok_or(keys_err("snapshot root"))?;
         let seal = self.unwrap(&row, e.0).await?;
         restore::open_loaded(&mut ks, &seal)?;
-        s.publish(id)
+        s.publish(&self.custody, id)
             .await
             .map_err(|_| keys_err("snapshot pointer"))
     }

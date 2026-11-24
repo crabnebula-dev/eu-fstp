@@ -119,6 +119,11 @@ impl Custody for StubCustody {
         key: &SealKey,
         aad: &Aad,
     ) -> Result<WrappedSealKey, CustodyError> {
+        // As `fstp-keyd`: an AAD above its frame limit is refused (ADR-012
+        // record of lane m10/backup-followups, row "Custody doubles").
+        if aad.0.len() > fstp_custody::keyd::MAX_AAD_LEN {
+            return Err(CustodyError::Refused(Refusal::BadRequest));
+        }
         let k = self
             .roots
             .lock()
@@ -139,6 +144,9 @@ impl Custody for StubCustody {
         w: &WrappedSealKey,
         aad: &Aad,
     ) -> Result<SealKey, CustodyError> {
+        if aad.0.len() > fstp_custody::keyd::MAX_AAD_LEN {
+            return Err(CustodyError::Refused(Refusal::BadRequest));
+        }
         let k = self
             .roots
             .lock()
@@ -453,7 +461,10 @@ fn snapshot_images(w: &World) -> Vec<KeystoreRows> {
     snapshot_objects(w)
         .values()
         .map(|bytes| {
-            let opened = fstp_backup::open_container(&secret, bytes).unwrap();
+            // ADR-012 record of lane m10/backup-followups: `FBC2`, signed by the
+            // vault's snapshot writer key.
+            let writer = w.snapshots.key().file().writer_public().unwrap();
+            let opened = fstp_backup::open_object(&secret, &writer[..], bytes).unwrap();
             let (cell, rows) = snapshot::decode_image(&opened.plaintext).unwrap();
             assert_eq!(cell, CELL);
             rows

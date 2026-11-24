@@ -40,8 +40,9 @@ pub const CONFIG_MEMBERS: [&str; 10] = [
 /// The optional members of a configuration. `assets_dir` names the
 /// static pages (ADR-004 record of lane L13b). `object_store` names the
 /// bucket of the keystore snapshots (ADR-012 record of lane L17), in the
-/// shape `fstp-backup` uses.
-pub const OPTIONAL_MEMBERS: [&str; 2] = ["assets_dir", "object_store"];
+/// shape `fstp-backup` uses, or `object_stores` lists one to three
+/// (record of lane m10/backup-followups).
+pub const OPTIONAL_MEMBERS: [&str; 3] = ["assets_dir", "object_store", "object_stores"];
 
 /// The members of the database part, in key order.
 pub const DATABASE_MEMBERS: [&str; 3] = ["dbname", "host", "port"];
@@ -146,6 +147,9 @@ pub struct VaultConfig {
     /// (ADR-012 record of lane L17). Without one, step 5 of a rotation
     /// reads the committed rows back from the database.
     pub object_store: Option<fstp_backup::s3::Endpoint>,
+    /// The further stores of `object_stores`, after the first, in order
+    /// (ADR-012 record of lane m10/backup-followups, row "Every store").
+    pub more_stores: Vec<fstp_backup::s3::Endpoint>,
 }
 
 /// The vault database name of `cell`: `v_` and 32 lowercase hex digits.
@@ -268,12 +272,16 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
     }
     let o = obj(&v, &names, "members")?;
     let has_assets = o.get("assets_dir").is_some();
-    let object_store = match o.get("object_store") {
-        None => None,
-        Some(os) => Some(
-            fstp_backup::config::decode_object_store(os.as_object().ok_or(bad("object_store"))?)
-                .map_err(|_| bad("object_store"))?,
-        ),
+    // ADR-012 record of lane m10/backup-followups: `object_store`, or
+    // `object_stores` in order, never both.
+    let (object_store, more_stores) = match fstp_backup::config::decode_stores(o) {
+        Ok(None) => (None, Vec::new()),
+        Ok(Some(mut s)) => {
+            let first = s.remove(0);
+            (Some(first), s)
+        }
+        Err(_) if o.get("object_store").is_none() => return Err(bad("object_stores")),
+        Err(_) => return Err(bad("object_store")),
     };
     let d = obj(member(o, "database")?, &DATABASE_MEMBERS, "database")?;
     let cell = hex::<16>(o, "cell")?;
@@ -317,6 +325,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
         ticket_keys,
         witness: witness(o)?,
         object_store,
+        more_stores,
     })
 }
 
@@ -338,6 +347,54 @@ pub(crate) mod tests {
             t = "33".repeat(32),
             w = "44".repeat(32),
         ))
+    }
+
+    /// Q25, ADR-012 record of lane m10/backup-followups, row "Every store":
+    /// `object_stores` lists one to three stores in order, the first in
+    /// `object_store`, the rest in `more_stores`. Both members together,
+    /// an empty list and four stores are refused by name.
+    #[test]
+    fn adr012_bf_vault_config_takes_a_list_of_stores() {
+        let one = r#"{"bucket":"fstp-pilot","endpoint":"s3.gra.io.cloud.ovh.net","region":"gra"}"#;
+        let two = r#"{"bucket":"fstp-copy","endpoint":"s3.fr-par.scw.cloud","region":"fr-par"}"#;
+        let with = |member: &str| {
+            text(|s| s.replacen("\"origin_host\"", &format!("{member},\"origin_host\""), 1))
+        };
+        let c =
+            decode_config(with(&format!("\"object_stores\":[{one},{two}]")).as_bytes()).unwrap();
+        assert_eq!(c.object_store.unwrap().bucket, "fstp-pilot");
+        assert_eq!(c.more_stores.len(), 1);
+        assert_eq!(c.more_stores[0].bucket, "fstp-copy");
+        assert!(
+            decode_config(text(|s| s).as_bytes())
+                .unwrap()
+                .more_stores
+                .is_empty()
+        );
+        assert_eq!(
+            decode_config(with(&format!("\"object_store\":{one}")).as_bytes())
+                .unwrap()
+                .more_stores
+                .len(),
+            0
+        );
+        for (bad_member, rule) in [
+            (
+                format!("\"object_store\":{one},\"object_stores\":[{two}]"),
+                "object_store",
+            ),
+            ("\"object_stores\":[]".to_owned(), "object_stores"),
+            (
+                format!("\"object_stores\":[{one},{one},{one},{one}]"),
+                "object_stores",
+            ),
+        ] {
+            assert_eq!(
+                decode_config(with(&bad_member).as_bytes()),
+                Err(VaultError::Config(rule)),
+                "{bad_member}"
+            );
+        }
     }
 
     /// ADR-012 record of lane L17: `object_store` is optional, absent by

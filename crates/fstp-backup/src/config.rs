@@ -232,21 +232,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         return Err(cfg("database.host"));
     }
     let port = port_of(db.get("port"), None, "database.port")?;
-    let mut stores = match (o.get("object_store"), o.get("object_stores")) {
-        (Some(v), None) => vec![decode_object_store(
-            v.as_object().ok_or(cfg("object_store"))?,
-        )?],
-        (None, Some(v)) => {
-            let list = v.as_array().ok_or(cfg("object_stores"))?;
-            if list.is_empty() || list.len() > MAX_STORES {
-                return Err(cfg("object_stores"));
-            }
-            list.iter()
-                .map(|s| decode_object_store(s.as_object().ok_or(cfg("object_stores"))?))
-                .collect::<Result<Vec<_>, _>>()?
-        }
-        _ => return Err(cfg("object_store")),
-    };
+    let mut stores = decode_stores(o)?.ok_or(cfg("object_store"))?;
     let object_store = stores.remove(0);
     let more_stores = stores;
     let keyd_socket = match o.get("keyd_socket") {
@@ -285,6 +271,38 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         keyd_socket,
         retention,
     })
+}
+
+/// Decodes the stores of a configuration object: the single member
+/// `object_store`, or `object_stores`, a list of one to [`MAX_STORES`]
+/// stores in order (ADR-012 records of lanes m10/backup-format and
+/// m10/backup-followups). `None` when the object names neither. The cell
+/// and the vault configurations take the same two members for their
+/// keystore snapshots.
+///
+/// # Errors
+///
+/// [`BackupError::Config`] for both members together, an empty or
+/// overlong list, or a store [`decode_object_store`] refuses.
+pub fn decode_stores(o: &Object) -> Result<Option<Vec<Endpoint>>, BackupError> {
+    Ok(Some(
+        match (o.get("object_store"), o.get("object_stores")) {
+            (None, None) => return Ok(None),
+            (Some(v), None) => vec![decode_object_store(
+                v.as_object().ok_or(cfg("object_store"))?,
+            )?],
+            (None, Some(v)) => {
+                let list = v.as_array().ok_or(cfg("object_stores"))?;
+                if list.is_empty() || list.len() > MAX_STORES {
+                    return Err(cfg("object_stores"));
+                }
+                list.iter()
+                    .map(|s| decode_object_store(s.as_object().ok_or(cfg("object_stores"))?))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            (Some(_), Some(_)) => return Err(cfg("object_store")),
+        },
+    ))
 }
 
 /// Decodes the `object_store` member: `endpoint` (a host name), `port`

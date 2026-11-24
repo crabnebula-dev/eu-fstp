@@ -566,7 +566,7 @@ pub async fn snapshot_once<C: Custody>(
 ) -> Result<(), VaultError> {
     let image = encode_image(&cell, rows)?;
     let id = snapshots
-        .upload(&image)
+        .upload(custody, &image)
         .await
         .map_err(|_| VaultError::Unavailable("the keystore snapshot upload"))?;
     let fetched = snapshots
@@ -579,7 +579,7 @@ pub async fn snapshot_once<C: Custody>(
     }
     crate::erasure::check_rows(custody, &cell, &back).await?;
     snapshots
-        .publish(id)
+        .publish(custody, id)
         .await
         .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))
 }

@@ -75,7 +75,7 @@ struct Verifier {
 /// Every composite verifier of the platform. A shipped file with a
 /// `composite::verify*` call that no row names fails
 /// [`i90_every_composite_verify_call_site_is_in_the_table`].
-const VERIFIERS: [Verifier; 11] = [
+const VERIFIERS: [Verifier; 12] = [
     Verifier {
         name: "audit anchor (fstp_audit::anchor::anchor_signature_verifies)",
         site: "crates/fstp-audit/src/anchor.rs",
@@ -141,6 +141,12 @@ const VERIFIERS: [Verifier; 11] = [
         site: "crates/fstp-backup/src/writer.rs",
         sign: backup_container_sign,
         verify: backup_container_verify,
+    },
+    Verifier {
+        name: "keystore snapshot pointer (fstp_backup::writer::pointer_signature_verifies)",
+        site: "crates/fstp-backup/src/writer.rs",
+        sign: snapshot_pointer_sign,
+        verify: snapshot_pointer_verify,
     },
 ];
 
@@ -404,6 +410,22 @@ fn backup_container_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
 
 fn backup_container_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
     fstp_backup::writer::container_signature_verifies(pk, &backup_container_body(v), sig)
+}
+
+/// The pointer bytes of variant `v` that a pointer signature covers (ADR-012
+/// record of lane m10/backup-followups).
+fn snapshot_pointer_body(v: u8) -> Vec<u8> {
+    fstp_backup::snapshot::pointer_body(fstp_backup::SnapshotOwner::Vault, [v; 16], [v; 16])
+}
+
+fn snapshot_pointer_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
+    fstp_backup::writer::sign_pointer(key, &snapshot_pointer_body(v))
+        .unwrap()
+        .to_vec()
+}
+
+fn snapshot_pointer_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
+    fstp_backup::writer::pointer_signature_verifies(pk, &snapshot_pointer_body(v), sig)
 }
 
 // ------------------------------------------------------------- the sweep

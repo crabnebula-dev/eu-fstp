@@ -1159,7 +1159,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         if let Some(s) = &self.snapshots {
             let image = crate::snapshot::encode_image(&self.cell, &rows)?;
             let id = s
-                .upload(&image)
+                .upload(self.custody, &image)
                 .await
                 .map_err(|_| VaultError::Unavailable("the keystore snapshot upload"))?;
             self.work.snapshot_id = Some(id);
@@ -1235,7 +1235,7 @@ impl<'c, R: Runtime, C: Custody> Runner<'c, R, C> {
         }
         check_epoch(&rows, e)?;
         check_rows(self.custody, &self.cell, &rows).await?;
-        s.publish(id)
+        s.publish(self.custody, id)
             .await
             .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))?;
         Ok(rows)

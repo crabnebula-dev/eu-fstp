@@ -1,11 +1,15 @@
 //! Version 2 backup containers, `FBC2`, for the cluster backup objects
-//! (ADR-012 record of lane m10/backup-format, F-043, TH-51, R-CR-01).
+//! (ADR-012 record of lane m10/backup-format, F-043, TH-51, R-CR-01), and
+//! since lane m10/backup-followups for the keystore snapshots and the
+//! custodian escrow too.
 //!
 //! ```text
 //! header  = "FBC2" | version u8 = 1 | aead u16 = 1 | kind u8 | chain u8 | owner 16
 //!           | container 16 | chunk_size u32 | ident_len u8 | ident | sealed_key 1210
 //! ident   = backup id 16 | be32(part) | last u8      (kind 1, base backup part)
 //!         | the archive file name in ASCII           (kind 2, WAL segment or history file)
+//!         | snapshot id 16                           (kinds 3 and 5, keystore snapshots)
+//!         | custodian id 16                          (kind 4, custodian escrow)
 //! chunk   = final u8 | len u32 | nonce 12 | ciphertext len | tag 16
 //! aad(i)  = header | i u64 | final u8
 //! trailer = the writer's composite signature over every byte before it,
@@ -47,6 +51,13 @@ pub enum ObjectIdent {
     /// The archive file of this name: a WAL segment or a timeline
     /// history file.
     Wal(String),
+    /// The App chain keystore snapshot of this id, kind 3 (ADR-012 record
+    /// of lane m10/backup-followups).
+    AppSnapshot([u8; 16]),
+    /// The vault keystore snapshot of this id, kind 5.
+    VaultSnapshot([u8; 16]),
+    /// The custodian escrow for the second custodian of this id, kind 4.
+    Escrow([u8; 16]),
 }
 
 impl ObjectIdent {
@@ -56,6 +67,9 @@ impl ObjectIdent {
         match self {
             ObjectIdent::Base { .. } => ContainerKind::BaseBackup,
             ObjectIdent::Wal(_) => ContainerKind::WalSegment,
+            ObjectIdent::AppSnapshot(_) => ContainerKind::KeystoreSnapshot,
+            ObjectIdent::VaultSnapshot(_) => ContainerKind::VaultKeystoreSnapshot,
+            ObjectIdent::Escrow(_) => ContainerKind::CustodianEscrow,
         }
     }
 
@@ -77,6 +91,9 @@ impl ObjectIdent {
                 check_wal_name(name)?;
                 Ok(name.as_bytes().to_vec())
             }
+            ObjectIdent::AppSnapshot(id)
+            | ObjectIdent::VaultSnapshot(id)
+            | ObjectIdent::Escrow(id) => Ok(id.to_vec()),
         }
     }
 
@@ -107,9 +124,18 @@ impl ObjectIdent {
                 check_wal_name(name)?;
                 Ok(ObjectIdent::Wal(name.to_owned()))
             }
-            _ => Err(BackupError::Malformed("kind")),
+            ContainerKind::KeystoreSnapshot => Ok(ObjectIdent::AppSnapshot(id16(bytes)?)),
+            ContainerKind::VaultKeystoreSnapshot => Ok(ObjectIdent::VaultSnapshot(id16(bytes)?)),
+            ContainerKind::CustodianEscrow => Ok(ObjectIdent::Escrow(id16(bytes)?)),
         }
     }
+}
+
+/// An `ident` of exactly 16 bytes: a snapshot id or a custodian id.
+fn id16(bytes: &[u8]) -> Result<[u8; 16], BackupError> {
+    bytes
+        .try_into()
+        .map_err(|_| BackupError::Malformed("ident"))
 }
 
 /// A segment or history file name, never a skipped one.
