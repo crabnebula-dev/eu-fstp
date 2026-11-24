@@ -471,6 +471,10 @@ pub enum PortKind {
     /// The caller sets its own theme choice, a `ThemeSet` record of the
     /// tenant ledger (ADR-030).
     SetTheme,
+    /// A tenant admin acknowledges an integrity finding of the System page
+    /// (ADR-012 record of lane m10/declared-restore). Web only, no step-up.
+    /// The acknowledgement never removes the finding.
+    AcknowledgeFinding,
 }
 
 /// An M5 operation that is neither a core command nor a read (M5 design
@@ -1370,6 +1374,18 @@ pub const OPS: &[OpSpec] = &[
     // no step-up. Its `tenant.` name lets the ADR-021 setup gate admit it
     // before activation, when the page matters most.
     OpSpec::read("tenant.system", RK::GetSystemStatus, "/admin/system").acting(ADMIN),
+    // ADR-012 record of lane m10/declared-restore: a tenant admin
+    // acknowledges one integrity finding: a window a declared restore lost,
+    // or a possible deletion. Web only, with no tool and no step-up
+    // (usability rule of 2026-11-21). Its `tenant.` name lets the setup
+    // gate admit it before activation, as `tenant.system`.
+    OpSpec::new(
+        "tenant.acknowledge_finding",
+        OpKind::M3Port(PortKind::AcknowledgeFinding),
+        Post,
+        "/admin/system/acknowledgements",
+    )
+    .acting(ADMIN),
     // SA-11 (Daniel, 2026-11-15, night): every member account of the
     // organisation with its roles, for the tenant admins. Web only: it
     // names emails and display names (I-86).

@@ -7,6 +7,11 @@
 //! `fstp-admin` writes. The page decides the lights. Every value is an
 //! instant, a count, a flag or one word of a closed list: no name, no
 //! address, no path and no account (R-NF-02).
+//!
+//! The integrity findings of the cell and its vault (ADR-012 record of
+//! lane m10/declared-restore) add a digest id and row numbers each: still
+//! no name and no account. `tenant.acknowledge_finding` records a tenant
+//! admin's acknowledgement of one, which never removes it.
 
 use fstp_domain::time::Timestamp;
 use fstp_json::{Object, ToJson, Value};
@@ -293,8 +298,85 @@ impl MailState {
     }
 }
 
-/// What the cell knows of itself and its host.
+/// What an integrity finding names (ADR-012 record of lane
+/// m10/declared-restore, ADR-010 "In doubt").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FindingKind {
+    /// Receipted rows that a declared restore lost.
+    LostInRestore,
+    /// A prepared row the cell could not tell from a deletion.
+    PossibleDeletion,
+}
+
+impl FindingKind {
+    /// The wire word.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::LostInRestore => "lost_in_restore",
+            Self::PossibleDeletion => "possible_deletion",
+        }
+    }
+}
+
+/// The audit chain a finding is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FindingChain {
+    /// The cell's App chain.
+    App,
+    /// The vault's chain.
+    Vault,
+}
+
+impl FindingChain {
+    /// The wire word.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::Vault => "vault",
+        }
+    }
+}
+
+/// One integrity finding that tenant admins must acknowledge (ADR-012
+/// record of lane m10/declared-restore). An acknowledgement never removes
+/// it: the page keeps showing it, marked acknowledged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Finding {
+    /// The finding id: the idem of its `ops.outbox` row.
+    pub id: [u8; 32],
+    /// What it names.
+    pub kind: FindingKind,
+    /// The chain.
+    pub chain: FindingChain,
+    /// The first row it names.
+    pub from: u64,
+    /// The last row it names.
+    pub to: u64,
+    /// When a tenant admin acknowledged it, if one did.
+    pub acknowledged_at: Option<Timestamp>,
+}
+
+impl Finding {
+    /// The id the page names: the first 16 bytes of [`Finding::id`], as an
+    /// id of the API grammar, so the reply holds no free string (R-NF-02).
+    #[must_use]
+    pub fn wire_id(&self) -> u128 {
+        wire_id(&self.id)
+    }
+}
+
+/// The wire id of the finding id `id` (see [`Finding::wire_id`]).
+#[must_use]
+pub fn wire_id(id: &[u8; 32]) -> u128 {
+    let mut first = [0u8; 16];
+    first.copy_from_slice(id.get(..16).unwrap_or(&[0; 16]));
+    u128::from_be_bytes(first)
+}
+
+/// What the cell knows of itself and its host.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SystemFacts {
     /// The vault answered a question that names nobody.
     pub vault_answers: bool,
@@ -302,6 +384,9 @@ pub struct SystemFacts {
     pub mail: MailState,
     /// The host status file.
     pub host: HostFile,
+    /// Every integrity finding of the cell and its vault, acknowledged or
+    /// not (ADR-012 record of lane m10/declared-restore).
+    pub findings: Vec<Finding>,
 }
 
 impl Default for SystemFacts {
@@ -311,12 +396,13 @@ impl Default for SystemFacts {
             vault_answers: false,
             mail: MailState::NotConfigured,
             host: HostFile::NotConfigured,
+            findings: Vec::new(),
         }
     }
 }
 
 /// The `tenant.system` reply: the facts and the cell clock.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SystemView {
     /// The cell clock at the read.
     pub now: Timestamp,
@@ -335,6 +421,21 @@ fn instant(t: Timestamp) -> Value {
 
 fn put(o: &mut Object, k: &str, v: Value) {
     let _ = o.insert(k, v);
+}
+
+fn finding_json(x: &Finding) -> Value {
+    let mut o = Object::new();
+    put(&mut o, "id", Value::String(x.wire_id().to_string()));
+    put(&mut o, "kind", Value::from(x.kind.wire()));
+    put(&mut o, "chain", Value::from(x.chain.wire()));
+    put(&mut o, "from", Value::String(x.from.to_string()));
+    put(&mut o, "to", Value::String(x.to.to_string()));
+    put(
+        &mut o,
+        "acknowledged_at",
+        x.acknowledged_at.map_or(Value::Null, instant),
+    );
+    Value::Object(o)
 }
 
 fn report_json(r: &HostReport) -> Value {
@@ -448,6 +549,11 @@ impl ToJson for SystemView {
         put(&mut o, "host", host);
         put(
             &mut o,
+            "findings",
+            Value::Array(f.findings.iter().map(finding_json).collect()),
+        );
+        put(
+            &mut o,
             "last_cell_erasure",
             self.last_cell_erasure.map_or(Value::Null, instant),
         );
@@ -468,5 +574,44 @@ mod tests {
             assert_eq!(HostNext::of(w).map(HostNext::wire), Some(w));
         }
         assert_eq!(HostNext::of("reboot"), None);
+    }
+
+    /// I-24, ADR-012 record of lane m10/declared-restore: each finding
+    /// reaches the System reply with its id, kind, chain, rows and
+    /// acknowledgement, and an acknowledged one stays listed.
+    #[test]
+    fn adr012_declared_restore_findings_reach_the_system_reply() {
+        let view = SystemView {
+            now: Timestamp::from_micros(5),
+            last_cell_erasure: None,
+            facts: SystemFacts {
+                findings: vec![
+                    Finding {
+                        id: [0xAB; 32],
+                        kind: FindingKind::LostInRestore,
+                        chain: FindingChain::Vault,
+                        from: 4,
+                        to: 9,
+                        acknowledged_at: Some(Timestamp::from_micros(7)),
+                    },
+                    Finding {
+                        id: [1; 32],
+                        kind: FindingKind::PossibleDeletion,
+                        chain: FindingChain::App,
+                        from: 3,
+                        to: 3,
+                        acknowledged_at: None,
+                    },
+                ],
+                ..SystemFacts::default()
+            },
+        };
+        let text = fstp_json::to_canonical(&view.to_json()).unwrap_or_default();
+        let id = u128::from_be_bytes([0xAB; 16]);
+        assert!(text.contains(&format!(
+            "{{\"acknowledged_at\":\"7\",\"chain\":\"vault\",\"from\":\"4\",\"id\":\"{id}\",\"kind\":\"lost_in_restore\",\"to\":\"9\"}}"
+        )));
+        assert!(text.contains("\"acknowledged_at\":null,\"chain\":\"app\""));
+        assert_eq!(wire_id(&[1; 32]), u128::from_be_bytes([1; 16]));
     }
 }

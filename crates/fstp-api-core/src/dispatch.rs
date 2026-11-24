@@ -2781,6 +2781,9 @@ enum PortCall {
     SetDisplayName(Option<String>),
     /// The caller sets its own theme (ADR-030).
     SetTheme(fstp_tenant::Theme),
+    /// A tenant admin acknowledges an integrity finding (ADR-012 record of
+    /// lane m10/declared-restore).
+    AcknowledgeFinding(u128),
 }
 
 /// An operation an M3 port serves.
@@ -2899,6 +2902,10 @@ async fn m3_port<P: Seams>(
         }
         PortKind::SetTheme => PortCall::SetTheme(
             forms::theme_param(&op.request)
+                .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?,
+        ),
+        PortKind::AcknowledgeFinding => PortCall::AcknowledgeFinding(
+            forms::id_param(&op.request, "finding")
                 .ok_or_else(|| call.refuse(ApiError::bad_request(forms::REQUEST_RULE)))?,
         ),
         PortKind::MarkMailboxRead => {
@@ -3153,6 +3160,18 @@ async fn m3_port<P: Seams>(
         PortCall::SetTheme(theme) => brand::set_theme(call, account, theme)
             .await
             .map_err(|e| call.refuse(e)),
+        // ADR-012 record of lane m10/declared-restore: the cell records the
+        // acknowledgement in its audit chain and never removes the finding.
+        PortCall::AcknowledgeFinding(finding) => {
+            use crate::port::TenantConfig as _;
+            done(
+                call.ports
+                    .tenant()
+                    .acknowledge_finding(account, finding)
+                    .await,
+                "I-24",
+            )
+        }
         PortCall::EndSession(s) => {
             done(call.ports.sessions_admin().end(account, s).await, "R-LG-04")
         }

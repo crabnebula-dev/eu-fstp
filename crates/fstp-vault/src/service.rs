@@ -1036,13 +1036,22 @@ pub async fn serve_with_registrar<R: Runtime>(
     // ADR-010 "Start-up": the vault verifies its chain against the
     // witness before it serves.
     let store = match chain {
-        Some(parts) => Some(Persist {
-            rt: rt.clone(),
-            chain: VaultChain::open(rt.clone(), cell, parts, &mut client).await?,
-            db,
-            client: Some(client),
-            sealer,
-        }),
+        Some(parts) => {
+            let mut chain = VaultChain::open(rt.clone(), cell, parts, &mut client).await?;
+            // ADR-012 record of lane m10/declared-restore: after a declared
+            // restore the vault starts, and records each lost window in its
+            // own chain first.
+            chain
+                .record_restore_losses(&mut client, sealer.as_ref(), now_us())
+                .await?;
+            Some(Persist {
+                rt: rt.clone(),
+                chain,
+                db,
+                client: Some(client),
+                sealer,
+            })
+        }
         None => None,
     };
     let shared = Arc::new(Shared {

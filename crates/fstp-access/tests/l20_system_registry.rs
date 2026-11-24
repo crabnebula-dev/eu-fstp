@@ -84,3 +84,27 @@ fn fstp_obs_words() -> Vec<&'static str> {
         "nothing",
     ]
 }
+
+/// I-24, ADR-012 record of lane m10/declared-restore: tenant admins
+/// acknowledge an integrity finding on the System page, on the web only,
+/// with no step-up. The reply names each finding by an id of the API
+/// grammar, so it still holds no free string.
+#[test]
+fn adr012_declared_restore_acknowledgement_is_a_tenant_admin_act() {
+    let spec = op("tenant.acknowledge_finding").expect("tenant.acknowledge_finding");
+    assert_eq!(
+        spec.kind,
+        OpKind::M3Port(fstp_access::PortKind::AcknowledgeFinding)
+    );
+    assert_eq!(
+        spec.route,
+        Some((Method::Post, "/admin/system/acknowledgements"))
+    );
+    assert_eq!(spec.acting, &[RoleOrApplicant::Role(Role::TenantAdmin)]);
+    assert!(spec.tool.is_none(), "no MCP tool");
+    assert!(!spec.high_risk);
+    let Some(Shape::Object(members)) = reply("tenant.system") else {
+        panic!("the System reply is an object");
+    };
+    assert!(members.iter().any(|m| m.name == "findings"));
+}

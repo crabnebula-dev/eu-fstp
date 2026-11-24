@@ -1830,6 +1830,20 @@ pub trait TenantConfig: Send + Sync {
     fn system(&self) -> impl Future<Output = crate::system::SystemFacts> + Send {
         std::future::ready(crate::system::SystemFacts::default())
     }
+    /// Records `account`'s acknowledgement of the integrity finding whose
+    /// wire id is `finding` ([`crate::system::Finding::wire_id`]) in the
+    /// audit chain (ADR-012 record of lane
+    /// m10/declared-restore). It never removes the finding. A finding the
+    /// cell does not hold is refused. The default is a cell with no
+    /// finding store: it fails closed.
+    fn acknowledge_finding(
+        &self,
+        account: AccountId,
+        finding: u128,
+    ) -> impl Future<Output = Result<(), PortError>> + Send {
+        let _ = (account, finding);
+        std::future::ready(Err(PortError::Unavailable))
+    }
 }
 
 /// The in-app notice list, read from outbox records.
