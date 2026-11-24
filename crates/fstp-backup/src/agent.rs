@@ -33,6 +33,7 @@ use crate::keyfile::{self, KeyFile};
 use crate::s3::S3Client;
 use crate::sigv4::hex;
 use crate::wal::{self, ArchiveName};
+use crate::writer::{WRITER_FILE, WriterKey};
 use crate::{BackupError, ContainerKind, WalName, open_container, seal_container};
 
 /// The plaintext of one base backup part (record of lane L10).
@@ -94,6 +95,7 @@ pub struct Restored {
 pub struct Agent<R: Runtime> {
     s3: S3Client<R>,
     key: KeyFile,
+    writer: Option<WriterKey>,
     state_dir: PathBuf,
     limits: Limits,
 }
@@ -142,16 +144,21 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), BackupError> {
 }
 
 impl<R: Runtime> Agent<R> {
-    /// An agent over `s3` for the cluster of the key file `key_file`.
+    /// An agent over `s3` for the cluster of the key file `key_file`,
+    /// signing with the writer key file `writer_key` (F-043, F-044). A host
+    /// that only restores, such as a second custodian, has no writer key and
+    /// passes `None`. It can fetch and open, and every seal refuses.
     ///
     /// # Errors
     ///
-    /// [`BackupError::KeyFile`] for a key file that does not decode or
-    /// names another cluster.
+    /// [`BackupError::KeyFile`] for a key file that does not decode, names
+    /// another cluster, or is not bound to the writer key
+    /// ([`KeyFile::check_writer`]).
     pub fn new(
         s3: S3Client<R>,
         cluster: [u8; 16],
         key_file: &[u8],
+        writer_key: Option<&[u8]>,
         state_dir: &Path,
     ) -> Result<Agent<R>, BackupError> {
         let key = keyfile::decode(key_file)?;
@@ -159,9 +166,15 @@ impl<R: Runtime> Agent<R> {
             return Err(BackupError::KeyFile("another cluster"));
         }
         key.public_key()?;
+        key.check_binding()?;
+        let writer = writer_key.map(WriterKey::decode).transpose()?;
+        if let Some(w) = &writer {
+            key.check_writer(w)?;
+        }
         Ok(Agent {
             s3,
             key,
+            writer,
             state_dir: state_dir.to_path_buf(),
             limits: Limits::default(),
         })
@@ -180,7 +193,20 @@ impl<R: Runtime> Agent<R> {
         let ca = config::s3_ca(dir)?;
         let s3 = S3Client::new(rt, cfg.object_store.clone(), credentials, ca.as_deref())?;
         let key = config::read_credential(dir, keyfile::KEY_FILE)?;
-        Agent::new(s3, cfg.cluster, &key, &cfg.state_dir)
+        // A restore-only host holds no writer key (record of lane
+        // m10/backup-format).
+        let writer = match std::fs::read(dir.join(WRITER_FILE)) {
+            Ok(bytes) => Some(zeroize::Zeroizing::new(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return Err(BackupError::Config(WRITER_FILE)),
+        };
+        Agent::new(
+            s3,
+            cfg.cluster,
+            &key,
+            writer.as_deref().map(Vec::as_slice),
+            &cfg.state_dir,
+        )
     }
 
     /// The agent with other sizes.
@@ -188,6 +214,11 @@ impl<R: Runtime> Agent<R> {
     pub fn with_limits(mut self, limits: Limits) -> Agent<R> {
         self.limits = limits;
         self
+    }
+
+    /// The writer key, which every seal needs.
+    fn writer(&self) -> Result<&WriterKey, BackupError> {
+        self.writer.as_ref().ok_or(BackupError::Config(WRITER_FILE))
     }
 
     /// The cluster.
@@ -215,6 +246,9 @@ impl<R: Runtime> Agent<R> {
         object: &str,
         plaintext: &[u8],
     ) -> Result<(), BackupError> {
+        // F-044: the key file is checked before every seal.
+        let writer = self.writer()?;
+        self.key.check_writer(writer)?;
         let public = self.key.public_key()?;
         let sealed = seal_container(&public, kind, &self.key.group_ref(), part, plaintext)?;
         self.s3

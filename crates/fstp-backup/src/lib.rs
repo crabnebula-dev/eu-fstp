@@ -24,6 +24,7 @@ mod seal;
 pub mod sigv4;
 pub mod snapshot;
 mod wal;
+pub mod writer;
 pub mod xml;
 
 use std::path::PathBuf;
@@ -218,9 +219,13 @@ pub fn backup_label_start(label: &[u8]) -> Result<WalName, BackupError> {
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// `init-keys`: create `cluster-backup.key` in the credentials
-    /// directory.
+    /// `init-keys`: create `cluster-backup.key` and
+    /// `cluster-backup-writer.key` in the credentials directory.
     InitKeys,
+    /// `upgrade-keys`: turn a version 1 `cluster-backup.key` into version
+    /// 2 bound to a writer key (record of lane m10/backup-format). A
+    /// version 2 file is left as it is.
+    UpgradeKeys,
     /// `base-backup`: one base backup.
     BaseBackup,
     /// `wal-archive <path> <name>`, for `archive_command` (`%p %f`).
@@ -268,6 +273,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
     let usage = BackupError::Config("arguments");
     match args {
         [c] if c == "init-keys" => Ok(Command::InitKeys),
+        [c] if c == "upgrade-keys" => Ok(Command::UpgradeKeys),
         [c] if c == "base-backup" => Ok(Command::BaseBackup),
         [c, path, name] if c == "wal-archive" => Ok(Command::WalArchive {
             path: PathBuf::from(path),
@@ -322,12 +328,19 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
     let rt = TokioRuntime::new_multi_thread(2).map_err(|_| BackupError::Io("runtime"))?;
     if *command == Command::InitKeys {
         let path = cfg.credentials_dir.join(keyfile::KEY_FILE);
-        if std::fs::symlink_metadata(&path).is_ok() {
-            return Err(BackupError::Config(keyfile::KEY_FILE));
+        let wpath = cfg.credentials_dir.join(writer::WRITER_FILE);
+        for p in [&path, &wpath] {
+            if std::fs::symlink_metadata(p).is_ok() {
+                return Err(BackupError::Config(keyfile::KEY_FILE));
+            }
         }
         let custody = console(&cfg)?;
-        let bytes = rt.block_on(keyfile::create(&custody, cfg.cluster))?;
-        return write_key_file(&path, &bytes);
+        let created = rt.block_on(keyfile::create(&custody, cfg.cluster))?;
+        write_key_file(&wpath, &created.writer_key)?;
+        return write_key_file(&path, &created.key_file);
+    }
+    if *command == Command::UpgradeKeys {
+        return upgrade_keys(&rt, &cfg);
     }
     if *command == Command::CustodianInit {
         let key_path = cfg.credentials_dir.join(custodian::CUSTODIAN_KEY_FILE);
@@ -355,7 +368,10 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
     let agent = agent::Agent::from_config(rt.clone(), &cfg)?;
     rt.block_on(async {
         match command {
-            Command::InitKeys | Command::CustodianInit | Command::CustodianEscrow { .. } => Ok(()),
+            Command::InitKeys
+            | Command::UpgradeKeys
+            | Command::CustodianInit
+            | Command::CustodianEscrow { .. } => Ok(()),
             Command::BaseBackup => agent.base_backup(&cfg).await.map(|_| ()),
             Command::WalArchive { path, name } => agent.archive(path, name).await.map(|_| ()),
             Command::WalRestore { name, path } => {
@@ -397,6 +413,41 @@ async fn open_group_secret<R: fstp_rt::Runtime>(
     agent.open_escrow(&custody, &key, &escrow).await
 }
 
+/// `upgrade-keys` (record of lane m10/backup-format): a version 2 key
+/// file is left as it is. A version 1 file is opened through the console
+/// socket and replaced by a version 2 file for the same group key, bound
+/// to the writer key file, which is created first unless it exists. The
+/// key file is replaced through a temporary file and a rename.
+fn upgrade_keys(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<(), BackupError> {
+    let dir = &cfg.credentials_dir;
+    let bytes = config::read_credential(dir, keyfile::KEY_FILE)?;
+    let wpath = dir.join(writer::WRITER_FILE);
+    let existing = match std::fs::read(&wpath) {
+        Ok(w) => Some(writer::WriterKey::decode(&zeroize::Zeroizing::new(w))?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(BackupError::Config(writer::WRITER_FILE)),
+    };
+    if let Ok(v2) = keyfile::decode(&bytes) {
+        return match &existing {
+            Some(w) => v2.check_writer(w),
+            None => Err(BackupError::Config(writer::WRITER_FILE)),
+        };
+    }
+    let had_writer = existing.is_some();
+    let custody = console(cfg)?;
+    let created = rt.block_on(keyfile::upgrade(&custody, &bytes, existing))?;
+    if !had_writer {
+        write_key_file(&wpath, &created.writer_key)?;
+    }
+    let tmp = dir.join(format!("{}.upgrade", keyfile::KEY_FILE));
+    let _ = std::fs::remove_file(&tmp);
+    write_key_file(&tmp, &created.key_file)?;
+    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))
+}
+
 /// Reads a file of at most `max` bytes.
 fn read_small(path: &std::path::Path, max: usize) -> Result<Vec<u8>, BackupError> {
     let meta = std::fs::metadata(path).map_err(|_| BackupError::Io("read a ceremony file"))?;
@@ -431,10 +482,14 @@ mod tests {
         v.iter().map(|x| (*x).to_owned()).collect()
     }
 
-    /// ADR-012 records of lanes L10 and L16: the seven command forms, and
-    /// no other.
+    /// ADR-012 records of lanes L10, L16 and m10/backup-format: the eight
+    /// command forms, and no other.
     #[test]
-    fn adr012_binary_takes_seven_command_forms() {
+    fn adr012_binary_takes_eight_command_forms() {
+        assert_eq!(
+            parse_args(&s(&["upgrade-keys"])).unwrap(),
+            Command::UpgradeKeys
+        );
         assert_eq!(
             parse_args(&s(&["custodian-init"])).unwrap(),
             Command::CustodianInit
@@ -483,6 +538,7 @@ mod tests {
             &["serve"],
             &["custodian-init", "x"],
             &["custodian-escrow", "/r"],
+            &["upgrade-keys", "x"],
         ] {
             assert_eq!(
                 parse_args(&s(bad)).unwrap_err(),

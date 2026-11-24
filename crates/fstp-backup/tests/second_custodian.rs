@@ -69,6 +69,7 @@ fn holds(hay: &[u8], needle: &[u8]) -> bool {
 /// and request, and A's escrow.
 struct Ceremony {
     key_file: Vec<u8>,
+    writer_key: Vec<u8>,
     custodian_key: Vec<u8>,
     request: Vec<u8>,
     escrow: Vec<u8>,
@@ -76,12 +77,15 @@ struct Ceremony {
 
 fn ceremony(rt: &TokioRuntime, a: &MemCustody, b: &MemCustody) -> Ceremony {
     rt.block_on(async {
-        let key_file = keyfile::create(a, CLUSTER).await.unwrap();
+        let created = keyfile::create(a, CLUSTER).await.unwrap();
+        let key_file = created.key_file.clone();
+        let writer_key = created.writer_key.to_vec();
         let (custodian_key, request) = custodian::init(b, CLUSTER).await.unwrap();
         let key = keyfile::decode(&key_file).unwrap();
         let escrow = custodian::escrow(a, &key, &request).await.unwrap();
         Ceremony {
             key_file,
+            writer_key,
             custodian_key,
             request,
             escrow,
@@ -154,7 +158,14 @@ fn i80_i81_host_loss_restore_from_the_second_custodian() {
     std::fs::write(&wal, &segment).unwrap();
     let base = b"synthetic cluster files, lane L16".repeat(1000);
     let entry = {
-        let agent_a = Agent::new(client(&rt, &fake), CLUSTER, &c.key_file, &temp_dir("a")).unwrap();
+        let agent_a = Agent::new(
+            client(&rt, &fake),
+            CLUSTER,
+            &c.key_file,
+            Some(&c.writer_key),
+            &temp_dir("a"),
+        )
+        .unwrap();
         rt.block_on(agent_a.archive(&wal, "000000010000000000000007"))
             .unwrap();
         rt.block_on(agent_a.base_backup_from(&mut &base[..]))
@@ -162,7 +173,14 @@ fn i80_i81_host_loss_restore_from_the_second_custodian() {
     };
     drop(a);
 
-    let agent_b = Agent::new(client(&rt, &fake), CLUSTER, &c.key_file, &temp_dir("b")).unwrap();
+    let agent_b = Agent::new(
+        client(&rt, &fake),
+        CLUSTER,
+        &c.key_file,
+        None,
+        &temp_dir("b"),
+    )
+    .unwrap();
     let secret = rt
         .block_on(agent_b.open_escrow(&b, &c.custodian_key, &c.escrow))
         .unwrap();
@@ -245,7 +263,8 @@ fn adr012_custodian_files_round_trip() {
         BackupError::KeyFile("another cluster")
     );
     // An escrow checked against another group key file is refused.
-    let other_key = keyfile::decode(&rt.block_on(keyfile::create(&a, CLUSTER)).unwrap()).unwrap();
+    let other_key =
+        keyfile::decode(&rt.block_on(keyfile::create(&a, CLUSTER)).unwrap().key_file).unwrap();
     assert!(
         rt.block_on(custodian::open(&b, &c.custodian_key, &c.escrow, &other_key))
             .is_err()
