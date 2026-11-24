@@ -175,3 +175,20 @@ Written before the code, after Daniel's answers of 2026-11-24 (ADR-004, "Decided
 | Copy owed | `fstp-keyd guard-check` exits 6 while a fresh copy is owed to the custodian. `status` shows `custodian  linked, a fresh copy is owed (retried every ten minutes)` and names it as the next thing after the backups. The host status file gains `guard_copy_owed`, the next word `custodian_copy`, and the System page shows the key copy row amber with the host admin to act | Usability rule of 2026-11-21 |
 
 Tests: `adr028_guard_restore_keys_takes_each_copy_from_the_directory_or_the_custodian` and `adr028_guard_status_names_an_owed_copy` in `fstp-admin`; the copy cases of `r_nf_02_host_status_round_trips` in `fstp-obs`; `adr028_guard_key_copy_row_shows_an_owed_copy` in `web/test/l20_system_page.test.ts`.
+
+## Record of lane `m10/backup-pitr`, 2026-11-24: restore to a time
+
+Written before the code. Daniel decided on 2026-11-24 that backup is mission critical and asked for point-in-time restore. The backup side is in ADR-012 (record of lane `m10/backup-pitr`). Each row is interim, pending Daniel, unless it says otherwise. The row "Backups" above is amended.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Command | `fstp-admin restore --to <time>`, with `<time>` exactly like `2026-11-24T10:00:00Z`, in UTC. `fstp-admin restore` with no argument restores to the newest point, as before | Decided by Daniel on 2026-11-24 |
+| Refusals | A time in the future, a time not after the oldest base backup of either database, and any other spelling are refused with exit status 2. The message names the format, or the oldest time that works | Usability rule of 2026-11-21 |
+| Warning | Before it changes anything, `restore --to` prints the window that will be lost, from the target to now. It says that the cell and the vault will refuse to start while the witness holds receipts for that window, and that tenant admins see nothing of it yet. It asks the operator to type `yes`. Any other answer stops it with nothing changed | I-24; ADR-012 record of lane `m10/backup-pitr` |
+| Both or neither | Both databases are restored and checked in fresh directories first. Only then are both swapped in. When one fails, both fresh directories are removed, the live databases stay as they were, and the services start again | Decided by Daniel on 2026-11-24 |
+| Start | After the swap, each database starts and finishes its recovery. `fstp-admin` waits for the promotion, then resets the recovery settings. The key steps of the record of lane L27 and of lane `m10/guard-key` follow unchanged | ADR-012 |
+| Fresh backup | Once the services have started, or failed to, `restore` takes a base backup of both databases | Decided by Daniel on 2026-11-24 |
+| Archive ends first | When the archive holds no change after the target, `restore --to` says the newest point is that same state and suggests `fstp-admin restore` | ADR-012 record of lane `m10/backup-pitr` |
+| Time parser | `fstp_admin::pitr::parse_time`, in-house, fuzzed as `restore_time_parse` in the fuzz project of `fstp-admin` | CLAUDE.md fuzz rule |
+
+Tests, written before the code: `adr012_pitr_time_*` and `adr028_pitr_restore_takes_an_optional_target` in `fstp-admin`.
