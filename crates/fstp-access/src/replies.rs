@@ -337,6 +337,7 @@ pub const HOST_NEXT: &[&str] = &[
     "public_certificate",
     "configure_backups",
     "wal_archive",
+    "witness_copy",
     "backup",
     "restore_drill",
     "custodian_copy",
@@ -2055,6 +2056,12 @@ pub const REPLIES: &[(&str, Shape)] = &[
                         ]),
                     ),
                     m("drill_seconds", Shape::Nullable(&Shape::Int)),
+                    // ADR-028 record of lane `m10/witness-copy`: the witness copy.
+                    m(
+                        "witness_copy",
+                        Shape::Enum(&["ok", "late", "failing", "unknown"]),
+                    ),
+                    m("last_witness_copied", Shape::Nullable(&Shape::Id)),
                 ])),
             ),
         ]),

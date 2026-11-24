@@ -435,16 +435,29 @@ impl Manager {
         args: &str,
         calendar: &str,
     ) -> Result<(), RunFail> {
+        self.timer_with_delay(name, admin, args, calendar, 300)
+    }
+
+    /// As [`Manager::timer`], with a random delay of at most `delay`
+    /// seconds. With 0, the timer has no random delay and an accuracy of
+    /// one second, for the witness copy every minute (ADR-028 record of
+    /// lane `m10/witness-copy`).
+    ///
+    /// # Errors
+    ///
+    /// [`RunFail`] when a unit does not write or start.
+    pub fn timer_with_delay(
+        &self,
+        name: &str,
+        admin: &Path,
+        args: &str,
+        calendar: &str,
+        delay: u32,
+    ) -> Result<(), RunFail> {
         if self.mode != Services::Systemd {
             return Ok(());
         }
-        let service = format!(
-            "# Written by fstp-admin.\n[Unit]\nDescription=fstp-admin {args}\n\n[Service]\nType=oneshot\nExecStart={} {args}\n",
-            admin.display()
-        );
-        let timer = format!(
-            "# Written by fstp-admin.\n[Unit]\nDescription=fstp-admin {args}\n\n[Timer]\nOnCalendar={calendar}\nPersistent=true\nRandomizedDelaySec=300\n\n[Install]\nWantedBy=timers.target\n"
-        );
+        let (service, timer) = timer_units(admin, args, calendar, delay);
         write_atomic(
             &self.unit_dir.join(format!("{name}.service")),
             service.as_bytes(),
@@ -461,9 +474,47 @@ impl Manager {
     }
 }
 
+/// The service and timer unit texts of a timer that runs `<admin> <args>`
+/// on `calendar`, with a random delay of at most `delay` seconds, or none
+/// and an accuracy of one second when `delay` is 0.
+#[must_use]
+pub fn timer_units(admin: &Path, args: &str, calendar: &str, delay: u32) -> (String, String) {
+    let service = format!(
+        "# Written by fstp-admin.\n[Unit]\nDescription=fstp-admin {args}\n\n[Service]\nType=oneshot\nExecStart={} {args}\n",
+        admin.display()
+    );
+    let timing = if delay == 0 {
+        "AccuracySec=1s\n".to_owned()
+    } else {
+        format!("Persistent=true\nRandomizedDelaySec={delay}\n")
+    };
+    let timer = format!(
+        "# Written by fstp-admin.\n[Unit]\nDescription=fstp-admin {args}\n\n[Timer]\nOnCalendar={calendar}\n{timing}\n[Install]\nWantedBy=timers.target\n"
+    );
+    (service, timer)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-028 record of lane `m10/witness-copy`, row "New timer": the
+    /// witness copy runs every minute with no random delay, and the other
+    /// timers keep their text.
+    #[test]
+    fn adr028_wc_copy_timer_runs_every_minute() {
+        let admin = Path::new("/usr/local/bin/fstp-admin");
+        let (service, timer) = timer_units(admin, "witness-copy", "*-*-* *:*:00", 0);
+        assert!(service.contains("ExecStart=/usr/local/bin/fstp-admin witness-copy\n"));
+        assert!(timer.contains("OnCalendar=*-*-* *:*:00\nAccuracySec=1s\n"));
+        assert!(!timer.contains("RandomizedDelaySec"));
+        assert!(!timer.contains("Persistent"));
+        let (_, nightly) = timer_units(admin, "backup", "*-*-* 02:30:00", 300);
+        assert_eq!(
+            nightly,
+            "# Written by fstp-admin.\n[Unit]\nDescription=fstp-admin backup\n\n[Timer]\nOnCalendar=*-*-* 02:30:00\nPersistent=true\nRandomizedDelaySec=300\n\n[Install]\nWantedBy=timers.target\n"
+        );
+    }
 
     /// ADR-028 "Services": a unit names its user, environment, program and
     /// order, and restarts on failure.

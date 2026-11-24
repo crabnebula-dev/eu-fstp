@@ -37,6 +37,7 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.name.mail": "Outgoing mail",
   "system.name.backups": "Backups",
   "system.name.archive": "Backup of recent changes",
+  "system.name.witness": "Copy of the audit witness",
   "system.name.drill": "Restore test",
   "system.name.keys": "Key copy",
   "system.name.snapshots": "Key store snapshots",
@@ -77,6 +78,13 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
     "Recent changes are not reaching the backup store. A lost server now would lose every change since the last one saved.",
   "system.row.archive.off": "Recent changes are saved off the host once backups are set up.",
   "system.row.archive.unknown": "Not known: the host could not read it. Running fstp-admin status shows why.",
+  "system.row.witness.fresh": "The audit witness's records are copied off the host every minute. The last full copy was {age} ago.",
+  "system.row.witness.late":
+    "The audit witness's records have not been copied off the host for over 10 minutes. A lost server now would lose their newest history.",
+  "system.row.witness.failing":
+    "The audit witness's records are not reaching the backup store. A lost server now would lose the proof of what happened since the last copy.",
+  "system.row.witness.off": "The audit witness's records are copied off the host once backups are set up.",
+  "system.row.witness.unknown": "Not known: no copy has run yet, or the host could not read it. Running fstp-admin status shows why.",
   "system.row.drill.passed":
     "The backups were last restored and checked in a test copy on {date}. Restoring took about {minutes} minutes. This test runs every month.",
   "system.row.drill.late": "The backups were last restored in a test on {date}. The test should run every month.",
@@ -130,6 +138,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.tell.backup": "Please run fstp-admin backup, and check that its nightly timer runs.",
   "system.tell.wal_archive":
     "Please run fstp-admin status. It names the database whose changes are not saved; read that database's log, fix the object store or its keys, then run fstp-admin status again.",
+  "system.tell.witness_copy":
+    "Please run fstp-admin witness-copy. It says why the witness records do not reach the backup store, often the object store or its keys. Then run fstp-admin status.",
   "system.tell.drill":
     "Please run fstp-admin drill. If it fails, it names the step, and its log is in admin/logs/fstp-admin.log.",
   "system.tell.custodian":
@@ -156,6 +166,7 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.next.public_certificate": "The host admin gets a public certificate for the domain.",
   "system.next.configure_backups": "The host admin sets up backups.",
   "system.next.wal_archive": "The host admin checks why recent changes are not reaching the backup store.",
+  "system.next.witness_copy": "The host admin checks why the audit witness's records are not reaching the backup store.",
   "system.next.backup": "The host admin runs a backup with fstp-admin backup.",
   "system.next.restore_drill": "The host admin tests the backups with fstp-admin drill.",
   "system.next.custodian_copy": "The host admin checks why the fresh key copy did not reach the second custodian.",

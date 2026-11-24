@@ -93,6 +93,13 @@ fn report(s: &HostStatus) -> Option<HostReport> {
             Some(fstp_obs::drill_status::Step::Cleanup) => DrillStep::Cleanup,
         },
         drill_seconds: s.drill_seconds,
+        witness_copy: match s.witness_copy {
+            host_status::WalArchive::Ok => ArchiveState::Ok,
+            host_status::WalArchive::Late => ArchiveState::Late,
+            host_status::WalArchive::Failing => ArchiveState::Failing,
+            host_status::WalArchive::Unknown => ArchiveState::Unknown,
+        },
+        last_witness_copied: s.last_witness_copied.map(instant),
     })
 }
 
@@ -157,6 +164,8 @@ mod tests {
             last_drill_passed: Some(1_794_000_000),
             drill_step: Some(fstp_obs::drill_status::Step::Cleanup),
             drill_seconds: Some(412),
+            witness_copy: host_status::WalArchive::Late,
+            last_witness_copied: Some(1_794_997_000),
         }
     }
 
@@ -215,6 +224,12 @@ mod tests {
         );
         assert_eq!(r.drill_step, DrillStep::Cleanup);
         assert_eq!(r.drill_seconds, Some(412));
+        // ADR-028 record of lane `m10/witness-copy`: the witness copy.
+        assert_eq!(r.witness_copy, ArchiveState::Late);
+        assert_eq!(
+            r.last_witness_copied,
+            Some(Timestamp::from_micros(1_794_997_000_000_000))
+        );
         assert_eq!(r.next.wire(), "copy_keys");
         for n in Next::ALL {
             assert_eq!(HostNext::of(n.word()).map(HostNext::wire), Some(n.word()));

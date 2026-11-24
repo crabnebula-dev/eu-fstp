@@ -198,3 +198,65 @@ pub fn rebuild(layout: &Layout) -> Result<(), crate::fail::Fail> {
     )]);
     Ok(())
 }
+
+/// The exit status of `fstp-backup witness-archive` when the object store
+/// holds witness copies this host did not write.
+pub const FOREIGN: i32 = 4;
+
+/// `fstp-admin witness-copy` (ADR-028 record of lane `m10/witness-copy`):
+/// one run of `fstp-backup witness-archive` over the witness store,
+/// recorded in the witness copy status file for `status`. The timer
+/// `fstp-admin-witness-copy` runs it every minute.
+///
+/// # Errors
+///
+/// [`crate::fail::Fail::Waits`] without backups, and
+/// [`crate::fail::Fail::Refused`] when the run failed, after a line that
+/// says what to do.
+pub fn copy(layout: &Layout) -> Result<(), crate::fail::Fail> {
+    use crate::fail::Fail;
+    use crate::say::{Part, out};
+    use fstp_obs::witness_copy;
+    if layout.cfg.backup.is_none() {
+        return Err(Fail::Waits(
+            "the witness copy needs \"backup\" in the configuration file, then fstp-admin setup",
+        ));
+    }
+    let store = layout.witness_store();
+    let code = backup_tool(layout, &["witness-archive".as_ref(), store.as_os_str()]);
+    let now = u64::try_from(crate::pki::now()).unwrap_or(0);
+    let dir = layout.admin_dir();
+    let before = witness_copy::read(&dir);
+    let ok = matches!(code, Ok(Some(0)));
+    let after = if ok {
+        before.after_success(now)
+    } else {
+        before.after_failure(now)
+    };
+    if witness_copy::write(&dir, &after).is_err() {
+        out(&[Part::T(
+            "  The witness copy status file did not write, so status cannot show this run.",
+        )]);
+    }
+    match code {
+        Ok(Some(0)) => {
+            out(&[Part::T(
+                "  done     every whole witness record is in each object store",
+            )]);
+            Ok(())
+        }
+        Ok(Some(FOREIGN)) => {
+            out(&[Part::T(
+                "The object store holds witness copies that this host did not write, so nothing was copied. If this host replaces a lost one, run fstp-admin restore: it rebuilds the witness store from those copies first.",
+            )]);
+            Err(Fail::Refused("fstp-backup witness-archive", Some(FOREIGN)))
+        }
+        Ok(c) => {
+            out(&[Part::T(
+                "The witness records did not reach every object store. The cause is in admin/logs/fstp-admin.log, often the object store or its key files. The next run tries again within a minute.",
+            )]);
+            Err(Fail::Refused("fstp-backup witness-archive", c))
+        }
+        Err(_) => Err(Fail::Refused("fstp-backup witness-archive", None)),
+    }
+}

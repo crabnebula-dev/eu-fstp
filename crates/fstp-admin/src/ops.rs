@@ -193,6 +193,20 @@ pub fn setup_backups(
         "*-*-01 04:30:00",
     )
     .map_err(|e| Fail::Step(step, e.into()))?;
+    // ADR-012 record of lane m10/witness-copy: the witness store leaves
+    // the host every minute, and once now. A failed first run is reported
+    // and does not stop setup: status shows it, and the timer tries again.
+    m.timer_with_delay(
+        "fstp-admin-witness-copy",
+        &layout.bin("fstp-admin"),
+        "witness-copy",
+        "*-*-* *:*:00",
+        0,
+    )
+    .map_err(|e| Fail::Step(step, e.into()))?;
+    if let Err(e) = crate::witness::copy(layout) {
+        crate::fail::report(&e);
+    }
     Ok(Some(did))
 }
 

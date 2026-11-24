@@ -2605,6 +2605,8 @@ pub(crate) mod reply_shape_tests {
                         last_drill_passed: None,
                         drill_step: crate::system::DrillStep::Keystore,
                         drill_seconds: Some(412),
+                        witness_copy: crate::system::ArchiveState::Late,
+                        last_witness_copied: None,
                     }),
                 },
             })),

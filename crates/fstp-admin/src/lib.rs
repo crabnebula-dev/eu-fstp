@@ -10,6 +10,7 @@
 //! fstp-admin renew                      certificates near their end, and the route pins
 //! fstp-admin backup | restore           base backups of both databases
 //! fstp-admin drill                      the monthly restore drill into a scratch copy
+//! fstp-admin witness-copy               copy the witness records off the host; a timer runs it
 //! fstp-admin restore --to <time>        both databases to a time, like 2026-11-24T10:00:00Z (UTC)
 //! fstp-admin backup-keys <dir>          the off-host copy of the custody entries
 //! fstp-admin pair-custodian <host>      pair the second custodian (once, on the pilot)
@@ -67,6 +68,7 @@ pub fn usage() {
         "  backup                     back up both databases now",
         "  restore                    restore both databases from their newest backups",
         "  drill                      test that the backups restore and open, in a scratch copy",
+        "  witness-copy               copy the new witness records to the object stores; a timer runs it every minute",
         "  restore --to <time>        restore both databases to a time in UTC, like 2026-11-24T10:00:00Z",
         "  backup-keys <dir>          copy the sealed keys off the host, for example to a USB stick",
         "  pair-custodian <host>      pair this host with its second custodian (once)",
@@ -155,6 +157,7 @@ fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
         ["renew"] => after(&need()?, ops::renew),
         ["backup"] => after(&need()?, ops::backup),
         ["drill"] => after(&need()?, drill::run),
+        ["witness-copy"] => witness::copy(&need()?).map(|()| OK),
         ["restore"] => ops::restore(&need()?, None).map(|()| OK),
         // ADR-028 record of lane `m10/backup-pitr`.
         ["restore", "--to", time] => {

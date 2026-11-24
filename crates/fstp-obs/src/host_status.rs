@@ -14,11 +14,13 @@
 //!  "last_drill_passed":1795000000,
 //!  "last_key_copy":null,"last_vault_erasure":null,
 //!  "last_vault_snapshot":1795000000,"last_wal_archived":1795000000,
+//!  "last_witness_copied":1795000000,
 //!  "next":"nothing",
 //!  "parts":{"cell":"running","databases":"running","edge":"running",
 //!           "keys":"running","vault":"running","witness":"running"},
 //!  "route":"current","self_signed":false,"setup_done":true,
 //!  "vault_snapshot_failed":false,"version":1,"wal_archive":"ok",
+//!  "witness_copy":"ok",
 //!  "written_at":1795000000}
 //! ```
 //!
@@ -238,6 +240,9 @@ pub enum Next {
     /// The WAL archive fails, or a finished segment waits too long for
     /// its upload (ADR-012 record of lane m10/backup-health).
     WalArchive,
+    /// The copy of the witness store fails or is late (ADR-012 record of
+    /// lane m10/witness-copy).
+    WitnessCopy,
     /// The newest backup is old or missing.
     Backup,
     /// No restore drill passed in 35 days, or the last one failed (ADR-012
@@ -258,7 +263,7 @@ pub enum Next {
 
 impl Next {
     /// Every value.
-    pub const ALL: [Next; 17] = [
+    pub const ALL: [Next; 18] = [
         Self::RunSetup,
         Self::StartService,
         Self::Custodian,
@@ -268,6 +273,7 @@ impl Next {
         Self::PublicCertificate,
         Self::ConfigureBackups,
         Self::WalArchive,
+        Self::WitnessCopy,
         Self::Backup,
         Self::RestoreDrill,
         Self::CustodianCopy,
@@ -292,6 +298,7 @@ impl Next {
             Self::PublicCertificate => "public_certificate",
             Self::ConfigureBackups => "configure_backups",
             Self::WalArchive => "wal_archive",
+            Self::WitnessCopy => "witness_copy",
             Self::Backup => "backup",
             Self::RestoreDrill => "restore_drill",
             Self::KeystoreSnapshot => "keystore_snapshot",
@@ -358,6 +365,11 @@ pub struct HostStatus {
     pub drill_step: Option<DrillStep>,
     /// The restore duration of the last passed drill, in seconds.
     pub drill_seconds: Option<i64>,
+    /// The state of the witness store's copy, in the words of
+    /// [`WalArchive`] (ADR-012 record of lane m10/witness-copy).
+    pub witness_copy: WalArchive,
+    /// When the witness store was last copied in full, in Unix seconds.
+    pub last_witness_copied: Option<i64>,
 }
 
 /// Why a file was refused. Names a rule, never the input (R-NF-02).
@@ -395,7 +407,7 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 24] = [
+const MEMBERS: [&str; 26] = [
     "app_snapshot_failed",
     "backups_configured",
     "certificate_days",
@@ -411,6 +423,7 @@ const MEMBERS: [&str; 24] = [
     "last_vault_erasure",
     "last_vault_snapshot",
     "last_wal_archived",
+    "last_witness_copied",
     "next",
     "parts",
     "route",
@@ -419,6 +432,7 @@ const MEMBERS: [&str; 24] = [
     "vault_snapshot_failed",
     "version",
     "wal_archive",
+    "witness_copy",
     "written_at",
 ];
 
@@ -438,12 +452,12 @@ pub fn encode(s: &HostStatus) -> String {
          \"custodian\":\"{}\",\"drill_seconds\":{},\"drill_step\":\"{}\",\
          \"guard_copy_owed\":{},\"guard_owed\":{},\
          \"last_app_snapshot\":{},\"last_backup\":{},\"last_drill_passed\":{},\"last_key_copy\":{},\
-         \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"last_wal_archived\":{},\
+         \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"last_wal_archived\":{},\"last_witness_copied\":{},\
          \"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
          \"witness\":\"{}\"}},\"route\":\"{}\",\"self_signed\":{},\"setup_done\":{},\
          \"vault_snapshot_failed\":{},\"version\":{VERSION},\"wal_archive\":\"{}\",\
-         \"written_at\":{}}}\n",
+         \"witness_copy\":\"{}\",\"written_at\":{}}}\n",
         s.app_snapshot_failed,
         s.backups_configured,
         opt(s.certificate_days),
@@ -459,6 +473,7 @@ pub fn encode(s: &HostStatus) -> String {
         opt(s.last_vault_erasure),
         opt(s.last_vault_snapshot),
         opt(s.last_wal_archived),
+        opt(s.last_witness_copied),
         s.next.word(),
         p.cell.word(),
         p.databases.word(),
@@ -471,6 +486,7 @@ pub fn encode(s: &HostStatus) -> String {
         s.setup_done,
         s.vault_snapshot_failed,
         s.wal_archive.word(),
+        s.witness_copy.word(),
         s.written_at,
     )
 }
@@ -615,5 +631,12 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
             1,
             i64::try_from(drill_status::MAX_SECONDS).unwrap_or(i64::MAX),
         )?,
+        witness_copy: word(
+            member(o, "witness_copy")?,
+            &WalArchive::ALL,
+            WalArchive::word,
+            "witness_copy",
+        )?,
+        last_witness_copied: opt_int(o, "last_witness_copied", 0, MAX_INSTANT)?,
     })
 }
