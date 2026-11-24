@@ -265,6 +265,28 @@ impl Restored {
                 .unwrap_or_default();
             panic!("the restored server did not start: {log}");
         }
+        // Every restore runs archive recovery with `hot_standby = off`
+        // (ADR-012 record of lane m10/backup-pitr). `pg_ctl -w` returns at
+        // the consistent point, before the promotion, so the server still
+        // refuses connections until it promotes.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        loop {
+            let ready = r
+                .command("pg_isready")
+                .args(["-h", "127.0.0.1", "-p", &r.port.to_string(), "-q"])
+                .stdin(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if ready {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                let log = std::fs::read_to_string(data.parent().unwrap().join("restored.log"))
+                    .unwrap_or_default();
+                panic!("the restored server did not promote: {log}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
         r
     }
 
