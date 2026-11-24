@@ -541,6 +541,12 @@ The key ceremony, as root on each host:
 
 On a host whose credentials directory holds `cluster-backup.escrow`, `restore` and `wal-restore` open `custodian.key` through the console socket and then the escrow. They check that it names the group key of `cluster-backup.key`.
 
+Since lane m10/backup-followups (ADR-012), interim, pending Daniel:
+
+- The escrow is signed by the pilot's backup writer key, so `custodian-escrow` reads `cluster-backup-writer.key` beside the key file. An escrow made before this change still opens.
+- The pilot puts a tagged copy of its version 2 `cluster-backup.key` into every object store, as `<cluster>/keys/cluster-backup.key`. `fstp-admin setup` and `fstp-admin backup` send it with `fstp-backup publish-key` whenever the key file changed. `fstp-admin status` names the copy while it is owed.
+- On the second host, `restore` and `wal-restore` take that copy when the local `cluster-backup.key` is missing or older than version 2. They accept it only when the escrow vouches for it, then write it in place. No file needs to be carried after a key file upgrade.
+
 The second custodian holds only a ClusterBackup root. ClusterBackup is never rotated or destroyed by an erasure, so no erased key is ever held there (I-81).
 
 ### Off-host copy of a custody entry

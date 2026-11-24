@@ -176,6 +176,9 @@ pub fn setup_backups(
                 Part::T(" database in the new backup format"),
             ]);
         }
+        // ADR-012 record of lane m10/backup-followups: the second custodian
+        // reads the version 2 key file from the stores.
+        publish_key_if_owed(layout, m, c);
     }
     m.timer(
         "fstp-admin-backup",
@@ -219,8 +222,55 @@ pub fn backup(layout: &Layout) -> Result<(), Fail> {
             Part::T(c.name()),
             Part::T(" database"),
         ]);
+        publish_key_if_owed(layout, &m, c);
     }
     Ok(())
+}
+
+/// The mark of the key file last published for the second custodian, in
+/// the agent's state directory (ADR-012 record of lane
+/// m10/backup-followups, row "Publishing").
+const PUBLISHED_MARK: &str = "key-published";
+
+/// Whether the copy of `c`'s backup key file for the second custodian is
+/// owed: the key file exists and the agent's `key-published` mark does
+/// not hold its SHA-256 (ADR-012 record of lane m10/backup-followups, row
+/// "Owed").
+#[must_use]
+pub fn key_copy_owed(layout: &Layout, c: Cluster) -> bool {
+    let Ok(key) = std::fs::read(layout.creds(&format!("backup-{}", c.name())).join(KEY_FILE))
+    else {
+        return false;
+    };
+    let want = format!("{}\n", crate::pki::hex(&fstp_crypto::sha256(&key)));
+    std::fs::read_to_string(layout.backup_state(c).join(PUBLISHED_MARK)).map_or(true, |m| m != want)
+}
+
+/// Sends the copy of `c`'s backup key file for the second custodian with
+/// `fstp-backup publish-key` when it is owed. A failure is reported and
+/// does not fail the caller: the copy stays owed, and `status` names it
+/// (ADR-028 record of lane `m10/backup-followups`, row "The custodian's
+/// key copy").
+fn publish_key_if_owed(layout: &Layout, m: &Manager, c: Cluster) {
+    if !key_copy_owed(layout, c) {
+        return;
+    }
+    let mut cmd = Command::new(layout.bin("fstp-backup"));
+    let (k, v) = backup_env(layout, c);
+    cmd.env(k, v).arg("publish-key");
+    match run_ok(&mut cmd, &m.log()) {
+        Ok(()) => out(&[
+            Part::T("  done     the backup key copy of the "),
+            Part::T(c.name()),
+            Part::T(" database for the custodian"),
+        ]),
+        Err(e) => {
+            crate::fail::report(&Fail::Step("custodian key copy", e.into()));
+            out(&[Part::T(
+                "  The copy stays owed. fstp-admin backup sends it again.",
+            )]);
+        }
+    }
 }
 
 /// The time of the newest base backup of `c`, from the agent's index.
