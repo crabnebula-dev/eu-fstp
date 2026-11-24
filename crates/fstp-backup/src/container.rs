@@ -105,6 +105,10 @@ fn header<'a>(r: &mut Reader<'a>) -> Result<Header<'a>, BackupError> {
     let Some(k) = crate::ContainerKind::from_code(kind) else {
         return Err(BackupError::Malformed("kind"));
     };
+    // A witness copy exists only as `FBC2` (record of lane m10/witness-copy).
+    if k == crate::ContainerKind::WitnessCopy {
+        return Err(BackupError::Malformed("kind"));
+    }
     // Each kind has one chain (ADR-012 record of lane L17).
     let chain = match Chain::from_code(r.u8()?) {
         Some(c) if c == k.chain() => c,
@@ -245,8 +249,8 @@ pub(crate) struct DecodedV2<'a> {
 ///
 /// # Errors
 ///
-/// As [`decode`], and [`BackupError::Malformed`] for a kind other than 1
-/// or 2, an `ident` that does not name an object of its kind, or bytes
+/// As [`decode`], and [`BackupError::Malformed`] for a kind other than 1,
+/// 2 or 6, an `ident` that does not name an object of its kind, or bytes
 /// after the signature.
 pub(crate) fn decode_v2(bytes: &[u8]) -> Result<DecodedV2<'_>, BackupError> {
     let mut r = Reader { rest: bytes };
@@ -260,7 +264,11 @@ pub(crate) fn decode_v2(bytes: &[u8]) -> Result<DecodedV2<'_>, BackupError> {
         return Err(BackupError::Malformed("aead"));
     }
     let kind = match crate::ContainerKind::from_code(r.u8()?) {
-        Some(k @ (crate::ContainerKind::BaseBackup | crate::ContainerKind::WalSegment)) => k,
+        Some(
+            k @ (crate::ContainerKind::BaseBackup
+            | crate::ContainerKind::WalSegment
+            | crate::ContainerKind::WitnessCopy),
+        ) => k,
         _ => return Err(BackupError::Malformed("kind")),
     };
     let chain = match Chain::from_code(r.u8()?) {

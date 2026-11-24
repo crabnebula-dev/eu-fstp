@@ -263,6 +263,15 @@ fn cause_line(cause: &Cause) {
         Cause::Witness(WitnessFail::Io) => err(&[Part::T(
             "  A witness or public key file could not be read or written.",
         )]),
+        Cause::Witness(WitnessFail::Copy(_)) => err(&[Part::T(
+            "  fstp-backup witness-archive failed: the witness records did not reach every object store. Its messages are in admin/logs/fstp-admin.log; often the object store or its key files.",
+        )]),
+        Cause::Witness(WitnessFail::Rebuild(_)) => err(&[Part::T(
+            "  fstp-backup could not fetch or open the witness copies. Check the object store and the key custody, see admin/logs/fstp-admin.log, then run the same command again.",
+        )]),
+        Cause::Witness(WitnessFail::Check(_)) => err(&[Part::T(
+            "  fstp-witness check-store refused the witness store: a record is missing, cut or changed. Nothing else was changed.",
+        )]),
     }
 }
 

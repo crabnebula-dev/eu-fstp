@@ -39,6 +39,9 @@ pub enum ContainerKind {
     /// A keystore snapshot of a vault, on the VaultBackup chain (ADR-012
     /// record of lane L17).
     VaultKeystoreSnapshot,
+    /// A segment of a file of the local witness store, `FBC2` only (ADR-012
+    /// record of lane m10/witness-copy).
+    WitnessCopy,
 }
 
 impl ContainerKind {
@@ -51,6 +54,7 @@ impl ContainerKind {
             ContainerKind::KeystoreSnapshot => 3,
             ContainerKind::CustodianEscrow => 4,
             ContainerKind::VaultKeystoreSnapshot => 5,
+            ContainerKind::WitnessCopy => 6,
         }
     }
 
@@ -65,7 +69,8 @@ impl ContainerKind {
         match self {
             ContainerKind::BaseBackup
             | ContainerKind::WalSegment
-            | ContainerKind::CustodianEscrow => Chain::ClusterBackup,
+            | ContainerKind::CustodianEscrow
+            | ContainerKind::WitnessCopy => Chain::ClusterBackup,
             ContainerKind::KeystoreSnapshot => Chain::CellBackup,
             ContainerKind::VaultKeystoreSnapshot => Chain::VaultBackup,
         }
@@ -80,6 +85,7 @@ impl ContainerKind {
             3 => Some(ContainerKind::KeystoreSnapshot),
             4 => Some(ContainerKind::CustodianEscrow),
             5 => Some(ContainerKind::VaultKeystoreSnapshot),
+            6 => Some(ContainerKind::WitnessCopy),
             _ => None,
         }
     }

@@ -67,6 +67,8 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
       last_drill_passed: (NOW - 240n * HOUR).toString(),
       drill_step: "none",
       drill_seconds: 400,
+      witness_copy: "ok",
+      last_witness_copied: (NOW - 1n * MIN).toString(),
       ...hostOver,
     },
     ...over,
@@ -181,7 +183,7 @@ test("adr028_l20_old_or_missing_report_is_shown", () => {
     const report = rowOf(r, "report");
     eq(report.light, "amber", file);
     eq(report.actor, "host", file);
-    for (const id of ["services", "edge", "backups", "archive", "drill", "keys", "snapshots", "certificates"]) {
+    for (const id of ["services", "edge", "backups", "archive", "witness", "drill", "keys", "snapshots", "certificates"]) {
       eq(rowOf(r, id).light, "unknown", `${id} without a report`);
     }
     eq(rowOf(r, "mail").light, "green", "the cell's own facts stay");
@@ -207,6 +209,9 @@ test("adr028_l20_every_label_exists", () => {
     decoded({}, { guard_copy_owed: true }),
     ...(["ok", "late", "failing", "unknown"] as const).map((w) => decoded({}, { wal_archive: w })),
     decoded({}, { last_wal_archived: null }),
+    ...(["ok", "late", "failing", "unknown"] as const).map((w) => decoded({}, { witness_copy: w })),
+    decoded({}, { last_witness_copied: null }),
+    decoded({}, { backups_configured: false }),
     ...DRILL_STEPS.map((s) => decoded({}, { drill_step: s })),
     decoded({}, { last_drill_passed: null, drill_seconds: null }),
     decoded({}, { last_drill_passed: "1" }),
@@ -423,6 +428,30 @@ test("adr028_bh_archive_and_drill_rows", () => {
     wire({}, { drill_seconds: 0 }),
     wire({}, { drill_seconds: "400" }),
     wire({}, { last_drill_passed: undefined }),
+  ]) {
+    eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
+  }
+});
+
+/** ADR-012 and ADR-028 records of lane `m10/witness-copy` (Daniel, 2026-11-24: the witness store is copied to the backup stores): the copy of the audit witness is red while it fails, amber while it is late, not known before the first copy, and green with the age of the last full copy; the host admin acts, and the reply refuses the facts out of their grammar. */
+test("adr028_wc_witness_copy_row", () => {
+  const healthy = rowOf(decoded(), "witness");
+  eq(healthy.light, "green", "a copy a minute ago");
+  eq(healthy.text, "system.row.witness.fresh", "the sentence");
+  eq(healthy.params["age"], "1", "one minute ago");
+  const failing = rowOf(decoded({}, { witness_copy: "failing" }), "witness");
+  eq(failing.light, "red", "a failing copy");
+  eq(failing.actor, "host", "the host admin acts");
+  eq(failing.tell, "system.tell.witness_copy", "what to tell");
+  eq(rowOf(decoded({}, { witness_copy: "late" }), "witness").light, "amber", "a late copy");
+  eq(rowOf(decoded({}, { witness_copy: "unknown", last_witness_copied: null }), "witness").light, "unknown", "no copy yet");
+  eq(rowOf(decoded({}, { backups_configured: false, witness_copy: "unknown" }), "witness").text, "system.row.witness.off", "starts with backups");
+  eq(hostNext(decoded({}, { next: "witness_copy" }))?.actor, "host", "the host admin acts");
+  for (const bad of [
+    wire({}, { witness_copy: "stuck" }),
+    wire({}, { witness_copy: undefined }),
+    wire({}, { last_witness_copied: 5 }),
+    wire({}, { last_witness_copied: undefined }),
   ]) {
     eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
   }

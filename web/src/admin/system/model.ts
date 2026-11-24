@@ -38,6 +38,7 @@ export const HOST_NEXT = [
   "public_certificate",
   "configure_backups",
   "wal_archive",
+  "witness_copy",
   "backup",
   "restore_drill",
   "custodian_copy",
@@ -54,7 +55,7 @@ const PARTS = ["cell", "vault", "witness", "edge", "databases", "keys"] as const
 type PartName = (typeof PARTS)[number];
 
 /** Where a restore drill failed (ADR-012 record of lane m10/backup-health). */
-export const DRILL_STEPS = ["none", "space", "restore", "recovery", "database", "keystore", "cleanup"] as const;
+export const DRILL_STEPS = ["none", "space", "restore", "recovery", "database", "keystore", "cleanup", "witness"] as const;
 /** One drill step. */
 export type DrillStep = (typeof DRILL_STEPS)[number];
 
@@ -93,6 +94,10 @@ export interface HostReport {
   readonly drillStep: DrillStep;
   /** The restore duration of the last passed drill, in seconds. */
   readonly drillSeconds: number | null;
+  /** The copy of the witness store: ok, late, failing, or unknown without backups (ADR-028 record of lane `m10/witness-copy`). */
+  readonly witnessCopy: "ok" | "late" | "failing" | "unknown";
+  /** When the witness store was last copied in full. */
+  readonly lastWitnessCopied: bigint | null;
 }
 
 /** The `tenant.system` reply. */
@@ -150,6 +155,8 @@ function host(v: unknown): HostReport | null {
     "last_drill_passed",
     "drill_step",
     "drill_seconds",
+    "witness_copy",
+    "last_witness_copied",
   ];
   if (o === null || !closed(o, names)) return null;
   const p = record(o["parts"]);
@@ -194,6 +201,10 @@ function host(v: unknown): HostReport | null {
   if (!oneOf(drillStep, DRILL_STEPS)) return null;
   const drillSeconds = o["drill_seconds"];
   if (drillSeconds !== null && !(typeof drillSeconds === "number" && Number.isSafeInteger(drillSeconds) && drillSeconds >= 1)) return null;
+  const witnessCopy = o["witness_copy"];
+  if (!oneOf(witnessCopy, ["ok", "late", "failing", "unknown"] as const)) return null;
+  const lastWitnessCopied = o["last_witness_copied"] === null ? null : instant(o["last_witness_copied"]);
+  if (o["last_witness_copied"] !== null && lastWitnessCopied === null) return null;
   return Object.freeze({
     writtenAt,
     setupDone,
@@ -218,6 +229,8 @@ function host(v: unknown): HostReport | null {
     lastDrillPassed,
     drillStep,
     drillSeconds,
+    witnessCopy,
+    lastWitnessCopied,
   });
 }
 
@@ -259,6 +272,7 @@ export const ROW_IDS = [
   "mail",
   "backups",
   "archive",
+  "witness",
   "drill",
   "keys",
   "snapshots",
@@ -340,7 +354,7 @@ export function lastErasure(r: SystemReply): bigint | null {
 function hostRows(r: SystemReply): Row[] {
   const h = r.host;
   if (h === null) {
-    return (["services", "edge", "backups", "archive", "drill", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
+    return (["services", "edge", "backups", "archive", "witness", "drill", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
   }
   const out: Row[] = [];
   const others = [h.parts.witness, h.parts.databases, h.parts.keys];
@@ -365,6 +379,7 @@ function hostRows(r: SystemReply): Row[] {
     else out.push(row("backups", "green", "fresh", params));
   }
   out.push(archiveRow(r, h));
+  out.push(witnessRow(r, h));
   out.push(drillRow(r, h));
   // The runbook asks for a new key copy after each erasure: an older copy
   // still holds the erased key (ADR-028 record of lane L20).
@@ -429,6 +444,22 @@ function archiveRow(r: SystemReply, h: HostReport): Row {
   if (h.lastWalArchived === null) return row("archive", "green", "none_yet");
   const age = ageOf(r.now - h.lastWalArchived);
   return row("archive", "green", "fresh", { age: age.n, unit: age.label });
+}
+
+/**
+ * The copy of the audit witness (ADR-012 and ADR-028 records of lane
+ * `m10/witness-copy`): red while it fails, amber while it is late, green
+ * with the age of the last full copy. Without backups the backups row
+ * already asks for them.
+ */
+function witnessRow(r: SystemReply, h: HostReport): Row {
+  const tell = "system.tell.witness_copy";
+  if (!h.backupsConfigured) return row("witness", "green", "off");
+  if (h.witnessCopy === "failing") return row("witness", "red", "failing", {}, "host", tell);
+  if (h.witnessCopy === "late") return row("witness", "amber", "late", {}, "host", tell);
+  if (h.witnessCopy === "unknown" || h.lastWitnessCopied === null) return row("witness", "unknown", "unknown");
+  const age = ageOf(r.now - h.lastWitnessCopied);
+  return row("witness", "green", "fresh", { age: age.n, unit: age.label });
 }
 
 /**

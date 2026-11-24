@@ -6,6 +6,7 @@
 //!           | container 16 | chunk_size u32 | ident_len u8 | ident | sealed_key 1210
 //! ident   = backup id 16 | be32(part) | last u8      (kind 1, base backup part)
 //!         | the archive file name in ASCII           (kind 2, WAL segment or history file)
+//!         | be32(file) | be64(offset) | file name    (kind 6, witness store segment)
 //! chunk   = final u8 | len u32 | nonce 12 | ciphertext len | tag 16
 //! aad(i)  = header | i u64 | final u8
 //! trailer = the writer's composite signature over every byte before it,
@@ -47,6 +48,16 @@ pub enum ObjectIdent {
     /// The archive file of this name: a WAL segment or a timeline
     /// history file.
     Wal(String),
+    /// The segment at byte `offset` of the witness store file `name`, the
+    /// store's file number `file` (ADR-012 record of lane m10/witness-copy).
+    Witness {
+        /// The file number, from 0.
+        file: u32,
+        /// The byte offset of the segment in its file.
+        offset: u64,
+        /// The file's name in the store ([`crate::witness::valid_name`]).
+        name: String,
+    },
 }
 
 impl ObjectIdent {
@@ -56,6 +67,7 @@ impl ObjectIdent {
         match self {
             ObjectIdent::Base { .. } => ContainerKind::BaseBackup,
             ObjectIdent::Wal(_) => ContainerKind::WalSegment,
+            ObjectIdent::Witness { .. } => ContainerKind::WitnessCopy,
         }
     }
 
@@ -76,6 +88,15 @@ impl ObjectIdent {
             ObjectIdent::Wal(name) => {
                 check_wal_name(name)?;
                 Ok(name.as_bytes().to_vec())
+            }
+            ObjectIdent::Witness { file, offset, name } => {
+                if !crate::witness::valid_name(name) {
+                    return Err(BackupError::Malformed("ident"));
+                }
+                let mut out = file.to_be_bytes().to_vec();
+                out.extend_from_slice(&offset.to_be_bytes());
+                out.extend_from_slice(name.as_bytes());
+                Ok(out)
             }
         }
     }
@@ -106,6 +127,19 @@ impl ObjectIdent {
                 let name = std::str::from_utf8(bytes).map_err(|_| bad)?;
                 check_wal_name(name)?;
                 Ok(ObjectIdent::Wal(name.to_owned()))
+            }
+            ContainerKind::WitnessCopy => {
+                let (file, rest) = bytes.split_first_chunk::<4>().ok_or(bad)?;
+                let (offset, name) = rest.split_first_chunk::<8>().ok_or(bad)?;
+                let name = std::str::from_utf8(name).map_err(|_| bad)?;
+                if !crate::witness::valid_name(name) {
+                    return Err(bad);
+                }
+                Ok(ObjectIdent::Witness {
+                    file: u32::from_be_bytes(*file),
+                    offset: u64::from_be_bytes(*offset),
+                    name: name.to_owned(),
+                })
             }
             _ => Err(BackupError::Malformed("kind")),
         }
@@ -371,5 +405,57 @@ mod tests {
             .is_err()
         );
         assert!(ObjectIdent::decode(ContainerKind::KeystoreSnapshot, &[0; 21]).is_err());
+    }
+
+    /// F-043, R-CR-01, ADR-012 record of lane m10/witness-copy, row
+    /// "Identity": a witness segment names its file number, its offset and
+    /// its file name in one spelling, seals and opens as kind 6, and any
+    /// other name is refused at the writer and the reader.
+    #[test]
+    fn adr012_wc_witness_ident_round_trips_in_one_spelling() {
+        let sk = hybrid_kem::generate().unwrap();
+        let w = WriterKey::generate([7; 16]).unwrap();
+        let id = ObjectIdent::Witness {
+            file: 3,
+            offset: 0x0102_0304_0506,
+            name: "chain-0102030405060708090a0b0c0d0e0f10-1".into(),
+        };
+        let bytes = id.encode().unwrap();
+        assert_eq!(&bytes[..12], &[0, 0, 0, 3, 0, 0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(bytes.len(), 12 + 40);
+        assert_eq!(
+            ObjectIdent::decode(ContainerKind::WitnessCopy, &bytes).unwrap(),
+            id
+        );
+        let c = seal_object(sk.public(), &w, &group(), &id, b"records").unwrap();
+        assert_eq!(c[7], 6);
+        let o = open_object(&sk, &w.public(), &c).unwrap();
+        assert_eq!((o.ident, o.plaintext), (id, b"records".to_vec()));
+        for bad in [
+            "",
+            "-x",
+            "Registry",
+            "a/b",
+            "..",
+            "chain.1",
+            &"a".repeat(49),
+        ] {
+            let id = ObjectIdent::Witness {
+                file: 0,
+                offset: 0,
+                name: bad.to_owned(),
+            };
+            assert!(id.encode().is_err(), "{bad:?}");
+            let mut raw = vec![0u8; 12];
+            raw.extend_from_slice(bad.as_bytes());
+            assert!(
+                ObjectIdent::decode(ContainerKind::WitnessCopy, &raw).is_err(),
+                "{bad:?}"
+            );
+        }
+        assert!(ObjectIdent::decode(ContainerKind::WitnessCopy, &[0; 11]).is_err());
+        // The legacy `FBC1` writer cannot spell a witness copy.
+        let c1 = crate::seal_container(sk.public(), ContainerKind::WitnessCopy, &group(), 0, b"x");
+        assert!(c1.map_or(true, |c| crate::decode_container(&c).is_err()));
     }
 }

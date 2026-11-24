@@ -46,6 +46,8 @@ fn sample() -> HostStatus {
         last_drill_passed: Some(1_794_000_000),
         drill_step: Some(DrillStep::Recovery),
         drill_seconds: Some(412),
+        witness_copy: WalArchive::Failing,
+        last_witness_copied: Some(1_794_998_500),
     }
 }
 
@@ -112,6 +114,8 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         } else {
             Some(g.i64_in(1..=9_999_999))
         },
+        witness_copy: pick(g, &WalArchive::ALL),
+        last_witness_copied: opt_time(g),
     }
 }
 
@@ -287,6 +291,22 @@ fn r_nf_02_host_status_refuses_bad_input() {
         (
             swap("\"last_drill_passed\":1794000000,", ""),
             HostStatusError::MissingMember("last_drill_passed"),
+        ),
+        // ADR-012 record of lane m10/witness-copy: the witness copy.
+        (
+            swap("\"witness_copy\":\"failing\"", "\"witness_copy\":\"stuck\""),
+            HostStatusError::Invalid("witness_copy"),
+        ),
+        (
+            swap("\"witness_copy\":\"failing\",", ""),
+            HostStatusError::MissingMember("witness_copy"),
+        ),
+        (
+            swap(
+                "\"last_witness_copied\":1794998500",
+                "\"last_witness_copied\":-1",
+            ),
+            HostStatusError::Invalid("last_witness_copied"),
         ),
         (
             format!("{good}{}", " ".repeat(MAX_LEN)),

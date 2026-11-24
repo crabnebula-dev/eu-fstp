@@ -18,6 +18,11 @@
 //! listens on loopback (ADR-012, row "Deviation: TCP on loopback"). It
 //! never serves a request and never reaches the witness.
 //!
+//! After both clusters, the drill fetches the witness copies into scratch
+//! with `fstp-backup witness-fetch`, checks that each is a prefix of the
+//! live witness store, and loads them with `fstp-witness check-store`
+//! (ADR-012 record of lane m10/witness-copy).
+//!
 //! Before the first restore, the drill checks the free space of the
 //! scratch location ([`needed_bytes`], [`parse_df`]). The result goes to
 //! `fstp_obs::drill_status`, which `status` and the System page read.
@@ -374,6 +379,9 @@ pub fn step_text(step: Step) -> &'static str {
         Step::Database => "the restored cell database is missing or does not answer",
         Step::Keystore => "the restored keys do not open with the live key custody",
         Step::Cleanup => "the scratch copy could not be stopped or deleted",
+        Step::Witness => {
+            "the witness copies could not be fetched, did not load, or differ from the live witness store"
+        }
     }
 }
 
@@ -401,6 +409,57 @@ fn failed(layout: &Layout, step: Step) -> Fail {
         Part::T("."),
     ]);
     Fail::Refused("the restore drill", Some(1))
+}
+
+/// The drill's witness step (ADR-012 record of lane m10/witness-copy, row
+/// "Drill"): fetches every witness copy into `scratch`, checks that each
+/// fetched file is a prefix of, or equal to, the live store file, and that
+/// the fetched store loads with every link recomputed. A live store with
+/// records but no copies fails.
+fn witness_step(layout: &Layout, scratch: &Path) -> Result<(), ()> {
+    crate::witness::fetch(layout, scratch).map_err(|_| ())?;
+    let live = layout.witness_store();
+    let mut fetched = 0u64;
+    for e in std::fs::read_dir(scratch).map_err(|_| ())? {
+        let e = e.map_err(|_| ())?;
+        let copy = std::fs::read(e.path()).map_err(|_| ())?;
+        let here = std::fs::read(live.join(e.file_name())).unwrap_or_default();
+        if !here.starts_with(&copy) {
+            out(&[
+                Part::T("  The witness copy of "),
+                Part::Name(&e.file_name().to_string_lossy()),
+                Part::T(" is not a prefix of the live witness store."),
+            ]);
+            return Err(());
+        }
+        fetched = fetched.saturating_add(1);
+    }
+    if fetched == 0 {
+        let live_records = std::fs::read_dir(&live).is_ok_and(|rd| {
+            rd.flatten()
+                .any(|e| e.metadata().is_ok_and(|m| m.is_file() && m.len() > 0))
+        });
+        if live_records {
+            out(&[Part::T(
+                "  The witness store holds records, but the object store holds no copy of them. Run fstp-admin witness-copy.",
+            )]);
+            return Err(());
+        }
+        out(&[Part::T(
+            "  done     no witness records yet, so no witness copy to check",
+        )]);
+        return Ok(());
+    }
+    out(&[
+        Part::T("  done     fetched "),
+        Part::N(fetched),
+        Part::T(" witness files, each this host's own history"),
+    ]);
+    crate::witness::check_store(layout, scratch).map_err(|_| ())?;
+    out(&[Part::T(
+        "  done     the witness copies load and every link recomputes",
+    )]);
+    Ok(())
 }
 
 /// `fstp-admin drill` (module documentation).
@@ -489,6 +548,17 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
             Part::T(" database"),
         ]);
     }
+    // ADR-012 record of lane m10/witness-copy, item 4: the witness copies
+    // fetch into scratch, load, and are this host's history.
+    let scratch = dir.join("witness");
+    let _ = std::fs::remove_dir_all(&scratch);
+    let checked = witness_step(layout, &scratch);
+    let cleaned = std::fs::remove_dir_all(&scratch).is_ok() || !scratch.exists();
+    match (checked, cleaned) {
+        (Err(()), _) => return Err(failed(layout, Step::Witness)),
+        (Ok(()), false) => return Err(failed(layout, Step::Cleanup)),
+        (Ok(()), true) => {}
+    }
     let s = drill_status::read(&layout.admin_dir()).after_pass(now_secs(), total);
     record(layout, &s);
     out(&[
@@ -555,6 +625,17 @@ mod tests {
     /// ADR-012 record of lane m10/backup-health, row "Disk check": the
     /// `df -Pk` output gives the available space in one shape, and the
     /// drill needs the larger base backup, half again, and 2 GiB.
+    /// ADR-012 record of lane m10/witness-copy, row "Drill": the witness
+    /// step has its own word in the drill status file and its own plain
+    /// words on the screen.
+    #[test]
+    fn adr012_wc_drill_names_the_witness_step() {
+        let s = DrillStatus::default().after_fail(9, Step::Witness);
+        assert_eq!(drill_status::encode(&s), "v1 9 0 witness 0\n");
+        assert_eq!(drill_status::decode(b"v1 9 0 witness 0\n"), Ok(s));
+        assert!(step_text(Step::Witness).contains("witness copies"));
+    }
+
     #[test]
     fn adr012_bh_df_output_gives_the_free_space() {
         let linux = "Filesystem     1024-blocks     Used Available Capacity Mounted on\n\

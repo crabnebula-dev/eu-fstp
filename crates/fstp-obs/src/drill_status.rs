@@ -8,7 +8,7 @@
 //! ```text
 //! file = "v1" SP last_try SP last_pass SP step SP seconds LF
 //! step = "none" / "space" / "restore" / "recovery" / "database"
-//!        / "keystore" / "cleanup"
+//!        / "keystore" / "cleanup" / "witness"
 //! ```
 //!
 //! `last_try` and `last_pass` are Unix seconds in decimal, with no sign
@@ -63,17 +63,21 @@ pub enum Step {
     /// The throwaway server did not stop, or the scratch directory did
     /// not go.
     Cleanup,
+    /// The witness copies did not fetch, did not load, or are not a prefix
+    /// of the live witness store (ADR-012 record of lane m10/witness-copy).
+    Witness,
 }
 
 impl Step {
     /// Every step.
-    pub const ALL: [Step; 6] = [
+    pub const ALL: [Step; 7] = [
         Self::Space,
         Self::Restore,
         Self::Recovery,
         Self::Database,
         Self::Keystore,
         Self::Cleanup,
+        Self::Witness,
     ];
 
     /// The word in the file.
@@ -86,6 +90,7 @@ impl Step {
             Self::Database => "database",
             Self::Keystore => "keystore",
             Self::Cleanup => "cleanup",
+            Self::Witness => "witness",
         }
     }
 }

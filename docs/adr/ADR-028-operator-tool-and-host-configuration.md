@@ -222,3 +222,25 @@ Written before the code. Daniel decided on 2026-11-24 that backup is mission cri
 | Time parser | `fstp_admin::pitr::parse_time`, in-house, fuzzed as `restore_time_parse` in the fuzz project of `fstp-admin` | CLAUDE.md fuzz rule |
 
 Tests, written before the code: `adr012_pitr_time_*` and `adr028_pitr_restore_takes_an_optional_target` in `fstp-admin`.
+
+## Record of lane `m10/witness-copy`, 2026-11-24: copies of the witness store
+
+Written before the code. Daniel decided on 2026-11-24 that the local witness store is copied to the backup object stores and rebuilt from them after a loss (ADR-012, record of lane m10/witness-copy). The operator side is below. Each row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| No new ceremony | `setup` with `backup` creates the timer and runs the first copy at once. The operator types nothing new | Usability rule of 2026-11-21 |
+| Command | `fstp-admin witness-copy`: one run of `fstp-backup witness-archive <state>/witness` with the application cluster's backup configuration, as root. It prints one line, `done` or the fix, and records the run for `status`. Exit 0 when the store is copied, 1 when the run failed, 4 without backups. The timer runs it, and an operator may run it to see an error | ADR-012 record of lane m10/witness-copy |
+| New timer | `fstp-admin-witness-copy`, every minute (`*-*-* *:*:00`), with no random delay and an accuracy of one second. `Manager::timer` takes the random delay as a parameter, 300 seconds for the other timers as before. Direct mode has no timers, so there the copy runs only when a command runs it | Item 1 of the ADR-012 record |
+| Copies of another host | When the object store holds witness copies that this host did not write, `witness-copy` says so and names `fstp-admin restore` as the fix | ADR-012 record, row "Copies this host did not write" |
+| Restore | `fstp-admin restore` stops the witness too. Before the databases, it rebuilds the witness store from the copies and checks it with `fstp-witness check-store`, one `done` line each. A store that differs from its copies stops the restore with nothing changed and the services started again. The line names the store and says to move it aside when this host is new (ADR-012 open question 1) | Item 2 of the ADR-012 record |
+| Status line | `witness copy`: when the store was last fully copied, or `FAILING` with the minutes since the failure, or `LATE` with the minutes since the last copy, or `never run` | Usability rule of 2026-11-21 |
+| Next word | `witness_copy` comes right after `wal_archive`, before `backup`. Its text names `fstp-admin witness-copy` to see the error | ADR-028 "Status" |
+| Host status members | Two new members of `fstp_obs::host_status`: `witness_copy` (`ok`, `late`, `failing` or `unknown`, the words of `wal_archive`) and `last_witness_copied` (Unix seconds or `null`). The version stays 1, as in the record of lane `m10/backup-health` | Record of lane L20, row "Members" |
+| Reply and page | `tenant.system` carries both in `host`. A new row "Copy of the audit witness" under "Backups and certificates": red while it fails, amber while it is late, green with the age of the last copy, not known when the host cannot read it, and green "starts with backups" without backups. Who acts: the host admin | Usability rule of 2026-11-21 |
+| Drill | `fstp-admin drill` gains a last step, `witness`: one `done` line when the copies load and match the live store, else `FAILED` with the step in plain words | Item 4 of the ADR-012 record |
+| Check-only command | `fstp-witness check-store <dir>`, run as the witness user: it loads every file of the store in `<dir>` as the witness does at start and exits 0, or 1 when a file does not load. It writes nothing and reaches no key | ADR-028 "No service library in `fstp-admin`" |
+
+Tests: `adr028_wc_status_names_the_witness_copy`, `adr028_wc_witness_copy_reaches_the_host_status_file` and `adr028_wc_copy_timer_runs_every_minute` in `fstp-admin`; the new cases of `r_nf_02_host_status_round_trips` and `r_nf_02_host_status_refuses_bad_input` in `fstp-obs`; `adr028_l20_host_status_read_states` in `fstp-cell`; `adr028_wc_witness_copy_row` in `web/test/l20_system_page.test.ts`.
+
+Lead answers of 2026-11-24 for this lane, interim pending Daniel (ADR-012, record of lane m10/witness-copy). After a host loss, `restore-keys` leaves the marker `<state>/admin/host-loss-restore`. The next `restore` then moves a witness store that differs from its copies aside as `<store>.before-restore-<time>`, with one `done` line, and rebuilds it, so the host-loss flow has no manual step. Without the marker, a diverged store still stops the restore. The operator guide says that bucket lifecycle rules must keep the `<cluster>/witness/` prefix.

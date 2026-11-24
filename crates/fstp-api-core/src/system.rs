@@ -76,7 +76,7 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 17] = [
+pub const HOST_NEXT: [&str; 18] = [
     "run_setup",
     "start_service",
     "custodian",
@@ -86,6 +86,7 @@ pub const HOST_NEXT: [&str; 17] = [
     "public_certificate",
     "configure_backups",
     "wal_archive",
+    "witness_copy",
     "backup",
     "restore_drill",
     "custodian_copy",
@@ -186,6 +187,9 @@ pub enum DrillStep {
     Keystore,
     /// The scratch copy did not stop or go.
     Cleanup,
+    /// The witness copies did not fetch, load or match (ADR-028 record of
+    /// lane `m10/witness-copy`).
+    Witness,
 }
 
 impl DrillStep {
@@ -200,6 +204,7 @@ impl DrillStep {
             Self::Database => "database",
             Self::Keystore => "keystore",
             Self::Cleanup => "cleanup",
+            Self::Witness => "witness",
         }
     }
 }
@@ -255,6 +260,11 @@ pub struct HostReport {
     pub drill_step: DrillStep,
     /// The restore duration of the last passed drill, in seconds.
     pub drill_seconds: Option<i64>,
+    /// The state of the witness store's copy (ADR-028 record of lane
+    /// `m10/witness-copy`).
+    pub witness_copy: ArchiveState,
+    /// When the witness store was last copied in full.
+    pub last_witness_copied: Option<Timestamp>,
 }
 
 /// What the cell found of the host status file.
@@ -423,6 +433,12 @@ fn report_json(r: &HostReport) -> Value {
         &mut o,
         "drill_seconds",
         r.drill_seconds.map_or(Value::Null, Value::from),
+    );
+    put(&mut o, "witness_copy", Value::from(r.witness_copy.wire()));
+    put(
+        &mut o,
+        "last_witness_copied",
+        r.last_witness_copied.map_or(Value::Null, instant),
     );
     Value::Object(o)
 }
