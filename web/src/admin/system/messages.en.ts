@@ -25,6 +25,23 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.checked": "Checked just now.",
   "system.back": "Back to home",
 
+  // ADR-012 record of lane m10/declared-restore: the audit log findings.
+  "system.findings.heading": "Audit log findings",
+  "system.findings.intro":
+    "The audit log records every change and cannot be changed without notice. Each finding below says that recorded entries are missing. Acknowledge each one once you have read it. An acknowledged finding stays on this page and in the audit log.",
+  "system.findings.open": "Needs acknowledgement",
+  "system.findings.acknowledged": "Acknowledged",
+  "system.findings.acknowledge": "Acknowledge",
+  "system.findings.done": "Acknowledged. The finding stays in the audit log.",
+  "system.findings.lost_in_restore.app":
+    "The platform was restored to an earlier time. Entries {from} to {to} of its audit log were lost, with the changes they recorded. Ask the people who worked in that window to check their work.",
+  "system.findings.lost_in_restore.vault":
+    "The identity vault was restored to an earlier time. Entries {from} to {to} of its audit log were lost, with the identity changes they recorded.",
+  "system.findings.possible_deletion.app":
+    "Entry {from} of the platform's audit log is missing. The platform may have stopped while saving it, or it was deleted. Ask the host admin which.",
+  "system.findings.possible_deletion.vault":
+    "Entry {from} of the identity vault's audit log is missing. The vault may have stopped while saving it, or it was deleted. Ask the host admin which.",
+
   "system.age.minutes": "{n} minutes",
   "system.age.hours": "{n} hours",
   "system.age.days": "{n} days",

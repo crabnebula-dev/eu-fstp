@@ -42,6 +42,7 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
     vault: "answers",
     mail: "works",
     last_cell_erasure: null,
+    findings: [],
     host_file: "present",
     host: {
       written_at: (NOW - 5n * MIN).toString(),
