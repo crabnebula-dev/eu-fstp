@@ -43,7 +43,7 @@ use super::Inner;
 /// id, 18 bytes in front of the text.
 const HEADER: usize = 18;
 
-fn header(class: TextClass, owner: TextOwner) -> [u8; HEADER] {
+pub(crate) fn header(class: TextClass, owner: TextOwner) -> [u8; HEADER] {
     let mut h = [0u8; HEADER];
     h[0] = match class {
         TextClass::Confidential => 1,
@@ -60,7 +60,7 @@ fn header(class: TextClass, owner: TextOwner) -> [u8; HEADER] {
     h
 }
 
-fn parse(text: &[u8]) -> Option<(TextClass, TextOwner, &[u8])> {
+pub(crate) fn parse(text: &[u8]) -> Option<(TextClass, TextOwner, &[u8])> {
     let (h, body) = text.split_first_chunk::<HEADER>()?;
     let class = match h[0] {
         1 => TextClass::Confidential,

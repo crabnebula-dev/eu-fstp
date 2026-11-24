@@ -164,6 +164,10 @@ fn problem_text(p: Problem) -> (&'static str, &'static str) {
             "is not three agreement versions",
             "write the versions of the SaaS terms, the data processing agreement and the sub-processor list, like \"1,1,1\"",
         ),
+        Problem::BadForges => (
+            "is not a list of up to 16 different forge host names",
+            "write it like [\"codeberg.org\"], one lowercase host name per forge",
+        ),
     }
 }
 

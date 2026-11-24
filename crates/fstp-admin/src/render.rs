@@ -79,8 +79,16 @@ pub fn cell(l: &Layout, f: &Facts) -> String {
     } else {
         String::new()
     };
+    // ADR-026 section of lane `m10/checks-runner`: the forge allowlist of
+    // the payment checks, when the host names one.
+    let checks = if l.cfg.forges.is_empty() {
+        String::new()
+    } else {
+        let hosts: Vec<String> = l.cfg.forges.iter().map(|h| quote(h)).collect();
+        format!("\"checks\":{{\"forge_hosts\":[{}]}},", hosts.join(","))
+    };
     format!(
-        "{{{assets}\"cell\":\"{cell}\",\"credentials_dir\":{creds},\
+        "{{{assets}\"cell\":\"{cell}\",{checks}\"credentials_dir\":{creds},\
          \"database\":{{\"dbname\":\"c_{cell}\",\"host\":\"127.0.0.1\",\"port\":{app_port}}},\
          \"host\":{host},\"host_status\":{status},\"key_file_keyd_socket\":{kf},\"keyd_socket\":{keyd},\
          \"listen\":{{\"health\":\"{health}\",\"internal\":\"{internal}\",\"tunnel\":\"{tunnel}\"}},\
@@ -406,5 +414,81 @@ mod tests {
             v.get("host_status").and_then(fstp_json::Value::as_str),
             Some("/var/lib/fstp/status/host.json")
         );
+    }
+}
+
+#[cfg(test)]
+mod forge_tests {
+    #![allow(clippy::unwrap_used, reason = "test code")]
+
+    use super::*;
+    use crate::config::{ConfigError, Problem, decode};
+
+    fn host(forges: &str) -> Result<crate::config::HostConfig, ConfigError> {
+        decode(
+            format!(
+                r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+                "mail":{{"relay":"smtp.example.eu","username":"cell"}}{forges}}}"#
+            )
+            .as_bytes(),
+        )
+    }
+
+    fn facts() -> Facts {
+        Facts {
+            cell: [0xab; 16],
+            app_server_spki: [1; 32],
+            vault_server_spki: [2; 32],
+            witness_ca_spki: [3; 32],
+            receipt_keys: vec!["0a0b".into()],
+            ticket_key: None,
+            assets: false,
+            edge_id: None,
+        }
+    }
+
+    /// ADR-026 section of lane `m10/checks-runner`, I-32: the host file's
+    /// `forges` becomes `checks.forge_hosts` of `cell.json`. Without it the
+    /// cell file names no forge, and the cell's allowlist is empty.
+    #[test]
+    fn adr026_forges_render_as_the_cell_forge_allowlist() {
+        let with = Layout::new(host(r#","forges":["codeberg.org","forge.example.eu"]"#).unwrap());
+        let text = cell(&with, &facts());
+        let v = fstp_json::parse(text.trim_end().as_bytes()).unwrap();
+        let hosts: Vec<String> = v
+            .as_object()
+            .and_then(|o| o.get("checks"))
+            .and_then(|c| c.as_object())
+            .and_then(|c| c.get("forge_hosts"))
+            .and_then(|h| h.as_array())
+            .unwrap()
+            .iter()
+            .map(|h| h.as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(hosts, vec!["codeberg.org", "forge.example.eu"]);
+        let without = Layout::new(host("").unwrap());
+        assert!(!cell(&without, &facts()).contains("checks"));
+    }
+
+    /// ADR-026 section of lane `m10/checks-runner`: `forges` is a list of
+    /// at most 16 different lowercase host names. Anything else is refused
+    /// by name, with its fix.
+    #[test]
+    fn adr026_forges_refuses_what_the_cell_would_refuse() {
+        let many: Vec<String> = (0..17).map(|i| format!("\"f{i}.example\"")).collect();
+        for bad in [
+            r#","forges":"codeberg.org""#.to_owned(),
+            r#","forges":["Codeberg.org"]"#.to_owned(),
+            r#","forges":["https://codeberg.org"]"#.to_owned(),
+            r#","forges":["a.example","a.example"]"#.to_owned(),
+            format!(r#","forges":[{}]"#, many.join(",")),
+        ] {
+            let e = host(&bad).unwrap_err();
+            assert_eq!(
+                (e.field.as_str(), e.problem),
+                ("forges", Problem::BadForges),
+                "{bad}"
+            );
+        }
     }
 }

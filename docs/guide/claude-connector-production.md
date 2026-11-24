@@ -30,9 +30,12 @@ The first time, it asks four questions: the domain, the first admin's email, the
   "mail": {"relay": "smtp.example.eu", "username": "cell"},
   "tls": {"cert": "/etc/letsencrypt/live/grants.example.eu/fullchain.pem",
           "key": "/etc/letsencrypt/live/grants.example.eu/privkey.pem"},
-  "backup": {"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra", "bucket": "fstp-backups"}
+  "backup": {"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra", "bucket": "fstp-backups"},
+  "forges": ["codeberg.org"]
 }
 ```
+
+`forges` lists the code forges where grantees publish their deliverables. The automated checks of a payment request fetch the deliverable and its `LICENSE` file from these hosts only, over https. Without `forges`, every payment request that names a deliverable fails its checks, and the grantee is told that the host is not on the allowlist. Add the forge, run `setup` again, then `sudo systemctl restart fstp-cell`, and the grantee resubmits. The checks read the licence at `<deliverable address>/raw/<release>/LICENSE`, the route of Forgejo and Gitea forges such as Codeberg.
 
 Setup creates the databases, keys, certificates and services, starts everything, and adds the cell's route. If a step fails, it says what to fix. Fix it and run `setup` again: it skips what is done.
 

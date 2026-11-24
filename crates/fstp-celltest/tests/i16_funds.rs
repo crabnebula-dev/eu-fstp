@@ -256,6 +256,10 @@ enum Reach {
     /// The configured DNS resolver (ADR-027). It carries TXT questions
     /// about the sending domain only.
     DnsResolver,
+    /// An allowlisted deliverable forge (ADR-009 amendment of
+    /// 2026-11-24). It carries unauthenticated GETs of the public
+    /// addresses grantees name, for the payment checks, only.
+    DeliverableForge,
 }
 
 /// The exhaustive map of `Destination`. A new variant fails to compile
@@ -272,6 +276,7 @@ fn cell_reach(d: &Destination) -> Reach {
         Destination::KeystoreSnapshots => Reach::KeystorePrefix,
         Destination::MailSubmission { .. } => Reach::MailRelay,
         Destination::DnsResolver { .. } => Reach::DnsResolver,
+        Destination::Forge => Reach::DeliverableForge,
     }
 }
 
@@ -304,6 +309,7 @@ fn i16_cell_egress_has_no_payment_destination() {
         Destination::DnsResolver {
             addr: std::net::SocketAddr::from(([127, 0, 0, 53], 53)),
         },
+        Destination::Forge,
     ];
     let reached: Vec<Reach> = cell.iter().map(cell_reach).collect();
     assert_eq!(
@@ -317,6 +323,7 @@ fn i16_cell_egress_has_no_payment_destination() {
             Reach::KeystorePrefix,
             Reach::MailRelay,
             Reach::DnsResolver,
+            Reach::DeliverableForge,
         ]
     );
     let vault = [

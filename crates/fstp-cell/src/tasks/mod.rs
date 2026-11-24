@@ -6,11 +6,13 @@
 //!   self-hosted cell (I-38, I-39).
 //! - [`erasure`]: the erasure runner of design section 3.5 (I-81).
 //! - [`dispatch`]: the M6 dispatcher over `ops.outbox` (I-25, I-26).
+//! - [`checks`]: the checks runner of payment requests (I-32, R-PR-02).
 //!
 //! Each task is a sans-IO core with an async runner over a [`Clock`]. A
 //! task never holds a handle a request handler reaches, so no command
 //! waits for one (I-39).
 
+pub mod checks;
 pub mod dispatch;
 pub mod drafts;
 pub mod erasure;
