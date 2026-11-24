@@ -251,6 +251,9 @@ fn one(s: &mut Scratch<'_>, c: Cluster, cell: &[u8; 16]) -> Result<u64, Step> {
         .arg("restore")
         .arg(&s.dir);
     run_ok(&mut restore, &s.m.log()).map_err(|_| Step::Restore)?;
+    // ADR-012 record of lane m10/backup-followups: the live TLS files, whose
+    // server key the keystore checks pin.
+    crate::ops::put_current_tls(layout, c, &s.dir).map_err(|_| Step::Restore)?;
     chown_pg(layout, s.m, &s.dir).map_err(|_| Step::Restore)?;
     step_done("restored", c);
     let port = port(layout, c);

@@ -479,6 +479,20 @@ pub fn restore(layout: &Layout, target: Option<u64>) -> Result<(), Fail> {
         start(layout)?;
         return Err(f);
     }
+    // ADR-012 record of lane m10/backup-followups: the current TLS files go
+    // into each restored directory before PostgreSQL starts on it.
+    let tls = renew_server_tls_if_due(layout).and_then(|()| {
+        Cluster::ALL
+            .iter()
+            .try_for_each(|c| put_current_tls(layout, *c, &fresh(*c)))
+    });
+    if let Err(e) = tls {
+        for c in Cluster::ALL {
+            let _ = std::fs::remove_dir_all(fresh(c));
+        }
+        start(layout)?;
+        return Err(e);
+    }
     if let Err(e) = swap_both(layout, &m, stamp, &fresh) {
         start(layout)?;
         return Err(e);
@@ -498,6 +512,60 @@ pub fn restore(layout: &Layout, target: Option<u64>) -> Result<(), Fail> {
         }
     }
     started
+}
+
+/// The TLS files of a cluster, in `<data>/tls` (ADR-028 "PostgreSQL"):
+/// the server certificate, its expiry sidecar, its key and the CA.
+pub const TLS_FILES: [&str; 4] = ["server.pem", "server.pem.expires", "server.key", "ca.pem"];
+
+/// Puts the live TLS files of cluster `c` into the restored data
+/// directory `restored`, before any PostgreSQL starts on it (ADR-012
+/// record of lane m10/backup-followups, rows "TLS files after a restore"
+/// and "TLS files in the drill"). A base backup carries the files of its
+/// own time, and the cell and the vault pin the live server key (I-83).
+///
+/// # Errors
+///
+/// [`Fail::Step`] when a live file is missing or a copy fails.
+pub fn put_current_tls(layout: &Layout, c: Cluster, restored: &Path) -> Result<(), Fail> {
+    let step = "restore";
+    let live = layout.pg_data(c).join("tls");
+    let to = restored.join("tls");
+    std::fs::create_dir_all(&to).map_err(io(step))?;
+    for name in TLS_FILES {
+        let bytes = std::fs::read(live.join(name)).map_err(io(step))?;
+        write_atomic(&to.join(name), &bytes, 0o600).map_err(io(step))?;
+    }
+    out(&[
+        Part::T("  done     put the current TLS files into the restored "),
+        Part::T(c.name()),
+        Part::T(" database"),
+    ]);
+    Ok(())
+}
+
+/// Before a restore copies the live TLS files: when a live server
+/// certificate needs a new issue (`pki::needs_issue`), issues it from the
+/// database CA, records its key and writes the service configurations
+/// again, as `renew` does, so the restored directories get current files
+/// (ADR-028 record of lane `m10/backup-followups`, row "TLS after a
+/// restore"). The services are stopped then, and the restore starts them.
+fn renew_server_tls_if_due(layout: &Layout) -> Result<(), Fail> {
+    let due = Cluster::ALL
+        .iter()
+        .any(|c| crate::pki::needs_issue(&layout.pg_data(*c).join("tls").join("server.pem")));
+    if !due {
+        return Ok(());
+    }
+    let mut state = State::load(&layout.admin_dir().join("state")).map_err(io("restore"))?;
+    let cell = crate::setup::cell_id(&mut state)?;
+    let cas = crate::setup::cas(layout)?;
+    let facts = crate::setup::credentials(layout, &mut state, &cas, cell)?;
+    crate::setup::write_configs(layout, &facts)?;
+    out(&[Part::T(
+        "  done     renewed the database server certificates before the restore",
+    )]);
+    Ok(())
 }
 
 /// Swaps both fresh directories in, each live one moved to
@@ -860,6 +928,54 @@ pub fn stop(layout: &Layout) -> Result<(), Fail> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// I-83, ADR-012 record of lane m10/backup-followups, row "TLS files
+    /// after a restore": the live server certificate, its expiry, its key
+    /// and the CA replace the ones a restored directory carries from backup
+    /// time, with mode 0600. A missing live file stops the step, so no
+    /// restored directory starts with old files.
+    #[test]
+    fn adr012_bf_restore_puts_the_live_tls_files_in_place() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = std::env::temp_dir().join(format!(
+            "fstp-admin-bf-tls-{}",
+            crate::pki::random_hex(8).unwrap_or_default()
+        ));
+        let cfg = format!(
+            r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{{"relay":"smtp.example.eu","username":"cell"}},
+            "services":"direct",
+            "paths":{{"state":"{0}/state","etc":"{0}/etc","bin":"{0}/bin"}}}}"#,
+            root.display()
+        );
+        let layout =
+            Layout::new(crate::config::decode(cfg.as_bytes()).unwrap_or_else(|_| panic!("config")));
+        for c in Cluster::ALL {
+            let live = layout.pg_data(c).join("tls");
+            let restored = root.join(format!("{}.restored", c.name()));
+            std::fs::create_dir_all(&live).unwrap();
+            std::fs::create_dir_all(restored.join("tls")).unwrap();
+            for name in TLS_FILES {
+                std::fs::write(live.join(name), format!("current {name}")).unwrap();
+                std::fs::write(restored.join("tls").join(name), format!("old {name}")).unwrap();
+            }
+            put_current_tls(&layout, c, &restored).unwrap();
+            for name in TLS_FILES {
+                let p = restored.join("tls").join(name);
+                assert_eq!(
+                    std::fs::read_to_string(&p).unwrap(),
+                    format!("current {name}")
+                );
+                assert_eq!(
+                    std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+            std::fs::remove_file(live.join("server.key")).unwrap();
+            assert!(put_current_tls(&layout, c, &restored).is_err());
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// ADR-028 record of lane `m10/backup-pitr`: `restore` takes an
     /// optional `--to <time>`. A malformed time is refused before any
