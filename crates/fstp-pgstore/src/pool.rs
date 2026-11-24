@@ -9,6 +9,22 @@
 //!
 //! A caller waits for a free client when all are in use. A connection that
 //! breaks is dropped, and its place is reopened on the next request.
+//!
+//! # Reconnect (ADR-005 record of lane m10/store-reconnect)
+//!
+//! A restart of the cluster ends every session, idle ones included. So
+//! [`Pool::get`] pings an idle client ([`fstp_pgwire::Client::ping`], one
+//! round trip that runs no statement) before it hands it out. A client
+//! that fails the ping is dropped and the next idle one is tried, then a
+//! new connection with the full start: TLS with the server check, login
+//! and the I-82 identity check. The pool never repeats a statement or a
+//! transaction: a client is only ever replaced between two uses.
+//!
+//! A failed connect starts a backoff of [`RECONNECT_FIRST`], doubled after
+//! each further failure up to [`RECONNECT_MAX`]. Until it ends, a call that
+//! needs a new connection fails at once with the last connect error, so a
+//! cluster that is down costs no caller a connect timeout. A connect that
+//! succeeds ends the backoff.
 
 use std::fmt;
 use std::future::Future;
@@ -16,6 +32,7 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 
 use fstp_pgwire::{Client, Config};
 use fstp_rt::Runtime;
@@ -24,6 +41,51 @@ use crate::error::DbFault;
 
 /// The most clients one pool may keep.
 pub const MAX_POOL_CLIENTS: usize = 64;
+
+/// The backoff after the first failed connect (module documentation).
+pub const RECONNECT_FIRST: Duration = Duration::from_millis(100);
+
+/// The longest backoff between two connect attempts (module
+/// documentation).
+pub const RECONNECT_MAX: Duration = Duration::from_secs(2);
+
+/// The connect backoff of a pool (module documentation).
+#[derive(Debug, Default)]
+struct Backoff {
+    /// No connect is tried before this instant.
+    until: Option<Instant>,
+    /// The wait after the next failure.
+    next: Duration,
+    /// The error the calls fail with until then.
+    last: Option<PoolError>,
+}
+
+impl Backoff {
+    /// The error to fail with now, if the backoff still runs.
+    fn waiting(&self, now: Instant) -> Option<PoolError> {
+        match (self.until, &self.last) {
+            (Some(until), Some(e)) if now < until => Some(e.clone()),
+            _ => None,
+        }
+    }
+
+    /// Records a failed connect at `now`.
+    fn failed(&mut self, now: Instant, e: PoolError) {
+        let wait = if self.next.is_zero() {
+            RECONNECT_FIRST
+        } else {
+            self.next
+        };
+        self.until = now.checked_add(wait);
+        self.next = wait.saturating_mul(2).min(RECONNECT_MAX);
+        self.last = Some(e);
+    }
+
+    /// Ends the backoff after a connect that succeeded.
+    fn succeeded(&mut self) {
+        *self = Backoff::default();
+    }
+}
 
 /// A login role of a cell's application database (design section 4.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -130,11 +192,16 @@ struct Inner<R: Runtime> {
     config: Config,
     max: usize,
     state: Mutex<State<R>>,
+    backoff: Mutex<Backoff>,
 }
 
 impl<R: Runtime> Inner<R> {
     fn lock(&self) -> MutexGuard<'_, State<R>> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn backoff(&self) -> MutexGuard<'_, Backoff> {
+        self.backoff.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Frees one place and wakes every waiter, which then compete again.
@@ -212,6 +279,7 @@ impl<R: Runtime> Pool<R> {
                 open: 1,
                 waiters: Vec::new(),
             }),
+            backoff: Mutex::new(Backoff::default()),
         });
         let first = connect(&inner).await;
         match first {
@@ -241,27 +309,59 @@ impl<R: Runtime> Pool<R> {
         &self.inner.rt
     }
 
-    /// A client, waiting while every client is in use.
+    /// A client, waiting while every client is in use. An idle client
+    /// answers a ping first; one the server ended is dropped and replaced
+    /// (module documentation, "Reconnect").
     ///
     /// # Errors
     ///
     /// [`PoolError::Connect`] or [`PoolError::IdentityMismatch`] when a new
-    /// connection is needed and fails.
+    /// connection is needed and fails, or while the backoff after such a
+    /// failure runs.
     pub async fn get(&self) -> Result<Pooled<R>, PoolError> {
-        let slot = Acquire { inner: &self.inner }.await;
-        match slot {
-            Some(client) => Ok(Pooled::new(&self.inner, client)),
-            None => {
-                // The place is reserved. The guard frees it if the connect
-                // fails or this future is dropped.
-                let guard = Reserved {
-                    inner: &self.inner,
-                    armed: true,
-                };
-                let client = connect(&self.inner).await?;
-                guard.defuse();
-                Ok(Pooled::new(&self.inner, client))
+        loop {
+            let slot = Acquire { inner: &self.inner }.await;
+            match slot {
+                Some(client) => {
+                    let mut pooled = Pooled::new(&self.inner, client);
+                    if pooled.client.ping().await.is_ok() {
+                        return Ok(pooled);
+                    }
+                    // The session is gone. Dropping it frees its place,
+                    // and the next round takes another idle client or
+                    // connects.
+                    drop(pooled);
+                }
+                None => {
+                    // The place is reserved. The guard frees it if the
+                    // connect fails or this future is dropped.
+                    let guard = Reserved {
+                        inner: &self.inner,
+                        armed: true,
+                    };
+                    let client = reconnect(&self.inner).await?;
+                    guard.defuse();
+                    return Ok(Pooled::new(&self.inner, client));
+                }
             }
+        }
+    }
+}
+
+/// A new client in place of one that broke or was never opened, under the
+/// backoff of the module documentation.
+async fn reconnect<R: Runtime>(inner: &Inner<R>) -> Result<Client<R>, PoolError> {
+    if let Some(e) = inner.backoff().waiting(Instant::now()) {
+        return Err(e);
+    }
+    match connect(inner).await {
+        Ok(c) => {
+            inner.backoff().succeeded();
+            Ok(c)
+        }
+        Err(e) => {
+            inner.backoff().failed(Instant::now(), e.clone());
+            Err(e)
         }
     }
 }
@@ -401,5 +501,41 @@ impl<R: Runtime> Deref for Pooled<R> {
 impl<R: Runtime> DerefMut for Pooled<R> {
     fn deref_mut(&mut self) -> &mut Client<R> {
         &mut self.client
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ADR-005 record of lane m10/store-reconnect, row "Backoff": the
+    /// wait after a failed connect starts at [`RECONNECT_FIRST`], doubles
+    /// up to [`RECONNECT_MAX`], fails calls with the last error while it
+    /// runs, and ends with a connect that succeeds.
+    #[test]
+    fn adr005_reconnect_backoff_is_bounded_and_ends_on_success() {
+        let fault = PoolError::Connect(DbFault {
+            kind: fstp_pgwire::ErrorKind::Io,
+            sqlstate: None,
+        });
+        let t0 = Instant::now();
+        let mut b = Backoff::default();
+        assert_eq!(b.waiting(t0), None);
+        let mut waits = Vec::new();
+        for _ in 0..8 {
+            b.failed(t0, fault.clone());
+            let until = b.until.unwrap_or(t0);
+            waits.push(until.duration_since(t0));
+            assert_eq!(b.waiting(t0), Some(fault.clone()));
+            assert_eq!(b.waiting(until), None);
+        }
+        assert_eq!(
+            waits,
+            [100, 200, 400, 800, 1600, 2000, 2000, 2000].map(Duration::from_millis)
+        );
+        b.succeeded();
+        assert_eq!(b.waiting(t0), None);
+        b.failed(t0, fault);
+        assert_eq!(b.until.map(|u| u.duration_since(t0)), Some(RECONNECT_FIRST));
     }
 }

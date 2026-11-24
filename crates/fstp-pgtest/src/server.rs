@@ -826,6 +826,63 @@ impl PgServer {
         log_tail(&self.dir.join("server.log"))
     }
 
+    /// Restarts the server in place with `pg_ctl restart -m fast`, on the
+    /// same port and data directory, and waits until it accepts
+    /// connections again. The server ends every session first, as an
+    /// operator's restart or an OS update would (ADR-005 record of lane
+    /// m10/store-reconnect).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error with the end of the server log when `pg_ctl`
+    /// fails.
+    pub fn restart(&self) -> Result<(), Error> {
+        self.pg_ctl(&["-m", "fast", "restart"])
+    }
+
+    /// Stops the server with `pg_ctl stop -m fast`, runs `down` while it
+    /// is down, and starts it again on the same port, waiting until it
+    /// accepts connections (ADR-005 record of lane m10/store-reconnect).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error with the end of the server log when `pg_ctl`
+    /// fails. The server is started again even when `down` panics.
+    pub fn while_down<T>(&self, down: impl FnOnce() -> T) -> Result<T, Error> {
+        self.pg_ctl(&["-m", "fast", "stop"])?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(down));
+        let port = format!("-p {}", self.port);
+        let started = self.pg_ctl(&["-o", &port, "start"]);
+        match result {
+            Ok(v) => started.map(|()| v),
+            Err(p) => std::panic::resume_unwind(p),
+        }
+    }
+
+    /// Runs `pg_ctl -D <data> -l <log> -w -t 60 -s <args>`.
+    fn pg_ctl(&self, args: &[&str]) -> Result<(), Error> {
+        let run_as = detect_run_as()?;
+        let log = self.dir.join("server.log");
+        let out = pg_command(&self.bindir, "pg_ctl", &run_as, &self.dir)
+            .arg("-D")
+            .arg(self.dir.join("data"))
+            .arg("-l")
+            .arg(&log)
+            .args(["-w", "-t", "60", "-s"])
+            .args(args)
+            .output()
+            .map_err(|e| Error::io("cannot run pg_ctl", &e))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(Error::new(format!(
+            "pg_ctl {args:?} failed ({}): {}\nserver log:\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim(),
+            log_tail(&log)
+        )))
+    }
+
     /// Stops the server, deletes its directory and waits for both.
     pub fn stop(self) {
         drop(self);

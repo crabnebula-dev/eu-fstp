@@ -88,7 +88,10 @@ pub use keystore::{
 };
 pub use migrations::MIGRATIONS;
 pub use outbox::{KeyFuture, MAX_OUTBOX_BODY, MAX_OUTBOX_ROWS, OutboxKey, OutboxKeys, OutboxRow};
-pub use pool::{MAX_POOL_CLIENTS, Pool, PoolError, Role, database_name, role_name};
+pub use pool::{
+    MAX_POOL_CLIENTS, Pool, PoolError, RECONNECT_FIRST, RECONNECT_MAX, Role, database_name,
+    role_name,
+};
 pub use seal::{
     LEDGER_KEY_SEALS, LedgerKey, LedgerKeys, checkpoint_aad, event_aad, ledger_aad,
     open_event_body, open_stored_entry, outbox_aad,
