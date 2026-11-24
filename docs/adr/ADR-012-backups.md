@@ -501,3 +501,14 @@ Tests, written before the code. In `fstp-backup`: `adr012_wc_witness_ident_round
 4. The bucket lifecycle rule must keep `<cluster>/witness/` (row "Retention"). Should `fstp-admin` check it, or does the runbook carry it?
 
 **Built.** The end-to-end test passes on macOS in about two minutes. It needed one change to itself, not to the code: `fstp-admin restore` fetches through the key custody, so it must run while custody runs. The test stops only the witness before it deletes the store, since `fstp-admin stop` also stops the custody simulator, which keeps its keys in memory. The CI part `celltest` selects every `adr*` test binary, so it now skips both backup end-to-end tests, which run in the part `devstack` with their binaries. `adr012_bh_backup_wal_archive_and_drill_over_real_postgres` ran in both parts before this lane, which `ci_test_parts_run_each_test_exactly_once` refused.
+
+### Lead answers of 2026-11-24, interim pending Daniel
+
+| Question | Reading | Basis |
+| --- | --- | --- |
+| 1. Host loss | One flow with no manual step. `fstp-admin restore-keys` writes the marker `<state>/admin/host-loss-restore` once it has put the keys back. When `restore` finds a local witness store that differs from its copies and the marker is present, it moves the whole store aside as `<store>.before-restore-<time>`, kept and never deleted, says so in one line, and rebuilds the store from the copies. Without the marker, on the same host, a diverged store still stops the restore with nothing changed, since it may be evidence of tampering. The marker goes once the witness store is rebuilt and checked | I-24; lead, 2026-11-24 |
+| 2. Every minute | Enough, the same recovery point as the WAL archive. Kept | Lead, 2026-11-24 |
+| 3. Lifecycle rule | Runbook only. The operator guide says that bucket lifecycle rules must keep `<cluster>/witness/` | Lead, 2026-11-24 |
+| 4. Chain check in the drill | Stays open, as recorded | Lead, 2026-11-24 |
+
+Test: `i24_adr012_wc_host_loss_restore_moves_a_diverged_store_aside` in `crates/fstp-celltest/tests/adr012_witness_copy_e2e.rs`. Direct mode has no paired custodian and no `fstp-keyd`, so `restore-keys` cannot run there. The test stands in for the new host by a fresh witness registration on the same host, the store a new host's `setup` writes, and sets the marker through `fstp_admin::custodian::mark_host_loss`, the function `restore-keys` calls.
