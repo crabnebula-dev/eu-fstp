@@ -121,10 +121,10 @@ const OFF_LATEST: &str = "base backup off the latest timeline";
 pub struct Agent<R: Runtime> {
     /// The object stores, in order, never empty (ADR-012 record of lane
     /// m10/backup-format).
-    s3: Vec<S3Client<R>>,
-    key: KeyFile,
+    pub(crate) s3: Vec<S3Client<R>>,
+    pub(crate) key: KeyFile,
     writer: Option<WriterKey>,
-    state_dir: PathBuf,
+    pub(crate) state_dir: PathBuf,
     limits: Limits,
 }
 
@@ -292,7 +292,7 @@ impl<R: Runtime> Agent<R> {
     /// Seals `plaintext` as the `FBC2` container of `ident`, signed by the
     /// writer key (F-043), and stores the same bytes as `object` in each
     /// store of `stores` (ADR-012 record of lane m10/backup-format).
-    async fn seal_and_store(
+    pub(crate) async fn seal_and_store(
         &self,
         ident: &ObjectIdent,
         object: &str,
@@ -502,7 +502,7 @@ impl<R: Runtime> Agent<R> {
     /// Otherwise it is the first error, so a refused copy is never taken
     /// for the end of the archive, and one dead store does not stop a
     /// restore.
-    async fn fetch_checked(
+    pub(crate) async fn fetch_checked(
         &self,
         secret: &HybridSecretKey,
         object: &str,

@@ -18,11 +18,18 @@
 //!   and request (ADR-012 record of lane L16);
 //! - `custodian-escrow <request> <out>`: on the first host, as root, seal
 //!   the group secret to a second custodian.
+//! - `witness-archive <store dir>`: one run of the witness store's copy,
+//!   from a timer every minute (ADR-012 record of lane m10/witness-copy);
+//! - `witness-fetch <dir>`: every copied witness file into a new directory,
+//!   as root;
+//! - `witness-restore <store dir>`: the witness store rebuilt from its
+//!   copies where it is missing or behind, as root.
 //!
 //! It writes no line of its own (R-NF-02). A refused configuration or
 //! argument exits with status 2, a restore whose archive ends before its
-//! target with status 3, and any other failure with status 1, which is
-//! also what `restore_command` returns for a file the store lacks.
+//! target with status 3, witness copies this host did not write with
+//! status 4, a witness store that differs from its copies with status 5,
+//! and any other failure with status 1, which is also what `restore_command` returns for a file the store lacks.
 
 use std::process::ExitCode;
 
@@ -36,6 +43,9 @@ fn main() -> ExitCode {
         // ADR-012 record of lane `m10/backup-pitr`: the archive holds no
         // change after the restore target.
         Err(BackupError::TargetNotReached) => ExitCode::from(3),
+        // ADR-012 record of lane m10/witness-copy.
+        Err(BackupError::WitnessForeign) => ExitCode::from(4),
+        Err(BackupError::WitnessDiverged) => ExitCode::from(5),
         Err(_) => ExitCode::FAILURE,
     }
 }

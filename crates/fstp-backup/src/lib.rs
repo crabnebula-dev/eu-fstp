@@ -28,6 +28,7 @@ pub mod snapshot;
 pub mod tar;
 pub mod timeline;
 mod wal;
+pub mod witness;
 pub mod writer;
 pub mod xml;
 
@@ -84,6 +85,13 @@ pub enum BackupError {
     /// The archive ends before the restore target: it holds no change
     /// after that time (ADR-012 record of lane `m10/backup-pitr`).
     TargetNotReached,
+    /// The witness archiver has no state while a store holds witness
+    /// copies: they are of another host or another store (ADR-012 record
+    /// of lane m10/witness-copy).
+    WitnessForeign,
+    /// A local witness store file neither extends nor is extended by its
+    /// copy (ADR-012 record of lane m10/witness-copy).
+    WitnessDiverged,
 }
 
 impl std::fmt::Display for BackupError {
@@ -110,6 +118,15 @@ impl std::fmt::Display for BackupError {
             BackupError::Tool(tool) => write!(f, "{tool} failed"),
             BackupError::TargetNotReached => {
                 write!(f, "the archive ends before the restore target")
+            }
+            BackupError::WitnessForeign => {
+                write!(
+                    f,
+                    "the object store holds witness copies this host did not write"
+                )
+            }
+            BackupError::WitnessDiverged => {
+                write!(f, "the witness store differs from its copies")
             }
         }
     }
@@ -291,6 +308,24 @@ pub enum Command {
         /// The new escrow file.
         out: PathBuf,
     },
+    /// `witness-archive <store dir>`: one run of the witness store's copy
+    /// (ADR-012 record of lane m10/witness-copy).
+    WitnessArchive {
+        /// The witness store directory.
+        store: PathBuf,
+    },
+    /// `witness-fetch <dir>`: every copied witness file into a new or empty
+    /// directory, as root.
+    WitnessFetch {
+        /// The directory.
+        out: PathBuf,
+    },
+    /// `witness-restore <store dir>`: the witness store rebuilt from its
+    /// copies where it is missing or behind, as root.
+    WitnessRestore {
+        /// The witness store directory.
+        store: PathBuf,
+    },
 }
 
 /// Parses the binary's arguments, without the program name.
@@ -339,6 +374,15 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
         [c, request, out] if c == "custodian-escrow" => Ok(Command::CustodianEscrow {
             request: PathBuf::from(request),
             out: PathBuf::from(out),
+        }),
+        [c, store] if c == "witness-archive" => Ok(Command::WitnessArchive {
+            store: PathBuf::from(store),
+        }),
+        [c, out] if c == "witness-fetch" => Ok(Command::WitnessFetch {
+            out: PathBuf::from(out),
+        }),
+        [c, store] if c == "witness-restore" => Ok(Command::WitnessRestore {
+            store: PathBuf::from(store),
         }),
         _ => Err(usage),
     }
@@ -422,6 +466,15 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
                 Ok(())
             }
             Command::WalArchive { path, name } => agent.archive(path, name).await.map(|_| ()),
+            Command::WitnessArchive { store } => agent.witness_archive(store).await.map(|_| ()),
+            Command::WitnessFetch { out } => {
+                let secret = open_group_secret(&agent, &cfg).await?;
+                agent.witness_fetch(&secret, out).await.map(|_| ())
+            }
+            Command::WitnessRestore { store } => {
+                let secret = open_group_secret(&agent, &cfg).await?;
+                agent.witness_restore(&secret, store).await.map(|_| ())
+            }
             Command::WalRestore { name, path } => {
                 let secret = open_group_secret(&agent, &cfg).await?;
                 agent.restore_wal(&secret, name, path).await
@@ -644,6 +697,36 @@ mod tests {
             &["restore", "/d", "--to", "7", "x"],
             &["restore", "/d", "--at", "7"],
             &["restore", "/d", &id, "--to", "7"],
+        ] {
+            assert_eq!(
+                parse_args(&s(bad)).unwrap_err(),
+                BackupError::Config("arguments"),
+                "{bad:?}"
+            );
+        }
+    }
+
+    /// ADR-012 record of lane m10/witness-copy, row "Mechanism": the three
+    /// witness commands each take one directory, and nothing else.
+    #[test]
+    fn adr012_wc_binary_takes_the_witness_commands() {
+        let d = PathBuf::from("/s/witness");
+        assert_eq!(
+            parse_args(&s(&["witness-archive", "/s/witness"])).unwrap(),
+            Command::WitnessArchive { store: d.clone() }
+        );
+        assert_eq!(
+            parse_args(&s(&["witness-fetch", "/s/witness"])).unwrap(),
+            Command::WitnessFetch { out: d.clone() }
+        );
+        assert_eq!(
+            parse_args(&s(&["witness-restore", "/s/witness"])).unwrap(),
+            Command::WitnessRestore { store: d }
+        );
+        for bad in [
+            &["witness-archive"][..],
+            &["witness-fetch", "/a", "/b"],
+            &["witness-restore"],
         ] {
             assert_eq!(
                 parse_args(&s(bad)).unwrap_err(),
