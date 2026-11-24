@@ -79,6 +79,7 @@ pub const LOCK_WAIT: Duration = Duration::from_secs(5);
 
 const TAG_TAKEN: u8 = 1;
 const TAG_RETIRED: u8 = 2;
+const TAG_GUARDED: u8 = 3;
 const HEAD_LEN: usize = 9;
 const SIGN_FLAG: u8 = 0x80;
 
@@ -367,6 +368,19 @@ pub enum RegisterRecord {
         /// The live keys it holds.
         keys: Vec<HeldKey>,
     },
+    /// A guarded copy was taken, at `created`, sealed to the guard
+    /// `generation` of its entry, holding `keys` (ADR-004 record of lane
+    /// `m10/guard-key`).
+    Guarded {
+        /// The copy.
+        id: ExportId,
+        /// When, in Unix seconds.
+        created: u64,
+        /// The guard generation it is sealed to.
+        generation: u32,
+        /// The live keys it holds.
+        keys: Vec<HeldKey>,
+    },
     /// The operator stated that every copy of `id` is destroyed.
     Retired {
         /// The copy.
@@ -386,6 +400,23 @@ pub fn encode_register_record(r: &RegisterRecord) -> Result<Vec<u8>, KeydError> 
             let mut out = vec![TAG_TAKEN];
             out.extend_from_slice(&id.0);
             out.extend_from_slice(&created.to_be_bytes());
+            out.extend_from_slice(&count.to_be_bytes());
+            for k in keys {
+                out.extend_from_slice(&k.head());
+            }
+            Ok(out)
+        }
+        RegisterRecord::Guarded {
+            id,
+            created,
+            generation,
+            keys,
+        } => {
+            let count = u16::try_from(keys.len()).map_err(|_| bad("a copy holds too many keys"))?;
+            let mut out = vec![TAG_GUARDED];
+            out.extend_from_slice(&id.0);
+            out.extend_from_slice(&created.to_be_bytes());
+            out.extend_from_slice(&generation.to_be_bytes());
             out.extend_from_slice(&count.to_be_bytes());
             for k in keys {
                 out.extend_from_slice(&k.head());
@@ -424,6 +455,24 @@ pub fn decode_register(bytes: &[u8]) -> Result<Vec<RegisterRecord>, KeydError> {
                     keys.push(HeldKey::from_head(r.array()?)?);
                 }
                 out.push(RegisterRecord::Taken { id, created, keys });
+            }
+            TAG_GUARDED => {
+                let created = u64::from_be_bytes(r.array()?);
+                let generation = u32::from_be_bytes(r.array()?);
+                if generation == 0 {
+                    return Err(bad("a register entry names guard generation 0"));
+                }
+                let count = u16::from_be_bytes(r.array()?);
+                let mut keys = Vec::with_capacity(usize::from(count));
+                for _ in 0..count {
+                    keys.push(HeldKey::from_head(r.array()?)?);
+                }
+                out.push(RegisterRecord::Guarded {
+                    id,
+                    created,
+                    generation,
+                    keys,
+                });
             }
             TAG_RETIRED => out.push(RegisterRecord::Retired { id }),
             _ => return Err(bad("a register record has an unknown tag")),
@@ -473,12 +522,26 @@ pub(crate) fn register_reason(volume: &Path, table: &KeyTable) -> Option<Reduced
         .iter()
         .filter_map(|r| match r {
             RegisterRecord::Retired { id } => Some(*id),
-            RegisterRecord::Taken { .. } => None,
+            RegisterRecord::Taken { .. } | RegisterRecord::Guarded { .. } => None,
         })
         .collect();
+    // A guarded copy whose guard generation the custodian has since
+    // destroyed opens nowhere, so it holds nothing (ADR-004 record of lane
+    // `m10/guard-key`). A state that does not read counts as no rotation.
+    let current = crate::guard::state::read_state(volume).map_or(0, |s| s.generation);
     let erased = records.iter().any(|r| match r {
         RegisterRecord::Taken { id, keys, .. } => {
             !retired.contains(id) && keys.iter().any(|k| !is_live(table, *k))
+        }
+        RegisterRecord::Guarded {
+            id,
+            keys,
+            generation,
+            ..
+        } => {
+            *generation >= current
+                && !retired.contains(id)
+                && keys.iter().any(|k| !is_live(table, *k))
         }
         RegisterRecord::Retired { .. } => false,
     });
@@ -508,9 +571,10 @@ pub fn export_reason(
 pub fn retire_export(volume: &Path, id: ExportId) -> Result<(), KeydError> {
     let _lock = lock_volume(volume, LOCK_WAIT)?;
     let records = read_register(volume)?;
-    let taken = records
-        .iter()
-        .any(|r| matches!(r, RegisterRecord::Taken { id: t, .. } if *t == id));
+    let taken = records.iter().any(|r| match r {
+        RegisterRecord::Taken { id: t, .. } | RegisterRecord::Guarded { id: t, .. } => *t == id,
+        RegisterRecord::Retired { .. } => false,
+    });
     let retired = records
         .iter()
         .any(|r| matches!(r, RegisterRecord::Retired { id: t } if *t == id));
@@ -632,10 +696,90 @@ pub fn export_volume(
     passphrase: &Passphrase,
 ) -> Result<(ExportId, Vec<u8>), KeydError> {
     let _lock = lock_volume(volume, LOCK_WAIT)?;
+    let (header, out, keys) = make_copy(volume, passphrase)?;
+    append_register(
+        volume,
+        &RegisterRecord::Taken {
+            id: header.id,
+            created: header.created,
+            keys,
+        },
+    )?;
+    Ok((header.id, out))
+}
+
+/// Makes a guarded copy of `volume` (ADR-004 record of lane
+/// `m10/guard-key`): the copy of [`export_volume`], sealed once more to
+/// the current guard of the entry `link` names. A rotation still owed is
+/// finished first, so the copy is sealed to the newest guard. The copy is
+/// recorded in the register with its guard generation.
+///
+/// # Errors
+///
+/// As [`export_volume`], and [`KeydError::Guard`] when the custodian does
+/// not answer.
+pub fn export_guarded(
+    volume: &Path,
+    passphrase: &Passphrase,
+    link: &crate::guard::GuardLink,
+) -> Result<(ExportId, Vec<u8>), KeydError> {
+    use crate::guard::state::{now, read_state, write_state};
+    let _lock = lock_volume(volume, LOCK_WAIT)?;
+    let mut st = read_state(volume)?;
+    if let Some(event) = st.owed {
+        let r = link
+            .client
+            .rotate(link.entry, event)
+            .map_err(KeydError::Guard)?;
+        st.generation = r.generation;
+        st.rotated = now();
+        st.owed = None;
+        write_state(volume, &st)?;
+    }
+    let (generation, public) = link.client.public(link.entry).map_err(KeydError::Guard)?;
+    if st.generation != generation {
+        st.generation = generation;
+        write_state(volume, &st)?;
+    }
+    let (header, inner, keys) = make_copy(volume, passphrase)?;
+    let outer = crate::guard::copy::seal(
+        &crate::guard::copy::GuardedHeader {
+            entry: link.entry,
+            generation,
+            id: header.id,
+            created: header.created,
+        },
+        &public,
+        &inner,
+    )?;
+    append_register(
+        volume,
+        &RegisterRecord::Guarded {
+            id: header.id,
+            created: header.created,
+            generation,
+            keys,
+        },
+    )?;
+    Ok((header.id, outer))
+}
+
+/// The header, bytes and held keys of a new copy of `volume`. The caller
+/// holds the volume's lock. A custodian's volume, which holds a guard, is
+/// never copied: a copy of the guard would outlive its destroy.
+pub(crate) fn make_copy(
+    volume: &Path,
+    passphrase: &Passphrase,
+) -> Result<(ExportHeader, Vec<u8>, Vec<HeldKey>), KeydError> {
     let raw =
         std::fs::read(volume.join(TABLE_FILE)).map_err(|_| KeydError::Io("read the key table"))?;
     let sealed = crate::table::SealedTable::decode(&raw)?;
     let table = sealed.open(passphrase)?;
+    if crate::server::Server::holds_guard(&table) {
+        return Err(KeydError::Volume(
+            "a custodian's key volume holds a guard and is never copied",
+        ));
+    }
     let read = |name: &str| match std::fs::read(volume.join(name)) {
         Ok(b) => Ok(Some(b)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -674,15 +818,7 @@ pub fn export_volume(
     if out.len() > MAX_EXPORT_LEN {
         return Err(bad("a copy is too long"));
     }
-    append_register(
-        volume,
-        &RegisterRecord::Taken {
-            id: header.id,
-            created: header.created,
-            keys: live_keys(&table),
-        },
-    )?;
-    Ok((header.id, out))
+    Ok((header, out, live_keys(&table)))
 }
 
 /// Opens a copy under `passphrase` and returns its header and files,
@@ -752,6 +888,69 @@ pub fn import_volume(
     Ok(header.id)
 }
 
+/// Imports a copy onto the fresh key volume `volume` and holds it, as
+/// [`import_volume`]. A guarded copy (ADR-004 record of lane
+/// `m10/guard-key`) opens only when the custodian of `link` opens its
+/// outer seal, which it does only while the copy's guard generation
+/// lives. A plain copy goes to [`import_volume`] as before: the binary
+/// admits one in development mode only.
+///
+/// # Errors
+///
+/// As [`import_volume`]; [`KeydError::Guard`] when the custodian does not
+/// answer or refuses, which a destroyed generation gives; and
+/// [`KeydError::Malformed`] for a copy of another entry or a guarded copy
+/// with no link.
+pub fn import_guarded(
+    copy: &[u8],
+    volume: &Path,
+    passphrase: &Passphrase,
+    link: Option<&crate::guard::GuardLink>,
+) -> Result<ExportId, KeydError> {
+    use crate::guard::copy as guarded;
+    if !guarded::is_guarded(copy) {
+        return import_volume(copy, volume, passphrase);
+    }
+    let link = link.ok_or(bad("a guarded copy needs the custodian"))?;
+    let (header, ct, sealed) = guarded::decode_guarded(copy)?;
+    if header.entry != link.entry {
+        return Err(bad("the copy is of another entry"));
+    }
+    let kek = link
+        .client
+        .open(header.entry, header.generation, &header.encode(), &ct)
+        .map_err(KeydError::Guard)?;
+    let inner = guarded::open(&header, &kek, sealed)?;
+    if decode_export(&inner)?.0.id != header.id {
+        return Err(bad("the outer and inner copy ids differ"));
+    }
+    import_volume(&inner, volume, passphrase)
+}
+
+/// Imports a copy as the binary does in `mode` (ADR-004, Q-F018-3,
+/// decided by Daniel on 2026-11-24): a guarded copy through its custodian,
+/// and a plain pre-guard copy in development mode only. In production a
+/// plain copy is refused, since no guard can be destroyed for it.
+///
+/// # Errors
+///
+/// As [`import_guarded`], and [`KeydError::Guard`] with
+/// [`crate::guard::GuardFault::Unreachable`] for a plain copy in
+/// production. Nothing is written then.
+pub fn import_copy(
+    copy: &[u8],
+    volume: &Path,
+    passphrase: &Passphrase,
+    link: Option<&crate::guard::GuardLink>,
+    mode: fstp_obs::assurance::DeploymentMode,
+) -> Result<ExportId, KeydError> {
+    use fstp_obs::assurance::DeploymentMode;
+    if !crate::guard::copy::is_guarded(copy) && mode == DeploymentMode::Production {
+        return Err(KeydError::Guard(crate::guard::GuardFault::Unreachable));
+    }
+    import_guarded(copy, volume, passphrase, link)
+}
+
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), KeydError> {
     let mut f = crate::volume::private(std::fs::OpenOptions::new().write(true).create_new(true))
         .open(path)
@@ -784,6 +983,23 @@ pub fn release_import(
     passphrase: &Passphrase,
     current: &[(Chain, Epoch)],
 ) -> Result<(), KeydError> {
+    release_import_guarded(volume, passphrase, current, None)
+}
+
+/// As [`release_import`], on a pilot entry with its custodian: each
+/// destroy of the release replaces the entry's guard before it counts
+/// (ADR-004 record of lane `m10/guard-key`).
+///
+/// # Errors
+///
+/// As [`release_import`], and [`KeydError::Guard`] while the custodian
+/// does not answer. The hold then stays, and a new release retries.
+pub fn release_import_guarded(
+    volume: &Path,
+    passphrase: &Passphrase,
+    current: &[(Chain, Epoch)],
+    guard: Option<crate::guard::GuardLink>,
+) -> Result<(), KeydError> {
     if !is_held(volume) {
         return Err(KeydError::Volume("the key volume holds no import"));
     }
@@ -799,7 +1015,7 @@ pub fn release_import(
             return Err(bad("release names a chain twice"));
         }
     }
-    crate::server::release(volume, passphrase, current)?;
+    crate::server::release(volume, passphrase, current, guard)?;
     std::fs::remove_file(volume.join(HOLD_FILE)).map_err(|_| KeydError::Io("remove the hold"))?;
     crate::epoch::sync_dir(volume)
 }
@@ -860,6 +1076,18 @@ pub enum Command {
         /// The copy.
         id: ExportId,
     },
+    /// `guard-check <volume>`: whether the custodian answers and a
+    /// rotation is owed (ADR-028 record of lane `m10/guard-key`).
+    GuardCheck {
+        /// The pilot key volume.
+        volume: std::path::PathBuf,
+    },
+    /// `fetch-copy <file>`: the custodian's held copy of this entry
+    /// (ADR-004 "The custodian's copy").
+    FetchCopy {
+        /// The new copy file.
+        file: std::path::PathBuf,
+    },
 }
 
 fn chain_epoch(arg: &str) -> Option<(Chain, Epoch)> {
@@ -902,6 +1130,8 @@ pub fn parse_command(args: &[String]) -> Result<Command, KeydError> {
             volume: p(v),
             id: ExportId::parse(id).ok_or(usage)?,
         }),
+        [c, v] if c == "guard-check" => Ok(Command::GuardCheck { volume: p(v) }),
+        [c, f] if c == "fetch-copy" => Ok(Command::FetchCopy { file: p(f) }),
         _ => Err(usage),
     }
 }

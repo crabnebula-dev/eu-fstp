@@ -127,7 +127,9 @@ dependencies = [
  "fstp-crypto",
  "fstp-custody",
  "fstp-obs",
+ "fstp-pgwire",
  "fstp-rt",
+ "fstp-tls",
  "zeroize",
 ]
 
@@ -154,6 +156,16 @@ name = "fstp-obs"
 version = "0.1.0"
 dependencies = [
  "fstp-json",
+]
+
+[[package]]
+name = "fstp-pgwire"
+version = "0.1.0"
+dependencies = [
+ "fstp-crypto",
+ "fstp-json",
+ "fstp-rt",
+ "fstp-tls",
 ]
 
 [[package]]

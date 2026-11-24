@@ -149,6 +149,10 @@ pub struct HostConfig {
     pub agreements: String,
     /// The cell version.
     pub version: String,
+    /// The second custodian that guards the key copies, as its host and
+    /// port (ADR-028 record of lane `m10/guard-key`). `fstp-admin
+    /// pair-custodian` writes it.
+    pub custodian: Option<(String, u16)>,
 }
 
 /// What is wrong with a member.
@@ -353,8 +357,9 @@ fn is_version(v: &str) -> bool {
             .all(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
-const TOP: [&str; 12] = [
+const TOP: [&str; 13] = [
     "backup",
+    "custodian",
     "custody_simulator",
     "domain",
     "mail",
@@ -574,6 +579,13 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
         Some(a) if is_agreements(a) => a.to_owned(),
         Some(_) => return err("agreements", Problem::BadAgreements),
     };
+    let custodian = match text(top, "custodian", "custodian")? {
+        None => None,
+        Some(c) => match custodian_target(c) {
+            Some(t) => Some(t),
+            None => return err("custodian", Problem::BadAddress),
+        },
+    };
     let version = match text(top, "version", "version")? {
         None => DEFAULT_VERSION.to_owned(),
         Some(v) if is_version(v) => v.to_owned(),
@@ -592,7 +604,34 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
         custody_simulator,
         agreements,
         version,
+        custodian,
     })
+}
+
+/// The port of the second custodian unless the member names another.
+pub const CUSTODIAN_PORT: u16 = 7460;
+
+/// The host and port of `host`, `host:port`, `ip`, `ip:port` or
+/// `[v6]:port`, with [`CUSTODIAN_PORT`] by default.
+#[must_use]
+pub fn custodian_target(text: &str) -> Option<(String, u16)> {
+    let port_of = |p: &str| p.parse::<u16>().ok().filter(|p| *p > 0);
+    let (host, port) = if let Some(rest) = text.strip_prefix('[') {
+        let (h, tail) = rest.split_once(']')?;
+        h.parse::<std::net::Ipv6Addr>().ok()?;
+        let port = match tail {
+            "" => CUSTODIAN_PORT,
+            t => port_of(t.strip_prefix(':')?)?,
+        };
+        (h, port)
+    } else {
+        match text.split_once(':') {
+            Some((h, p)) => (h, port_of(p)?),
+            None => (text, CUSTODIAN_PORT),
+        }
+    };
+    let ok = is_host_name(host) || host.parse::<std::net::IpAddr>().is_ok();
+    ok.then(|| (host.to_owned(), port))
 }
 
 /// A starting configuration with the three things every host must name
@@ -652,6 +691,43 @@ mod tests {
         assert_eq!(c.services, Services::Systemd);
         assert!(c.tls.is_none() && c.backup.is_none());
         assert_eq!(c.agreements, "1,1,1");
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`: the member `custodian`
+    /// names the second custodian by host or address, with port 7460 by
+    /// default, and a bad one names the member. The pairing command adds
+    /// it to a file without touching the rest.
+    #[test]
+    fn adr028_guard_config_takes_the_custodian_member() {
+        let c = decode(with(r#""custodian":"c.example.eu""#).as_bytes()).unwrap();
+        assert_eq!(c.custodian, Some(("c.example.eu".into(), CUSTODIAN_PORT)));
+        let c = decode(with(r#""custodian":"[2001:db8::7]:9""#).as_bytes()).unwrap();
+        assert_eq!(c.custodian, Some(("2001:db8::7".into(), 9)));
+        assert!(
+            decode(with("\"agreements\":\"1,1,1\"").as_bytes())
+                .unwrap()
+                .custodian
+                .is_none()
+        );
+        for bad in ["", "c.example.eu:0", "C!", "[x]:1"] {
+            assert_eq!(
+                problem(&with(&format!(r#""custodian":"{bad}""#))),
+                ("custodian".into(), Problem::BadAddress),
+                "{bad}"
+            );
+        }
+        let dir = std::env::temp_dir().join(format!("fstp-admin-guard-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fstp.json");
+        std::fs::write(&path, with(r#""agreements":"1,1,1""#)).unwrap();
+        crate::custodian::set_member(&path, "c.example.eu:7460").unwrap();
+        crate::custodian::set_member(&path, "d.example.eu:7460").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("\"custodian\"").count(), 1, "{text}");
+        let c = decode(text.as_bytes()).unwrap();
+        assert_eq!(c.custodian, Some(("d.example.eu".into(), 7460)));
+        assert_eq!(c.agreements, "1,1,1");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ADR-028: each refusal names the member that is wrong.

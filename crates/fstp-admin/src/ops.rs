@@ -251,6 +251,10 @@ fn restore_keystores(layout: &Layout, m: &Manager) -> Result<(), Fail> {
         m.ensure(&crate::pg::service(layout, c))
             .map_err(|e| Fail::Step("restore", e.into()))?;
     }
+    // After `restore-keys` (ADR-028 record of lane `m10/guard-key`, part
+    // 2): each held entry is released with the epochs of the restored
+    // databases, before any keystore opens.
+    crate::custodian::release_held(layout, m)?;
     for (step, user, bin, env, service) in [
         (
             "fstp-vault restore-keystore",
@@ -287,10 +291,12 @@ fn restore_keystores(layout: &Layout, m: &Manager) -> Result<(), Fail> {
 /// record of lane L16).
 #[must_use]
 pub fn copy_id(bytes: &[u8]) -> Option<String> {
-    if bytes.get(0..4) != Some(b"FKX1".as_slice()) {
-        return None;
+    match bytes.get(0..4) {
+        Some(b"FKX1") => bytes.get(26..42).map(crate::pki::hex),
+        // A guarded copy (ADR-028 record of lane `m10/guard-key`).
+        Some(b"FGC1") => bytes.get(12..28).map(crate::pki::hex),
+        _ => None,
     }
-    bytes.get(26..42).map(crate::pki::hex)
 }
 
 /// `fstp-admin backup-keys <dest>`: one passphrase-sealed copy per custody
@@ -305,6 +311,13 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
     if layout.cfg.custody_simulator.is_some() {
         return Err(Fail::Waits(
             "the custody simulator keeps its keys in memory, so there is nothing to copy",
+        ));
+    }
+    // Decided by Daniel on 2026-11-23: every copy is guarded by the
+    // second custodian (ADR-028 record of lane `m10/guard-key`).
+    if layout.cfg.custodian.is_none() && layout.cfg.services == crate::config::Services::Systemd {
+        return Err(Fail::Waits(
+            "the second custodian: run fstp-admin pair-custodian <host> first",
         ));
     }
     let step = "key copy";
@@ -328,6 +341,14 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
         let r = pass.and_then(|p| {
             write_atomic(&creds.join(fstp_keyd_credential()), &p, 0o600).map_err(io(step))?;
             let mut c = Command::new(layout.bin("fstp-keyd"));
+            if let Some((host, port)) = &layout.cfg.custodian {
+                crate::custodian::stage_credentials(layout, e, &creds).map_err(io(step))?;
+                c.env(
+                    "FSTP_KEYD_GUARD",
+                    crate::custodian::target_text(host, *port),
+                )
+                .env("FSTP_KEYD_GUARD_ENTRY", e.name());
+            }
             c.env("CREDENTIALS_DIRECTORY", &creds)
                 .arg("export")
                 .arg(layout.keyd_volume(e))
@@ -449,6 +470,22 @@ pub fn renew(layout: &Layout) -> Result<(), Fail> {
         state.get("server-spki.vault").map(str::to_owned),
     );
     let m = Manager::new(layout);
+    // ADR-028 record of lane `m10/guard-key`: the guard client
+    // certificates renew with the others, and each fstp-keyd entry reads
+    // its new one at a restart.
+    if layout.cfg.services == crate::config::Services::Systemd
+        && crate::custodian::ensure_clients(layout)?
+    {
+        for e in crate::custodian::guarded_entries() {
+            for s in stack::keyd(layout, e) {
+                m.stop(&s).map_err(|e| Fail::Step("renew", e.into()))?;
+                m.ensure(&s).map_err(|e| Fail::Step("renew", e.into()))?;
+            }
+        }
+        out(&[Part::T(
+            "  done     custodian certificates renewed and key custody restarted",
+        )]);
+    }
     if before == sidecars(layout) && spki_before == spki_after {
         out(&[Part::T("  skipped  certificates (none near its end)")]);
     } else {

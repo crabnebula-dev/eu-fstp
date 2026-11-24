@@ -8,7 +8,8 @@
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 use fstp_obs::host_status::{
-    HostStatus, HostStatusError, MAX_LEN, Next, PartState, Parts, RouteState, decode, encode,
+    CustodianState, HostStatus, HostStatusError, MAX_LEN, Next, PartState, Parts, RouteState,
+    decode, encode,
 };
 use fstp_prop::{Gen, check};
 
@@ -36,6 +37,9 @@ fn sample() -> HostStatus {
         self_signed: false,
         route: RouteState::Mismatch,
         next: Next::RenewRoute,
+        custodian: CustodianState::Unreachable,
+        guard_owed: true,
+        guard_copy_owed: false,
     }
 }
 
@@ -86,6 +90,9 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         self_signed: g.bool(),
         route: pick(g, &ROUTES),
         next: pick(g, &Next::ALL),
+        custodian: pick(g, &CustodianState::ALL),
+        guard_owed: g.bool(),
+        guard_copy_owed: g.bool(),
     }
 }
 
@@ -206,6 +213,24 @@ fn r_nf_02_host_status_refuses_bad_input() {
         (
             swap("\"app_snapshot_failed\":false,", ""),
             HostStatusError::MissingMember("app_snapshot_failed"),
+        ),
+        // ADR-028 record of lane `m10/guard-key`: the custodian facts.
+        (
+            swap("\"custodian\":\"unreachable\"", "\"custodian\":\"down\""),
+            HostStatusError::Invalid("custodian"),
+        ),
+        (
+            swap("\"guard_owed\":true,", ""),
+            HostStatusError::MissingMember("guard_owed"),
+        ),
+        // Part 2 (Q-F018-4): an owed fresh copy for the custodian.
+        (
+            swap("\"guard_copy_owed\":false,", "\"guard_copy_owed\":0,"),
+            HostStatusError::Invalid("guard_copy_owed"),
+        ),
+        (
+            swap("\"guard_copy_owed\":false,", ""),
+            HostStatusError::MissingMember("guard_copy_owed"),
         ),
         (
             format!("{good}{}", " ".repeat(MAX_LEN)),

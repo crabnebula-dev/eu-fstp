@@ -8,6 +8,7 @@
 //!
 //! ```text
 //! {"app_snapshot_failed":false,"backups_configured":true,"certificate_days":5,
+//!  "custodian":"linked","guard_copy_owed":false,"guard_owed":false,
 //!  "last_app_snapshot":1795000000,"last_backup":1795000000,
 //!  "last_key_copy":null,"last_vault_erasure":null,
 //!  "last_vault_snapshot":1795000000,"next":"nothing",
@@ -130,6 +131,41 @@ impl RouteState {
     }
 }
 
+/// The link to the second custodian, which guards the key copies
+/// (ADR-028 record of lane `m10/guard-key`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CustodianState {
+    /// Every erasing entry reaches it.
+    Linked,
+    /// An entry does not reach it: erasures wait.
+    Unreachable,
+    /// None is paired.
+    Unpaired,
+    /// The host runs in direct mode, where none is used.
+    NotUsed,
+}
+
+impl CustodianState {
+    /// Every state.
+    pub const ALL: [CustodianState; 4] = [
+        Self::Linked,
+        Self::Unreachable,
+        Self::Unpaired,
+        Self::NotUsed,
+    ];
+
+    /// The word in the file.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Linked => "linked",
+            Self::Unreachable => "unreachable",
+            Self::Unpaired => "unpaired",
+            Self::NotUsed => "not_used",
+        }
+    }
+}
+
 /// The one next thing `fstp-admin status` names (ADR-028 "Status").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Next {
@@ -137,6 +173,13 @@ pub enum Next {
     RunSetup,
     /// A service is down.
     StartService,
+    /// The second custodian does not answer, or a guard rotation is owed.
+    Custodian,
+    /// No second custodian is paired, or its pairing nears its end.
+    PairCustodian,
+    /// A fresh copy is owed to the second custodian: the last try failed
+    /// (ADR-004 "The custodian's copy").
+    CustodianCopy,
     /// The route's pins differ from the current certificates.
     RenewRoute,
     /// A certificate is near its end.
@@ -162,14 +205,17 @@ pub enum Next {
 
 impl Next {
     /// Every value.
-    pub const ALL: [Next; 12] = [
+    pub const ALL: [Next; 15] = [
         Self::RunSetup,
         Self::StartService,
+        Self::Custodian,
+        Self::PairCustodian,
         Self::RenewRoute,
         Self::Renew,
         Self::PublicCertificate,
         Self::ConfigureBackups,
         Self::Backup,
+        Self::CustodianCopy,
         Self::KeystoreSnapshot,
         Self::WebAdmins,
         Self::VerifyAdmins,
@@ -183,6 +229,9 @@ impl Next {
         match self {
             Self::RunSetup => "run_setup",
             Self::StartService => "start_service",
+            Self::Custodian => "custodian",
+            Self::PairCustodian => "pair_custodian",
+            Self::CustodianCopy => "custodian_copy",
             Self::RenewRoute => "renew_route",
             Self::Renew => "renew",
             Self::PublicCertificate => "public_certificate",
@@ -233,6 +282,12 @@ pub struct HostStatus {
     pub route: RouteState,
     /// The one next thing to do on the host.
     pub next: Next,
+    /// The link to the second custodian.
+    pub custodian: CustodianState,
+    /// A guard rotation is owed, so an erasure waits.
+    pub guard_owed: bool,
+    /// A fresh copy is owed to the custodian.
+    pub guard_copy_owed: bool,
 }
 
 /// Why a file was refused. Names a rule, never the input (R-NF-02).
@@ -270,10 +325,13 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 16] = [
+const MEMBERS: [&str; 19] = [
     "app_snapshot_failed",
     "backups_configured",
     "certificate_days",
+    "custodian",
+    "guard_copy_owed",
+    "guard_owed",
     "last_app_snapshot",
     "last_backup",
     "last_key_copy",
@@ -302,6 +360,7 @@ pub fn encode(s: &HostStatus) -> String {
     let p = &s.parts;
     format!(
         "{{\"app_snapshot_failed\":{},\"backups_configured\":{},\"certificate_days\":{},\
+         \"custodian\":\"{}\",\"guard_copy_owed\":{},\"guard_owed\":{},\
          \"last_app_snapshot\":{},\"last_backup\":{},\"last_key_copy\":{},\
          \"last_vault_erasure\":{},\"last_vault_snapshot\":{},\"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
@@ -310,6 +369,9 @@ pub fn encode(s: &HostStatus) -> String {
         s.app_snapshot_failed,
         s.backups_configured,
         opt(s.certificate_days),
+        s.custodian.word(),
+        s.guard_copy_owed,
+        s.guard_owed,
         opt(s.last_app_snapshot),
         opt(s.last_backup),
         opt(s.last_key_copy),
@@ -439,5 +501,13 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
             "route",
         )?,
         next: word(member(o, "next")?, &Next::ALL, Next::word, "next")?,
+        custodian: word(
+            member(o, "custodian")?,
+            &CustodianState::ALL,
+            CustodianState::word,
+            "custodian",
+        )?,
+        guard_owed: flag(o, "guard_owed")?,
+        guard_copy_owed: flag(o, "guard_copy_owed")?,
     })
 }

@@ -10,6 +10,9 @@
 //! fstp-admin renew                      certificates near their end, and the route pins
 //! fstp-admin backup | restore           base backups of both databases
 //! fstp-admin backup-keys <dir>          the off-host copy of the custody entries
+//! fstp-admin pair-custodian <host>      pair the second custodian (once, on the pilot)
+//! fstp-admin custodian <file>           install the second custodian (on its machine)
+//! fstp-admin restore-keys <dir>         after a host loss: put the keys back
 //! fstp-admin verify [<account> [<file>]] record the admins' checked IDs
 //! fstp-admin admins                   list the tenant admins' accounts
 //! fstp-admin erase-identity <account>   erase an identity in the vault
@@ -21,6 +24,7 @@
 
 pub mod cellcmd;
 pub mod config;
+pub mod custodian;
 pub mod fail;
 pub mod layout;
 pub mod ops;
@@ -58,6 +62,9 @@ pub fn usage() {
         "  backup                     back up both databases now",
         "  restore                    restore both databases from their newest backups",
         "  backup-keys <dir>          copy the sealed keys off the host, for example to a USB stick",
+        "  pair-custodian <host>      pair this host with its second custodian (once)",
+        "  custodian <file>           on the custodian machine: install it from the pairing file",
+        "  restore-keys <dir>         after losing a host: put the keys back from the copies or the custodian",
         "  verify [<account> [<file>]] record that you checked an admin's ID in person",
         "  admins                     list the tenant admins' account ids (stops the cell briefly)",
         "  erase-identity <account>   erase one person's identity in the vault",
@@ -149,6 +156,14 @@ fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
             status::report_quietly(&l);
             r.map(|()| OK)
         }
+        ["pair-custodian", host] => {
+            let l = need()?;
+            let r = custodian::pair(&l, config_path, host);
+            status::report_quietly(&l);
+            r.map(|()| OK)
+        }
+        ["custodian", file] => custodian::install(Path::new(file)).map(|()| OK),
+        ["restore-keys", dir] => custodian::restore_keys(&need()?, Path::new(dir)).map(|()| OK),
         ["verify"] => verify(&need()?, None, None).map(|()| OK),
         ["verify", account] => verify(&need()?, Some(account), None).map(|()| OK),
         ["verify", account, file] => verify(&need()?, Some(account), Some(file)).map(|()| OK),

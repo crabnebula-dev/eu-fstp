@@ -76,14 +76,17 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 12] = [
+pub const HOST_NEXT: [&str; 15] = [
     "run_setup",
     "start_service",
+    "custodian",
+    "pair_custodian",
     "renew_route",
     "renew",
     "public_certificate",
     "configure_backups",
     "backup",
+    "custodian_copy",
     "keystore_snapshot",
     "web_admins",
     "verify_admins",
@@ -106,6 +109,33 @@ impl HostNext {
     #[must_use]
     pub fn wire(self) -> &'static str {
         HOST_NEXT.get(self.0).copied().unwrap_or("nothing")
+    }
+}
+
+/// The link to the second custodian, which guards the key copies (ADR-028
+/// record of lane `m10/guard-key`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CustodianState {
+    /// Every erasing entry reaches it.
+    Linked,
+    /// An entry does not reach it: erasures wait.
+    Unreachable,
+    /// None is paired.
+    Unpaired,
+    /// The host runs in direct mode, where none is used.
+    NotUsed,
+}
+
+impl CustodianState {
+    /// The wire word.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Linked => "linked",
+            Self::Unreachable => "unreachable",
+            Self::Unpaired => "unpaired",
+            Self::NotUsed => "not_used",
+        }
     }
 }
 
@@ -144,6 +174,12 @@ pub struct HostReport {
     pub route: RouteState,
     /// The one next thing on the host.
     pub next: HostNext,
+    /// The link to the second custodian.
+    pub custodian: CustodianState,
+    /// A guard rotation is owed, so an erasure waits.
+    pub guard_owed: bool,
+    /// A fresh copy is owed to the custodian (Q-F018-4).
+    pub guard_copy_owed: bool,
 }
 
 /// What the cell found of the host status file.
@@ -293,6 +329,9 @@ fn report_json(r: &HostReport) -> Value {
     put(&mut o, "self_signed", Value::Bool(r.self_signed));
     put(&mut o, "route", Value::from(r.route.wire()));
     put(&mut o, "next", Value::from(r.next.wire()));
+    put(&mut o, "custodian", Value::from(r.custodian.wire()));
+    put(&mut o, "guard_owed", Value::Bool(r.guard_owed));
+    put(&mut o, "guard_copy_owed", Value::Bool(r.guard_copy_owed));
     Value::Object(o)
 }
 

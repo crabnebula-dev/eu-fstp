@@ -14,6 +14,12 @@ fstp-rt.workspace = true
 # ADR-001 A1: `RootMaterial` wipes on drop (design sections 2.1 and 3.3).
 zeroize.workspace = true
 fstp-obs.workspace = true
+# ADR-004 record of lane `m10/guard-key`: the guard link runs TLS 1.3
+# through fstp-tls and reads the peer's CN with the fuzzed X.509 subject
+# walk of fstp-pgwire. Both were already in this crate's tree through
+# fstp-custody, except fstp-pgwire, which adds no third-party crate.
+fstp-tls.workspace = true
+fstp-pgwire.workspace = true
 
 [features]
 # Test only: records root bytes for the I-80 scans of fstp-celltest. A
@@ -22,6 +28,9 @@ test-needles = []
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# The guard link test issues its own test certificates (ADR-004 record of
+# lane `m10/guard-key`).
+fstp-pki.workspace = true
 
 [lints]
 workspace = true

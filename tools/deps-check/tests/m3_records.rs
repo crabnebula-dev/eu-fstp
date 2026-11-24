@@ -84,6 +84,7 @@ const FUZZ_TARGETS: [(&str, &[&str]); 22] = [
             "keyd_request_decode",
             "custody_file_decode",
             "keyd_export_decode",
+            "guard_link_decode",
         ],
     ),
     (

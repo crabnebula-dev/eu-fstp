@@ -57,6 +57,9 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
       self_signed: false,
       route: "current",
       next: "nothing",
+      custodian: "linked",
+      guard_owed: false,
+      guard_copy_owed: false,
       ...hostOver,
     },
     ...over,
@@ -191,6 +194,10 @@ test("adr028_l20_every_label_exists", () => {
     decoded({}, { app_snapshot_failed: true, last_vault_snapshot: null }),
     decoded({}, { last_app_snapshot: "1" }),
     decoded({}, { backups_configured: false }),
+    decoded({}, { custodian: "unreachable" }),
+    decoded({}, { custodian: "unpaired" }),
+    decoded({}, { guard_owed: true }),
+    decoded({}, { guard_copy_owed: true }),
     ...["not_configured", "missing", "unreadable"].map((f) => decoded({ host_file: f, host: null })),
     ...HOST_NEXT.map((n) => decoded({}, { next: n })),
   ];
@@ -329,6 +336,40 @@ test("adr028_l26_keystore_snapshot_row", () => {
     wire({}, { last_vault_snapshot: "07" }),
     wire({}, { vault_snapshot_failed: undefined }),
   ]) {
+    eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
+  }
+});
+
+/** ADR-028 record of lane `m10/guard-key`, I-81, F-018: the key copy row shows the second custodian. It is red while the custodian does not answer or a guard is still to be replaced, since erasures then wait, and amber while none is paired. The reply refuses a custodian fact out of its grammar. */
+test("adr028_guard_key_copy_row_shows_the_custodian", () => {
+  for (const [hostOver, light, text, tell] of [
+    [{ custodian: "unreachable" }, "red", "system.row.keys.custodian_down", "system.tell.custodian"],
+    [{ guard_owed: true }, "red", "system.row.keys.custodian_down", "system.tell.custodian"],
+    [{ custodian: "unpaired" }, "amber", "system.row.keys.custodian_unpaired", "system.tell.pair_custodian"],
+  ] as const) {
+    const keys = rowOf(decoded({}, hostOver), "keys");
+    eq(keys.light, light, JSON.stringify(hostOver));
+    eq(keys.text, text, "the sentence");
+    eq(keys.tell, tell, "what to tell");
+    eq(keys.actor, "host", "the host admin acts");
+  }
+  eq(rowOf(decoded({}, { custodian: "not_used" }), "keys").light, "green", "direct mode uses none");
+  eq(hostNext(decoded({}, { next: "custodian" }))?.actor, "host", "the host admin acts");
+  for (const bad of [wire({}, { custodian: "down" }), wire({}, { guard_owed: "no" }), wire({}, { guard_owed: undefined })]) {
+    eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
+  }
+});
+
+/** ADR-028 record of lane `m10/guard-key`, part 2 (Q-F018-4), F-018, I-81: an owed fresh copy for the custodian shows the key copy row amber with the host admin to act, below an unreachable custodian, and the reply refuses the fact out of its grammar. */
+test("adr028_guard_key_copy_row_shows_an_owed_copy", () => {
+  const keys = rowOf(decoded({}, { guard_copy_owed: true }), "keys");
+  eq(keys.light, "amber", "an owed copy");
+  eq(keys.text, "system.row.keys.custodian_copy_owed", "the sentence");
+  eq(keys.tell, "system.tell.custodian_copy", "what to tell");
+  eq(keys.actor, "host", "the host admin acts");
+  eq(rowOf(decoded({}, { guard_copy_owed: true, custodian: "unreachable" }), "keys").light, "red", "unreachable wins");
+  eq(hostNext(decoded({}, { next: "custodian_copy" }))?.actor, "host", "the host admin acts");
+  for (const bad of [wire({}, { guard_copy_owed: "yes" }), wire({}, { guard_copy_owed: undefined })]) {
     eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
   }
 });

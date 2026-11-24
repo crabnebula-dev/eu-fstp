@@ -2594,6 +2594,9 @@ pub(crate) mod reply_shape_tests {
                         route: crate::system::RouteState::Mismatch,
                         next: crate::system::HostNext::of("renew_route")
                             .unwrap_or_else(|| panic!("a host next word")),
+                        custodian: crate::system::CustodianState::Unreachable,
+                        guard_owed: true,
+                        guard_copy_owed: false,
                     }),
                 },
             }),

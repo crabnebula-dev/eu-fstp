@@ -179,11 +179,15 @@ pub enum ReducedReason {
     /// owning process has since replaced (ADR-004 record of lane L16,
     /// Q-L16-3).
     CopyHoldsReplacedKey,
+    /// A pilot `fstp-keyd` entry runs in production without a second
+    /// custodian, so its off-host copies are not guarded (ADR-004 record of
+    /// lane `m10/guard-key`, F-018).
+    GuardMissing,
 }
 
 impl ReducedReason {
     /// Every reason, in code order.
-    pub const ALL: [ReducedReason; 24] = [
+    pub const ALL: [ReducedReason; 25] = [
         Self::Apfs,
         Self::HfsPlus,
         Self::Ntfs,
@@ -208,6 +212,7 @@ impl ReducedReason {
         Self::TemporaryVolume,
         Self::ExportHoldsErasedEpoch,
         Self::CopyHoldsReplacedKey,
+        Self::GuardMissing,
     ];
 
     /// The reason as a sentence for an operator or a tenant admin, such
@@ -239,6 +244,7 @@ impl ReducedReason {
             Self::TemporaryVolume => "the key volume is a fresh temporary directory",
             Self::ExportHoldsErasedEpoch => "an off-host copy holds a destroyed key",
             Self::CopyHoldsReplacedKey => "an off-host copy of a key file holds a replaced key",
+            Self::GuardMissing => "no second custodian guards the off-host copies",
         }
     }
 
@@ -270,6 +276,7 @@ impl ReducedReason {
             Self::TemporaryVolume => 22,
             Self::ExportHoldsErasedEpoch => 23,
             Self::CopyHoldsReplacedKey => 24,
+            Self::GuardMissing => 25,
         }
     }
 

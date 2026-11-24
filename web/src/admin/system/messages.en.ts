@@ -73,6 +73,11 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.keys.before_erasure":
     "The keys were last copied off the host on {date}, before the erasure of {erased}. That copy still holds the erased data's key.",
   "system.row.keys.unknown": "Not known until the host reports.",
+  "system.row.keys.custodian_down":
+    "The second custodian does not answer, or a key guard is still to be replaced. Erasures wait until it answers.",
+  "system.row.keys.custodian_unpaired": "No second custodian guards the key copies yet.",
+  "system.row.keys.custodian_copy_owed":
+    "The second custodian answers, but its fresh copy of the keys did not arrive after the last erasure. The host retries every ten minutes.",
   "system.row.snapshots.fresh": "The key stores of the platform and the vault were last saved off the host {age} ago. This runs every day.",
   "system.row.snapshots.late": "A key store was last saved off the host {age} ago. This should run every day.",
   "system.row.snapshots.none": "A key store has not been saved off the host yet.",
@@ -101,6 +106,12 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.tell.configure_backups":
     "Please add an object store under backup in /etc/fstp/fstp.json, then run fstp-admin setup.",
   "system.tell.backup": "Please run fstp-admin backup, and check that its nightly timer runs.",
+  "system.tell.custodian":
+    "Please check that the second custodian machine is on and reachable, then run fstp-admin status. Erasures wait until it answers.",
+  "system.tell.custodian_copy":
+    "Please run fstp-admin status, check the free space on the second custodian machine, and read the log of fstp-keyd there.",
+  "system.tell.pair_custodian":
+    "Please pair the second custodian with fstp-admin pair-custodian, then run fstp-admin setup.",
   "system.tell.copy_keys":
     "Please run fstp-admin backup-keys to a USB stick, and keep the passphrases apart from it.",
   "system.tell.copy_keys_again":
@@ -112,11 +123,14 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
 
   "system.next.run_setup": "The host admin finishes the set-up with fstp-admin setup.",
   "system.next.start_service": "The host admin starts what stopped with fstp-admin start.",
+  "system.next.custodian": "The host admin checks the second custodian: erasures wait until it answers.",
+  "system.next.pair_custodian": "The host admin pairs the second custodian with fstp-admin pair-custodian.",
   "system.next.renew_route": "The host admin runs fstp-admin renew to update the public address.",
   "system.next.renew": "The host admin runs fstp-admin renew: a certificate ends soon.",
   "system.next.public_certificate": "The host admin gets a public certificate for the domain.",
   "system.next.configure_backups": "The host admin sets up backups.",
   "system.next.backup": "The host admin runs a backup with fstp-admin backup.",
+  "system.next.custodian_copy": "The host admin checks why the fresh key copy did not reach the second custodian.",
   "system.next.keystore_snapshot":
     "The host admin checks why a key store snapshot failed or is late, then runs fstp-admin start.",
   "system.next.web_admins":

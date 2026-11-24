@@ -36,6 +36,9 @@ const CONNECTION_TIMEOUT_SECS: u64 = 5;
 const MAX_CONNECTIONS_PER_SOCKET: usize = 16;
 /// How often the accept loop looks at its stop flag, in milliseconds.
 const POLL_MILLIS: u64 = 10;
+/// How often a pilot entry tries again to send an owed fresh copy to its
+/// custodian (ADR-004 "The custodian's copy").
+const COPY_RETRY: Duration = Duration::from_secs(600);
 /// How long [`stop`] waits for a server to end, in seconds.
 const STOP_WAIT_SECS: u64 = 30;
 
@@ -74,8 +77,8 @@ fn status(table: &KeyTable, handle: RootHandle) -> Status<'_> {
 
 /// The state of one key volume.
 pub(crate) struct Server {
-    volume: PathBuf,
-    table: TableStore,
+    pub(crate) volume: PathBuf,
+    pub(crate) table: TableStore,
     roots: BTreeMap<RootHandle, (RootMaterial, aead::Key)>,
     usage: UsageLog,
     /// Records written in the current window, per client code: the window
@@ -86,6 +89,13 @@ pub(crate) struct Server {
     /// Whether the volume is held after an import (ADR-004 record of
     /// lane L16 rule 2).
     held: bool,
+    /// The guard of this entry's key copies, on a pilot entry with a
+    /// second custodian (ADR-004 record of lane `m10/guard-key`).
+    pub(crate) guard: Option<crate::guard::GuardLink>,
+    /// The passphrase, kept in wiped memory on a pilot entry with a
+    /// custodian, so the entry can make the custodian's fresh copy after
+    /// each rotation (ADR-004 "The custodian's copy").
+    pub(crate) copy_passphrase: Option<Passphrase>,
     /// The exclusive lock of the volume, held for the server's lifetime.
     _lock: crate::export::VolumeLock,
 }
@@ -144,6 +154,8 @@ impl Server {
             log_max: usage::USAGE_LOG_MAX_BYTES,
             rate_max: usage::USAGE_RECORDS_PER_CLIENT_MINUTE,
             held: crate::export::is_held(volume),
+            guard: None,
+            copy_passphrase: None,
             _lock: lock,
         })
     }
@@ -209,9 +221,21 @@ impl Server {
             Request::Unwrap {
                 root, aad, wrapped, ..
             } => self.unwrap(*root, aad, wrapped),
-            Request::Destroy { root, .. } => self.destroy(*root),
+            Request::Destroy { id, root } => {
+                if matches!(status(&self.table.table, *root), Status::Unknown) {
+                    return Err(Refusal::UnknownRoot);
+                }
+                self.guarded(*id, |s| s.destroy(*root))
+            }
             Request::Sign { key, digest, .. } => self.sign(key, digest),
-            Request::DestroySignKey { key, .. } => self.destroy_sign_key(key),
+            Request::DestroySignKey { id, key } => {
+                let known = SignKeyName::from_handle(key)
+                    .is_some_and(|n| self.table.table.sign_key(n).is_some());
+                if !known {
+                    return Err(Refusal::NoSignKey);
+                }
+                self.guarded(*id, |s| s.destroy_sign_key(key))
+            }
             Request::CreateSignKey { key, .. } => self.create_sign_key(key),
             Request::UsageSince { root, cursor, .. } => {
                 let (records, next) = self
@@ -371,6 +395,117 @@ impl Server {
 }
 
 // ---------------------------------------------------------------------------
+// The guard of the key copies (ADR-004 record of lane `m10/guard-key`,
+// F-018, I-81).
+
+impl Server {
+    /// Runs the destroy `destroy` of request `id` under the guard. On a
+    /// pilot entry with a custodian, the request id is first recorded as
+    /// the owed event, so a crash after the local destroy still owes the
+    /// rotation. After the local destroy has read back, the custodian
+    /// replaces the guard. Only then does the receipt go out. While the
+    /// custodian does not answer, the destroy answers
+    /// [`Refusal::GuardPending`] and the event stays owed: the erasure
+    /// waits and is never reported complete while the old guard lives.
+    fn guarded(
+        &mut self,
+        id: RequestId,
+        destroy: impl FnOnce(&mut Server) -> Result<Response, Refusal>,
+    ) -> Result<Response, Refusal> {
+        if self.guard.is_none() {
+            return destroy(self);
+        }
+        let mut st =
+            crate::guard::state::read_state(&self.volume).map_err(|_| Refusal::Internal)?;
+        if st.owed.is_none() {
+            st.owed = Some(id.0);
+            crate::guard::state::write_state(&self.volume, &st).map_err(|_| Refusal::Internal)?;
+        }
+        let response = destroy(self)?;
+        self.settle_guard()?;
+        Ok(response)
+    }
+
+    /// Replaces the guard for the owed event, if one is owed.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::GuardPending`] while the custodian does not answer or
+    /// refuses, and [`Refusal::Internal`] when the state does not write.
+    pub(crate) fn settle_guard(&mut self) -> Result<(), Refusal> {
+        let Some(link) = self.guard.as_ref() else {
+            return Ok(());
+        };
+        let mut st =
+            crate::guard::state::read_state(&self.volume).map_err(|_| Refusal::Internal)?;
+        let Some(event) = st.owed else {
+            self.retry_copy();
+            return Ok(());
+        };
+        let rotated = link
+            .client
+            .rotate(link.entry, event)
+            .map_err(|_| Refusal::GuardPending)?;
+        st.generation = rotated.generation;
+        st.rotated = crate::guard::state::now();
+        st.owed = None;
+        st.copy_owed = true;
+        crate::guard::state::write_state(&self.volume, &st).map_err(|_| Refusal::Internal)?;
+        // The fresh copy is a follow-up, never part of completion: the old
+        // guard is destroyed already (ADR-004 "The custodian's copy").
+        if let Ok(public) = fstp_crypto::hybrid_kem::HybridPublicKey::from_bytes(&rotated.public) {
+            self.send_copy(rotated.generation, &public);
+        }
+        Ok(())
+    }
+
+    /// Sends a fresh copy owed to the custodian, if one is owed. A failure
+    /// leaves it owed for the next try.
+    pub(crate) fn retry_copy(&mut self) {
+        let Some(link) = self.guard.as_ref() else {
+            return;
+        };
+        let owed = crate::guard::state::read_state(&self.volume)
+            .is_ok_and(|s| s.copy_owed && s.owed.is_none());
+        if !owed {
+            return;
+        }
+        if let Ok((generation, public)) = link.client.public(link.entry) {
+            self.send_copy(generation, &public);
+        }
+    }
+
+    /// Makes a copy of this volume under the lock the server holds, seals
+    /// it to the guard `generation` with `public`, and sends it to the
+    /// custodian. On success the copy is no longer owed.
+    fn send_copy(&mut self, generation: u32, public: &fstp_crypto::hybrid_kem::HybridPublicKey) {
+        let (Some(link), Some(pass)) = (self.guard.as_ref(), self.copy_passphrase.as_ref()) else {
+            return;
+        };
+        let Ok((header, inner, _)) = crate::export::make_copy(&self.volume, pass) else {
+            return;
+        };
+        let guarded = crate::guard::copy::GuardedHeader {
+            entry: link.entry,
+            generation,
+            id: header.id,
+            created: header.created,
+        };
+        let Ok(outer) = crate::guard::copy::seal(&guarded, public, &inner) else {
+            return;
+        };
+        if link.client.put(link.entry, &outer).is_err() {
+            return;
+        }
+        if let Ok(mut st) = crate::guard::state::read_state(&self.volume) {
+            st.copy_owed = false;
+            st.copied = crate::guard::state::now();
+            let _ = crate::guard::state::write_state(&self.volume, &st);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CA sign keys in sign-key slots (ADR-004 "Decided by Daniel, 2026-11-15
 // (late)", lane m3/erase-prod).
 
@@ -503,8 +638,10 @@ pub(crate) fn release(
     volume: &Path,
     passphrase: &Passphrase,
     current: &[(Chain, Epoch)],
+    guard: Option<crate::guard::GuardLink>,
 ) -> Result<(), KeydError> {
     let mut server = Server::open(volume, passphrase)?;
+    server.guard = guard;
     let live = |s: &Server, chain: Chain| -> Vec<Epoch> {
         s.table
             .table
@@ -531,6 +668,9 @@ pub(crate) fn release(
             };
             match server.serve_logged(ClientRole::Console.code(), &Request::Destroy { id, root }) {
                 Response::Destroyed(_) => {}
+                Response::Refused(Refusal::GuardPending) => {
+                    return Err(KeydError::Guard(crate::guard::GuardFault::Unreachable));
+                }
                 _ => return Err(KeydError::Io("destroy an epoch below the current one")),
             }
         }
@@ -653,6 +793,34 @@ pub fn serve_sockets_from(
     source: PassphraseSource,
 ) -> Result<(), KeydError> {
     check_layout(sockets)?;
+    let setup = crate::guard::link::setup_from_env()?;
+    serve_guarded(sockets, key_volume, origin, source, setup)
+}
+
+/// As [`serve_sockets`], with the guard setup `setup` in place of the one
+/// the environment names (ADR-004 record of lane `m10/guard-key`): a
+/// pilot entry with its custodian, or a custodian with its listener.
+///
+/// # Errors
+///
+/// As [`serve_sockets_from`].
+pub fn serve_sockets_with_guard(
+    sockets: &[ClientSocket],
+    key_volume: &Path,
+    source: PassphraseSource,
+    setup: crate::guard::link::GuardSetup,
+) -> Result<(), KeydError> {
+    serve_guarded(sockets, key_volume, VolumeOrigin::Named, source, setup)
+}
+
+fn serve_guarded(
+    sockets: &[ClientSocket],
+    key_volume: &Path,
+    origin: VolumeOrigin,
+    source: PassphraseSource,
+    setup: crate::guard::link::GuardSetup,
+) -> Result<(), KeydError> {
+    check_layout(sockets)?;
     let choice = deployment_mode_from_env().map_err(KeydError::Mode)?;
     if choice.defaulted {
         log(&LogEvent::HostCheckWarned {
@@ -681,7 +849,26 @@ pub fn serve_sockets_from(
     };
     // H-22: owner and mode of the volume, before any key file is read.
     crate::volume::check_private_volume(key_volume, choice.mode == DeploymentMode::Development)?;
-    let server = Server::open(key_volume, &passphrase)?;
+    let mut server = Server::open(key_volume, &passphrase)?;
+    // ADR-004 record of lane `m10/guard-key`: a pilot entry names its
+    // custodian, and the custodian names its listen address.
+    let mut listener = None;
+    let guarded = match setup {
+        crate::guard::link::GuardSetup::None => false,
+        crate::guard::link::GuardSetup::Pilot(link) => {
+            server.guard = Some(link);
+            server.copy_passphrase = Some(Passphrase::from_bytes(passphrase.bytes())?);
+            // A rotation or a fresh copy owed from before a restart is
+            // tried at once. A failure is not fatal: the next destroy and
+            // the ten-minute retry try again.
+            let _ = server.settle_guard();
+            true
+        }
+        crate::guard::link::GuardSetup::Custodian(l) => {
+            listener = Some(l);
+            true
+        }
+    };
     drop(passphrase);
     // ADR-004 record of lane L16 rule 4: a copy that holds a key since
     // destroyed lowers a full assurance. A volume reason stays first.
@@ -692,11 +879,19 @@ pub fn serve_sockets_from(
         (Assurance::Full, Some(reason)) => Assurance::Reduced(reason),
         (a, _) => a,
     };
+    // In production a pilot entry without a custodian runs at reduced
+    // assurance: its copies are not guarded (I-81).
+    let assurance = match (assurance, guarded, choice.mode) {
+        (Assurance::Full, false, DeploymentMode::Production) => {
+            Assurance::Reduced(ReducedReason::GuardMissing)
+        }
+        (a, _, _) => a,
+    };
     log(&LogEvent::KeyCustodyStarted {
         mode: choice.mode,
         assurance,
     });
-    run_sockets(sockets, server)
+    run_sockets_with(sockets, server, listener.as_ref())
 }
 
 /// Refuses an empty socket list and two sockets of one path.
@@ -752,7 +947,20 @@ pub(crate) fn run(socket: &Path, server: Server) -> Result<(), KeydError> {
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 pub(crate) fn run_sockets(sockets: &[ClientSocket], server: Server) -> Result<(), KeydError> {
+    run_sockets_with(sockets, server, None)
+}
+
+/// As [`run_sockets`], and on a custodian the guard listener beside the
+/// sockets (ADR-004 record of lane `m10/guard-key`). A listener that
+/// stops stops the whole entry.
+#[cfg(unix)]
+pub(crate) fn run_sockets_with(
+    sockets: &[ClientSocket],
+    server: Server,
+    listener: Option<&crate::guard::link::GuardListener>,
+) -> Result<(), KeydError> {
     use std::os::unix::net::UnixStream;
 
     check_layout(sockets)?;
@@ -777,8 +985,24 @@ pub(crate) fn run_sockets(sockets: &[ClientSocket], server: Server) -> Result<()
             list.push((s.path.clone(), Arc::clone(&flag)));
         }
     }
-    let server = Mutex::new(server);
-    let result = accept_loop(sockets, &server, &flag);
+    let server = Arc::new(Mutex::new(server));
+    let result = std::thread::scope(|scope| {
+        let guard = listener.map(|l| {
+            let (server, flag) = (Arc::clone(&server), Arc::clone(&flag));
+            scope.spawn(move || {
+                let r = crate::guard::link::run_listener(l, &server, &flag);
+                flag.store(true, Ordering::SeqCst);
+                r
+            })
+        });
+        let r = accept_loop(sockets, &server, &flag);
+        flag.store(true, Ordering::SeqCst);
+        match guard.map(std::thread::ScopedJoinHandle::join) {
+            Some(Ok(Err(e))) => r.and(Err(e)),
+            Some(Err(_)) => r.and(Err(KeydError::Io("the guard listener stopped"))),
+            _ => r,
+        }
+    });
     for s in sockets {
         let _ = std::fs::remove_file(&s.path);
     }
@@ -821,8 +1045,17 @@ fn accept_loop(
             .map_err(|_| KeydError::Io("configure the socket"))?;
         listeners.push((listener, s.role, AtomicUsize::new(0)));
     }
+    let mut last_copy_try = Instant::now();
     std::thread::scope(|scope| {
         while !flag.load(Ordering::SeqCst) {
+            // ADR-004 "The custodian's copy": an owed fresh copy is tried
+            // again every ten minutes, when no request holds the server.
+            if last_copy_try.elapsed() >= COPY_RETRY {
+                last_copy_try = Instant::now();
+                if let Ok(mut s) = server.try_lock() {
+                    s.retry_copy();
+                }
+            }
             let mut idle = true;
             for (listener, role, active) in &listeners {
                 let Ok((stream, _)) = listener.accept() else {
@@ -903,8 +1136,18 @@ fn bind_in(tmp: &Path, spec: &ClientSocket) -> Result<std::os::unix::net::UnixLi
 }
 
 #[cfg(not(unix))]
+#[cfg(test)]
 pub(crate) fn run_sockets(sockets: &[ClientSocket], server: Server) -> Result<(), KeydError> {
-    let _ = (sockets, server);
+    run_sockets_with(sockets, server, None)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn run_sockets_with(
+    sockets: &[ClientSocket],
+    server: Server,
+    listener: Option<&crate::guard::link::GuardListener>,
+) -> Result<(), KeydError> {
+    let _ = (sockets, server, listener);
     Err(KeydError::Io("fstp-keyd needs a Unix host"))
 }
 

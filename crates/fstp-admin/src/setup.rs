@@ -727,6 +727,31 @@ fn host_command(
     }
 }
 
+/// Checks that every `fstp-keyd` entry reaches its custodian. Without a
+/// custodian, production says it is the next thing to pair.
+fn custodian_step(layout: &Layout) -> Result<(), Fail> {
+    use crate::custodian::{Link, check};
+    if layout.cfg.services != Services::Systemd {
+        return Ok(());
+    }
+    if layout.cfg.custodian.is_none() {
+        out(&[Part::T(
+            "  waiting  second custodian: run fstp-admin pair-custodian <host> to pair it",
+        )]);
+        return Ok(());
+    }
+    for e in crate::custodian::guarded_entries() {
+        if check(layout, e) == Link::Unreachable {
+            return Err(Fail::Step(
+                "custodian",
+                Cause::Run(crate::svc::RunFail::Exit(layout.bin("fstp-keyd"), Some(4))),
+            ));
+        }
+    }
+    out(&[Part::T("  checked  second custodian linked")]);
+    Ok(())
+}
+
 /// Runs every step of `setup`.
 ///
 /// # Errors
@@ -750,6 +775,15 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
     ]);
 
     say_done("operating system users", users(layout)?);
+
+    // ADR-028 record of lane `m10/guard-key`: the guard client
+    // certificates exist before any fstp-keyd unit loads them.
+    if layout.cfg.custodian.is_some() && layout.cfg.services == Services::Systemd {
+        say_done(
+            "custodian certificates",
+            crate::custodian::ensure_clients(layout)?,
+        );
+    }
 
     // Key custody: the four fstp-keyd entries.
     say_done(
@@ -1011,6 +1045,11 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         m.ensure(&stack::edge(layout))
             .map_err(|e| Fail::Step("edge", e.into()))?,
     );
+
+    // The second custodian: each entry reaches it, and the first check
+    // makes the entry's first guard (ADR-028 record of lane
+    // `m10/guard-key`).
+    custodian_step(layout)?;
 
     // Backups.
     match crate::ops::setup_backups(layout, &m, &mut state, &cas)? {
