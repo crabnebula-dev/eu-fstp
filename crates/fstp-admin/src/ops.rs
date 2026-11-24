@@ -28,7 +28,7 @@ fn io(step: &'static str) -> impl Fn(std::io::Error) -> Fail {
     move |_| Fail::Step(step, Cause::Io)
 }
 
-fn backup_env(layout: &Layout, c: Cluster) -> (&'static str, PathBuf) {
+pub(crate) fn backup_env(layout: &Layout, c: Cluster) -> (&'static str, PathBuf) {
     (
         "FSTP_BACKUP_CONFIG",
         layout.config_file(&format!("backup-{}", c.name())),
@@ -349,7 +349,9 @@ pub fn restore_args(fresh: &Path, target: Option<u64>) -> Vec<std::ffi::OsString
 
 /// `fstp-admin restore [--to <time>]`: both clusters to the newest point,
 /// or to the time `target` (ADR-028 records of lanes L27 and
-/// `m10/backup-pitr`). With the services stopped, both clusters are
+/// `m10/backup-pitr`). With the services stopped, the witness store is
+/// rebuilt from its copies where it is missing or behind (ADR-012 record
+/// of lane m10/witness-copy), then both clusters are
 /// restored and checked in fresh directories. Only when both succeed are
 /// both swapped in, and the old ones stay beside them. Then each restored
 /// cluster promotes, each process keeps the newest copy of its keys that
@@ -373,12 +375,21 @@ pub fn restore(layout: &Layout, target: Option<u64>) -> Result<(), Fail> {
         confirm_loss(t, now)?;
     }
     let m = Manager::new(layout);
+    // ADR-012 record of lane m10/witness-copy: the witness stops too, so
+    // its store can be rebuilt before it starts again.
     for s in [
         stack::edge(layout),
         stack::cell(layout),
         stack::vault(layout),
+        stack::witness(layout),
     ] {
         m.stop(&s).map_err(|e| Fail::Step("restore", e.into()))?;
+    }
+    // Decided by Daniel on 2026-11-24: the witness store comes back from
+    // its copies before the databases, so a failure changes no database.
+    if let Err(e) = crate::witness::rebuild(layout) {
+        start(layout)?;
+        return Err(e);
     }
     let stamp = crate::pki::now();
     let fresh = |c: Cluster| {

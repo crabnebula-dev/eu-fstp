@@ -672,3 +672,34 @@ fn r_sw_02_registry_file_reads_and_bounds_revocations() {
         assert!(load_registry_file(&file(&bad)).is_err(), "{bad:?}");
     }
 }
+
+/// I-24, ADR-012 record of lane m10/witness-copy, rows "Rebuild in
+/// `restore`" and "Drill", ADR-028 "Check-only command": `check-store`
+/// loads a store as the witness does at start. It passes on the store a
+/// witness wrote, and refuses a changed byte, a cut last record and a
+/// missing directory, writing nothing.
+#[test]
+fn i24_adr012_wc_check_store_loads_and_refuses_a_changed_record() {
+    let s = setup();
+    let cell = Cell::new(0x46);
+    cell.register(&s);
+    three_records(&s, &cell);
+    s.rt.block_on(s.witness.shutdown(Duration::from_secs(10)))
+        .unwrap();
+    let dir = s.dir.0.clone();
+    assert!(fstp_witness::install::check_store(&dir).is_ok());
+    let path = cell.chain_file(&s);
+    let whole = std::fs::read(&path).unwrap();
+    let mut changed = whole.clone();
+    changed[12 + 2 + 40 + 4 + 32 + 16 + 1 + 8] ^= 1;
+    for bytes in [changed, whole[..whole.len() - 1].to_vec()] {
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(fstp_witness::install::check_store(&dir).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "nothing written");
+    }
+    std::fs::write(&path, &whole).unwrap();
+    assert!(fstp_witness::install::check_store(&dir).is_ok());
+    let missing = dir.join("absent");
+    assert!(fstp_witness::install::check_store(&missing).is_err());
+    assert!(!missing.exists(), "no directory created");
+}
