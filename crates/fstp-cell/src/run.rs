@@ -312,6 +312,19 @@ fn parts(
         pages,
         listen,
     };
+    // ADR-026 section of lane `m10/checks-runner`: the payment checks
+    // runner always runs, over the forge allowlist of `checks`. An empty
+    // list refuses every fetch, so the checks fail closed (I-32).
+    let forge_hosts = cfg
+        .checks
+        .as_ref()
+        .map(|c| c.forge_hosts.clone())
+        .unwrap_or_default();
+    let forge = crate::egress::SharedForge::new(crate::egress::ForgeClient::new(
+        crate::egress::ForgePolicy::new(forge_hosts),
+        rt.clone(),
+        crate::egress::TlsForgeTransport::new(rt.clone()).map_err(|_| cfg_err("checks"))?,
+    ));
     let options = StartOptions {
         proof_mail,
         api_relay,
@@ -322,6 +335,7 @@ fn parts(
         web_assets: Some(web_assets),
         // ADR-028 record of lane L20: the System page's host status file.
         host_status: cfg.host_status.clone(),
+        checks: Some(forge),
         ..StartOptions::default()
     };
     Ok((parts, options))

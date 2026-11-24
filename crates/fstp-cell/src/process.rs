@@ -577,6 +577,15 @@ pub struct StartOptions {
     /// record of lane L20), which `fstp-admin` writes. `None` shows the
     /// page's host rows as not configured.
     pub host_status: Option<std::path::PathBuf>,
+    /// The forge client of the payment checks runner (ADR-026 section of
+    /// lane `m10/checks-runner`, ADR-009 amendment of 2026-11-24). With
+    /// one, the cell runs `crate::tasks::checks` in the background, and
+    /// it records the submission and acceptance runs of each payment
+    /// request (I-32). `fstp_cell::run` always passes one, built from the
+    /// configuration's forge allowlist. The default is `None`, so a test
+    /// world keeps playing the payment port in process
+    /// ([`RunningCell::payment_checks`]).
+    pub checks: Option<crate::egress::SharedForge>,
     /// Test only (ADR-026 amendment of 2026-11-23, M10 F-039, F-040):
     /// `true` serves the wide form of `POST /api/v1/commands`, as a test
     /// world drives its cycle through it. The field exists only with the
@@ -605,6 +614,7 @@ impl Default for StartOptions {
             keystore_snapshots: None,
             tenant_prober: None,
             host_status: None,
+            checks: None,
             #[cfg(feature = "wide-commands")]
             wide_commands: false,
         }
@@ -668,6 +678,7 @@ where
         keystore_snapshots,
         tenant_prober,
         host_status,
+        checks,
         #[cfg(feature = "wide-commands")]
         wide_commands,
     } = options;
@@ -775,6 +786,18 @@ where
         let erasure = started.erasure.clone();
         drop(rt.spawn(async move {
             crate::tasks::retention::run(&clock, store, erasure, &signal).await;
+            drop(signal);
+        }));
+    }
+    // ADR-026 section of lane `m10/checks-runner` (I-32, R-PR-02): the
+    // checks runner of payment requests, over the configured forge client.
+    if let Some(forge) = checks {
+        let signal = started.shutdown.signal();
+        let clock = crate::tasks::FnClock::new(rt.clone(), Arc::clone(&clock));
+        let engine = started.engine.clone();
+        let texts = crate::tasks::checks::ErasureTexts(started.erasure.clone());
+        drop(rt.spawn(async move {
+            crate::tasks::checks::run(&clock, &engine, &forge, &texts, &signal).await;
             drop(signal);
         }));
     }
@@ -1506,9 +1529,10 @@ impl<R: Runtime> RunningCell<R> {
     /// `RecordChecks` under this task, and the domain decides it with
     /// every guard of its row.
     ///
-    /// Interim, pending Daniel (lane m3/licence-update): no checks runner
-    /// runs in the cell yet, so only a test world calls this, in process,
-    /// as it plays the contract port ([`RunningCell::contract_fact`]).
+    /// Since lane `m10/checks-runner` the production cell records these
+    /// runs itself (`crate::tasks::checks`, ADR-026). A test world, whose
+    /// start options set no forge client, still calls this in process, as
+    /// it plays the contract port ([`RunningCell::contract_fact`]).
     ///
     /// # Errors
     ///

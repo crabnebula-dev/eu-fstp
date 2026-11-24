@@ -95,10 +95,28 @@ function total(t: I18n, r: RequestRow): HTMLElement[] {
   return r.lines.map((l) => h("div", {}, [`${l.milestone}: ${l.requested}`, l.approved === null ? "" : ` (${t.label("pay.detail.line_approved")} ${l.approved})`]));
 }
 
+/**
+ * The two runs of the automated checks (I-32). A run the cell still has to record shows as
+ * running: the submission run while the request is SUBMITTED, the acceptance run while it is
+ * SUBMITTED or UNDER_REVIEW. Only a run that cannot come any more shows as not passed.
+ */
 function checks(t: I18n, r: RequestRow): HTMLElement {
-  const one = (id: string, ok: boolean): HTMLElement =>
-    h("div", {}, [t.label(id), ": ", t.label(ok ? "pay.checks.pass" : "pay.checks.fail")]);
-  return h("div", {}, [one("pay.checks.sub", r.submission_checks), one("pay.checks.acc", r.acceptance_checks)]);
+  const one = (id: string, ok: boolean, running: boolean): HTMLElement =>
+    h("div", { "data-check": id }, [t.label(id), ": ", t.label(ok ? "pay.checks.pass" : running ? "pay.checks.running" : "pay.checks.fail")]);
+  return h("div", {}, [
+    one("pay.checks.sub", r.submission_checks, r.status === "SUBMITTED"),
+    one("pay.checks.acc", r.acceptance_checks, r.status === "SUBMITTED" || r.status === "UNDER_REVIEW"),
+  ]);
+}
+
+/**
+ * I-32: whether the decision on line `line` waits for the acceptance checks. The decision on the
+ * last open line can make the request ACCEPTED, which the cell refuses until the acceptance run
+ * passed. So the page holds that one decision back and says why, instead of a bare refusal.
+ */
+export function waitsForChecks(r: RequestRow, line: string): boolean {
+  const open = r.lines.filter((l) => l.approved === null);
+  return !r.acceptance_checks && open.length === 1 && open[0]?.line === line;
 }
 
 // ---------------------------------------------------------------------------
@@ -334,9 +352,17 @@ function reviewSection(env: PageEnv, t: I18n, f: Frame, r: RequestRow, reload: (
     const approved = textField(`pay-review-amount-${l.line}`, t.label("pay.review.approved", n), { inputmode: "decimal", value: l.requested });
     const reason = textField(`pay-review-reason-${l.line}`, t.label("pay.review.reason", n));
     const submit = buttonEl(`pay-review-submit-${l.line}`, "submit", t.label("pay.review.submit", n));
+    const held = waitsForChecks(r, l.line);
+    if (held) {
+      submit.disabled = true;
+    }
     const form = formEl(`pay-review-form-${l.line}`, [approved.root, reason.root, submit]);
     onSubmit(f, form, submit, async () => {
       f.clearAlert();
+      if (held) {
+        f.alert(t.label("pay.review.wait"));
+        return;
+      }
       const v = approved.control.value.trim();
       if (!isAmountText(v)) {
         f.alert(t.label("pay.review.err"));
@@ -370,7 +396,14 @@ function reviewSection(env: PageEnv, t: I18n, f: Frame, r: RequestRow, reload: (
     await reload();
     f.status(t.label("pay.changes.done"));
   });
-  return section("pay-review", t.label("pay.review.heading"), [h("p", {}, [t.label("pay.review.intro")]), ...forms, h("h3", {}, [t.label("pay.changes.heading")]), changes]);
+  // I-32: while the acceptance run is not recorded, say so in plain words, and offer to look again.
+  const running: Child[] = r.acceptance_checks
+    ? []
+    : [
+        h("p", { id: "pay-review-checks-running", class: "fstp-alert", "data-callout": "checks-running" }, [t.label("pay.review.checks_running")]),
+        actionButton("pay-review-recheck", t.label("pay.review.recheck"), f, reload),
+      ];
+  return section("pay-review", t.label("pay.review.heading"), [h("p", {}, [t.label("pay.review.intro")]), ...running, ...forms,h("h3", {}, [t.label("pay.changes.heading")]), changes]);
 }
 
 function payeeSection(env: PageEnv, t: I18n, f: Frame, r: RequestRow): HTMLElement {
@@ -418,7 +451,7 @@ async function mountRequest(env: PageEnv, params: Readonly<Record<string, string
   const id = params["request"] ?? "";
   const f = frame(env, t, t.label("pay.detail.title"));
   // R-PR-08: whether this page showed the assigned reviewer's line review view.
-  const seen = { review: false };
+  const seen = { review: false, lastOpen: 0, acceptance: false };
   const render = async (): Promise<void> => {
     const res = await readOp(env, "payment.status", { proposal }, (v): v is readonly RequestRow[] => decodePayments(v) !== null);
     if (!res.ok) {
@@ -473,6 +506,7 @@ async function mountRequest(env: PageEnv, params: Readonly<Record<string, string
         section("pay-checks-failed", t.label("pay.detail.checks_failed_title"), [
           h("p", {}, [t.label("pay.callout.checks_failed")]),
           h("p", { class: "text-sm" }, [t.label("pay.detail.checks_failed_intro")]),
+          h("p", { id: "pay-checks-failed-who" }, [t.label("pay.detail.checks_failed_who")]),
         ]),
       );
     }
@@ -520,7 +554,7 @@ async function reviewerFallback(
   f: Frame,
   proposal: string,
   id: string,
-  seen: { review: boolean },
+  seen: { review: boolean; lastOpen: number; acceptance: boolean },
   reload: () => Promise<void>,
 ): Promise<boolean> {
   const roles = await rolesOrNull();
@@ -539,11 +573,19 @@ async function reviewerFallback(
     if (!seen.review) {
       return false;
     }
-    f.show([h("p", { id: "pay-review-complete" }, [t.label("pay.reviewer.complete")]), back]);
+    // I-32: the view closes when the review completes, and also when the acceptance checks
+    // failed or the request went back to the grantee. Only the first follows a ready last line.
+    const done = seen.lastOpen <= 1 && seen.acceptance;
+    f.show([
+      done ? h("p", { id: "pay-review-complete" }, [t.label("pay.reviewer.complete")]) : h("p", { id: "pay-review-left" }, [t.label("pay.reviewer.left")]),
+      back,
+    ]);
     return true;
   }
   seen.review = true;
   const r = view.request;
+  seen.lastOpen = r.lines.filter((l) => l.approved === null).length;
+  seen.acceptance = r.acceptance_checks;
   f.retitle(requestLabel(t, r, null));
   const ev = (line: string): LineEvidence | undefined => view.evidence.find((e) => e.line === line);
   const cell = (s: string | null | undefined): string => (s === null || s === undefined || s === "" ? "-" : s);

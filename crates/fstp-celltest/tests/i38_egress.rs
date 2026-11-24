@@ -608,7 +608,8 @@ fn other_destinations() -> Vec<Destination> {
         | Destination::Witness
         | Destination::KeystoreSnapshots
         | Destination::MailSubmission { .. }
-        | Destination::DnsResolver { .. } => true,
+        | Destination::DnsResolver { .. }
+        | Destination::Forge => true,
         Destination::CrabNebula(_) => false,
     };
     [
@@ -626,6 +627,9 @@ fn other_destinations() -> Vec<Destination> {
         Destination::DnsResolver {
             addr: std::net::SocketAddr::from(([127, 0, 0, 53], 53)),
         },
+        // ADR-009 amendment of 2026-11-24: a deliverable forge is never a
+        // CrabNebula host.
+        Destination::Forge,
     ]
     .into_iter()
     .filter(is_other)

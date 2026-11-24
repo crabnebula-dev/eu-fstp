@@ -48,6 +48,10 @@ mod session;
 mod system;
 mod tenant;
 
+// The stored text form, which the checks runner opens and writes as the
+// text store does (`crate::tasks::checks`, lane m10/checks-runner).
+pub(crate) use content::{header as text_header, parse as parse_text};
+
 use std::sync::Arc;
 
 use fstp_api_core::ApiCore;

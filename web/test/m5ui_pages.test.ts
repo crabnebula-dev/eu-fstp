@@ -161,3 +161,62 @@ test("r_nf_03_operations_labels_have_no_raw_ids_or_enums", async () => {
   assert(t.includes("Contract of proposal 1001") && t.includes("Signed by the grantee"), t.slice(0, 600));
   assert(!t.includes("signed_by_grantee signed_by_grantee"), "no doubled enum");
 });
+
+/** The review page of request 7 on grant 3, with `row` as the cell's reply. */
+async function reviewPage(row: unknown): Promise<string> {
+  prepare();
+  const sent: Sent[] = [];
+  await mountPostGrant(env({ "GET /grants/3/payment-requests": [row] }, sent), "/app/grants/3/payments/7");
+  await new Promise((r) => setTimeout(r, 20));
+  return text();
+}
+
+function button(id: string): FakeElement {
+  const el = fakeDocument.getElementById(id) as FakeElement | null;
+  assert(el !== null, `${id} is on the page`);
+  return el as FakeElement;
+}
+
+/**
+ * I-32, R-PR-08: while the acceptance checks have not passed, the review page says that the
+ * automated checks are still running, shows them as running rather than not passed, and holds
+ * back the decision on the last open line, which the cell would refuse under I-32.
+ */
+test("i32_review_holds_the_last_line_while_checks_run", async () => {
+  const row = { request: "7", proposal: "3", status: "UNDER_REVIEW", kind: "milestone", submission_checks: true, acceptance_checks: false, lines: [{ line: "8", milestone: "9", requested: "100.00", approved: null }] };
+  const t = await reviewPage(row);
+  assert(t.includes("The automated acceptance checks are still running."), t.slice(0, 600));
+  assert(t.includes("Acceptance checks: Running"), "the acceptance run shows as running");
+  assert(!t.includes("Not passed"), "a run still to come is not shown as failed");
+  assert(t.includes("Check again"), "the reviewer can look again");
+  assert((button("pay-review-submit-8") as unknown as { disabled: boolean }).disabled, "the last line waits");
+});
+
+/** I-32: once both runs passed, the last line's decision is open and no running note shows. */
+test("i32_review_opens_the_last_line_once_checks_pass", async () => {
+  const row = { request: "7", proposal: "3", status: "UNDER_REVIEW", kind: "milestone", submission_checks: true, acceptance_checks: true, lines: [{ line: "8", milestone: "9", requested: "100.00", approved: null }] };
+  const t = await reviewPage(row);
+  assert(!t.includes("still running"), "no running note");
+  assert(t.includes("Acceptance checks: Passed"), "the acceptance run passed");
+  assert(!(button("pay-review-submit-8") as unknown as { disabled: boolean }).disabled, "the last line is open");
+});
+
+/** I-32: with checks running, only the last open line waits; the other lines can be decided. */
+test("i32_review_holds_only_the_last_open_line", async () => {
+  const two = { request: "7", proposal: "3", status: "UNDER_REVIEW", kind: "milestone", submission_checks: true, acceptance_checks: false, lines: [{ line: "8", milestone: "9", requested: "100.00", approved: null }, { line: "10", milestone: "11", requested: "50.00", approved: null }] };
+  await reviewPage(two);
+  assert(!(button("pay-review-submit-8") as unknown as { disabled: boolean }).disabled, "line 8 is open while another line is open");
+  assert(!(button("pay-review-submit-10") as unknown as { disabled: boolean }).disabled, "line 10 is open while another line is open");
+  const one_left = { ...two, lines: [{ line: "8", milestone: "9", requested: "100.00", approved: "100.00" }, { line: "10", milestone: "11", requested: "50.00", approved: null }] };
+  await reviewPage(one_left);
+  assert((button("pay-review-submit-10") as unknown as { disabled: boolean }).disabled, "the last open line waits");
+});
+
+/** R-PR-02, I-32: a request whose checks failed says so and names who acts next. */
+test("i32_r_pr_02_failed_checks_name_who_acts", async () => {
+  const row = { request: "7", proposal: "3", status: "CHECKS_FAILED", kind: "milestone", submission_checks: false, acceptance_checks: false, lines: [{ line: "8", milestone: "9", requested: "100.00", approved: null }] };
+  const t = await reviewPage(row);
+  assert(t.includes("The automated checks did not pass."), t.slice(0, 600));
+  assert(t.includes("The grantee acts next"), "the page names who acts");
+  assert(t.includes("Acceptance checks: Not passed"), "a run that cannot come shows as not passed");
+});
