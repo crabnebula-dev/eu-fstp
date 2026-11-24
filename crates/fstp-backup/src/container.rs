@@ -1,5 +1,10 @@
 //! The backup container decoder (ADR-012 "Container format", R-CR-01).
 //!
+//! It reads `FBC1` below and, since lane m10/backup-format, the `FBC2`
+//! container of the cluster backup objects ([`decode_v2`], `crate::object`),
+//! which adds the object's identity to the header and the writer's
+//! signature after the final chunk.
+//!
 //! The bytes are interim, pending Daniel, as ADR-012 marks them:
 //!
 //! ```text
@@ -137,6 +142,8 @@ pub(crate) fn decode_header(bytes: &[u8]) -> Result<Header<'_>, BackupError> {
 }
 
 /// Decodes a backup container into its sealed chunks, in order (ADR-012).
+/// An `FBC1` container and an `FBC2` container (record of lane
+/// m10/backup-format) are each read in their own one spelling.
 ///
 /// # Errors
 ///
@@ -145,8 +152,21 @@ pub(crate) fn decode_header(bytes: &[u8]) -> Result<Header<'_>, BackupError> {
 /// not a hybrid `FSK1` key of the container's chain, and
 /// [`BackupError::Malformed`] for any other rule the input breaks.
 pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<Chunk>, BackupError> {
+    if bytes.get(..4) == Some(&CONTAINER_MAGIC_V2[..]) {
+        return decode_v2(bytes).map(|d| d.chunks);
+    }
     let mut r = Reader { rest: bytes };
     header(&mut r)?;
+    let chunks = chunks(&mut r)?;
+    if r.rest.is_empty() {
+        Ok(chunks)
+    } else {
+        Err(BackupError::Malformed("bytes after the final chunk"))
+    }
+}
+
+/// The chunks after a header, up to and with the final one.
+fn chunks(r: &mut Reader<'_>) -> Result<Vec<Chunk>, BackupError> {
     let mut chunks = Vec::new();
     let mut index: u64 = 0;
     loop {
@@ -176,17 +196,113 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<Chunk>, BackupError> {
             sealed,
         });
         if last {
-            break;
+            return Ok(chunks);
         }
         index = index
             .checked_add(1)
             .ok_or(BackupError::Malformed("chunk index"))?;
     }
-    if r.rest.is_empty() {
-        Ok(chunks)
-    } else {
-        Err(BackupError::Malformed("bytes after the final chunk"))
+}
+
+/// The magic of a version 2 container (ADR-012 record of lane
+/// m10/backup-format, F-043).
+pub(crate) const CONTAINER_MAGIC_V2: [u8; 4] = *b"FBC2";
+/// The bytes of a version 2 header before its `ident`.
+pub(crate) const V2_FIXED_LEN: usize = 46;
+/// The longest `ident`.
+pub(crate) const MAX_IDENT_LEN: usize = 64;
+/// The length of the writer's signature at the end of a version 2
+/// container.
+pub(crate) const V2_SIGNATURE_LEN: usize = crate::writer::SIGNATURE_LEN;
+
+/// A decoded version 2 container (ADR-012 record of lane
+/// m10/backup-format).
+pub(crate) struct DecodedV2<'a> {
+    /// The kind, 1 or 2.
+    pub(crate) kind: crate::ContainerKind,
+    /// The owner: the cluster.
+    pub(crate) owner: [u8; 16],
+    /// The container id.
+    pub(crate) container: [u8; 16],
+    /// The object the container names.
+    pub(crate) ident: crate::ObjectIdent,
+    /// The header bytes, the prefix of every chunk's AAD.
+    pub(crate) header: &'a [u8],
+    /// The sealed data key bytes.
+    pub(crate) sealed_key: &'a [u8],
+    /// The chunks, in order.
+    pub(crate) chunks: Vec<Chunk>,
+    /// Every byte before the signature, which the signature covers.
+    pub(crate) signed: &'a [u8],
+    /// The writer's composite signature.
+    pub(crate) signature: &'a [u8],
+}
+
+/// Decodes a version 2 container: its header, its chunks and its
+/// signature, in one spelling (ADR-012 record of lane m10/backup-format).
+/// Nothing here verifies the signature or opens a chunk. Fuzzed
+/// (`backup_container_decode`).
+///
+/// # Errors
+///
+/// As [`decode`], and [`BackupError::Malformed`] for a kind other than 1
+/// or 2, an `ident` that does not name an object of its kind, or bytes
+/// after the signature.
+pub(crate) fn decode_v2(bytes: &[u8]) -> Result<DecodedV2<'_>, BackupError> {
+    let mut r = Reader { rest: bytes };
+    if r.array::<4>()? != CONTAINER_MAGIC_V2 {
+        return Err(BackupError::Malformed("magic"));
     }
+    if r.u8()? != FORMAT_VERSION {
+        return Err(BackupError::Malformed("version"));
+    }
+    if r.u16()? != AEAD_AES_256_GCM {
+        return Err(BackupError::Malformed("aead"));
+    }
+    let kind = match crate::ContainerKind::from_code(r.u8()?) {
+        Some(k @ (crate::ContainerKind::BaseBackup | crate::ContainerKind::WalSegment)) => k,
+        _ => return Err(BackupError::Malformed("kind")),
+    };
+    let chain = match Chain::from_code(r.u8()?) {
+        Some(c) if c == kind.chain() => c,
+        _ => return Err(BackupError::Malformed("chain")),
+    };
+    let owner = r.array::<16>()?;
+    let container = r.array::<16>()?;
+    if r.u32()? != CHUNK_SIZE {
+        return Err(BackupError::Malformed("chunk size"));
+    }
+    let ident_len = usize::from(r.u8()?);
+    if ident_len == 0 || ident_len > MAX_IDENT_LEN {
+        return Err(BackupError::Malformed("ident length"));
+    }
+    let ident = crate::ObjectIdent::decode(kind, r.take(ident_len)?)?;
+    let sealed_key = r.take(SEALED_KEY_LEN)?;
+    let key = decode_sealed_key(sealed_key)
+        .map_err(|_| BackupError::KeyNotHybrid)?
+        .header();
+    if key.kem != KEM_HYBRID || key.chain != chain {
+        return Err(BackupError::KeyNotHybrid);
+    }
+    let header_len = bytes.len().saturating_sub(r.rest.len());
+    let header = bytes.get(..header_len).ok_or(BackupError::Truncated)?;
+    let chunks = chunks(&mut r)?;
+    let signed_len = bytes.len().saturating_sub(r.rest.len());
+    let signature = r.take(V2_SIGNATURE_LEN)?;
+    if !r.rest.is_empty() {
+        return Err(BackupError::Malformed("bytes after the signature"));
+    }
+    Ok(DecodedV2 {
+        kind,
+        owner,
+        container,
+        ident,
+        header,
+        sealed_key,
+        chunks,
+        signed: bytes.get(..signed_len).ok_or(BackupError::Truncated)?,
+        signature,
+    })
 }
 
 #[cfg(test)]

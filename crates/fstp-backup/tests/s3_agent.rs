@@ -353,7 +353,9 @@ fn adr012_restore_checks_parts_and_size() {
         ..entry
     };
     for (e, want) in [
-        (longer, BackupError::NotFound),
+        // F-043: the last part says it is the last, so a size the parts
+        // do not reach is refused without asking for another part.
+        (longer, BackupError::Malformed("base backup size")),
         (shorter, BackupError::Malformed("base backup size")),
         (other, BackupError::NotFound),
     ] {
@@ -402,8 +404,9 @@ fn i81_destroyed_cluster_root_leaves_every_backup_unreadable() {
     let other = fstp_crypto::hybrid_kem::generate().unwrap();
     let object =
         s.fake.state.objects.lock().unwrap()[&s.agent.base_object(entry.backup, 0)].clone();
+    let writer = *f.writer_public().unwrap();
     assert_eq!(
-        fstp_backup::open_container(&other, &object).unwrap_err(),
+        fstp_backup::open_object(&other, &writer, &object).unwrap_err(),
         BackupError::OpenFailed
     );
     let _ = std::fs::remove_dir_all(&s.state);

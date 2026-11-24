@@ -4,6 +4,9 @@
 //! accepted container has chunks numbered from 0, exactly one final
 //! chunk, the last, and every chunk holds a nonce and a tag (ADR-012).
 //! It also runs the snapshot pointer decoder (ADR-012 record of lane L17).
+//! The same entry point reads the `FBC2` container of the record of lane
+//! m10/backup-format: an accepted one ends in exactly one writer
+//! signature, and its `ident` names an object of its kind.
 
 #![no_main]
 

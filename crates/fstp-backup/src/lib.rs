@@ -19,6 +19,7 @@ mod container;
 pub mod custodian;
 pub mod index;
 pub mod keyfile;
+mod object;
 pub mod s3;
 mod seal;
 pub mod sigv4;
@@ -29,6 +30,7 @@ pub mod xml;
 
 use std::path::PathBuf;
 
+pub use object::{ObjectIdent, OpenedObject, open_object, seal_object};
 pub use seal::{ContainerKind, GroupRef, Opened, open_container, seal_container};
 pub use snapshot::{ObjectStore, SnapshotKey, SnapshotOwner, Snapshots};
 pub use wal::ArchiveName;
@@ -161,9 +163,11 @@ pub const fn container_len(plaintext: usize) -> usize {
         .saturating_add(chunks.saturating_mul(33))
 }
 
-/// Decodes a backup container into its sealed chunks (ADR-012). Chunk
-/// order and the final flag are enforced, and the data key must be
-/// sealed through the hybrid KEM (R-CR-01). Fuzzed
+/// Decodes a backup container, `FBC1` or `FBC2`, into its sealed chunks
+/// (ADR-012, record of lane m10/backup-format). Chunk order and the final
+/// flag are enforced, and the data key must be sealed through the hybrid
+/// KEM (R-CR-01). An `FBC2` container must end in exactly one signature,
+/// which this does not verify ([`open_object`] does). Fuzzed
 /// (`backup_container_decode`).
 ///
 /// # Errors

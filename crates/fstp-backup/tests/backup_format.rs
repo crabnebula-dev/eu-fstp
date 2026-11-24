@@ -268,3 +268,165 @@ fn f043_upgrade_keeps_the_group_key_and_binds_a_writer() {
     );
     fake.stop(&rt);
 }
+
+/// F-043, TH-51, R-CR-01: a bucket writer moves part 0 of base backup B
+/// under the name of part 0 of base backup A. The container names its
+/// backup and part, so the restore of A refuses it and never returns B's
+/// bytes.
+#[test]
+fn f043_th51_base_part_of_another_backup_is_refused() {
+    let s = setup();
+    let a = vec![0xaau8; 4 * 1024 * 1024];
+    let b = vec![0xbbu8; 4 * 1024 * 1024];
+    let ea =
+        s.rt.block_on(s.agent.base_backup_from(&mut &a[..]))
+            .unwrap();
+    let eb =
+        s.rt.block_on(s.agent.base_backup_from(&mut &b[..]))
+            .unwrap();
+    let secret = s.rt.block_on(s.agent.open_secret(&s.custody)).unwrap();
+    let from = s.agent.base_object(eb.backup, 0);
+    let to = s.agent.base_object(ea.backup, 0);
+    {
+        let mut objects = s.fake.state.objects.lock().unwrap();
+        let moved = objects[&from].clone();
+        objects.insert(to, moved);
+    }
+    let mut out = Vec::new();
+    let got = s.rt.block_on(s.agent.restore_base(&secret, &ea, &mut out));
+    assert_eq!(got, Err(BackupError::Malformed("restored container")));
+    assert!(out.is_empty(), "no byte of backup B was written");
+    // Backup B itself still restores.
+    let mut out = Vec::new();
+    assert_eq!(
+        s.rt.block_on(s.agent.restore_base(&secret, &eb, &mut out)),
+        Ok(2)
+    );
+    assert_eq!(out, b);
+    let _ = std::fs::remove_dir_all(&s.state);
+    s.fake.stop(&s.rt);
+}
+
+/// F-043, TH-51: a bucket writer stores the container of WAL segment 4
+/// under the name of segment 3. `restore_command` for segment 3 refuses
+/// it and writes nothing.
+#[test]
+fn f043_th51_wal_container_under_another_segment_name_is_refused() {
+    let s = setup();
+    let dir = s.state.join("wal");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (n3, n4) = ("000000010000000000000003", "000000010000000000000004");
+    std::fs::write(dir.join("s3"), vec![3u8; 4096]).unwrap();
+    std::fs::write(dir.join("s4"), vec![4u8; 4096]).unwrap();
+    s.rt.block_on(async {
+        s.agent.archive(&dir.join("s3"), n3).await.unwrap();
+        s.agent.archive(&dir.join("s4"), n4).await.unwrap();
+    });
+    let secret = s.rt.block_on(s.agent.open_secret(&s.custody)).unwrap();
+    {
+        let mut objects = s.fake.state.objects.lock().unwrap();
+        let moved = objects[&s.agent.wal_object(n4)].clone();
+        objects.insert(s.agent.wal_object(n3), moved);
+    }
+    let dest = s.state.join("restored");
+    let got = s.rt.block_on(s.agent.restore_wal(&secret, n3, &dest));
+    assert_eq!(got, Err(BackupError::Malformed("restored container")));
+    assert!(std::fs::metadata(&dest).is_err());
+    let _ = std::fs::remove_dir_all(&s.state);
+    s.fake.stop(&s.rt);
+}
+
+/// F-043, TH-51: a party that holds the key file (public keys only, I-80)
+/// and bucket write access seals a container of its own: an `FBC1`
+/// container, and an `FBC2` container signed with a writer key of its
+/// own. A restore refuses both, before it opens any key.
+#[test]
+fn f043_th51_container_from_a_public_key_holder_is_refused() {
+    let s = setup();
+    let key = keyfile::decode(&s.key_file).unwrap();
+    let name = "000000010000000000000007";
+    let old = fstp_backup::seal_container(
+        &key.public_key().unwrap(),
+        fstp_backup::ContainerKind::WalSegment,
+        &key.group_ref(),
+        0,
+        b"forged WAL bytes, synthetic",
+    )
+    .unwrap();
+    let theirs = WriterKey::generate(CLUSTER).unwrap();
+    let forged = fstp_backup::seal_object(
+        &key.public_key().unwrap(),
+        &theirs,
+        &key.group_ref(),
+        &fstp_backup::ObjectIdent::Wal(name.to_owned()),
+        b"forged WAL bytes, synthetic",
+    )
+    .unwrap();
+    let secret = s.rt.block_on(s.agent.open_secret(&s.custody)).unwrap();
+    let dest = s.state.join("restored");
+    for (bytes, want) in [
+        (old, BackupError::Malformed("magic")),
+        (forged, BackupError::Malformed("writer signature")),
+    ] {
+        s.fake
+            .state
+            .objects
+            .lock()
+            .unwrap()
+            .insert(s.agent.wal_object(name), bytes);
+        let got = s.rt.block_on(s.agent.restore_wal(&secret, name, &dest));
+        assert_eq!(got, Err(want));
+        assert!(std::fs::metadata(&dest).is_err());
+    }
+    let _ = std::fs::remove_dir_all(&s.state);
+    s.fake.stop(&s.rt);
+}
+
+/// F-043: the last flag stands on the last part, also when the stream is
+/// a whole number of parts long, and a dropped last part is refused.
+#[test]
+fn f043_last_part_is_flagged_for_every_stream_length() {
+    let s = setup();
+    let secret = s.rt.block_on(s.agent.open_secret(&s.custody)).unwrap();
+    let part = SMALL.base_part;
+    for (len, parts) in [(0, 1), (1, 1), (part, 1), (part + 1, 2), (2 * part, 2)] {
+        let base: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+        let e =
+            s.rt.block_on(s.agent.base_backup_from(&mut &base[..]))
+                .unwrap();
+        let mut out = Vec::new();
+        assert_eq!(
+            s.rt.block_on(s.agent.restore_base(&secret, &e, &mut out)),
+            Ok(parts),
+            "{len}"
+        );
+        assert_eq!(out, base, "{len}");
+        for p in 0..parts {
+            let (_, last) =
+                s.rt.block_on(s.agent.fetch_base_part(&secret, e.backup, p))
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(last, p + 1 == parts, "{len} part {p}");
+        }
+        if parts == 2 {
+            // Without its last part the backup does not restore, even when
+            // the index claims the size of the first part alone.
+            s.fake
+                .state
+                .objects
+                .lock()
+                .unwrap()
+                .remove(&s.agent.base_object(e.backup, 1));
+            let short = fstp_backup::index::IndexEntry {
+                size: part as u64,
+                ..e
+            };
+            assert!(
+                s.rt.block_on(s.agent.restore_base(&secret, &short, &mut Vec::new()))
+                    .is_err()
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&s.state);
+    s.fake.stop(&s.rt);
+}

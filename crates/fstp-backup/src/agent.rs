@@ -12,9 +12,11 @@
 //! - [`Agent::restore_wal`] for `restore_command`: one segment or history
 //!   file.
 //!
-//! Every container is sealed through [`crate::seal_container`] to the
-//! ClusterBackup group public key of `cluster-backup.key`: a fresh data
-//! key each, sealed through the hybrid KEM (R-CR-01). The writer holds
+//! Every container is an `FBC2` container ([`crate::seal_object`], record
+//! of lane m10/backup-format), sealed to the ClusterBackup group public
+//! key of `cluster-backup.key`: a fresh data key each, sealed through the
+//! hybrid KEM (R-CR-01). It names its object and carries the writer
+//! key's signature, and every restore checks both (F-043). The writer holds
 //! the public key only. Opening needs the group secret, which only the
 //! custody root opens ([`crate::keyfile::open`]), so a destroyed key
 //! stays destroyed in every copy (I-81).
@@ -34,7 +36,7 @@ use crate::s3::S3Client;
 use crate::sigv4::hex;
 use crate::wal::{self, ArchiveName};
 use crate::writer::{WRITER_FILE, WriterKey};
-use crate::{BackupError, ContainerKind, WalName, open_container, seal_container};
+use crate::{BackupError, ObjectIdent, WalName, open_object, seal_object};
 
 /// The plaintext of one base backup part (record of lane L10).
 pub const BASE_PART: usize = 64 * 1024 * 1024;
@@ -239,10 +241,11 @@ impl<R: Runtime> Agent<R> {
         format!("{}/wal/{name}", hex(&self.key.cluster))
     }
 
+    /// Seals `plaintext` as the `FBC2` container of `ident`, signed by the
+    /// writer key, and stores it as `object` (F-043).
     async fn seal_and_store(
         &self,
-        kind: ContainerKind,
-        part: u32,
+        ident: &ObjectIdent,
         object: &str,
         plaintext: &[u8],
     ) -> Result<(), BackupError> {
@@ -250,7 +253,7 @@ impl<R: Runtime> Agent<R> {
         let writer = self.writer()?;
         self.key.check_writer(writer)?;
         let public = self.key.public_key()?;
-        let sealed = seal_container(&public, kind, &self.key.group_ref(), part, plaintext)?;
+        let sealed = seal_object(&public, writer, &self.key.group_ref(), ident, plaintext)?;
         self.s3
             .store(
                 object,
@@ -281,7 +284,7 @@ impl<R: Runtime> Agent<R> {
             return Err(BackupError::Malformed("WAL file size"));
         }
         let bytes = std::fs::read(path).map_err(io("WAL file"))?;
-        self.seal_and_store(ContainerKind::WalSegment, 0, &object, &bytes)
+        self.seal_and_store(&ObjectIdent::Wal(name.to_owned()), &object, &bytes)
             .await?;
         Ok(Archived::Uploaded)
     }
@@ -343,51 +346,94 @@ impl<R: Runtime> Agent<R> {
     }
 
     /// Seals and uploads the parts of `tar` under a new backup id, without
-    /// the index line. The id and the plaintext size.
+    /// the index line. The id and the plaintext size. Each part says
+    /// whether it is the last (F-043): the agent reads one byte ahead to
+    /// know, since it cuts the stream as it reads.
     async fn stage_parts(&self, tar: &mut impl Read) -> Result<([u8; 16], u64), BackupError> {
         let backup =
             fstp_crypto::random_array::<16>().map_err(|_| BackupError::Seal("backup id"))?;
         let mut buf = vec![0u8; self.limits.base_part.max(1)];
         let mut size = 0u64;
         let mut part = 0u32;
+        let mut carry: Option<u8> = None;
         loop {
-            let n = fill(tar, &mut buf)?;
-            if n == 0 && part > 0 {
-                break;
+            let n = match (carry.take(), buf.split_first_mut()) {
+                (Some(b), Some((first, rest))) => {
+                    *first = b;
+                    fill(tar, rest)?.saturating_add(1)
+                }
+                _ => fill(tar, &mut buf)?,
+            };
+            if n == buf.len() {
+                let mut one = [0u8; 1];
+                if fill(tar, &mut one)? == 1 {
+                    carry = Some(one[0]);
+                }
             }
+            let last = carry.is_none();
             let body = buf.get(..n).ok_or(BackupError::Io("read"))?;
-            let object = self.base_object(backup, part);
-            self.seal_and_store(ContainerKind::BaseBackup, part, &object, body)
+            let ident = ObjectIdent::Base { backup, part, last };
+            self.seal_and_store(&ident, &self.base_object(backup, part), body)
                 .await?;
             size = size.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+            if last {
+                return Ok((backup, size));
+            }
             part = part
                 .checked_add(1)
                 .ok_or(BackupError::Malformed("part count"))?;
-            if n < buf.len() {
-                break;
-            }
         }
-        Ok((backup, size))
     }
 
-    /// Fetches `object` and opens it under `secret`. `None` when it does
-    /// not exist. The container must be of `kind`, of this cluster and
-    /// part `part`.
-    async fn fetch_open(
+    /// The fetch helper of every restore (ADR-012 record of lane
+    /// m10/backup-format): fetches `object`, opens it as an `FBC2`
+    /// container signed by the key file's writer key, and checks that it
+    /// is of this cluster and names the object `want` accepts. `want`
+    /// gives the part's last flag, or `None` to refuse the object. The
+    /// plaintext and the last flag, or `None` when the object does not
+    /// exist.
+    async fn fetch_checked(
         &self,
         secret: &HybridSecretKey,
         object: &str,
-        kind: ContainerKind,
-        part: u32,
-    ) -> Result<Option<Vec<u8>>, BackupError> {
+        want: impl Fn(&ObjectIdent) -> Option<bool>,
+    ) -> Result<Option<(Vec<u8>, bool)>, BackupError> {
+        let writer = self.key.check_binding()?;
         let Some(bytes) = self.s3.get_object(object).await? else {
             return Ok(None);
         };
-        let opened = open_container(secret, &bytes)?;
-        if opened.kind != kind || opened.owner != self.key.cluster || opened.part != part {
+        let opened = open_object(secret, &writer.writer[..], &bytes)?;
+        if opened.owner != self.key.cluster {
             return Err(BackupError::Malformed("restored container"));
         }
-        Ok(Some(opened.plaintext))
+        let last = want(&opened.ident).ok_or(BackupError::Malformed("restored container"))?;
+        Ok(Some((opened.plaintext, last)))
+    }
+
+    /// Fetches and opens part `part` of base backup `backup`, with its
+    /// last flag. `None` when no store holds it.
+    ///
+    /// # Errors
+    ///
+    /// [`BackupError::Malformed`] for a container that is not signed by
+    /// this cluster's writer key or names another object, and the errors
+    /// of the fetch.
+    pub async fn fetch_base_part(
+        &self,
+        secret: &HybridSecretKey,
+        backup: [u8; 16],
+        part: u32,
+    ) -> Result<Option<(Vec<u8>, bool)>, BackupError> {
+        let object = self.base_object(backup, part);
+        self.fetch_checked(secret, &object, |id| match id {
+            ObjectIdent::Base {
+                backup: b,
+                part: p,
+                last,
+            } if *b == backup && *p == part => Some(*last),
+            _ => None,
+        })
+        .await
     }
 
     /// Opens the group secret through `custody` (the console socket).
@@ -418,8 +464,9 @@ impl<R: Runtime> Agent<R> {
     }
 
     /// Writes the plaintext of base backup `entry` to `out`, part by part.
-    /// Each part must exist, be of this cluster and carry its number, and
-    /// the parts must add up to the entry's size.
+    /// Each part must exist, be of this cluster and name its backup and
+    /// number, and the last flag must stand exactly on the part where the
+    /// parts add up to the entry's size (F-043).
     ///
     /// # Errors
     ///
@@ -435,23 +482,22 @@ impl<R: Runtime> Agent<R> {
         let mut total = 0u64;
         let mut part = 0u32;
         loop {
-            let object = self.base_object(entry.backup, part);
-            let plain = self
-                .fetch_open(secret, &object, ContainerKind::BaseBackup, part)
+            let (plain, last) = self
+                .fetch_base_part(secret, entry.backup, part)
                 .await?
                 .ok_or(BackupError::NotFound)?;
             if plain.is_empty() && entry.size != 0 {
                 return Err(BackupError::Malformed("empty base backup part"));
             }
             total = total.saturating_add(u64::try_from(plain.len()).unwrap_or(u64::MAX));
-            if total > entry.size {
+            if total > entry.size || (last && total != entry.size) {
                 return Err(BackupError::Malformed("base backup size"));
             }
             out.write_all(&plain).map_err(io("restore write"))?;
             part = part
                 .checked_add(1)
                 .ok_or(BackupError::Malformed("part count"))?;
-            if total == entry.size {
+            if last {
                 return Ok(part);
             }
         }
@@ -462,8 +508,9 @@ impl<R: Runtime> Agent<R> {
     ///
     /// # Errors
     ///
-    /// [`BackupError::Malformed`] for a name of no archive kind or a
-    /// container of another kind or cluster, and the errors of the fetch.
+    /// [`BackupError::Malformed`] for a name of no archive kind, or a
+    /// container that is not signed by this cluster's writer key or names
+    /// another file, and the errors of the fetch.
     pub async fn fetch_wal(
         &self,
         secret: &HybridSecretKey,
@@ -472,8 +519,13 @@ impl<R: Runtime> Agent<R> {
         if wal::parse_archive(name)? == ArchiveName::Skipped {
             return Ok(None);
         }
-        self.fetch_open(secret, &self.wal_object(name), ContainerKind::WalSegment, 0)
-            .await
+        let got = self
+            .fetch_checked(secret, &self.wal_object(name), |id| match id {
+                ObjectIdent::Wal(n) if n == name => Some(true),
+                _ => None,
+            })
+            .await?;
+        Ok(got.map(|(plain, _)| plain))
     }
 
     /// `restore_command`: writes the archive file `name` to `dest`.
