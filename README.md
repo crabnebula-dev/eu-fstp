@@ -20,7 +20,7 @@ Status on 2026-11-17, from CI run 44115329811 on 0a54b50d. Built milestone by mi
 | M7 | Assessor, pre-check, evaluation harness, synthetic corpus | Built | The I-10, I-11 and I-21 tests exist. No evaluation run against a live model has been reported, so the thresholds are not yet met |
 | M8 | Matrix and WhatsApp | Deferred (B-03, B-05) | None while deferred |
 | M9 | ML-DSA-65 and composite signatures, branding, terminology, public transparency pages, funder profiles, SBOM | Built, plus P-57 reporting periods, the P-79 milestone opt-in, tenant copies of funder profiles, the programme footer in `/app/`, operator rotation of the notice key, and funder profile reads for all programme staff | Closed on 2026-11-16 in CI run 43853477946. `docs/handoff/m9-exit-audit.md` maps each invariant to its tests. I-74 stays open until the Mythos confirmation |
-| M10 | Hardening on a Mythos-tier model | Not started | Daniel decided on 2026-11-15 to run it on Claude Mythos 5.2 once phase 1 development is done. Design in `docs/handoff/m10-m12-design.md` |
+| M10 | Hardening on a Mythos-tier model | Run on Claude Mythos 5.2 on 2026-11-23 and 2026-11-24 over commit `268e5079`. No critical finding. The four high findings are fixed with regression tests. The Tier B crate versions are confirmed (I-74) | Exit criteria met in full CI run 45446562822 on `6c7fa592`. `docs/hardening/m10-hardening-report.md` is the report. Findings below high that are not fixed stay open, and H-12 and H-20 were not reviewed |
 | M11 | Pilot with SuperSAFE and a second programme | Not started | Waits on the parties' approval |
 | M12 | Calibration with consented real proposals | Consent records and per-corpus metrics (`fstp-calib`) only | Needs real consented proposals |
 
