@@ -205,3 +205,20 @@ Written before the code. Daniel decided on 2026-11-24 that backups go to every c
 | Retention | `backup.keep_days` (1 to 3650) and `backup.keep_min` (1 to 1000). Interim, pending Daniel: 35 days and at least 5 base backups by default. `setup` writes them into `backup-<cluster>.json` as `retention`, so the nightly `fstp-admin backup` prunes after each base backup. A value out of range names the member | ADR-012 record of lane m10/backup-format, row "Retention values" |
 
 Tests: `adr028_backup_takes_further_stores_as_copies` and `adr028_backup_retention_has_defaults_and_ranges` in `fstp_admin::config`, and `adr012_backup_config_names_every_store` in `fstp_admin::render`.
+
+## Record of lane `m10/backup-pitr`, 2026-11-24: restore to a time
+
+Written before the code. Daniel decided on 2026-11-24 that backup is mission critical and asked for point-in-time restore. The backup side is in ADR-012 (record of lane `m10/backup-pitr`). Each row is interim, pending Daniel, unless it says otherwise. The row "Backups" above is amended.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Command | `fstp-admin restore --to <time>`, with `<time>` exactly like `2026-11-24T10:00:00Z`, in UTC. `fstp-admin restore` with no argument restores to the newest point, as before | Decided by Daniel on 2026-11-24 |
+| Refusals | A time in the future, a time not after the oldest base backup of either database, and any other spelling are refused with exit status 2. The message names the format, or the oldest time that works | Usability rule of 2026-11-21 |
+| Warning | Before it changes anything, `restore --to` prints the window that will be lost, from the target to now. It says that the cell and the vault will refuse to start while the witness holds receipts for that window, and that tenant admins see nothing of it yet. It asks the operator to type `yes`. Any other answer stops it with nothing changed | I-24; ADR-012 record of lane `m10/backup-pitr` |
+| Both or neither | Both databases are restored and checked in fresh directories first. Only then are both swapped in. When one fails, both fresh directories are removed, the live databases stay as they were, and the services start again | Decided by Daniel on 2026-11-24 |
+| Start | After the swap, each database starts and finishes its recovery. `fstp-admin` waits for the promotion, then resets the recovery settings. The key steps of the record of lane L27 and of lane `m10/guard-key` follow unchanged | ADR-012 |
+| Fresh backup | Once the services have started, or failed to, `restore` takes a base backup of both databases | Decided by Daniel on 2026-11-24 |
+| Archive ends first | When the archive holds no change after the target, `restore --to` says the newest point is that same state and suggests `fstp-admin restore` | ADR-012 record of lane `m10/backup-pitr` |
+| Time parser | `fstp_admin::pitr::parse_time`, in-house, fuzzed as `restore_time_parse` in the fuzz project of `fstp-admin` | CLAUDE.md fuzz rule |
+
+Tests, written before the code: `adr012_pitr_time_*` and `adr028_pitr_restore_takes_an_optional_target` in `fstp-admin`.

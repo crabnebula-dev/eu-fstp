@@ -68,6 +68,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "wal_history_decode"
+path = "fuzz_targets/wal_history_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

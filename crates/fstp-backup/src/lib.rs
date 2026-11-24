@@ -20,11 +20,13 @@ pub mod custodian;
 pub mod index;
 pub mod keyfile;
 mod object;
+pub mod recovery;
 pub mod s3;
 mod seal;
 pub mod sigv4;
 pub mod snapshot;
 pub mod tar;
+pub mod timeline;
 mod wal;
 pub mod writer;
 pub mod xml;
@@ -76,8 +78,12 @@ pub enum BackupError {
     NotFound,
     /// A local file operation failed. It names the step.
     Io(&'static str),
-    /// A host tool (`pg_basebackup`, `tar`) failed. It names the tool.
+    /// A host tool (`pg_basebackup`, `tar`, `postgres`) failed. It names
+    /// the tool.
     Tool(&'static str),
+    /// The archive ends before the restore target: it holds no change
+    /// after that time (ADR-012 record of lane `m10/backup-pitr`).
+    TargetNotReached,
 }
 
 impl std::fmt::Display for BackupError {
@@ -102,6 +108,9 @@ impl std::fmt::Display for BackupError {
             BackupError::NotFound => write!(f, "not found"),
             BackupError::Io(step) => write!(f, "the file step {step} failed"),
             BackupError::Tool(tool) => write!(f, "{tool} failed"),
+            BackupError::TargetNotReached => {
+                write!(f, "the archive ends before the restore target")
+            }
         }
     }
 }
@@ -221,6 +230,17 @@ pub fn backup_label_start(label: &[u8]) -> Result<WalName, BackupError> {
     wal::start_segment(label)
 }
 
+/// The start segment and the start location a `backup_label` names.
+/// Fuzzed (`wal_name_parse`).
+///
+/// # Errors
+///
+/// [`BackupError::Malformed`] when no `START WAL LOCATION` line names
+/// both.
+pub fn backup_label_location(label: &[u8]) -> Result<(WalName, u64), BackupError> {
+    wal::start_location(label)
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -247,13 +267,17 @@ pub enum Command {
         /// Where to write it.
         path: PathBuf,
     },
-    /// `restore <data dir> [<backup id> <size>]`.
+    /// `restore <data dir> [<backup id> <size>] [--to <unix seconds>]`.
     Restore {
         /// The new data directory.
         data_dir: PathBuf,
         /// The backup id and its plaintext size, or the newest of the
-        /// index.
+        /// index that suits the target.
         backup: Option<([u8; 16], u64)>,
+        /// The point in time to restore to, in Unix seconds, or the
+        /// newest archived point (ADR-012 record of lane
+        /// `m10/backup-pitr`).
+        target: Option<u64>,
     },
     /// `custodian-init`, on a second custodian: create `custodian.key`
     /// and `custodian.pub` in the credentials directory (ADR-012 record
@@ -288,16 +312,27 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
             name: name.clone(),
             path: PathBuf::from(path),
         }),
-        [c, dir] if c == "restore" => Ok(Command::Restore {
-            data_dir: PathBuf::from(dir),
-            backup: None,
-        }),
-        [c, dir, id, size] if c == "restore" => {
-            let id = index::parse_hex16(id).map_err(|_| usage)?;
-            let size = size.parse::<u64>().map_err(|_| usage)?;
+        [c, dir, rest @ ..] if c == "restore" => {
+            // ADR-012 record of lane `m10/backup-pitr`: an optional
+            // `--to <unix seconds>` after the other forms.
+            let (rest, target) = match rest {
+                [r @ .., flag, secs] if flag == "--to" => {
+                    (r, Some(index::decimal(secs).map_err(|_| usage)?))
+                }
+                r => (r, None),
+            };
+            let backup = match rest {
+                [] => None,
+                [id, size] => Some((
+                    index::parse_hex16(id).map_err(|_| usage)?,
+                    size.parse::<u64>().map_err(|_| usage)?,
+                )),
+                _ => return Err(usage),
+            };
             Ok(Command::Restore {
                 data_dir: PathBuf::from(dir),
-                backup: Some((id, size)),
+                backup,
+                target,
             })
         }
         [c] if c == "custodian-init" => Ok(Command::CustodianInit),
@@ -391,18 +426,28 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
                 let secret = open_group_secret(&agent, &cfg).await?;
                 agent.restore_wal(&secret, name, path).await
             }
-            Command::Restore { data_dir, backup } => {
-                let entry = match backup {
-                    Some((id, size)) => index::IndexEntry {
+            Command::Restore {
+                data_dir,
+                backup,
+                target,
+            } => {
+                // ADR-012 record of lane `m10/backup-pitr`: the named
+                // backup, or each backup of the index that finished before
+                // the target, newest first.
+                let entries = match backup {
+                    Some((id, size)) => vec![index::IndexEntry {
                         cluster: cfg.cluster,
                         backup: *id,
                         at: 0,
                         size: *size,
-                    },
-                    None => index::newest(&cfg.state_dir, cfg.cluster)?,
+                    }],
+                    None => index::before(&cfg.state_dir, cfg.cluster, *target)?,
                 };
                 let secret = open_group_secret(&agent, &cfg).await?;
-                agent.restore(&secret, &entry, data_dir).await.map(|_| ())
+                agent
+                    .restore_to(&secret, &entries, data_dir, *target)
+                    .await?;
+                recovery::check(&cfg.pg_bindir, data_dir, *target)
             }
         }
     })
@@ -539,7 +584,8 @@ mod tests {
             parse_args(&s(&["restore", "/d", &"ab".repeat(16), "12"])).unwrap(),
             Command::Restore {
                 data_dir: PathBuf::from("/d"),
-                backup: Some(([0xab; 16], 12))
+                backup: Some(([0xab; 16], 12)),
+                target: None,
             }
         );
         for bad in [
@@ -556,6 +602,53 @@ mod tests {
             assert_eq!(
                 parse_args(&s(bad)).unwrap_err(),
                 BackupError::Config("arguments")
+            );
+        }
+    }
+
+    /// ADR-012 record of lane `m10/backup-pitr`: `restore` takes an
+    /// optional `--to <unix seconds>` after either form, in one spelling,
+    /// and the forms without it are unchanged.
+    #[test]
+    fn adr012_pitr_binary_takes_a_target() {
+        let id = "ab".repeat(16);
+        assert_eq!(
+            parse_args(&s(&["restore", "/d"])).unwrap(),
+            Command::Restore {
+                data_dir: PathBuf::from("/d"),
+                backup: None,
+                target: None,
+            }
+        );
+        assert_eq!(
+            parse_args(&s(&["restore", "/d", "--to", "1795514400"])).unwrap(),
+            Command::Restore {
+                data_dir: PathBuf::from("/d"),
+                backup: None,
+                target: Some(1_795_514_400),
+            }
+        );
+        assert_eq!(
+            parse_args(&s(&["restore", "/d", &id, "12", "--to", "7"])).unwrap(),
+            Command::Restore {
+                data_dir: PathBuf::from("/d"),
+                backup: Some(([0xab; 16], 12)),
+                target: Some(7),
+            }
+        );
+        for bad in [
+            &["restore", "/d", "--to"][..],
+            &["restore", "/d", "--to", "07"],
+            &["restore", "/d", "--to", "+7"],
+            &["restore", "/d", "--to", "2026-11-24T10:00:00Z"],
+            &["restore", "/d", "--to", "7", "x"],
+            &["restore", "/d", "--at", "7"],
+            &["restore", "/d", &id, "--to", "7"],
+        ] {
+            assert_eq!(
+                parse_args(&s(bad)).unwrap_err(),
+                BackupError::Config("arguments"),
+                "{bad:?}"
             );
         }
     }

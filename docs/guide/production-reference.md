@@ -504,17 +504,19 @@ Stop the server that will use the restored directory. Then, as root:
 ```sh
 FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored
 FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored <backup id> <size>
+FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored --to <unix seconds>
 ```
 
-- The first form takes the newest backup in the local index. The second names one from an index line.
+- The first form takes the newest backup in the local index. The second names one from an index line. The third restores to a point in time: it takes the newest backup that finished before that time (ADR-012 record of lane `m10/backup-pitr`).
 - The directory must be new or empty.
-- The command checks every part, extracts the tar with the host's `tar`, and fetches each archived segment from the backup's start into `pg_wal`, until the next one is absent.
-- Give the directory to the `postgres` user and start PostgreSQL on it. It replays the fetched WAL, so the copy reaches the newest archived position.
-- Then follow the restore rule of ADR-012: the cell verifies its chain against the witness, and lost receipted entries are reported, never hidden.
+- The command checks every part and extracts the tar with the host's `tar`. It fetches every timeline history file of the archive, and each archived segment from the backup's start along the latest timeline, into `pg_wal`, until no timeline holds the next one.
+- It writes `recovery.signal` and the recovery settings into `postgresql.auto.conf`. It then runs PostgreSQL once on the directory, as `postgres`, to check that the target (or, with no target, a consistent state) is reached. That run stops without promoting, and its PostgreSQL log is kept in `<dir>.check.log`.
+- Give the directory to the `postgres` user and start PostgreSQL on it with its normal configuration. It replays the fetched WAL, promotes onto a new timeline above every timeline in the archive, and archives that timeline's history file.
+- Then follow the restore rule of ADR-012: the cell verifies its chain against the witness. Today a cell or vault that misses more than one receipted entry refuses to start (ADR-012 record of lane `m10/backup-pitr`).
 
-For archive recovery driven by PostgreSQL itself, `restore_command = 'FSTP_BACKUP_CONFIG=... fstp-backup wal-restore %f %p'` fetches one file and exits with status 1 when the bucket lacks it. It opens the key through the console socket, so it must run as root. Interim, pending Daniel: the pilot has no continuous standby, and a restore across a timeline switch is not built.
+For archive recovery driven by PostgreSQL itself, `restore_command = 'FSTP_BACKUP_CONFIG=... fstp-backup wal-restore %f %p'` fetches one file and exits with status 1 when the bucket lacks it. It opens the key through the console socket, so it must run as root. Interim, pending Daniel: the pilot has no continuous standby.
 
-Exit status: 0 on success, 2 for a refused configuration or argument, 1 for any other failure. No line names a secret.
+Exit status: 0 on success, 2 for a refused configuration or argument, 3 when the archive holds no change after the target, 1 for any other failure. No line names a secret.
 
 ### Second custodian
 
