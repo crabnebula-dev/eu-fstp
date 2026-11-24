@@ -9,7 +9,7 @@
 //! fstp-admin start | stop               every service, in order
 //! fstp-admin renew                      certificates near their end, and the route pins
 //! fstp-admin backup | restore           base backups of both databases
-//! fstp-admin backup-keys <dir>          the off-host copy of the custody entries
+//! fstp-admin backup-keys <dir>          the off-host copy of the custody entries and their passphrases
 //! fstp-admin pair-custodian <host>      pair the second custodian (once, on the pilot)
 //! fstp-admin custodian <file>           install the second custodian (on its machine)
 //! fstp-admin restore-keys <dir>         after a host loss: put the keys back
@@ -61,7 +61,7 @@ pub fn usage() {
         "  renew                      renew certificates near their end and update the route",
         "  backup                     back up both databases now",
         "  restore                    restore both databases from their newest backups",
-        "  backup-keys <dir>          copy the sealed keys off the host, for example to a USB stick",
+        "  backup-keys <dir>          copy the sealed keys and their passphrases off the host, for example to a USB stick",
         "  pair-custodian <host>      pair this host with its second custodian (once)",
         "  custodian <file>           on the custodian machine: install it from the pairing file",
         "  restore-keys <dir>         after losing a host: put the keys back from the copies or the custodian",
