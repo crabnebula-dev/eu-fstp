@@ -307,6 +307,13 @@ pub fn is_guarded(bytes: &[u8]) -> bool {
     bytes.get(0..4) == Some(b"FGC1".as_slice())
 }
 
+/// The entries `backup-keys` copies: the list `restore-keys` requires
+/// (ADR-028 record of lane `m10/guard-key`, part 3).
+#[must_use]
+pub fn backup_entries(route_feed: bool) -> Vec<Entry> {
+    crate::custodian::copy_entries(route_feed)
+}
+
 /// `fstp-admin backup-keys <dest>`: one passphrase-sealed copy per custody
 /// entry, each with its copy id in `<entry>.fkx.id`, and the sealed key
 /// files beside them (ADR-028 "Simple key backup", lane L16). Each entry
@@ -342,7 +349,7 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
     crate::custodian::private_dir(dest).map_err(io(step))?;
     let m = Manager::new(layout);
     let mut guarded = true;
-    for e in Entry::ALL {
+    for e in backup_entries(crate::route::ROUTE_FEED) {
         let file = dest.join(format!("{}.fkx", e.name()));
         let services = stack::keyd(layout, e);
         for s in &services {
