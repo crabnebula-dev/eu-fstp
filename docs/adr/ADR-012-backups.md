@@ -366,6 +366,7 @@ Written before the code. Daniel decided on 2026-11-24 that backup is mission cri
 | Waiting for the promotion | After starting each restored cluster, `fstp-admin` waits until `pg_is_in_recovery()` is false, at most one hour. It then resets the recovery settings with `ALTER SYSTEM RESET`, so no later standby inherits them | Item 1 |
 | Fresh base backup | After the keystores and the start of the services, `fstp-admin` runs `fstp-backup base-backup` for both clusters, also when a service did not start. A failed backup is reported and does not undo the restore | Item 4 |
 | Witness and lost entries | See "What a restored cell does at the witness" below | I-24; ADR-010 |
+| Scratch restores | A restore drill or any scratch copy must start PostgreSQL with `archive_mode = off`. Otherwise its promotion archives a history file, and every later restore follows that abandoned timeline as the latest one. Lane `m10/backup-health` owns the drill | Item 2 |
 | Ownership | Container, seal, key file, S3 and configuration code stay unchanged. Every fetch and open of a WAL or history file goes through `Agent::fetch_wal`, so lane `m10/backup-format` has one place to change | Coordination of 2026-11-24 |
 
 ### What a restored cell does at the witness
