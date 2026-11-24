@@ -185,6 +185,16 @@ pub fn preflight(layout: &Layout) -> Result<(), Fail> {
             &b.secret_key_file,
             "the object store secret key (backup.secret_key_file)",
         )?;
+        for c in &b.copies {
+            need_file(
+                &c.access_key_file,
+                "the access key id of a further object store (backup.copies)",
+            )?;
+            need_file(
+                &c.secret_key_file,
+                "the secret key of a further object store (backup.copies)",
+            )?;
+        }
     }
     Ok(())
 }

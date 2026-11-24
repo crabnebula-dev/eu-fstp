@@ -271,18 +271,30 @@ pub fn backup(l: &Layout, c: Cluster, cluster_id: &str) -> Option<String> {
         Cluster::App => Entry::Cell,
         Cluster::Vault => Entry::Vault,
     };
+    // ADR-012 record of lane m10/backup-format: every store, in order.
+    let store = |bucket: &str, endpoint: &str, port: u16, region: &str| {
+        format!(
+            "{{\"bucket\":{},\"endpoint\":{},\"port\":{port},\"region\":{}}}",
+            quote(bucket),
+            quote(endpoint),
+            quote(region)
+        )
+    };
+    let mut stores = vec![store(&b.bucket, &b.endpoint, b.port, &b.region)];
+    for s in &b.copies {
+        stores.push(store(&s.bucket, &s.endpoint, s.port, &s.region));
+    }
     Some(format!(
         "{{\"cluster\":\"{cluster_id}\",\"credentials_dir\":{},\"database\":{{\"host\":\"127.0.0.1\",\"port\":{}}},\
-         \"keyd_socket\":{},\"object_store\":{{\"bucket\":{},\"endpoint\":{},\"port\":{},\"region\":{}}},\
-         \"pg_bindir\":{},\"state_dir\":{}}}\n",
+         \"keyd_socket\":{},\"object_stores\":[{}],\
+         \"pg_bindir\":{},\"retention\":{{\"keep_days\":{},\"keep_min\":{}}},\"state_dir\":{}}}\n",
         p(&l.creds(&format!("backup-{}", c.name()))),
         l.pg_port(c),
         p(&l.keyd_socket(entry, "console")),
-        quote(&b.bucket),
-        quote(&b.endpoint),
-        b.port,
-        quote(&b.region),
+        stores.join(","),
         p(&l.cfg.paths.pg_bin),
+        b.keep_days,
+        b.keep_min,
         p(&l.backup_state(c)),
     ))
 }
@@ -315,6 +327,39 @@ mod tests {
             ticket_key: Some("cd".repeat(32)),
             assets: true,
             edge_id: None,
+        }
+    }
+
+    /// Q25, ADR-012 record of lane m10/backup-format: the backup agent's
+    /// configuration names every store in order, the first one first, and
+    /// the retention.
+    #[test]
+    fn adr012_backup_config_names_every_store() {
+        let l = Layout::new(
+            decode(
+                br#"{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+                "mail":{"relay":"smtp.example.eu","username":"cell"},
+                "backup":{"endpoint":"s3.gra.io.cloud.ovh.net","region":"gra","bucket":"fstp-b",
+                  "copies":[{"endpoint":"s3.fr-par.scw.cloud","region":"fr-par","bucket":"fstp-c","port":8443}]}}"#,
+            )
+            .unwrap(),
+        );
+        for (layout, n) in [(layout(), 1), (l, 2)] {
+            let text = backup(&layout, Cluster::Vault, &"11".repeat(16)).unwrap();
+            let v = fstp_json::parse(text.as_bytes()).unwrap();
+            let o = v.as_object().unwrap();
+            assert!(o.get("object_store").is_none());
+            let list = o.get("object_stores").unwrap().as_array().unwrap();
+            assert_eq!(list.len(), n);
+            let first = list.first().unwrap().as_object().unwrap();
+            assert_eq!(first.get("bucket").unwrap().as_str(), Some("fstp-b"));
+            if n == 2 {
+                let second = list.get(1).unwrap().as_object().unwrap();
+                assert_eq!(second.get("port").unwrap().as_u64(), Some(8443));
+            }
+            let r = o.get("retention").unwrap().as_object().unwrap();
+            assert_eq!(r.get("keep_days").unwrap().as_u64(), Some(35));
+            assert_eq!(r.get("keep_min").unwrap().as_u64(), Some(5));
         }
     }
 

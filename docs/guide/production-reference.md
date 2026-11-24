@@ -417,7 +417,8 @@ Run one agent per self-operated cluster, so one for the application cluster and 
 
 ### What the operator supplies
 
-- **Bucket.** An OVHcloud Object Storage bucket in an EU region, with object lock and versioning (ADR-005 V14). Set a lifecycle rule for old versions. The agent never deletes an object. Retention is open (Q25).
+- **Bucket.** An OVHcloud Object Storage bucket in an EU region, with object lock and versioning (ADR-005 V14). Set a lifecycle rule for old versions. After each base backup the agent prunes old base backups and their WAL, when the configuration names a `retention` (ADR-012 record of lane m10/backup-format). An object under an object lock stays until its lock ends, and the agent tries again the next night.
+- **Further buckets.** Optional: one or two more buckets, at another provider for example. The agent writes every container to each of them, and a restore takes the first copy that verifies.
 - **Object store credentials.** An access key id and secret, scoped to the bucket where the service allows it (V15).
 - **Replication login.** The role `fstp_repl` on the cluster, with its client certificate, key and password, and the single `pg_hba` line `hostssl replication fstp_repl 127.0.0.1/32 scram-sha-256 clientcert=verify-full` (ADR-005).
 - **Custody.** The `fstp-keyd` console socket, which serves the ClusterBackup chain. Only `init-keys`, `restore` and `wal-restore` use it, and they run as root.
@@ -433,23 +434,27 @@ Write one JSON file per cluster, for example `/etc/fstp/backup-app.json`. It hol
   "state_dir": "/var/lib/fstp-backup/app",
   "pg_bindir": "/usr/lib/postgresql/16/bin",
   "database": {"host": "127.0.0.1", "port": 5432},
-  "object_store": {"endpoint": "s3.<region>.io.cloud.ovh.net", "region": "<region>", "bucket": "<bucket>"},
-  "keyd_socket": "/run/fstp-keyd/console.sock"
+  "object_stores": [{"endpoint": "s3.<region>.io.cloud.ovh.net", "region": "<region>", "bucket": "<bucket>"}],
+  "keyd_socket": "/run/fstp-keyd/console.sock",
+  "retention": {"keep_days": 35, "keep_min": 5}
 }
 ```
 
 - `database.host` must be a loopback address.
-- `object_store.port` is optional and defaults to 443.
+- `object_stores` lists one to three stores in order. The older member `object_store`, one store, is still read. A store's `port` is optional and defaults to 443.
+- `retention` is optional. Without it the agent prunes nothing. The values 35 days and at least 5 base backups are interim, pending Daniel.
 - `keyd_socket` is needed only for `init-keys` and the restore commands.
 
 The credentials directory holds these files:
 
 | File | Holds | Read by |
 | --- | --- | --- |
-| `s3-access-key-id`, `s3-secret-access-key` | The object store credentials, one line each | Every command |
+| `s3-access-key-id`, `s3-secret-access-key` | The first object store's credentials, one line each | Every command |
 | `s3-ca.pem` | Optional: a CA to trust beside the public roots | Every command |
+| `s3-<n>-access-key-id`, `s3-<n>-secret-access-key`, `s3-<n>-ca.pem` | The same for store `n` from 1, when `object_stores` lists more than one | Every command |
 | `repl.pem`, `repl.key`, `repl.password`, `db-ca.pem` | The `fstp_repl` login and the cluster CA | `base-backup` |
 | `cluster-backup.key` | The ClusterBackup key file, made by `init-keys` | Every command |
+| `cluster-backup-writer.key` | The writer key that signs every container, made by `init-keys` | `wal-archive`, `base-backup` |
 
 `archive_command` runs as the `postgres` OS user, and `base-backup` as the `fstp-backup` OS user. Give each user read access to the files of its commands only. The `fstp_repl` files stay readable by the `fstp-backup` user alone (ADR-005).
 
@@ -461,7 +466,7 @@ Once, as root:
 FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup init-keys
 ```
 
-It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` with mode 0600. It refuses to overwrite an existing key file.
+It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` and `cluster-backup-writer.key` with mode 0600. It refuses to overwrite an existing key file. A key file made before 2026-11-24 has no writer key: `fstp-backup upgrade-keys`, as root, binds one to it, and a base backup should follow at once, since a restore reads only containers of the new form. `fstp-admin setup` does both.
 
 The root of that key lives in this host's `fstp-keyd`. Decided by Daniel on 2026-11-21: a backup must still open after the loss of this host. Two measures carry that, and the pilot uses both. A second custodian on another machine holds its own custody of the ClusterBackup chain ("Second custodian" below). An off-host sealed copy of each `fstp-keyd` entry keeps the App and Vault roots ("Off-host copy of a custody entry" below). The rows inside a backup open only with those roots.
 

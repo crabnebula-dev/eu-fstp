@@ -1,6 +1,7 @@
 //! The in-house S3 client of the subset (ADR-012 "S3 subset", record of
 //! lane L10): `PutObject`, `GetObject`, `HeadObject` and the four
-//! multipart calls. No delete call and no listing call exist.
+//! multipart calls, and `DeleteObject` for pruning only (record of lane
+//! m10/backup-format). No listing call exists.
 //!
 //! It runs over `fstp-http` and `fstp-tls`. Each request is signed with
 //! SigV4 ([`crate::sigv4`]) and carries the SHA-256 of its body. URLs are
@@ -58,6 +59,15 @@ pub fn key_ok(key: &str) -> bool {
         && key
             .split('/')
             .all(|s| !s.is_empty() && s != "." && s != "..")
+}
+
+/// What [`S3Client::delete_object`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Deleted {
+    /// The object is gone, or was never there.
+    Gone,
+    /// The store refused, for example under an object lock.
+    Held,
 }
 
 /// An S3 client of one endpoint and bucket.
@@ -270,6 +280,26 @@ impl<R: Runtime> S3Client<R> {
             200 => Ok(true),
             404 => Ok(false),
             _ => Err(BackupError::S3Status(status)),
+        }
+    }
+
+    /// `DeleteObject`, for pruning only (ADR-012 record of lane
+    /// m10/backup-format). [`Deleted::Gone`] for 204, 200 or 404.
+    /// [`Deleted::Held`] for any other 4xx answer, such as `AccessDenied`
+    /// from an object lock: a held object is not a failure.
+    ///
+    /// # Errors
+    ///
+    /// [`BackupError::Transport`] or [`BackupError::S3Status`] for a
+    /// request that did not complete or a 5xx answer.
+    pub async fn delete_object(&self, key: &str) -> Result<Deleted, BackupError> {
+        let (status, _, body) = self
+            .send(Method::DELETE, key, &[], Vec::new(), None)
+            .await?;
+        match status {
+            200 | 204 | 404 => Ok(Deleted::Gone),
+            400..=499 => Ok(Deleted::Held),
+            _ => Err(refusal(status, &body)),
         }
     }
 

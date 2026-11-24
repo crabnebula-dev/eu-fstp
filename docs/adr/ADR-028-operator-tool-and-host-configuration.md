@@ -192,3 +192,16 @@ Written before the code. Daniel decided on 2026-11-24 that backup is mission cri
 | Check-only commands | `fstp-cell check-keystore <port>` and `fstp-vault check-keystore <port>`, run as each service's user with its own configuration, the port replaced. They never write (ADR-012 record of lane m10/backup-health, row "Check: keystore") | ADR-028 "No service library in `fstp-admin`" |
 
 Tests: `adr028_bh_status_names_the_wal_archive_and_the_drill` and `adr028_bh_backup_health_reaches_the_host_status_file` in `fstp-admin`; the new cases of `r_nf_02_host_status_round_trips` and `r_nf_02_host_status_refuses_bad_input` in `fstp-obs`; `adr028_l20_host_status_read_states` in `fstp-cell`; `r_nf_02_system_reply_holds_no_free_text` in `fstp-access`; `adr028_bh_archive_and_drill_rows` in `web/test/l20_system_page.test.ts`.
+
+## Record of lane m10/backup-format, 2026-11-24: backup copies, retention and the writer key
+
+Written before the code. Daniel decided on 2026-11-24 that backups go to every configured object store and that retention comes from `fstp.json` (ADR-012 record of lane m10/backup-format). The member names and defaults are this lane's, interim, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Further stores | `backup.copies`: a list of one or two further object stores, each with `endpoint`, `region`, `bucket`, and optionally `port` (443), `access_key_file` and `secret_key_file`. Copy `n` from 1 takes its key files from `<etc>/s3-<n>-access-key-id` and `<etc>/s3-<n>-secret-access-key` by default. Without `copies`, the one store of `backup` is the only one, as before | ADR-012 "Copies and the second provider" |
+| Agent configuration | `setup` writes `object_stores`, the list of every store in order, into `backup-<cluster>.json`, and copies each store's key files into the agent's credentials directory, store `n` as `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`. The cell's and the vault's keystore snapshots keep the first store only | ADR-012 record of lane m10/backup-format |
+| Writer key | `setup` runs `fstp-backup init-keys`, which now also writes `cluster-backup-writer.key`. When a key file exists without a writer key, `setup` runs `fstp-backup upgrade-keys` and then a base backup at once. Both key files are `root:postgres`, mode 0640 | F-043; F-044 |
+| Retention | `backup.keep_days` (1 to 3650) and `backup.keep_min` (1 to 1000). Interim, pending Daniel: 35 days and at least 5 base backups by default. `setup` writes them into `backup-<cluster>.json` as `retention`, so the nightly `fstp-admin backup` prunes after each base backup. A value out of range names the member | ADR-012 record of lane m10/backup-format, row "Retention values" |
+
+Tests: `adr028_backup_takes_further_stores_as_copies` and `adr028_backup_retention_has_defaults_and_ranges` in `fstp_admin::config`, and `adr012_backup_config_names_every_store` in `fstp_admin::render`.

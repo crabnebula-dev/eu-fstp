@@ -14,7 +14,8 @@
 //! shipped sources. A new `composite::verify*` call site that no row
 //! names fails it, so a new verifier cannot skip the sweep. Lane C2 added
 //! the notice companion row. Lane m3/erase-cell added the cell erasure
-//! confirmation row.
+//! confirmation row. Lane m10/backup-format added the backup key file
+//! binding and the backup container rows.
 //!
 //! The layout is draft 19 section 4.3: `mldsaSig || tradSig`. Code outside
 //! `fstp-crypto` splits it with `composite::MLDSA_SIGNATURE_LEN` (I-75).
@@ -74,7 +75,7 @@ struct Verifier {
 /// Every composite verifier of the platform. A shipped file with a
 /// `composite::verify*` call that no row names fails
 /// [`i90_every_composite_verify_call_site_is_in_the_table`].
-const VERIFIERS: [Verifier; 9] = [
+const VERIFIERS: [Verifier; 11] = [
     Verifier {
         name: "audit anchor (fstp_audit::anchor::anchor_signature_verifies)",
         site: "crates/fstp-audit/src/anchor.rs",
@@ -128,6 +129,18 @@ const VERIFIERS: [Verifier; 9] = [
         site: "crates/fstp-edge/src/feed.rs",
         sign: route_table_sign,
         verify: route_table_verify,
+    },
+    Verifier {
+        name: "backup key file binding (fstp_backup::writer::binding_verifies)",
+        site: "crates/fstp-backup/src/writer.rs",
+        sign: backup_binding_sign,
+        verify: backup_binding_verify,
+    },
+    Verifier {
+        name: "backup container (fstp_backup::writer::container_signature_verifies)",
+        site: "crates/fstp-backup/src/writer.rs",
+        sign: backup_container_sign,
+        verify: backup_container_verify,
     },
 ];
 
@@ -355,6 +368,42 @@ fn route_table_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
 fn route_table_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
     fstp_edge::encode_signed_route_table(&route_table_body(v), sig)
         .is_ok_and(|bytes| fstp_edge::verify_route_table(&[pk.to_vec()], &bytes).is_ok())
+}
+
+/// The key file bytes of variant `v` that a binding signature covers
+/// (ADR-012 record of lane m10/backup-format, F-044).
+fn backup_binding_message(v: u8) -> Vec<u8> {
+    let mut m = b"fstp-cluster-backup-v2".to_vec();
+    m.extend_from_slice(&[v; 16 + 16 + 4 + 8 + 1216 + 1984]);
+    m
+}
+
+fn backup_binding_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
+    fstp_backup::writer::sign_binding(key, &backup_binding_message(v))
+        .unwrap()
+        .to_vec()
+}
+
+fn backup_binding_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
+    fstp_backup::writer::binding_verifies(pk, &backup_binding_message(v), sig)
+}
+
+/// The container bytes of variant `v` that a container signature covers
+/// (F-043).
+fn backup_container_body(v: u8) -> Vec<u8> {
+    let mut b = b"FBC2".to_vec();
+    b.extend_from_slice(&[v; 300]);
+    b
+}
+
+fn backup_container_sign(key: &CompositeSigningKey, v: u8) -> Vec<u8> {
+    fstp_backup::writer::sign_container(key, &backup_container_body(v))
+        .unwrap()
+        .to_vec()
+}
+
+fn backup_container_verify(pk: &[u8], v: u8, sig: &[u8]) -> bool {
+    fstp_backup::writer::container_signature_verifies(pk, &backup_container_body(v), sig)
 }
 
 // ------------------------------------------------------------- the sweep

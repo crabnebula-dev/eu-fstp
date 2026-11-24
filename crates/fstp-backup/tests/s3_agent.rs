@@ -77,11 +77,18 @@ fn setup() -> Setup {
     let rt = rt();
     let fake = FakeS3::start(&rt, AK, SK, REGION, BUCKET);
     let custody = MemCustody::default();
-    let key_file = rt.block_on(keyfile::create(&custody, CLUSTER)).unwrap();
+    let created = rt.block_on(keyfile::create(&custody, CLUSTER)).unwrap();
+    let key_file = created.key_file.clone();
     let state = temp_dir("state");
-    let agent = Agent::new(client(&rt, &fake, SK), CLUSTER, &key_file, &state)
-        .unwrap()
-        .with_limits(SMALL);
+    let agent = Agent::new(
+        client(&rt, &fake, SK),
+        CLUSTER,
+        &key_file,
+        Some(&created.writer_key),
+        &state,
+    )
+    .unwrap()
+    .with_limits(SMALL);
     Setup {
         rt,
         fake,
@@ -346,7 +353,9 @@ fn adr012_restore_checks_parts_and_size() {
         ..entry
     };
     for (e, want) in [
-        (longer, BackupError::NotFound),
+        // F-043: the last part says it is the last, so a size the parts
+        // do not reach is refused without asking for another part.
+        (longer, BackupError::Malformed("base backup size")),
         (shorter, BackupError::Malformed("base backup size")),
         (other, BackupError::NotFound),
     ] {
@@ -395,8 +404,9 @@ fn i81_destroyed_cluster_root_leaves_every_backup_unreadable() {
     let other = fstp_crypto::hybrid_kem::generate().unwrap();
     let object =
         s.fake.state.objects.lock().unwrap()[&s.agent.base_object(entry.backup, 0)].clone();
+    let writer = *f.writer_public().unwrap();
     assert_eq!(
-        fstp_backup::open_container(&other, &object).unwrap_err(),
+        fstp_backup::open_object(&other, &writer, &object).unwrap_err(),
         BackupError::OpenFailed
     );
     let _ = std::fs::remove_dir_all(&s.state);
@@ -409,7 +419,8 @@ fn i81_destroyed_cluster_root_leaves_every_backup_unreadable() {
 fn i80_key_file_holds_no_open_key() {
     let rt = rt();
     let custody = MemCustody::default();
-    let bytes = rt.block_on(keyfile::create(&custody, CLUSTER)).unwrap();
+    let created = rt.block_on(keyfile::create(&custody, CLUSTER)).unwrap();
+    let bytes = created.key_file.clone();
     let f = keyfile::decode(&bytes).unwrap();
     assert_eq!(keyfile::encode(&f).unwrap(), bytes);
     assert_eq!((f.cluster, f.generation, f.epoch), (CLUSTER, 1, 1));
@@ -435,6 +446,7 @@ fn i80_key_file_holds_no_open_key() {
             client(&rt, &FakeS3::start(&rt, AK, SK, REGION, BUCKET), SK),
             [1; 16],
             &bytes,
+            Some(&created.writer_key),
             &std::env::temp_dir()
         )
         .is_err()

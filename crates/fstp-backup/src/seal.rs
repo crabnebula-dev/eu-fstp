@@ -113,7 +113,7 @@ pub struct Opened {
     pub plaintext: Vec<u8>,
 }
 
-fn context(kind: ContainerKind, group: &GroupRef, container: [u8; 16]) -> SealContext {
+pub(crate) fn context(kind: ContainerKind, group: &GroupRef, container: [u8; 16]) -> SealContext {
     SealContext {
         cell: CellId(group.owner),
         chain: kind.chain(),
@@ -125,7 +125,7 @@ fn context(kind: ContainerKind, group: &GroupRef, container: [u8; 16]) -> SealCo
 }
 
 /// The AAD of chunk `index` (ADR-012): header, index, final flag.
-fn chunk_aad(header: &[u8], index: u64, last: bool) -> Vec<u8> {
+pub(crate) fn chunk_aad(header: &[u8], index: u64, last: bool) -> Vec<u8> {
     let mut aad = header.to_vec();
     aad.extend_from_slice(&index.to_be_bytes());
     aad.push(u8::from(last));

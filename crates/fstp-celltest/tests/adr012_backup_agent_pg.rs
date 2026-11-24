@@ -450,10 +450,17 @@ fn run_scenario() -> Report {
         format!("{SK}\n").as_bytes(),
     );
     write_private(&creds.join("s3-ca.pem"), fake_s3::CA_PEM);
-    let key_file = rt
+    let created = rt
         .block_on(fstp_backup::keyfile::create(&custody, cluster_id))
         .unwrap();
-    write_private(&creds.join(fstp_backup::keyfile::KEY_FILE), &key_file);
+    write_private(
+        &creds.join(fstp_backup::keyfile::KEY_FILE),
+        &created.key_file,
+    );
+    write_private(
+        &creds.join(fstp_backup::writer::WRITER_FILE),
+        &created.writer_key,
+    );
     let cfg_text = format!(
         r#"{{"cluster": "{}", "credentials_dir": "{}", "state_dir": "{}", "pg_bindir": "{}",
             "database": {{"host": "127.0.0.1", "port": {}}},
@@ -481,6 +488,15 @@ fn run_scenario() -> Report {
         fstp_backup::index::newest(&cfg.state_dir, cluster_id).unwrap(),
         entry
     );
+    // ADR-012 record of lane m10/backup-format, row "Start segment": the
+    // index line names the start segment read from the real tar stream's
+    // `backup_label`, which pruning needs.
+    let line = *fstp_backup::index::read_lines(&cfg.state_dir)
+        .unwrap()
+        .last()
+        .unwrap();
+    assert!(line.start.is_some(), "no start segment in the index line");
+    assert!(line.parts.is_some());
 
     // Copy A: the archive up to now.
     let head_a = live_head(&world);

@@ -190,9 +190,16 @@ fn adr004_snapshot_key_files_decode_only_under_their_magic() {
     let rt = rt();
     let custody = MemCustody::default();
     for kind in FileKind::ALL {
-        let bytes = rt
-            .block_on(keyfile::create_kind(&custody, CELL, kind))
-            .unwrap();
+        // The version 2 group key file comes with its writer key, from
+        // `create` (record of lane m10/backup-format).
+        let bytes = if kind == FileKind::ClusterBackup {
+            rt.block_on(keyfile::create(&custody, CELL))
+                .unwrap()
+                .key_file
+        } else {
+            rt.block_on(keyfile::create_kind(&custody, CELL, kind))
+                .unwrap()
+        };
         for other in FileKind::ALL {
             assert_eq!(
                 keyfile::decode_kind(&bytes, other).is_ok(),

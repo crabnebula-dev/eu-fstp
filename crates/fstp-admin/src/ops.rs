@@ -19,6 +19,11 @@ use crate::svc::{Manager, RunFail, run_logged, run_ok};
 /// The replication role of every cluster (ADR-005, `HBA_REPLICATION_LINE`).
 pub const REPL_ROLE: &str = "fstp_repl";
 
+/// The backup agent's key file (ADR-012 record of lane L10).
+const KEY_FILE: &str = "cluster-backup.key";
+/// The backup agent's writer key (ADR-012 record of lane m10/backup-format).
+const WRITER_FILE: &str = "cluster-backup-writer.key";
+
 fn io(step: &'static str) -> impl Fn(std::io::Error) -> Fail {
     move |_| Fail::Step(step, Cause::Io)
 }
@@ -51,10 +56,21 @@ pub fn setup_backups(
         let dir = layout.creds(&format!("backup-{}", c.name()));
         std::fs::create_dir_all(&dir).map_err(io(step))?;
         std::fs::create_dir_all(layout.backup_state(c)).map_err(io(step))?;
-        for (from, to) in [
-            (&b.access_key_file, "s3-access-key-id"),
-            (&b.secret_key_file, "s3-secret-access-key"),
-        ] {
+        // ADR-012 record of lane m10/backup-format: store `n` from 1 takes
+        // `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`.
+        let mut files = vec![
+            (b.access_key_file.clone(), "s3-access-key-id".to_owned()),
+            (b.secret_key_file.clone(), "s3-secret-access-key".to_owned()),
+        ];
+        for (i, s) in b.copies.iter().enumerate() {
+            let n = i.saturating_add(1);
+            files.push((s.access_key_file.clone(), format!("s3-{n}-access-key-id")));
+            files.push((
+                s.secret_key_file.clone(),
+                format!("s3-{n}-secret-access-key"),
+            ));
+        }
+        for (from, to) in &files {
             let bytes = std::fs::read(from).map_err(io(step))?;
             write_atomic(&dir.join(to), &bytes, 0o640).map_err(io(step))?;
         }
@@ -109,17 +125,37 @@ pub fn setup_backups(
             d.arg("0750").arg(&dir);
             run_ok(&mut d, &m.log()).map_err(|e| Fail::Step(step, e.into()))?;
         }
-        if !dir.join("cluster-backup.key").is_file() {
+        // ADR-012 record of lane m10/backup-format: the key file is bound
+        // to the agent's writer key. A key file from before that lane has
+        // no writer key, so `upgrade-keys` binds one, and a base backup
+        // follows at once, so a restore never needs an older container.
+        let mut fresh_base = false;
+        let key_files = [KEY_FILE, WRITER_FILE];
+        if !dir.join(KEY_FILE).is_file() {
             let mut cmd = Command::new(layout.bin("fstp-backup"));
             let (k, v) = backup_env(layout, c);
             cmd.env(k, v).arg("init-keys");
             run_ok(&mut cmd, &m.log()).map_err(|e| Fail::Step(step, e.into()))?;
-            if layout.cfg.services == Services::Systemd {
+            did = true;
+        } else if !dir.join(WRITER_FILE).is_file() {
+            let mut cmd = Command::new(layout.bin("fstp-backup"));
+            let (k, v) = backup_env(layout, c);
+            cmd.env(k, v).arg("upgrade-keys");
+            run_ok(&mut cmd, &m.log()).map_err(|e| Fail::Step(step, e.into()))?;
+            fresh_base = true;
+            did = true;
+        }
+        if layout.cfg.services == Services::Systemd {
+            // archive_command runs as postgres and signs with the writer
+            // key: both files are root:postgres, mode 0640.
+            for name in key_files {
+                let mut g = Command::new("chown");
+                g.arg("root:postgres").arg(dir.join(name));
+                run_ok(&mut g, &m.log()).map_err(|e| Fail::Step(step, e.into()))?;
                 let mut g = Command::new("chmod");
-                g.arg("0640").arg(dir.join("cluster-backup.key"));
+                g.arg("0640").arg(dir.join(name));
                 run_ok(&mut g, &m.log()).map_err(|e| Fail::Step(step, e.into()))?;
             }
-            did = true;
         }
         if crate::pg::enable_archive(layout, c, &backup_env(layout, c).1)
             .map_err(|e| Fail::Step(step, e.into()))?
@@ -128,6 +164,17 @@ pub fn setup_backups(
             m.stop(&s).map_err(|e| Fail::Step(step, e.into()))?;
             m.ensure(&s).map_err(|e| Fail::Step(step, e.into()))?;
             did = true;
+        }
+        if fresh_base {
+            let mut cmd = Command::new(layout.bin("fstp-backup"));
+            let (k, v) = backup_env(layout, c);
+            cmd.env(k, v).arg("base-backup");
+            run_ok(&mut cmd, &m.log()).map_err(|e| Fail::Step(step, e.into()))?;
+            out(&[
+                Part::T("  done     a fresh base backup of the "),
+                Part::T(c.name()),
+                Part::T(" database in the new backup format"),
+            ]);
         }
     }
     m.timer(
