@@ -28,6 +28,7 @@ pub mod archive;
 pub mod cellcmd;
 pub mod config;
 pub mod custodian;
+pub mod declare;
 pub mod drill;
 pub mod fail;
 pub mod layout;

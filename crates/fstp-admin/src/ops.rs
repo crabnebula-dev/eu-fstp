@@ -285,10 +285,10 @@ fn confirm_loss(t: u64, now: u64) -> Result<(), Fail> {
         Part::T(", in both databases."),
     ]);
     out(&[Part::T(
-        "The audit witness holds receipts for the entries of that window. Today the cell and the vault refuse to start while receipted entries are missing, until a declared restore is built (ADR-012).",
+        "The audit witness holds receipts for the entries of that window. fstp-admin declares the restore at the witness, so the cell and the vault start again.",
     )]);
     out(&[Part::T(
-        "Tenant admins see nothing of the lost window yet. Tell them yourself, with the two times above.",
+        "The lost window stays in the audit log. Tenant admins see it on the System page and are asked to acknowledge it.",
     )]);
     out(&[Part::T(
         "Both databases are restored, or neither, and the current ones are kept beside them.",
@@ -353,7 +353,8 @@ pub fn restore_args(fresh: &Path, target: Option<u64>) -> Vec<std::ffi::OsString
 /// restored and checked in fresh directories. Only when both succeed are
 /// both swapped in, and the old ones stay beside them. Then each restored
 /// cluster promotes, each process keeps the newest copy of its keys that
-/// opens, the services start, and a fresh base backup of both runs.
+/// opens, both audit chains are declared at the witness (ADR-012
+/// record of lane `m10/declared-restore`), the services start, and a fresh base backup of both runs.
 ///
 /// # Errors
 ///
@@ -434,6 +435,17 @@ pub fn restore(layout: &Layout, target: Option<u64>) -> Result<(), Fail> {
         return Err(e);
     }
     restore_keystores(layout, &m)?;
+    // ADR-012 record of lane m10/declared-restore: both chains are
+    // declared at the witness before the services start, so the cell and
+    // the vault start and report the lost window. A failed declaration is
+    // reported after the start, and the services then refuse as before.
+    let declared = declare_restore(layout, &m);
+    match &declared {
+        Ok(()) => out(&[Part::T(
+            "  done     declared the restore of both audit logs at the witness",
+        )]),
+        Err(e) => crate::fail::report(e),
+    }
     let started = start(layout);
     // Decided by Daniel on 2026-11-24: a fresh base backup of both
     // clusters right after the restore, so the next restore starts on the
@@ -447,7 +459,16 @@ pub fn restore(layout: &Layout, target: Option<u64>) -> Result<(), Fail> {
             )]);
         }
     }
-    started
+    started.and(declared)
+}
+
+/// Declares the restore of both chains at the stopped witness (ADR-012
+/// record of lane m10/declared-restore, [`crate::declare`]).
+fn declare_restore(layout: &Layout, m: &Manager) -> Result<(), Fail> {
+    let mut state = crate::state::State::load(&layout.admin_dir().join("state"))
+        .map_err(|_| Fail::Step("declare restore", Cause::Io))?;
+    let cell = crate::setup::cell_id(&mut state)?;
+    crate::declare::declare_both(layout, m, &cell)
 }
 
 /// Swaps both fresh directories in, each live one moved to
