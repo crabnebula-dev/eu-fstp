@@ -37,7 +37,13 @@
 //! databases. So a live view must be quiescent, and the reader takes it
 //! as [`ChainView`] states. A view of a restored or offline copy is read
 //! as it is. A receipted head beyond it is then `Truncated` by design
-//! (ADR-010 open point 8).
+//! (ADR-010 open point 8). A declared restore changes that for the links
+//! it covers: each live prepare beyond its head that was receipted before
+//! it and has no row is listed in [`Verified::lost_in_restore`] as
+//! `LostInRestore { from, to, job }` (ADR-012 record of lane
+//! m10/declared-restore). Without a declaration the verdict stays
+//! `Truncated` or `Deleted`. A declaration signature is checked in step 6
+//! under the pinned witness keys.
 //!
 //! Steps 4 and 5 index the witness log and the anchor rows once each, so
 //! the whole check costs O(N log N) in the number of appends. Step 6
@@ -50,7 +56,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::anchor::{AnchorRow, anchor_signature_verifies, receipt_signature_verifies};
 use crate::chain::{ChainId, Link, RowKind, StoredEntry, StoredRow, genesis, link, stored_hash};
-use crate::witness::WitnessRecord;
+use crate::witness::{Live, WitnessRecord, declaration_signature_verifies};
 use crate::{AuditError, CellId, PUBLIC_KEY_LEN, SIGNATURE_LEN};
 
 /// A change the verifier found.
@@ -134,6 +140,24 @@ pub struct Verified {
     /// verifies with them, so callers and the auditor view must show
     /// them. Reading of lane W2g, for ADR-010.
     pub possible_deletions: Vec<(u64, Link)>,
+    /// The receipted links that a declared restore lost, one window per
+    /// declaration that lost any, in witness order (ADR-012 record of lane
+    /// m10/declared-restore). A chain verifies with them, so callers and
+    /// the auditor view must show them. A declaration only names the
+    /// cause of a loss. It never removes the finding (I-24).
+    pub lost_in_restore: Vec<LostInRestore>,
+}
+
+/// The rows a declared restore lost: `from` to `to`, by `job` (ADR-010
+/// "Verifier", ADR-012 record of lane m10/declared-restore).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LostInRestore {
+    /// The first lost row: the declared head plus one.
+    pub from: u64,
+    /// The highest lost receipted row.
+    pub to: u64,
+    /// The restore job that declared it.
+    pub job: [u8; 16],
 }
 
 /// Everything the verifier reads for one cell and chain.
@@ -289,7 +313,9 @@ fn prepared_heads(view: &ChainView<'_>) -> BTreeSet<(u64, Link)> {
         .iter()
         .filter_map(|w| match w {
             WitnessRecord::Prepare(p) => Some((p.anchor.n, p.anchor.link)),
-            WitnessRecord::Abort { .. } | WitnessRecord::InDoubtAbsent { .. } => None,
+            WitnessRecord::Abort { .. }
+            | WitnessRecord::InDoubtAbsent { .. }
+            | WitnessRecord::RestoreDeclared(_) => None,
         })
         .collect()
 }
@@ -331,12 +357,61 @@ fn anchor_rows(
     Ok(())
 }
 
+/// The links that declared restores lost, and one window per declaration
+/// that lost any (ADR-012 record of lane m10/declared-restore). The log
+/// is read in witness order with the witness's own rule ([`Live`]). At a
+/// declaration of a live head or of genesis, each live prepare beyond the
+/// head with no chain row is covered by it. A declaration of any other
+/// head covers nothing. A link prepared after a declaration is never
+/// covered by it.
+fn restore_losses(
+    view: &ChainView<'_>,
+    link_at: &dyn Fn(u64) -> Option<Link>,
+) -> (BTreeSet<(u64, Link)>, Vec<LostInRestore>) {
+    let mut live = Live::new(view.cell, view.chain);
+    let mut covered = BTreeSet::new();
+    let mut windows = Vec::new();
+    for w in view.witness {
+        if let WitnessRecord::RestoreDeclared(d) = w
+            && live.accepts(&d.fields.head)
+        {
+            let head = d.fields.head.0;
+            let mut to: Option<u64> = None;
+            for (n, l) in live.beyond(head) {
+                if link_at(*n) != Some(*l) {
+                    covered.insert((*n, *l));
+                    to = Some(to.map_or(*n, |t| t.max(*n)));
+                }
+            }
+            if let Some(to) = to {
+                windows.push(LostInRestore {
+                    from: head.saturating_add(1),
+                    to,
+                    job: d.fields.job,
+                });
+            }
+        }
+        live.step(w);
+    }
+    (covered, windows)
+}
+
 /// Step 5: the witness log. Each lookup in the anchor rows is a set
-/// lookup, so the step costs O(N log N) for N witness records.
+/// lookup, so the step costs O(N log N) for N witness records. A missing
+/// link that a declared restore covers is listed in `lost`, never as
+/// `Truncated` or `Deleted`.
 fn witness_log(
     view: &ChainView<'_>,
     link_at: &dyn Fn(u64) -> Option<Link>,
+    lost: &BTreeSet<(u64, Link)>,
 ) -> Result<(), AuditError> {
+    for w in view.witness {
+        if let WitnessRecord::RestoreDeclared(d) = w
+            && d.signature.len() != SIGNATURE_LEN
+        {
+            return tamper(Tamper::BadSignature { n: d.fields.head.0 });
+        }
+    }
     let have = count(view.rows.len());
     let anchored = anchored_heads(view);
     let withdrawn: BTreeSet<(u64, Link)> = view
@@ -346,7 +421,7 @@ fn witness_log(
             WitnessRecord::Abort { n, link } | WitnessRecord::InDoubtAbsent { n, link } => {
                 Some((*n, *link))
             }
-            WitnessRecord::Prepare(_) => None,
+            WitnessRecord::Prepare(_) | WitnessRecord::RestoreDeclared(_) => None,
         })
         .collect();
     let mut covered: u64 = 0;
@@ -372,7 +447,7 @@ fn witness_log(
                 return tamper(Tamper::AnchorMismatch { n });
             }
             covered = covered.max(n);
-        } else if !out {
+        } else if !out && !lost.contains(&(n, l)) {
             if n > have {
                 beyond = Some(beyond.map_or(n, |b| b.max(n)));
             } else {
@@ -397,7 +472,9 @@ fn possible_deletions(view: &ChainView<'_>) -> Vec<(u64, Link)> {
         .iter()
         .filter_map(|w| match w {
             WitnessRecord::InDoubtAbsent { n, link } => Some((*n, *link)),
-            WitnessRecord::Prepare(_) | WitnessRecord::Abort { .. } => None,
+            WitnessRecord::Prepare(_)
+            | WitnessRecord::Abort { .. }
+            | WitnessRecord::RestoreDeclared(_) => None,
         })
         .collect()
 }
@@ -424,8 +501,15 @@ fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
             .or_insert(row);
     }
     for w in view.witness {
-        let WitnessRecord::Prepare(p) = w else {
-            continue;
+        let p = match w {
+            WitnessRecord::Prepare(p) => p,
+            WitnessRecord::RestoreDeclared(d) => {
+                if !declaration_signature_verifies(view.cell, view.chain, d, view.witness_keys) {
+                    return tamper(Tamper::BadSignature { n: d.fields.head.0 });
+                }
+                continue;
+            }
+            WitnessRecord::Abort { .. } | WitnessRecord::InDoubtAbsent { .. } => continue,
         };
         let head = (p.anchor.n, p.anchor.link);
         if checked.get(&head).is_some_and(|c| *c == p) {
@@ -458,17 +542,24 @@ pub fn verify(view: &ChainView<'_>) -> Result<Verified, AuditError> {
         view.rows.get(i).map(|r| r.link)
     };
     anchor_rows(view, &link_at)?;
-    witness_log(view, &link_at)?;
+    let (lost, lost_in_restore) = restore_losses(view, &link_at);
+    witness_log(view, &link_at, &lost)?;
     signatures(view)?;
     Ok(Verified {
         rows: count(view.rows.len()),
         possible_deletions: possible_deletions(view),
+        lost_in_restore,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, reason = "test code")]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        reason = "test code"
+    )]
 
     use super::*;
 
@@ -506,5 +597,279 @@ mod tests {
             possible_deletions(&view),
             vec![(2, Link([2; 32])), (1, Link([4; 32]))]
         );
+    }
+
+    // ADR-012 record of lane m10/declared-restore: a chain of event rows
+    // with real composite anchors and receipts, a restore that cuts its
+    // tail, and the declarations the witness records.
+
+    use crate::anchor::{RECEIPT_CONTEXT, Receipt, ReceiptFields, receipt_message, sign_anchor};
+    use crate::chain::ChainWriter;
+    use crate::witness::{DeclarationFields, sign_declaration};
+    use crate::{CompositeSigningKey, Tamper};
+
+    struct World {
+        cell: CellId,
+        anchor: CompositeSigningKey,
+        witness: CompositeSigningKey,
+        rows: Vec<StoredRow>,
+        anchors: Vec<AnchorRow>,
+        log: Vec<WitnessRecord>,
+        seq: u64,
+        at: i64,
+    }
+
+    impl World {
+        fn new() -> World {
+            World {
+                cell: CellId([5; 16]),
+                anchor: fstp_crypto::composite::generate().unwrap(),
+                witness: fstp_crypto::composite::generate().unwrap(),
+                rows: Vec::new(),
+                anchors: Vec::new(),
+                log: Vec::new(),
+                seq: 0,
+                at: 1_000,
+            }
+        }
+
+        fn head(&self) -> (u64, Link) {
+            self.rows
+                .last()
+                .map_or((0, crate::chain::genesis(self.cell, ChainId::App)), |r| {
+                    (r.row.n, r.link)
+                })
+        }
+
+        /// One committed batch of `k` event rows under one prepare.
+        fn commit(&mut self, k: usize) {
+            self.at += 10;
+            let (n, l) = self.head();
+            let mut w = ChainWriter::resume(n, l);
+            for i in 0..k {
+                let body = vec![u8::try_from(i).unwrap(); 3];
+                let row = w
+                    .append(
+                        self.cell,
+                        ChainId::App,
+                        self.at,
+                        RowKind::Event { body },
+                        None,
+                    )
+                    .unwrap();
+                self.rows.push(row);
+            }
+            let (n, l) = self.head();
+            let anchor =
+                sign_anchor(&self.anchor, self.cell, ChainId::App, n, &l, self.at).unwrap();
+            self.seq += 1;
+            let fields = ReceiptFields {
+                n,
+                link: l,
+                witness_seq: self.seq,
+                witness_link: Link([u8::try_from(self.seq % 256).unwrap(); 32]),
+                received_at: self.at,
+            };
+            let message = receipt_message(self.cell, ChainId::App, &fields);
+            let signature = self
+                .witness
+                .sign_with_context(&message, RECEIPT_CONTEXT)
+                .unwrap()
+                .to_bytes()
+                .to_vec();
+            let row = AnchorRow {
+                anchor,
+                receipt: Receipt {
+                    cell: self.cell,
+                    chain: ChainId::App,
+                    fields,
+                    signature,
+                },
+            };
+            self.anchors.push(row.clone());
+            self.log.push(WitnessRecord::Prepare(row));
+        }
+
+        /// A restore of the database to row `n`: the witness log stays.
+        fn restore_to(&mut self, n: u64) {
+            self.rows.retain(|r| r.row.n <= n);
+            self.anchors.retain(|a| a.anchor.n <= n);
+        }
+
+        /// The witness records a declaration of `head` by `job`.
+        fn declare_head(&mut self, head: (u64, Link), job: u8) {
+            let lost_to = crate::witness::Live::of(self.cell, ChainId::App, &self.log)
+                .lost_to(&head)
+                .max(head.0);
+            self.seq += 1;
+            let fields = DeclarationFields {
+                head,
+                lost_to,
+                job: [job; 16],
+                witness_seq: self.seq,
+                witness_link: Link([0xD0; 32]),
+                received_at: self.at,
+            };
+            let d = sign_declaration(&self.witness, self.cell, ChainId::App, &fields).unwrap();
+            self.log.push(WitnessRecord::RestoreDeclared(d));
+        }
+
+        fn declare(&mut self, job: u8) {
+            self.declare_head(self.head(), job);
+        }
+
+        fn verify(&self) -> Result<Verified, AuditError> {
+            let anchor_keys = vec![self.anchor.public_key().to_bytes().to_vec()];
+            let witness_keys = vec![self.witness.public_key().to_bytes().to_vec()];
+            verify(&ChainView {
+                cell: self.cell,
+                chain: ChainId::App,
+                rows: &self.rows,
+                ledger: &[],
+                anchors: &self.anchors,
+                witness: &self.log,
+                anchor_keys: &anchor_keys,
+                witness_keys: &witness_keys,
+            })
+        }
+    }
+
+    fn lost(from: u64, to: u64, job: u8) -> LostInRestore {
+        LostInRestore {
+            from,
+            to,
+            job: [job; 16],
+        }
+    }
+
+    /// I-24, ADR-012: a restore to row 3 after rows 4 and 5 were
+    /// receipted verifies once it is declared, and lists rows 4 to 5 as
+    /// lost by the job. The chain then grows from the declared head and
+    /// still verifies with the same finding.
+    #[test]
+    fn i24_declared_restore_lists_the_lost_window_and_verifies() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(1);
+        w.commit(1);
+        assert_eq!(w.verify().unwrap().lost_in_restore, Vec::new());
+        w.restore_to(3);
+        w.declare(9);
+        let v = w.verify().unwrap();
+        assert_eq!(v.rows, 3);
+        assert_eq!(v.lost_in_restore, vec![lost(4, 5, 9)]);
+        w.commit(2);
+        let v = w.verify().unwrap();
+        assert_eq!(v.rows, 5);
+        assert_eq!(v.lost_in_restore, vec![lost(4, 5, 9)]);
+    }
+
+    /// I-24, ADR-012: without a declaration the verdicts stay `Truncated`,
+    /// and `Deleted` once the chain grows over a lost row.
+    #[test]
+    fn i24_declared_restore_absent_keeps_truncated_and_deleted() {
+        let mut w = World::new();
+        w.commit(3);
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(3);
+        assert_eq!(
+            w.verify(),
+            Err(AuditError::Tamper(Tamper::Truncated {
+                witnessed: 5,
+                have: 3
+            }))
+        );
+        w.commit(1);
+        assert_eq!(
+            w.verify(),
+            Err(AuditError::Tamper(Tamper::Deleted { n: 4 }))
+        );
+    }
+
+    /// I-24, ADR-012: a declaration covers only links receipted before it.
+    /// Rows cut after it are `Truncated`, and rows cut below its head are
+    /// never covered.
+    #[test]
+    fn i24_declared_restore_covers_only_links_receipted_before_it() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(3);
+        w.declare(1);
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(4);
+        assert_eq!(
+            w.verify(),
+            Err(AuditError::Tamper(Tamper::Truncated {
+                witnessed: 5,
+                have: 4
+            }))
+        );
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(3);
+        w.declare(1);
+        w.restore_to(2);
+        assert!(matches!(
+            w.verify(),
+            Err(AuditError::Tamper(Tamper::Truncated { .. }))
+        ));
+    }
+
+    /// I-24, ADR-012: a declaration of a head the witness never receipted
+    /// covers nothing, and a changed declaration signature is
+    /// `BadSignature` of its head.
+    #[test]
+    fn i24_declared_restore_needs_a_live_head_and_a_good_signature() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.restore_to(2);
+        w.declare_head((2, Link([0xEE; 32])), 3);
+        assert!(matches!(
+            w.verify(),
+            Err(AuditError::Tamper(Tamper::Truncated { .. }))
+        ));
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.restore_to(2);
+        w.declare(3);
+        if let Some(WitnessRecord::RestoreDeclared(d)) = w.log.last_mut() {
+            d.signature[7] ^= 1;
+        }
+        assert_eq!(
+            w.verify(),
+            Err(AuditError::Tamper(Tamper::BadSignature { n: 2 }))
+        );
+    }
+
+    /// I-24, ADR-012: two restores keep two findings, each named by its
+    /// own job, and a restore to genesis loses every row.
+    #[test]
+    fn i24_declared_restore_keeps_one_finding_per_restore() {
+        let mut w = World::new();
+        w.commit(1);
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(2);
+        w.declare(1);
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(3);
+        w.declare(2);
+        let v = w.verify().unwrap();
+        assert_eq!(v.lost_in_restore, vec![lost(3, 3, 1), lost(4, 4, 2)]);
+        let mut w = World::new();
+        w.commit(2);
+        w.restore_to(0);
+        w.declare(4);
+        assert_eq!(w.verify().unwrap().lost_in_restore, vec![lost(1, 2, 4)]);
     }
 }

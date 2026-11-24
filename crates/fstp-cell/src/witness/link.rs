@@ -178,7 +178,9 @@ impl<R: Runtime> WitnessLink for TlsWitnessLink<R> {
             WireReply::UnknownPrepare => Ok(WitnessReply::UnknownPrepare),
             // An answer that fits no message leaves the witness's state
             // unknown, so it reads as a lost answer.
-            WireReply::Outstanding(_) | WireReply::Log(_) => Err(WitnessFault::Unreachable),
+            WireReply::Outstanding(_) | WireReply::Log(_) | WireReply::Declarations(_) => {
+                Err(WitnessFault::Unreachable)
+            }
         }
     }
 
@@ -227,6 +229,20 @@ impl<R: Runtime> WitnessLink for TlsWitnessLink<R> {
                 WireReply::Refused => return Err(WitnessFault::Refused),
                 _ => return Err(WitnessFault::Unreachable),
             }
+        }
+    }
+
+    async fn declarations(
+        &self,
+        cell: CellId,
+    ) -> Result<Vec<(ChainId, fstp_audit::witness::Declaration)>, WitnessFault> {
+        if cell != self.cell {
+            return Err(WitnessFault::Refused);
+        }
+        match self.exchange(&WireRequest::Declarations { cell }).await? {
+            WireReply::Declarations(d) => Ok(d),
+            WireReply::Refused => Err(WitnessFault::Refused),
+            _ => Err(WitnessFault::Unreachable),
         }
     }
 }

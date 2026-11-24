@@ -434,7 +434,9 @@ fn in_doubt_absent(log: &[WitnessRecord]) -> Vec<(u64, fstp_audit::Link)> {
     log.iter()
         .filter_map(|w| match w {
             WitnessRecord::InDoubtAbsent { n, link } => Some((*n, *link)),
-            WitnessRecord::Prepare(_) | WitnessRecord::Abort { .. } => None,
+            WitnessRecord::Prepare(_)
+            | WitnessRecord::Abort { .. }
+            | WitnessRecord::RestoreDeclared(_) => None,
         })
         .collect()
 }

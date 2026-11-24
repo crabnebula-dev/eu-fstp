@@ -13,6 +13,11 @@
 //! `fstp_witness::install`): `init-keys <dir>` creates the receipt key
 //! file, and `register <cell> <cell-ca.pem> <app-anchor.pub>
 //! <vault-anchor.pub>` registers a cell in the file store.
+//!
+//! One console command of a self-hosted witness (ADR-012 record of lane
+//! m10/declared-restore, `fstp_witness::declare`): `declare-restore
+//! <cell> <app|vault> <head n> <head link> <job>` records a declared
+//! restore while the witness is stopped.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -29,6 +34,10 @@ fn command(args: &[String]) -> Result<(), WitnessError> {
             .ok_or(WitnessError::Config("arguments"))
             .and_then(fstp_witness::key_copy::run_retire),
         [c, dir] if c == "init-keys" => fstp_witness::install::init_keys(Path::new(dir)),
+        [c, rest @ ..] if c == "declare-restore" => {
+            let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
+            fstp_witness::declare::run(&rest)
+        }
         [c, cell, ca, app, vault] if c == "register" => {
             fstp_witness::install::register(cell, Path::new(ca), Path::new(app), Path::new(vault))
         }

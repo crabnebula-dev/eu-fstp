@@ -500,21 +500,24 @@ pub fn prod_store_batch(
     let log = locked(&witness.0.log).clone();
     let witness_log = log
         .iter()
-        .map(|w| match w {
-            fstp_audit::WitnessRecord::Prepare(row) => SymWitnessRecord::Prepare {
+        .filter_map(|w| match w {
+            fstp_audit::WitnessRecord::Prepare(row) => Some(SymWitnessRecord::Prepare {
                 anchor: ref_anchor_fields(&row.anchor),
                 receipt: ref_receipt(&row.receipt.fields),
-            },
-            fstp_audit::WitnessRecord::Abort { n, link } => SymWitnessRecord::Abort {
+            }),
+            fstp_audit::WitnessRecord::Abort { n, link } => Some(SymWitnessRecord::Abort {
                 n: *n,
                 link: link.0,
-            },
+            }),
             fstp_audit::WitnessRecord::InDoubtAbsent { n, link } => {
-                SymWitnessRecord::InDoubtAbsent {
+                Some(SymWitnessRecord::InDoubtAbsent {
                     n: *n,
                     link: link.0,
-                }
+                })
             }
+            // The model makes no declared restore (ADR-012 record of lane
+            // m10/declared-restore): only the root console command does.
+            fstp_audit::WitnessRecord::RestoreDeclared(_) => None,
         })
         .collect();
     let witness_state = ref_witness_state(&locked(&witness.0.core));

@@ -367,12 +367,20 @@ pub(crate) enum Stored {
         link: Link,
         witness_link: Link,
     },
+    /// A declared restore (ADR-012 record of lane m10/declared-restore).
+    /// Only the file store of a self-hosted witness holds one.
+    Declared {
+        seq: u64,
+        declaration: fstp_audit::witness::Declaration,
+    },
 }
 
 impl Stored {
     fn seq(&self) -> u64 {
         match self {
-            Stored::Prepare { seq, .. } | Stored::Withdrawn { seq, .. } => *seq,
+            Stored::Prepare { seq, .. }
+            | Stored::Withdrawn { seq, .. }
+            | Stored::Declared { seq, .. } => *seq,
         }
     }
 }
@@ -490,6 +498,10 @@ pub(crate) fn replay(
     };
     let mut held = None;
     let mut log = Vec::with_capacity(stored.len());
+    // The live prepares and the declarations so far, so a declaration is
+    // replayed under the rule the core recorded it with.
+    let mut live = fstp_audit::witness::Live::new(cell, chain);
+    let mut declared = 0usize;
     for s in stored {
         let seq = state
             .seq
@@ -536,6 +548,36 @@ pub(crate) fn replay(
                     _ => WitnessRecord::InDoubtAbsent { n, link },
                 });
             }
+            Stored::Declared { declaration, .. } => {
+                let f = &declaration.fields;
+                let head = fstp_audit::witness::declaration_link(
+                    &state.head,
+                    cell,
+                    chain,
+                    seq,
+                    &f.head,
+                    f.lost_to,
+                    &f.job,
+                );
+                declared = declared.saturating_add(1);
+                if head != f.witness_link
+                    || f.witness_seq != seq
+                    || !live.accepts(&f.head)
+                    || live.lost_to(&f.head) != f.lost_to
+                    || declared > fstp_audit::witness::MAX_DECLARATIONS
+                {
+                    return Err(StoreError::Corrupt("declaration"));
+                }
+                state.confirmed = f.head;
+                state.outstanding = None;
+                state.seq = seq;
+                state.head = head;
+                held = None;
+                log.push(WitnessRecord::RestoreDeclared(declaration));
+            }
+        }
+        if let Some(r) = log.last() {
+            live.step(r);
         }
     }
     Ok(LoadedChain { state, held, log })

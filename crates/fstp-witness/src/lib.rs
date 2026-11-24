@@ -45,6 +45,9 @@
 
 pub mod chain_witness;
 pub mod config;
+// ADR-012 record of lane m10/declared-restore: the root-only console
+// command that records a declared restore.
+pub mod declare;
 pub mod file_store;
 pub mod key_copy;
 pub mod lock;
@@ -61,7 +64,7 @@ use fstp_audit::{CryptoError, DecodeError, Invalid};
 use fstp_migrate::catalogue::{ColumnClass, ColumnSpec, TableClass, TableSpec};
 
 pub use crate::chain_witness::{
-    ChainWitness, Refusal, Sender, Withdrawal, WitnessState, accepts_sender,
+    ChainWitness, DeclareRefusal, Refusal, Sender, Withdrawal, WitnessState, accepts_sender,
 };
 pub use crate::file_store::{FileRecord, decode_file_store, encode_file_store, load_file_store};
 pub use crate::message::{WitnessMessage, decode_witness_message, encode_witness_message};
