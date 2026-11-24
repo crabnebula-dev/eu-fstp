@@ -175,7 +175,7 @@ fn next_text(n: Next) -> &'static str {
             "host admin: check each admin's ID document in person, then run fstp-admin verify. It asks for the details of each admin listed above."
         }
         Next::CopyKeys => {
-            "copy the keys off this host: fstp-admin backup-keys /media/usb/fstp-keys, and keep the passphrases apart. After an erasure, a new copy replaces the old one."
+            "copy the keys off this host: fstp-admin backup-keys /media/usb/fstp-keys. The stick then holds the passphrases too, so keep it somewhere safe, away from this host and the custodian machine. After an erasure, a new copy replaces the old one."
         }
         Next::Nothing => "nothing. Everything is in order.",
     }
@@ -640,6 +640,19 @@ mod tests {
             custodian: Some(crate::custodian::Link::Linked),
             pairing_days: Some(700),
         }
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, part 3 (decided by Daniel
+    /// on 2026-11-24), F-018: the next step for the key copy no longer
+    /// asks for the passphrases apart. It says the stick holds them, and
+    /// where to keep it.
+    #[test]
+    fn adr028_f018_copy_keys_wording_names_the_passphrases() {
+        let t = next_text(Next::CopyKeys);
+        assert!(t.contains("fstp-admin backup-keys"), "{t}");
+        assert!(t.contains("passphrases too"), "{t}");
+        assert!(t.contains("custodian machine"), "{t}");
+        assert!(!t.contains("apart"), "{t}");
     }
 
     /// ADR-028 record of lane `m10/guard-key`, part 2 (Q-F018-4), F-018:

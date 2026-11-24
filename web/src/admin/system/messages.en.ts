@@ -113,7 +113,7 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.tell.pair_custodian":
     "Please pair the second custodian with fstp-admin pair-custodian, then run fstp-admin setup.",
   "system.tell.copy_keys":
-    "Please run fstp-admin backup-keys to a USB stick, and keep the passphrases apart from it.",
+    "Please run fstp-admin backup-keys to a USB stick. It holds the passphrases too, so keep it somewhere safe, away from the host and the custodian machine.",
   "system.tell.copy_keys_again":
     "Please run fstp-admin backup-keys to a USB stick again, then destroy the older copy. An erasure took place since the last copy.",
   "system.tell.keystore_snapshot":
