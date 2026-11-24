@@ -61,7 +61,7 @@ pub fn parse_hex16(s: &str) -> Result<[u8; 16], BackupError> {
     Ok(out)
 }
 
-fn decimal(s: &str) -> Result<u64, BackupError> {
+pub(crate) fn decimal(s: &str) -> Result<u64, BackupError> {
     if s.is_empty() || s.len() > 20 || (s.len() > 1 && s.starts_with('0')) {
         return Err(bad("number"));
     }
@@ -128,6 +128,40 @@ pub fn newest(state_dir: &Path, cluster: [u8; 16]) -> Result<IndexEntry, BackupE
         .rev()
         .find(|e| e.cluster == cluster)
         .ok_or(BackupError::NotFound)
+}
+
+/// The entries of `cluster` a restore may start from, newest first: every
+/// one with no target, and with a target `t` those that finished before
+/// it (ADR-012 record of lane `m10/backup-pitr`). A line's time is
+/// written after its last part is uploaded, so the backup ended earlier.
+///
+/// # Errors
+///
+/// [`BackupError::Index`] when the file cannot be read or decoded,
+/// [`BackupError::NotFound`] when it names no backup of `cluster`, and
+/// [`BackupError::Config`] when every backup finished at or after `t`.
+pub fn before(
+    state_dir: &Path,
+    cluster: [u8; 16],
+    target: Option<u64>,
+) -> Result<Vec<IndexEntry>, BackupError> {
+    let bytes = std::fs::read(state_dir.join(INDEX_FILE)).map_err(|_| bad("read"))?;
+    let all: Vec<IndexEntry> = decode(&bytes)?
+        .into_iter()
+        .rev()
+        .filter(|e| e.cluster == cluster)
+        .collect();
+    if all.is_empty() {
+        return Err(BackupError::NotFound);
+    }
+    let fit: Vec<IndexEntry> = all
+        .into_iter()
+        .filter(|e| target.is_none_or(|t| e.at < t))
+        .collect();
+    if fit.is_empty() {
+        return Err(BackupError::Config("target before the oldest base backup"));
+    }
+    Ok(fit)
 }
 
 /// The entry of `backup` of `cluster`, if the index names it.
@@ -208,6 +242,21 @@ mod tests {
         assert_eq!(newest(&dir, [1; 16]).unwrap(), c);
         assert_eq!(find(&dir, [1; 16], [2; 16]).unwrap(), a);
         assert_eq!(newest(&dir, [9; 16]).unwrap_err(), BackupError::NotFound);
+        // ADR-012 record of lane `m10/backup-pitr`: newest first, and only
+        // those finished before the target.
+        assert_eq!(before(&dir, [1; 16], None).unwrap(), vec![c, a]);
+        assert_eq!(
+            before(&dir, [1; 16], Some(1_790_000_001)).unwrap(),
+            vec![c, a]
+        );
+        assert_eq!(
+            before(&dir, [1; 16], Some(1_790_000_000)).unwrap_err(),
+            BackupError::Config("target before the oldest base backup")
+        );
+        assert_eq!(
+            before(&dir, [9; 16], Some(5)).unwrap_err(),
+            BackupError::NotFound
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

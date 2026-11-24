@@ -22,6 +22,9 @@ zeroize.workspace = true
 
 [dev-dependencies]
 fstp-prop.workspace = true
+# Lane m10/backup-pitr: the point-in-time restore over a real PostgreSQL
+# (tests/pitr_pg.rs). In-house.
+fstp-pgtest.workspace = true
 
 [lints]
 workspace = true

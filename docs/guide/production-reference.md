@@ -501,7 +501,7 @@ FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgr
 - The first form takes the newest backup in the local index. The second names one from an index line. The third restores to a point in time: it takes the newest backup that finished before that time (ADR-012 record of lane `m10/backup-pitr`).
 - The directory must be new or empty.
 - The command checks every part and extracts the tar with the host's `tar`. It fetches every timeline history file of the archive, and each archived segment from the backup's start along the latest timeline, into `pg_wal`, until no timeline holds the next one.
-- It writes `recovery.signal` and the recovery settings into `postgresql.auto.conf`. It then runs PostgreSQL once on the directory, as `postgres`, to check that the target (or, with no target, a consistent state) is reached. That run stops without promoting.
+- It writes `recovery.signal` and the recovery settings into `postgresql.auto.conf`. It then runs PostgreSQL once on the directory, as `postgres`, to check that the target (or, with no target, a consistent state) is reached. That run stops without promoting, and its PostgreSQL log is kept in `<dir>.check.log`.
 - Give the directory to the `postgres` user and start PostgreSQL on it with its normal configuration. It replays the fetched WAL, promotes onto a new timeline above every timeline in the archive, and archives that timeline's history file.
 - Then follow the restore rule of ADR-012: the cell verifies its chain against the witness. Today a cell or vault that misses more than one receipted entry refuses to start (ADR-012 record of lane `m10/backup-pitr`).
 

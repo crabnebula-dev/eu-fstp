@@ -318,6 +318,7 @@ dependencies = [
  "fstp-http",
  "fstp-json",
  "fstp-keys",
+ "fstp-pgtest",
  "fstp-prop",
  "fstp-rt",
  "fstp-tls",

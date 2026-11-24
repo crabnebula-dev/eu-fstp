@@ -6,9 +6,11 @@
 //! - [`Agent::base_backup`] for the timer: `pg_basebackup` over loopback,
 //!   cut into parts of [`Limits::base_part`] bytes, each sealed as its own
 //!   container and uploaded. The index line is written last.
-//! - [`Agent::restore`] for a restore as root: the parts of one base
-//!   backup, checked and extracted, then the archived segments from the
-//!   backup's start segment into `pg_wal`.
+//! - [`Agent::restore_to`] for a restore as root: the parts of one base
+//!   backup, checked and extracted, then every timeline history file and
+//!   the archived segments from the backup's start segment along the
+//!   latest timeline into `pg_wal`, and the recovery settings for a target
+//!   time (ADR-012 record of lane `m10/backup-pitr`).
 //! - [`Agent::restore_wal`] for `restore_command`: one segment or history
 //!   file.
 //!
@@ -32,6 +34,7 @@ use crate::index::{self, IndexEntry};
 use crate::keyfile::{self, KeyFile};
 use crate::s3::S3Client;
 use crate::sigv4::hex;
+use crate::timeline;
 use crate::wal::{self, ArchiveName};
 use crate::{BackupError, ContainerKind, WalName, open_container, seal_container};
 
@@ -88,7 +91,28 @@ pub struct Restored {
     pub segments: u32,
     /// The last of them, if any.
     pub last_segment: Option<WalName>,
+    /// The latest timeline of the archive, which the restore follows.
+    pub timeline: u32,
+    /// The history files written into `pg_wal`.
+    pub histories: u32,
 }
+
+/// One timeline history file of the archive (ADR-012 record of lane
+/// `m10/backup-pitr`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct History {
+    /// Its timeline.
+    pub tli: u32,
+    /// Its bytes, as PostgreSQL wrote them.
+    pub bytes: Vec<u8>,
+    /// Its decoded switch points.
+    pub switches: Vec<timeline::Switch>,
+}
+
+/// The rule a base backup breaks when the latest timeline does not
+/// descend from its position: it lies on a branch an earlier restore
+/// abandoned.
+const OFF_LATEST: &str = "base backup off the latest timeline";
 
 /// The agent of one cluster.
 pub struct Agent<R: Runtime> {
@@ -462,22 +486,92 @@ impl<R: Runtime> Agent<R> {
         write_new(dest, &bytes)
     }
 
-    /// A restore into the new directory `data_dir` (module documentation):
-    /// the base backup `entry`, extracted with the host's `tar`, then each
-    /// archived segment from the start segment of its `backup_label`, on
-    /// that timeline, into `pg_wal`, until the next one is absent.
-    /// PostgreSQL replays them at its next start.
+    /// Every timeline history file of the archive, from timeline 2 upwards
+    /// until one is absent, with its decoded switch points (ADR-012 record
+    /// of lane `m10/backup-pitr`). PostgreSQL probes for them the same way.
     ///
     /// # Errors
     ///
-    /// [`BackupError::Io`] when `data_dir` exists and is not empty,
-    /// [`BackupError::Tool`] when `tar` fails, and the errors of
-    /// [`Agent::restore_base`] and [`Agent::fetch_wal`].
+    /// [`BackupError::Malformed`] for a history file that does not decode,
+    /// and the errors of [`Agent::fetch_wal`].
+    pub async fn fetch_histories(
+        &self,
+        secret: &HybridSecretKey,
+    ) -> Result<Vec<History>, BackupError> {
+        let mut out = Vec::new();
+        let mut tli = 2u32;
+        while let Some(bytes) = self.fetch_wal(secret, &timeline::history_name(tli)).await? {
+            let switches = timeline::decode_history(tli, &bytes)?;
+            out.push(History {
+                tli,
+                bytes,
+                switches,
+            });
+            tli = tli
+                .checked_add(1)
+                .ok_or(BackupError::Malformed("history timeline"))?;
+        }
+        Ok(out)
+    }
+
+    /// A restore into the new directory `data_dir` to the newest archived
+    /// point: [`Agent::restore_to`] of `entry` alone, with no target.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Agent::restore_to`].
     pub async fn restore(
         &self,
         secret: &HybridSecretKey,
         entry: &IndexEntry,
         data_dir: &Path,
+    ) -> Result<Restored, BackupError> {
+        self.restore_to(secret, std::slice::from_ref(entry), data_dir, None)
+            .await
+    }
+
+    /// A restore into the new directory `data_dir` (module documentation,
+    /// ADR-012 record of lane `m10/backup-pitr`): the first base backup of
+    /// `entries` whose position the latest timeline descends from, its
+    /// history files and segments, and the recovery settings for `target`
+    /// (Unix seconds, or the newest point). A backup on a branch that an
+    /// earlier restore abandoned is skipped, and the directory emptied for
+    /// the next one. PostgreSQL replays the segments at its next start and
+    /// promotes onto a new timeline above every archived one.
+    ///
+    /// # Errors
+    ///
+    /// [`BackupError::NotFound`] when no entry suits the latest timeline,
+    /// and the errors of [`Agent::fetch_histories`] and of each attempt.
+    pub async fn restore_to(
+        &self,
+        secret: &HybridSecretKey,
+        entries: &[IndexEntry],
+        data_dir: &Path,
+        target: Option<u64>,
+    ) -> Result<Restored, BackupError> {
+        let histories = self.fetch_histories(secret).await?;
+        for entry in entries {
+            match self
+                .restore_one(secret, entry, data_dir, &histories, target)
+                .await
+            {
+                Err(BackupError::Malformed(OFF_LATEST)) => {
+                    std::fs::remove_dir_all(data_dir).map_err(io("data directory"))?;
+                }
+                r => return r,
+            }
+        }
+        Err(BackupError::NotFound)
+    }
+
+    async fn restore_one(
+        &self,
+        secret: &HybridSecretKey,
+        entry: &IndexEntry,
+        data_dir: &Path,
+        histories: &[History],
+        target: Option<u64>,
     ) -> Result<Restored, BackupError> {
         use std::os::unix::fs::DirBuilderExt as _;
         if entry.cluster != self.key.cluster {
@@ -517,7 +611,16 @@ impl<R: Runtime> Agent<R> {
             return Err(BackupError::Tool("tar"));
         }
         let label = std::fs::read(data_dir.join("backup_label")).map_err(io("backup_label"))?;
-        let mut next = Some(wal::start_segment(&label)?);
+        let (start, start_lsn) = wal::start_location(&label)?;
+        // The latest timeline, as `recovery_target_timeline = 'latest'`
+        // reads it, and the path to it.
+        let (latest, path) = match histories.last() {
+            Some(h) => (h.tli, timeline::path(h.tli, &h.switches)),
+            None => (1, timeline::path(1, &[])),
+        };
+        if !timeline::descends(&path, start.timeline, start_lsn) {
+            return Err(BackupError::Malformed(OFF_LATEST));
+        }
         let pg_wal = data_dir.join("pg_wal");
         if std::fs::metadata(&pg_wal).is_err() {
             std::fs::DirBuilder::new()
@@ -525,25 +628,50 @@ impl<R: Runtime> Agent<R> {
                 .create(&pg_wal)
                 .map_err(io("pg_wal"))?;
         }
+        // Every history file, so the promoted cluster takes a timeline id
+        // above all of them.
+        for h in histories {
+            let p = pg_wal.join(timeline::history_name(h.tli));
+            let _ = std::fs::remove_file(&p);
+            write_new(&p, &h.bytes)?;
+        }
         let mut segments = 0u32;
         let mut last_segment = None;
+        let mut size: Option<u64> = None;
+        let mut min_tli = start.timeline;
+        let mut next = Some(start.segment);
         while let Some(seg) = next {
-            let name = seg.file_name();
-            let Some(bytes) = self.fetch_wal(secret, &name).await? else {
+            let mut found = None;
+            for name in timeline::candidates(&path, seg, size, min_tli) {
+                if let Some(bytes) = self.fetch_wal(secret, &name.file_name()).await? {
+                    found = Some((name, bytes));
+                    break;
+                }
+            }
+            let Some((name, bytes)) = found else {
                 break;
             };
-            let path = pg_wal.join(&name);
-            let _ = std::fs::remove_file(&path);
-            write_new(&path, &bytes)?;
+            let p = pg_wal.join(name.file_name());
+            let _ = std::fs::remove_file(&p);
+            write_new(&p, &bytes)?;
+            let len = u64::try_from(bytes.len()).unwrap_or(0);
+            if size.is_some_and(|s| s != len) {
+                return Err(BackupError::Malformed("WAL segment size"));
+            }
+            size = Some(len);
             segments = segments.saturating_add(1);
-            last_segment = Some(seg);
-            next = seg.next(u64::try_from(bytes.len()).unwrap_or(0));
+            last_segment = Some(name);
+            min_tli = name.timeline;
+            next = name.next(len).map(|n| n.segment);
         }
+        crate::recovery::write(data_dir, target, crate::recovery::Run::Final)?;
         Ok(Restored {
             backup: *entry,
             parts,
             segments,
             last_segment,
+            timeline: latest,
+            histories: u32::try_from(histories.len()).unwrap_or(u32::MAX),
         })
     }
 }
