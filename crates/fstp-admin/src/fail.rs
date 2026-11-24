@@ -196,6 +196,10 @@ fn problem_text(p: Problem) -> (&'static str, &'static str) {
             "is not a retention in range",
             "write keep_days from 1 to 3650 and keep_min from 1 to 1000, without quotes, or leave them out",
         ),
+        Problem::BadForges => (
+            "is not a list of up to 16 different forge host names",
+            "write it like [\"codeberg.org\"], one lowercase host name per forge",
+        ),
     }
 }
 

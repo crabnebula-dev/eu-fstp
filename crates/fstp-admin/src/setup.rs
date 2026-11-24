@@ -1116,11 +1116,9 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
             Part::T("/auth/invite#<line 1><line 2> and enrol a passkey."),
         ]);
     }
-    out(&[
-        Part::T("Copy the four passphrases in "),
-        Part::P(&layout.etc("keyd")),
-        Part::T(" off this host once, for example into a password manager."),
-    ]);
+    out(&[Part::T(
+        "fstp-admin backup-keys copies the keys and their passphrases off this host, for example to a USB stick. fstp-admin status says when.",
+    )]);
     if !state.done("first-admin-verified") {
         out(&[Part::T(
             "Next, on the web: the first admin enrols and invites the second admin by email. Then check both admins' IDs in person and run fstp-admin verify. fstp-admin status walks you through it.",

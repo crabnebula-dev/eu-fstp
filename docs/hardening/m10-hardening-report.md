@@ -140,6 +140,6 @@ Condition C1 binds later work. No path may carry outside bytes to `fstp-pki::cms
 
 ## 11. Open questions
 
-- Whether `fstp-admin backup-keys` should write the custody passphrases beside the key copies, to spare the operator typing them at `restore-keys`.
+- Whether `fstp-admin backup-keys` should write the custody passphrases beside the key copies, to spare the operator typing them at `restore-keys`. Decided by Daniel on 2026-11-24: yes (ADR-028, record of lane `m10/guard-key`, part 3).
 - The cause of F-092.
 - When the remaining H-05 parsers, H-12 and H-20 are reviewed.

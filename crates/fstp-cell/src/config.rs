@@ -180,6 +180,7 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
 // ```text
 // {"assets_dir": "/opt/fstp/web",                                   optional
 //  "cell": "<32 hex>", "credentials_dir": "/etc/fstp/cell",
+//  "checks": {"forge_hosts": ["codeberg.org"]},                       optional
 //  "database": {"dbname": "c_<32 hex>", "host": "db.internal", "port": 5432},
 //  "eudi_relying_party": "tenant_registration",                     optional
 //  "host": "grants.example.eu",
@@ -215,6 +216,10 @@ pub const MAX_PATH_LEN: usize = 1024;
 /// The most registered server keys the file names.
 pub const MAX_REGISTERED: usize = 32;
 
+/// The most forge hosts `checks.forge_hosts` names (ADR-026 section of
+/// lane `m10/checks-runner`).
+pub const MAX_FORGE_HOSTS: usize = 16;
+
 /// The most witness receipt keys `witness-receipt-keys` holds.
 pub const MAX_RECEIPT_KEYS: usize = 8;
 
@@ -224,6 +229,7 @@ pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 const FILE_MEMBERS: [&str; 20] = [
     "assets_dir",
     "cell",
+    "checks",
     "credentials_dir",
     "database",
     "eudi_relying_party",
@@ -361,6 +367,44 @@ fn is_platform_url(s: &str) -> bool {
     s.len() <= 512 && is_host_name(host) && path.bytes().all(|b| b.is_ascii_graphic())
 }
 
+/// The settings of the payment checks runner of a configured cell
+/// (ADR-026 section of lane `m10/checks-runner`, ADR-009 amendment of
+/// 2026-11-24, interim, pending Daniel).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChecksConfig {
+    /// The forge allowlist: the hosts whose deliverables the checks fetch,
+    /// over https to public addresses only. Empty refuses every fetch, so
+    /// the checks fail closed.
+    pub forge_hosts: Vec<String>,
+}
+
+fn checks_of(o: &Object) -> Result<ChecksConfig, ConfigError> {
+    members(o, &["forge_hosts"], "checks")?;
+    let Some(list) = o.get("forge_hosts") else {
+        return Ok(ChecksConfig::default());
+    };
+    let list = list
+        .as_array()
+        .ok_or(ConfigError::Invalid("checks.forge_hosts"))?;
+    if list.len() > MAX_FORGE_HOSTS {
+        return Err(ConfigError::Invalid("checks.forge_hosts"));
+    }
+    let mut forge_hosts: Vec<String> = Vec::with_capacity(list.len());
+    for v in list.iter() {
+        let h = v
+            .as_str()
+            .ok_or(ConfigError::Invalid("checks.forge_hosts"))?;
+        if !is_host_name(h)
+            || crate::egress::is_crabnebula_host(h)
+            || forge_hosts.iter().any(|x| x == h)
+        {
+            return Err(ConfigError::Invalid("checks.forge_hosts"));
+        }
+        forge_hosts.push(h.to_owned());
+    }
+    Ok(ChecksConfig { forge_hosts })
+}
+
 fn shell_of(o: &Object) -> Result<ShellConfig, ConfigError> {
     members(
         o,
@@ -432,6 +476,9 @@ pub struct FileConfig {
     pub mail: Option<MailConfig>,
     /// The creator shell's settings (ADR-027), if any.
     pub shell: Option<ShellConfig>,
+    /// The payment checks runner's settings (ADR-026 section of lane
+    /// `m10/checks-runner`), if any. Absent is an empty forge allowlist.
+    pub checks: Option<ChecksConfig>,
     /// The object store of the App chain's keystore snapshots, if one is
     /// configured (ADR-012 record of lane L17), in the shape `fstp-backup`
     /// uses.
@@ -712,6 +759,12 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
             v.as_object().ok_or(ConfigError::Invalid("shell"))?,
         )?),
     };
+    let checks = match o.get("checks") {
+        None => None,
+        Some(v) => Some(checks_of(
+            v.as_object().ok_or(ConfigError::Invalid("checks"))?,
+        )?),
+    };
     // ADR-012 record of lane m10/backup-followups: `object_store`, or
     // `object_stores` in order, never both.
     let (object_store, more_stores) = match fstp_backup::config::decode_stores(o) {
@@ -740,6 +793,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
         listen,
         mail,
         shell,
+        checks,
         object_store,
         more_stores,
     })
@@ -1167,5 +1221,67 @@ mod shell_tests {
         ] {
             assert_eq!(decode_file(tests_file(bad).as_bytes()), Err(rule), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod checks_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// ADR-026 section of lane `m10/checks-runner`, ADR-009 amendment of
+    /// 2026-11-24, I-38: `checks.forge_hosts` names at most 16 distinct
+    /// host names, never a CrabNebula host. Absent, the allowlist is empty.
+    #[test]
+    fn adr026_config_checks_member_names_the_forge_allowlist() {
+        assert_eq!(decode_file(tests_file("").as_bytes()).unwrap().checks, None);
+        let ok = tests_file(r#","checks":{"forge_hosts":["codeberg.org","forge.example.test"]}"#);
+        let c = decode_file(ok.as_bytes()).unwrap().checks.unwrap();
+        assert_eq!(c.forge_hosts, vec!["codeberg.org", "forge.example.test"]);
+        let empty = decode_file(tests_file(r#","checks":{}"#).as_bytes()).unwrap();
+        assert_eq!(empty.checks, Some(ChecksConfig::default()));
+        let seventeen: Vec<String> = (0..17).map(|i| format!("\"f{i}.example\"")).collect();
+        let many = format!(r#","checks":{{"forge_hosts":[{}]}}"#, seventeen.join(","));
+        for (bad, rule) in [
+            (r#","checks":{"x":1}"#.to_owned(), "checks"),
+            (r#","checks":"codeberg.org""#.to_owned(), "checks"),
+            (
+                r#","checks":{"forge_hosts":"codeberg.org"}"#.to_owned(),
+                "checks.forge_hosts",
+            ),
+            (
+                r#","checks":{"forge_hosts":["Codeberg.org"]}"#.to_owned(),
+                "checks.forge_hosts",
+            ),
+            (
+                r#","checks":{"forge_hosts":["https://codeberg.org"]}"#.to_owned(),
+                "checks.forge_hosts",
+            ),
+            (
+                r#","checks":{"forge_hosts":["10.0.0.1"]}"#.to_owned(),
+                "checks.forge_hosts",
+            ),
+            (
+                r#","checks":{"forge_hosts":["a.example","a.example"]}"#.to_owned(),
+                "checks.forge_hosts",
+            ),
+            (
+                r#","checks":{"forge_hosts":["updates.fstp.crabnebula.dev"]}"#.to_owned(),
+                "checks.forge_hosts",
+            ),
+            (many, "checks.forge_hosts"),
+        ] {
+            assert_eq!(
+                decode_file(tests_file(&bad).as_bytes()),
+                Err(ConfigError::Invalid(rule)),
+                "{bad}"
+            );
+        }
+        let seed = include_bytes!("../fuzz/seeds/cell_config_decode/file_checks");
+        assert_eq!(
+            decode_file(seed).unwrap().checks.unwrap().forge_hosts.len(),
+            2
+        );
     }
 }

@@ -31,16 +31,19 @@ The first time, it asks four questions: the domain, the first admin's email, the
   "mail": {"relay": "smtp.example.eu", "username": "cell"},
   "tls": {"cert": "/etc/letsencrypt/live/grants.example.eu/fullchain.pem",
           "key": "/etc/letsencrypt/live/grants.example.eu/privkey.pem"},
-  "backup": {"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra", "bucket": "fstp-backups"}
+  "backup": {"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra", "bucket": "fstp-backups"},
+  "forges": ["codeberg.org"]
 }
 ```
+
+`forges` lists the code forges where grantees publish their deliverables. The automated checks of a payment request fetch the deliverable and its `LICENSE` file from these hosts only, over https. Without `forges`, every payment request that names a deliverable fails its checks, and the grantee is told that the host is not on the allowlist. Add the forge, run `setup` again, then `sudo systemctl restart fstp-cell`, and the grantee resubmits. The checks read the licence at `<deliverable address>/raw/<release>/LICENSE`, the route of Forgejo and Gitea forges such as Codeberg.
 
 Setup creates the databases, keys, certificates and services, starts everything, and adds the cell's route. If a step fails, it says what to fix. Fix it and run `setup` again: it skips what is done.
 
 At the end it tells you two things:
 
 - **The invitation.** `/root/fstp-first-admin.token` holds two lines. Give each line to the first admin through a different channel, for example one by phone and one by chat. They open `https://<domain>/auth/invite#<line 1><line 2>`. Then delete the file.
-- **The passphrases.** Copy the four files in `/etc/fstp/keyd` into a password manager, off the host, once.
+- **The key copy.** Once the second custodian is paired (part 2a), run `sudo fstp-admin backup-keys /media/usb/fstp-keys`. The stick then holds the key copies and the passphrases that open them. Keep it somewhere safe, away from the host and the custodian machine. The passphrases never change, so any stick from `backup-keys` carries them.
 
 ## 2a. Pair the second custodian
 
@@ -55,7 +58,7 @@ While the custodian does not answer, erasures wait: the data is unreadable on th
 
 After each erasure, each key custody entry sends a fresh copy of its keys to the custodian by itself. If that copy does not arrive, `status` and the page **System** say so, and the host retries every ten minutes.
 
-If the pilot host is lost, set up the new host and run steps 1 to 4 again with the same custodian. Put the old host's passphrases into a directory as `<entry>.passphrase` (for example `cell.passphrase`), with any copies you kept as `<entry>.fkx`. Then run `sudo fstp-admin restore-keys <that directory>`: it takes each copy from the directory or else from the custodian. Then run `sudo fstp-admin restore`. If the custodian machine is lost, pair a new one the same way, then run `fstp-admin backup-keys` at once: the old copies no longer open. The custodian's certificate lasts two years, and `status` asks for a new pairing a month before it ends.
+If the pilot host is lost, set up the new host and run steps 1 to 4 again with the same custodian. Plug in the stick from `backup-keys` and run `sudo fstp-admin restore-keys /media/usb/fstp-keys`. It reads the old host's passphrases from the stick, so you type nothing. For each entry it takes the newer of the stick's copy and the custodian's, and says which. A copy made before the last erasure of its entry never opens, so it is never taken while the custodian holds a newer one. Then run `sudo fstp-admin restore`. If the custodian machine is lost, pair a new one the same way, then run `fstp-admin backup-keys` at once: the old copies no longer open. The custodian's certificate lasts two years, and `status` asks for a new pairing a month before it ends.
 
 ## 3. Open the organisation
 
@@ -79,7 +82,7 @@ The web admin sees the same on the page **System** (`https://<domain>/app/admin/
 | Command | When |
 | --- | --- |
 | `fstp-admin verify` | Step 3 of part 3. `fstp-admin admins` only lists the accounts |
-| `fstp-admin backup-keys /media/usb/fstp-keys` | Once after setup and pairing, and after each erasure. Keep the stick apart from the passphrases. It needs the second custodian, which seals each copy |
+| `fstp-admin backup-keys /media/usb/fstp-keys` | Once after setup and pairing, and after each erasure. The stick then holds the passphrases too, so keep it somewhere safe, away from the host and the custodian machine. It needs the second custodian, which seals each copy |
 | `fstp-admin pair-custodian <host>` | Once, part 2a. Again after the loss of either machine, and when `status` asks |
 | `fstp-admin restore-keys <dir>` | After the loss of the host, before `restore` (part 2a). It moves each key volume it replaces aside and never deletes it |
 | `fstp-admin backup` | A backup now. A timer runs it daily |

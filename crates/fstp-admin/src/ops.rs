@@ -769,14 +769,33 @@ pub fn copy_id(bytes: &[u8]) -> Option<String> {
     }
 }
 
+/// Whether a copy is sealed to the custodian's guard (`"FGC1"`), so its
+/// passphrase alone does not open it (ADR-028 record of lane
+/// `m10/guard-key`, part 3).
+#[must_use]
+pub fn is_guarded(bytes: &[u8]) -> bool {
+    bytes.get(0..4) == Some(b"FGC1".as_slice())
+}
+
+/// The entries `backup-keys` copies: the list `restore-keys` requires
+/// (ADR-028 record of lane `m10/guard-key`, part 3).
+#[must_use]
+pub fn backup_entries(route_feed: bool) -> Vec<Entry> {
+    crate::custodian::copy_entries(route_feed)
+}
+
 /// `fstp-admin backup-keys <dest>`: one passphrase-sealed copy per custody
 /// entry, each with its copy id in `<entry>.fkx.id`, and the sealed key
 /// files beside them (ADR-028 "Simple key backup", lane L16). Each entry
-/// stops for its copy and starts again.
+/// stops for its copy and starts again. When every copy is guarded, each
+/// entry's passphrase follows as `<entry>.passphrase`, which
+/// `restore-keys` reads (part 3 of the record of lane `m10/guard-key`,
+/// decided by Daniel on 2026-11-24).
 ///
 /// # Errors
 ///
-/// [`Fail::Waits`] in direct mode or when `fstp-keyd` has no `export` yet.
+/// [`Fail::Waits`] in direct mode or when `fstp-keyd` has no `export` yet,
+/// [`Fail::Missing`] for a directory that holds a copy or a passphrase.
 pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<(), Fail> {
     if layout.cfg.custody_simulator.is_some() {
         return Err(Fail::Waits(
@@ -791,16 +810,17 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
         ));
     }
     let step = "key copy";
-    std::fs::create_dir_all(dest).map_err(io(step))?;
+    if let Some(file) = crate::custodian::occupied(dest) {
+        return Err(Fail::Missing(
+            file,
+            "nothing: pick an empty directory for the copy",
+        ));
+    }
+    crate::custodian::private_dir(dest).map_err(io(step))?;
     let m = Manager::new(layout);
-    for e in Entry::ALL {
+    let mut guarded = true;
+    for e in backup_entries(crate::route::ROUTE_FEED) {
         let file = dest.join(format!("{}.fkx", e.name()));
-        if file.exists() {
-            return Err(Fail::Missing(
-                file,
-                "nothing: pick an empty directory for the copy",
-            ));
-        }
         let services = stack::keyd(layout, e);
         for s in &services {
             m.stop(s).map_err(|c| Fail::Step(step, c.into()))?;
@@ -844,6 +864,7 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
             }
         }
         let bytes = std::fs::read(&file).map_err(io(step))?;
+        guarded &= is_guarded(&bytes);
         let id = copy_id(&bytes).ok_or(Fail::Step(step, Cause::Io))?;
         write_atomic(
             &dest.join(format!("{}.fkx.id", e.name())),
@@ -880,6 +901,15 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
             write_atomic(&dest.join(to), &b, 0o600).map_err(io(step))?;
         }
     }
+    // Decided by Daniel on 2026-11-24: the passphrases go beside guarded
+    // copies, so restore-keys asks for nothing (ADR-028 record of lane
+    // `m10/guard-key`, part 3).
+    let with_passphrases = crate::custodian::write_passphrases(
+        layout,
+        dest,
+        guarded && layout.cfg.custodian.is_some(),
+    )
+    .map_err(io(step))?;
     state.mark("keys-copied").map_err(io(step))?;
     state
         .set(
@@ -887,13 +917,24 @@ pub fn backup_keys(layout: &Layout, state: &mut State, dest: &Path) -> Result<()
             &crate::pki::now().to_string(),
         )
         .map_err(io(step))?;
-    out(&[
-        Part::T("The copy is in "),
-        Part::P(dest),
-        Part::T(". It opens only with the passphrases in "),
-        Part::P(&layout.etc("keyd")),
-        Part::T(": keep those apart from the copy."),
-    ]);
+    if with_passphrases {
+        out(&[
+            Part::T("The copy and the passphrases that open it are in "),
+            Part::P(dest),
+            Part::T("."),
+        ]);
+        out(&[Part::T(
+            "Keep this directory somewhere safe off this host, and not with the second custodian machine.",
+        )]);
+    } else {
+        out(&[
+            Part::T("The copy is in "),
+            Part::P(dest),
+            Part::T(". It opens only with the passphrases in "),
+            Part::P(&layout.etc("keyd")),
+            Part::T(": keep those apart from the copy."),
+        ]);
+    }
     Ok(())
 }
 

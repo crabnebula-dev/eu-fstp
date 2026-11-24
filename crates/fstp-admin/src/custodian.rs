@@ -185,11 +185,25 @@ fn client_files(layout: &Layout, e: Entry) -> (PathBuf, PathBuf) {
 /// the four of [`Entry::ALL`], and the route feed's when it runs.
 #[must_use]
 pub fn guarded_entries() -> Vec<Entry> {
+    copy_entries(crate::route::ROUTE_FEED)
+}
+
+/// The entries of a host whose route feed runs when `route_feed`: the one
+/// list that `backup-keys` copies and `restore-keys` requires (ADR-028
+/// record of lane `m10/guard-key`, part 3).
+#[must_use]
+pub fn copy_entries(route_feed: bool) -> Vec<Entry> {
     let mut v = Entry::ALL.to_vec();
-    if crate::route::ROUTE_FEED {
+    if route_feed {
         v.push(Entry::Control);
     }
     v
+}
+
+/// The entries `restore-keys` requires a copy of.
+#[must_use]
+pub fn restore_entries(route_feed: bool) -> Vec<Entry> {
+    copy_entries(route_feed)
 }
 
 /// The value of `FSTP_KEYD_GUARD` for the configured custodian.
@@ -603,32 +617,247 @@ pub fn install(file: &Path) -> Result<(), Fail> {
 // Restore after the loss of the host (ADR-028 record of lane
 // `m10/guard-key`, part 2; decided by Daniel on 2026-11-24, Q-F018-5).
 
-/// Where `restore-keys` takes the copy of one entry from.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CopySource {
-    /// `<dir>/<entry>.fkx`, a copy the operator kept.
-    File(PathBuf),
-    /// The custodian's held copy, which it keeps fresh after each erasure.
-    Custodian,
+/// The length of the clear header of a guarded copy (ADR-004 record of
+/// lane `m10/guard-key`, row "Outer seal of a copy").
+pub const COPY_HEADER_LEN: usize = 36;
+
+/// The clear header of a guarded copy: `"FGC1" | version u8 = 1 | kem u16
+/// = 1 | entry u8 | generation u32 | copy id 16 | created u64`, integers
+/// big-endian.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CopyHeader {
+    /// The guard code of the pilot entry: 1 to 5.
+    pub entry: u8,
+    /// The guard generation the copy is sealed to, at least 1.
+    pub generation: u32,
+    /// The copy id.
+    pub id: [u8; 16],
+    /// When the copy was made, in Unix seconds.
+    pub created: u64,
 }
 
-/// The copy of entry `e`: the file in `dir` when there is one, or else the
-/// custodian's.
+impl CopyHeader {
+    /// The header bytes.
+    #[must_use]
+    pub fn encode(&self) -> [u8; COPY_HEADER_LEN] {
+        let parts: [&[u8]; 7] = [
+            b"FGC1",
+            &[1],
+            &1u16.to_be_bytes(),
+            &[self.entry],
+            &self.generation.to_be_bytes(),
+            &self.id,
+            &self.created.to_be_bytes(),
+        ];
+        let mut out = [0u8; COPY_HEADER_LEN];
+        for (o, b) in out.iter_mut().zip(parts.into_iter().flatten()) {
+            *o = *b;
+        }
+        out
+    }
+}
+
+/// `N` bytes of `b` from `at`.
+fn take<const N: usize>(b: &[u8], at: usize) -> Option<[u8; N]> {
+    b.get(at..at.checked_add(N)?)?.try_into().ok()
+}
+
+/// The guard code of entry `e`, as `fstp-keyd` numbers the pilot entries.
 #[must_use]
-pub fn copy_source(dir: &Path, e: Entry) -> CopySource {
-    let file = dir.join(format!("{}.fkx", e.name()));
-    if file.is_file() {
-        CopySource::File(file)
-    } else {
-        CopySource::Custodian
+pub fn guard_code(e: Entry) -> u8 {
+    match e {
+        Entry::Cell => 1,
+        Entry::CellKeys => 2,
+        Entry::Vault => 3,
+        Entry::Witness => 4,
+        Entry::Control => 5,
+    }
+}
+
+/// Decodes the clear header at the start of `bytes`, which may hold the
+/// rest of the copy. `None` for anything but a header of version 1, KEM
+/// 1, a known entry and a generation of at least 1. Fuzzed
+/// (`guarded_copy_header_decode`).
+#[must_use]
+pub fn decode_copy_header(bytes: &[u8]) -> Option<CopyHeader> {
+    let [entry] = take::<1>(bytes, 7)?;
+    let generation = u32::from_be_bytes(take(bytes, 8)?);
+    let id = take::<16>(bytes, 12)?;
+    let created = u64::from_be_bytes(take(bytes, 28)?);
+    let fixed = take::<4>(bytes, 0)? == *b"FGC1"
+        && take::<1>(bytes, 4)? == [1]
+        && take::<2>(bytes, 5)? == 1u16.to_be_bytes();
+    (fixed && (1..=5).contains(&entry) && generation > 0).then_some(CopyHeader {
+        entry,
+        generation,
+        id,
+        created,
+    })
+}
+
+/// The header of a copy file, read from its first bytes only.
+fn file_header(file: &Path) -> Option<CopyHeader> {
+    use std::io::Read as _;
+    let mut buf = [0u8; COPY_HEADER_LEN];
+    std::fs::File::open(file).ok()?.read_exact(&mut buf).ok()?;
+    decode_copy_header(&buf)
+}
+
+/// The header of `<dir>/<entry>.fkx`, when it is a guarded copy of `e`.
+#[must_use]
+pub fn stick_header(dir: &Path, e: Entry) -> Option<CopyHeader> {
+    file_header(&dir.join(format!("{}.fkx", e.name()))).filter(|h| h.entry == guard_code(e))
+}
+
+/// Which copy `restore-keys` takes for one entry (ADR-028 record of lane
+/// `m10/guard-key`, part 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// The directory's copy; the custodian holds none.
+    Directory,
+    /// The custodian's held copy; the directory holds none.
+    Custodian,
+    /// The directory's copy, of the custodian's generation and as new.
+    DirectoryAsNew,
+    /// The custodian's held copy, newer than the directory's.
+    CustodianNewer,
+}
+
+/// The copy to take, from the directory's header and the custodian's held
+/// copy's header. The custodian serves a held copy only of its newest
+/// live generation, so it always opens. The directory's copy is taken
+/// over it only at the same generation and at least as new. A copy of
+/// any other generation is sealed to a destroyed guard, or to none of
+/// this custodian's (I-81).
+#[must_use]
+pub fn pick(stick: Option<CopyHeader>, held: Option<CopyHeader>) -> Option<Pick> {
+    match (stick, held) {
+        (None, None) => None,
+        (Some(_), None) => Some(Pick::Directory),
+        (None, Some(_)) => Some(Pick::Custodian),
+        (Some(s), Some(h)) if s.generation == h.generation && s.created >= h.created => {
+            Some(Pick::DirectoryAsNew)
+        }
+        (Some(_), Some(_)) => Some(Pick::CustodianNewer),
+    }
+}
+
+impl Pick {
+    /// The end of the `done` line that names the copy and why.
+    fn said(self) -> &'static str {
+        match self {
+            Pick::Directory => {
+                " entry, from the copy in the directory; the second custodian holds none."
+            }
+            Pick::Custodian => {
+                " entry, from the second custodian; the directory holds no copy of it."
+            }
+            Pick::DirectoryAsNew => {
+                " entry, from the copy in the directory, which is as new as the second custodian's."
+            }
+            Pick::CustodianNewer => {
+                " entry, from the second custodian, whose copy is newer than the one in the directory."
+            }
+        }
     }
 }
 
 /// The old host's passphrase of entry `e`, when `dir` holds one.
 #[must_use]
 pub fn passphrase_in(dir: &Path, e: Entry) -> Option<PathBuf> {
-    let p = dir.join(format!("{}.passphrase", e.name()));
+    let p = passphrase_file(dir, e);
     p.is_file().then_some(p)
+}
+
+/// The passphrase of entry `e` in a copy directory: the one name that
+/// `backup-keys` writes and `restore-keys` reads.
+fn passphrase_file(dir: &Path, e: Entry) -> PathBuf {
+    dir.join(format!("{}.passphrase", e.name()))
+}
+
+/// The first file of `dest` that `backup-keys` would write over: a copy or
+/// a passphrase of any entry (ADR-028 record of lane `m10/guard-key`,
+/// part 3).
+#[must_use]
+pub fn occupied(dest: &Path) -> Option<PathBuf> {
+    guarded_entries()
+        .into_iter()
+        .flat_map(|e| {
+            [
+                dest.join(format!("{}.fkx", e.name())),
+                passphrase_file(dest, e),
+            ]
+        })
+        .find(|p| p.exists())
+}
+
+/// Creates the copy directory `dest` with mode 0700, or sets an existing
+/// one to 0700. A FAT or exFAT stick has no Unix modes and refuses the
+/// change, so its mount options decide there.
+///
+/// # Errors
+///
+/// The I/O error of the creation.
+pub fn private_dir(dest: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dest)?;
+    let _ = std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o700));
+    Ok(())
+}
+
+/// `backup-keys`, after every copy succeeded (ADR-028 record of lane
+/// `m10/guard-key`, part 3, decided by Daniel on 2026-11-24): writes each
+/// guarded entry's passphrase into `dest` as `<entry>.passphrase`, mode
+/// 0600, so `restore-keys` asks for nothing. Only when `guarded`, that is
+/// every copy is sealed to the custodian's guard: a plain copy opens with
+/// its passphrase alone (I-80). An entry without a passphrase on this
+/// host is skipped. Returns whether it wrote them. Nothing is printed or
+/// logged.
+///
+/// # Errors
+///
+/// The I/O error of a passphrase that exists and does not copy.
+pub fn write_passphrases(layout: &Layout, dest: &Path, guarded: bool) -> std::io::Result<bool> {
+    if !guarded {
+        return Ok(false);
+    }
+    private_dir(dest)?;
+    for e in guarded_entries() {
+        let from = layout.keyd_passphrase(e);
+        if from.is_file() {
+            crate::state::copy_atomic(&from, &passphrase_file(dest, e), 0o600)?;
+        }
+    }
+    Ok(true)
+}
+
+/// `restore-keys`: when `dir` holds the old host's passphrase of entry
+/// `e`, moves the current one aside as
+/// `<entry>.passphrase.before-restore-<stamp>` and puts the old one in
+/// its place, mode 0600. Returns whether `dir` held one.
+///
+/// # Errors
+///
+/// The I/O error of any step.
+pub fn install_passphrase(
+    layout: &Layout,
+    dir: &Path,
+    e: Entry,
+    stamp: i64,
+) -> std::io::Result<bool> {
+    let Some(old) = passphrase_in(dir, e) else {
+        return Ok(false);
+    };
+    let current = layout.keyd_passphrase(e);
+    let aside = current.with_extension(format!("passphrase.before-restore-{stamp}"));
+    if current.is_file() {
+        std::fs::rename(&current, &aside)?;
+    }
+    crate::state::copy_atomic(&old, &current, 0o600)?;
+    Ok(true)
 }
 
 /// Runs `fstp-keyd <args>` for entry `e` with its passphrase and guard
@@ -725,22 +954,32 @@ pub fn restore_keys(layout: &Layout, dir: &Path) -> Result<(), Fail> {
     let staging = layout.admin_dir().join("restore-keys");
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(io)?;
+    // Lead reading of 2026-11-24 (ADR-028 record of lane `m10/guard-key`,
+    // part 3): the custodian's held copy, unless the directory's is of the
+    // same live generation and as new. Never a copy of a destroyed guard
+    // while a held copy exists (I-81).
     let mut copies = Vec::new();
-    for e in guarded_entries() {
-        let file = match copy_source(dir, e) {
-            CopySource::File(f) => f,
-            CopySource::Custodian => {
-                let f = staging.join(format!("{}.fgc", e.name()));
-                match keyd_with_credentials(layout, e, &["fetch-copy".as_ref(), f.as_os_str()])? {
-                    Some(0) => f,
-                    Some(7) => {
-                        return Err(Fail::Missing(
-                            dir.join(format!("{}.fkx", e.name())),
-                            "a key copy of this entry: there is none here and none at the second custodian",
-                        ));
-                    }
-                    code => return Err(exit_fail(layout, code)),
-                }
+    for e in restore_entries(crate::route::ROUTE_FEED) {
+        let held_file = staging.join(format!("{}.fgc", e.name()));
+        let held = match keyd_with_credentials(
+            layout,
+            e,
+            &["fetch-copy".as_ref(), held_file.as_os_str()],
+        )? {
+            Some(0) => Some(file_header(&held_file).ok_or(Fail::Step(step, Cause::Io))?),
+            Some(7) => None,
+            code => return Err(exit_fail(layout, code)),
+        };
+        let file = match pick(stick_header(dir, e), held) {
+            Some(p @ (Pick::Directory | Pick::DirectoryAsNew)) => {
+                (p, dir.join(format!("{}.fkx", e.name())))
+            }
+            Some(p @ (Pick::Custodian | Pick::CustodianNewer)) => (p, held_file),
+            None => {
+                return Err(Fail::Missing(
+                    dir.join(format!("{}.fkx", e.name())),
+                    "a key copy of this entry: there is none here and none at the second custodian",
+                ));
             }
         };
         copies.push((e, file));
@@ -748,15 +987,8 @@ pub fn restore_keys(layout: &Layout, dir: &Path) -> Result<(), Fail> {
     crate::ops::stop(layout)?;
     let m = Manager::new(layout);
     let stamp = crate::pki::now();
-    for (e, file) in &copies {
-        if let Some(old) = passphrase_in(dir, *e) {
-            let current = layout.keyd_passphrase(*e);
-            let aside = current.with_extension(format!("passphrase.before-restore-{stamp}"));
-            if current.is_file() {
-                std::fs::rename(&current, &aside).map_err(io)?;
-            }
-            write_atomic(&current, &std::fs::read(old).map_err(io)?, 0o600).map_err(io)?;
-        }
+    for (e, (chosen, file)) in &copies {
+        install_passphrase(layout, dir, *e, stamp).map_err(io)?;
         let volume = layout.keyd_volume(*e);
         let aside = volume.with_file_name(format!(
             "{}.before-restore-{stamp}",
@@ -777,7 +1009,19 @@ pub fn restore_keys(layout: &Layout, dir: &Path) -> Result<(), Fail> {
             &["import".as_ref(), file.as_os_str(), volume.as_os_str()],
         )? {
             Some(0) => {}
-            code => return Err(exit_fail(layout, code)),
+            code => {
+                // Without a held copy, the directory's copy may be sealed
+                // to a destroyed guard: the custodian refuses to open it
+                // and nothing is written (I-81).
+                crate::say::err(&[
+                    Part::T("  failed   keys of the "),
+                    Part::T(e.name()),
+                    Part::T(
+                        " entry: fstp-keyd import refused the copy and wrote nothing. A copy older than the last erasure of its entry never opens.",
+                    ),
+                ]);
+                return Err(exit_fail(layout, code));
+            }
         }
         if layout.cfg.services == crate::config::Services::Systemd {
             let owner = format!("{0}:{0}", crate::stack::KEYD_USER);
@@ -788,13 +1032,10 @@ pub fn restore_keys(layout: &Layout, dir: &Path) -> Result<(), Fail> {
         out(&[
             Part::T("  done     keys of the "),
             Part::T(e.name()),
-            Part::T(match copy_source(dir, *e) {
-                CopySource::File(_) => " entry, from the directory",
-                CopySource::Custodian => " entry, from the second custodian",
-            }),
+            Part::T(chosen.said()),
         ]);
     }
-    for e in guarded_entries() {
+    for e in restore_entries(crate::route::ROUTE_FEED) {
         for s in crate::stack::keyd(layout, e) {
             m.ensure(&s).map_err(|f| Fail::Step(step, f.into()))?;
         }
@@ -1026,13 +1267,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fstp-admin-restore-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("cell.fkx"), b"FGC1").unwrap();
+        let cell = header(Entry::Cell, 2, 50);
+        std::fs::write(dir.join("cell.fkx"), cell.encode()).unwrap();
         std::fs::write(dir.join("vault.passphrase"), b"old\n").unwrap();
+        assert_eq!(stick_header(&dir, Entry::Cell), Some(cell));
+        assert_eq!(stick_header(&dir, Entry::Vault), None);
+        assert_eq!(pick(stick_header(&dir, Entry::Vault), None), None);
         assert_eq!(
-            copy_source(&dir, Entry::Cell),
-            CopySource::File(dir.join("cell.fkx"))
+            pick(stick_header(&dir, Entry::Vault), Some(cell)),
+            Some(Pick::Custodian)
         );
-        assert_eq!(copy_source(&dir, Entry::Vault), CopySource::Custodian);
         assert_eq!(
             passphrase_in(&dir, Entry::Vault),
             Some(dir.join("vault.passphrase"))
@@ -1050,6 +1294,246 @@ mod tests {
             .unwrap(),
         );
         assert!(matches!(restore_keys(&unpaired, &dir), Err(Fail::Waits(_))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A synthetic clear header of a guarded copy of `e`.
+    fn header(e: Entry, generation: u32, created: u64) -> CopyHeader {
+        CopyHeader {
+            entry: guard_code(e),
+            generation,
+            id: [0x5a; 16],
+            created,
+        }
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, part 3 (lead reading of
+    /// 2026-11-24), F-018: `backup-keys` copies exactly the entries
+    /// `restore-keys` requires, with the route feed on and off, so a
+    /// restore never stops on an entry the copy left out.
+    #[test]
+    fn adr028_f018_backup_keys_and_restore_keys_agree_on_the_entries() {
+        for route_feed in [false, true] {
+            let backup = crate::ops::backup_entries(route_feed);
+            let restore = restore_entries(route_feed);
+            assert_eq!(backup, restore, "route feed {route_feed}");
+            for e in Entry::ALL {
+                assert!(backup.contains(&e), "{}", e.name());
+            }
+            assert_eq!(backup.contains(&Entry::Control), route_feed);
+        }
+        assert_eq!(
+            crate::ops::backup_entries(crate::route::ROUTE_FEED),
+            guarded_entries()
+        );
+    }
+
+    /// I-81, ADR-028 record of lane `m10/guard-key`, part 3 (lead reading
+    /// of 2026-11-24), F-018: `restore-keys` takes the custodian's held
+    /// copy unless the directory's copy is of the same generation and as
+    /// new, and takes the one copy there is when only one exists.
+    #[test]
+    fn i81_adr028_f018_restore_keys_takes_the_newer_live_copy() {
+        let h = |g, c| Some(header(Entry::Vault, g, c));
+        assert_eq!(pick(None, None), None);
+        assert_eq!(pick(h(3, 100), None), Some(Pick::Directory));
+        assert_eq!(pick(None, h(3, 100)), Some(Pick::Custodian));
+        assert_eq!(pick(h(3, 200), h(3, 100)), Some(Pick::DirectoryAsNew));
+        assert_eq!(pick(h(3, 100), h(3, 100)), Some(Pick::DirectoryAsNew));
+        assert_eq!(pick(h(3, 100), h(3, 200)), Some(Pick::CustodianNewer));
+    }
+
+    /// I-81, ADR-028 record of lane `m10/guard-key`, part 3, F-018: the
+    /// custodian serves a held copy only of its newest live generation. So
+    /// a directory copy of any other generation is sealed to a destroyed
+    /// guard, or to none of this custodian's, and is never taken while a
+    /// held copy exists, however late it was made.
+    #[test]
+    fn i81_adr028_f018_restore_keys_never_takes_a_stick_copy_of_a_destroyed_guard() {
+        let h = |g, c| Some(header(Entry::Cell, g, c));
+        assert_eq!(pick(h(2, 999), h(3, 100)), Some(Pick::CustodianNewer));
+        assert_eq!(pick(h(7, 999), h(2, 100)), Some(Pick::CustodianNewer));
+        for sg in 1..6u32 {
+            for hg in 1..6u32 {
+                for (sc, hc) in [(1u64, 2u64), (2, 2), (3, 2)] {
+                    let p = pick(h(sg, sc), h(hg, hc));
+                    if matches!(p, Some(Pick::Directory | Pick::DirectoryAsNew)) {
+                        assert_eq!(sg, hg, "stick {sg}/{sc}, held {hg}/{hc}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, part 3, F-018: the clear
+    /// header of a guarded copy reads back what it was written with, its
+    /// copy id where `ops::copy_id` reads it, and refuses another magic,
+    /// version or KEM, an unknown entry, generation 0 and a short input.
+    #[test]
+    fn adr028_f018_guarded_copy_header_decodes_and_refuses() {
+        let h = header(Entry::Control, 9, 1_790_000_000);
+        let bytes = h.encode();
+        assert_eq!(bytes.len(), COPY_HEADER_LEN);
+        assert_eq!(decode_copy_header(&bytes), Some(h));
+        let mut long = bytes.to_vec();
+        long.extend_from_slice(&[7; 64]);
+        assert_eq!(decode_copy_header(&long), Some(h));
+        assert_eq!(
+            crate::ops::copy_id(&bytes).as_deref(),
+            Some("5a".repeat(16).as_str())
+        );
+        assert_eq!(decode_copy_header(bytes.get(..35).unwrap()), None);
+        for (at, value) in [(0, b'X'), (4, 2), (6, 2), (7, 0), (7, 6)] {
+            let mut bad = bytes;
+            *bad.get_mut(at).unwrap() = value;
+            assert_eq!(decode_copy_header(&bad), None, "byte {at}");
+        }
+        let zero = CopyHeader { generation: 0, ..h };
+        assert_eq!(decode_copy_header(&zero.encode()), None);
+        let dir = fresh("copy-header");
+        std::fs::write(dir.join("control.fkx"), &long).unwrap();
+        assert_eq!(stick_header(&dir, Entry::Control), Some(h));
+        std::fs::write(dir.join("cell.fkx"), &long).unwrap();
+        assert_eq!(stick_header(&dir, Entry::Cell), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A host layout under `dir`, paired with a custodian when `paired`,
+    /// with a synthetic passphrase per guarded entry tagged `host`.
+    fn host(dir: &Path, paired: bool, host: &str) -> Layout {
+        let d = dir.display();
+        let custodian = if paired {
+            r#","custodian":"c.example.eu""#
+        } else {
+            ""
+        };
+        let text = format!(
+            r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{{"relay":"smtp.example.eu","username":"cell"}},
+            "paths":{{"etc":"{d}/etc","state":"{d}/state","token_dir":"{d}"}}{custodian}}}"#
+        );
+        let layout = Layout::new(crate::config::decode(text.as_bytes()).unwrap());
+        for e in guarded_entries() {
+            write_atomic(
+                &layout.keyd_passphrase(e),
+                synthetic_passphrase(e, host).as_bytes(),
+                0o600,
+            )
+            .unwrap();
+        }
+        layout
+    }
+
+    fn synthetic_passphrase(e: Entry, host: &str) -> String {
+        format!("synthetic-{}-passphrase-of-host-{host}\n", e.name())
+    }
+
+    fn mode(p: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    fn fresh(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("fstp-admin-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, part 3 (decided by Daniel
+    /// on 2026-11-24), F-018: `backup-keys` writes every guarded entry's
+    /// passphrase beside the copies, mode 0600 in a directory of mode
+    /// 0700, in the name and format `restore-keys` reads. On a new host,
+    /// `restore-keys` then finds each one and puts the old host's
+    /// passphrase in place, with the new host's moved aside, so nothing is
+    /// typed.
+    #[test]
+    fn adr028_f018_backup_keys_passphrases_round_trip_to_restore_keys() {
+        let dir = fresh("pass-round-trip");
+        let old = host(&dir.join("old"), true, "old");
+        let new = host(&dir.join("new"), true, "new");
+        let stick = dir.join("usb").join("fstp-keys");
+        assert_eq!(occupied(&stick), None);
+        assert!(write_passphrases(&old, &stick, true).unwrap());
+        assert_eq!(mode(&stick), 0o700);
+        for e in guarded_entries() {
+            let p = passphrase_in(&stick, e).unwrap();
+            assert_eq!(mode(&p), 0o600, "{}", e.name());
+            assert_eq!(
+                std::fs::read_to_string(&p).unwrap(),
+                synthetic_passphrase(e, "old")
+            );
+        }
+        for f in std::fs::read_dir(&stick).unwrap().flatten() {
+            let name = f.file_name().into_string().unwrap();
+            assert!(name.ends_with(".passphrase"), "{name}");
+        }
+        assert!(occupied(&stick).is_some());
+        for e in guarded_entries() {
+            assert!(install_passphrase(&new, &stick, e, 42).unwrap());
+            let current = new.keyd_passphrase(e);
+            assert_eq!(
+                std::fs::read_to_string(&current).unwrap(),
+                synthetic_passphrase(e, "old")
+            );
+            assert_eq!(mode(&current), 0o600);
+            let aside = current.with_extension("passphrase.before-restore-42");
+            assert_eq!(
+                std::fs::read_to_string(aside).unwrap(),
+                synthetic_passphrase(e, "new")
+            );
+        }
+        let none = dir.join("empty");
+        std::fs::create_dir_all(&none).unwrap();
+        assert!(!install_passphrase(&new, &none, Entry::Cell, 43).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// I-80, ADR-028 record of lane `m10/guard-key`, part 3: a plain
+    /// `"FKX1"` copy opens with its passphrase alone, so no passphrase is
+    /// written beside one. Only a guarded `"FGC1"` copy, which also needs
+    /// the custodian, gets its passphrase.
+    #[test]
+    fn i80_adr028_f018_backup_keys_writes_no_passphrase_beside_an_unguarded_copy() {
+        let dir = fresh("pass-unguarded");
+        let layout = host(&dir.join("dev"), false, "dev");
+        let dest = dir.join("copy");
+        assert!(!write_passphrases(&layout, &dest, false).unwrap());
+        for e in guarded_entries() {
+            assert_eq!(passphrase_in(&dest, e), None);
+        }
+        assert!(crate::ops::is_guarded(b"FGC1\x01rest"));
+        assert!(!crate::ops::is_guarded(b"FKX1\x01rest"));
+        assert!(!crate::ops::is_guarded(b"FG"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ADR-028 record of lane `m10/guard-key`, part 3: `backup-keys`
+    /// refuses a directory that already holds a copy or a passphrase of
+    /// any entry, before it stops anything, so no old passphrase is
+    /// written over.
+    #[test]
+    fn adr028_f018_backup_keys_refuses_a_directory_that_holds_a_passphrase() {
+        let dir = fresh("pass-occupied");
+        let layout = host(&dir.join("pilot"), true, "pilot");
+        let dest = dir.join("copy");
+        assert_eq!(occupied(&dest), None);
+        std::fs::create_dir_all(&dest).unwrap();
+        assert_eq!(occupied(&dest), None);
+        std::fs::write(dest.join("control.passphrase"), b"x\n").unwrap();
+        assert_eq!(occupied(&dest), Some(dest.join("control.passphrase")));
+        let mut state = crate::state::State::load(&dir.join("state")).unwrap();
+        assert!(matches!(
+            crate::ops::backup_keys(&layout, &mut state, &dest),
+            Err(Fail::Missing(p, _)) if p == dest.join("control.passphrase")
+        ));
+        assert_eq!(
+            std::fs::read(dest.join("control.passphrase")).unwrap(),
+            b"x\n"
+        );
+        std::fs::remove_file(dest.join("control.passphrase")).unwrap();
+        std::fs::write(dest.join("vault.fkx"), b"FGC1").unwrap();
+        assert_eq!(occupied(&dest), Some(dest.join("vault.fkx")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

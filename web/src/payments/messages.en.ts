@@ -27,6 +27,7 @@ export const PAYMENTS_LABELS: Readonly<Record<string, string>> = {
   "pay.lines": "{n} lines",
   "pay.checks.pass": "Passed",
   "pay.checks.fail": "Not passed",
+  "pay.checks.running": "Running",
   "pay.checks.sub": "Submission checks",
   "pay.checks.acc": "Acceptance checks",
   "pay.status.DRAFT": "Draft",
@@ -82,6 +83,8 @@ export const PAYMENTS_LABELS: Readonly<Record<string, string>> = {
   "pay.detail.checks_failed_title": "Failed checks",
   "pay.detail.checks_failed_intro":
     "The checks are: the deliverable is reachable, the licence is allowed, the amount is within what is available, and the evidence rules hold. The cell does not name which one failed on this page.",
+  "pay.detail.checks_failed_who":
+    "The grantee acts next: they correct the evidence and resubmit, or withdraw the request. If the deliverable is on a forge the platform does not reach yet, the platform operator adds that forge first.",
   "pay.detail.edit": "Edit and resubmit",
   "pay.withdraw.heading": "Withdraw the request",
   "pay.withdraw.intro": "You can withdraw a request until it is accepted. A new request needs new evidence.",
@@ -94,6 +97,10 @@ export const PAYMENTS_LABELS: Readonly<Record<string, string>> = {
   "pay.review.submit": "Record the decision for line {line} (milestone {m})",
   "pay.review.err": "Write the approved amount, such as 100.00.",
   "pay.review.done": "The decision is recorded.",
+  "pay.review.checks_running":
+    "The automated acceptance checks are still running. You can decide every line but the last one now. The decision on the last line waits until the checks pass, which usually takes a few seconds.",
+  "pay.review.recheck": "Check again",
+  "pay.review.wait": "The automated checks have not passed yet. Wait a moment, then select Check again.",
   "pay.changes.heading": "Ask for changes",
   "pay.changes.reason": "What must change",
   "pay.changes.submit": "Ask for changes",
@@ -127,6 +134,8 @@ export const PAYMENTS_LABELS: Readonly<Record<string, string>> = {
   "pay.reviewer.grant": "Grant overview of proposal {id}",
   "pay.reviewer.intro": "You are an assigned reviewer of this grant. Check the evidence of each line, then record a decision per line.",
   "pay.reviewer.complete": "The line review of this request is complete. It now waits for the finance approver.",
+  "pay.reviewer.left":
+    "This request is no longer waiting for your review. The automated checks may have failed, or the request went back to the grantee. The grantee acts next.",
   "pay.reviewer.location": "Deliverable location",
   "pay.reviewer.release": "Release",
   "pay.reviewer.licence": "Licence",

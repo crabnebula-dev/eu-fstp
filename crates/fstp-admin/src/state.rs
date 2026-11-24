@@ -145,6 +145,39 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()>
     std::fs::rename(&tmp, path)
 }
 
+/// Copies the file `from` to `to` as [`write_atomic`] writes, with `mode`.
+/// The bytes go file to file through [`std::io::copy`], which runs in the
+/// kernel on Linux, so a secret never sits in a buffer of this process
+/// there (ADR-028 record of lane `m10/guard-key`, part 3).
+///
+/// # Errors
+///
+/// The I/O error of any step.
+pub fn copy_atomic(from: &Path, to: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let dir = to
+        .parent()
+        .ok_or_else(|| std::io::Error::other("a path has no parent"))?;
+    std::fs::create_dir_all(dir)?;
+    let mut src = std::fs::File::open(from)?;
+    let mut tmp = to.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&tmp)?;
+    let copied = std::io::copy(&mut src, &mut f).and_then(|_| f.sync_all());
+    drop(f);
+    if let Err(e) = copied {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    std::fs::rename(&tmp, to)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "test code")]

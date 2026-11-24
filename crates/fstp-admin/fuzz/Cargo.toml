@@ -61,6 +61,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "guarded_copy_header_decode"
+path = "fuzz_targets/guarded_copy_header_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

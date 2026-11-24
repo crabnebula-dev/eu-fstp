@@ -4656,6 +4656,11 @@ fn start_cell(
         tenant_prober: None,
         // ADR-028 record of lane L20: a world cell has no host status file.
         host_status: None,
+        // ADR-026 section of lane `m10/checks-runner`: a world cell runs no
+        // checks runner. Its cycle plays the payment port in process
+        // (`RunningCell::payment_checks`), so its scripted runs stay
+        // deterministic.
+        checks: None,
         // ADR-026 amendment of 2026-11-23 (M10 F-039, F-040): the world's
         // cycle, its model checks and the devstack scenario send their
         // commands through the test-only wide command route. A production

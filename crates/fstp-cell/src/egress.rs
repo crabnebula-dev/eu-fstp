@@ -83,6 +83,12 @@ pub enum Destination {
         /// The resolver address.
         addr: SocketAddr,
     },
+    /// A deliverable host on the cell's forge allowlist, for the checks
+    /// runner of payment requests (ADR-009 amendment and ADR-026 section
+    /// of lane `m10/checks-runner`, 2026-11-24, interim, pending Daniel).
+    /// Only [`ForgeClient`] opens it: an unauthenticated GET over https to
+    /// public addresses, never a CrabNebula host (I-38).
+    Forge,
 }
 
 /// Why the connector refused a destination.
@@ -213,7 +219,8 @@ pub fn check_host(to: &Destination, host: &str) -> Result<(), EgressRefusal> {
         | Destination::Custody
         | Destination::ControlPlane
         | Destination::Witness
-        | Destination::DnsResolver { .. } => {
+        | Destination::DnsResolver { .. }
+        | Destination::Forge => {
             if is_crabnebula_host(host) {
                 Err(EgressRefusal::CrabNebulaHost)
             } else {
@@ -283,7 +290,8 @@ pub fn connect(to: &Destination) -> Result<(), crate::CellError> {
         | Destination::Custody
         | Destination::ControlPlane
         | Destination::Witness
-        | Destination::DnsResolver { .. } => Ok(()),
+        | Destination::DnsResolver { .. }
+        | Destination::Forge => Ok(()),
     }
     .map_err(crate::CellError::Egress)
 }
@@ -757,9 +765,10 @@ impl<R: Runtime, T: MailTransport> MailEgress<R, T> {
 // The e2e test cell's local forge alone may use http on loopback, through
 // [`ForgePolicy::test_cell`]. No shipped configuration builds it.
 //
-// The deliverable connector is not a `Destination` variant yet: ADR-009
-// says a new variant needs its amendment, which waits for Daniel. The
-// policy here is the one that amendment would name.
+// The deliverable connector is [`Destination::Forge`] (ADR-009 amendment
+// of 2026-11-24, interim, pending Daniel). [`TlsForgeTransport`] is its
+// transport in the production cell (ADR-026 section of lane
+// `m10/checks-runner`).
 
 /// The most bytes one deliverable fetch reads.
 pub const FORGE_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -938,6 +947,209 @@ impl<R: Runtime, T: ForgeTransport> Fetch for ForgeClient<R, T> {
     }
 }
 
+/// The longest response head a forge answer may carry, beyond its body.
+const FORGE_MAX_HEAD: usize = 64 * 1024;
+
+/// The parser limits of a forge answer: `max_bytes` of body, the default
+/// limits otherwise.
+fn forge_limits(max_bytes: usize) -> fstp_http::Limits {
+    let body = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    fstp_http::Limits {
+        max_body_bytes: body,
+        max_chunk_size: body,
+        ..fstp_http::Limits::default()
+    }
+}
+
+/// The request bytes of one deliverable fetch: a GET of the URL's path,
+/// with no cookie and no credential, closing the connection after the
+/// answer. The URL is the strict subset of `fstp_checks::url`, so its
+/// host and path hold no control byte.
+pub fn forge_request(url: &DeliverableUrl) -> Vec<u8> {
+    let default = match url.scheme() {
+        Scheme::Https => 443,
+        Scheme::Http => 80,
+    };
+    let host = if url.port() == default {
+        url.host().to_owned()
+    } else {
+        format!("{}:{}", url.host(), url.port())
+    };
+    format!(
+        "GET {} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: fstp-checks\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+        url.path()
+    )
+    .into_bytes()
+}
+
+/// Reads one answer to [`forge_request`] from `io`, decoded by
+/// `fstp_http::parse_response`, the fuzzed response decoder. A body over
+/// `max_bytes` is [`FetchFault::TooLarge`]. A malformed answer or a broken
+/// link is [`FetchFault::Unreachable`].
+///
+/// # Errors
+///
+/// The fault above.
+pub async fn forge_exchange<S: Connection>(
+    mut io: S,
+    url: &DeliverableUrl,
+    max_bytes: usize,
+) -> Result<Fetched, FetchFault> {
+    io.write_all(&forge_request(url))
+        .await
+        .map_err(|_| FetchFault::Unreachable)?;
+    io.flush().await.map_err(|_| FetchFault::Unreachable)?;
+    let limits = forge_limits(max_bytes);
+    let cap = max_bytes.saturating_add(FORGE_MAX_HEAD);
+    let mut answer = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let (n, eof) = match io.read(&mut chunk).await {
+            Ok(0) => (0, true),
+            Ok(n) => (n, false),
+            // A peer that closes without close_notify ends the stream.
+            Err(_) => (0, true),
+        };
+        answer.extend_from_slice(chunk.get(..n).ok_or(FetchFault::Unreachable)?);
+        if answer.len() > cap {
+            return Err(FetchFault::TooLarge);
+        }
+        match fstp_http::parse_response(&answer, &fstp_http::Method::GET, &limits, eof) {
+            Ok(fstp_http::Parsed::Complete { message, .. }) => {
+                return Ok(Fetched {
+                    status: message.status.as_u16(),
+                    body: message.body,
+                });
+            }
+            Ok(fstp_http::Parsed::Incomplete) if !eof => {}
+            Ok(fstp_http::Parsed::Incomplete) => return Err(FetchFault::Unreachable),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    fstp_http::ParseErrorKind::BodyTooLarge
+                        | fstp_http::ParseErrorKind::ChunkTooLarge
+                ) =>
+            {
+                return Err(FetchFault::TooLarge);
+            }
+            Err(_) => return Err(FetchFault::Unreachable),
+        }
+    }
+}
+
+/// The transport of [`ForgeClient`] in the production cell (ADR-009
+/// amendment of 2026-11-24). It resolves through the runtime, connects to
+/// the address the client checked, and speaks TLS verified against the
+/// public roots and the host name, with no client certificate. Plain http
+/// is used only for a URL the policy let through as http, which only the
+/// e2e test cell's policy does.
+#[derive(Clone, Debug)]
+pub struct TlsForgeTransport<R> {
+    rt: R,
+    tls: fstp_tls::ClientConfig,
+}
+
+impl<R: Runtime> TlsForgeTransport<R> {
+    /// A transport that trusts the public roots ([`service_tls`]).
+    ///
+    /// # Errors
+    ///
+    /// The configuration error of [`service_tls`].
+    pub fn new(rt: R) -> Result<TlsForgeTransport<R>, fstp_tls::TlsError> {
+        Ok(TlsForgeTransport {
+            rt,
+            tls: service_tls()?,
+        })
+    }
+}
+
+impl<R: Runtime> ForgeTransport for TlsForgeTransport<R> {
+    fn resolve(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> impl Future<Output = Result<Vec<IpAddr>, FetchFault>> + Send {
+        let rt = self.rt.clone();
+        let host = host.to_owned();
+        async move {
+            let addrs = rt
+                .resolve(&host, port)
+                .await
+                .map_err(|_| FetchFault::Unreachable)?;
+            Ok(addrs.into_iter().map(|a| a.ip()).collect())
+        }
+    }
+
+    fn get(
+        &self,
+        addr: SocketAddr,
+        url: &DeliverableUrl,
+        max_bytes: usize,
+    ) -> impl Future<Output = Result<Fetched, FetchFault>> + Send {
+        let rt = self.rt.clone();
+        let tls = self.tls.clone();
+        let url = url.clone();
+        async move {
+            let tcp = rt
+                .connect_tcp(addr)
+                .await
+                .map_err(|_| FetchFault::Unreachable)?;
+            match url.scheme() {
+                Scheme::Https => {
+                    let stream = fstp_tls::connect(&tls, url.host(), tcp)
+                        .await
+                        .map_err(|_| FetchFault::Unreachable)?;
+                    forge_exchange(stream, &url, max_bytes).await
+                }
+                Scheme::Http => forge_exchange(tcp, &url, max_bytes).await,
+            }
+        }
+    }
+}
+
+/// One boxed fetch of a [`DynFetch`].
+pub type FetchFuture<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Result<Fetched, FetchFault>> + Send + 'a>>;
+
+/// The object-safe form of a [`Fetch`], so a start option can hold any
+/// forge client ([`SharedForge`]).
+pub trait DynFetch: Send + Sync + 'static {
+    /// [`Fetch::fetch`], boxed.
+    fn fetch_boxed<'a>(&'a self, url: &'a DeliverableUrl) -> FetchFuture<'a>;
+}
+
+impl<T: Fetch + Send + Sync + 'static> DynFetch for T {
+    fn fetch_boxed<'a>(&'a self, url: &'a DeliverableUrl) -> FetchFuture<'a> {
+        Box::pin(self.fetch(url))
+    }
+}
+
+/// A shared forge client of any type. The cell's checks runner takes its
+/// fetcher in this form (`crate::process::StartOptions::checks`). It adds
+/// nothing to the policy: the client inside is a [`ForgeClient`] in
+/// production, which applies [`ForgePolicy`].
+#[derive(Clone)]
+pub struct SharedForge(std::sync::Arc<dyn DynFetch>);
+
+impl SharedForge {
+    /// `fetch`, shared.
+    pub fn new<T: Fetch + Send + Sync + 'static>(fetch: T) -> SharedForge {
+        SharedForge(std::sync::Arc::new(fetch))
+    }
+}
+
+impl std::fmt::Debug for SharedForge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SharedForge(..)")
+    }
+}
+
+impl Fetch for SharedForge {
+    async fn fetch(&self, url: &DeliverableUrl) -> Result<Fetched, FetchFault> {
+        self.0.fetch_boxed(url).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -953,6 +1165,7 @@ mod tests {
             Destination::Custody,
             Destination::ControlPlane,
             Destination::Witness,
+            Destination::Forge,
         ];
         for d in others {
             for h in [LICENCE_HOST, UPDATE_HOST, "LICENCES.fstp.crabnebula.dev."] {
@@ -1351,6 +1564,87 @@ mod tests {
         );
         let r = rt.block_on(big.fetch(&url("https://forge.example/a")));
         assert_eq!(r, Err(FetchFault::TooLarge));
+    }
+
+    /// Plays one forge answer `answer` over a duplex link and gives what
+    /// [`forge_exchange`] made of it, with the request bytes the forge read.
+    fn forge_answer(answer: &[u8], max: usize) -> (Result<Fetched, FetchFault>, Vec<u8>) {
+        let (c, mut s) = fstp_rt::duplex::duplex(1 << 16);
+        let u = url("https://forge.example/team/kit/raw/v1.0.0/LICENSE");
+        let answer = answer.to_vec();
+        let server = async move {
+            let mut got = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !got.ends_with(b"\r\n\r\n") {
+                match s.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => got.extend_from_slice(&chunk[..n]),
+                }
+            }
+            let _ = s.write_all(&answer).await;
+            let _ = s.flush().await;
+            drop(s);
+            got
+        };
+        fstp_rt::future::block_on(fstp_rt::future::join(forge_exchange(c, &u, max), server))
+    }
+
+    /// ADR-009 amendment of 2026-11-24, TH-24: the forge request is one
+    /// unauthenticated GET that closes the link, and the answer is decoded
+    /// by the fuzzed `fstp_http` decoder, chunked bodies included.
+    #[test]
+    fn adr009_forge_exchange_sends_a_bare_get_and_decodes_the_answer() {
+        let (got, request) = forge_answer(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nSPDX-\r\n3\r\nok!\r\n0\r\n\r\n",
+            FORGE_MAX_BYTES,
+        );
+        assert_eq!(
+            got,
+            Ok(Fetched {
+                status: 200,
+                body: b"SPDX-ok!".to_vec()
+            })
+        );
+        let text = String::from_utf8(request).unwrap();
+        assert!(text.starts_with("GET /team/kit/raw/v1.0.0/LICENSE HTTP/1.1\r\n"));
+        assert!(text.contains("\r\nHost: forge.example\r\n"));
+        assert!(text.contains("\r\nConnection: close\r\n"));
+        let lower = text.to_ascii_lowercase();
+        assert!(!lower.contains("cookie") && !lower.contains("authorization"));
+    }
+
+    /// ADR-009 amendment of 2026-11-24: a redirect is an answer, never
+    /// followed. A body over the cap is too large, and a malformed answer
+    /// gives no fetch.
+    #[test]
+    fn adr009_forge_exchange_follows_no_redirect_and_caps_the_body() {
+        let (got, _) = forge_answer(
+            b"HTTP/1.1 302 Found\r\nLocation: https://elsewhere.example/\r\nContent-Length: 0\r\n\r\n",
+            FORGE_MAX_BYTES,
+        );
+        assert_eq!(got.map(|f| f.status), Ok(302));
+        let (big, _) = forge_answer(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789",
+            4,
+        );
+        assert_eq!(big, Err(FetchFault::TooLarge));
+        let (bad, _) = forge_answer(b"not http at all\r\n\r\n", FORGE_MAX_BYTES);
+        assert_eq!(bad, Err(FetchFault::Unreachable));
+    }
+
+    /// I-38, ADR-009 amendment of 2026-11-24: the forge destination never
+    /// reaches a CrabNebula host, and a SaaS or self-hosted cell may build it.
+    #[test]
+    fn i38_forge_destination_refuses_crabnebula_hosts() {
+        for h in [LICENCE_HOST, UPDATE_HOST, "x.crabnebula.dev"] {
+            assert_eq!(
+                check_host(&Destination::Forge, h),
+                Err(EgressRefusal::CrabNebulaHost)
+            );
+        }
+        assert_eq!(check_host(&Destination::Forge, "codeberg.org"), Ok(()));
+        assert_eq!(check_mode(Mode::Saas, &Destination::Forge), Ok(()));
+        assert_eq!(check_mode(Mode::SelfHosted, &Destination::Forge), Ok(()));
     }
 }
 

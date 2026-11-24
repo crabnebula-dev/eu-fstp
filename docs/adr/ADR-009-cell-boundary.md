@@ -258,6 +258,25 @@ DnsResolver { addr: SocketAddr },   // the configured resolver, TCP port 53 only
 - R-NF-09 is not claimed for it. DNS over TCP to a resolver is neither encrypted nor authenticated. A spoofed answer can only make a probe pass or fail.
 - `i16_cell_egress_has_no_payment_destination`, `i38_only_egress_reaches_crabnebula_hosts` and `adr009_cell_egress_connect_builds_the_closed_set_only` enumerate it.
 
+### Amendment: deliverable forges (lane `m10/checks-runner`, 2026-11-24, interim, pending Daniel)
+
+Daniel said "go ahead" on 2026-11-24 to a checks runner in the production cell (ADR-026 section "Written by lane `m10/checks-runner`"). The runner fetches the deliverable locations and licence files that grantees name (`SPEC/02-domain/payment-requests.md` "Automated checks"). Since M5 the policy of these fetches lived in `fstp_cell::egress::ForgeClient`, with a note that it is not a `Destination` member until this ADR is amended. `Destination` of `fstp-cell` gains one member:
+
+```rust
+Forge,   // a deliverable host on the cell's forge allowlist, unauthenticated GET over https to public addresses (ADR-026)
+```
+
+- `ForgeClient` is the only way the cell opens it. It applies `ForgePolicy`: the host is on the cell's forge allowlist, compared without case, and is never a CrabNebula host (I-38). The scheme is https. Every address the host resolves to is public, and a host with any private, loopback, link-local, shared, documentation, multicast or reserved address is refused as a whole. The connection goes to an address that passed this check, so a second lookup cannot move it.
+- One fetch takes at most 10 seconds and 2 MiB. The request is one `GET` with no cookie, no credential and `Connection: close`. A redirect is answered as a failed check, never followed.
+- The TLS client verifies the forge against the public root store and the host name, with no client certificate, as for the CrabNebula hosts. Verification is never disabled.
+- The answer is decoded by `fstp_http::parse_response`, whose fuzz target `http_response_parse` already exists. No new parser is added. Retrieved bytes are untrusted data: the checks hash them, scan the licence file for its SPDX tag, and drop them (TH-24). They never reach a model.
+- The allowlist comes from the operator's configuration (ADR-026). The empty list is the default, and it refuses every fetch, so checks fail closed until the operator names the forges.
+- It reaches no payment service and names no platform account (I-16). It sends no tenant data beyond the address the grantee gave as public.
+- R-NF-09 is not claimed for it. The forge is a public server that the cell reads without authenticating itself.
+- This is not the MCP client of `SPEC/03-architecture/mcp-client.md`, which connects tenant-chosen servers with declared fields (P-78). Whether forge checks move behind such an integration later is a question for Daniel.
+- The e2e test cell's local forge keeps `ForgePolicy::test_cell`, http on loopback. No shipped configuration builds it.
+- `i16_cell_egress_has_no_payment_destination`, `i38_connector_refuses_crabnebula_hosts_for_other_destinations` and `adr009_cell_egress_connect_builds_the_closed_set_only` enumerate it.
+
 ## Vault origin
 
 Answered (Q7 A). The vault origin is `https://id.<cell host>`, a web origin of the vault, separate from the application origin and inside the cell (`overview.md`).

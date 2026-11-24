@@ -25,6 +25,7 @@
 //!   "ports": {"public": 443, "base": 7440},
 //!   "services": "systemd",
 //!   "custody_simulator": "/path/to/fstp-custody-sim",    direct only
+//!   "forges": ["codeberg.org"],                         payment checks
 //!   "agreements": "1,1,1",
 //!   "version": "0.3.0"
 //! }
@@ -40,6 +41,9 @@ use fstp_json::{Object, Value};
 
 /// The longest configuration file.
 pub const MAX_CONFIG_LEN: usize = 16 * 1024;
+
+/// The most forges `forges` names, as `fstp-cell` takes them.
+pub const MAX_FORGES: usize = 16;
 
 /// The longest path.
 pub const MAX_PATH_LEN: usize = 512;
@@ -159,6 +163,10 @@ pub struct Paths {
 pub struct HostConfig {
     /// The tenant domain.
     pub domain: String,
+    /// The forges whose deliverables the payment checks fetch (ADR-026
+    /// section of lane `m10/checks-runner`), rendered as
+    /// `checks.forge_hosts` of `cell.json`. Empty by default.
+    pub forges: Vec<String>,
     /// The first admin's email address. Never printed.
     pub operator_email: String,
     /// The mail relay.
@@ -232,6 +240,9 @@ pub enum Problem {
     BadCopies,
     /// `backup.keep_days` or `backup.keep_min` is out of range.
     BadRetention,
+    /// Not a list of at most 16 different lowercase host names (ADR-026
+    /// section of lane `m10/checks-runner`).
+    BadForges,
 }
 
 /// A refused configuration: the member, as a dotted path, and what is
@@ -481,11 +492,12 @@ fn is_version(v: &str) -> bool {
             .all(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
-const TOP: [&str; 13] = [
+const TOP: [&str; 14] = [
     "backup",
     "custodian",
     "custody_simulator",
     "domain",
+    "forges",
     "mail",
     "agreements",
     "operator_email",
@@ -718,10 +730,35 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
         Some(v) if is_version(v) => v.to_owned(),
         Some(_) => return err("version", Problem::BadVersion),
     };
+    // ADR-026 section of lane `m10/checks-runner`: the forges whose
+    // deliverables the payment checks fetch. None by default, which
+    // fails every check that needs a fetch.
+    let forges = match top.get("forges") {
+        None => Vec::new(),
+        Some(v) => {
+            let Some(list) = v.as_array() else {
+                return err("forges", Problem::BadForges);
+            };
+            let mut out: Vec<String> = Vec::new();
+            for h in list.iter() {
+                match h.as_str() {
+                    Some(h) if is_host_name(h) && !out.iter().any(|x| x == h) => {
+                        out.push(h.to_owned());
+                    }
+                    _ => return err("forges", Problem::BadForges),
+                }
+            }
+            if out.len() > MAX_FORGES {
+                return err("forges", Problem::BadForges);
+            }
+            out
+        }
+    };
     Ok(HostConfig {
         domain: domain.to_owned(),
         operator_email: operator_email.to_owned(),
         mail,
+        forges,
         tls,
         backup,
         paths,

@@ -93,6 +93,7 @@ fn adr009_cell_egress_connect_builds_the_closed_set_only() {
         Destination::DnsResolver {
             addr: std::net::SocketAddr::from(([127, 0, 0, 53], 53)),
         },
+        Destination::Forge,
     ] {
         let want = match d {
             Destination::AppDatabase
@@ -102,7 +103,8 @@ fn adr009_cell_egress_connect_builds_the_closed_set_only() {
             | Destination::Witness
             | Destination::CrabNebula(_)
             | Destination::MailSubmission { .. }
-            | Destination::DnsResolver { .. } => Ok(()),
+            | Destination::DnsResolver { .. }
+            | Destination::Forge => Ok(()),
             Destination::KeystoreSnapshots => {
                 Err(fstp_cell::CellError::Egress(EgressRefusal::PendingDecision))
             }

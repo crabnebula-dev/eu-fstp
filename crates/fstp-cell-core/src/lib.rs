@@ -278,10 +278,11 @@ pub enum SystemTask {
     /// core `RecordChecks` of a payment request, with the actor
     /// `System(PaymentPort)`.
     ///
-    /// Interim, pending Daniel (lane m3/licence-update): no checks runner
-    /// runs in the cell yet, so only a test world issues it, in process,
-    /// through `fstp_cell::process::RunningCell::payment_checks`. No
-    /// request handler reaches it, and claims built on it say so.
+    /// Since lane `m10/checks-runner` (ADR-026) the production cell's
+    /// checks runner issues it (`fstp_cell::tasks::checks`). A test world
+    /// with no forge client issues it in process, through
+    /// `fstp_cell::process::RunningCell::payment_checks`. No request
+    /// handler reaches it.
     PaymentPort,
     /// The login verifier (ADR-008 "Sign counts", issue 6 L10): the cell
     /// itself, when `fstp_webauthn` reports a sign-count regression at a

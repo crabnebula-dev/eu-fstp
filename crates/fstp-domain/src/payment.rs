@@ -419,7 +419,7 @@ impl RequestStatus {
 }
 
 /// One line of a request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Line {
     /// The milestone.
     milestone: MilestoneId,
@@ -427,6 +427,9 @@ struct Line {
     requested: PosAmount,
     /// The deciding reviewer and the approved amount.
     decision: Option<(AccountId, NonNegAmount)>,
+    /// The evidence as the lead gave it, which the checks runner judges
+    /// (I-32, R-PR-02, lane m10/checks-runner).
+    evidence: LineEvidence,
 }
 
 impl Line {
@@ -1218,6 +1221,7 @@ pub(crate) fn apply(
                             milestone: l.milestone,
                             requested: l.amount,
                             decision: None,
+                            evidence: l.evidence.clone(),
                         },
                     )
                 })
@@ -1459,4 +1463,128 @@ pub fn grant_milestones(state: &State, grant: ProposalId) -> Option<GrantMilesto
         })
         .collect();
     Some(GrantMilestones { plan, milestones })
+}
+
+// ---------------------------------------------------------------------------
+// Reads of the checks runner (lane m10/checks-runner, I-32, R-PR-02)
+// ---------------------------------------------------------------------------
+
+/// Each request that awaits a run of the automated checks, with the phase
+/// of that run, in request id order (I-32, M5 design section 4.2). A
+/// request in SUBMITTED awaits its submission run. A request in
+/// UNDER_REVIEW without a passed acceptance run awaits its acceptance run.
+/// Every other request awaits nothing.
+pub fn awaiting_checks(state: &State) -> Vec<(RequestId, CheckPhase)> {
+    state
+        .payments
+        .requests
+        .iter()
+        .filter_map(|(id, r)| match r.status {
+            RequestStatus::Submitted => Some((*id, CheckPhase::Submission)),
+            RequestStatus::UnderReview if r.acceptance.is_none() => {
+                Some((*id, CheckPhase::Acceptance))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// One line as the checks runner judges it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckLine {
+    /// The line.
+    pub line: LineId,
+    /// The milestone it claims.
+    pub milestone: MilestoneId,
+    /// The requested amount.
+    pub amount: PosAmount,
+    /// The evidence as the lead gave it (P-34).
+    pub evidence: LineEvidence,
+}
+
+/// What the checks runner reads of one request that awaits a run
+/// (`payment-requests.md` "Automated checks", I-31, I-58, I-59, P-26).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChecksInput {
+    /// The request.
+    pub request: RequestId,
+    /// Its grant.
+    pub grant: ProposalId,
+    /// The phase of the run it awaits.
+    pub phase: CheckPhase,
+    /// Its lines, in line id order.
+    pub lines: Vec<CheckLine>,
+    /// Per milestone of the effective contract plan: its amount less what
+    /// every other request holds on it, paid or pending. Zero once the
+    /// programme manager closed it (NOTE 12).
+    pub available: BTreeMap<MilestoneId, NonNegAmount>,
+    /// The contract amount: the granted total of the effective version.
+    pub contract_total: NonNegAmount,
+    /// What every other request of the grant holds, paid or pending.
+    /// `None` when nothing.
+    pub claimed_elsewhere: Option<NonNegAmount>,
+    /// The P-26 of the grant's call.
+    pub licences: crate::policy::LicenceSet,
+}
+
+/// The input of the run that `request` awaits, or `None` when it awaits
+/// none or the grant has no effective contract plan or no frozen policy.
+pub fn checks_input(state: &State, request: RequestId) -> Option<ChecksInput> {
+    let phase = awaiting_checks(state)
+        .into_iter()
+        .find(|(r, _)| *r == request)
+        .map(|(_, p)| p)?;
+    let r = state.payments.requests.get(&request)?;
+    let grant = r.grant;
+    let contract = crate::grant::contract_milestones(state, grant)?;
+    let available = contract
+        .iter()
+        .map(|(m, amount, _)| {
+            let whole = NonNegAmount::new(amount.amount()).ok()?;
+            let zero =
+                NonNegAmount::new(fstp_money::Amount::zero(amount.amount().currency())).ok()?;
+            let left = if state.money.milestone_closed(grant, *m) {
+                zero
+            } else {
+                match used_except(state, grant, *m, Some(request)) {
+                    None => whole,
+                    Some(used) => crate::grant::sub(whole, used).unwrap_or(zero),
+                }
+            };
+            Some((*m, left))
+        })
+        .collect::<Option<BTreeMap<_, _>>>()?;
+    let claimed_elsewhere = state
+        .payments
+        .requests
+        .iter()
+        .filter(|(id, x)| x.grant == grant && **id != request)
+        .map(|(_, x)| x)
+        .filter(|x| x.status.paid() || x.status.pending())
+        .flat_map(|x| x.lines.values())
+        .filter_map(Line::holds)
+        .fold(None, |acc, a| add_opt(acc, Some(a)));
+    let licences = crate::assignment::governing_values(state, grant)
+        .ok()?
+        .p26
+        .clone();
+    Some(ChecksInput {
+        request,
+        grant,
+        phase,
+        lines: r
+            .lines
+            .iter()
+            .map(|(id, l)| CheckLine {
+                line: *id,
+                milestone: l.milestone,
+                amount: l.requested,
+                evidence: l.evidence.clone(),
+            })
+            .collect(),
+        available,
+        contract_total: state.money.granted(grant)?,
+        claimed_elsewhere,
+        licences,
+    })
 }

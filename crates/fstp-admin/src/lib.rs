@@ -12,7 +12,7 @@
 //! fstp-admin drill                      the monthly restore drill into a scratch copy
 //! fstp-admin witness-copy               copy the witness records off the host; a timer runs it
 //! fstp-admin restore --to <time>        both databases to a time, like 2026-11-24T10:00:00Z (UTC)
-//! fstp-admin backup-keys <dir>          the off-host copy of the custody entries
+//! fstp-admin backup-keys <dir>          the off-host copy of the custody entries and their passphrases
 //! fstp-admin pair-custodian <host>      pair the second custodian (once, on the pilot)
 //! fstp-admin custodian <file>           install the second custodian (on its machine)
 //! fstp-admin restore-keys <dir>         after a host loss: put the keys back
@@ -71,7 +71,7 @@ pub fn usage() {
         "  drill                      test that the backups restore and open, in a scratch copy",
         "  witness-copy               copy the new witness records to the object stores; a timer runs it every minute",
         "  restore --to <time>        restore both databases to a time in UTC, like 2026-11-24T10:00:00Z",
-        "  backup-keys <dir>          copy the sealed keys off the host, for example to a USB stick",
+        "  backup-keys <dir>          copy the sealed keys and their passphrases off the host, for example to a USB stick",
         "  pair-custodian <host>      pair this host with its second custodian (once)",
         "  custodian <file>           on the custodian machine: install it from the pairing file",
         "  restore-keys <dir>         after losing a host: put the keys back from the copies or the custodian",
