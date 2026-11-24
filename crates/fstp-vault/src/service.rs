@@ -349,6 +349,14 @@ impl<R: Runtime> Persist<R> {
     /// failed database connection is dropped, and the next call opens
     /// another, with the same I-83 server check.
     async fn commit(&mut self, journal: &[JournalEntry], now: i64) -> Result<(), VaultError> {
+        // A connection a database restart ended is replaced before the
+        // transaction begins, never during it (ADR-005 record of lane
+        // m10/store-reconnect).
+        if let Some(c) = self.client.as_mut()
+            && c.ping().await.is_err()
+        {
+            self.client = None;
+        }
         if self.client.is_none() {
             let c = Client::connect(&self.rt, &self.db)
                 .await
@@ -473,6 +481,14 @@ impl<R: Runtime> Shared<R> {
         let mut held = self.held.lock().await;
         let mut registrar = self.registrar.lock().await;
         let registrar = registrar.as_mut()?;
+        // A keys connection a database restart ended is replaced before
+        // the call (ADR-005 record of lane m10/store-reconnect).
+        self.check_keys(registrar).await;
+        if self.is_stopped() {
+            return Some(origin_answer(crate::origin::refusal_reply(
+                crate::OriginRefusal::Unavailable,
+            )));
+        }
         match held.vault.check_verification_write(bytes, now) {
             Ok(None) => return None,
             Err(r) => return Some(origin_answer(crate::origin::refusal_reply(r))),
@@ -522,6 +538,12 @@ impl<R: Runtime> Shared<R> {
         let Some(registrar) = registrar.as_mut() else {
             return unavailable;
         };
+        // A keys connection a database restart ended is replaced before
+        // the call (ADR-005 record of lane m10/store-reconnect).
+        self.check_keys(registrar).await;
+        if self.is_stopped() {
+            return unavailable;
+        }
         let Held { vault, store } = &mut *held;
         let Some(store) = store.as_mut() else {
             return unavailable;
@@ -1274,13 +1296,19 @@ fn spawn_daily<R: Runtime>(
             if shared.is_stopped() {
                 break;
             }
-            if !due(started, last, now()) {
+            if !due(started, last, now()) && !daily.requested() {
                 continue;
             }
             let rows = {
                 let mut registrar = shared.registrar.lock().await;
                 match registrar.as_mut() {
-                    Some(r) => r.keystore_rows().await.ok(),
+                    // A keys connection a database restart ended is
+                    // replaced first, under the lock rules of the watch
+                    // (ADR-005 record of lane m10/store-reconnect).
+                    Some(r) => {
+                        shared.check_keys(r).await;
+                        r.keystore_rows().await.ok()
+                    }
                     None => None,
                 }
             };

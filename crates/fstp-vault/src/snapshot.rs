@@ -611,6 +611,12 @@ pub trait DailySnapshot: Send + Sync {
     fn run(&self, rows: KeystoreRows) -> DailyFuture<'_>;
     /// Records a try that failed before it had rows to snapshot.
     fn failed(&self);
+    /// Whether a request file asks for a snapshot now, which this takes
+    /// (ADR-012 record of lane m10/store-reconnect, row "Snapshot
+    /// request"). None by default.
+    fn requested(&self) -> bool {
+        false
+    }
 }
 
 /// The daily snapshot over `custody`, writing the status file in
@@ -639,6 +645,12 @@ impl<C: Custody + Send + Sync> DailySnapshot for Daily<C> {
 
     fn failed(&self) {
         note(self.status_dir.as_deref(), SnapshotTrigger::Daily, false);
+    }
+
+    fn requested(&self) -> bool {
+        self.status_dir
+            .as_deref()
+            .is_some_and(fstp_obs::snapshot_status::take_request)
     }
 }
 
