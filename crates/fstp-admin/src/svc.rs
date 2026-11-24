@@ -392,8 +392,16 @@ impl Manager {
                     return Ok(());
                 };
                 if Self::alive(pid) {
+                    // The kill signal of the unit, as systemd would send it:
+                    // PostgreSQL stops fast on SIGINT, while SIGTERM waits
+                    // for every client (lane m10/backup-health).
+                    let signal = if s.unit_lines.iter().any(|l| l == "KillSignal=SIGINT") {
+                        "-INT"
+                    } else {
+                        "-TERM"
+                    };
                     let _ = Command::new("kill")
-                        .arg("-TERM")
+                        .arg(signal)
                         .arg(pid.to_string())
                         .status();
                     let begun = Instant::now();

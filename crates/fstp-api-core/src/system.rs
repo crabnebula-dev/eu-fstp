@@ -76,7 +76,7 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 15] = [
+pub const HOST_NEXT: [&str; 17] = [
     "run_setup",
     "start_service",
     "custodian",
@@ -85,7 +85,9 @@ pub const HOST_NEXT: [&str; 15] = [
     "renew",
     "public_certificate",
     "configure_backups",
+    "wal_archive",
     "backup",
+    "restore_drill",
     "custodian_copy",
     "keystore_snapshot",
     "web_admins",
@@ -139,6 +141,69 @@ impl CustodianState {
     }
 }
 
+/// The state of the WAL archive of both clusters (ADR-012 record of lane
+/// m10/backup-health).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchiveState {
+    /// Every finished segment reached the object store in time.
+    Ok,
+    /// A finished segment has waited too long for its upload.
+    Late,
+    /// The last upload failed.
+    Failing,
+    /// No backups, or a cluster did not answer.
+    Unknown,
+}
+
+impl ArchiveState {
+    /// The wire word.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Late => "late",
+            Self::Failing => "failing",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Where the last restore drill failed (ADR-012 record of lane
+/// m10/backup-health).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrillStep {
+    /// The last drill passed, or none ran.
+    None,
+    /// Not enough free disk space.
+    Space,
+    /// The backup did not restore.
+    Restore,
+    /// The restored copy did not start or finish recovery.
+    Recovery,
+    /// The cell database is missing or does not answer.
+    Database,
+    /// The restored keys do not open.
+    Keystore,
+    /// The scratch copy did not stop or go.
+    Cleanup,
+}
+
+impl DrillStep {
+    /// The wire word.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Space => "space",
+            Self::Restore => "restore",
+            Self::Recovery => "recovery",
+            Self::Database => "database",
+            Self::Keystore => "keystore",
+            Self::Cleanup => "cleanup",
+        }
+    }
+}
+
 /// The host's last report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostReport {
@@ -180,6 +245,16 @@ pub struct HostReport {
     pub guard_owed: bool,
     /// A fresh copy is owed to the custodian (Q-F018-4).
     pub guard_copy_owed: bool,
+    /// The state of the WAL archive.
+    pub wal_archive: ArchiveState,
+    /// The older of the two clusters' last archived segments.
+    pub last_wal_archived: Option<Timestamp>,
+    /// When a restore drill last passed.
+    pub last_drill_passed: Option<Timestamp>,
+    /// Where the last restore drill failed.
+    pub drill_step: DrillStep,
+    /// The restore duration of the last passed drill, in seconds.
+    pub drill_seconds: Option<i64>,
 }
 
 /// What the cell found of the host status file.
@@ -332,6 +407,23 @@ fn report_json(r: &HostReport) -> Value {
     put(&mut o, "custodian", Value::from(r.custodian.wire()));
     put(&mut o, "guard_owed", Value::Bool(r.guard_owed));
     put(&mut o, "guard_copy_owed", Value::Bool(r.guard_copy_owed));
+    put(&mut o, "wal_archive", Value::from(r.wal_archive.wire()));
+    put(
+        &mut o,
+        "last_wal_archived",
+        r.last_wal_archived.map_or(Value::Null, instant),
+    );
+    put(
+        &mut o,
+        "last_drill_passed",
+        r.last_drill_passed.map_or(Value::Null, instant),
+    );
+    put(&mut o, "drill_step", Value::from(r.drill_step.wire()));
+    put(
+        &mut o,
+        "drill_seconds",
+        r.drill_seconds.map_or(Value::Null, Value::from),
+    );
     Value::Object(o)
 }
 

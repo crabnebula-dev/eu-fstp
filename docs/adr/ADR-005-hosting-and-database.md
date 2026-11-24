@@ -152,6 +152,7 @@ The provider's role can also write `cp` rows. **Rule: no isolation invariant res
 - TODO(legal): L-15. Daniel to confirm whether tenant DPAs must state the backup retention period and the backup provider.
 - Recovery point objective for self-operated clusters: about one minute. It follows from `archive_timeout` of 60 seconds and continuous archiving, plus upload time. Restore drills measure it.
 - Recovery time objective: Record at first use, from the first restore drill.
+- Measured recovery time: TODO(Daniel): fill in from the first real `fstp-admin drill` on the pilot. `fstp-admin status` shows the seconds of the last passed drill, from the start of `fstp-backup restore` to the open keystore of both clusters (ADR-012 record of lane m10/backup-health). No value is recorded yet.
 - Control cluster: backed up by the provider's managed service, not by `fstp-backup`. Its properties are verify item V10.
 
 **Open: R-CR-01 and the control cluster.** R-CR-01 asks that data at rest leaving the running system, such as backups, be protected by hybrid post-quantum key encapsulation. The provider's backups of `cp` and `licence` are not sealed by us.

@@ -501,7 +501,11 @@ pub fn decode(bytes: &[u8]) -> Result<HostConfig, ConfigError> {
         Some(b) => {
             closed(b, "backup", &BACKUP)?;
             let endpoint = required(b, "endpoint", "backup.endpoint")?;
-            if !is_host_name(endpoint) {
+            // A development host may name `localhost`, as the end-to-end
+            // test of its fake object store does (ADR-012 record of lane
+            // m10/backup-health). A production host names a DNS name.
+            let direct = matches!(text(top, "services", "services"), Ok(Some("direct")));
+            if !is_host_name(endpoint) && !(direct && endpoint == "localhost") {
                 return err("backup.endpoint", Problem::BadHost);
             }
             let region = required(b, "region", "backup.region")?;
@@ -691,6 +695,29 @@ mod tests {
         assert_eq!(c.services, Services::Systemd);
         assert!(c.tls.is_none() && c.backup.is_none());
         assert_eq!(c.agreements, "1,1,1");
+    }
+
+    /// ADR-012 record of lane m10/backup-health: a development host in
+    /// direct mode may name `localhost` as its object store, for the
+    /// end-to-end test's fake; a production host may not.
+    #[test]
+    fn adr012_bh_backup_endpoint_localhost_only_in_direct_mode() {
+        let file = |services: &str| {
+            format!(
+                r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+                "mail":{{"relay":"smtp.example.eu","username":"cell"}}{services},
+                "backup":{{"endpoint":"localhost","region":"gra","bucket":"fstp-b"}}}}"#
+            )
+        };
+        let direct = decode(file(r#","services":"direct""#).as_bytes());
+        assert!(direct.is_ok_and(|c| c.backup.is_some_and(|b| b.endpoint == "localhost")));
+        assert_eq!(
+            decode(file("").as_bytes()).err(),
+            Some(ConfigError {
+                field: "backup.endpoint".into(),
+                problem: Problem::BadHost
+            })
+        );
     }
 
     /// ADR-028 record of lane `m10/guard-key`: the member `custodian`

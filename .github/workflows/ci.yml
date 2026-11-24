@@ -223,7 +223,7 @@ jobs:
           # the fstp-cell binary. Lane L9: i19_edge_binary_e2e too, which
           # also needs the fstp-edge binary. Lane L8: g12_vault_run_e2e as
           # well, after the same step builds the fstp-vault binary.
-          - { part: devstack, packages: -p fstp-celltest --test slice_devstack --test prod_mcp_e2e --test i19_edge_binary_e2e --test i19_route_feed_e2e --test g12_vault_run_e2e --test l19_admin_setup_e2e, timeout: 60 }
+          - { part: devstack, packages: -p fstp-celltest --test slice_devstack --test prod_mcp_e2e --test i19_edge_binary_e2e --test i19_route_feed_e2e --test g12_vault_run_e2e --test l19_admin_setup_e2e --test adr012_backup_health_e2e, timeout: 60 }
           - part: domain-testkit
             packages: -p fstp-domain-testkit
             timeout: 60
@@ -471,9 +471,11 @@ jobs:
       # Lane L19: l19_admin_setup_e2e runs fstp-admin setup over the
       # binaries of fstp-admin, fstp-witness and fstp-pgagent too; cargo test
       # builds fstp-custody-sim with its own package.
+      # Lane m10/backup-health: adr012_backup_health_e2e runs fstp-admin
+      # backup and drill over the fstp-backup binary and a fake S3.
       - name: Build the fstp-cell, fstp-edge and fstp-vault binaries for the devstack part
         if: matrix.part == 'devstack'
-        run: cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-edge --bin fstp-edge -p fstp-vault --bin fstp-vault -p fstp-control --bin fstp-control --bin fstp-pgagent -p fstp-admin --bin fstp-admin -p fstp-witness --bin fstp-witness
+        run: cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-edge --bin fstp-edge -p fstp-vault --bin fstp-vault -p fstp-control --bin fstp-control --bin fstp-pgagent -p fstp-admin --bin fstp-admin -p fstp-witness --bin fstp-witness -p fstp-backup --bin fstp-backup
       # Some tests are red on purpose: each waits on a seam that a named
       # lane closes, and ci/known-red.txt lists it with that seam and lane.
       # The run itself may fail; test-gate decides. It fails on any red

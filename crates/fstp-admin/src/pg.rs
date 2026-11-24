@@ -380,13 +380,32 @@ pub fn psql(
     sql: &str,
     what: &'static str,
 ) -> Result<String, PgFail> {
+    psql_at(layout, c, layout.pg_port(c), db, sql, what)
+}
+
+/// As [`psql`], at `port` on loopback: the drill server of a restored copy
+/// of `c` (ADR-012 record of lane m10/backup-health), which keeps the
+/// cluster's superuser, CA and server certificate.
+///
+/// # Errors
+///
+/// [`PgFail::Sql`] naming `what` when psql fails.
+pub fn psql_at(
+    layout: &Layout,
+    c: Cluster,
+    port: u16,
+    db: &str,
+    sql: &str,
+    what: &'static str,
+) -> Result<String, PgFail> {
     let dir = layout.pg_dir(c);
     let password = std::fs::read_to_string(dir.join("super.password"))?;
-    let port = layout.pg_port(c);
     let passfile = dir.join("pgpass");
+    // Any port: the drill server of a restored copy keeps the password,
+    // and one file serves both, whichever writes last.
     write_atomic(
         &passfile,
-        format!("127.0.0.1:{port}:*:{SUPERUSER}:{}\n", password.trim()).as_bytes(),
+        format!("127.0.0.1:*:*:{SUPERUSER}:{}\n", password.trim()).as_bytes(),
         0o600,
     )?;
     let mut cmd = Command::new(layout.pg_bin("psql"));

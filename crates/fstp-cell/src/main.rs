@@ -21,6 +21,9 @@
 //! - `restore-keystore [<snapshot id>]`: after a restore of the application
 //!   cluster, keep the newest keystore copy that opens, with the cell
 //!   stopped (ADR-012 record of lane L27).
+//! - `check-keystore <port>`: the restore drill's check that the keystore
+//!   rows of a scratch cluster at `port` open; it writes nothing (ADR-012
+//!   record of lane m10/backup-health).
 //!
 //! It writes typed events only (R-NF-02). A refused configuration or
 //! argument exits with status 2, any other failure with status 1.

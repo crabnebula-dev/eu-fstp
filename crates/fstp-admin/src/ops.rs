@@ -137,6 +137,15 @@ pub fn setup_backups(
         "*-*-* 02:30:00",
     )
     .map_err(|e| Fail::Step(step, e.into()))?;
+    // ADR-012 record of lane m10/backup-health: the monthly restore drill,
+    // after the backup at 02:30 and the renewal at 03:30.
+    m.timer(
+        "fstp-admin-drill",
+        &layout.bin("fstp-admin"),
+        "drill",
+        "*-*-01 04:30:00",
+    )
+    .map_err(|e| Fail::Step(step, e.into()))?;
     Ok(Some(did))
 }
 

@@ -488,6 +488,10 @@ FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup base-backup
 
 It runs `pg_basebackup` over loopback, cuts the tar stream into parts of 64 MiB, seals and uploads each part, and only then appends a line to `<state_dir>/base-backups.index`. Each line holds the cluster id, the backup id, the time and the size in bytes. Copy that file off the host after each run. A restore on a new host needs a backup id and its size.
 
+### Restore drill
+
+`fstp-admin drill` tests the backups each month, by its timer `fstp-admin-drill` (ADR-012, record of lane m10/backup-health). For each database in turn it runs `fstp-backup restore` into `<state>/drill/<cluster>`, starts a throwaway PostgreSQL there on the cluster's port plus 100 (loopback and TLS only, no archive, no Unix socket), waits until recovery ends, and checks that the cell database answers. Then `fstp-cell check-keystore <port>` or `fstp-vault check-keystore <port>` opens the restored keys through the live custody entry, writing nothing. The server stops and the scratch copy is deleted, also after a failure. The result is in `<state>/admin/drill.status`. The server's log is `<state>/drill/<cluster>.log`.
+
 ### Restore
 
 Stop the server that will use the restored directory. Then, as root:
