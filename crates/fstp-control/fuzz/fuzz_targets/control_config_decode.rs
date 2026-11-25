@@ -30,6 +30,7 @@ fuzz_target!(|data: &[u8]| {
             .collect();
         assert_eq!(creds.len(), cfg.staff.len());
         assert!(is_config_path(&cfg.credentials_dir));
+        assert!(is_config_path(&cfg.keyd_socket));
         assert!(fstp_webauthn_host_ok(&cfg.operator_host));
         assert_ne!(cfg.cell_listen.port(), 0);
     }

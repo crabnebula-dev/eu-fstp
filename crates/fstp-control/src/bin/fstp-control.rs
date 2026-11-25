@@ -13,6 +13,10 @@
 //! - `route-feed`: serve the feed and the operator socket until SIGTERM;
 //! - `init-route-feed <out dir>`: create the feed signing key through
 //!   `fstp-keyd` and the first table, and write `route-feed.pub` to `out`;
+//! - `init-restore-declaration <out dir>`: create the restore declaration
+//!   key through `fstp-keyd` under a ControlPlane root, and write
+//!   `restore-declaration-keys` to `out` (ADR-012 record of lane
+//!   m10/saas-declare);
 //! - `route add <route file>`: publish the one route of the file;
 //! - `route remove <cell id>`: remove every route of the cell;
 //! - `route list <out file>`: write the served routes to the file.
@@ -36,6 +40,7 @@ fn main() -> ExitCode {
         [] => fstp_control::service::run(),
         ["route-feed"] => route_feed::run(),
         ["init-route-feed", out] => route_feed::init(Path::new(out)),
+        ["init-restore-declaration", out] => fstp_control::declare::init(Path::new(out)),
         ["route", "add", file] => route_feed::route_add(Path::new(file)).map(|_| ()),
         ["route", "remove", cell] => route_feed::route_remove(cell).map(|_| ()),
         ["route", "list", out] => route_feed::route_list(Path::new(out)).map(|_| ()),

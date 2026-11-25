@@ -805,3 +805,75 @@ fn i24_adr012_saas_declared_restore_through_fstp_control_reports_lost_in_restore
     assert_eq!(v.rows, 4);
     assert_eq!(v.lost_in_restore, vec![lost], "the finding stays");
 }
+
+/// I-80, ADR-004 "Restore declaration key", ADR-012 record of lane
+/// m10/saas-declare (lead answer of 2026-11-25): the setup step creates
+/// the key through a real `fstp-keyd` under a ControlPlane root, writes
+/// its sealed file to the credentials directory and the public key line
+/// that the witness, the cells and the vaults pin. A second run opens the
+/// same key and writes the same line. The cell socket cannot run it. The
+/// control configuration names `keyd_socket`, and refuses a configuration
+/// without it.
+#[test]
+fn i80_setup_creates_the_restore_declaration_key_and_its_public_line() {
+    use fstp_control::declare::{KEY_FILE, PUBLIC_KEYS_FILE, init_declaration_key};
+    let dir = scratch("setup");
+    let (control, cell) = keyd(&dir.0);
+    let creds = dir.0.join("creds");
+    let out = dir.0.join("out");
+    let other = dir.0.join("other");
+    for d in [&creds, &out, &other] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let public = block_on(init_declaration_key(&control, &creds, &out)).unwrap();
+    let file = std::fs::read(creds.join(KEY_FILE)).unwrap();
+    let opened = block_on(open_declaration_key(&control, &file)).unwrap();
+    assert_eq!(opened.public_key().to_bytes().to_vec(), public);
+    let line = std::fs::read(out.join(PUBLIC_KEYS_FILE)).unwrap();
+    assert_eq!(
+        fstp_witness::config::decode_declaration_keys(&line).unwrap(),
+        vec![public.clone()],
+        "the witness reads the line"
+    );
+    assert_eq!(
+        fstp_cell_line(&line),
+        vec![public.clone()],
+        "the cell form is the same line"
+    );
+    let again = block_on(init_declaration_key(&control, &creds, &other)).unwrap();
+    assert_eq!(again, public, "a second run keeps the key");
+    assert_eq!(std::fs::read(other.join(PUBLIC_KEYS_FILE)).unwrap(), line);
+    let elsewhere = dir.0.join("cellcreds");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    assert!(matches!(
+        block_on(init_declaration_key(&cell, &elsewhere, &out)),
+        Err(ControlError::Custody(_))
+    ));
+    assert!(!elsewhere.join(KEY_FILE).exists());
+    let cfg = |keyd: &str| {
+        format!(
+            "{{\"cell_listen\":\"10.0.0.2:7300\",\"clusters\":[],\"credentials_dir\":\"/etc/fstp-control\",{keyd}\"operator_host\":\"control.example.test\",\"staff\":[]}}"
+        )
+    };
+    let c = fstp_control::config::decode_control_config(
+        cfg("\"keyd_socket\":\"/run/fstp-keyd/control.sock\",").as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(c.keyd_socket, "/run/fstp-keyd/control.sock");
+    assert!(fstp_control::config::decode_control_config(cfg("").as_bytes()).is_err());
+}
+
+/// The keys of a `restore-declaration-keys` line, read as lowercase hex
+/// lines, as `fstp_cell::config::decode_receipt_keys` reads them.
+fn fstp_cell_line(bytes: &[u8]) -> Vec<Vec<u8>> {
+    std::str::from_utf8(bytes)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            (0..l.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&l[i..i + 2], 16).unwrap())
+                .collect()
+        })
+        .collect()
+}

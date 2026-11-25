@@ -84,6 +84,10 @@ pub struct ControlConfig {
     pub cell_listen: std::net::SocketAddr,
     /// The directory of the TLS files ([`config::CONTROL_FILES`]).
     pub credentials_dir: String,
+    /// The socket of `fstp-keyd` for the ControlPlane chain, through which
+    /// the restore declaration key is made and opened (ADR-012 record of
+    /// lane m10/saas-declare).
+    pub keyd_socket: String,
     /// The control-plane host, the relying party id of staff passkeys
     /// (ADR-008 "Control plane").
     pub operator_host: String,

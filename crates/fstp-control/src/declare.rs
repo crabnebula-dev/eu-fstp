@@ -25,8 +25,9 @@
 //! leaves custody (I-80). Only the magic differs ([`KEY_MAGIC`]).
 //! [`create_declaration_key`] makes it and [`open_declaration_key`] opens
 //! it. Its public keys reach the witness, and any verifier that pins them,
-//! as [`PUBLIC_KEYS_FILE`]. The SaaS `fstp-control` has no `fstp-keyd`
-//! entry in its configuration yet, so no command calls these.
+//! as [`PUBLIC_KEYS_FILE`]. The setup command `fstp-control
+//! init-restore-declaration <out dir>` makes it ([`init`]) through the
+//! `keyd_socket` of the configuration.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -305,4 +306,65 @@ impl<R: Runtime> RestoreWitness for TlsRestoreWitness<R> {
             _ => Err(ControlError::Job("the witness answer")),
         }
     }
+}
+
+/// The setup step of the restore declaration key (ADR-012 record of lane
+/// m10/saas-declare, lead answer of 2026-11-25): creates the key through
+/// `custody` under a ControlPlane root and writes its sealed file as
+/// [`KEY_FILE`] in `credentials_dir`, unless one is there, which it then
+/// opens. Either way it writes the public key line to [`PUBLIC_KEYS_FILE`]
+/// in `out_dir`, for the witness, the cells and the vaults to pin. It
+/// returns the encoded public key.
+///
+/// # Errors
+///
+/// [`ControlError::Custody`] when custody refuses, [`ControlError::Config`]
+/// for a key file that does not open, and [`ControlError::Io`] when a file
+/// cannot be written.
+pub async fn init_declaration_key<C: Custody>(
+    custody: &C,
+    credentials_dir: &std::path::Path,
+    out_dir: &std::path::Path,
+) -> Result<Vec<u8>, ControlError> {
+    let key_path = credentials_dir.join(KEY_FILE);
+    let key = if std::fs::symlink_metadata(&key_path).is_ok() {
+        let bytes = std::fs::read(&key_path).map_err(|e| ControlError::Io(e.kind()))?;
+        open_declaration_key(custody, &bytes).await?
+    } else {
+        let key = fstp_crypto::composite::generate()
+            .map_err(|_| ControlError::Job("the restore declaration key"))?;
+        let file = create_declaration_key(custody, &key).await?;
+        crate::routes::write_atomic(&key_path, &file)?;
+        key
+    };
+    let public = key.public_key().to_bytes().to_vec();
+    crate::routes::write_atomic(
+        &out_dir.join(PUBLIC_KEYS_FILE),
+        &fstp_witness::config::encode_declaration_keys(std::slice::from_ref(&public)),
+    )?;
+    Ok(public)
+}
+
+/// `fstp-control init-restore-declaration <out dir>`: runs
+/// [`init_declaration_key`] with the configuration named by
+/// `FSTP_CONTROL_CONFIG`, through its `keyd_socket`, into its
+/// `credentials_dir` and `out`.
+///
+/// # Errors
+///
+/// [`ControlError::Config`] for a refused configuration or socket, and the
+/// errors of [`init_declaration_key`].
+pub fn init(out: &std::path::Path) -> Result<(), ControlError> {
+    let bytes = crate::config::read_config_file(crate::service::CONFIG_ENV)?;
+    let cfg = crate::config::decode_control_config(&bytes)?;
+    let custody = fstp_custody::KeydCustody::new(std::path::Path::new(&cfg.keyd_socket))
+        .map_err(|_| ControlError::Config("keyd_socket"))?;
+    let rt = fstp_rt::tokio::TokioRuntime::new_multi_thread(2)
+        .map_err(|e| ControlError::Io(e.kind()))?;
+    rt.block_on(init_declaration_key(
+        &custody,
+        std::path::Path::new(&cfg.credentials_dir),
+        out,
+    ))
+    .map(drop)
 }
