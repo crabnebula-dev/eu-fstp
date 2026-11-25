@@ -42,10 +42,16 @@ pub const CONFIG_MEMBERS: [&str; 10] = [
 /// bucket of the keystore snapshots (ADR-012 record of lane L17), in the
 /// shape `fstp-backup` uses, or `object_stores` lists one to three
 /// (record of lane m10/backup-followups).
-/// `mode` is `saas` or `self_hosted`, and absent means self-hosted (ADR-012
-/// record of lane m10/saas-declare): a SaaS vault fails closed without its
-/// pinned restore declaration keys.
-pub const OPTIONAL_MEMBERS: [&str; 4] = ["assets_dir", "mode", "object_store", "object_stores"];
+/// `restore_declarations` is `witness_key` or `control_plane`, and absent
+/// means `witness_key` (ADR-012 record of lane m10/saas-declare): a
+/// `control_plane` vault fails closed without its pinned restore
+/// declaration keys.
+pub const OPTIONAL_MEMBERS: [&str; 4] = [
+    "assets_dir",
+    "object_store",
+    "object_stores",
+    "restore_declarations",
+];
 
 /// The members of the database part, in key order.
 pub const DATABASE_MEMBERS: [&str; 3] = ["dbname", "host", "port"];
@@ -153,10 +159,12 @@ pub struct VaultConfig {
     /// The further stores of `object_stores`, after the first, in order
     /// (ADR-012 record of lane m10/backup-followups, row "Every store").
     pub more_stores: Vec<fstp_backup::s3::Endpoint>,
-    /// Whether the vault serves a SaaS cell (`"mode": "saas"`). It then
+    /// Whether `fstp-control` states the restore declarations the vault
+    /// accepts (`"restore_declarations": "control_plane"`). The vault then
     /// starts only with a pinned `restore-declaration-keys` file (ADR-012
-    /// record of lane m10/saas-declare). Absent means self-hosted.
-    pub saas: bool,
+    /// record of lane m10/saas-declare). Absent means `witness_key`: the
+    /// witness receipt key alone, as for the pilot.
+    pub control_plane_declarations: bool,
 }
 
 /// The vault database name of `cell`: `v_` and 32 lowercase hex digits.
@@ -309,12 +317,12 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
     }
     let internal_listen = addr(o, "internal_listen")?;
     let origin_listen = addr(o, "origin_listen")?;
-    let saas = match o.get("mode") {
+    let control_plane_declarations = match o.get("restore_declarations") {
         None => false,
-        Some(_) => match string(o, "mode")? {
-            "saas" => true,
-            "self_hosted" => false,
-            _ => return Err(bad("mode")),
+        Some(_) => match string(o, "restore_declarations")? {
+            "control_plane" => true,
+            "witness_key" => false,
+            _ => return Err(bad("restore_declarations")),
         },
     };
     let assets_dir = if has_assets {
@@ -341,7 +349,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
         witness: witness(o)?,
         object_store,
         more_stores,
-        saas,
+        control_plane_declarations,
     })
 }
 
@@ -613,28 +621,35 @@ pub(crate) mod tests {
         }
     }
 
-    /// ADR-012 record of lane m10/saas-declare: the optional `mode` is
-    /// `saas` or `self_hosted`, absent means self-hosted, and any other
-    /// value is refused by name.
+    /// ADR-012 record of lane m10/saas-declare: the optional
+    /// `restore_declarations` is `witness_key` or `control_plane`, absent
+    /// means `witness_key`, as in the configuration `fstp-admin` writes
+    /// for the pilot, and any other value is refused by name.
     #[test]
-    fn adr012_saas_vault_config_names_its_mode() {
-        let with = |member: &str| {
-            text(|s| s.replacen("\"origin_host\"", &format!("{member},\"origin_host\""), 1))
+    fn adr012_vault_config_names_who_signs_restore_declarations() {
+        let with = |v: &str| {
+            decode_config(
+                text(|s| {
+                    s.replacen(
+                        "\"ticket_keys\"",
+                        &format!("\"restore_declarations\":\"{v}\",\"ticket_keys\""),
+                        1,
+                    )
+                })
+                .as_bytes(),
+            )
+            .map(|c| c.control_plane_declarations)
         };
-        assert!(!decode_config(text(|s| s).as_bytes()).unwrap().saas);
         assert!(
-            decode_config(with("\"mode\":\"saas\"").as_bytes())
+            !decode_config(text(|s| s).as_bytes())
                 .unwrap()
-                .saas
+                .control_plane_declarations
         );
-        assert!(
-            !decode_config(with("\"mode\":\"self_hosted\"").as_bytes())
-                .unwrap()
-                .saas
-        );
+        assert_eq!(with("control_plane"), Ok(true));
+        assert_eq!(with("witness_key"), Ok(false));
         assert_eq!(
-            decode_config(with("\"mode\":\"SaaS\"").as_bytes()),
-            Err(VaultError::Config("mode"))
+            with("saas"),
+            Err(VaultError::Config("restore_declarations"))
         );
     }
 }

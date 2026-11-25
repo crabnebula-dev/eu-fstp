@@ -658,3 +658,16 @@ The lead answered the three questions above the same day. Each answer is built a
 | 4. Gaps kept | The `cp.job` rows of the job and the copy of witness records to a second provider stay unbuilt | Lead direction |
 
 Tests, written before the code: `i24_saas_cell_start_fails_closed_without_a_declaration_pin` in `fstp_cell::engine::startup`; `i24_saas_cell_refuses_to_start_without_a_declaration_pin` in `fstp_cell::run`; `adr012_saas_vault_config_names_its_mode` in `fstp_vault::config`; `i24_saas_vault_refuses_to_start_without_a_declaration_pin` in `fstp_vault::run`; `i24_saas_vault_rejects_a_declaration_signed_only_by_the_receipt_key` in `crates/fstp-vault/tests/vault_chain.rs`; and `i80_setup_creates_the_restore_declaration_key_and_its_public_line` (real `fstp-keyd`) in `crates/fstp-control/tests/adr012_saas_declare.rs`.
+
+### Correction after the integration gate, 2026-11-25, interim pending Daniel
+
+The gate found that `fstp-admin` renders the pilot cell configuration with `"mode":"saas"`, while the pilot's local witness signs declarations with its receipt key. So the cell mode does not say who signs a declaration, and the pilot cell refused to start. The rule is now keyed on an explicit member, and replaces the rows "1. Fail closed", "How a cell knows", "How a vault knows" and "Test worlds" above.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Member | The cell configuration (core and file form) and the vault configuration gain the optional member `restore_declarations`: `witness_key` or `control_plane`. Absent means `witness_key`. Any other value is refused by name. The vault's `mode` member of the earlier answer is dropped | Lead direction after the gate |
+| `witness_key` | The receipt-key rule of lane m10/declared-restore. The process reads no `restore-declaration-keys` file and verifies under no declaration key, even if one is pinned. `fstp-admin` writes no new member, so the pilot keeps this rule | Item 2 above |
+| `control_plane` | The process refuses to start without a pinned, decodable `restore-declaration-keys` file of composite keys. The refusal names the file. Every declaration then needs a statement under a pinned key, so a receipt-key-only declaration is refused | Lead answer to question 1 |
+| Test worlds | A world cell and the world's seeded vault take `witness_key` declarations and pin no key, as before the earlier answer | Pilot shape |
+
+Tests: `i24_control_plane_cell_start_fails_closed_without_a_declaration_pin` in `fstp_cell::engine::startup`; `i24_control_plane_cell_refuses_to_start_without_a_declaration_pin` and `i24_pilot_shaped_cell_starts_without_restore_declaration_keys` in `fstp_cell::run`; `adr012_vault_config_names_who_signs_restore_declarations` in `fstp_vault::config`; `i24_control_plane_vault_refuses_to_start_without_a_declaration_pin` in `fstp_vault::run`; `i24_control_plane_vault_rejects_a_declaration_signed_only_by_the_receipt_key` in `crates/fstp-vault/tests/vault_chain.rs`. The `fstp-admin` setup test `l19_admin_setup_e2e` passes over the real binaries. Fuzz seed: `control_plane` for `cell_config_decode`.

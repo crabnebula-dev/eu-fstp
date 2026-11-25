@@ -54,25 +54,27 @@ fn read(dir: &Path, name: &'static str) -> Result<Vec<u8>, CellError> {
     std::fs::read(dir.join(name)).map_err(|_| cfg_err(name))
 }
 
-/// The pinned restore declaration keys of a SaaS control plane, from the
+/// The pinned restore declaration keys of a control plane, from the
 /// credentials file `restore-declaration-keys`, in the form of
 /// `witness-receipt-keys` (ADR-012 record of lane m10/saas-declare). A
-/// SaaS cell fails closed without a decodable file of composite keys. A
-/// self-hosted cell reads none and pins none.
+/// cell that takes `control_plane` declarations fails closed without a
+/// decodable file of composite keys. A `witness_key` cell, such as the
+/// pilot, reads none and pins none.
 ///
 /// # Errors
 ///
 /// [`CellError::Config`] naming the file.
 pub(crate) fn read_declaration_keys(
     dir: &Path,
-    mode: config::Mode,
+    declarations: config::RestoreDeclarations,
 ) -> Result<Vec<Vec<u8>>, CellError> {
     const FILE: &str = crate::engine::startup::DECLARATION_KEYS_FILE;
-    if mode != config::Mode::Saas {
+    if declarations != config::RestoreDeclarations::ControlPlane {
         return Ok(Vec::new());
     }
     let keys = config::decode_receipt_keys(&read(dir, FILE)?).map_err(|_| cfg_err(FILE))?;
-    crate::engine::startup::check_declaration_pin(mode, true, &keys).map_err(|_| cfg_err(FILE))?;
+    crate::engine::startup::check_declaration_pin(declarations, true, &keys)
+        .map_err(|_| cfg_err(FILE))?;
     Ok(keys)
 }
 
@@ -200,7 +202,7 @@ fn parts(
     };
     let witness_keys = config::decode_receipt_keys(&read(dir, "witness-receipt-keys")?)
         .map_err(CellError::Config)?;
-    let declaration_keys = read_declaration_keys(dir, cfg.core.mode)?;
+    let declaration_keys = read_declaration_keys(dir, cfg.core.restore_declarations)?;
     let vault = SharedVault(Arc::new(crate::vault::HttpVaultClient::new(
         rt.clone(),
         format!("https://{}", cfg.vault.address),
@@ -1195,12 +1197,13 @@ mod tests {
         assert_eq!(token_text(&own).as_str(), format!("{}\n", "cd".repeat(32)));
     }
 
-    /// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
-    /// 2026-11-25): a SaaS cell refuses to start without a pinned,
-    /// decodable `restore-declaration-keys` file of composite keys, with a
-    /// plain refusal that names the file. A self-hosted cell reads none.
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+    /// 2026-11-25): a cell that takes `control_plane` declarations refuses
+    /// to start without a pinned, decodable `restore-declaration-keys` file
+    /// of composite keys, with a plain refusal that names the file. A
+    /// `witness_key` cell reads none.
     #[test]
-    fn i24_saas_cell_refuses_to_start_without_a_declaration_pin() {
+    fn i24_control_plane_cell_refuses_to_start_without_a_declaration_pin() {
         let tag: String = fstp_crypto::random_array::<4>()
             .unwrap()
             .iter()
@@ -1211,10 +1214,10 @@ mod tests {
         let refused = Err(CellError::Config(ConfigError::Invalid(
             "restore-declaration-keys",
         )));
-        let saas = config::Mode::Saas;
+        let saas = config::RestoreDeclarations::ControlPlane;
         assert_eq!(read_declaration_keys(&dir, saas), refused, "no file");
         assert_eq!(
-            read_declaration_keys(&dir, config::Mode::SelfHosted),
+            read_declaration_keys(&dir, config::RestoreDeclarations::WitnessKey),
             Ok(Vec::new())
         );
         let file = dir.join("restore-declaration-keys");
@@ -1231,5 +1234,59 @@ mod tests {
         std::fs::write(&file, config::encode_receipt_keys(&keys)).unwrap();
         assert_eq!(read_declaration_keys(&dir, saas), Ok(keys));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+    /// 2026-11-25): a configuration shaped like the one `fstp-admin`
+    /// renders for the pilot cell, `"mode":"saas"` with no
+    /// `restore_declarations`, takes `witness_key` declarations. Its start
+    /// needs no `restore-declaration-keys` file, as the pilot's local
+    /// witness signs declarations with its receipt key. The member decodes
+    /// both values and refuses any other by name.
+    #[test]
+    fn i24_pilot_shaped_cell_starts_without_restore_declaration_keys() {
+        let pilot = config::decode_file(config::file_tests::file("").as_bytes()).unwrap();
+        assert_eq!(pilot.core.mode, config::Mode::Saas);
+        assert_eq!(
+            pilot.core.restore_declarations,
+            config::RestoreDeclarations::WitnessKey
+        );
+        let empty = std::env::temp_dir().join("fstp-cell-pin-none-does-not-exist");
+        assert_eq!(
+            read_declaration_keys(&empty, pilot.core.restore_declarations),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            crate::engine::startup::check_declaration_pin(
+                pilot.core.restore_declarations,
+                true,
+                &[]
+            ),
+            Ok(())
+        );
+        let with = |v: &str| {
+            config::decode_file(
+                config::file_tests::file("")
+                    .replacen(
+                        "\"registered_servers\"",
+                        &format!("\"restore_declarations\":\"{v}\",\"registered_servers\""),
+                        1,
+                    )
+                    .as_bytes(),
+            )
+            .map(|c| c.core.restore_declarations)
+        };
+        assert_eq!(
+            with("control_plane"),
+            Ok(config::RestoreDeclarations::ControlPlane)
+        );
+        assert_eq!(
+            with("witness_key"),
+            Ok(config::RestoreDeclarations::WitnessKey)
+        );
+        assert_eq!(
+            with("receipt"),
+            Err(ConfigError::Invalid("restore_declarations"))
+        );
     }
 }

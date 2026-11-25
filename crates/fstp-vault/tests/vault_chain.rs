@@ -930,13 +930,14 @@ fn adr012_declared_restore_lets_the_vault_start_and_records_the_window() {
     );
 }
 
-/// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
-/// 2026-11-25): a vault that pins a restore declaration key, as a SaaS
-/// vault does, refuses to start over a declaration that only the witness
-/// receipt key signed, the console form. The same store starts a vault
-/// that pins none, as a self-hosted vault keeps the console rule.
+/// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+/// 2026-11-25): a vault that pins a restore declaration key, as a
+/// `control_plane` vault does, refuses to start over a declaration that
+/// only the witness receipt key signed, the console form. The same store
+/// starts a vault that pins none, as a `witness_key` vault keeps the
+/// console rule.
 #[test]
-fn i24_saas_vault_rejects_a_declaration_signed_only_by_the_receipt_key() {
+fn i24_control_plane_vault_rejects_a_declaration_signed_only_by_the_receipt_key() {
     let mut s = Setup::new();
     let v = s.vault(true).unwrap();
     for seq in [5, 6] {

@@ -299,16 +299,6 @@ impl ExternalCell {
         for (name, bytes) in &files {
             write_private(&creds.join(name), bytes)?;
         }
-        // ADR-012 record of lane m10/saas-declare: a SaaS cell fails closed
-        // without a pinned restore declaration key. No declaration is made.
-        if !parts.self_hosted {
-            let key = fstp_crypto::composite::generate()
-                .map_err(|_| WorldError::Store("the restore declaration key".to_owned()))?;
-            write_private(
-                &creds.join("restore-declaration-keys"),
-                &fstp_cell::config::encode_receipt_keys(&[key.public_key().to_bytes().to_vec()]),
-            )?;
-        }
         if let Some(r) = &spec.relay {
             write_private(&creds.join("mail.password"), r.password.as_bytes())?;
             write_private(&creds.join("mail-ca.pem"), &r.ca_pem)?;

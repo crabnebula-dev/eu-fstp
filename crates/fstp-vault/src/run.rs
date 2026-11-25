@@ -286,16 +286,17 @@ pub async fn lock_keystore<R: Runtime>(client: &mut Client<R>) -> Result<(), Vau
 /// public key, as a witness reads it.
 pub const DECLARATION_KEYS_FILE: &str = "restore-declaration-keys";
 
-/// The pinned restore declaration keys of a SaaS vault, from
-/// [`DECLARATION_KEYS_FILE`] in its credentials directory. A SaaS vault
-/// fails closed without a decodable file of composite keys (lead answer of
-/// 2026-11-25, interim pending Daniel). A self-hosted vault reads none.
+/// The pinned restore declaration keys of a vault that takes
+/// `control_plane` declarations, from [`DECLARATION_KEYS_FILE`] in its
+/// credentials directory. Such a vault fails closed without a decodable
+/// file of composite keys (lead answers of 2026-11-25, interim pending
+/// Daniel). A `witness_key` vault, such as the pilot, reads none.
 ///
 /// # Errors
 ///
 /// [`VaultError::Config`] naming the file.
 pub fn read_declaration_keys(cfg: &VaultConfig) -> Result<Vec<Vec<u8>>, VaultError> {
-    if !cfg.saas {
+    if !cfg.control_plane_declarations {
         return Ok(Vec::new());
     }
     let bytes = std::fs::read(cfg.credentials_dir.join(DECLARATION_KEYS_FILE))
@@ -1208,12 +1209,13 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
-    /// 2026-11-25): a SaaS vault refuses to start without a pinned,
-    /// decodable `restore-declaration-keys` file of composite keys, with a
-    /// plain refusal naming the file. A self-hosted vault reads none.
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+    /// 2026-11-25): a vault that takes `control_plane` declarations refuses
+    /// to start without a pinned, decodable `restore-declaration-keys` file
+    /// of composite keys, with a plain refusal naming the file. A vault with
+    /// no member, as `fstp-admin` writes it for the pilot, reads none.
     #[test]
-    fn i24_saas_vault_refuses_to_start_without_a_declaration_pin() {
+    fn i24_control_plane_vault_refuses_to_start_without_a_declaration_pin() {
         let tag: String = fstp_crypto::random_array::<4>()
             .unwrap()
             .iter()
@@ -1224,8 +1226,8 @@ mod tests {
         let mut cfg =
             crate::config::decode_config(crate::config::tests::text(|s| s).as_bytes()).unwrap();
         cfg.credentials_dir = dir.clone();
-        assert_eq!(read_declaration_keys(&cfg), Ok(Vec::new()), "self-hosted");
-        cfg.saas = true;
+        assert_eq!(read_declaration_keys(&cfg), Ok(Vec::new()), "witness_key");
+        cfg.control_plane_declarations = true;
         let refused = Err(VaultError::Config(DECLARATION_KEYS_FILE));
         assert_eq!(read_declaration_keys(&cfg), refused, "no file");
         let file = dir.join(DECLARATION_KEYS_FILE);

@@ -66,7 +66,7 @@ use fstp_rt::{Listener as _, Runtime, Shutdown};
 
 use super::pg::PgCellStore;
 use super::{CellEngine, CellStore, VaultClient};
-use crate::config::{CellConfig, Mode};
+use crate::config::{CellConfig, Mode, RestoreDeclarations};
 use crate::egress::{CnClient, CnTransport};
 use crate::tasks::erasure::{self, ErasureHandle, ErasureRunner, Keystore};
 use crate::tasks::release::{self, LicenceHold, ReleaseSettings, ReleaseView};
@@ -572,21 +572,22 @@ pub(crate) fn lost_in_restore_event(loss: &OwnRow) -> Option<Vec<u8>> {
 /// record of lane m10/saas-declare).
 pub const DECLARATION_KEYS_FILE: &str = "restore-declaration-keys";
 
-/// Fails closed (ADR-012 record of lane m10/saas-declare, lead answer of
-/// 2026-11-25, interim pending Daniel): a SaaS cell process, over its
-/// cluster, starts only with one or more pinned restore declaration keys,
-/// each a composite public key. A self-hosted cell keeps the console rule
-/// and needs none. The in-memory store is a test path on no cluster.
+/// Fails closed (ADR-012 record of lane m10/saas-declare, lead answers of
+/// 2026-11-25, interim pending Daniel): a cell process whose configuration
+/// takes `control_plane` restore declarations starts, over its cluster,
+/// only with one or more pinned restore declaration keys, each a composite
+/// public key. A `witness_key` cell, such as the pilot, keeps the console
+/// rule and needs none. The in-memory store is a test path on no cluster.
 ///
 /// # Errors
 ///
 /// [`StartRefusal::Config`] naming [`DECLARATION_KEYS_FILE`].
 pub fn check_declaration_pin(
-    mode: Mode,
+    declarations: RestoreDeclarations,
     on_cluster: bool,
     keys: &[Vec<u8>],
 ) -> Result<(), StartRefusal> {
-    if mode != Mode::Saas || !on_cluster {
+    if declarations != RestoreDeclarations::ControlPlane || !on_cluster {
         return Ok(());
     }
     if keys.is_empty()
@@ -871,8 +872,13 @@ where
     let cell = config.cell.0;
     let mut store = open(cell)?;
     let witness_keys = store.pinned_witness_keys();
-    let declaration_keys = store.pinned_declaration_keys();
-    check_declaration_pin(config.mode, on_cluster, &declaration_keys)?;
+    // ADR-012 record of lane m10/saas-declare: only a cell that takes
+    // `control_plane` declarations reads them under the pinned keys.
+    let declaration_keys = match config.restore_declarations {
+        RestoreDeclarations::ControlPlane => store.pinned_declaration_keys(),
+        RestoreDeclarations::WitnessKey => Vec::new(),
+    };
+    check_declaration_pin(config.restore_declarations, on_cluster, &declaration_keys)?;
     match crate::process::step(|| store.resolve_open_prepare()).await? {
         Resolved::Nothing => {}
         Resolved::Committed => report(StartPhase::InDoubtCommitted),
@@ -1139,24 +1145,37 @@ mod tests {
         );
     }
 
-    /// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
-    /// 2026-11-25): a SaaS cell on its cluster refuses to start without a
-    /// pinned composite declaration key. A self-hosted cell, and the
-    /// in-memory test path, need none.
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+    /// 2026-11-25): a cell that takes `control_plane` declarations refuses
+    /// to start on its cluster without a pinned composite declaration key.
+    /// A `witness_key` cell, such as the pilot, and the in-memory test path
+    /// need none.
     #[test]
-    fn i24_saas_cell_start_fails_closed_without_a_declaration_pin() {
+    fn i24_control_plane_cell_start_fails_closed_without_a_declaration_pin() {
         let refused = Err(StartRefusal::Config(crate::config::ConfigError::Invalid(
             DECLARATION_KEYS_FILE,
         )));
         let key = fstp_crypto::composite::generate().unwrap();
         let good = vec![key.public_key().to_bytes().to_vec()];
-        assert_eq!(check_declaration_pin(Mode::Saas, true, &[]), refused);
         assert_eq!(
-            check_declaration_pin(Mode::Saas, true, &[vec![7; 32]]),
+            check_declaration_pin(RestoreDeclarations::ControlPlane, true, &[]),
             refused
         );
-        assert_eq!(check_declaration_pin(Mode::Saas, true, &good), Ok(()));
-        assert_eq!(check_declaration_pin(Mode::SelfHosted, true, &[]), Ok(()));
-        assert_eq!(check_declaration_pin(Mode::Saas, false, &[]), Ok(()));
+        assert_eq!(
+            check_declaration_pin(RestoreDeclarations::ControlPlane, true, &[vec![7; 32]]),
+            refused
+        );
+        assert_eq!(
+            check_declaration_pin(RestoreDeclarations::ControlPlane, true, &good),
+            Ok(())
+        );
+        assert_eq!(
+            check_declaration_pin(RestoreDeclarations::WitnessKey, true, &[]),
+            Ok(())
+        );
+        assert_eq!(
+            check_declaration_pin(RestoreDeclarations::ControlPlane, false, &[]),
+            Ok(())
+        );
     }
 }
