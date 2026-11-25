@@ -81,9 +81,10 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 18] = [
+pub const HOST_NEXT: [&str; 19] = [
     "run_setup",
     "start_service",
+    "backup_key",
     "custodian",
     "pair_custodian",
     "renew_route",
@@ -218,6 +219,71 @@ impl DrillStep {
     }
 }
 
+/// Where a keystore snapshot failed (ADR-012 records of lanes
+/// m10/backup-followups and m10/key-pin-reason).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotStep {
+    /// It did not fail, or the step is not known.
+    None,
+    /// Another erasure ran, or the process holds no object store.
+    Busy,
+    /// The keystore rows did not read or encode.
+    Image,
+    /// The process's own database refused a write.
+    Database,
+    /// Custody refused, or the snapshot key file did not open.
+    Custody,
+    /// An object store refused the upload.
+    Upload,
+    /// No object store gave the snapshot back.
+    Fetch,
+    /// The fetched snapshot did not verify or open.
+    Open,
+    /// The opened rows did not open under the current root.
+    Check,
+    /// The pointer to the verified snapshot did not write.
+    Pointer,
+}
+
+impl SnapshotStep {
+    /// Every step, `None` first.
+    pub const ALL: [SnapshotStep; 10] = [
+        Self::None,
+        Self::Busy,
+        Self::Image,
+        Self::Database,
+        Self::Custody,
+        Self::Upload,
+        Self::Fetch,
+        Self::Open,
+        Self::Check,
+        Self::Pointer,
+    ];
+
+    /// The wire word.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Busy => "busy",
+            Self::Image => "image",
+            Self::Database => "database",
+            Self::Custody => "custody",
+            Self::Upload => "upload",
+            Self::Fetch => "fetch",
+            Self::Open => "open",
+            Self::Check => "check",
+            Self::Pointer => "pointer",
+        }
+    }
+
+    /// The step of the wire word `w`, if it is one.
+    #[must_use]
+    pub fn of(w: &str) -> Option<SnapshotStep> {
+        Self::ALL.into_iter().find(|s| s.wire() == w)
+    }
+}
+
 /// The host's last report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostReport {
@@ -240,10 +306,14 @@ pub struct HostReport {
     pub last_app_snapshot: Option<Timestamp>,
     /// The cell's last keystore snapshot try failed.
     pub app_snapshot_failed: bool,
+    /// Where it failed (ADR-012 record of lane m10/key-pin-reason).
+    pub app_snapshot_step: SnapshotStep,
     /// When the vault's keystore snapshot last verified.
     pub last_vault_snapshot: Option<Timestamp>,
     /// The vault's last keystore snapshot try failed.
     pub vault_snapshot_failed: bool,
+    /// Where it failed.
+    pub vault_snapshot_step: SnapshotStep,
     /// Whole days until the first host certificate ends. The reply
     /// shows an ended one as 0.
     pub certificate_days: Option<i64>,
@@ -500,6 +570,11 @@ fn report_json(r: &HostReport) -> Value {
     );
     put(
         &mut o,
+        "app_snapshot_step",
+        Value::from(r.app_snapshot_step.wire()),
+    );
+    put(
+        &mut o,
         "last_vault_snapshot",
         r.last_vault_snapshot.map_or(Value::Null, instant),
     );
@@ -507,6 +582,11 @@ fn report_json(r: &HostReport) -> Value {
         &mut o,
         "vault_snapshot_failed",
         Value::Bool(r.vault_snapshot_failed),
+    );
+    put(
+        &mut o,
+        "vault_snapshot_step",
+        Value::from(r.vault_snapshot_step.wire()),
     );
     put(
         &mut o,

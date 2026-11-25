@@ -13,7 +13,7 @@
 
 use fstp_access::{
     Classification, HOST_NEXT, Method, OpKind, PART_STATES, PageNeed, ReadKind, ReadRule,
-    RoleOrApplicant, Shape, op, page_of, read_rule, reply,
+    RoleOrApplicant, SNAPSHOT_STEPS, Shape, op, page_of, read_rule, reply,
 };
 use fstp_domain::StateTag;
 use fstp_domain::roles::Role;
@@ -58,6 +58,15 @@ fn r_nf_02_system_reply_holds_no_free_text() {
     assert_eq!(PART_STATES, &["running", "unhealthy", "stopped"]);
     let words: Vec<&str> = fstp_obs_words();
     assert_eq!(HOST_NEXT, words.as_slice());
+    // ADR-012 record of lane m10/key-pin-reason: the words of
+    // `fstp_obs::SnapshotFailure`, after `none`.
+    assert_eq!(
+        SNAPSHOT_STEPS,
+        &[
+            "none", "busy", "image", "database", "custody", "upload", "fetch", "open", "check",
+            "pointer",
+        ]
+    );
 }
 
 /// The words of `fstp_obs::host_status::Next`, spelled out here, since
@@ -67,6 +76,7 @@ fn fstp_obs_words() -> Vec<&'static str> {
     vec![
         "run_setup",
         "start_service",
+        "backup_key",
         "custodian",
         "pair_custodian",
         "renew_route",

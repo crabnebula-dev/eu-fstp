@@ -34,6 +34,7 @@ use fstp_rt::Runtime;
 use crate::config::{self, FileConfig, Retention};
 use crate::index::{self, IndexEntry, IndexLine};
 use crate::keyfile::{self, KeyFile};
+use crate::keypin;
 use crate::s3::{Deleted, S3Client};
 use crate::sigv4::hex;
 use crate::timeline;
@@ -126,6 +127,12 @@ pub struct Agent<R: Runtime> {
     writer: Option<WriterKey>,
     pub(crate) state_dir: PathBuf,
     limits: Limits,
+    /// The SHA-256 of the key file bytes the agent was built on.
+    key_digest: [u8; 32],
+    /// The pin every seal requires, or `None` for an agent built in
+    /// process on key file bytes its caller holds (ADR-012 record of lane
+    /// m10/key-pin-reason). The agent of a configuration always has one.
+    pin: Option<keypin::Pin>,
 }
 
 impl<R: Runtime> std::fmt::Debug for Agent<R> {
@@ -205,6 +212,8 @@ impl<R: Runtime> Agent<R> {
             writer,
             state_dir: state_dir.to_path_buf(),
             limits: Limits::default(),
+            key_digest: fstp_crypto::sha256(key_file),
+            pin: None,
         })
     }
 
@@ -247,7 +256,8 @@ impl<R: Runtime> Agent<R> {
             writer.as_deref().map(Vec::as_slice),
             &cfg.state_dir,
         )?
-        .with_stores(stores.collect()))
+        .with_stores(stores.collect())
+        .with_pin(keypin::read(&cfg.state_dir)))
     }
 
     /// The agent with the further object stores `more`, after the first:
@@ -259,11 +269,31 @@ impl<R: Runtime> Agent<R> {
         self
     }
 
+    /// The agent that requires `pin` to name its key file before every
+    /// seal (ADR-012 record of lane m10/key-pin-reason, F-044, TH-51).
+    #[must_use]
+    pub fn with_pin(mut self, pin: keypin::Pin) -> Agent<R> {
+        self.pin = Some(pin);
+        self
+    }
+
     /// The agent with other sizes.
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Agent<R> {
         self.limits = limits;
         self
+    }
+
+    /// The writer key, once the key file passed the checks before a seal
+    /// (F-044): first its pin (ADR-012 record of lane m10/key-pin-reason,
+    /// TH-51), then the writer binding.
+    fn sealer(&self) -> Result<&WriterKey, BackupError> {
+        if let Some(pin) = self.pin {
+            keypin::matches_digest(pin, &self.key_digest)?;
+        }
+        let writer = self.writer()?;
+        self.key.check_writer(writer)?;
+        Ok(writer)
     }
 
     /// The writer key, which every seal needs.
@@ -299,9 +329,7 @@ impl<R: Runtime> Agent<R> {
         plaintext: &[u8],
         stores: &[&S3Client<R>],
     ) -> Result<(), BackupError> {
-        // F-044: the key file is checked before every seal.
-        let writer = self.writer()?;
-        self.key.check_writer(writer)?;
+        let writer = self.sealer()?;
         let public = self.key.public_key()?;
         let sealed = seal_object(&public, writer, &self.key.group_ref(), ident, plaintext)?;
         // Every store is tried, so one refusing store does not keep the
@@ -410,6 +438,9 @@ impl<R: Runtime> Agent<R> {
     /// [`BackupError::Tool`] when `pg_basebackup` fails, and the errors of
     /// [`Agent::base_backup_from`].
     pub async fn base_backup(&self, cfg: &FileConfig) -> Result<IndexEntry, BackupError> {
+        // Checked before `pg_basebackup` starts, so a refused key file
+        // never leaves it streaming into a closed reader.
+        self.sealer()?;
         let mut child = pg_basebackup(cfg)?
             .spawn()
             .map_err(|_| BackupError::Tool("pg_basebackup"))?;
@@ -436,6 +467,7 @@ impl<R: Runtime> Agent<R> {
     /// whether it is the last (F-043): the agent reads one byte ahead to
     /// know, since it cuts the stream as it reads.
     async fn stage_parts(&self, tar: &mut impl Read) -> Result<Staged, BackupError> {
+        self.sealer()?;
         let backup =
             fstp_crypto::random_array::<16>().map_err(|_| BackupError::Seal("backup id"))?;
         let mut buf = vec![0u8; self.limits.base_part.max(1)];

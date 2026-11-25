@@ -819,3 +819,224 @@ fn f044_bound_key_file_gives_custody_an_aad_keyd_takes() {
     other.generation = other.generation.wrapping_add(1);
     assert!(rt.block_on(keyfile::open(&custody, &other)).is_err());
 }
+
+/// A backup host over the fake S3, as `fstp-admin setup` lays it out: a
+/// credentials directory with the object store keys and the fake's CA,
+/// and an empty state directory (ADR-012 record of lane
+/// m10/key-pin-reason).
+fn pin_host(fake: &FakeS3, what: &str) -> fstp_backup::config::FileConfig {
+    let creds = temp_dir(&format!("{what}-creds"));
+    std::fs::write(creds.join("s3-access-key-id"), AK).unwrap();
+    std::fs::write(creds.join("s3-secret-access-key"), SK).unwrap();
+    std::fs::write(creds.join("s3-ca.pem"), fake_s3::CA_PEM).unwrap();
+    fstp_backup::config::FileConfig {
+        cluster: CLUSTER,
+        credentials_dir: creds,
+        state_dir: temp_dir(&format!("{what}-state")),
+        pg_bindir: PathBuf::from("/nonexistent/pg/bin"),
+        database: fstp_backup::config::DatabaseConfig {
+            host: std::net::IpAddr::from([127, 0, 0, 1]),
+            port: 5432,
+        },
+        object_store: Endpoint {
+            host: "localhost".to_owned(),
+            port: fake.port(),
+            region: REGION.to_owned(),
+            bucket: BUCKET.to_owned(),
+        },
+        more_stores: Vec::new(),
+        keyd_socket: None,
+        retention: None,
+    }
+}
+
+/// Archives one synthetic WAL file named `name` through the agent of
+/// `cfg`, as `archive_command` does.
+fn archive_one(
+    rt: &TokioRuntime,
+    cfg: &fstp_backup::config::FileConfig,
+    name: &str,
+) -> Result<(), BackupError> {
+    let agent = Agent::from_config(rt.clone(), cfg)?;
+    let dir = temp_dir("pin-wal");
+    std::fs::write(dir.join("s"), b"synthetic segment, lane m10/key-pin-reason").unwrap();
+    let got = rt.block_on(agent.archive(&dir.join("s"), name)).map(|_| ());
+    let _ = std::fs::remove_dir_all(&dir);
+    got
+}
+
+fn pin_of(cfg: &fstp_backup::config::FileConfig) -> Option<Vec<u8>> {
+    std::fs::read(cfg.state_dir.join(fstp_backup::keypin::PIN_FILE)).ok()
+}
+
+fn cleanup(cfg: &fstp_backup::config::FileConfig) {
+    let _ = std::fs::remove_dir_all(&cfg.credentials_dir);
+    let _ = std::fs::remove_dir_all(&cfg.state_dir);
+}
+
+/// F-044, TH-51, ADR-012 record of lane m10/key-pin-reason, row "Gap": a
+/// party without custody replaces both key files with a pair of its own,
+/// each bound to the other. The agent builds on them, since a restore
+/// must still start, and refuses every seal before any upload: a WAL
+/// file, a base backup and the custodian copy. `pin-key` never replaces
+/// the pin of the setup.
+#[test]
+fn f044_th51_replaced_key_file_pair_is_refused_before_any_upload() {
+    let rt = rt();
+    let fake = FakeS3::start(&rt, AK, SK, REGION, BUCKET);
+    let custody = MemCustody::default();
+    let cfg = pin_host(&fake, "pin-replaced");
+    fstp_backup::init_keys_with(&rt, &custody, &cfg).unwrap();
+    archive_one(&rt, &cfg, "000000010000000000000001").unwrap();
+    assert_eq!(fake.state.objects.lock().unwrap().len(), 1);
+    let pin = pin_of(&cfg).unwrap();
+
+    // The replaced pair passes every check the agent made before.
+    let theirs = rt
+        .block_on(keyfile::create(&MemCustody::default(), CLUSTER))
+        .unwrap();
+    std::fs::write(
+        cfg.credentials_dir.join(keyfile::KEY_FILE),
+        &theirs.key_file,
+    )
+    .unwrap();
+    std::fs::write(
+        cfg.credentials_dir.join(fstp_backup::writer::WRITER_FILE),
+        &*theirs.writer_key,
+    )
+    .unwrap();
+    let agent = Agent::from_config(rt.clone(), &cfg).unwrap();
+    let dir = temp_dir("pin-replaced-wal");
+    std::fs::write(dir.join("s"), b"synthetic segment two").unwrap();
+    assert_eq!(
+        rt.block_on(agent.archive(&dir.join("s"), "000000010000000000000002"))
+            .unwrap_err(),
+        BackupError::KeyPinDiffers
+    );
+    let base = b"synthetic cluster files, lane m10/key-pin-reason".repeat(100);
+    assert_eq!(
+        rt.block_on(agent.base_backup_from(&mut &base[..]))
+            .unwrap_err(),
+        BackupError::KeyPinDiffers
+    );
+    assert_eq!(
+        fstp_backup::keypin::check(&cfg.state_dir, &theirs.key_file),
+        Err(BackupError::KeyPinDiffers)
+    );
+    assert_eq!(fstp_backup::pin_key(&cfg), Err(BackupError::KeyPinDiffers));
+    assert_eq!(pin_of(&cfg).unwrap(), pin);
+    // Nothing reached the store after the replacement.
+    assert_eq!(fake.state.objects.lock().unwrap().len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+    cleanup(&cfg);
+    fake.stop(&rt);
+}
+
+/// F-044, TH-51, ADR-012 record of lane m10/key-pin-reason, rows
+/// "Refusals" and "Hosts set up before this lane": without a pin every
+/// seal refuses, and so does a pin that does not decode. `pin-key` pins a
+/// bound pair once, and refuses a writer key of another key file.
+#[test]
+fn f044_th51_missing_pin_refuses_every_seal() {
+    let rt = rt();
+    let fake = FakeS3::start(&rt, AK, SK, REGION, BUCKET);
+    let custody = MemCustody::default();
+    let cfg = pin_host(&fake, "pin-missing");
+    fstp_backup::init_keys_with(&rt, &custody, &cfg).unwrap();
+    let pin_path = cfg.state_dir.join(fstp_backup::keypin::PIN_FILE);
+    std::fs::remove_file(&pin_path).unwrap();
+    assert_eq!(
+        archive_one(&rt, &cfg, "000000010000000000000001").unwrap_err(),
+        BackupError::KeyPinMissing
+    );
+    std::fs::write(&pin_path, "not a pin\n").unwrap();
+    assert_eq!(
+        archive_one(&rt, &cfg, "000000010000000000000001").unwrap_err(),
+        BackupError::KeyPinDiffers
+    );
+    assert!(fake.state.objects.lock().unwrap().is_empty());
+
+    // A writer key of another key file is never pinned.
+    std::fs::remove_file(&pin_path).unwrap();
+    let wpath = cfg.credentials_dir.join(fstp_backup::writer::WRITER_FILE);
+    let good_writer = std::fs::read(&wpath).unwrap();
+    let other = rt.block_on(keyfile::create(&custody, CLUSTER)).unwrap();
+    std::fs::write(&wpath, &*other.writer_key).unwrap();
+    assert_eq!(
+        fstp_backup::pin_key(&cfg),
+        Err(BackupError::KeyFile("writer key of another key file"))
+    );
+    assert!(pin_of(&cfg).is_none());
+
+    // The bound pair is pinned once, and then it seals.
+    std::fs::write(&wpath, &good_writer).unwrap();
+    fstp_backup::pin_key(&cfg).unwrap();
+    let key = std::fs::read(cfg.credentials_dir.join(keyfile::KEY_FILE)).unwrap();
+    assert_eq!(
+        pin_of(&cfg).unwrap(),
+        fstp_backup::keypin::encode(&key).into_bytes()
+    );
+    fstp_backup::pin_key(&cfg).unwrap();
+    archive_one(&rt, &cfg, "000000010000000000000001").unwrap();
+    assert_eq!(fake.state.objects.lock().unwrap().len(), 1);
+    cleanup(&cfg);
+    fake.stop(&rt);
+}
+
+/// F-044, TH-51, ADR-012 record of lane m10/key-pin-reason, row
+/// "Legitimate changes": `init-keys` and `upgrade-keys` write the pin in
+/// the same step as the key file, so the next seal works with no operator
+/// step. An upgrade of a version 2 file leaves the pin as it is.
+#[test]
+fn f044_th51_init_and_upgrade_write_the_pin() {
+    let rt = rt();
+    let fake = FakeS3::start(&rt, AK, SK, REGION, BUCKET);
+    let custody = MemCustody::default();
+
+    let fresh = pin_host(&fake, "pin-init");
+    fstp_backup::init_keys_with(&rt, &custody, &fresh).unwrap();
+    let key = std::fs::read(fresh.credentials_dir.join(keyfile::KEY_FILE)).unwrap();
+    assert_eq!(
+        pin_of(&fresh).unwrap(),
+        fstp_backup::keypin::encode(&key).into_bytes()
+    );
+    assert_eq!(fstp_backup::keypin::encode(&key).len(), 65);
+    archive_one(&rt, &fresh, "000000010000000000000001").unwrap();
+    // `init-keys` never replaces a key file, so it never moves a pin.
+    assert_eq!(
+        fstp_backup::init_keys_with(&rt, &custody, &fresh),
+        Err(BackupError::Config(keyfile::KEY_FILE))
+    );
+
+    let old = pin_host(&fake, "pin-upgrade");
+    let v1 = rt
+        .block_on(keyfile::create_kind(
+            &custody,
+            CLUSTER,
+            FileKind::ClusterBackupV1,
+        ))
+        .unwrap();
+    std::fs::write(old.credentials_dir.join(keyfile::KEY_FILE), &v1).unwrap();
+    fstp_backup::upgrade_keys_with(&rt, Ok(&custody), &old).unwrap();
+    let v2 = std::fs::read(old.credentials_dir.join(keyfile::KEY_FILE)).unwrap();
+    assert_ne!(v2, v1);
+    assert_eq!(
+        pin_of(&old).unwrap(),
+        fstp_backup::keypin::encode(&v2).into_bytes()
+    );
+    fstp_backup::upgrade_keys_with::<MemCustody>(
+        &rt,
+        Err(BackupError::Config("keyd_socket")),
+        &old,
+    )
+    .unwrap();
+    assert_eq!(
+        pin_of(&old).unwrap(),
+        fstp_backup::keypin::encode(&v2).into_bytes()
+    );
+    archive_one(&rt, &old, "000000010000000000000002").unwrap();
+    assert_eq!(fake.state.objects.lock().unwrap().len(), 2);
+    cleanup(&fresh);
+    cleanup(&old);
+    fake.stop(&rt);
+}

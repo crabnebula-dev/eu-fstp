@@ -325,11 +325,18 @@ pub const IMPORT_MEDIA: &[&str] = &["text/plain", "text/markdown"];
 /// of lane L20).
 pub const PART_STATES: &[&str] = &["running", "unhealthy", "stopped"];
 
+/// Where a keystore snapshot failed, `none` when it did not or the step
+/// is not known (ADR-012 record of lane m10/key-pin-reason).
+pub const SNAPSHOT_STEPS: &[&str] = &[
+    "none", "busy", "image", "database", "custody", "upload", "fetch", "open", "check", "pointer",
+];
+
 /// The one next thing on the host, as `fstp-admin status` names it
 /// (ADR-028 "Status", record of lane L20).
 pub const HOST_NEXT: &[&str] = &[
     "run_setup",
     "start_service",
+    "backup_key",
     "custodian",
     "pair_custodian",
     "renew_route",
@@ -2042,8 +2049,11 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     // ADR-028 record of lane L26: the keystore snapshots of L27.
                     m("last_app_snapshot", Shape::Nullable(&Shape::Id)),
                     m("app_snapshot_failed", Shape::Bool),
+                    // ADR-012 record of lane m10/key-pin-reason: where it failed.
+                    m("app_snapshot_step", Shape::Enum(SNAPSHOT_STEPS)),
                     m("last_vault_snapshot", Shape::Nullable(&Shape::Id)),
                     m("vault_snapshot_failed", Shape::Bool),
+                    m("vault_snapshot_step", Shape::Enum(SNAPSHOT_STEPS)),
                     m("certificate_days", Shape::Nullable(&Shape::Int)),
                     m("self_signed", Shape::Bool),
                     m("route", Shape::Enum(&["current", "mismatch", "unknown"])),

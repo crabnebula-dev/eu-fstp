@@ -8,6 +8,7 @@
 //!   root, through the `fstp-keyd` console socket;
 //! - `upgrade-keys`: turn a version 1 key file into version 2, bound to a
 //!   writer key, as root, through the console socket;
+//! - `pin-key`: pin a bound key file pair that has no pin yet, as root;
 //! - `base-backup`: one base backup, from a timer, then pruning when the
 //!   configuration names a retention;
 //! - `wal-archive <path> <name>`: `archive_command`, `%p %f`;
@@ -29,7 +30,9 @@
 //! argument exits with status 2, a restore whose archive ends before its
 //! target with status 3, witness copies this host did not write with
 //! status 4, a witness store that differs from its copies with status 5,
-//! and any other failure with status 1, which is also what `restore_command` returns for a file the store lacks.
+//! a key file its pin does not name with status 6, a key file without a
+//! pin with status 7 (ADR-012 record of lane m10/key-pin-reason), and
+//! any other failure with status 1, which is also what `restore_command` returns for a file the store lacks.
 
 use std::process::ExitCode;
 
@@ -46,6 +49,9 @@ fn main() -> ExitCode {
         // ADR-012 record of lane m10/witness-copy.
         Err(BackupError::WitnessForeign) => ExitCode::from(4),
         Err(BackupError::WitnessDiverged) => ExitCode::from(5),
+        // ADR-012 record of lane m10/key-pin-reason (F-044, TH-51).
+        Err(BackupError::KeyPinDiffers) => ExitCode::from(6),
+        Err(BackupError::KeyPinMissing) => ExitCode::from(7),
         Err(_) => ExitCode::FAILURE,
     }
 }

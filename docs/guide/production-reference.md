@@ -488,6 +488,8 @@ FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup init-keys
 
 It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` and `cluster-backup-writer.key` with mode 0600. It refuses to overwrite an existing key file. A key file made before 2026-11-24 has no writer key: `fstp-backup upgrade-keys`, as root, binds one to it, and a base backup should follow at once, since a restore reads only containers of the new form. `fstp-admin setup` does both.
 
+It also writes `key-pin` in the state directory: the SHA-256 of `cluster-backup.key` in hex and a line feed. `upgrade-keys` and the adoption on a second custodian write it too. Every command that seals or uploads refuses while the pin does not name the key file, with exit status 6, or while there is no pin, with exit status 7. So a replaced key file pair stops the backups instead of sealing them to keys someone else holds. On a host set up before 2026-11-25, `fstp-backup pin-key`, as root, pins a bound pair once. `fstp-admin setup` runs it. Only root should be able to replace `key-pin` (ADR-012 record of lane m10/key-pin-reason).
+
 The root of that key lives in this host's `fstp-keyd`. Decided by Daniel on 2026-11-21: a backup must still open after the loss of this host. Two measures carry that, and the pilot uses both. A second custodian on another machine holds its own custody of the ClusterBackup chain ("Second custodian" below). An off-host sealed copy of each `fstp-keyd` entry keeps the App and Vault roots ("Off-host copy of a custody entry" below). The rows inside a backup open only with those roots.
 
 ### Archive WAL continuously

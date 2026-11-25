@@ -31,6 +31,7 @@ export type PartState = (typeof PART_STATES)[number];
 export const HOST_NEXT = [
   "run_setup",
   "start_service",
+  "backup_key",
   "custodian",
   "pair_custodian",
   "renew_route",
@@ -59,6 +60,11 @@ export const DRILL_STEPS = ["none", "space", "restore", "recovery", "database", 
 /** One drill step. */
 export type DrillStep = (typeof DRILL_STEPS)[number];
 
+/** Where a key store snapshot failed, `none` when it did not or the step is not known (ADR-012 record of lane m10/key-pin-reason). */
+export const SNAPSHOT_STEPS = ["none", "busy", "image", "database", "custody", "upload", "fetch", "open", "check", "pointer"] as const;
+/** One snapshot step. */
+export type SnapshotStep = (typeof SNAPSHOT_STEPS)[number];
+
 /** The host status report, as the cell read it. */
 export interface HostReport {
   readonly writtenAt: bigint;
@@ -71,9 +77,13 @@ export interface HostReport {
   /** When the cell's keystore snapshot last verified. */
   readonly lastAppSnapshot: bigint | null;
   readonly appSnapshotFailed: boolean;
+  /** Where the cell's last keystore snapshot failed. */
+  readonly appSnapshotStep: SnapshotStep;
   /** When the vault's keystore snapshot last verified. */
   readonly lastVaultSnapshot: bigint | null;
   readonly vaultSnapshotFailed: boolean;
+  /** Where the vault's last keystore snapshot failed. */
+  readonly vaultSnapshotStep: SnapshotStep;
   readonly certificateDays: number | null;
   readonly selfSigned: boolean;
   readonly route: "current" | "mismatch" | "unknown";
@@ -157,8 +167,10 @@ function host(v: unknown): HostReport | null {
     "last_vault_erasure",
     "last_app_snapshot",
     "app_snapshot_failed",
+    "app_snapshot_step",
     "last_vault_snapshot",
     "vault_snapshot_failed",
+    "vault_snapshot_step",
     "certificate_days",
     "self_signed",
     "route",
@@ -199,6 +211,8 @@ function host(v: unknown): HostReport | null {
   if (o["last_app_snapshot"] !== null && lastAppSnapshot === null) return null;
   if (o["last_vault_snapshot"] !== null && lastVaultSnapshot === null) return null;
   if (typeof appSnapshotFailed !== "boolean" || typeof vaultSnapshotFailed !== "boolean") return null;
+  const { app_snapshot_step: appSnapshotStep, vault_snapshot_step: vaultSnapshotStep } = o;
+  if (!oneOf(appSnapshotStep, SNAPSHOT_STEPS) || !oneOf(vaultSnapshotStep, SNAPSHOT_STEPS)) return null;
   if (days !== null && !(typeof days === "number" && Number.isSafeInteger(days) && days >= 0)) return null;
   if (typeof setupDone !== "boolean" || typeof backupsConfigured !== "boolean" || typeof selfSigned !== "boolean") return null;
   if (!oneOf(route, ["current", "mismatch", "unknown"] as const) || !oneOf(next, HOST_NEXT)) return null;
@@ -231,8 +245,10 @@ function host(v: unknown): HostReport | null {
     lastVaultErasure,
     lastAppSnapshot,
     appSnapshotFailed,
+    appSnapshotStep,
     lastVaultSnapshot,
     vaultSnapshotFailed,
+    vaultSnapshotStep,
     certificateDays: days,
     selfSigned,
     route,
@@ -468,7 +484,12 @@ function hostRows(r: SystemReply): Row[] {
 function snapshotRow(r: SystemReply, h: HostReport): Row {
   const tell = "system.tell.keystore_snapshot";
   if (!h.backupsConfigured) return row("snapshots", "green", "off");
-  if (h.appSnapshotFailed || h.vaultSnapshotFailed) return row("snapshots", "red", "failed", {}, "host", tell);
+  // ADR-012 record of lane m10/key-pin-reason: the step that failed, the
+  // platform's first, in plain words.
+  if (h.appSnapshotFailed || h.vaultSnapshotFailed) {
+    const step = h.appSnapshotFailed ? h.appSnapshotStep : h.vaultSnapshotStep;
+    return row("snapshots", "red", step === "none" ? "failed" : `failed_${step}`, {}, "host", tell);
+  }
   if (h.lastAppSnapshot === null || h.lastVaultSnapshot === null) return row("snapshots", "amber", "none", {}, "host", tell);
   const oldest = h.lastAppSnapshot < h.lastVaultSnapshot ? h.lastAppSnapshot : h.lastVaultSnapshot;
   const age = ageOf(r.now - oldest);

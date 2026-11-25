@@ -19,6 +19,7 @@ mod container;
 pub mod custodian;
 pub mod index;
 pub mod keyfile;
+pub mod keypin;
 mod object;
 pub mod recovery;
 pub mod s3;
@@ -92,6 +93,13 @@ pub enum BackupError {
     /// A local witness store file neither extends nor is extended by its
     /// copy (ADR-012 record of lane m10/witness-copy).
     WitnessDiverged,
+    /// The key file is not the one its pin names, or the pin does not
+    /// decode: a party may have replaced the key file pair (ADR-012 record
+    /// of lane m10/key-pin-reason, F-044, TH-51).
+    KeyPinDiffers,
+    /// The state directory holds no pin of the key file (ADR-012 record
+    /// of lane m10/key-pin-reason).
+    KeyPinMissing,
 }
 
 impl std::fmt::Display for BackupError {
@@ -128,6 +136,10 @@ impl std::fmt::Display for BackupError {
             BackupError::WitnessDiverged => {
                 write!(f, "the witness store differs from its copies")
             }
+            BackupError::KeyPinDiffers => {
+                write!(f, "the backup key file is not the one its pin names")
+            }
+            BackupError::KeyPinMissing => write!(f, "the backup key file has no pin"),
         }
     }
 }
@@ -272,6 +284,10 @@ pub enum Command {
     /// every store, for the second custodian, and mark it published
     /// (ADR-012 record of lane m10/backup-followups, row "Publishing").
     PublishKey,
+    /// `pin-key`: pin a bound key file pair that has no pin yet, on a host
+    /// set up before the pin (ADR-012 record of lane m10/key-pin-reason,
+    /// row "Hosts set up before this lane").
+    PinKey,
     /// `base-backup`: one base backup.
     BaseBackup,
     /// `wal-archive <path> <name>`, for `archive_command` (`%p %f`).
@@ -343,6 +359,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
         [c] if c == "init-keys" => Ok(Command::InitKeys),
         [c] if c == "upgrade-keys" => Ok(Command::UpgradeKeys),
         [c] if c == "publish-key" => Ok(Command::PublishKey),
+        [c] if c == "pin-key" => Ok(Command::PinKey),
         [c] if c == "base-backup" => Ok(Command::BaseBackup),
         [c, path, name] if c == "wal-archive" => Ok(Command::WalArchive {
             path: PathBuf::from(path),
@@ -416,29 +433,22 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
     let cfg = config::load()?;
     let rt = TokioRuntime::new_multi_thread(2).map_err(|_| BackupError::Io("runtime"))?;
     if *command == Command::InitKeys {
-        let path = cfg.credentials_dir.join(keyfile::KEY_FILE);
-        let wpath = cfg.credentials_dir.join(writer::WRITER_FILE);
-        for p in [&path, &wpath] {
-            if std::fs::symlink_metadata(p).is_ok() {
-                return Err(BackupError::Config(keyfile::KEY_FILE));
-            }
-        }
-        let custody = console(&cfg)?;
-        let created = rt.block_on(keyfile::create(&custody, cfg.cluster))?;
-        write_key_file(&wpath, &created.writer_key)?;
-        return write_key_file(&path, &created.key_file);
+        return init_keys_with(&rt, &console(&cfg)?, &cfg);
     }
     if *command == Command::UpgradeKeys {
-        return upgrade_keys(&rt, &cfg);
+        return upgrade_keys_with(&rt, console(&cfg).as_ref().map_err(|e| *e), &cfg);
     }
     if *command == Command::PublishKey {
         return publish_key(&rt, &cfg);
+    }
+    if *command == Command::PinKey {
+        return pin_key(&cfg);
     }
     if matches!(
         command,
         Command::Restore { .. } | Command::WalRestore { .. }
     ) {
-        adopt_key_file(&rt, &cfg)?;
+        adopt_key_file_with(&rt, console(&cfg).as_ref().map_err(|e| *e), &cfg)?;
     }
     if *command == Command::CustodianInit {
         let key_path = cfg.credentials_dir.join(custodian::CUSTODIAN_KEY_FILE);
@@ -475,6 +485,7 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
             Command::InitKeys
             | Command::UpgradeKeys
             | Command::PublishKey
+            | Command::PinKey
             | Command::CustodianInit
             | Command::CustodianEscrow { .. } => Ok(()),
             Command::BaseBackup => {
@@ -545,13 +556,77 @@ async fn open_group_secret<R: fstp_rt::Runtime>(
     agent.open_escrow(&custody, &key, &escrow).await
 }
 
-/// `upgrade-keys` (record of lane m10/backup-format): a version 2 key
-/// file is left as it is. A version 1 file is opened through the console
-/// socket and replaced by a version 2 file for the same group key, bound
-/// to the writer key file, which is created first unless it exists. The
-/// key file is replaced through a temporary file and a rename.
-fn upgrade_keys(
+/// `init-keys`: creates the key file and the writer key through
+/// `custody`, then pins the key file (ADR-012 record of lane
+/// m10/key-pin-reason, row "Legitimate changes"). It never replaces a
+/// key file, so it never moves a pin.
+///
+/// # Errors
+///
+/// [`BackupError::Config`] (`cluster-backup.key`) when either key file
+/// exists, and the errors of the custody calls and the file steps.
+pub fn init_keys_with<C: fstp_custody::Custody>(
     rt: &fstp_rt::tokio::TokioRuntime,
+    custody: &C,
+    cfg: &config::FileConfig,
+) -> Result<(), BackupError> {
+    let path = cfg.credentials_dir.join(keyfile::KEY_FILE);
+    let wpath = cfg.credentials_dir.join(writer::WRITER_FILE);
+    for p in [&path, &wpath] {
+        if std::fs::symlink_metadata(p).is_ok() {
+            return Err(BackupError::Config(keyfile::KEY_FILE));
+        }
+    }
+    let created = rt.block_on(keyfile::create(custody, cfg.cluster))?;
+    write_key_file(&wpath, &created.writer_key)?;
+    write_key_file(&path, &created.key_file)?;
+    keypin::write(&cfg.state_dir, &created.key_file)
+}
+
+/// `pin-key` (ADR-012 record of lane m10/key-pin-reason, row "Hosts set
+/// up before this lane"): pins the key file when no pin exists, after it
+/// checks that the file is version 2, that its binding verifies and that
+/// the writer key file matches. A matching pin is left as it is.
+///
+/// # Errors
+///
+/// [`BackupError::KeyPinDiffers`] for a pin of another file, which is
+/// never replaced, and the errors of the key file checks.
+pub fn pin_key(cfg: &config::FileConfig) -> Result<(), BackupError> {
+    let dir = &cfg.credentials_dir;
+    let bytes = config::read_credential(dir, keyfile::KEY_FILE)?;
+    match keypin::check(&cfg.state_dir, &bytes) {
+        Err(BackupError::KeyPinMissing) => {}
+        other => return other,
+    }
+    let key = keyfile::decode(&bytes)?;
+    if key.cluster != cfg.cluster {
+        return Err(BackupError::KeyFile("another cluster"));
+    }
+    key.check_binding()?;
+    let w = writer::WriterKey::decode(&zeroize::Zeroizing::new(config::read_credential(
+        dir,
+        writer::WRITER_FILE,
+    )?))?;
+    key.check_writer(&w)?;
+    keypin::write(&cfg.state_dir, &bytes)
+}
+
+/// `upgrade-keys` (record of lane m10/backup-format): a version 2 key
+/// file is left as it is, with its pin. A version 1 file is opened
+/// through `custody` and replaced by a version 2 file for the same group
+/// key, bound to the writer key file, which is created first unless it
+/// exists. The key file is replaced through a temporary file and a
+/// rename, and then pinned (ADR-012 record of lane m10/key-pin-reason).
+/// `custody` is needed only for a version 1 file.
+///
+/// # Errors
+///
+/// The error of `custody` when it is needed, and the errors of the key
+/// file checks, the custody calls and the file steps.
+pub fn upgrade_keys_with<C: fstp_custody::Custody>(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    custody: Result<&C, BackupError>,
     cfg: &config::FileConfig,
 ) -> Result<(), BackupError> {
     let dir = &cfg.credentials_dir;
@@ -569,15 +644,15 @@ fn upgrade_keys(
         };
     }
     let had_writer = existing.is_some();
-    let custody = console(cfg)?;
-    let created = rt.block_on(keyfile::upgrade(&custody, &bytes, existing))?;
+    let created = rt.block_on(keyfile::upgrade(custody?, &bytes, existing))?;
     if !had_writer {
         write_key_file(&wpath, &created.writer_key)?;
     }
     let tmp = dir.join(format!("{}.upgrade", keyfile::KEY_FILE));
     let _ = std::fs::remove_file(&tmp);
     write_key_file(&tmp, &created.key_file)?;
-    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))
+    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))?;
+    keypin::write(&cfg.state_dir, &created.key_file)
 }
 
 /// The file in the state directory that names the key file last
@@ -601,6 +676,9 @@ fn publish_key(
     cfg: &config::FileConfig,
 ) -> Result<(), BackupError> {
     let key_file = config::read_credential(&cfg.credentials_dir, keyfile::KEY_FILE)?;
+    // ADR-012 record of lane m10/key-pin-reason: no upload of a key file
+    // its pin does not name.
+    keypin::check(&cfg.state_dir, &key_file)?;
     let custody = console(cfg)?;
     let body = rt.block_on(custodian::publish(&custody, &key_file))?;
     let stores = config_stores(rt, cfg)?;
@@ -633,10 +711,18 @@ fn config_stores(
 /// before `restore` or `wal-restore` (ADR-012 record of lane
 /// m10/backup-followups, row "On the second host"): when the local key
 /// file is not version 2, the published one that the escrow vouches for
-/// replaces it, through a temporary file and a rename. Nothing happens on
-/// a host without an escrow or with a version 2 key file.
-fn adopt_key_file(
+/// replaces it, through a temporary file and a rename, and is pinned in
+/// the same step (ADR-012 record of lane m10/key-pin-reason). Nothing
+/// happens on a host without an escrow or with a version 2 key file, and
+/// only an adoption needs `custody`.
+///
+/// # Errors
+///
+/// The error of `custody` when it is needed, and the errors of the
+/// adoption and the file steps.
+pub fn adopt_key_file_with<C: fstp_custody::Custody>(
     rt: &fstp_rt::tokio::TokioRuntime,
+    custody: Result<&C, BackupError>,
     cfg: &config::FileConfig,
 ) -> Result<(), BackupError> {
     let dir = &cfg.credentials_dir;
@@ -652,11 +738,11 @@ fn adopt_key_file(
     };
     let escrow = read_small(&escrow, custodian::MAX_ESCROW_LEN)?;
     let custodian_key = config::read_credential(dir, custodian::CUSTODIAN_KEY_FILE)?;
-    let custody = console(cfg)?;
+    let custody = custody?;
     let stores = config_stores(rt, cfg)?;
     let refs: Vec<&dyn ObjectStore> = stores.iter().map(|s| &**s as &dyn ObjectStore).collect();
     let adopted = rt.block_on(custodian::adopt_published(
-        &custody,
+        custody,
         &refs,
         cfg.cluster,
         local.as_deref(),
@@ -666,7 +752,8 @@ fn adopt_key_file(
     let tmp = dir.join(format!("{}.adopt", keyfile::KEY_FILE));
     let _ = std::fs::remove_file(&tmp);
     write_key_file(&tmp, &adopted)?;
-    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))
+    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))?;
+    keypin::write(&cfg.state_dir, &adopted)
 }
 
 /// Reads a file of at most `max` bytes.
@@ -704,9 +791,11 @@ mod tests {
     }
 
     /// ADR-012 records of lanes L10, L16, m10/backup-format and
-    /// m10/backup-followups: the nine command forms, and no other.
+    /// m10/backup-followups and m10/key-pin-reason (F-044): the ten command
+    /// forms, and no other.
     #[test]
-    fn adr012_binary_takes_nine_command_forms() {
+    fn adr012_binary_takes_ten_command_forms() {
+        assert_eq!(parse_args(&s(&["pin-key"])).unwrap(), Command::PinKey);
         assert_eq!(
             parse_args(&s(&["publish-key"])).unwrap(),
             Command::PublishKey
@@ -766,6 +855,7 @@ mod tests {
             &["custodian-escrow", "/r"],
             &["upgrade-keys", "x"],
             &["publish-key", "x"],
+            &["pin-key", "x"],
         ] {
             assert_eq!(
                 parse_args(&s(bad)).unwrap_err(),

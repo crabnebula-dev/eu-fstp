@@ -14,6 +14,7 @@ import {
   HOUR,
   ROW_IDS,
   SNAPSHOT_LATE,
+  SNAPSHOT_STEPS,
   ageOf,
   decodeSystem,
   hostNext,
@@ -54,8 +55,10 @@ function wire(over: Record<string, unknown> = {}, hostOver: Record<string, unkno
       last_vault_erasure: null,
       last_app_snapshot: (NOW - 2n * HOUR).toString(),
       app_snapshot_failed: false,
+      app_snapshot_step: "none",
       last_vault_snapshot: (NOW - 4n * HOUR).toString(),
       vault_snapshot_failed: false,
+      vault_snapshot_step: "none",
       certificate_days: 5,
       self_signed: false,
       route: "current",
@@ -214,6 +217,7 @@ test("adr028_l20_every_label_exists", () => {
     decoded({}, { last_witness_copied: null }),
     decoded({}, { backups_configured: false }),
     ...DRILL_STEPS.map((s) => decoded({}, { drill_step: s })),
+    ...SNAPSHOT_STEPS.map((s) => decoded({}, { vault_snapshot_failed: true, vault_snapshot_step: s })),
     decoded({}, { last_drill_passed: null, drill_seconds: null }),
     decoded({}, { last_drill_passed: "1" }),
     ...["not_configured", "missing", "unreadable"].map((f) => decoded({ host_file: f, host: null })),
@@ -453,6 +457,34 @@ test("adr028_wc_witness_copy_row", () => {
     wire({}, { witness_copy: undefined }),
     wire({}, { last_witness_copied: 5 }),
     wire({}, { last_witness_copied: undefined }),
+  ]) {
+    eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
+  }
+});
+
+/** R-NF-02, ADR-012 record of lane m10/key-pin-reason, row "Reply and page": a failed key store snapshot names its step in plain words, the platform's first when both failed, and a failure of unknown step keeps the plain sentence. The reply refuses a step out of its grammar. */
+test("adr012_kpr_snapshot_row_names_the_failed_step", () => {
+  eq(SNAPSHOT_STEPS.length, 10, "none and the nine steps of fstp_obs::SnapshotFailure");
+  const upload = rowOf(decoded({}, { vault_snapshot_failed: true, vault_snapshot_step: "upload" }), "snapshots");
+  eq(upload.light, "red", "a failed snapshot is a problem");
+  eq(upload.text, "system.row.snapshots.failed_upload", "the step of the failed one");
+  assert((SYSTEM_LABELS[upload.text] ?? "").includes("the upload to the object store failed"), "plain words");
+  eq(upload.actor, "host", "the host admin acts");
+  const both = rowOf(
+    decoded({}, { app_snapshot_failed: true, app_snapshot_step: "fetch", vault_snapshot_failed: true, vault_snapshot_step: "upload" }),
+    "snapshots",
+  );
+  eq(both.text, "system.row.snapshots.failed_fetch", "the platform's step first");
+  eq(rowOf(decoded({}, { app_snapshot_failed: true }), "snapshots").text, "system.row.snapshots.failed", "no step known");
+  for (const s of SNAPSHOT_STEPS) {
+    if (s === "none") continue;
+    const text = SYSTEM_LABELS[`system.row.snapshots.failed_${s}`] ?? "";
+    assert(text.startsWith("The last daily save of a key store off the host"), s);
+  }
+  for (const bad of [
+    wire({}, { vault_snapshot_step: "Upload" }),
+    wire({}, { vault_snapshot_step: null }),
+    wire({}, { app_snapshot_step: undefined }),
   ]) {
     eq(decodeSystem(JSON.parse(JSON.stringify(bad))), null, JSON.stringify(bad));
   }
