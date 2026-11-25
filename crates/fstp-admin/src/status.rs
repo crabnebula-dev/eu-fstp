@@ -1,7 +1,9 @@
 //! `fstp-admin status`: one screen with what runs, what is unhealthy, and
 //! the single next thing to do (ADR-028 "Status").
 
-use fstp_obs::host_status::{self, HostStatus, Next as HostNext, PartState, Parts, RouteState};
+use fstp_obs::host_status::{
+    self, HostStatus, Next as HostNext, PartState, Parts, RouteState, WalArchive,
+};
 
 use crate::fail::{Cause, Fail, OK, UNHEALTHY};
 use crate::layout::{Cluster, Layout};
@@ -30,11 +32,24 @@ pub enum Next {
     PublicCertificate,
     /// No object store is configured.
     ConfigureBackups,
+    /// The WAL archive fails, or a finished segment waits too long for
+    /// its upload (ADR-012 record of lane m10/backup-health).
+    WalArchive,
+    /// The copy of the witness store fails or is late (ADR-012 record of
+    /// lane m10/witness-copy).
+    WitnessCopy,
     /// The newest base backup is old or missing.
     Backup,
+    /// No restore drill passed in 35 days, or the last one failed (ADR-012
+    /// record of lane m10/backup-health).
+    RestoreDrill,
     /// A fresh copy is owed to the second custodian: the last try failed
     /// (ADR-028 record of lane `m10/guard-key`, part 2).
     CustodianCopy,
+    /// The copy of a cluster's backup key file for the second custodian is
+    /// not in the object stores yet (ADR-012 record of lane
+    /// m10/backup-followups, row "Owed").
+    CustodianKeyCopy,
     /// A keystore snapshot failed, or none verified in a day and a half.
     KeystoreSnapshot,
     /// The web admins must enrol and invite the second admin first.
@@ -86,6 +101,25 @@ pub struct Findings {
     pub custodian: Option<crate::custodian::Link>,
     /// Days until the custodian's server certificate ends, if paired.
     pub pairing_days: Option<i64>,
+    /// The state of the WAL archive, the worse of the two clusters
+    /// (ADR-012 record of lane m10/backup-health).
+    pub wal_archive: WalArchive,
+    /// The older of the two clusters' last archived segments.
+    pub wal_last: Option<i64>,
+    /// The state of the witness store's copy (ADR-012 record of lane
+    /// m10/witness-copy).
+    pub witness_copy: WalArchive,
+    /// When the witness store was last copied in full, Unix seconds.
+    pub witness_copied: Option<i64>,
+    /// The restore drill status file.
+    pub drill: fstp_obs::drill_status::DrillStatus,
+    /// A restore drill is due: none passed in 35 days, or the last one
+    /// failed.
+    pub drill_due: bool,
+    /// The copy of a cluster's backup key file for the second custodian is
+    /// owed: its `key-published` mark does not name the key file (ADR-012
+    /// record of lane m10/backup-followups, row "Owed").
+    pub custodian_key_owed: bool,
 }
 
 /// Whether the newest key copy is older than the last vault erasure, so
@@ -121,10 +155,18 @@ pub fn next(f: &Findings) -> Next {
         Next::PublicCertificate
     } else if !f.backups {
         Next::ConfigureBackups
+    } else if matches!(f.wal_archive, WalArchive::Failing | WalArchive::Late) {
+        Next::WalArchive
+    } else if matches!(f.witness_copy, WalArchive::Failing | WalArchive::Late) {
+        Next::WitnessCopy
     } else if f.backup_age_hours.is_none_or(|h| h > 36) {
         Next::Backup
+    } else if f.drill_due {
+        Next::RestoreDrill
     } else if f.custodian == Some(crate::custodian::Link::CopyOwed) {
         Next::CustodianCopy
+    } else if f.custodian_key_owed {
+        Next::CustodianKeyCopy
     } else if f.snapshot_failed || f.snapshot_age_hours.is_none_or(|h| h > 36) {
         Next::KeystoreSnapshot
     } else if f.custodian == Some(crate::custodian::Link::Unpaired)
@@ -161,9 +203,21 @@ fn next_text(n: Next) -> &'static str {
         Next::ConfigureBackups => {
             "add \"backup\" with your object store to fstp.json, put its two key files in place, then run fstp-admin setup."
         }
+        Next::WalArchive => {
+            "the WAL archive does not keep up, so the backups miss the newest changes. Read the log of the database named above (journalctl -u fstp-postgres-app or fstp-postgres-vault) for the archive command's error, often the object store or its key files. Fix it, then run fstp-admin status."
+        }
+        Next::WitnessCopy => {
+            "the audit witness's records are not reaching the object store, so a lost host would lose their history. Run fstp-admin witness-copy: it says what failed, often the object store or its key files. Its timer then tries every minute."
+        }
         Next::Backup => "run fstp-admin backup. The newest backup is older than a day and a half.",
+        Next::RestoreDrill => {
+            "run fstp-admin drill. It restores both databases into a scratch copy and checks that they open. No drill passed in 35 days, or the last one failed: its line above names the step."
+        }
         Next::CustodianCopy => {
             "the second custodian answers, but the fresh key copy after the last erasure did not reach it. fstp-keyd tries again every ten minutes. Check the free disk space on the custodian machine and its log (journalctl -u fstp-keyd-custodian), then run fstp-admin status again."
+        }
+        Next::CustodianKeyCopy => {
+            "the copy of the backup key file for the second custodian is not in the object stores yet, so a restore on the custodian could not read the newest backups. Run fstp-admin backup, which sends it. If this stays, read admin/logs/fstp-admin.log for the object store's error, fix it, then run fstp-admin backup again."
         }
         Next::KeystoreSnapshot => {
             "the daily keystore snapshot failed or did not run. Read the log of fstp-cell and fstp-vault (journalctl -u <its name>), fix what it names, then run fstp-admin start: each service takes a snapshot a minute after it starts."
@@ -282,6 +336,8 @@ struct Survey {
     last_key_copy: Option<i64>,
     /// The keystore snapshots of both processes.
     snapshots: Snapshots,
+    /// The WAL archive facts of each cluster, empty without backups.
+    archives: Vec<(Cluster, Option<crate::archive::Archiver>)>,
 }
 
 fn survey(layout: &Layout, state: &State) -> Survey {
@@ -318,6 +374,9 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         .filter(|t| *t != i64::MAX);
     let now = crate::pki::now();
     let snapshots = snapshot_status(layout);
+    let archives = crate::archive::read_all(layout);
+    let drill = fstp_obs::drill_status::read(&layout.admin_dir());
+    let copy = fstp_obs::witness_copy::read(&layout.admin_dir());
     let findings = Findings {
         setup_done: state.done("first-admin") && cell.is_some(),
         all_running,
@@ -336,6 +395,16 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         custodian: (layout.cfg.services == crate::config::Services::Systemd)
             .then(|| crate::custodian::host_link(layout)),
         pairing_days: crate::custodian::pairing_days(layout),
+        wal_archive: crate::archive::host_state(&archives, now),
+        wal_last: crate::archive::oldest_last_archived(&archives),
+        witness_copy: copy.state(u64::try_from(now).unwrap_or(0)),
+        witness_copied: copy.last_success.and_then(|t| i64::try_from(t).ok()),
+        drill,
+        drill_due: drill.due(u64::try_from(now).unwrap_or(0)),
+        custodian_key_owed: layout.cfg.backup.is_some()
+            && Cluster::ALL
+                .iter()
+                .any(|c| crate::ops::key_copy_owed(layout, *c)),
     };
     let last_key_copy = findings.keys_copied_at;
     Survey {
@@ -345,6 +414,7 @@ fn survey(layout: &Layout, state: &State) -> Survey {
         last_backup,
         last_key_copy,
         snapshots,
+        archives,
     }
 }
 
@@ -374,8 +444,12 @@ pub fn next_word(n: Next) -> HostNext {
         Next::Renew => HostNext::Renew,
         Next::PublicCertificate => HostNext::PublicCertificate,
         Next::ConfigureBackups => HostNext::ConfigureBackups,
+        Next::WalArchive => HostNext::WalArchive,
+        Next::WitnessCopy => HostNext::WitnessCopy,
         Next::Backup => HostNext::Backup,
+        Next::RestoreDrill => HostNext::RestoreDrill,
         Next::CustodianCopy => HostNext::CustodianCopy,
+        Next::CustodianKeyCopy => HostNext::CustodianCopy,
         Next::KeystoreSnapshot => HostNext::KeystoreSnapshot,
         Next::WebAdmins => HostNext::WebAdmins,
         Next::VerifyAdmins => HostNext::VerifyAdmins,
@@ -437,7 +511,33 @@ pub fn host_status(
             None => host_status::CustodianState::NotUsed,
         },
         guard_owed: f.custodian == Some(crate::custodian::Link::Owed),
-        guard_copy_owed: f.custodian == Some(crate::custodian::Link::CopyOwed),
+        guard_copy_owed: f.custodian == Some(crate::custodian::Link::CopyOwed)
+            || f.custodian_key_owed,
+        wal_archive: if f.backups {
+            f.wal_archive
+        } else {
+            WalArchive::Unknown
+        },
+        last_wal_archived: f.wal_last.map(|t| t.clamp(0, host_status::MAX_INSTANT)),
+        last_drill_passed: f.drill.last_pass.map(|t| {
+            i64::try_from(t)
+                .unwrap_or(i64::MAX)
+                .clamp(0, host_status::MAX_INSTANT)
+        }),
+        drill_step: f.drill.failed,
+        drill_seconds: f
+            .drill
+            .seconds
+            .and_then(|s| i64::try_from(s).ok())
+            .filter(|s| *s >= 1),
+        witness_copy: if f.backups {
+            f.witness_copy
+        } else {
+            WalArchive::Unknown
+        },
+        last_witness_copied: f
+            .witness_copied
+            .map(|t| t.clamp(0, host_status::MAX_INSTANT)),
     }
 }
 
@@ -477,6 +577,101 @@ pub fn report(layout: &Layout) -> Result<(), Fail> {
 /// leaves the old file, whose age the System page shows.
 pub fn report_quietly(layout: &Layout) {
     let _ = report(layout);
+}
+
+fn minutes_since(t: i64, now: i64) -> u64 {
+    now.saturating_sub(t).max(0).unsigned_abs() / 60
+}
+
+/// One `wal archive` line of the status screen (ADR-028 record of lane
+/// `m10/backup-health`).
+fn archive_line(c: Cluster, a: Option<&crate::archive::Archiver>, now: i64) {
+    let name = match c {
+        Cluster::App => "app  ",
+        Cluster::Vault => "vault",
+    };
+    let head = [Part::T("  wal archive  "), Part::T(name)];
+    let line = |tail: &[Part<'_>]| {
+        let mut parts = head.to_vec();
+        parts.extend_from_slice(tail);
+        out(&parts);
+    };
+    let Some(a) = a else {
+        return line(&[Part::T(" unknown: the database did not answer")]);
+    };
+    match crate::archive::state(Some(a), now) {
+        WalArchive::Failing => line(&[
+            Part::T(" FAILING: the last upload failed "),
+            Part::N(a.last_failed.map_or(0, |t| minutes_since(t, now))),
+            Part::T(" minutes ago"),
+        ]),
+        WalArchive::Late => line(&[
+            Part::T(" LATE: a finished segment has waited "),
+            Part::N(a.waited(now).map_or(0, |w| w.unsigned_abs() / 60)),
+            Part::T(" minutes for its upload"),
+        ]),
+        WalArchive::Ok | WalArchive::Unknown => match a.last_archived {
+            Some(t) => line(&[
+                Part::T(" last change saved "),
+                Part::N(minutes_since(t, now)),
+                Part::T(" minutes ago"),
+            ]),
+            None => line(&[Part::T(" no change saved yet")]),
+        },
+    }
+}
+
+/// The `witness copy` line of the status screen (ADR-028 record of lane
+/// `m10/witness-copy`).
+fn witness_line(f: &Findings, now: i64) {
+    let head = Part::T("  witness copy ");
+    let ago = |t: i64| [Part::N(minutes_since(t, now)), Part::T(" minutes ago")];
+    match (f.witness_copy, f.witness_copied) {
+        (WalArchive::Failing, _) => out(&[
+            head,
+            Part::T(" FAILING: the last run failed; fstp-admin witness-copy shows why"),
+        ]),
+        (WalArchive::Late, Some(t)) => {
+            let [n, unit] = ago(t);
+            out(&[head, Part::T(" LATE: last copied "), n, unit]);
+        }
+        (WalArchive::Late, None) => out(&[head, Part::T(" LATE: never copied")]),
+        (WalArchive::Ok, Some(t)) => {
+            let [n, unit] = ago(t);
+            out(&[head, Part::T(" last copied "), n, unit]);
+        }
+        (WalArchive::Ok | WalArchive::Unknown, _) => out(&[head, Part::T(" never run")]),
+    }
+}
+
+/// The `restore drill` line of the status screen (ADR-028 record of lane
+/// `m10/backup-health`).
+fn drill_line(d: &fstp_obs::drill_status::DrillStatus, now: i64) {
+    let head = Part::T("  restore drill  ");
+    let days = |t: u64| {
+        now.saturating_sub(i64::try_from(t).unwrap_or(i64::MAX))
+            .max(0)
+            .unsigned_abs()
+            / 86_400
+    };
+    if let Some(step) = d.failed {
+        out(&[
+            head,
+            Part::T("FAILED: "),
+            Part::T(crate::drill::step_text(step)),
+        ]);
+    } else if let Some(t) = d.last_pass {
+        out(&[
+            head,
+            Part::T("last passed "),
+            Part::N(days(t)),
+            Part::T(" days ago; restoring both databases took "),
+            Part::N(d.seconds.unwrap_or(0)),
+            Part::T(" seconds"),
+        ]);
+    } else {
+        out(&[head, Part::T("never run")]);
+    }
 }
 
 /// Prints the status screen and returns the exit code. It also writes the
@@ -535,9 +730,16 @@ pub fn run(layout: &Layout) -> u8 {
                 out(&parts);
             };
             match (sn.failing(), sn.last_verified) {
-                (true, _) => line(&[Part::T(
-                    " FAILED: the last keystore snapshot did not verify",
-                )]),
+                // ADR-012 record of lane m10/backup-followups, row "Failure
+                // reason": the step that failed, one word of a closed list.
+                (true, _) => line(&[
+                    Part::T(" FAILED: the last keystore snapshot did not verify (step: "),
+                    Part::T(
+                        sn.reason
+                            .map_or("unknown", fstp_obs::SnapshotFailure::as_str),
+                    ),
+                    Part::T(")"),
+                ]),
                 (false, Some(t)) => line(&[
                     Part::T(" last verified "),
                     Part::N(
@@ -552,6 +754,12 @@ pub fn run(layout: &Layout) -> u8 {
                 (false, None) => line(&[Part::T(" none yet")]),
             }
         }
+        let now = crate::pki::now();
+        for (c, a) in &s.archives {
+            archive_line(*c, a.as_ref(), now);
+        }
+        witness_line(f, now);
+        drill_line(&f.drill, now);
     }
     out(&[Part::T(match f.custodian {
         Some(crate::custodian::Link::Linked) => "  custodian  linked, guard current",
@@ -565,6 +773,11 @@ pub fn run(layout: &Layout) -> u8 {
         Some(crate::custodian::Link::Unpaired) => "  custodian  not paired",
         None => "  custodian  not used in direct mode",
     })]);
+    if f.custodian_key_owed {
+        out(&[Part::T(
+            "  custodian  the backup key copy for the custodian is OWED (fstp-admin backup sends it)",
+        )]);
+    }
     out(&[Part::T(if key_copy_stale(f) {
         "  key copy   OLDER THAN THE LAST ERASURE: make a new copy"
     } else if f.keys_copied {
@@ -639,7 +852,47 @@ mod tests {
             snapshot_failed: false,
             custodian: Some(crate::custodian::Link::Linked),
             pairing_days: Some(700),
+            wal_archive: WalArchive::Ok,
+            wal_last: Some(1_700_000_000),
+            witness_copy: WalArchive::Ok,
+            witness_copied: Some(1_700_000_000),
+            drill: fstp_obs::drill_status::DrillStatus::default().after_pass(1_700_000_000, 300),
+            drill_due: false,
+            custodian_key_owed: false,
         }
+    }
+
+    /// F-044, ADR-012 record of lane m10/backup-followups, row "Owed": an
+    /// owed copy of the backup key file for the custodian is named after
+    /// the backups and an owed key entry copy, and reaches the host status
+    /// file as `guard_copy_owed` with the next word `custodian_copy`, with
+    /// no new member.
+    #[test]
+    fn adr012_bf_status_names_an_owed_custodian_key_copy() {
+        use crate::custodian::Link;
+        let mut f = healthy();
+        f.custodian_key_owed = true;
+        assert_eq!(next(&f), Next::CustodianKeyCopy);
+        assert!(next_text(Next::CustodianKeyCopy).contains("fstp-admin backup"));
+        f.custodian = Some(Link::CopyOwed);
+        assert_eq!(next(&f), Next::CustodianCopy);
+        f.custodian = Some(Link::Linked);
+        f.backup_age_hours = Some(40);
+        assert_eq!(next(&f), Next::Backup);
+        f.backup_age_hours = Some(2);
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.custodian, host_status::CustodianState::Linked);
+        assert!(s.guard_copy_owed && !s.guard_owed);
+        assert_eq!(s.next, HostNext::CustodianCopy);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        f.custodian_key_owed = false;
+        assert!(
+            !host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2)
+                .guard_copy_owed
+        );
     }
 
     /// ADR-028 record of lane `m10/guard-key`, part 3 (decided by Daniel
@@ -791,7 +1044,9 @@ mod tests {
             Next::Renew,
             Next::PublicCertificate,
             Next::ConfigureBackups,
+            Next::WalArchive,
             Next::Backup,
+            Next::RestoreDrill,
             Next::KeystoreSnapshot,
             Next::WebAdmins,
             Next::VerifyAdmins,
@@ -886,10 +1141,10 @@ mod tests {
         g.snapshot_age_hours = None;
         assert_eq!(next(&g), Next::KeystoreSnapshot);
         let s = Snapshots {
-            app: fstp_obs::snapshot_status::SnapshotStatus::default().after(true, 100),
+            app: fstp_obs::snapshot_status::SnapshotStatus::default().after(None, 100),
             vault: fstp_obs::snapshot_status::SnapshotStatus::default()
-                .after(true, 50)
-                .after(false, 60),
+                .after(None, 50)
+                .after(Some(fstp_obs::SnapshotFailure::Fetch), 60),
         };
         assert!(s.failing());
         assert_eq!(s.oldest_verified(), Some(50));
@@ -903,10 +1158,10 @@ mod tests {
     fn adr028_l26_snapshots_reach_the_host_status_file() {
         use fstp_obs::snapshot_status::SnapshotStatus;
         let snaps = Snapshots {
-            app: SnapshotStatus::default().after(true, 1_700_000_000),
+            app: SnapshotStatus::default().after(None, 1_700_000_000),
             vault: SnapshotStatus::default()
-                .after(true, 1_699_990_000)
-                .after(false, 1_700_000_050),
+                .after(None, 1_699_990_000)
+                .after(Some(fstp_obs::SnapshotFailure::Fetch), 1_700_000_050),
         };
         let mut f = healthy();
         f.snapshot_failed = snaps.failing();
@@ -940,5 +1195,130 @@ mod tests {
             (None, None)
         );
         assert!(!none.app_snapshot_failed && !none.vault_snapshot_failed);
+    }
+
+    /// ADR-028 record of lane `m10/backup-health`, row "Next words": a
+    /// failing or late WAL archive comes before the backup, since a base
+    /// backup restores only with the archived WAL from its start. An
+    /// unknown archive names nothing: a stopped database comes first.
+    #[test]
+    fn adr028_bh_status_names_the_wal_archive_and_the_drill() {
+        for (w, want) in [
+            (WalArchive::Failing, Next::WalArchive),
+            (WalArchive::Late, Next::WalArchive),
+            (WalArchive::Ok, Next::Nothing),
+            (WalArchive::Unknown, Next::Nothing),
+        ] {
+            let mut f = healthy();
+            f.wal_archive = w;
+            assert_eq!(next(&f), want, "{w:?}");
+            f.backup_age_hours = None;
+            if want == Next::WalArchive {
+                assert_eq!(next(&f), Next::WalArchive, "before the backup");
+            }
+        }
+        let mut f = healthy();
+        f.wal_archive = WalArchive::Failing;
+        f.backups = false;
+        assert_eq!(next(&f), Next::ConfigureBackups);
+        // The drill: due after a failure or 35 days without a pass, named
+        // right after the backup and before the keystore snapshots.
+        let mut f = healthy();
+        f.drill_due = true;
+        assert_eq!(next(&f), Next::RestoreDrill);
+        f.snapshot_failed = true;
+        assert_eq!(next(&f), Next::RestoreDrill);
+        f.backup_age_hours = None;
+        assert_eq!(next(&f), Next::Backup);
+        f.wal_archive = WalArchive::Failing;
+        assert_eq!(next(&f), Next::WalArchive);
+    }
+
+    /// ADR-028 record of lane `m10/witness-copy`, row "Next word": a
+    /// failing or late witness copy comes right after the WAL archive and
+    /// before the backup. Unknown names nothing, and without backups the
+    /// backups come first.
+    #[test]
+    fn adr028_wc_status_names_the_witness_copy() {
+        for (w, want) in [
+            (WalArchive::Failing, Next::WitnessCopy),
+            (WalArchive::Late, Next::WitnessCopy),
+            (WalArchive::Ok, Next::Nothing),
+            (WalArchive::Unknown, Next::Nothing),
+        ] {
+            let mut f = healthy();
+            f.witness_copy = w;
+            assert_eq!(next(&f), want, "{w:?}");
+            f.backup_age_hours = None;
+            if want == Next::WitnessCopy {
+                assert_eq!(next(&f), Next::WitnessCopy, "before the backup");
+                f.wal_archive = WalArchive::Late;
+                assert_eq!(next(&f), Next::WalArchive, "after the WAL archive");
+                f.backups = false;
+                assert_eq!(next(&f), Next::ConfigureBackups);
+            }
+        }
+    }
+
+    /// ADR-028 record of lane `m10/witness-copy`, row "Host status
+    /// members": the copy state and the time of the last full copy reach
+    /// the file, and a host without backups reports `unknown`.
+    #[test]
+    fn adr028_wc_witness_copy_reaches_the_host_status_file() {
+        let mut f = healthy();
+        f.witness_copy = WalArchive::Failing;
+        f.witness_copied = Some(1_700_000_070);
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.witness_copy, WalArchive::Failing);
+        assert_eq!(s.last_witness_copied, Some(1_700_000_070));
+        assert_eq!(s.next, HostNext::WitnessCopy);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        f.backups = false;
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.witness_copy, WalArchive::Unknown);
+    }
+
+    /// ADR-028 record of lane `m10/backup-health`, row "Host status
+    /// members": the archive state and the last archived segment reach
+    /// the file, and a host without backups reports `unknown`.
+    #[test]
+    fn adr028_bh_backup_health_reaches_the_host_status_file() {
+        let mut f = healthy();
+        f.wal_archive = WalArchive::Late;
+        f.wal_last = Some(1_700_000_050);
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.wal_archive, WalArchive::Late);
+        assert_eq!(s.last_wal_archived, Some(1_700_000_050));
+        assert_eq!(s.next, HostNext::WalArchive);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        f.backups = false;
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.wal_archive, WalArchive::Unknown);
+        // The drill: its last pass, its duration and a failed step.
+        use fstp_obs::drill_status::Step;
+        let mut f = healthy();
+        f.drill = f.drill.after_fail(1_700_100_000, Step::Keystore);
+        f.drill_due = true;
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.last_drill_passed, Some(1_700_000_000));
+        assert_eq!(s.drill_seconds, Some(300));
+        assert_eq!(s.drill_step, Some(Step::Keystore));
+        assert_eq!(s.next, HostNext::RestoreDrill);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        f.drill = fstp_obs::drill_status::DrillStatus::default();
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(
+            (s.last_drill_passed, s.drill_step, s.drill_seconds),
+            (None, None, None)
+        );
     }
 }

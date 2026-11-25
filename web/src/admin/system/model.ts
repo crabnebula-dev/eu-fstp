@@ -18,6 +18,9 @@
 // after 36 hours on a host with backups, as `fstp-admin status` reads it,
 // and a failed last try is a problem (ADR-028 records of lanes L27 and
 // L26).
+// The WAL archive is a problem while it fails, and late while a finished
+// segment waits over 10 minutes, as `fstp-admin status` reads it (ADR-012
+// record of lane m10/backup-health).
 
 /** A part's state in the host report. */
 export const PART_STATES = ["running", "unhealthy", "stopped"] as const;
@@ -34,7 +37,10 @@ export const HOST_NEXT = [
   "renew",
   "public_certificate",
   "configure_backups",
+  "wal_archive",
+  "witness_copy",
   "backup",
+  "restore_drill",
   "custodian_copy",
   "keystore_snapshot",
   "web_admins",
@@ -47,6 +53,11 @@ export type HostNext = (typeof HOST_NEXT)[number];
 
 const PARTS = ["cell", "vault", "witness", "edge", "databases", "keys"] as const;
 type PartName = (typeof PARTS)[number];
+
+/** Where a restore drill failed (ADR-012 record of lane m10/backup-health). */
+export const DRILL_STEPS = ["none", "space", "restore", "recovery", "database", "keystore", "cleanup", "witness"] as const;
+/** One drill step. */
+export type DrillStep = (typeof DRILL_STEPS)[number];
 
 /** The host status report, as the cell read it. */
 export interface HostReport {
@@ -73,6 +84,34 @@ export interface HostReport {
   readonly guardOwed: boolean;
   /** A fresh copy is owed to the custodian: the last try failed. */
   readonly guardCopyOwed: boolean;
+  /** The WAL archive of both clusters: ok, late, failing, or unknown without backups. */
+  readonly walArchive: "ok" | "late" | "failing" | "unknown";
+  /** The older of the two clusters' last archived segments. */
+  readonly lastWalArchived: bigint | null;
+  /** When a restore drill last passed. */
+  readonly lastDrillPassed: bigint | null;
+  /** Where the last restore drill failed, `none` when it passed or none ran. */
+  readonly drillStep: DrillStep;
+  /** The restore duration of the last passed drill, in seconds. */
+  readonly drillSeconds: number | null;
+  /** The copy of the witness store: ok, late, failing, or unknown without backups (ADR-028 record of lane `m10/witness-copy`). */
+  readonly witnessCopy: "ok" | "late" | "failing" | "unknown";
+  /** When the witness store was last copied in full. */
+  readonly lastWitnessCopied: bigint | null;
+}
+
+/** One integrity finding (ADR-012 record of lane m10/declared-restore). */
+export interface Finding {
+  /** The id to acknowledge it by. */
+  readonly id: string;
+  /** Rows a declared restore lost, or a row the cell could not tell from a deletion. */
+  readonly kind: "lost_in_restore" | "possible_deletion";
+  /** The platform's audit log or the identity vault's. */
+  readonly chain: "app" | "vault";
+  readonly from: bigint;
+  readonly to: bigint;
+  /** When a tenant admin acknowledged it, or null. It stays listed either way. */
+  readonly acknowledgedAt: bigint | null;
 }
 
 /** The `tenant.system` reply. */
@@ -84,6 +123,8 @@ export interface SystemReply {
   readonly lastCellErasure: bigint | null;
   readonly hostFile: "present" | "not_configured" | "missing" | "unreadable";
   readonly host: HostReport | null;
+  /** Every integrity finding, acknowledged or not. */
+  readonly findings: readonly Finding[];
 }
 
 const ID = /^(0|[1-9][0-9]{0,38})$/;
@@ -125,6 +166,13 @@ function host(v: unknown): HostReport | null {
     "custodian",
     "guard_owed",
     "guard_copy_owed",
+    "wal_archive",
+    "last_wal_archived",
+    "last_drill_passed",
+    "drill_step",
+    "drill_seconds",
+    "witness_copy",
+    "last_witness_copied",
   ];
   if (o === null || !closed(o, names)) return null;
   const p = record(o["parts"]);
@@ -159,6 +207,20 @@ function host(v: unknown): HostReport | null {
   if (typeof guardOwed !== "boolean") return null;
   const guardCopyOwed = o["guard_copy_owed"];
   if (typeof guardCopyOwed !== "boolean") return null;
+  const walArchive = o["wal_archive"];
+  if (!oneOf(walArchive, ["ok", "late", "failing", "unknown"] as const)) return null;
+  const lastWalArchived = o["last_wal_archived"] === null ? null : instant(o["last_wal_archived"]);
+  if (o["last_wal_archived"] !== null && lastWalArchived === null) return null;
+  const lastDrillPassed = o["last_drill_passed"] === null ? null : instant(o["last_drill_passed"]);
+  if (o["last_drill_passed"] !== null && lastDrillPassed === null) return null;
+  const drillStep = o["drill_step"];
+  if (!oneOf(drillStep, DRILL_STEPS)) return null;
+  const drillSeconds = o["drill_seconds"];
+  if (drillSeconds !== null && !(typeof drillSeconds === "number" && Number.isSafeInteger(drillSeconds) && drillSeconds >= 1)) return null;
+  const witnessCopy = o["witness_copy"];
+  if (!oneOf(witnessCopy, ["ok", "late", "failing", "unknown"] as const)) return null;
+  const lastWitnessCopied = o["last_witness_copied"] === null ? null : instant(o["last_witness_copied"]);
+  if (o["last_witness_copied"] !== null && lastWitnessCopied === null) return null;
   return Object.freeze({
     writtenAt,
     setupDone,
@@ -178,13 +240,53 @@ function host(v: unknown): HostReport | null {
     custodian,
     guardOwed,
     guardCopyOwed,
+    walArchive,
+    lastWalArchived,
+    lastDrillPassed,
+    drillStep,
+    drillSeconds,
+    witnessCopy,
+    lastWitnessCopied,
   });
+}
+
+function finding(v: unknown): Finding | null {
+  const o = record(v);
+  if (o === null || !closed(o, ["id", "kind", "chain", "from", "to", "acknowledged_at"])) return null;
+  const { id, kind, chain } = o;
+  const from = instant(o["from"]);
+  const to = instant(o["to"]);
+  const acknowledgedAt = o["acknowledged_at"] === null ? null : instant(o["acknowledged_at"]);
+  if (typeof id !== "string" || !ID.test(id)) return null;
+  if (!oneOf(kind, ["lost_in_restore", "possible_deletion"] as const)) return null;
+  if (!oneOf(chain, ["app", "vault"] as const)) return null;
+  if (from === null || to === null || to < from) return null;
+  if (o["acknowledged_at"] !== null && acknowledgedAt === null) return null;
+  return Object.freeze({ id, kind, chain, from, to, acknowledgedAt });
+}
+
+/** The body of `tenant.acknowledge_finding` for the finding `id`. */
+export function acknowledgeBody(id: string): Readonly<Record<string, string>> {
+  return Object.freeze({ finding: id });
+}
+
+/** The findings a tenant admin has not acknowledged yet. */
+export function openFindings(r: SystemReply): readonly Finding[] {
+  return r.findings.filter((f) => f.acknowledgedAt === null);
 }
 
 /** The `tenant.system` reply, or null when it has another shape. */
 export function decodeSystem(v: unknown): SystemReply | null {
   const o = record(v);
-  if (o === null || !closed(o, ["now", "vault", "mail", "last_cell_erasure", "host_file", "host"])) return null;
+  if (o === null || !closed(o, ["now", "vault", "mail", "last_cell_erasure", "host_file", "host", "findings"])) return null;
+  const raw = o["findings"];
+  if (!Array.isArray(raw)) return null;
+  const findings: Finding[] = [];
+  for (const x of raw) {
+    const f = finding(x);
+    if (f === null) return null;
+    findings.push(f);
+  }
   const now = instant(o["now"]);
   const lastCellErasure = o["last_cell_erasure"] === null ? null : instant(o["last_cell_erasure"]);
   if (o["last_cell_erasure"] !== null && lastCellErasure === null) return null;
@@ -196,7 +298,7 @@ export function decodeSystem(v: unknown): SystemReply | null {
   const report = o["host"] === null ? null : host(o["host"]);
   if (o["host"] !== null && report === null) return null;
   if ((hostFile === "present") !== (report !== null)) return null;
-  return Object.freeze({ now, vault, mail, lastCellErasure, hostFile, host: report });
+  return Object.freeze({ now, vault, mail, lastCellErasure, hostFile, host: report, findings: Object.freeze(findings) });
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +312,21 @@ export type Light = "green" | "amber" | "red" | "unknown";
 export type Actor = "host" | "you";
 
 /** The rows of the page, in order. */
-export const ROW_IDS = ["report", "cell", "vault", "services", "edge", "mail", "backups", "keys", "snapshots", "certificates"] as const;
+export const ROW_IDS = [
+  "report",
+  "cell",
+  "vault",
+  "services",
+  "edge",
+  "mail",
+  "backups",
+  "archive",
+  "witness",
+  "drill",
+  "keys",
+  "snapshots",
+  "certificates",
+] as const;
 /** One row id. */
 export type RowId = (typeof ROW_IDS)[number];
 
@@ -236,6 +352,8 @@ export const BACKUP_LATE = 36n * HOUR;
 export const BACKUP_MISSING = 72n * HOUR;
 /** The keystore snapshot age that `fstp-admin status` calls late (ADR-028 record of lane L27). */
 export const SNAPSHOT_LATE = 36n * HOUR;
+/** The age of the last passed restore drill after which the next is late: 35 days (ADR-012 record of lane m10/backup-health). */
+export const DRILL_LATE = 35n * 24n * HOUR;
 
 /** An age in plain words: the label id and its count. */
 export function ageOf(micros: bigint): { readonly label: string; readonly n: string } {
@@ -285,7 +403,7 @@ export function lastErasure(r: SystemReply): bigint | null {
 function hostRows(r: SystemReply): Row[] {
   const h = r.host;
   if (h === null) {
-    return (["services", "edge", "backups", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
+    return (["services", "edge", "backups", "archive", "witness", "drill", "keys", "snapshots", "certificates"] as const).map((id) => row(id, "unknown", "unknown"));
   }
   const out: Row[] = [];
   const others = [h.parts.witness, h.parts.databases, h.parts.keys];
@@ -309,6 +427,9 @@ function hostRows(r: SystemReply): Row[] {
     else if (a > BACKUP_LATE) out.push(row("backups", "amber", "late", params, "host", "system.tell.backup"));
     else out.push(row("backups", "green", "fresh", params));
   }
+  out.push(archiveRow(r, h));
+  out.push(witnessRow(r, h));
+  out.push(drillRow(r, h));
   // The runbook asks for a new key copy after each erasure: an older copy
   // still holds the erased key (ADR-028 record of lane L20).
   const erased = lastErasure(r);
@@ -355,6 +476,55 @@ function snapshotRow(r: SystemReply, h: HostReport): Row {
   return r.now - oldest > SNAPSHOT_LATE
     ? row("snapshots", "amber", "late", params, "host", tell)
     : row("snapshots", "green", "fresh", params);
+}
+
+/**
+ * The WAL archive, the backup of recent changes (ADR-012 and ADR-028
+ * records of lane `m10/backup-health`): red while it fails, amber while a
+ * finished segment waits too long, green with the age of the last saved
+ * change. Without backups the backups row already asks for them.
+ */
+function archiveRow(r: SystemReply, h: HostReport): Row {
+  const tell = "system.tell.wal_archive";
+  if (!h.backupsConfigured) return row("archive", "green", "off");
+  if (h.walArchive === "failing") return row("archive", "red", "failing", {}, "host", tell);
+  if (h.walArchive === "late") return row("archive", "amber", "late", {}, "host", tell);
+  if (h.walArchive === "unknown") return row("archive", "unknown", "unknown");
+  if (h.lastWalArchived === null) return row("archive", "green", "none_yet");
+  const age = ageOf(r.now - h.lastWalArchived);
+  return row("archive", "green", "fresh", { age: age.n, unit: age.label });
+}
+
+/**
+ * The copy of the audit witness (ADR-012 and ADR-028 records of lane
+ * `m10/witness-copy`): red while it fails, amber while it is late, green
+ * with the age of the last full copy. Without backups the backups row
+ * already asks for them.
+ */
+function witnessRow(r: SystemReply, h: HostReport): Row {
+  const tell = "system.tell.witness_copy";
+  if (!h.backupsConfigured) return row("witness", "green", "off");
+  if (h.witnessCopy === "failing") return row("witness", "red", "failing", {}, "host", tell);
+  if (h.witnessCopy === "late") return row("witness", "amber", "late", {}, "host", tell);
+  if (h.witnessCopy === "unknown" || h.lastWitnessCopied === null) return row("witness", "unknown", "unknown");
+  const age = ageOf(r.now - h.lastWitnessCopied);
+  return row("witness", "green", "fresh", { age: age.n, unit: age.label });
+}
+
+/**
+ * The restore drill (ADR-012 and ADR-028 records of lane
+ * `m10/backup-health`): red when the last one failed, naming the step;
+ * amber when none passed in 35 days; green with its date and duration.
+ */
+function drillRow(r: SystemReply, h: HostReport): Row {
+  const tell = "system.tell.drill";
+  if (!h.backupsConfigured) return row("drill", "green", "off");
+  if (h.drillStep !== "none") return row("drill", "red", `failed_${h.drillStep}`, {}, "host", tell);
+  if (h.lastDrillPassed === null) return row("drill", "amber", "never", {}, "host", tell);
+  const date = dayOf(h.lastDrillPassed);
+  if (r.now - h.lastDrillPassed > DRILL_LATE) return row("drill", "amber", "late", { date }, "host", tell);
+  const minutes = String(Math.max(1, Math.ceil((h.drillSeconds ?? 60) / 60)));
+  return row("drill", "green", "passed", { date, minutes });
 }
 
 /** Every row of the page, in `ROW_IDS` order. */

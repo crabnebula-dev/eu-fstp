@@ -372,48 +372,48 @@ fn listen_of(cfg: &FileConfig) -> Listen {
 /// The App chain's keystore snapshot writer of `cfg`, or `None` when the
 /// file names no object store (ADR-012 record of lane L17, row
 /// "Fallback"). The snapshot key file `cell-snapshot.key` is created
-/// through the cell's own `fstp-keyd` entry when it is missing, so no
-/// operator step is needed (ADR-004 record of lane L17, row "Genesis").
-/// The object store credentials come from the credentials directory by
-/// fixed name, as for `fstp-backup`.
+/// through the cell's own `fstp-keyd` entry when it is missing (ADR-004
+/// record of lane L17, row "Genesis"), and a version 1 file is upgraded
+/// through it (ADR-012 record of lane m10/backup-followups, row
+/// "Upgrade"), so no operator step is needed. Each store's credentials
+/// come from the credentials directory by fixed name, as for
+/// `fstp-backup`, and every store gets each snapshot.
 ///
 /// # Errors
 ///
 /// [`CellError::Config`] for a credential or key file that does not read,
 /// write or decode, and [`CellError::Keys`] when custody refuses the
-/// create.
+/// create or the upgrade.
 pub async fn keystore_snapshots(
     rt: &TokioRuntime,
     cfg: &FileConfig,
 ) -> Result<Option<fstp_backup::Snapshots>, CellError> {
-    use fstp_backup::snapshot::{SnapshotKey, SnapshotOwner};
-    let Some(endpoint) = cfg.object_store.clone() else {
+    use fstp_backup::BackupError;
+    use fstp_backup::snapshot::{self, SnapshotOwner};
+    let Some(first) = cfg.object_store.clone() else {
         return Ok(None);
     };
     let dir = &cfg.credentials_dir;
-    let credentials =
-        fstp_backup::config::s3_credentials(dir).map_err(|_| cfg_err("s3-access-key-id"))?;
-    let ca = fstp_backup::config::s3_ca(dir).map_err(|_| cfg_err("s3-ca.pem"))?;
-    let client = fstp_backup::s3::S3Client::new(rt.clone(), endpoint, credentials, ca.as_deref())
-        .map_err(|_| cfg_err("s3-ca.pem"))?;
+    let endpoints: Vec<_> = std::iter::once(first)
+        .chain(cfg.more_stores.iter().cloned())
+        .collect();
+    let stores =
+        snapshot::s3_stores(rt, dir, &endpoints).map_err(|_| cfg_err("s3-access-key-id"))?;
     let owner = SnapshotOwner::App;
     let name = fstp_backup::keyfile::CELL_SNAPSHOT_KEY_FILE;
-    let path = dir.join(name);
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let custody = fstp_custody::KeydCustody::new(&cfg.keyd_socket)
-                .map_err(|_| cfg_err("keyd_socket"))?;
-            let b = SnapshotKey::create(&custody, cfg.core.cell.0, owner)
-                .await
-                .map_err(|_| CellError::Keys("the cell snapshot key"))?;
-            write_new(&path, &b)?;
-            b
-        }
-        Err(_) => return Err(cfg_err(name)),
-    };
-    let key = SnapshotKey::decode(&bytes, cfg.core.cell.0, owner).map_err(|_| cfg_err(name))?;
-    Ok(Some(fstp_backup::Snapshots::new(Arc::new(client), key)))
+    let custody =
+        fstp_custody::KeydCustody::new(&cfg.keyd_socket).map_err(|_| cfg_err("keyd_socket"))?;
+    let key = snapshot::load_key(&custody, &dir.join(name), cfg.core.cell.0, owner)
+        .await
+        .map_err(|e| match e {
+            BackupError::Custody(_) | BackupError::Seal(_) => {
+                CellError::Keys("the cell snapshot key")
+            }
+            _ => cfg_err(name),
+        })?;
+    fstp_backup::Snapshots::with_stores(stores, key)
+        .map(Some)
+        .map_err(|_| cfg_err("object_stores"))
 }
 
 /// The registered cluster server keys of `cfg`, as the start checks them.
@@ -501,6 +501,49 @@ pub fn restore_keystore(cfg: &FileConfig, id: Option<[u8; 16]>) -> Result<(), Ce
                 .map_err(|_| CellError::Keys("the keystore tables refused the restore"))?;
         }
         Ok(())
+    })
+}
+
+/// `fstp-cell check-keystore <port>` (ADR-012 record of lane
+/// m10/backup-health, row "Check: keystore"): the restore drill's check
+/// of a scratch cluster at `port` on the configured database host. It
+/// reads the restored keystore tables over the keys role and opens them
+/// through the cell's custody entry with the check of `restore-keystore`
+/// (`crate::tasks::erasure::restore::check_rows`). It writes nothing,
+/// takes no lock, fetches no snapshot, reaches no witness and prints
+/// nothing.
+///
+/// # Errors
+///
+/// [`CellError::Config`] for a refused configuration or credential, and
+/// [`CellError::Keys`] or [`CellError::Custody`] when the rows do not
+/// open.
+pub fn check_keystore(cfg: &FileConfig, port: u16) -> Result<(), CellError> {
+    use crate::tasks::erasure::restore;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    rt.block_on(async move {
+        let cell = cfg.core.cell.0;
+        let custody =
+            fstp_custody::KeydCustody::new(&cfg.keyd_socket).map_err(|_| cfg_err("keyd_socket"))?;
+        let mut scratch = cfg.clone();
+        scratch.database.port = port;
+        let keys = login(&scratch, fstp_pgstore::Role::Keys)?
+            .server_check(process::application_server_check(&registered_of(cfg)));
+        let pool =
+            fstp_pgstore::Pool::open(task_rt.clone(), cell, fstp_pgstore::Role::Keys, keys, 1)
+                .await
+                .map_err(|_| CellError::Keys("the keys role of the scratch database"))?;
+        let tables = fstp_pgstore::KeystoreTables::new(pool)
+            .map_err(|_| CellError::Keys("the keystore tables"))?;
+        let rows = tables
+            .load()
+            .await
+            .map_err(|_| CellError::Keys("the keystore tables"))?;
+        if rows.chain.is_none() {
+            return Err(CellError::Keys("no keystore chain row"));
+        }
+        restore::check_rows(&custody, cell, rows).await
     })
 }
 
@@ -768,6 +811,10 @@ pub enum Command {
     /// `restore-keystore [<snapshot id>]`: the snapshot id as 32 hex
     /// digits, or the newest one (ADR-012 record of lane L27).
     RestoreKeystore(Option<[u8; 16]>),
+    /// `check-keystore <port>`: open the keystore rows of a restore drill's
+    /// scratch cluster at `port`, and write nothing (ADR-012 record of lane
+    /// m10/backup-health).
+    CheckKeystore(u16),
     /// `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
     /// (ADR-026 "Tenant provisioning").
     ProvisionTenant {
@@ -822,6 +869,14 @@ fn snapshot_id_arg(s: &str) -> Option<[u8; 16]> {
     u128::from_str_radix(s, 16).ok().map(u128::to_be_bytes)
 }
 
+/// A port: a canonical decimal from 1 to 65535.
+fn port_arg(s: &str) -> Option<u16> {
+    if s.is_empty() || s.len() > 5 || !s.bytes().all(|b| b.is_ascii_digit()) || s.starts_with('0') {
+        return None;
+    }
+    s.parse::<u16>().ok()
+}
+
 /// Parses the binary's arguments, without the program name.
 ///
 /// # Errors
@@ -846,6 +901,9 @@ pub fn parse_args(args: &[String]) -> Result<Command, CellError> {
         ["restore-keystore"] => Ok(Command::RestoreKeystore(None)),
         ["restore-keystore", id] => snapshot_id_arg(id)
             .map(|i| Command::RestoreKeystore(Some(i)))
+            .ok_or_else(|| cfg_err("arguments")),
+        ["check-keystore", port] => port_arg(port)
+            .map(Command::CheckKeystore)
             .ok_or_else(|| cfg_err("arguments")),
         ["provision-tenant"] => Ok(Command::ProvisionTenant { agreements: None }),
         ["provision-tenant", "--agreements", v] => Ok(Command::ProvisionTenant {
@@ -874,6 +932,7 @@ pub fn run_command(command: &Command) -> Result<(), CellError> {
         Command::ProvisionTenant { agreements } => provision_tenant(&cfg, *agreements),
         Command::CopyKeyFile(out) => copy_key_file(&cfg, out),
         Command::RestoreKeystore(id) => restore_keystore(&cfg, *id),
+        Command::CheckKeystore(port) => check_keystore(&cfg, *port),
         Command::RetireKeyFileCopy(id) => {
             crate::key_copy::retire(&cfg.credentials_dir, *id).map_err(|e| CellError::Keys(e.0))
         }
@@ -973,6 +1032,32 @@ mod tests {
             &["restore-keystore", "a", "b"],
         ] {
             assert!(parse_args(&s(bad)).is_err());
+        }
+    }
+
+    /// ADR-012 record of lane m10/backup-health, row "Check: keystore":
+    /// `check-keystore` takes exactly one port, a canonical decimal from
+    /// 1 to 65535, and refuses any other form.
+    #[test]
+    fn adr012_bh_cell_check_keystore_takes_a_port() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert!(matches!(
+            parse_args(&s(&["check-keystore", "5546"])),
+            Ok(Command::CheckKeystore(5546))
+        ));
+        assert!(matches!(
+            parse_args(&s(&["check-keystore", "65535"])),
+            Ok(Command::CheckKeystore(65535))
+        ));
+        for bad in [
+            &["check-keystore"][..],
+            &["check-keystore", "0"],
+            &["check-keystore", "05546"],
+            &["check-keystore", "65536"],
+            &["check-keystore", "+5546"],
+            &["check-keystore", "5546", "x"],
+        ] {
+            assert!(parse_args(&s(bad)).is_err(), "{bad:?}");
         }
     }
 

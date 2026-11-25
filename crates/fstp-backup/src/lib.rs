@@ -19,15 +19,22 @@ mod container;
 pub mod custodian;
 pub mod index;
 pub mod keyfile;
+mod object;
+pub mod recovery;
 pub mod s3;
 mod seal;
 pub mod sigv4;
 pub mod snapshot;
+pub mod tar;
+pub mod timeline;
 mod wal;
+pub mod witness;
+pub mod writer;
 pub mod xml;
 
 use std::path::PathBuf;
 
+pub use object::{ObjectIdent, OpenedObject, open_object, seal_object};
 pub use seal::{ContainerKind, GroupRef, Opened, open_container, seal_container};
 pub use snapshot::{ObjectStore, SnapshotKey, SnapshotOwner, Snapshots};
 pub use wal::ArchiveName;
@@ -72,8 +79,19 @@ pub enum BackupError {
     NotFound,
     /// A local file operation failed. It names the step.
     Io(&'static str),
-    /// A host tool (`pg_basebackup`, `tar`) failed. It names the tool.
+    /// A host tool (`pg_basebackup`, `tar`, `postgres`) failed. It names
+    /// the tool.
     Tool(&'static str),
+    /// The archive ends before the restore target: it holds no change
+    /// after that time (ADR-012 record of lane `m10/backup-pitr`).
+    TargetNotReached,
+    /// The witness archiver has no state while a store holds witness
+    /// copies: they are of another host or another store (ADR-012 record
+    /// of lane m10/witness-copy).
+    WitnessForeign,
+    /// A local witness store file neither extends nor is extended by its
+    /// copy (ADR-012 record of lane m10/witness-copy).
+    WitnessDiverged,
 }
 
 impl std::fmt::Display for BackupError {
@@ -98,6 +116,18 @@ impl std::fmt::Display for BackupError {
             BackupError::NotFound => write!(f, "not found"),
             BackupError::Io(step) => write!(f, "the file step {step} failed"),
             BackupError::Tool(tool) => write!(f, "{tool} failed"),
+            BackupError::TargetNotReached => {
+                write!(f, "the archive ends before the restore target")
+            }
+            BackupError::WitnessForeign => {
+                write!(
+                    f,
+                    "the object store holds witness copies this host did not write"
+                )
+            }
+            BackupError::WitnessDiverged => {
+                write!(f, "the witness store differs from its copies")
+            }
         }
     }
 }
@@ -160,9 +190,11 @@ pub const fn container_len(plaintext: usize) -> usize {
         .saturating_add(chunks.saturating_mul(33))
 }
 
-/// Decodes a backup container into its sealed chunks (ADR-012). Chunk
-/// order and the final flag are enforced, and the data key must be
-/// sealed through the hybrid KEM (R-CR-01). Fuzzed
+/// Decodes a backup container, `FBC1` or `FBC2`, into its sealed chunks
+/// (ADR-012, record of lane m10/backup-format). Chunk order and the final
+/// flag are enforced, and the data key must be sealed through the hybrid
+/// KEM (R-CR-01). An `FBC2` container must end in exactly one signature,
+/// which this does not verify ([`open_object`] does). Fuzzed
 /// (`backup_container_decode`).
 ///
 /// # Errors
@@ -215,12 +247,31 @@ pub fn backup_label_start(label: &[u8]) -> Result<WalName, BackupError> {
     wal::start_segment(label)
 }
 
+/// The start segment and the start location a `backup_label` names.
+/// Fuzzed (`wal_name_parse`).
+///
+/// # Errors
+///
+/// [`BackupError::Malformed`] when no `START WAL LOCATION` line names
+/// both.
+pub fn backup_label_location(label: &[u8]) -> Result<(WalName, u64), BackupError> {
+    wal::start_location(label)
+}
+
 /// What the binary was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// `init-keys`: create `cluster-backup.key` in the credentials
-    /// directory.
+    /// `init-keys`: create `cluster-backup.key` and
+    /// `cluster-backup-writer.key` in the credentials directory.
     InitKeys,
+    /// `upgrade-keys`: turn a version 1 `cluster-backup.key` into version
+    /// 2 bound to a writer key (record of lane m10/backup-format). A
+    /// version 2 file is left as it is.
+    UpgradeKeys,
+    /// `publish-key`: write the tagged copy of the version 2 key file to
+    /// every store, for the second custodian, and mark it published
+    /// (ADR-012 record of lane m10/backup-followups, row "Publishing").
+    PublishKey,
     /// `base-backup`: one base backup.
     BaseBackup,
     /// `wal-archive <path> <name>`, for `archive_command` (`%p %f`).
@@ -237,13 +288,17 @@ pub enum Command {
         /// Where to write it.
         path: PathBuf,
     },
-    /// `restore <data dir> [<backup id> <size>]`.
+    /// `restore <data dir> [<backup id> <size>] [--to <unix seconds>]`.
     Restore {
         /// The new data directory.
         data_dir: PathBuf,
         /// The backup id and its plaintext size, or the newest of the
-        /// index.
+        /// index that suits the target.
         backup: Option<([u8; 16], u64)>,
+        /// The point in time to restore to, in Unix seconds, or the
+        /// newest archived point (ADR-012 record of lane
+        /// `m10/backup-pitr`).
+        target: Option<u64>,
     },
     /// `custodian-init`, on a second custodian: create `custodian.key`
     /// and `custodian.pub` in the credentials directory (ADR-012 record
@@ -257,6 +312,24 @@ pub enum Command {
         /// The new escrow file.
         out: PathBuf,
     },
+    /// `witness-archive <store dir>`: one run of the witness store's copy
+    /// (ADR-012 record of lane m10/witness-copy).
+    WitnessArchive {
+        /// The witness store directory.
+        store: PathBuf,
+    },
+    /// `witness-fetch <dir>`: every copied witness file into a new or empty
+    /// directory, as root.
+    WitnessFetch {
+        /// The directory.
+        out: PathBuf,
+    },
+    /// `witness-restore <store dir>`: the witness store rebuilt from its
+    /// copies where it is missing or behind, as root.
+    WitnessRestore {
+        /// The witness store directory.
+        store: PathBuf,
+    },
 }
 
 /// Parses the binary's arguments, without the program name.
@@ -268,6 +341,8 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
     let usage = BackupError::Config("arguments");
     match args {
         [c] if c == "init-keys" => Ok(Command::InitKeys),
+        [c] if c == "upgrade-keys" => Ok(Command::UpgradeKeys),
+        [c] if c == "publish-key" => Ok(Command::PublishKey),
         [c] if c == "base-backup" => Ok(Command::BaseBackup),
         [c, path, name] if c == "wal-archive" => Ok(Command::WalArchive {
             path: PathBuf::from(path),
@@ -277,22 +352,42 @@ pub fn parse_args(args: &[String]) -> Result<Command, BackupError> {
             name: name.clone(),
             path: PathBuf::from(path),
         }),
-        [c, dir] if c == "restore" => Ok(Command::Restore {
-            data_dir: PathBuf::from(dir),
-            backup: None,
-        }),
-        [c, dir, id, size] if c == "restore" => {
-            let id = index::parse_hex16(id).map_err(|_| usage)?;
-            let size = size.parse::<u64>().map_err(|_| usage)?;
+        [c, dir, rest @ ..] if c == "restore" => {
+            // ADR-012 record of lane `m10/backup-pitr`: an optional
+            // `--to <unix seconds>` after the other forms.
+            let (rest, target) = match rest {
+                [r @ .., flag, secs] if flag == "--to" => {
+                    (r, Some(index::decimal(secs).map_err(|_| usage)?))
+                }
+                r => (r, None),
+            };
+            let backup = match rest {
+                [] => None,
+                [id, size] => Some((
+                    index::parse_hex16(id).map_err(|_| usage)?,
+                    size.parse::<u64>().map_err(|_| usage)?,
+                )),
+                _ => return Err(usage),
+            };
             Ok(Command::Restore {
                 data_dir: PathBuf::from(dir),
-                backup: Some((id, size)),
+                backup,
+                target,
             })
         }
         [c] if c == "custodian-init" => Ok(Command::CustodianInit),
         [c, request, out] if c == "custodian-escrow" => Ok(Command::CustodianEscrow {
             request: PathBuf::from(request),
             out: PathBuf::from(out),
+        }),
+        [c, store] if c == "witness-archive" => Ok(Command::WitnessArchive {
+            store: PathBuf::from(store),
+        }),
+        [c, out] if c == "witness-fetch" => Ok(Command::WitnessFetch {
+            out: PathBuf::from(out),
+        }),
+        [c, store] if c == "witness-restore" => Ok(Command::WitnessRestore {
+            store: PathBuf::from(store),
         }),
         _ => Err(usage),
     }
@@ -322,12 +417,28 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
     let rt = TokioRuntime::new_multi_thread(2).map_err(|_| BackupError::Io("runtime"))?;
     if *command == Command::InitKeys {
         let path = cfg.credentials_dir.join(keyfile::KEY_FILE);
-        if std::fs::symlink_metadata(&path).is_ok() {
-            return Err(BackupError::Config(keyfile::KEY_FILE));
+        let wpath = cfg.credentials_dir.join(writer::WRITER_FILE);
+        for p in [&path, &wpath] {
+            if std::fs::symlink_metadata(p).is_ok() {
+                return Err(BackupError::Config(keyfile::KEY_FILE));
+            }
         }
         let custody = console(&cfg)?;
-        let bytes = rt.block_on(keyfile::create(&custody, cfg.cluster))?;
-        return write_key_file(&path, &bytes);
+        let created = rt.block_on(keyfile::create(&custody, cfg.cluster))?;
+        write_key_file(&wpath, &created.writer_key)?;
+        return write_key_file(&path, &created.key_file);
+    }
+    if *command == Command::UpgradeKeys {
+        return upgrade_keys(&rt, &cfg);
+    }
+    if *command == Command::PublishKey {
+        return publish_key(&rt, &cfg);
+    }
+    if matches!(
+        command,
+        Command::Restore { .. } | Command::WalRestore { .. }
+    ) {
+        adopt_key_file(&rt, &cfg)?;
     }
     if *command == Command::CustodianInit {
         let key_path = cfg.credentials_dir.join(custodian::CUSTODIAN_KEY_FILE);
@@ -349,31 +460,68 @@ pub fn run(command: &Command) -> Result<(), BackupError> {
             keyfile::KEY_FILE,
         )?)?;
         let custody = console(&cfg)?;
-        let escrow = rt.block_on(custodian::escrow(&custody, &key, &request))?;
+        // ADR-012 record of lane m10/backup-followups: the escrow is signed
+        // by the cluster writer key, which root reads here.
+        let writer = writer::WriterKey::decode(&zeroize::Zeroizing::new(config::read_credential(
+            &cfg.credentials_dir,
+            writer::WRITER_FILE,
+        )?))?;
+        let escrow = rt.block_on(custodian::escrow(&custody, &key, &writer, &request))?;
         return write_key_file(out, &escrow);
     }
     let agent = agent::Agent::from_config(rt.clone(), &cfg)?;
     rt.block_on(async {
         match command {
-            Command::InitKeys | Command::CustodianInit | Command::CustodianEscrow { .. } => Ok(()),
-            Command::BaseBackup => agent.base_backup(&cfg).await.map(|_| ()),
+            Command::InitKeys
+            | Command::UpgradeKeys
+            | Command::PublishKey
+            | Command::CustodianInit
+            | Command::CustodianEscrow { .. } => Ok(()),
+            Command::BaseBackup => {
+                agent.base_backup(&cfg).await?;
+                // ADR-012 record of lane m10/backup-format: pruning follows
+                // a successful base backup and never fails it.
+                if let Some(r) = &cfg.retention {
+                    let _ = agent.prune(r, agent::now_unix()).await;
+                }
+                Ok(())
+            }
             Command::WalArchive { path, name } => agent.archive(path, name).await.map(|_| ()),
+            Command::WitnessArchive { store } => agent.witness_archive(store).await.map(|_| ()),
+            Command::WitnessFetch { out } => {
+                let secret = open_group_secret(&agent, &cfg).await?;
+                agent.witness_fetch(&secret, out).await.map(|_| ())
+            }
+            Command::WitnessRestore { store } => {
+                let secret = open_group_secret(&agent, &cfg).await?;
+                agent.witness_restore(&secret, store).await.map(|_| ())
+            }
             Command::WalRestore { name, path } => {
                 let secret = open_group_secret(&agent, &cfg).await?;
                 agent.restore_wal(&secret, name, path).await
             }
-            Command::Restore { data_dir, backup } => {
-                let entry = match backup {
-                    Some((id, size)) => index::IndexEntry {
+            Command::Restore {
+                data_dir,
+                backup,
+                target,
+            } => {
+                // ADR-012 record of lane `m10/backup-pitr`: the named
+                // backup, or each backup of the index that finished before
+                // the target, newest first.
+                let entries = match backup {
+                    Some((id, size)) => vec![index::IndexEntry {
                         cluster: cfg.cluster,
                         backup: *id,
                         at: 0,
                         size: *size,
-                    },
-                    None => index::newest(&cfg.state_dir, cfg.cluster)?,
+                    }],
+                    None => index::before(&cfg.state_dir, cfg.cluster, *target)?,
                 };
                 let secret = open_group_secret(&agent, &cfg).await?;
-                agent.restore(&secret, &entry, data_dir).await.map(|_| ())
+                agent
+                    .restore_to(&secret, &entries, data_dir, *target)
+                    .await?;
+                recovery::check(&cfg.pg_bindir, data_dir, *target)
             }
         }
     })
@@ -395,6 +543,130 @@ async fn open_group_secret<R: fstp_rt::Runtime>(
     let escrow = read_small(&escrow, custodian::MAX_ESCROW_LEN)?;
     let key = config::read_credential(&cfg.credentials_dir, custodian::CUSTODIAN_KEY_FILE)?;
     agent.open_escrow(&custody, &key, &escrow).await
+}
+
+/// `upgrade-keys` (record of lane m10/backup-format): a version 2 key
+/// file is left as it is. A version 1 file is opened through the console
+/// socket and replaced by a version 2 file for the same group key, bound
+/// to the writer key file, which is created first unless it exists. The
+/// key file is replaced through a temporary file and a rename.
+fn upgrade_keys(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<(), BackupError> {
+    let dir = &cfg.credentials_dir;
+    let bytes = config::read_credential(dir, keyfile::KEY_FILE)?;
+    let wpath = dir.join(writer::WRITER_FILE);
+    let existing = match std::fs::read(&wpath) {
+        Ok(w) => Some(writer::WriterKey::decode(&zeroize::Zeroizing::new(w))?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(BackupError::Config(writer::WRITER_FILE)),
+    };
+    if let Ok(v2) = keyfile::decode(&bytes) {
+        return match &existing {
+            Some(w) => v2.check_writer(w),
+            None => Err(BackupError::Config(writer::WRITER_FILE)),
+        };
+    }
+    let had_writer = existing.is_some();
+    let custody = console(cfg)?;
+    let created = rt.block_on(keyfile::upgrade(&custody, &bytes, existing))?;
+    if !had_writer {
+        write_key_file(&wpath, &created.writer_key)?;
+    }
+    let tmp = dir.join(format!("{}.upgrade", keyfile::KEY_FILE));
+    let _ = std::fs::remove_file(&tmp);
+    write_key_file(&tmp, &created.key_file)?;
+    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))
+}
+
+/// The file in the state directory that names the key file last
+/// published for the second custodian: its SHA-256 in 64 lowercase hex
+/// digits and a line feed (ADR-012 record of lane m10/backup-followups,
+/// row "Publishing").
+pub const PUBLISHED_MARK: &str = "key-published";
+
+/// The text of [`PUBLISHED_MARK`] for the key file `key_file`.
+#[must_use]
+pub fn published_mark(key_file: &[u8]) -> String {
+    format!("{}\n", sigv4::hex(&fstp_crypto::sha256(key_file)))
+}
+
+/// `publish-key` (ADR-012 record of lane m10/backup-followups): the
+/// tagged copy of the version 2 key file goes to every store, then the
+/// mark names it. A failed upload leaves the mark as it was, so the copy
+/// stays owed and `fstp-admin` tries again.
+fn publish_key(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<(), BackupError> {
+    let key_file = config::read_credential(&cfg.credentials_dir, keyfile::KEY_FILE)?;
+    let custody = console(cfg)?;
+    let body = rt.block_on(custodian::publish(&custody, &key_file))?;
+    let stores = config_stores(rt, cfg)?;
+    let name = custodian::published_name(cfg.cluster);
+    rt.block_on(async {
+        for s in &stores {
+            s.put(&name, body.clone()).await?;
+        }
+        Ok::<(), BackupError>(())
+    })?;
+    let mark = cfg.state_dir.join(PUBLISHED_MARK);
+    let tmp = cfg.state_dir.join(format!("{PUBLISHED_MARK}.tmp"));
+    let _ = std::fs::remove_file(&tmp);
+    write_key_file(&tmp, published_mark(&key_file).as_bytes())?;
+    std::fs::rename(&tmp, mark).map_err(|_| BackupError::Io("publish mark"))
+}
+
+/// Every store of `cfg`, in order, with its credentials.
+fn config_stores(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<Vec<std::sync::Arc<dyn ObjectStore>>, BackupError> {
+    let endpoints: Vec<s3::Endpoint> = std::iter::once(cfg.object_store.clone())
+        .chain(cfg.more_stores.iter().cloned())
+        .collect();
+    snapshot::s3_stores(rt, &cfg.credentials_dir, &endpoints)
+}
+
+/// On a second custodian, whose credentials directory holds the escrow,
+/// before `restore` or `wal-restore` (ADR-012 record of lane
+/// m10/backup-followups, row "On the second host"): when the local key
+/// file is not version 2, the published one that the escrow vouches for
+/// replaces it, through a temporary file and a rename. Nothing happens on
+/// a host without an escrow or with a version 2 key file.
+fn adopt_key_file(
+    rt: &fstp_rt::tokio::TokioRuntime,
+    cfg: &config::FileConfig,
+) -> Result<(), BackupError> {
+    let dir = &cfg.credentials_dir;
+    let escrow = dir.join(custodian::ESCROW_FILE);
+    if std::fs::symlink_metadata(&escrow).is_err() {
+        return Ok(());
+    }
+    let local = match std::fs::read(dir.join(keyfile::KEY_FILE)) {
+        Ok(b) if keyfile::decode(&b).is_ok() => return Ok(()),
+        Ok(b) => Some(b),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(BackupError::Config(keyfile::KEY_FILE)),
+    };
+    let escrow = read_small(&escrow, custodian::MAX_ESCROW_LEN)?;
+    let custodian_key = config::read_credential(dir, custodian::CUSTODIAN_KEY_FILE)?;
+    let custody = console(cfg)?;
+    let stores = config_stores(rt, cfg)?;
+    let refs: Vec<&dyn ObjectStore> = stores.iter().map(|s| &**s as &dyn ObjectStore).collect();
+    let adopted = rt.block_on(custodian::adopt_published(
+        &custody,
+        &refs,
+        cfg.cluster,
+        local.as_deref(),
+        &custodian_key,
+        &escrow,
+    ))?;
+    let tmp = dir.join(format!("{}.adopt", keyfile::KEY_FILE));
+    let _ = std::fs::remove_file(&tmp);
+    write_key_file(&tmp, &adopted)?;
+    std::fs::rename(&tmp, dir.join(keyfile::KEY_FILE)).map_err(|_| BackupError::Io("key file"))
 }
 
 /// Reads a file of at most `max` bytes.
@@ -431,10 +703,18 @@ mod tests {
         v.iter().map(|x| (*x).to_owned()).collect()
     }
 
-    /// ADR-012 records of lanes L10 and L16: the seven command forms, and
-    /// no other.
+    /// ADR-012 records of lanes L10, L16, m10/backup-format and
+    /// m10/backup-followups: the nine command forms, and no other.
     #[test]
-    fn adr012_binary_takes_seven_command_forms() {
+    fn adr012_binary_takes_nine_command_forms() {
+        assert_eq!(
+            parse_args(&s(&["publish-key"])).unwrap(),
+            Command::PublishKey
+        );
+        assert_eq!(
+            parse_args(&s(&["upgrade-keys"])).unwrap(),
+            Command::UpgradeKeys
+        );
         assert_eq!(
             parse_args(&s(&["custodian-init"])).unwrap(),
             Command::CustodianInit
@@ -471,7 +751,8 @@ mod tests {
             parse_args(&s(&["restore", "/d", &"ab".repeat(16), "12"])).unwrap(),
             Command::Restore {
                 data_dir: PathBuf::from("/d"),
-                backup: Some(([0xab; 16], 12))
+                backup: Some(([0xab; 16], 12)),
+                target: None,
             }
         );
         for bad in [
@@ -483,10 +764,89 @@ mod tests {
             &["serve"],
             &["custodian-init", "x"],
             &["custodian-escrow", "/r"],
+            &["upgrade-keys", "x"],
+            &["publish-key", "x"],
         ] {
             assert_eq!(
                 parse_args(&s(bad)).unwrap_err(),
                 BackupError::Config("arguments")
+            );
+        }
+    }
+
+    /// ADR-012 record of lane `m10/backup-pitr`: `restore` takes an
+    /// optional `--to <unix seconds>` after either form, in one spelling,
+    /// and the forms without it are unchanged.
+    #[test]
+    fn adr012_pitr_binary_takes_a_target() {
+        let id = "ab".repeat(16);
+        assert_eq!(
+            parse_args(&s(&["restore", "/d"])).unwrap(),
+            Command::Restore {
+                data_dir: PathBuf::from("/d"),
+                backup: None,
+                target: None,
+            }
+        );
+        assert_eq!(
+            parse_args(&s(&["restore", "/d", "--to", "1795514400"])).unwrap(),
+            Command::Restore {
+                data_dir: PathBuf::from("/d"),
+                backup: None,
+                target: Some(1_795_514_400),
+            }
+        );
+        assert_eq!(
+            parse_args(&s(&["restore", "/d", &id, "12", "--to", "7"])).unwrap(),
+            Command::Restore {
+                data_dir: PathBuf::from("/d"),
+                backup: Some(([0xab; 16], 12)),
+                target: Some(7),
+            }
+        );
+        for bad in [
+            &["restore", "/d", "--to"][..],
+            &["restore", "/d", "--to", "07"],
+            &["restore", "/d", "--to", "+7"],
+            &["restore", "/d", "--to", "2026-11-24T10:00:00Z"],
+            &["restore", "/d", "--to", "7", "x"],
+            &["restore", "/d", "--at", "7"],
+            &["restore", "/d", &id, "--to", "7"],
+        ] {
+            assert_eq!(
+                parse_args(&s(bad)).unwrap_err(),
+                BackupError::Config("arguments"),
+                "{bad:?}"
+            );
+        }
+    }
+
+    /// ADR-012 record of lane m10/witness-copy, row "Mechanism": the three
+    /// witness commands each take one directory, and nothing else.
+    #[test]
+    fn adr012_wc_binary_takes_the_witness_commands() {
+        let d = PathBuf::from("/s/witness");
+        assert_eq!(
+            parse_args(&s(&["witness-archive", "/s/witness"])).unwrap(),
+            Command::WitnessArchive { store: d.clone() }
+        );
+        assert_eq!(
+            parse_args(&s(&["witness-fetch", "/s/witness"])).unwrap(),
+            Command::WitnessFetch { out: d.clone() }
+        );
+        assert_eq!(
+            parse_args(&s(&["witness-restore", "/s/witness"])).unwrap(),
+            Command::WitnessRestore { store: d }
+        );
+        for bad in [
+            &["witness-archive"][..],
+            &["witness-fetch", "/a", "/b"],
+            &["witness-restore"],
+        ] {
+            assert_eq!(
+                parse_args(&s(bad)).unwrap_err(),
+                BackupError::Config("arguments"),
+                "{bad:?}"
             );
         }
     }

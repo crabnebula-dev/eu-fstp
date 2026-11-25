@@ -417,7 +417,8 @@ Run one agent per self-operated cluster, so one for the application cluster and 
 
 ### What the operator supplies
 
-- **Bucket.** An OVHcloud Object Storage bucket in an EU region, with object lock and versioning (ADR-005 V14). Set a lifecycle rule for old versions. The agent never deletes an object. Retention is open (Q25).
+- **Bucket.** An OVHcloud Object Storage bucket in an EU region, with object lock and versioning (ADR-005 V14). Set a lifecycle rule for old versions. After each base backup the agent prunes old base backups and their WAL, when the configuration names a `retention` (ADR-012 record of lane m10/backup-format). An object under an object lock stays until its lock ends, and the agent tries again the next night.
+- **Further buckets.** Optional: one or two more buckets, at another provider for example. The agent writes every container to each of them, and a restore takes the first copy that verifies.
 - **Object store credentials.** An access key id and secret, scoped to the bucket where the service allows it (V15).
 - **Replication login.** The role `fstp_repl` on the cluster, with its client certificate, key and password, and the single `pg_hba` line `hostssl replication fstp_repl 127.0.0.1/32 scram-sha-256 clientcert=verify-full` (ADR-005).
 - **Custody.** The `fstp-keyd` console socket, which serves the ClusterBackup chain. Only `init-keys`, `restore` and `wal-restore` use it, and they run as root.
@@ -433,23 +434,27 @@ Write one JSON file per cluster, for example `/etc/fstp/backup-app.json`. It hol
   "state_dir": "/var/lib/fstp-backup/app",
   "pg_bindir": "/usr/lib/postgresql/16/bin",
   "database": {"host": "127.0.0.1", "port": 5432},
-  "object_store": {"endpoint": "s3.<region>.io.cloud.ovh.net", "region": "<region>", "bucket": "<bucket>"},
-  "keyd_socket": "/run/fstp-keyd/console.sock"
+  "object_stores": [{"endpoint": "s3.<region>.io.cloud.ovh.net", "region": "<region>", "bucket": "<bucket>"}],
+  "keyd_socket": "/run/fstp-keyd/console.sock",
+  "retention": {"keep_days": 35, "keep_min": 5}
 }
 ```
 
 - `database.host` must be a loopback address.
-- `object_store.port` is optional and defaults to 443.
+- `object_stores` lists one to three stores in order. The older member `object_store`, one store, is still read. A store's `port` is optional and defaults to 443.
+- `retention` is optional. Without it the agent prunes nothing. The values 35 days and at least 5 base backups are interim, pending Daniel.
 - `keyd_socket` is needed only for `init-keys` and the restore commands.
 
 The credentials directory holds these files:
 
 | File | Holds | Read by |
 | --- | --- | --- |
-| `s3-access-key-id`, `s3-secret-access-key` | The object store credentials, one line each | Every command |
+| `s3-access-key-id`, `s3-secret-access-key` | The first object store's credentials, one line each | Every command |
 | `s3-ca.pem` | Optional: a CA to trust beside the public roots | Every command |
+| `s3-<n>-access-key-id`, `s3-<n>-secret-access-key`, `s3-<n>-ca.pem` | The same for store `n` from 1, when `object_stores` lists more than one | Every command |
 | `repl.pem`, `repl.key`, `repl.password`, `db-ca.pem` | The `fstp_repl` login and the cluster CA | `base-backup` |
 | `cluster-backup.key` | The ClusterBackup key file, made by `init-keys` | Every command |
+| `cluster-backup-writer.key` | The writer key that signs every container, made by `init-keys` | `wal-archive`, `base-backup` |
 
 `archive_command` runs as the `postgres` OS user, and `base-backup` as the `fstp-backup` OS user. Give each user read access to the files of its commands only. The `fstp_repl` files stay readable by the `fstp-backup` user alone (ADR-005).
 
@@ -461,7 +466,7 @@ Once, as root:
 FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup init-keys
 ```
 
-It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` with mode 0600. It refuses to overwrite an existing key file.
+It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` and `cluster-backup-writer.key` with mode 0600. It refuses to overwrite an existing key file. A key file made before 2026-11-24 has no writer key: `fstp-backup upgrade-keys`, as root, binds one to it, and a base backup should follow at once, since a restore reads only containers of the new form. `fstp-admin setup` does both.
 
 The root of that key lives in this host's `fstp-keyd`. Decided by Daniel on 2026-11-21: a backup must still open after the loss of this host. Two measures carry that, and the pilot uses both. A second custodian on another machine holds its own custody of the ClusterBackup chain ("Second custodian" below). An off-host sealed copy of each `fstp-keyd` entry keeps the App and Vault roots ("Off-host copy of a custody entry" below). The rows inside a backup open only with those roots.
 
@@ -488,6 +493,10 @@ FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup base-backup
 
 It runs `pg_basebackup` over loopback, cuts the tar stream into parts of 64 MiB, seals and uploads each part, and only then appends a line to `<state_dir>/base-backups.index`. Each line holds the cluster id, the backup id, the time and the size in bytes. Copy that file off the host after each run. A restore on a new host needs a backup id and its size.
 
+### Restore drill
+
+`fstp-admin drill` tests the backups each month, by its timer `fstp-admin-drill` (ADR-012, record of lane m10/backup-health). For each database in turn it runs `fstp-backup restore` into `<state>/drill/<cluster>`, starts a throwaway PostgreSQL there on the cluster's port plus 100 (loopback and TLS only, no archive, no Unix socket), waits until recovery ends, and checks that the cell database answers. Then `fstp-cell check-keystore <port>` or `fstp-vault check-keystore <port>` opens the restored keys through the live custody entry, writing nothing. The server stops and the scratch copy is deleted, also after a failure. The result is in `<state>/admin/drill.status`. The server's log is `<state>/drill/<cluster>.log`.
+
 ### Restore
 
 Stop the server that will use the restored directory. Then, as root:
@@ -495,17 +504,19 @@ Stop the server that will use the restored directory. Then, as root:
 ```sh
 FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored
 FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored <backup id> <size>
+FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup restore /var/lib/postgresql/16/restored --to <unix seconds>
 ```
 
-- The first form takes the newest backup in the local index. The second names one from an index line.
+- The first form takes the newest backup in the local index. The second names one from an index line. The third restores to a point in time: it takes the newest backup that finished before that time (ADR-012 record of lane `m10/backup-pitr`).
 - The directory must be new or empty.
-- The command checks every part, extracts the tar with the host's `tar`, and fetches each archived segment from the backup's start into `pg_wal`, until the next one is absent.
-- Give the directory to the `postgres` user and start PostgreSQL on it. It replays the fetched WAL, so the copy reaches the newest archived position.
-- Then follow the restore rule of ADR-012: the cell verifies its chain against the witness, and lost receipted entries are reported, never hidden.
+- The command checks every part and extracts the tar with the host's `tar`. It fetches every timeline history file of the archive, and each archived segment from the backup's start along the latest timeline, into `pg_wal`, until no timeline holds the next one.
+- It writes `recovery.signal` and the recovery settings into `postgresql.auto.conf`. It then runs PostgreSQL once on the directory, as `postgres`, to check that the target (or, with no target, a consistent state) is reached. That run stops without promoting, and its PostgreSQL log is kept in `<dir>.check.log`.
+- Give the directory to the `postgres` user and start PostgreSQL on it with its normal configuration. It replays the fetched WAL, promotes onto a new timeline above every timeline in the archive, and archives that timeline's history file.
+- Then follow the restore rule of ADR-012: the cell verifies its chain against the witness. Today a cell or vault that misses more than one receipted entry refuses to start (ADR-012 record of lane `m10/backup-pitr`).
 
-For archive recovery driven by PostgreSQL itself, `restore_command = 'FSTP_BACKUP_CONFIG=... fstp-backup wal-restore %f %p'` fetches one file and exits with status 1 when the bucket lacks it. It opens the key through the console socket, so it must run as root. Interim, pending Daniel: the pilot has no continuous standby, and a restore across a timeline switch is not built.
+For archive recovery driven by PostgreSQL itself, `restore_command = 'FSTP_BACKUP_CONFIG=... fstp-backup wal-restore %f %p'` fetches one file and exits with status 1 when the bucket lacks it. It opens the key through the console socket, so it must run as root. Interim, pending Daniel: the pilot has no continuous standby.
 
-Exit status: 0 on success, 2 for a refused configuration or argument, 1 for any other failure. No line names a secret.
+Exit status: 0 on success, 2 for a refused configuration or argument, 3 when the archive holds no change after the target, 1 for any other failure. No line names a secret.
 
 ### Second custodian
 
@@ -529,6 +540,12 @@ The key ceremony, as root on each host:
 5. Run a restore drill on the second host into a scratch directory (section "Restore after the loss of the host", step 2). Delete the escrow copy from the pilot host once the drill passes.
 
 On a host whose credentials directory holds `cluster-backup.escrow`, `restore` and `wal-restore` open `custodian.key` through the console socket and then the escrow. They check that it names the group key of `cluster-backup.key`.
+
+Since lane m10/backup-followups (ADR-012), interim, pending Daniel:
+
+- The escrow is signed by the pilot's backup writer key, so `custodian-escrow` reads `cluster-backup-writer.key` beside the key file. An escrow made before this change still opens.
+- The pilot puts a tagged copy of its version 2 `cluster-backup.key` into every object store, as `<cluster>/keys/cluster-backup.key`. `fstp-admin setup` and `fstp-admin backup` send it with `fstp-backup publish-key` whenever the key file changed. `fstp-admin status` names the copy while it is owed.
+- On the second host, `restore` and `wal-restore` take that copy when the local `cluster-backup.key` is missing or older than version 2. They accept it only when the escrow vouches for it, then write it in place. No file needs to be carried after a key file upgrade.
 
 The second custodian holds only a ClusterBackup root. ClusterBackup is never rotated or destroyed by an erasure, so no erased key is ever held there (I-81).
 

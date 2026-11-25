@@ -19,16 +19,22 @@
 //! the raw `std::io::stdout` and `std::io::stderr` handles. A binary writes
 //! its events through [`log_to_stderr`] and [`metric_to_stdout`] instead.
 //!
-//! The crate has two parsers. [`host_status`] reads the host status file of
+//! The crate has four parsers. [`host_status`] reads the host status file of
 //! the System page (ADR-028 record of lane L20), with the fuzz target
 //! `host_status_decode`. [`snapshot_status::decode`] reads the keystore
 //! snapshot status file, fuzzed in the fuzz project of `fstp-admin`, its
-//! reader (ADR-012 record of lane L27).
+//! reader (ADR-012 record of lane L27). [`drill_status::decode`] reads
+//! the restore drill status file, with the fuzz target `drill_status_decode`
+//! (ADR-012 record of lane m10/backup-health). [`witness_copy::decode`] reads
+//! the witness copy status file, with the fuzz target
+//! `witness_copy_status_decode` (ADR-012 record of lane m10/witness-copy).
 
 pub mod assurance;
+pub mod drill_status;
 mod encode;
 pub mod host_status;
 pub mod snapshot_status;
+pub mod witness_copy;
 
 use crate::assurance::{Assurance, DeploymentMode, HostCheck};
 pub use crate::encode::{
@@ -196,8 +202,9 @@ pub enum LogEvent {
         chain: SnapshotChain,
         /// Why the snapshot was taken.
         trigger: SnapshotTrigger,
-        /// Whether it verified.
-        verified: bool,
+        /// `None` when it verified, else the step that failed (ADR-012
+        /// record of lane m10/backup-followups, row "Failure reason").
+        failure: Option<SnapshotFailure>,
     },
 }
 
@@ -264,12 +271,12 @@ impl fmt::Debug for LogEvent {
             Self::KeystoreSnapshot {
                 chain,
                 trigger,
-                verified,
+                failure,
             } => f
                 .debug_struct("KeystoreSnapshot")
                 .field("chain", &chain)
                 .field("trigger", &trigger)
-                .field("verified", &verified)
+                .field("failure", &failure)
                 .finish(),
         }
     }
@@ -427,3 +434,67 @@ impl fmt::Display for ObsError {
 }
 
 impl std::error::Error for ObsError {}
+
+/// The step at which a keystore snapshot failed (ADR-012 record of lane
+/// m10/backup-followups, row "Failure reason"). A closed list of words, so
+/// a failure is diagnosable from the log and the status file without an
+/// id, a path or tenant data (R-NF-02).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SnapshotFailure {
+    /// Another erasure batch runs, or the process holds no object store.
+    Busy,
+    /// The keystore rows did not read or encode.
+    Image,
+    /// The process's own database refused a write, such as the key record
+    /// that precedes every custody call (ADR-004 "Reconciliation").
+    Database,
+    /// Custody refused, or the snapshot key file did not open.
+    Custody,
+    /// An object store refused the upload.
+    Upload,
+    /// No object store gave the snapshot back.
+    Fetch,
+    /// The fetched snapshot did not verify or open.
+    Open,
+    /// The opened rows did not decode or open under the current root.
+    Check,
+    /// The pointer to the verified snapshot did not write.
+    Pointer,
+}
+
+impl SnapshotFailure {
+    /// Every failure, in a fixed order.
+    pub const ALL: [SnapshotFailure; 9] = [
+        Self::Busy,
+        Self::Image,
+        Self::Database,
+        Self::Custody,
+        Self::Upload,
+        Self::Fetch,
+        Self::Open,
+        Self::Check,
+        Self::Pointer,
+    ];
+
+    /// The word in a log line and in the status file.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Busy => "busy",
+            Self::Image => "image",
+            Self::Database => "database",
+            Self::Custody => "custody",
+            Self::Upload => "upload",
+            Self::Fetch => "fetch",
+            Self::Open => "open",
+            Self::Check => "check",
+            Self::Pointer => "pointer",
+        }
+    }
+
+    /// The failure of a word, if it is one.
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<SnapshotFailure> {
+        Self::ALL.into_iter().find(|f| f.as_str() == word)
+    }
+}

@@ -12,6 +12,7 @@ Two people run a host. The **technical admin** uses a terminal over SSH, and par
 - An account on a mail relay for sign-in mail. Put its password in `/etc/fstp/mail.password`.
 - A second machine that stays on: the **second custodian**. It guards the copies of the keys (part 2a). A small Linux machine with systemd is enough. The pilot host must reach it on TCP port 7460.
 - Optional: a versioned object storage bucket for backups and the daily key snapshots, with its two key files in `/etc/fstp/s3-access-key-id` and `/etc/fstp/s3-secret-access-key`.
+  The bucket also keeps the copies of the audit witness under `<cluster>/witness/`. If you set lifecycle rules that delete old objects, they must keep that prefix (ADR-012, record of lane m10/witness-copy).
 
 Install the release: the binaries into `/usr/local/bin`, and its `migrations/` and `web/` directories into `/usr/share/fstp`.
 
@@ -85,7 +86,9 @@ The web admin sees the same on the page **System** (`https://<domain>/app/admin/
 | `fstp-admin pair-custodian <host>` | Once, part 2a. Again after the loss of either machine, and when `status` asks |
 | `fstp-admin restore-keys <dir>` | After the loss of the host, before `restore` (part 2a). It moves each key volume it replaces aside and never deletes it |
 | `fstp-admin backup` | A backup now. A timer runs it daily |
-| `fstp-admin restore` | After data loss. It restores both databases from their newest backups, then the cell's and the vault's keys |
+| `fstp-admin restore` | After data loss. It restores both databases from their newest backups, then the cell's and the vault's keys, then takes a fresh backup. Both databases are restored, or neither |
+| `fstp-admin restore --to 2026-11-24T10:00:00Z` | After a bad change, such as a destructive bug. It restores both databases to that moment, in UTC. It first names the window that will be lost and asks you to type yes. Today the cell and the vault then refuse to start until a declared restore is built (ADR-012) |
+| `fstp-admin drill` | A restore test into a scratch copy, on this host. A timer runs it monthly. `status` and the page **System** show the last result, and the time a restore took. It needs free disk space of about one and a half times the larger database, plus 2 GiB |
 | `fstp-admin renew` | Only when `status` asks. A daily timer renews certificates and updates the route |
 | `fstp-admin report` | Rarely. It writes the status file of the page System. A timer runs it every 15 minutes |
 | `fstp-admin erase-identity <account>` | When a person's identity must be erased from the vault |

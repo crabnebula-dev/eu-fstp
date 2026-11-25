@@ -10,8 +10,10 @@
 //!   registers a cell's CA and its two anchor keys in the file store of a
 //!   self-hosted witness. A repeat changes nothing. The witness must be
 //!   stopped, since it reads its registry at start.
+//! - `check-store <dir>` loads a file store as the witness does at start
+//!   and writes nothing (ADR-028 record of lane `m10/witness-copy`).
 //!
-//! Both read the configuration named by [`crate::CONFIG_ENV`]. They write
+//! The first two read the configuration named by [`crate::CONFIG_ENV`]. They write
 //! no output (R-NF-02).
 
 use std::path::Path;
@@ -181,6 +183,24 @@ pub fn register(
     fs.register_anchor_key(CellId(cell), ChainId::App, &app, at)
         .map_err(WitnessError::Store)?;
     fs.register_anchor_key(CellId(cell), ChainId::Vault, &vault, at)
+        .map_err(WitnessError::Store)
+}
+
+/// `check-store <dir>` (ADR-028 record of lane `m10/witness-copy`): loads
+/// the file store in `dir` as the witness does at start, recomputing every
+/// witness link. It needs no configuration and no key, and writes
+/// nothing. A missing directory is refused, never created.
+///
+/// # Errors
+///
+/// [`WitnessError::Io`] for a missing directory, and
+/// [`WitnessError::Store`] for any file that does not load.
+pub fn check_store(dir: &Path) -> Result<(), WitnessError> {
+    if !std::fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
+        return Err(WitnessError::Io(std::io::ErrorKind::NotFound));
+    }
+    crate::file_store::FileStore::open(dir)
+        .map(|_| ())
         .map_err(WitnessError::Store)
 }
 

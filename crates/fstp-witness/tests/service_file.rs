@@ -672,3 +672,128 @@ fn r_sw_02_registry_file_reads_and_bounds_revocations() {
         assert!(load_registry_file(&file(&bad)).is_err(), "{bad:?}");
     }
 }
+
+/// I-24, ADR-012 record of lane m10/witness-copy, rows "Rebuild in
+/// `restore`" and "Drill", ADR-028 "Check-only command": `check-store`
+/// loads a store as the witness does at start. It passes on the store a
+/// witness wrote, and refuses a changed byte, a cut last record and a
+/// missing directory, writing nothing.
+#[test]
+fn i24_adr012_wc_check_store_loads_and_refuses_a_changed_record() {
+    let s = setup();
+    let cell = Cell::new(0x46);
+    cell.register(&s);
+    three_records(&s, &cell);
+    s.rt.block_on(s.witness.shutdown(Duration::from_secs(10)))
+        .unwrap();
+    let dir = s.dir.0.clone();
+    assert!(fstp_witness::install::check_store(&dir).is_ok());
+    let path = cell.chain_file(&s);
+    let whole = std::fs::read(&path).unwrap();
+    let mut changed = whole.clone();
+    changed[12 + 2 + 40 + 4 + 32 + 16 + 1 + 8] ^= 1;
+    for bytes in [changed, whole[..whole.len() - 1].to_vec()] {
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(fstp_witness::install::check_store(&dir).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "nothing written");
+    }
+    std::fs::write(&path, &whole).unwrap();
+    assert!(fstp_witness::install::check_store(&dir).is_ok());
+    let missing = dir.join("absent");
+    assert!(fstp_witness::install::check_store(&missing).is_err());
+    assert!(!missing.exists(), "no directory created");
+}
+
+/// I-24, ADR-012 record of lane m10/declared-restore: with the witness
+/// stopped, the console path declares a restore of the App chain to its
+/// first head. The restarted witness serves the declaration in the log
+/// and in `Declarations`, holds no outstanding prepare, refuses a prepare
+/// from the lost tail and receipts one that extends the declared head. A
+/// head the witness never receipted is refused, and the store still loads.
+#[test]
+fn i24_declared_restore_at_the_local_witness_resets_the_head() {
+    let mut s = setup();
+    let cell = Cell::new(0x47);
+    cell.register(&s);
+    let g = (0, genesis(cell.id, ChainId::App));
+    let mut c = Conn::open(&s, &cell.ca, "cell-witness").unwrap();
+    let p1 = prepare(&cell, g, [1; 32]);
+    let WireReply::Receipt(r1) = c.message(&s, WitnessMessage::Prepare(p1)) else {
+        panic!("p1 refused");
+    };
+    let head1 = (r1.fields.n, r1.fields.link);
+    let p2 = prepare(&cell, head1, [2; 32]);
+    assert!(matches!(
+        c.message(&s, WitnessMessage::Prepare(p2.clone())),
+        WireReply::Receipt(_)
+    ));
+    drop(c);
+    s.rt.block_on(s.witness.shutdown(Duration::from_secs(10)))
+        .unwrap();
+    let key = CompositeSigningKey::from_bytes(&s.receipt_key).unwrap();
+    let store = fstp_witness::file_store::FileStore::open(&s.dir.0).unwrap();
+    let args = fstp_witness::declare::DeclareArgs {
+        cell: cell.id,
+        chain: ChainId::App,
+        head: head1,
+        job: [9; 16],
+    };
+    let forged = fstp_witness::declare::DeclareArgs {
+        head: (1, Link([0xAB; 32])),
+        ..args
+    };
+    assert!(fstp_witness::declare::declare(&store, &key, &forged, 5).is_err());
+    let d = fstp_witness::declare::declare(&store, &key, &args, 5).unwrap();
+    assert_eq!(d.fields.lost(), Some((2, 2)));
+    assert!(fstp_audit::witness::declaration_signature_verifies(
+        cell.id,
+        ChainId::App,
+        &d,
+        std::slice::from_ref(&s.receipt_key_public)
+    ));
+    drop(store);
+    s.witness = start_at(&s.rt, &s.dir.0, &s.install_ca, &s.receipt_key).unwrap();
+    let mut c = Conn::open(&s, &cell.ca, "cell-witness").unwrap();
+    let WireReply::Log(page) = log_of(&mut c, &s, &cell) else {
+        panic!("no log");
+    };
+    assert_eq!(
+        page.records.last(),
+        Some(&WitnessRecord::RestoreDeclared(d.clone()))
+    );
+    assert_eq!(
+        c.ask(&s, &WireRequest::Declarations { cell: cell.id })
+            .unwrap(),
+        WireReply::Declarations(vec![(ChainId::App, d)])
+    );
+    assert_eq!(
+        c.ask(
+            &s,
+            &WireRequest::Outstanding {
+                cell: cell.id,
+                chain: ChainId::App
+            }
+        )
+        .unwrap(),
+        WireReply::Outstanding(None)
+    );
+    let tail = prepare(&cell, (p2.anchor.n, p2.anchor.link), [3; 32]);
+    assert_eq!(
+        c.message(&s, WitnessMessage::Prepare(tail)),
+        WireReply::Refused
+    );
+    let p2b = prepare(&cell, head1, [4; 32]);
+    let WireReply::Receipt(r2b) = c.message(&s, WitnessMessage::Prepare(p2b)) else {
+        panic!("a prepare that extends the declared head was refused");
+    };
+    assert_eq!((r2b.fields.n, r2b.fields.witness_seq), (2, 4));
+    let other = Cell::new(0x48);
+    other.register(&s);
+    let mut o = Conn::open(&s, &other.ca, "cell-witness").unwrap();
+    assert_eq!(
+        o.ask(&s, &WireRequest::Declarations { cell: cell.id })
+            .unwrap(),
+        WireReply::Refused,
+        "another cell reads no declaration"
+    );
+}

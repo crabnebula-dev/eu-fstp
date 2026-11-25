@@ -39,6 +39,9 @@ pub enum ContainerKind {
     /// A keystore snapshot of a vault, on the VaultBackup chain (ADR-012
     /// record of lane L17).
     VaultKeystoreSnapshot,
+    /// A segment of a file of the local witness store, `FBC2` only (ADR-012
+    /// record of lane m10/witness-copy).
+    WitnessCopy,
 }
 
 impl ContainerKind {
@@ -51,6 +54,7 @@ impl ContainerKind {
             ContainerKind::KeystoreSnapshot => 3,
             ContainerKind::CustodianEscrow => 4,
             ContainerKind::VaultKeystoreSnapshot => 5,
+            ContainerKind::WitnessCopy => 6,
         }
     }
 
@@ -65,7 +69,8 @@ impl ContainerKind {
         match self {
             ContainerKind::BaseBackup
             | ContainerKind::WalSegment
-            | ContainerKind::CustodianEscrow => Chain::ClusterBackup,
+            | ContainerKind::CustodianEscrow
+            | ContainerKind::WitnessCopy => Chain::ClusterBackup,
             ContainerKind::KeystoreSnapshot => Chain::CellBackup,
             ContainerKind::VaultKeystoreSnapshot => Chain::VaultBackup,
         }
@@ -80,6 +85,7 @@ impl ContainerKind {
             3 => Some(ContainerKind::KeystoreSnapshot),
             4 => Some(ContainerKind::CustodianEscrow),
             5 => Some(ContainerKind::VaultKeystoreSnapshot),
+            6 => Some(ContainerKind::WitnessCopy),
             _ => None,
         }
     }
@@ -113,7 +119,7 @@ pub struct Opened {
     pub plaintext: Vec<u8>,
 }
 
-fn context(kind: ContainerKind, group: &GroupRef, container: [u8; 16]) -> SealContext {
+pub(crate) fn context(kind: ContainerKind, group: &GroupRef, container: [u8; 16]) -> SealContext {
     SealContext {
         cell: CellId(group.owner),
         chain: kind.chain(),
@@ -125,7 +131,7 @@ fn context(kind: ContainerKind, group: &GroupRef, container: [u8; 16]) -> SealCo
 }
 
 /// The AAD of chunk `index` (ADR-012): header, index, final flag.
-fn chunk_aad(header: &[u8], index: u64, last: bool) -> Vec<u8> {
+pub(crate) fn chunk_aad(header: &[u8], index: u64, last: bool) -> Vec<u8> {
     let mut aad = header.to_vec();
     aad.extend_from_slice(&index.to_be_bytes());
     aad.push(u8::from(last));

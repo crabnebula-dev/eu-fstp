@@ -103,18 +103,34 @@ pub(crate) fn parse_archive(name: &str) -> Result<ArchiveName, BackupError> {
 ///
 /// [`BackupError::Malformed`] when no such line names a segment.
 pub(crate) fn start_segment(label: &[u8]) -> Result<WalName, BackupError> {
+    start_location(label).map(|(w, _)| w)
+}
+
+/// The start segment and the start location a `backup_label` names, from
+/// its line `START WAL LOCATION: <X/X> (file <segment name>)`. Fuzzed
+/// (`wal_name_parse`).
+///
+/// # Errors
+///
+/// [`BackupError::Malformed`] when no such line names both.
+pub(crate) fn start_location(label: &[u8]) -> Result<(WalName, u64), BackupError> {
     let text = std::str::from_utf8(label).map_err(|_| BackupError::Malformed("backup label"))?;
     let line = text
         .lines()
         .find(|l| l.starts_with("START WAL LOCATION: "))
         .ok_or(BackupError::Malformed("backup label"))?;
-    let (_, after) = line
-        .split_once("(file ")
+    let rest = line
+        .strip_prefix("START WAL LOCATION: ")
+        .ok_or(BackupError::Malformed("backup label"))?;
+    let (lsn, after) = rest
+        .split_once(" (file ")
         .ok_or(BackupError::Malformed("backup label"))?;
     let name = after
         .strip_suffix(')')
         .ok_or(BackupError::Malformed("backup label"))?;
-    parse(name)
+    let lsn =
+        crate::timeline::parse_lsn(lsn).map_err(|_| BackupError::Malformed("backup label"))?;
+    Ok((parse(name)?, lsn))
 }
 
 impl WalName {
@@ -225,6 +241,7 @@ mod tests {
         let label = b"START WAL LOCATION: 0/2000028 (file 000000010000000000000002)\n\
             CHECKPOINT LOCATION: 0/2000060\nBACKUP METHOD: streamed\n";
         let s = start_segment(label).unwrap();
+        assert_eq!(start_location(label).unwrap(), (s, 0x0200_0028));
         assert_eq!(s.file_name(), "000000010000000000000002");
         assert!(start_segment(b"CHECKPOINT LOCATION: 0/2000060\n").is_err());
         assert!(start_segment(b"START WAL LOCATION: 0/2 (file 0001)\n").is_err());

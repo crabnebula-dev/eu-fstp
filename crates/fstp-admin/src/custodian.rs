@@ -902,6 +902,36 @@ fn exit_fail(layout: &Layout, code: Option<i32>) -> Fail {
     )
 }
 
+/// The marker `restore-keys` leaves for the next `restore`: the restore
+/// follows a host loss (ADR-012 record of lane m10/witness-copy, lead
+/// answer 1). It holds the time it was written.
+const HOST_LOSS_FILE: &str = "host-loss-restore";
+
+/// Writes the host-loss marker.
+///
+/// # Errors
+///
+/// The I/O error of the write.
+pub fn mark_host_loss(layout: &Layout) -> std::io::Result<()> {
+    std::fs::create_dir_all(layout.admin_dir())?;
+    write_atomic(
+        &layout.admin_dir().join(HOST_LOSS_FILE),
+        format!("{}\n", crate::pki::now()).as_bytes(),
+        0o600,
+    )
+}
+
+/// Whether the next `restore` follows `restore-keys` on this host.
+#[must_use]
+pub fn host_loss_pending(layout: &Layout) -> bool {
+    layout.admin_dir().join(HOST_LOSS_FILE).is_file()
+}
+
+/// Removes the host-loss marker, once the witness store is rebuilt.
+pub fn clear_host_loss(layout: &Layout) {
+    let _ = std::fs::remove_file(layout.admin_dir().join(HOST_LOSS_FILE));
+}
+
 /// `fstp-admin restore-keys <dir>` on a new host, after `setup` and the
 /// pairing: puts each `fstp-keyd` entry's keys back from its copy, held
 /// until `fstp-admin restore` releases it. Every copy is found first, so a
@@ -1011,6 +1041,9 @@ pub fn restore_keys(layout: &Layout, dir: &Path) -> Result<(), Fail> {
         }
     }
     let _ = std::fs::remove_dir_all(&staging);
+    // ADR-012 record of lane m10/witness-copy, lead answer 1: the next
+    // restore is a host-loss restore.
+    mark_host_loss(layout).map_err(io)?;
     out(&[Part::T(
         "Next: run fstp-admin restore. It restores both databases and then releases these keys.",
     )]);

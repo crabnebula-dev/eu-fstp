@@ -100,6 +100,7 @@ export type OpName =
   | "admin.request_erasure"
   | "admin.erase_document"
   | "tenant.system"
+  | "tenant.acknowledge_finding"
   | "admin.members"
   | "creator.open_draft"
   | "creator.list_programmes"
@@ -369,6 +370,7 @@ export interface OpParams {
   readonly "admin.request_erasure": Readonly<Record<never, string>>;
   readonly "admin.erase_document": { readonly "document": string };
   readonly "tenant.system": Readonly<Record<never, string>>;
+  readonly "tenant.acknowledge_finding": Readonly<Record<never, string>>;
   readonly "admin.members": Readonly<Record<never, string>>;
   readonly "creator.open_draft": Readonly<Record<never, string>>;
   readonly "creator.list_programmes": Readonly<Record<never, string>>;
@@ -611,6 +613,7 @@ export const OP_NAMES: readonly OpName[] = [
   "admin.request_erasure",
   "admin.erase_document",
   "tenant.system",
+  "tenant.acknowledge_finding",
   "admin.members",
   "creator.open_draft",
   "creator.list_programmes",
@@ -1419,6 +1422,20 @@ export const OPERATIONS: readonly Operation[] = [
     segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "system" }],
     params: [],
     body: false,
+    highRisk: false,
+    binding: false,
+    session: "any",
+    classification: "confidential",
+    tool: null,
+  },
+  {
+    name: "tenant.acknowledge_finding",
+    method: "POST",
+    path: "/admin/system/acknowledgements",
+    base: "api",
+    segments: [{ kind: "literal", text: "admin" }, { kind: "literal", text: "system" }, { kind: "literal", text: "acknowledgements" }],
+    params: [],
+    body: true,
     highRisk: false,
     binding: false,
     session: "any",
@@ -5722,6 +5739,17 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
       "vault": { schema: { kind: "enum", values: ["answers", "silent"] }, optional: false },
       "mail": { schema: { kind: "enum", values: ["works", "fails", "not_configured"] }, optional: false },
       "last_cell_erasure": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+      "findings": { schema: { kind: "array", items: {
+        kind: "object",
+        fields: {
+          "id": { schema: { kind: "id" }, optional: false },
+          ["kind"]: { schema: { kind: "enum", values: ["lost_in_restore", "possible_deletion"] }, optional: false },
+          "chain": { schema: { kind: "enum", values: ["app", "vault"] }, optional: false },
+          "from": { schema: { kind: "id" }, optional: false },
+          "to": { schema: { kind: "id" }, optional: false },
+          "acknowledged_at": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+        },
+      } }, optional: false },
       "host_file": { schema: { kind: "enum", values: ["present", "not_configured", "missing", "unreadable"] }, optional: false },
       "host": { schema: { kind: "nullable", inner: {
         kind: "object",
@@ -5750,10 +5778,17 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "certificate_days": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
           "self_signed": { schema: { kind: "bool" }, optional: false },
           "route": { schema: { kind: "enum", values: ["current", "mismatch", "unknown"] }, optional: false },
-          "next": { schema: { kind: "enum", values: ["run_setup", "start_service", "custodian", "pair_custodian", "renew_route", "renew", "public_certificate", "configure_backups", "backup", "custodian_copy", "keystore_snapshot", "web_admins", "verify_admins", "copy_keys", "nothing"] }, optional: false },
+          "next": { schema: { kind: "enum", values: ["run_setup", "start_service", "custodian", "pair_custodian", "renew_route", "renew", "public_certificate", "configure_backups", "wal_archive", "witness_copy", "backup", "restore_drill", "custodian_copy", "keystore_snapshot", "web_admins", "verify_admins", "copy_keys", "nothing"] }, optional: false },
           "custodian": { schema: { kind: "enum", values: ["linked", "unreachable", "unpaired", "not_used"] }, optional: false },
           "guard_owed": { schema: { kind: "bool" }, optional: false },
           "guard_copy_owed": { schema: { kind: "bool" }, optional: false },
+          "wal_archive": { schema: { kind: "enum", values: ["ok", "late", "failing", "unknown"] }, optional: false },
+          "last_wal_archived": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "last_drill_passed": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
+          "drill_step": { schema: { kind: "enum", values: ["none", "space", "restore", "recovery", "database", "keystore", "cleanup", "witness"] }, optional: false },
+          "drill_seconds": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
+          "witness_copy": { schema: { kind: "enum", values: ["ok", "late", "failing", "unknown"] }, optional: false },
+          "last_witness_copied": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
         },
       } }, optional: false },
     },

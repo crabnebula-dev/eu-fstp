@@ -1430,14 +1430,23 @@ fn irc_review(
             },
         );
     }
-    // The round: X first. The delegator votes through the member.
+    // The round: X first. The delegator votes through the member. Its
+    // rationale is stored as the route stores it, so `committee.round`
+    // opens it (R-EV-08, CI run 45507712676).
     let round = DecisionId::from_raw(w.fresh());
-    let open =
-        fstp_domain_testkit::mc::life_model::open_round(MEMBER, round, call, vec![x, y], 1, false);
-    let mut cmd = open.cmd;
-    if let Core::OpenCutOffRound { .. } = &mut cmd {
-    } else {
-        panic!("open_round gave {cmd:?}");
+    let programme = w.t.programme.unwrap_or(P1);
+    let cmd = fstp_celltest::cycle::cut_off_round(
+        w.cell(),
+        MEMBER,
+        round,
+        call,
+        programme,
+        vec![x, y],
+        1,
+    )
+    .unwrap_or_else(|e| panic!("the round's rationale: {e}"));
+    if !matches!(cmd, Core::OpenCutOffRound { .. }) {
+        panic!("cut_off_round gave {cmd:?}");
     }
     w.core(MEMBER, cmd);
     w.t.round = Some(round);

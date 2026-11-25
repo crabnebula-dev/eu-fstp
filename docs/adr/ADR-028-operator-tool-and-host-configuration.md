@@ -220,3 +220,94 @@ Tests, written before the code: `adr028_f018_backup_keys_passphrases_round_trip_
 | The guide | The step "delete that entry's `.fkx` and run it again" is gone. `restore-keys` makes that choice itself | Usability rule of 2026-11-21 |
 
 Tests, written before the code: `adr028_f018_backup_keys_and_restore_keys_agree_on_the_entries`, `i81_adr028_f018_restore_keys_takes_the_newer_live_copy`, `i81_adr028_f018_restore_keys_never_takes_a_stick_copy_of_a_destroyed_guard` and `adr028_f018_guarded_copy_header_decodes_and_refuses` in `fstp-admin`, and the fuzz target `guarded_copy_header_decode`.
+
+## Record of lane `m10/backup-health`, 2026-11-24: backup health and the restore drill
+
+Written before the code. Daniel decided on 2026-11-24 that backup is mission critical (ADR-012, record of lane m10/backup-health). Two operators run the pilot, so each fact shows in `fstp-admin status` and on the System page in plain words, and each step is one command. Every row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| New command | `fstp-admin drill`: the restore drill of ADR-012 (record of lane m10/backup-health). It prints one line per step, `done` or the fix, and ends with the restore duration. It needs backups configured and a base backup of each cluster. Exit 0 when it passed, 1 when a step failed, 4 without backups | Decided by Daniel on 2026-11-24 (2) |
+| New timer | `setup` creates `fstp-admin-drill` beside `fstp-admin-backup`, with the same `m.timer` call: monthly, on the first day at 04:30 local time, after the backup at 02:30 and the renewal at 03:30 | Decided by Daniel on 2026-11-24 (2) |
+| Status lines | `wal archive` per cluster: the last segment saved, or `FAILING` or `LATE` with the time. `restore drill`: when the last one passed and its duration, or `FAILED` with the step, or `never run` | Usability rule of 2026-11-21 |
+| Next words | `wal_archive` comes before `backup`, since a base backup restores only with the archived WAL from its start. `restore_drill` comes right after `backup`, when no drill passed in 35 days or the last one failed. Each joins the closed list of the host status file, the reply and the page | ADR-028 "Status" |
+| Host status members | Five new members of `fstp_obs::host_status`: `wal_archive` (`ok`, `late`, `failing` or `unknown`), `last_wal_archived` (the older of the two clusters' last archived segments, Unix seconds or `null`), `last_drill_passed` (Unix seconds or `null`), `drill_step` (`none`, `space`, `restore`, `recovery`, `database`, `keystore` or `cleanup`) and `drill_seconds` (the duration of the last passed drill, or `null`). The version stays 1, as in the record of lane L26. So `fstp-admin` and `fstp-cell` ship together, as PR #66 noted: a cell of the old grammar reads the new file as unreadable | Record of lane L20, row "Members" |
+| Reply | `tenant.system` carries the five facts in `host`, the two times as instants | R-NF-02 |
+| Page rows | Two new rows under "Backups and certificates". "Backup of recent changes": red while the archive fails, amber while it is late, green with the age of the last saved change, not known when the host cannot read it, and green "starts with backups" without backups. "Restore test": red when the last drill failed, with the step in plain words; amber when none passed in 35 days; green with its date and duration. Who acts: the host admin. The page names the command to tell them | Usability rule of 2026-11-21 |
+| Check-only commands | `fstp-cell check-keystore <port>` and `fstp-vault check-keystore <port>`, run as each service's user with its own configuration, the port replaced. They never write (ADR-012 record of lane m10/backup-health, row "Check: keystore") | ADR-028 "No service library in `fstp-admin`" |
+
+Tests: `adr028_bh_status_names_the_wal_archive_and_the_drill` and `adr028_bh_backup_health_reaches_the_host_status_file` in `fstp-admin`; the new cases of `r_nf_02_host_status_round_trips` and `r_nf_02_host_status_refuses_bad_input` in `fstp-obs`; `adr028_l20_host_status_read_states` in `fstp-cell`; `r_nf_02_system_reply_holds_no_free_text` in `fstp-access`; `adr028_bh_archive_and_drill_rows` in `web/test/l20_system_page.test.ts`.
+
+## Record of lane m10/backup-format, 2026-11-24: backup copies, retention and the writer key
+
+Written before the code. Daniel decided on 2026-11-24 that backups go to every configured object store and that retention comes from `fstp.json` (ADR-012 record of lane m10/backup-format). The member names and defaults are this lane's, interim, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Further stores | `backup.copies`: a list of one or two further object stores, each with `endpoint`, `region`, `bucket`, and optionally `port` (443), `access_key_file` and `secret_key_file`. Copy `n` from 1 takes its key files from `<etc>/s3-<n>-access-key-id` and `<etc>/s3-<n>-secret-access-key` by default. Without `copies`, the one store of `backup` is the only one, as before | ADR-012 "Copies and the second provider" |
+| Agent configuration | `setup` writes `object_stores`, the list of every store in order, into `backup-<cluster>.json`, and copies each store's key files into the agent's credentials directory, store `n` as `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`. The cell's and the vault's keystore snapshots keep the first store only | ADR-012 record of lane m10/backup-format |
+| Writer key | `setup` runs `fstp-backup init-keys`, which now also writes `cluster-backup-writer.key`. When a key file exists without a writer key, `setup` runs `fstp-backup upgrade-keys` and then a base backup at once. Both key files are `root:postgres`, mode 0640 | F-043; F-044 |
+| Retention | `backup.keep_days` (1 to 3650) and `backup.keep_min` (1 to 1000). Interim, pending Daniel: 35 days and at least 5 base backups by default. `setup` writes them into `backup-<cluster>.json` as `retention`, so the nightly `fstp-admin backup` prunes after each base backup. A value out of range names the member | ADR-012 record of lane m10/backup-format, row "Retention values" |
+
+Tests: `adr028_backup_takes_further_stores_as_copies` and `adr028_backup_retention_has_defaults_and_ranges` in `fstp_admin::config`, and `adr012_backup_config_names_every_store` in `fstp_admin::render`.
+
+## Record of lane `m10/backup-pitr`, 2026-11-24: restore to a time
+
+Written before the code. Daniel decided on 2026-11-24 that backup is mission critical and asked for point-in-time restore. The backup side is in ADR-012 (record of lane `m10/backup-pitr`). Each row is interim, pending Daniel, unless it says otherwise. The row "Backups" above is amended.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Command | `fstp-admin restore --to <time>`, with `<time>` exactly like `2026-11-24T10:00:00Z`, in UTC. `fstp-admin restore` with no argument restores to the newest point, as before | Decided by Daniel on 2026-11-24 |
+| Refusals | A time in the future, a time not after the oldest base backup of either database, and any other spelling are refused with exit status 2. The message names the format, or the oldest time that works | Usability rule of 2026-11-21 |
+| Warning | Before it changes anything, `restore --to` prints the window that will be lost, from the target to now. It says that the cell and the vault will refuse to start while the witness holds receipts for that window, and that tenant admins see nothing of it yet. It asks the operator to type `yes`. Any other answer stops it with nothing changed | I-24; ADR-012 record of lane `m10/backup-pitr` |
+| Both or neither | Both databases are restored and checked in fresh directories first. Only then are both swapped in. When one fails, both fresh directories are removed, the live databases stay as they were, and the services start again | Decided by Daniel on 2026-11-24 |
+| Start | After the swap, each database starts and finishes its recovery. `fstp-admin` waits for the promotion, then resets the recovery settings. The key steps of the record of lane L27 and of lane `m10/guard-key` follow unchanged | ADR-012 |
+| Fresh backup | Once the services have started, or failed to, `restore` takes a base backup of both databases | Decided by Daniel on 2026-11-24 |
+| Archive ends first | When the archive holds no change after the target, `restore --to` says the newest point is that same state and suggests `fstp-admin restore` | ADR-012 record of lane `m10/backup-pitr` |
+| Time parser | `fstp_admin::pitr::parse_time`, in-house, fuzzed as `restore_time_parse` in the fuzz project of `fstp-admin` | CLAUDE.md fuzz rule |
+
+Tests, written before the code: `adr012_pitr_time_*` and `adr028_pitr_restore_takes_an_optional_target` in `fstp-admin`.
+
+## Record of lane `m10/witness-copy`, 2026-11-24: copies of the witness store
+
+Written before the code. Daniel decided on 2026-11-24 that the local witness store is copied to the backup object stores and rebuilt from them after a loss (ADR-012, record of lane m10/witness-copy). The operator side is below. Each row is interim, pending Daniel, unless it says otherwise.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| No new ceremony | `setup` with `backup` creates the timer and runs the first copy at once. The operator types nothing new | Usability rule of 2026-11-21 |
+| Command | `fstp-admin witness-copy`: one run of `fstp-backup witness-archive <state>/witness` with the application cluster's backup configuration, as root. It prints one line, `done` or the fix, and records the run for `status`. Exit 0 when the store is copied, 1 when the run failed, 4 without backups. The timer runs it, and an operator may run it to see an error | ADR-012 record of lane m10/witness-copy |
+| New timer | `fstp-admin-witness-copy`, every minute (`*-*-* *:*:00`), with no random delay and an accuracy of one second. `Manager::timer` takes the random delay as a parameter, 300 seconds for the other timers as before. Direct mode has no timers, so there the copy runs only when a command runs it | Item 1 of the ADR-012 record |
+| Copies of another host | When the object store holds witness copies that this host did not write, `witness-copy` says so and names `fstp-admin restore` as the fix | ADR-012 record, row "Copies this host did not write" |
+| Restore | `fstp-admin restore` stops the witness too. Before the databases, it rebuilds the witness store from the copies and checks it with `fstp-witness check-store`, one `done` line each. A store that differs from its copies stops the restore with nothing changed and the services started again. The line names the store and says to move it aside when this host is new (ADR-012 open question 1) | Item 2 of the ADR-012 record |
+| Status line | `witness copy`: when the store was last fully copied, or `FAILING` with the minutes since the failure, or `LATE` with the minutes since the last copy, or `never run` | Usability rule of 2026-11-21 |
+| Next word | `witness_copy` comes right after `wal_archive`, before `backup`. Its text names `fstp-admin witness-copy` to see the error | ADR-028 "Status" |
+| Host status members | Two new members of `fstp_obs::host_status`: `witness_copy` (`ok`, `late`, `failing` or `unknown`, the words of `wal_archive`) and `last_witness_copied` (Unix seconds or `null`). The version stays 1, as in the record of lane `m10/backup-health` | Record of lane L20, row "Members" |
+| Reply and page | `tenant.system` carries both in `host`. A new row "Copy of the audit witness" under "Backups and certificates": red while it fails, amber while it is late, green with the age of the last copy, not known when the host cannot read it, and green "starts with backups" without backups. Who acts: the host admin | Usability rule of 2026-11-21 |
+| Drill | `fstp-admin drill` gains a last step, `witness`: one `done` line when the copies load and match the live store, else `FAILED` with the step in plain words | Item 4 of the ADR-012 record |
+| Check-only command | `fstp-witness check-store <dir>`, run as the witness user: it loads every file of the store in `<dir>` as the witness does at start and exits 0, or 1 when a file does not load. It writes nothing and reaches no key | ADR-028 "No service library in `fstp-admin`" |
+
+Tests: `adr028_wc_status_names_the_witness_copy`, `adr028_wc_witness_copy_reaches_the_host_status_file` and `adr028_wc_copy_timer_runs_every_minute` in `fstp-admin`; the new cases of `r_nf_02_host_status_round_trips` and `r_nf_02_host_status_refuses_bad_input` in `fstp-obs`; `adr028_l20_host_status_read_states` in `fstp-cell`; `adr028_wc_witness_copy_row` in `web/test/l20_system_page.test.ts`.
+
+Lead answers of 2026-11-24 for this lane, interim pending Daniel (ADR-012, record of lane m10/witness-copy). After a host loss, `restore-keys` leaves the marker `<state>/admin/host-loss-restore`. The next `restore` then moves a witness store that differs from its copies aside as `<store>.before-restore-<time>`, with one `done` line, and rebuilds it, so the host-loss flow has no manual step. Without the marker, a diverged store still stops the restore. The operator guide says that bucket lifecycle rules must keep the `<cluster>/witness/` prefix.
+
+## Record of lane `m10/backup-followups`, 2026-11-24: snapshots to every store, the custodian's key copy, TLS after a restore
+
+Written before the code. Daniel decided on 2026-11-24 that backup is mission critical (ADR-012, record of lane m10/backup-followups). Each row is interim, pending Daniel, unless it says otherwise. The rows "Agent configuration" of the record of lane m10/backup-format and "Turned on with backups" of the record of lane L27 are amended.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Snapshots to every store | With `backup.copies`, `setup` writes `object_stores`, the list of every store in order, into `cell.json` and `vault.json`, and copies each copy's key files into the cell's and the vault's credentials directories as `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`. With one store, both files keep `object_store` as before | Q25 |
+| Snapshot key upgrade | When the cell's or the vault's credentials directory holds a version 1 snapshot key file, `setup` restarts that service. The service upgrades the file at its start and takes a fresh snapshot a minute later. `fstp-admin` reads only the file's 22-byte magic. It still reaches no custody | ADR-012 record of lane m10/backup-followups, row "Upgrade" |
+| The custodian's key copy | `setup` runs `fstp-backup publish-key` for each cluster after `init-keys` or `upgrade-keys`, and whenever the agent's `key-published` file does not hold the SHA-256 of `cluster-backup.key`. `fstp-admin backup` runs it too while that holds. A failure is reported and does not fail the backup | ADR-012 record of lane m10/backup-followups, row "Publishing" |
+| Status | While a cluster's key copy is owed, `status` shows `custodian  ..., the backup key copy for the custodian is owed (fstp-admin backup sends it)`, and the host status file sets `guard_copy_owed` with the next word `custodian_copy`, as for an owed copy of a key entry. No new member, so the System page needs no change | ADR-028 record of lane `m10/guard-key`, part 2 |
+| TLS after a restore | After both restores succeed and before the swap, `restore` puts the live `tls` files of each cluster into its restored directory. When the live server certificate needs a new issue, it issues one from the database CA, records the new key, and writes the service configurations again, as `renew` does. The step is its own function, before any PostgreSQL start on a restored directory | ADR-012 record of lane m10/backup-followups, row "TLS files after a restore" |
+| TLS in the drill | The drill puts the live `tls` files into its scratch copy before it starts the throwaway server, so the keystore checks meet the server key they pin | ADR-012 record of lane m10/backup-followups, row "TLS files in the drill" |
+
+Tests, written before the code: `adr012_bf_status_names_an_owed_custodian_key_copy`, `adr012_bf_restore_puts_the_live_tls_files_in_place`, `adr012_bf_setup_restarts_a_service_with_a_version_1_snapshot_key` and `adr012_bf_snapshot_config_names_every_store` in `fstp-admin`, and the end-to-end test `crates/fstp-celltest/tests/adr012_backup_health_e2e.rs` with a renewed server certificate before the drill.
+
+Added after the code, 2026-11-24 (ADR-012 record of lane m10/backup-followups, part "Found after the code"). Interim, pending Daniel.
+
+| Topic | Reading | Basis |
+| --- | --- | --- |
+| Restart after archiving is turned on | When `setup` restarts a database cluster to turn archiving on, it then stops and starts the vault, the cell and the edge, in start order. Before, the cell kept a dead database connection and every keystore snapshot and erasure step 5 failed until its next start | I-81 |
+| Snapshot step in `status` | A failed keystore snapshot line ends with `(step: <word>)`, the step the service recorded in its status file | R-NF-02 |

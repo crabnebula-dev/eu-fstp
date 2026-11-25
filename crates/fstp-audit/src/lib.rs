@@ -39,8 +39,8 @@ pub use anchor::{Anchor, AnchorRow, Receipt, ReceiptFields};
 pub use chain::{ChainId, ChainRow, ChainWriter, Link, RowKind, StoredEntry, StoredRow};
 pub use fstp_crypto::CryptoError;
 pub use fstp_crypto::composite::{CompositePublicKey, CompositeSigningKey};
-pub use verify::{ChainView, Tamper, Verified};
-pub use witness::{Prepare, WitnessRecord};
+pub use verify::{ChainView, LostInRestore, Tamper, Verified};
+pub use witness::{Declaration, DeclarationFields, Prepare, WitnessRecord};
 
 /// The composite signature length of draft 19: ML-DSA-65 then Ed25519
 /// (ADR-010 "Composite encoding", row "Signature").
@@ -145,6 +145,10 @@ pub enum Invalid {
     PrepareShape,
     /// File store sequences must strictly rise.
     SequenceNotRising,
+    /// A restore declaration whose lost window ends before its head, or
+    /// whose witness sequence is 0 (ADR-012 record of lane
+    /// m10/declared-restore).
+    DeclarationShape,
     /// A whole file store must hold sequences 1, 2, 3 with no gap.
     SequenceGap,
 }

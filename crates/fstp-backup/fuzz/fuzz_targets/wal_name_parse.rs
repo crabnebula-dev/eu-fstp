@@ -18,6 +18,11 @@ fuzz_target!(|data: &[u8]| {
     if fstp_backup::parse_archive_name(&text).is_ok() {
         assert!(fstp_backup::s3::key_ok(&format!("c/wal/{text}")));
     }
+    // Lane m10/backup-pitr: the start location parses with the segment,
+    // and the segment is the one the start parser returns.
+    if let Ok((seg, _lsn)) = fstp_backup::backup_label_location(data) {
+        assert_eq!(fstp_backup::backup_label_start(data).ok(), Some(seg));
+    }
     if let Ok(start) = fstp_backup::backup_label_start(data) {
         for size in [1u64 << 20, 16 << 20, 1 << 30] {
             if let Some(next) = start.next(size) {

@@ -40,7 +40,6 @@ use crate::keystore::{self, IdentityKeys, VaultKeys};
 use crate::origin::Vault;
 use crate::service::{self, VaultHandle, VaultParts};
 use fstp_backup::keyfile;
-use fstp_backup::s3::S3Client;
 use fstp_backup::snapshot::{SnapshotKey, SnapshotOwner, Snapshots};
 use fstp_keys::erasure::Phase;
 
@@ -371,37 +370,36 @@ pub async fn resume_keystore<R: Runtime, C: Custody>(
 
 /// The vault's snapshot key file `vault-snapshot.key` in the credentials
 /// directory of `cfg`, created through `custody` when it is missing
-/// (ADR-004 record of lane L17, row "Genesis"): no operator step.
+/// (ADR-004 record of lane L17, row "Genesis") and upgraded through it
+/// when it is version 1 (ADR-012 record of lane m10/backup-followups, row
+/// "Upgrade"): no operator step.
 ///
 /// # Errors
 ///
-/// [`VaultError::Unavailable`] when custody refuses the create, and
-/// [`VaultError::Config`] for a file that does not read, write or decode.
+/// [`VaultError::Unavailable`] when custody refuses the create or the
+/// upgrade, and [`VaultError::Config`] for a file that does not read,
+/// write or decode.
 pub async fn snapshot_key<C: Custody>(
     cfg: &VaultConfig,
     custody: &C,
 ) -> Result<SnapshotKey, VaultError> {
     let owner = SnapshotOwner::Vault;
     let path = cfg.credentials_dir.join(owner.key_file_name());
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let b = SnapshotKey::create(custody, cfg.cell, owner)
-                .await
-                .map_err(|_| VaultError::Unavailable("the vault snapshot key"))?;
-            write_new(&path, &b)?;
-            b
-        }
-        Err(_) => return Err(cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE)),
-    };
-    SnapshotKey::decode(&bytes, cfg.cell, owner)
-        .map_err(|_| cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE))
+    fstp_backup::snapshot::load_key(custody, &path, cfg.cell, owner)
+        .await
+        .map_err(|e| match e {
+            fstp_backup::BackupError::Custody(_) | fstp_backup::BackupError::Seal(_) => {
+                VaultError::Unavailable("the vault snapshot key")
+            }
+            _ => cfg_err(keyfile::VAULT_SNAPSHOT_KEY_FILE),
+        })
 }
 
 /// The keystore snapshot writer of `cfg`, or `None` when no object store
-/// is configured (ADR-012 record of lane L17, row "Fallback"). The
-/// object store credentials come from the credentials directory by fixed
-/// name, as for `fstp-backup`.
+/// is configured (ADR-012 record of lane L17, row "Fallback"). Each
+/// store's credentials come from the credentials directory by fixed name,
+/// as for `fstp-backup`, and every store gets each snapshot (record of
+/// lane m10/backup-followups, row "Every store").
 ///
 /// # Errors
 ///
@@ -412,17 +410,18 @@ pub async fn snapshots_of<R: Runtime, C: Custody>(
     cfg: &VaultConfig,
     custody: &C,
 ) -> Result<Option<Snapshots>, VaultError> {
-    let Some(endpoint) = cfg.object_store.clone() else {
+    let Some(first) = cfg.object_store.clone() else {
         return Ok(None);
     };
-    let dir = &cfg.credentials_dir;
-    let credentials =
-        fstp_backup::config::s3_credentials(dir).map_err(|_| cfg_err("s3-access-key-id"))?;
-    let ca = fstp_backup::config::s3_ca(dir).map_err(|_| cfg_err("s3-ca.pem"))?;
-    let client = S3Client::new(rt.clone(), endpoint, credentials, ca.as_deref())
-        .map_err(|_| cfg_err("s3-ca.pem"))?;
+    let endpoints: Vec<_> = std::iter::once(first)
+        .chain(cfg.more_stores.iter().cloned())
+        .collect();
+    let stores = fstp_backup::snapshot::s3_stores(rt, &cfg.credentials_dir, &endpoints)
+        .map_err(|_| cfg_err("s3-access-key-id"))?;
     let key = snapshot_key(cfg, custody).await?;
-    Ok(Some(Snapshots::new(Arc::new(client), key)))
+    Snapshots::with_stores(stores, key)
+        .map(Some)
+        .map_err(|_| cfg_err("object_stores"))
 }
 
 /// The runner of `client` with the snapshot writer of `cfg`, if any.
@@ -816,6 +815,42 @@ pub fn restore_keystore(cfg: &VaultConfig, id: Option<[u8; 16]>) -> Result<(), V
         .map(|_| ())
 }
 
+/// `fstp-vault check-keystore <port>` (ADR-012 record of lane
+/// m10/backup-health, row "Check: keystore"): the restore drill's check
+/// of a scratch cluster at `port` on the configured database host. It
+/// reads the restored keystore rows over the keys login and opens them
+/// through the vault's custody entry with the check of `restore-keystore`
+/// ([`crate::erasure::check_rows`]). It writes nothing, takes no lock,
+/// fetches no snapshot, reaches no witness and prints nothing.
+///
+/// # Errors
+///
+/// [`VaultError::Config`] for a refused configuration or credential,
+/// [`VaultError::Unavailable`] when the scratch database does not answer
+/// or holds no keystore, and [`VaultError::Malformed`] for rows that do
+/// not open.
+pub fn check_keystore(cfg: &VaultConfig, port: u16) -> Result<(), VaultError> {
+    let custody = keyd(cfg)?;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    rt.block_on(async move {
+        let mut scratch = cfg.clone();
+        scratch.database.port = port;
+        let creds = Credentials::read(&cfg.credentials_dir)?;
+        let mut client = keys_client(&task_rt, &scratch, &creds).await?;
+        let done =
+            async {
+                let rows = crate::keystore::read_rows(&mut client).await?.ok_or(
+                    VaultError::Unavailable("a keystore in the scratch database"),
+                )?;
+                crate::erasure::check_rows(&custody, &cfg.cell, &rows).await
+            }
+            .await;
+        let _ = client.close().await;
+        done
+    })
+}
+
 /// `fstp-vault verify-first-admin <account> <identity file>` over
 /// `custody` (ADR-008 and ADR-004 record of lane L13b, decided by Daniel
 /// on 2026-11-21): records the verification of a first admin with the
@@ -911,6 +946,10 @@ pub enum Command {
     /// `restore-keystore [<snapshot id>]`: the snapshot id as 32 hex
     /// digits, or the newest one (ADR-012 record of lane L17).
     RestoreKeystore(Option<[u8; 16]>),
+    /// `check-keystore <port>`: open the keystore rows of a restore drill's
+    /// scratch cluster at `port`, and write nothing (ADR-012 record of lane
+    /// m10/backup-health).
+    CheckKeystore(u16),
     /// `verify-first-admin <account> <identity file>`: the technical admin
     /// verifies a first admin on the host (ADR-008, Daniel, 2026-11-21).
     VerifyFirstAdmin(u128, PathBuf),
@@ -937,6 +976,14 @@ fn account_of(text: &str) -> Option<u128> {
     u128::from_str_radix(&hex, 16).ok()
 }
 
+/// A port: a canonical decimal from 1 to 65535.
+fn port_of(s: &str) -> Option<u16> {
+    if s.is_empty() || s.len() > 5 || !s.bytes().all(|b| b.is_ascii_digit()) || s.starts_with('0') {
+        return None;
+    }
+    s.parse::<u16>().ok()
+}
+
 /// Parses the binary's arguments, without the program name.
 ///
 /// # Errors
@@ -953,6 +1000,9 @@ pub fn parse_args(args: &[String]) -> Result<Command, VaultError> {
         [cmd, id] if cmd == "restore-keystore" => account_of(id)
             .filter(|_| id.len() == 32)
             .map(|n| Command::RestoreKeystore(Some(n.to_be_bytes())))
+            .ok_or(cfg_err("arguments")),
+        [cmd, port] if cmd == "check-keystore" => port_of(port)
+            .map(Command::CheckKeystore)
             .ok_or(cfg_err("arguments")),
         [cmd, account, file] if cmd == "verify-first-admin" => account_of(account)
             .map(|a| Command::VerifyFirstAdmin(a, PathBuf::from(file)))
@@ -973,6 +1023,7 @@ pub fn run_command(command: &Command) -> Result<(), VaultError> {
         Command::InitKeys(out) => init_keys(&cfg, out),
         Command::EraseIdentity(account) => erase_identity(&cfg, *account),
         Command::RestoreKeystore(id) => restore_keystore(&cfg, *id),
+        Command::CheckKeystore(port) => check_keystore(&cfg, *port),
         Command::VerifyFirstAdmin(account, file) => verify_first_admin(&cfg, *account, file),
     }
 }
@@ -1076,6 +1127,28 @@ mod tests {
             &["restore-keystore", "a", "b"],
         ] {
             assert_eq!(parse_args(&s(bad)), Err(VaultError::Config("arguments")));
+        }
+    }
+
+    /// ADR-012 record of lane m10/backup-health, row "Check: keystore":
+    /// `check-keystore` takes exactly one port, a canonical decimal from 1
+    /// to 65535, and refuses any other form.
+    #[test]
+    fn adr012_bh_vault_check_keystore_takes_a_port() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(&s(&["check-keystore", "5547"])).unwrap(),
+            Command::CheckKeystore(5547)
+        );
+        for bad in [
+            &["check-keystore"][..],
+            &["check-keystore", "0"],
+            &["check-keystore", "05547"],
+            &["check-keystore", "70000"],
+            &["check-keystore", "-1"],
+            &["check-keystore", "5547", "x"],
+        ] {
+            assert!(parse_args(&s(bad)).is_err(), "{bad:?}");
         }
     }
 

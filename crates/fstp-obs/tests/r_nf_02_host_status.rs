@@ -7,9 +7,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+use fstp_obs::drill_status::Step as DrillStep;
 use fstp_obs::host_status::{
     CustodianState, HostStatus, HostStatusError, MAX_LEN, Next, PartState, Parts, RouteState,
-    decode, encode,
+    WalArchive, decode, encode,
 };
 use fstp_prop::{Gen, check};
 
@@ -40,6 +41,13 @@ fn sample() -> HostStatus {
         custodian: CustodianState::Unreachable,
         guard_owed: true,
         guard_copy_owed: false,
+        wal_archive: WalArchive::Late,
+        last_wal_archived: Some(1_794_999_000),
+        last_drill_passed: Some(1_794_000_000),
+        drill_step: Some(DrillStep::Recovery),
+        drill_seconds: Some(412),
+        witness_copy: WalArchive::Failing,
+        last_witness_copied: Some(1_794_998_500),
     }
 }
 
@@ -93,6 +101,21 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         custodian: pick(g, &CustodianState::ALL),
         guard_owed: g.bool(),
         guard_copy_owed: g.bool(),
+        wal_archive: pick(g, &WalArchive::ALL),
+        last_wal_archived: opt_time(g),
+        last_drill_passed: opt_time(g),
+        drill_step: if g.bool() {
+            None
+        } else {
+            Some(pick(g, &DrillStep::ALL))
+        },
+        drill_seconds: if g.bool() {
+            None
+        } else {
+            Some(g.i64_in(1..=9_999_999))
+        },
+        witness_copy: pick(g, &WalArchive::ALL),
+        last_witness_copied: opt_time(g),
     }
 }
 
@@ -232,6 +255,59 @@ fn r_nf_02_host_status_refuses_bad_input() {
             swap("\"guard_copy_owed\":false,", ""),
             HostStatusError::MissingMember("guard_copy_owed"),
         ),
+        // ADR-012 record of lane m10/backup-health: the WAL archive.
+        (
+            swap("\"wal_archive\":\"late\"", "\"wal_archive\":\"stuck\""),
+            HostStatusError::Invalid("wal_archive"),
+        ),
+        (
+            swap("\"wal_archive\":\"late\",", ""),
+            HostStatusError::MissingMember("wal_archive"),
+        ),
+        (
+            swap(
+                "\"last_wal_archived\":1794999000",
+                "\"last_wal_archived\":\"1794999000\"",
+            ),
+            HostStatusError::Invalid("last_wal_archived"),
+        ),
+        // The restore drill.
+        (
+            swap("\"drill_step\":\"recovery\"", "\"drill_step\":\"later\""),
+            HostStatusError::Invalid("drill_step"),
+        ),
+        (
+            swap("\"drill_step\":\"recovery\"", "\"drill_step\":null"),
+            HostStatusError::Invalid("drill_step"),
+        ),
+        (
+            swap("\"drill_seconds\":412", "\"drill_seconds\":0"),
+            HostStatusError::Invalid("drill_seconds"),
+        ),
+        (
+            swap("\"drill_seconds\":412", "\"drill_seconds\":10000000"),
+            HostStatusError::Invalid("drill_seconds"),
+        ),
+        (
+            swap("\"last_drill_passed\":1794000000,", ""),
+            HostStatusError::MissingMember("last_drill_passed"),
+        ),
+        // ADR-012 record of lane m10/witness-copy: the witness copy.
+        (
+            swap("\"witness_copy\":\"failing\"", "\"witness_copy\":\"stuck\""),
+            HostStatusError::Invalid("witness_copy"),
+        ),
+        (
+            swap("\"witness_copy\":\"failing\",", ""),
+            HostStatusError::MissingMember("witness_copy"),
+        ),
+        (
+            swap(
+                "\"last_witness_copied\":1794998500",
+                "\"last_witness_copied\":-1",
+            ),
+            HostStatusError::Invalid("last_witness_copied"),
+        ),
         (
             format!("{good}{}", " ".repeat(MAX_LEN)),
             HostStatusError::TooLong,
@@ -259,5 +335,23 @@ fn r_nf_02_host_status_errors_never_quote_bytes() {
         let e = decode(text.as_bytes()).unwrap_err();
         let shown = format!("{e} {e:?}");
         assert!(!shown.contains("canary"), "{shown}");
+    }
+}
+
+/// ADR-012 record of lane m10/backup-health, row "WAL archive rule": the
+/// host shows the worse of the two clusters, failing before late before
+/// unknown.
+#[test]
+fn adr012_bh_wal_archive_takes_the_worse_cluster() {
+    use WalArchive::{Failing, Late, Ok, Unknown};
+    for (a, b, want) in [
+        (Ok, Ok, Ok),
+        (Ok, Unknown, Unknown),
+        (Unknown, Late, Late),
+        (Late, Failing, Failing),
+        (Failing, Ok, Failing),
+    ] {
+        assert_eq!(a.worst(b), want, "{a:?} {b:?}");
+        assert_eq!(b.worst(a), want, "{b:?} {a:?}");
     }
 }

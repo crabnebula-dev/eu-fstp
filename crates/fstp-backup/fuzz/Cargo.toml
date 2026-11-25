@@ -61,6 +61,27 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "backup_tar_label_decode"
+path = "fuzz_targets/backup_tar_label_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wal_history_decode"
+path = "fuzz_targets/wal_history_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "witness_state_decode"
+path = "fuzz_targets/witness_state_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

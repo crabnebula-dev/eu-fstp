@@ -42,7 +42,7 @@ use std::pin::Pin;
 use fstp_backup::Snapshots;
 use fstp_custody::Custody;
 use fstp_keys::envelope::SEALED_KEY_LEN;
-use fstp_obs::{SnapshotChain, SnapshotTrigger, snapshot_status};
+use fstp_obs::{SnapshotChain, SnapshotFailure, SnapshotTrigger, snapshot_status};
 use fstp_pgwire::Client;
 use fstp_rt::Runtime;
 
@@ -546,6 +546,45 @@ pub async fn restore_with<R: Runtime, C: Custody>(
 // The snapshot without a rotation, and the daily snapshot.
 // ---------------------------------------------------------------------
 
+/// A failed snapshot step and its error (ADR-012 record of lane
+/// m10/backup-followups, row "Failure reason").
+pub type Failed = (SnapshotFailure, VaultError);
+
+/// The step of a failed upload of the snapshot writer.
+#[must_use]
+pub fn upload_failure(e: &fstp_backup::BackupError) -> SnapshotFailure {
+    use fstp_backup::BackupError as B;
+    match e {
+        B::Custody(_) | B::KeyFile(_) => SnapshotFailure::Custody,
+        B::Seal(_) => SnapshotFailure::Image,
+        _ => SnapshotFailure::Upload,
+    }
+}
+
+/// The step of a failed fetch of the snapshot reader: custody, the store,
+/// or a copy that did not verify or open.
+#[must_use]
+pub fn fetch_failure(e: &fstp_backup::BackupError) -> SnapshotFailure {
+    use fstp_backup::BackupError as B;
+    match e {
+        B::Custody(_) | B::KeyFile(_) => SnapshotFailure::Custody,
+        B::NotFound | B::S3Status(_) | B::S3Refused(_) | B::Transport(_) | B::Xml(_) | B::Io(_) => {
+            SnapshotFailure::Fetch
+        }
+        _ => SnapshotFailure::Open,
+    }
+}
+
+/// The step of a failed pointer write.
+#[must_use]
+pub fn pointer_failure(e: &fstp_backup::BackupError) -> SnapshotFailure {
+    use fstp_backup::BackupError as B;
+    match e {
+        B::Custody(_) | B::KeyFile(_) => SnapshotFailure::Custody,
+        _ => SnapshotFailure::Pointer,
+    }
+}
+
 /// Takes a snapshot of `rows` and checks it, with no rotation (ADR-012
 /// record of lane L27, row "Daily snapshot"): seals and uploads their
 /// image, fetches it back, opens it with the vault's snapshot key through
@@ -555,6 +594,7 @@ pub async fn restore_with<R: Runtime, C: Custody>(
 ///
 /// # Errors
 ///
+/// The failed step (ADR-012 record of lane m10/backup-followups) with
 /// [`VaultError::Unavailable`] for a failed upload, fetch or pointer
 /// write, and [`VaultError::Malformed`] for a snapshot that does not
 /// open.
@@ -563,39 +603,49 @@ pub async fn snapshot_once<C: Custody>(
     cell: [u8; 16],
     snapshots: &Snapshots,
     rows: &KeystoreRows,
-) -> Result<(), VaultError> {
-    let image = encode_image(&cell, rows)?;
-    let id = snapshots
-        .upload(&image)
-        .await
-        .map_err(|_| VaultError::Unavailable("the keystore snapshot upload"))?;
-    let fetched = snapshots
-        .fetch(custody, id)
-        .await
-        .map_err(|_| VaultError::Unavailable("the keystore snapshot fetch"))?;
-    let (c, back) = decode_image(&fetched)?;
+) -> Result<(), Failed> {
+    let check = |e: VaultError| (SnapshotFailure::Check, e);
+    let image = encode_image(&cell, rows).map_err(|e| (SnapshotFailure::Image, e))?;
+    let id = snapshots.upload(custody, &image).await.map_err(|e| {
+        (
+            upload_failure(&e),
+            VaultError::Unavailable("the keystore snapshot upload"),
+        )
+    })?;
+    let fetched = snapshots.fetch(custody, id).await.map_err(|e| {
+        (
+            fetch_failure(&e),
+            VaultError::Unavailable("the keystore snapshot fetch"),
+        )
+    })?;
+    let (c, back) = decode_image(&fetched).map_err(check)?;
     if c != cell || back.root.epoch != rows.root.epoch {
-        return Err(bad("the snapshot root"));
+        return Err(check(bad("the snapshot root")));
     }
-    crate::erasure::check_rows(custody, &cell, &back).await?;
-    snapshots
-        .publish(id)
+    crate::erasure::check_rows(custody, &cell, &back)
         .await
-        .map_err(|_| VaultError::Unavailable("the keystore snapshot pointer"))
+        .map_err(check)?;
+    snapshots.publish(custody, id).await.map_err(|e| {
+        (
+            pointer_failure(&e),
+            VaultError::Unavailable("the keystore snapshot pointer"),
+        )
+    })
 }
 
 /// Records one snapshot try: the status file in `dir`, if any, and one
-/// typed event (ADR-012 record of lane L27, rows "Event" and "Status
-/// file"). A status file that does not write is skipped: the event still
-/// says what happened.
-pub fn note(dir: Option<&Path>, trigger: SnapshotTrigger, verified: bool) {
+/// typed event, each naming the failed step, if any (ADR-012 records of
+/// lanes L27 and m10/backup-followups, rows "Event", "Status file" and
+/// "Failure reason"). A status file that does not write is skipped: the
+/// event still says what happened.
+pub fn note(dir: Option<&Path>, trigger: SnapshotTrigger, failure: Option<SnapshotFailure>) {
     if let Some(d) = dir {
-        let _ = snapshot_status::record(d, verified, snapshot_status::now());
+        let _ = snapshot_status::record(d, failure, snapshot_status::now());
     }
     let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::KeystoreSnapshot {
         chain: SnapshotChain::Vault,
         trigger,
-        verified,
+        failure,
     });
 }
 
@@ -609,8 +659,15 @@ pub trait DailySnapshot: Send + Sync {
     /// Takes, checks and records one snapshot of `rows`. Whether it
     /// verified.
     fn run(&self, rows: KeystoreRows) -> DailyFuture<'_>;
-    /// Records a try that failed before it had rows to snapshot.
+    /// Records a try that failed before it had rows to snapshot: the
+    /// keystore rows did not read from the vault's database.
     fn failed(&self);
+    /// Whether a request file asks for a snapshot now, which this takes
+    /// (ADR-012 record of lane m10/store-reconnect, row "Snapshot
+    /// request"). None by default.
+    fn requested(&self) -> bool {
+        false
+    }
 }
 
 /// The daily snapshot over `custody`, writing the status file in
@@ -629,16 +686,27 @@ pub struct Daily<C> {
 impl<C: Custody + Send + Sync> DailySnapshot for Daily<C> {
     fn run(&self, rows: KeystoreRows) -> DailyFuture<'_> {
         Box::pin(async move {
-            let ok = snapshot_once(&self.custody, self.cell, &self.snapshots, &rows)
+            let failure = snapshot_once(&self.custody, self.cell, &self.snapshots, &rows)
                 .await
-                .is_ok();
-            note(self.status_dir.as_deref(), SnapshotTrigger::Daily, ok);
-            ok
+                .err()
+                .map(|(step, _)| step);
+            note(self.status_dir.as_deref(), SnapshotTrigger::Daily, failure);
+            failure.is_none()
         })
     }
 
     fn failed(&self) {
-        note(self.status_dir.as_deref(), SnapshotTrigger::Daily, false);
+        note(
+            self.status_dir.as_deref(),
+            SnapshotTrigger::Daily,
+            Some(SnapshotFailure::Database),
+        );
+    }
+
+    fn requested(&self) -> bool {
+        self.status_dir
+            .as_deref()
+            .is_some_and(fstp_obs::snapshot_status::take_request)
     }
 }
 

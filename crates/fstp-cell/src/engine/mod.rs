@@ -262,6 +262,28 @@ pub trait CellStore: AsyncRecordStore<CellRecord> + Send + Sync + 'static {
             StoreError::Unavailable,
         ))))
     }
+
+    /// [`CellStore::append_events`] with the store's own `ops.outbox` rows
+    /// `own` in the same transaction: an integrity finding or its
+    /// acknowledgement, with its event (ADR-012 record of lane
+    /// m10/declared-restore). The default writes no own row, so it fails
+    /// as unavailable for any, and never drops one.
+    fn append_events_with(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+        own: Vec<fstp_pgstore::OwnRow>,
+    ) -> impl Future<Output = Result<(), CellAppendError>> + Send {
+        async move {
+            if own.is_empty() {
+                self.append_events(at, events).await
+            } else {
+                Err(CellAppendError::Ledger(AppendError::Store(
+                    StoreError::Unavailable,
+                )))
+            }
+        }
+    }
 }
 
 /// Reads every entry of `store` after `after`, in pages.
@@ -508,6 +530,7 @@ enum Job {
     Events {
         at: i64,
         events: Vec<Vec<u8>>,
+        own: Vec<fstp_pgstore::OwnRow>,
         reply: ReplyTx<Result<(), EngineError>>,
     },
 }
@@ -764,7 +787,40 @@ impl CellEngine {
             return Err(EngineError::ShuttingDown);
         }
         let (reply, rx) = chan::reply();
-        self.send(Job::Events { at, events, reply }).await?;
+        self.send(Job::Events {
+            at,
+            events,
+            own: Vec::new(),
+            reply,
+        })
+        .await?;
+        rx.recv().await.unwrap_or(Err(EngineError::Stopped))
+    }
+
+    /// [`CellEngine::append_events`] with the store's own `ops.outbox` rows
+    /// `own` in the same anchored transaction (ADR-012 record of lane
+    /// m10/declared-restore).
+    ///
+    /// # Errors
+    ///
+    /// As [`CellEngine::append_events`].
+    pub async fn append_events_with(
+        &self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+        own: Vec<fstp_pgstore::OwnRow>,
+    ) -> Result<(), EngineError> {
+        if self.shutdown.is_triggered() {
+            return Err(EngineError::ShuttingDown);
+        }
+        let (reply, rx) = chan::reply();
+        self.send(Job::Events {
+            at,
+            events,
+            own,
+            reply,
+        })
+        .await?;
         rx.recv().await.unwrap_or(Err(EngineError::Stopped))
     }
 
@@ -854,20 +910,28 @@ impl<S: CellStore, V: VaultClient, R: Runtime> EngineTask<S, V, R> {
                     let result = self.dry_run(admitted).await;
                     reply.send(result);
                 }
-                Job::Events { at, events, reply } => {
+                Job::Events {
+                    at,
+                    events,
+                    own,
+                    reply,
+                } => {
                     let rt = self.rt.clone();
-                    let result =
-                        fstp_rt::timeout(&rt, STORE_TIMEOUT, self.store.append_events(at, events))
-                            .await
-                            .unwrap_or(Err(CellAppendError::Ledger(AppendError::Store(
-                                StoreError::Unavailable,
-                            ))))
-                            .map_err(|e| {
-                                EngineError::Exec(ExecError::Store(match e {
-                                    CellAppendError::Ledger(AppendError::Store(s)) => s,
-                                    _ => StoreError::Unavailable,
-                                }))
-                            });
+                    let result = fstp_rt::timeout(
+                        &rt,
+                        STORE_TIMEOUT,
+                        self.store.append_events_with(at, events, own),
+                    )
+                    .await
+                    .unwrap_or(Err(CellAppendError::Ledger(AppendError::Store(
+                        StoreError::Unavailable,
+                    ))))
+                    .map_err(|e| {
+                        EngineError::Exec(ExecError::Store(match e {
+                            CellAppendError::Ledger(AppendError::Store(s)) => s,
+                            _ => StoreError::Unavailable,
+                        }))
+                    });
                     reply.send(result);
                 }
             }

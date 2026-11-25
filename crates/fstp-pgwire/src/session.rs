@@ -685,6 +685,35 @@ impl Session {
         Ok(())
     }
 
+    /// Checks that the server still serves this session: a lone Sync, one
+    /// round trip, answered by ReadyForQuery. It runs no statement and
+    /// changes no state on the server. A FATAL error, such as the
+    /// `57P01` a restarting server sends to every session, or a closed
+    /// socket breaks the session (ADR-005 record of lane
+    /// m10/store-reconnect).
+    pub(crate) async fn ping(&mut self) -> Result<(), Error> {
+        self.ensure_ready().await?;
+        self.encode_request(|s| {
+            frontend::sync(&mut s.wbuf);
+            Ok(())
+        })?;
+        self.pending_ready = self.pending_ready.saturating_add(1);
+        self.send().await?;
+        match self.next().await? {
+            BackendMessage::ReadyForQuery(status) => {
+                self.on_ready(status);
+                Ok(())
+            }
+            BackendMessage::ErrorResponse(fields) => {
+                // A Sync alone runs nothing, so any error here is the
+                // server ending the session.
+                let e = self.db_error(&fields)?;
+                Err(self.broken_by(e))
+            }
+            other => Err(self.unexpected(&other)),
+        }
+    }
+
     /// Runs a transaction control statement through the unnamed statement
     /// and returns its command tag. The caller has called `ensure_ready`.
     ///

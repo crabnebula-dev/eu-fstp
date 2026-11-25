@@ -113,6 +113,143 @@ pub const SESSION_END_CREDENTIAL_DISABLED: i16 = 2;
 /// witness log, as `fstp_audit::Verified::possible_deletions`.
 pub const OUTBOX_POSSIBLE_DELETION: i16 = 1;
 
+/// The `ops.outbox.kind` of a lost window of a declared restore (ADR-012
+/// record of lane m10/declared-restore): the store's own kind, below every
+/// caller kind. Its body is `chain || be64(from) || be64(to) || job`.
+pub const OUTBOX_LOST_IN_RESTORE: i16 = -1;
+
+/// The `ops.outbox.kind` of a tenant admin's acknowledgement of a finding
+/// (ADR-012 record of lane m10/declared-restore). Its body is the finding
+/// id and the account. It never removes the finding.
+pub const OUTBOX_FINDING_ACK: i16 = -2;
+
+/// One of the store's own `ops.outbox` rows that an events transaction
+/// writes ([`PgRecordStore::append_events_with`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnRow {
+    /// The rows `from` to `to` of chain `chain` (the `fstp_audit` chain
+    /// byte) that the restore `job` lost.
+    LostInRestore {
+        /// The chain byte.
+        chain: u8,
+        /// The first lost row.
+        from: u64,
+        /// The last lost row.
+        to: u64,
+        /// The restore job.
+        job: [u8; 16],
+    },
+    /// The acknowledgement of the finding `finding` by `actor`.
+    FindingAck {
+        /// The finding id: its own idem.
+        finding: [u8; 32],
+        /// The account, big-endian.
+        actor: [u8; 16],
+    },
+}
+
+impl OwnRow {
+    /// The row's idem in `cell`.
+    #[must_use]
+    pub fn idem(&self, cell: &[u8; 16]) -> [u8; 32] {
+        match self {
+            OwnRow::LostInRestore {
+                chain,
+                from,
+                to,
+                job,
+            } => lost_in_restore_idem(cell, *chain, *from, *to, job),
+            OwnRow::FindingAck { finding, .. } => finding_ack_idem(cell, finding),
+        }
+    }
+
+    fn kind(&self) -> i16 {
+        match self {
+            OwnRow::LostInRestore { .. } => OUTBOX_LOST_IN_RESTORE,
+            OwnRow::FindingAck { .. } => OUTBOX_FINDING_ACK,
+        }
+    }
+
+    fn plain(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(48);
+        match self {
+            OwnRow::LostInRestore {
+                chain,
+                from,
+                to,
+                job,
+            } => {
+                out.push(*chain);
+                out.extend_from_slice(&from.to_be_bytes());
+                out.extend_from_slice(&to.to_be_bytes());
+                out.extend_from_slice(job);
+            }
+            OwnRow::FindingAck { finding, actor } => {
+                out.extend_from_slice(finding);
+                out.extend_from_slice(actor);
+            }
+        }
+        out
+    }
+}
+
+/// The id of the finding that the restore `job` lost rows `from` to `to`
+/// of `chain` in `cell` (ADR-012 record of lane m10/declared-restore).
+#[must_use]
+pub fn lost_in_restore_idem(
+    cell: &[u8; 16],
+    chain: u8,
+    from: u64,
+    to: u64,
+    job: &[u8; 16],
+) -> [u8; 32] {
+    let mut h = fstp_crypto::Sha256::new();
+    h.update(b"fstp-lost-in-restore-v1");
+    h.update(cell);
+    h.update(&[chain]);
+    h.update(&from.to_be_bytes());
+    h.update(&to.to_be_bytes());
+    h.update(job);
+    h.finish()
+}
+
+/// The idem of the acknowledgement of `finding` in `cell`: one per finding.
+#[must_use]
+pub fn finding_ack_idem(cell: &[u8; 16], finding: &[u8; 32]) -> [u8; 32] {
+    let mut h = fstp_crypto::Sha256::new();
+    h.update(b"fstp-finding-ack-v1");
+    h.update(cell);
+    h.update(finding);
+    h.finish()
+}
+
+/// When each of `idems` was written to `ops.outbox`, or `None`. It reads
+/// the plain idem and time columns only, so the app role may run it: the
+/// System page asks it whether a finding is acknowledged (ADR-012 record of
+/// lane m10/declared-restore).
+///
+/// # Errors
+///
+/// A pool or database fault.
+pub async fn outbox_written<R: Runtime>(
+    pool: &crate::Pool<R>,
+    idems: &[[u8; 32]],
+) -> Result<Vec<Option<i64>>, StoreFault> {
+    let mut client = pool.get().await?;
+    let mut out = Vec::with_capacity(idems.len());
+    for idem in idems {
+        let row = client
+            .query_opt(OUTBOX_WRITTEN_SQL, &[&idem.as_slice()])
+            .await?;
+        out.push(match row {
+            Some(r) => Some(r.get::<i64>(0)?),
+            None => None,
+        });
+    }
+    client.release();
+    Ok(out)
+}
+
 /// The most sessions one append may end.
 const MAX_SESSIONS_ENDED: usize = 65_536;
 
@@ -161,6 +298,7 @@ const CHAIN_ROWS_SQL: &str = "SELECT n, at, kind, ledger_seq, stored_hash, body,
 const ANCHOR_ROWS_SQL: &str = "SELECT n, link, at, signature, receipt \
      FROM audit.anchor WHERE n >= $1 ORDER BY n LIMIT $2";
 const ALERT_EXISTS_SQL: &str = "SELECT EXISTS (SELECT 1 FROM ops.outbox WHERE idem = $1)";
+const OUTBOX_WRITTEN_SQL: &str = "SELECT created_at FROM ops.outbox WHERE idem = $1";
 const INSERT_ALERT_SQL: &str = "INSERT INTO ops.outbox (id, kind, idem, dek, body, created_at) \
      VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (idem) DO NOTHING";
 const ALERTS_SQL: &str = "SELECT id, idem, dek, body FROM ops.outbox WHERE kind = $1";
@@ -1105,6 +1243,67 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         Ok(())
     }
 
+    /// Seals the store's own row `row` under a fresh data key of its own
+    /// and inserts it at `at`, once per idem (ADR-012 record of lane
+    /// m10/declared-restore). The caller holds the advisory lock.
+    async fn insert_own_row(
+        &self,
+        tx: &mut Transaction<'_, R>,
+        row: &OwnRow,
+        at: i64,
+    ) -> Result<(), AppendFault> {
+        let idem = row.idem(&self.cell);
+        let exists: bool = tx
+            .query_one(ALERT_EXISTS_SQL, &[&idem.as_slice()])
+            .await
+            .map_err(db)?
+            .get(0)
+            .map_err(db)?;
+        if exists {
+            return Ok(());
+        }
+        let id: [u8; 16] = fstp_crypto::random_array().map_err(|_| StoreFault::SealRefused)?;
+        let key = self.outbox_keys.create(ObjectId(id)).await?;
+        let kind = row.kind();
+        let body = seal_outbox_body(
+            &self.cell,
+            &key,
+            &id,
+            u16::from_be_bytes(kind.to_be_bytes()),
+            &idem,
+            &row.plain(),
+        )?;
+        tx.execute(
+            INSERT_ALERT_SQL,
+            &[
+                &Uuid::from_bytes(id),
+                &kind,
+                &idem.as_slice(),
+                &Uuid::from_bytes(key.dek.0),
+                &body,
+                &at,
+            ],
+        )
+        .await
+        .map_err(db)?;
+        Ok(())
+    }
+
+    /// Whether `ops.outbox` holds a row of `idem`.
+    ///
+    /// # Errors
+    ///
+    /// A pool or database fault.
+    pub async fn outbox_has(&self, idem: &[u8; 32]) -> Result<bool, StoreFault> {
+        let mut client = self.pool.get().await?;
+        let exists: bool = client
+            .query_one(ALERT_EXISTS_SQL, &[&idem.as_slice()])
+            .await?
+            .get(0)?;
+        client.release();
+        Ok(exists)
+    }
+
     /// Every durable `PossibleDeletion` alert, as `(n, link)`, in that
     /// order.
     ///
@@ -1224,7 +1423,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             }
         };
         let result = self
-            .run_append(&mut client, expected, at, command, &batch, side, false)
+            .run_append(&mut client, expected, at, command, &batch, side, false, &[])
             .await;
         client.release();
         if matches!(self.anchorer.phase(), Phase::MustAbort { .. }) {
@@ -1258,6 +1457,27 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
     where
         T: Canonical,
     {
+        self.append_events_with(at, events, &[]).await
+    }
+
+    /// [`PgRecordStore::append_events`] with the store's own `ops.outbox`
+    /// rows `own` in the same transaction (ADR-012 record of lane
+    /// m10/declared-restore): a finding and its event, or an
+    /// acknowledgement and its event, commit together under one anchor. A
+    /// row whose idem exists already is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// As [`PgRecordStore::append_events`].
+    pub async fn append_events_with(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+        own: &[OwnRow],
+    ) -> Result<Committed, AppendFault>
+    where
+        T: Canonical,
+    {
         if events.is_empty() {
             return Err(StoreFault::Refused("an event transaction with no event").into());
         }
@@ -1278,7 +1498,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             }
         };
         let result = self
-            .run_append(&mut client, Seq::ZERO, at, [0; 16], &[], &side, true)
+            .run_append(&mut client, Seq::ZERO, at, [0; 16], &[], &side, true, own)
             .await;
         client.release();
         if matches!(self.anchorer.phase(), Phase::MustAbort { .. }) {
@@ -1295,6 +1515,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         tx: &mut Transaction<'_, R>,
         at: i64,
         side: &SideEffects,
+        own: &[OwnRow],
     ) -> Result<Staged, AppendFault> {
         let step = |a: &mut Anchorer, s: Step| a.step_done(s).map_err(out_of_order);
         tx.execute(LOCK_SQL, &[]).await.map_err(db)?;
@@ -1319,6 +1540,9 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         self.insert_events(tx, &mut writer, at, &side.events, &mut stored_hashes)
             .await?;
         step(&mut self.anchorer, Step::InsertChain)?;
+        for row in own {
+            self.insert_own_row(tx, row, at).await?;
+        }
         step(&mut self.anchorer, Step::SideEffects)?;
         Ok(Staged {
             prev,
@@ -1408,6 +1632,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         batch: &[T],
         side: &SideEffects,
         events_only: bool,
+        own: &[OwnRow],
     ) -> Result<Committed, AppendFault>
     where
         T: Canonical,
@@ -1420,7 +1645,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
             }
         };
         let staged = if events_only {
-            self.stage_events(&mut tx, at, side).await
+            self.stage_events(&mut tx, at, side, own).await
         } else {
             self.stage(&mut tx, expected, at, command, batch, side)
                 .await

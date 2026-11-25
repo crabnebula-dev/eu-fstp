@@ -713,6 +713,7 @@ fn body_rule(spec: &OpSpec) -> BodyRule {
         OpKind::M3Port(PortKind::MarkMailboxRead) => BodyRule::Exactly(&["message"]),
         // ADR-030: the caller's own theme choice.
         OpKind::M3Port(PortKind::SetTheme) => BodyRule::Exactly(&["theme"]),
+        OpKind::M3Port(PortKind::AcknowledgeFinding) => BodyRule::Exactly(&["finding"]),
         // F-079, ADR-038: the invited address, and nothing about an account.
         OpKind::M3Port(PortKind::InviteTeamMember | PortKind::InviteGuardian) => {
             BodyRule::Exactly(&["email"])
@@ -877,6 +878,9 @@ fn check_plain_values(spec: &OpSpec, request: &Object) -> Result<(), ApiError> {
             request.get("reason").and_then(Value::as_str).is_some()
         }
         OpKind::M3Port(fstp_access::PortKind::SetTheme) => theme_param(request).is_some(),
+        OpKind::M3Port(fstp_access::PortKind::AcknowledgeFinding) => {
+            id_param(request, "finding").is_some()
+        }
         OpKind::Agent(fstp_access::AgentKind::Consent) => consent_handle(request).is_some(),
         _ => true,
     };

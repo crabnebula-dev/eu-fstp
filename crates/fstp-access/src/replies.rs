@@ -336,7 +336,10 @@ pub const HOST_NEXT: &[&str] = &[
     "renew",
     "public_certificate",
     "configure_backups",
+    "wal_archive",
+    "witness_copy",
     "backup",
+    "restore_drill",
     "custodian_copy",
     "keystore_snapshot",
     "web_admins",
@@ -1996,6 +1999,22 @@ pub const REPLIES: &[(&str, Shape)] = &[
             m("vault", Shape::Enum(&["answers", "silent"])),
             m("mail", Shape::Enum(&["works", "fails", "not_configured"])),
             m("last_cell_erasure", Shape::Nullable(&Shape::Id)),
+            // ADR-012 record of lane m10/declared-restore: every integrity
+            // finding of the cell and its vault, acknowledged or not.
+            m(
+                "findings",
+                Shape::Array(&Shape::Object(&[
+                    m("id", Shape::Id),
+                    m(
+                        "kind",
+                        Shape::Enum(&["lost_in_restore", "possible_deletion"]),
+                    ),
+                    m("chain", Shape::Enum(&["app", "vault"])),
+                    m("from", Shape::Id),
+                    m("to", Shape::Id),
+                    m("acknowledged_at", Shape::Nullable(&Shape::Id)),
+                ])),
+            ),
             m(
                 "host_file",
                 Shape::Enum(&["present", "not_configured", "missing", "unreadable"]),
@@ -2037,6 +2056,28 @@ pub const REPLIES: &[(&str, Shape)] = &[
                     ),
                     m("guard_owed", Shape::Bool),
                     m("guard_copy_owed", Shape::Bool),
+                    // ADR-028 record of lane `m10/backup-health`: the WAL archive.
+                    m(
+                        "wal_archive",
+                        Shape::Enum(&["ok", "late", "failing", "unknown"]),
+                    ),
+                    m("last_wal_archived", Shape::Nullable(&Shape::Id)),
+                    // ADR-028 record of lane `m10/backup-health`: the restore drill.
+                    m("last_drill_passed", Shape::Nullable(&Shape::Id)),
+                    m(
+                        "drill_step",
+                        Shape::Enum(&[
+                            "none", "space", "restore", "recovery", "database", "keystore",
+                            "cleanup", "witness",
+                        ]),
+                    ),
+                    m("drill_seconds", Shape::Nullable(&Shape::Int)),
+                    // ADR-028 record of lane `m10/witness-copy`: the witness copy.
+                    m(
+                        "witness_copy",
+                        Shape::Enum(&["ok", "late", "failing", "unknown"]),
+                    ),
+                    m("last_witness_copied", Shape::Nullable(&Shape::Id)),
                 ])),
             ),
         ]),

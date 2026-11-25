@@ -92,6 +92,8 @@ pub mod tables;
 pub use tables::{KeystoreSink, NoSink, SinkFuture};
 
 use super::Clock;
+use fstp_backup::BackupError;
+
 use crate::CellError;
 use crate::engine::chan::{self, Receiver, ReplyTx, Sender};
 use crate::engine::{CellEngine, EngineError};
@@ -2462,23 +2464,36 @@ impl<C: Custody> ErasureRunner<C> {
     /// (ADR-012 records of lanes L17 and L27). Without one the runner keeps
     /// an in-memory copy.
     async fn snapshot(&mut self, e: Epoch) -> Result<ErasureEvent, CellError> {
-        self.take_snapshot().await?;
+        if let Err((step, err)) = self.take_snapshot().await {
+            self.note(fstp_obs::SnapshotTrigger::Rotation, Some(step));
+            return Err(err);
+        }
         self.apply_durable(&Step::Snapshot(e))?;
         Ok(ErasureEvent::SnapshotTaken { epoch: e.0 })
     }
 
     /// Seals and uploads the keystore's table rows, and returns the
-    /// snapshot id.
-    async fn upload_rows(&self, s: &fstp_backup::Snapshots) -> Result<[u8; 16], CellError> {
-        let rows = self.store.table_rows(&self.work.current)?;
-        let image =
-            rows_image::encode(self.store.cell.0, &rows).map_err(|_| keys_err("snapshot image"))?;
-        s.upload(&image)
-            .await
-            .map_err(|_| keys_err("snapshot upload"))
+    /// snapshot id. A failure names its step (ADR-012 record of lane
+    /// m10/backup-followups, row "Failure reason").
+    async fn upload_rows(&self, s: &fstp_backup::Snapshots) -> Result<[u8; 16], Failed> {
+        use fstp_obs::SnapshotFailure as F;
+        let rows = self
+            .store
+            .table_rows(&self.work.current)
+            .map_err(|e| (F::Image, e))?;
+        let image = rows_image::encode(self.store.cell.0, &rows)
+            .map_err(|_| (F::Image, keys_err("snapshot image")))?;
+        s.upload(&self.custody, &image).await.map_err(|e| {
+            let step = match e {
+                BackupError::Custody(_) | BackupError::KeyFile(_) => F::Custody,
+                BackupError::Seal(_) => F::Image,
+                _ => F::Upload,
+            };
+            (step, keys_err("snapshot upload"))
+        })
     }
 
-    async fn take_snapshot(&mut self) -> Result<(), CellError> {
+    async fn take_snapshot(&mut self) -> Result<(), Failed> {
         if let Some(s) = self.snapshots.clone() {
             self.work.snapshot_id = Some(self.upload_rows(&s).await?);
         }
@@ -2488,48 +2503,70 @@ impl<C: Custody> ErasureRunner<C> {
 
     /// Fetches snapshot `id`, loads its rows as a keystore, and opens
     /// every current key of epoch `e` under `R(e)` through custody
-    /// ([`restore::open_loaded`]). Then the pointer names it.
+    /// ([`restore::open_loaded`]). Then the pointer names it. A failure
+    /// names its step.
     async fn check_fetched(
         &self,
         s: &fstp_backup::Snapshots,
         id: [u8; 16],
         e: Epoch,
-    ) -> Result<(), CellError> {
-        let bytes = s
-            .fetch(&self.custody, id)
-            .await
-            .map_err(|_| keys_err("snapshot fetch"))?;
-        let (cell, rows) = rows_image::decode(&bytes).map_err(|_| keys_err("snapshot image"))?;
+    ) -> Result<(), Failed> {
+        use fstp_obs::SnapshotFailure as F;
+        let check = |e: CellError| (F::Check, e);
+        let bytes = s.fetch(&self.custody, id).await.map_err(|e| {
+            let step = match e {
+                BackupError::Custody(_) | BackupError::KeyFile(_) => F::Custody,
+                BackupError::NotFound
+                | BackupError::S3Status(_)
+                | BackupError::S3Refused(_)
+                | BackupError::Transport(_)
+                | BackupError::Xml(_)
+                | BackupError::Io(_) => F::Fetch,
+                _ => F::Open,
+            };
+            (step, keys_err("snapshot fetch"))
+        })?;
+        let (cell, rows) =
+            rows_image::decode(&bytes).map_err(|_| check(keys_err("snapshot image")))?;
         if cell != self.store.cell.0 {
-            return Err(keys_err("snapshot cell"));
+            return Err(check(keys_err("snapshot cell")));
         }
-        let mut ks = Keystore::from_rows(cell, rows, Arc::new(NoSink))?;
+        let mut ks = Keystore::from_rows(cell, rows, Arc::new(NoSink)).map_err(check)?;
         if ks.epoch() != e.0 {
-            return Err(keys_err("snapshot epoch"));
+            return Err(check(keys_err("snapshot epoch")));
         }
         let row = ks
             .roots
             .get(&e.0)
             .cloned()
-            .ok_or(keys_err("snapshot root"))?;
-        let seal = self.unwrap(&row, e.0).await?;
-        restore::open_loaded(&mut ks, &seal)?;
-        s.publish(id)
-            .await
-            .map_err(|_| keys_err("snapshot pointer"))
+            .ok_or(check(keys_err("snapshot root")))?;
+        // The unwrap is recorded in the cell's own database first (ADR-004
+        // "Reconciliation"), so a refused record is a database failure.
+        let seal = self.unwrap(&row, e.0).await.map_err(|e| match e {
+            CellError::Custody(_) => (F::Custody, e),
+            _ => (F::Database, e),
+        })?;
+        restore::open_loaded(&mut ks, &seal).map_err(check)?;
+        s.publish(&self.custody, id).await.map_err(|e| {
+            let step = match e {
+                BackupError::Custody(_) | BackupError::KeyFile(_) => F::Custody,
+                _ => F::Pointer,
+            };
+            (step, keys_err("snapshot pointer"))
+        })
     }
 
-    /// Records one snapshot try: the status file and one typed event
-    /// (ADR-012 record of lane L27).
-    fn note(&self, trigger: fstp_obs::SnapshotTrigger, verified: bool) {
+    /// Records one snapshot try: the status file and one typed event, each
+    /// naming the failed step, if any (ADR-012 records of lanes L27 and
+    /// m10/backup-followups).
+    fn note(&self, trigger: fstp_obs::SnapshotTrigger, failure: Option<fstp_obs::SnapshotFailure>) {
         if let Some(d) = &self.snapshot_status {
-            let _ =
-                fstp_obs::snapshot_status::record(d, verified, fstp_obs::snapshot_status::now());
+            let _ = fstp_obs::snapshot_status::record(d, failure, fstp_obs::snapshot_status::now());
         }
         let _ = fstp_obs::log_to_stderr(&fstp_obs::LogEvent::KeystoreSnapshot {
             chain: fstp_obs::SnapshotChain::App,
             trigger,
-            verified,
+            failure,
         });
     }
 
@@ -2545,13 +2582,19 @@ impl<C: Custody> ErasureRunner<C> {
             let id = match self.work.snapshot_id.take() {
                 Some(id) => id,
                 None => {
-                    self.take_snapshot().await?;
+                    if let Err((step, err)) = self.take_snapshot().await {
+                        self.note(fstp_obs::SnapshotTrigger::Rotation, Some(step));
+                        return Err(err);
+                    }
                     self.work.snapshot_id.take().ok_or(keys_err("snapshot"))?
                 }
             };
             let checked = self.check_fetched(&s, id, e).await;
-            self.note(fstp_obs::SnapshotTrigger::Rotation, checked.is_ok());
-            checked?;
+            self.note(
+                fstp_obs::SnapshotTrigger::Rotation,
+                checked.as_ref().err().map(|(step, _)| *step),
+            );
+            checked.map_err(|(_, err)| err)?;
         }
         let snap = match self.work.snapshot.clone() {
             Some(s) => s,
@@ -2602,20 +2645,29 @@ impl<C: Custody> ErasureRunner<C> {
         }
         .await;
         let ok = checked.is_ok();
-        self.note(fstp_obs::SnapshotTrigger::Daily, ok);
+        self.note(
+            fstp_obs::SnapshotTrigger::Daily,
+            checked.err().map(|(step, _)| step),
+        );
         self.daily_last = Some((fstp_obs::snapshot_status::now(), ok));
         Ok(ok)
     }
 
     /// Whether a daily snapshot is due now: an object store is configured
-    /// and the schedule of `fstp_obs::snapshot_status::due` says so.
+    /// and the schedule of `fstp_obs::snapshot_status::due` says so, or a
+    /// request file waits in the status directory, which this takes
+    /// (ADR-012 record of lane m10/store-reconnect, row "Snapshot
+    /// request").
     pub fn daily_due(&self) -> bool {
         self.snapshots.is_some()
-            && fstp_obs::snapshot_status::due(
+            && (fstp_obs::snapshot_status::due(
                 self.daily_started,
                 self.daily_last,
                 fstp_obs::snapshot_status::now(),
-            )
+            ) || self
+                .snapshot_status
+                .as_deref()
+                .is_some_and(fstp_obs::snapshot_status::take_request))
     }
 
     /// Writes the snapshot status file into `dir` after each snapshot
@@ -3507,3 +3559,7 @@ fn publish<C>(runner: &ErasureRunner<C>, progress: &Mutex<Progress>) {
         p.erased.clone_from(&runner.erased);
     }
 }
+
+/// A failed snapshot step and its error (ADR-012 record of lane
+/// m10/backup-followups, row "Failure reason").
+type Failed = (fstp_obs::SnapshotFailure, CellError);

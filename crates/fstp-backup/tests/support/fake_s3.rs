@@ -13,8 +13,10 @@
 //!
 //! It keeps objects and multipart uploads in memory, and it records every
 //! request and every body it received, so a test can scan what left the
-//! client. An object `DELETE` is refused and recorded as a violation
-//! (ADR-012: no client deletes an object).
+//! client. An object `DELETE` removes the object and is recorded in
+//! `deletes`, since pruning deletes (ADR-012 record of lane
+//! m10/backup-format). A key in `locked` stands for an object lock: its
+//! `DELETE` is refused with `AccessDenied` and the object stays.
 
 #![allow(
     dead_code,
@@ -62,8 +64,12 @@ pub struct State {
     pub bodies: Mutex<Vec<Vec<u8>>>,
     /// Requests refused for a bad signature or payload hash.
     pub bad_signatures: Mutex<u32>,
-    /// Object deletes and other calls outside the subset.
+    /// Calls outside the subset.
     pub violations: Mutex<Vec<String>>,
+    /// Every object `DELETE`, by key, in order.
+    pub deletes: Mutex<Vec<String>>,
+    /// Keys under an object lock: a `DELETE` of one is refused.
+    pub locked: Mutex<std::collections::BTreeSet<String>>,
     /// When set, the next `CompleteMultipartUpload` answers 200 with an
     /// error document.
     pub fail_next_complete: Mutex<bool>,
@@ -406,11 +412,12 @@ impl State {
                 self.uploads.lock().unwrap().remove(id);
                 return Response::new(StatusCode::NO_CONTENT);
             }
-            self.violations
-                .lock()
-                .unwrap()
-                .push(format!("DELETE {key}"));
-            return error(405, "MethodNotAllowed");
+            self.deletes.lock().unwrap().push(key.clone());
+            if self.locked.lock().unwrap().contains(&key) {
+                return error(403, "AccessDenied");
+            }
+            self.objects.lock().unwrap().remove(&key);
+            return Response::new(StatusCode::NO_CONTENT);
         }
         self.violations
             .lock()

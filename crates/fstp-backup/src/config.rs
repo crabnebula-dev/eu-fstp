@@ -9,9 +9,14 @@
 //! - `credentials_dir`, `state_dir`, `pg_bindir`: absolute paths.
 //! - `database`: `host`, a loopback address literal, and `port`.
 //! - `object_store`: `endpoint` (a host name), `port` (optional, 443),
-//!   `region` and `bucket`.
+//!   `region` and `bucket`. Or `object_stores`, a list of one to
+//!   [`MAX_STORES`] such stores, in order (ADR-012 record of lane
+//!   m10/backup-format). Exactly one of the two is given.
 //! - `keyd_socket`: optional, absolute. The `fstp-keyd` console socket,
 //!   for `init-keys` and the restore commands only.
+//! - `retention`: optional, `keep_days` (1 to 3650) and `keep_min` (1 to
+//!   1000), both required in it. Without it the agent prunes nothing
+//!   (ADR-012 record of lane m10/backup-format).
 //!
 //! An unknown member, a member given twice or a missing required member is
 //! refused, so a typo never falls back to a default. No secret is in the
@@ -35,15 +40,21 @@ pub const MAX_FILE_LEN: usize = 4096;
 /// The longest path.
 pub const MAX_PATH_LEN: usize = 1024;
 
-const MEMBERS: [&str; 7] = [
+const MEMBERS: [&str; 9] = [
     "cluster",
     "credentials_dir",
     "state_dir",
     "pg_bindir",
     "database",
     "object_store",
+    "object_stores",
     "keyd_socket",
+    "retention",
 ];
+
+/// The most object stores a configuration names (ADR-012 record of lane
+/// m10/backup-format).
+pub const MAX_STORES: usize = 3;
 
 /// The loopback database login of `pg_basebackup`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,10 +78,26 @@ pub struct FileConfig {
     pub pg_bindir: PathBuf,
     /// The database.
     pub database: DatabaseConfig,
-    /// The object store.
+    /// The first object store.
     pub object_store: Endpoint,
+    /// The further object stores, in order: each container goes to every
+    /// store (ADR-012 record of lane m10/backup-format).
+    pub more_stores: Vec<Endpoint>,
     /// The `fstp-keyd` console socket, if any.
     pub keyd_socket: Option<PathBuf>,
+    /// The retention, if the agent prunes.
+    pub retention: Option<Retention>,
+}
+
+/// How long base backups are kept (ADR-012 record of lane
+/// m10/backup-format). A base backup is pruned only when it is older than
+/// `keep_days` and not among the newest `keep_min`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    /// Days a base backup is kept at least.
+    pub keep_days: u32,
+    /// Base backups kept at least, whatever their age.
+    pub keep_min: u32,
 }
 
 fn cfg(rule: &'static str) -> BackupError {
@@ -80,8 +107,8 @@ fn cfg(rule: &'static str) -> BackupError {
 fn limits() -> ParseLimits {
     ParseLimits::default()
         .with_max_input_bytes(MAX_FILE_LEN)
-        .with_max_depth(2)
-        .with_max_container_len(8)
+        .with_max_depth(3)
+        .with_max_container_len(10)
         .with_max_string_bytes(MAX_PATH_LEN)
 }
 
@@ -205,17 +232,33 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         return Err(cfg("database.host"));
     }
     let port = port_of(db.get("port"), None, "database.port")?;
-    let os = o
-        .get("object_store")
-        .and_then(|v| v.as_object())
-        .ok_or(cfg("object_store"))?;
-    let object_store = decode_object_store(os)?;
+    let mut stores = decode_stores(o)?.ok_or(cfg("object_store"))?;
+    let object_store = stores.remove(0);
+    let more_stores = stores;
     let keyd_socket = match o.get("keyd_socket") {
         None => None,
         Some(v) => Some(path_of(
             v.as_str().ok_or(cfg("keyd_socket"))?,
             "keyd_socket",
         )?),
+    };
+    let retention = match o.get("retention") {
+        None => None,
+        Some(v) => {
+            let r = v.as_object().ok_or(cfg("retention"))?;
+            members(r, &["keep_days", "keep_min"], "retention")?;
+            let num = |name: &str, max: u64| {
+                r.get(name)
+                    .and_then(fstp_json::Value::as_u64)
+                    .filter(|n| (1..=max).contains(n))
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or(cfg("retention"))
+            };
+            Some(Retention {
+                keep_days: num("keep_days", 3650)?,
+                keep_min: num("keep_min", 1000)?,
+            })
+        }
     };
     Ok(FileConfig {
         cluster,
@@ -224,8 +267,42 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, BackupError> {
         pg_bindir,
         database: DatabaseConfig { host, port },
         object_store,
+        more_stores,
         keyd_socket,
+        retention,
     })
+}
+
+/// Decodes the stores of a configuration object: the single member
+/// `object_store`, or `object_stores`, a list of one to [`MAX_STORES`]
+/// stores in order (ADR-012 records of lanes m10/backup-format and
+/// m10/backup-followups). `None` when the object names neither. The cell
+/// and the vault configurations take the same two members for their
+/// keystore snapshots.
+///
+/// # Errors
+///
+/// [`BackupError::Config`] for both members together, an empty or
+/// overlong list, or a store [`decode_object_store`] refuses.
+pub fn decode_stores(o: &Object) -> Result<Option<Vec<Endpoint>>, BackupError> {
+    Ok(Some(
+        match (o.get("object_store"), o.get("object_stores")) {
+            (None, None) => return Ok(None),
+            (Some(v), None) => vec![decode_object_store(
+                v.as_object().ok_or(cfg("object_store"))?,
+            )?],
+            (None, Some(v)) => {
+                let list = v.as_array().ok_or(cfg("object_stores"))?;
+                if list.is_empty() || list.len() > MAX_STORES {
+                    return Err(cfg("object_stores"));
+                }
+                list.iter()
+                    .map(|s| decode_object_store(s.as_object().ok_or(cfg("object_stores"))?))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            (Some(_), Some(_)) => return Err(cfg("object_store")),
+        },
+    ))
 }
 
 /// Decodes the `object_store` member: `endpoint` (a host name), `port`
@@ -327,6 +404,46 @@ pub fn s3_credentials(dir: &Path) -> Result<Credentials, BackupError> {
     Credentials::new(&id, &secret)
 }
 
+/// The credential file names of store `n` from 1 (ADR-012 record of lane
+/// m10/backup-format): access key id, secret access key and CA.
+const MORE_STORE_FILES: [[&str; 3]; MAX_STORES - 1] = [
+    [
+        "s3-1-access-key-id",
+        "s3-1-secret-access-key",
+        "s3-1-ca.pem",
+    ],
+    [
+        "s3-2-access-key-id",
+        "s3-2-secret-access-key",
+        "s3-2-ca.pem",
+    ],
+];
+
+/// The credentials and the optional pinned CA of store `n`: store 0 takes
+/// the files of the record of lane L10, store `n` from 1 takes
+/// `s3-<n>-access-key-id`, `s3-<n>-secret-access-key` and optionally
+/// `s3-<n>-ca.pem`.
+///
+/// # Errors
+///
+/// [`BackupError::Config`] naming the file.
+pub fn store_credentials(
+    dir: &Path,
+    n: usize,
+) -> Result<(Credentials, Option<Vec<u8>>), BackupError> {
+    let Some(i) = n.checked_sub(1) else {
+        return Ok((s3_credentials(dir)?, s3_ca(dir)?));
+    };
+    let [id, secret, ca] = *MORE_STORE_FILES.get(i).ok_or(cfg("object_stores"))?;
+    let credentials = Credentials::new(&read_secret(dir, id)?, &read_secret(dir, secret)?)?;
+    let ca = match std::fs::read(dir.join(ca)) {
+        Ok(pem) => Some(pem),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(cfg(ca)),
+    };
+    Ok((credentials, ca))
+}
+
 /// The optional pinned CA of the object store.
 ///
 /// # Errors
@@ -401,6 +518,68 @@ mod tests {
         assert!(decode_file(twice.as_bytes()).is_err());
         assert!(decode_file(b"[]").is_err());
         assert!(decode_file(&vec![b' '; MAX_FILE_LEN + 1]).is_err());
+    }
+
+    /// Q25, ADR-012 record of lane m10/backup-format: `object_stores` takes
+    /// one to three stores in order, one entry stays valid, and the single
+    /// `object_store` still reads. Both together, none, an empty list and
+    /// four stores are refused.
+    #[test]
+    fn adr012_config_takes_a_list_of_stores() {
+        let one = r#"{"endpoint": "s3.gra.io.cloud.ovh.net", "region": "gra", "bucket": "fstp-pilot-backups"}"#;
+        let two = r#"{"endpoint": "s3.fr-par.scw.cloud", "port": 8443, "region": "fr-par", "bucket": "fstp-copy"}"#;
+        let single = format!("\"object_store\": {one},");
+        let with = |member: &str| GOOD.replacen(&single, member, 1);
+        assert_ne!(with("X"), GOOD);
+        let c =
+            decode_file(with(&format!("\"object_stores\": [{one}, {two}],")).as_bytes()).unwrap();
+        assert_eq!(c.object_store.bucket, "fstp-pilot-backups");
+        assert_eq!(c.more_stores.len(), 1);
+        assert_eq!(
+            (c.more_stores[0].port, c.more_stores[0].region.as_str()),
+            (8443, "fr-par")
+        );
+        let c = decode_file(with(&format!("\"object_stores\": [{one}],")).as_bytes()).unwrap();
+        assert!(c.more_stores.is_empty());
+        assert_eq!(c, decode_file(GOOD.as_bytes()).unwrap());
+        for bad in [
+            format!("{single} \"object_stores\": [{one}],"),
+            String::new(),
+            "\"object_stores\": [],".to_owned(),
+            format!("\"object_stores\": [{one}, {one}, {one}, {one}],"),
+            format!("\"object_stores\": {one},"),
+            "\"object_stores\": [{\"endpoint\": \"10.0.0.1\", \"region\": \"gra\", \"bucket\": \"abc\"}],".to_owned(),
+        ] {
+            assert!(decode_file(with(&bad).as_bytes()).is_err(), "{bad}");
+        }
+    }
+
+    /// ADR-012 record of lane m10/backup-format: `retention` takes
+    /// `keep_days` and `keep_min` in range, both, and nothing else.
+    #[test]
+    fn adr012_config_takes_retention() {
+        assert_eq!(decode_file(GOOD.as_bytes()).unwrap().retention, None);
+        let with = |r: &str| GOOD.replacen("{\n", &format!("{{\n \"retention\": {r},\n"), 1);
+        let c = decode_file(with(r#"{"keep_days": 35, "keep_min": 5}"#).as_bytes()).unwrap();
+        assert_eq!(
+            c.retention,
+            Some(Retention {
+                keep_days: 35,
+                keep_min: 5
+            })
+        );
+        for bad in [
+            r#"{"keep_days": 35}"#,
+            r#"{"keep_days": 0, "keep_min": 5}"#,
+            r#"{"keep_days": 3651, "keep_min": 5}"#,
+            r#"{"keep_days": 35, "keep_min": 0}"#,
+            r#"{"keep_days": 35, "keep_min": 1001}"#,
+            r#"{"keep_days": 35, "keep_min": 5, "keep_years": 1}"#,
+            r#"{"keep_days": "35", "keep_min": 5}"#,
+            "35",
+        ] {
+            assert!(decode_file(with(bad).as_bytes()).is_err(), "{bad}");
+        }
     }
 
     /// R-NF-02: a refused configuration never quotes its bytes, and a

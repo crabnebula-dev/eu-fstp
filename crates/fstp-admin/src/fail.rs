@@ -44,6 +44,27 @@ pub enum Fail {
     Waits(&'static str),
     /// A host command of a service refused: the command and its exit code.
     Refused(&'static str, Option<i32>),
+    /// A restore to a time was refused or stopped: why.
+    Time(TimeRefusal),
+}
+
+/// Why `fstp-admin restore --to` did not restore (ADR-028 record of lane
+/// `m10/backup-pitr`, rows "Refusals" and "Archive ends first").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeRefusal {
+    /// The time is not spelled `YYYY-MM-DDTHH:MM:SSZ`.
+    Format,
+    /// The time lies in the future.
+    Future,
+    /// A database has no base backup yet.
+    NoBackup,
+    /// The time is not after the oldest base backup of both databases:
+    /// the earliest time that works, in Unix seconds.
+    BeforeOldest(u64),
+    /// The archive holds no change after the time.
+    ArchiveEndsFirst,
+    /// The operator did not type `yes`.
+    NotConfirmed,
 }
 
 /// The cause of a failed step.
@@ -94,6 +115,9 @@ impl Fail {
         match self {
             Fail::Config(..) | Fail::NoConfig(_) | Fail::Usage => USAGE,
             Fail::Waits(_) => WAITS,
+            Fail::Time(
+                TimeRefusal::Format | TimeRefusal::Future | TimeRefusal::BeforeOldest(_),
+            ) => USAGE,
             _ => FAILED,
         }
     }
@@ -164,6 +188,14 @@ fn problem_text(p: Problem) -> (&'static str, &'static str) {
             "is not three agreement versions",
             "write the versions of the SaaS terms, the data processing agreement and the sub-processor list, like \"1,1,1\"",
         ),
+        Problem::BadCopies => (
+            "is not a list of one or two further object stores",
+            "write \"copies\": [{\"endpoint\": ..., \"region\": ..., \"bucket\": ...}], or leave it out",
+        ),
+        Problem::BadRetention => (
+            "is not a retention in range",
+            "write keep_days from 1 to 3650 and keep_min from 1 to 1000, without quotes, or leave them out",
+        ),
         Problem::BadForges => (
             "is not a list of up to 16 different forge host names",
             "write it like [\"codeberg.org\"], one lowercase host name per forge",
@@ -232,9 +264,46 @@ fn cause_line(cause: &Cause) {
         Cause::Witness(WitnessFail::Register(_)) => err(&[Part::T(
             "  fstp-witness register failed. Is the witness stopped, and was the cell registered with other keys before?",
         )]),
+        Cause::Witness(WitnessFail::Declare(_)) => err(&[Part::T(
+            "  fstp-witness declare-restore failed, so the cell and the vault will refuse to start. See admin/logs/fstp-admin.log, and keep the old databases beside the restored ones.",
+        )]),
         Cause::Witness(WitnessFail::Io) => err(&[Part::T(
             "  A witness or public key file could not be read or written.",
         )]),
+        Cause::Witness(WitnessFail::Copy(_)) => err(&[Part::T(
+            "  fstp-backup witness-archive failed: the witness records did not reach every object store. Its messages are in admin/logs/fstp-admin.log; often the object store or its key files.",
+        )]),
+        Cause::Witness(WitnessFail::Rebuild(_)) => err(&[Part::T(
+            "  fstp-backup could not fetch or open the witness copies. Check the object store and the key custody, see admin/logs/fstp-admin.log, then run the same command again.",
+        )]),
+        Cause::Witness(WitnessFail::Check(_)) => err(&[Part::T(
+            "  fstp-witness check-store refused the witness store: a record is missing, cut or changed. Nothing else was changed.",
+        )]),
+    }
+}
+
+fn time_refusal(r: TimeRefusal) {
+    match r {
+        TimeRefusal::Format => err(&[Part::T(
+            "Write the time like 2026-11-24T10:00:00Z: the date, T, the time of day, then Z. It is UTC.",
+        )]),
+        TimeRefusal::Future => err(&[Part::T(
+            "That time is in the future. Give a time in the past, in UTC.",
+        )]),
+        TimeRefusal::NoBackup => err(&[Part::T(
+            "A database has no base backup yet, so there is no earlier point to go back to. Run fstp-admin backup first.",
+        )]),
+        TimeRefusal::BeforeOldest(t) => err(&[
+            Part::T(
+                "That time is before the oldest backup of both databases. The earliest time that works is ",
+            ),
+            Part::Name(&crate::pitr::format_time(t)),
+            Part::T("."),
+        ]),
+        TimeRefusal::ArchiveEndsFirst => err(&[Part::T(
+            "The backup archive holds no change after that time, so the newest point is that same state. Nothing was changed. Run fstp-admin restore without --to.",
+        )]),
+        TimeRefusal::NotConfirmed => err(&[Part::T("Nothing was changed.")]),
     }
 }
 
@@ -295,6 +364,7 @@ pub fn report(f: &Fail) {
         Fail::Waits(what) => {
             err(&[Part::T("Not possible yet: "), Part::T(what), Part::T(".")]);
         }
+        Fail::Time(r) => time_refusal(*r),
         Fail::Refused(cmd, code) => {
             err(&[
                 Part::T(cmd),

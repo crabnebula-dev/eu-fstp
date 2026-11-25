@@ -107,7 +107,8 @@ use fstp_domain::command::{Actor, DeclarationSubject};
 use fstp_domain::decision::Vote;
 use fstp_domain::id::{
     AccountId, AssignmentId, BindingId, CallId, ContentDigest, ContractId, DecisionId, Handle,
-    LlmConfigId, MilestoneId, PlanVersionId, PolicyVersionId, ProposalId, TextId, TextRef,
+    LlmConfigId, MilestoneId, PlanVersionId, PolicyVersionId, ProgrammeId, ProposalId, TextId,
+    TextRef,
 };
 use fstp_domain::roles::Role;
 use fstp_domain::scoring::{ScoreKey, Stage};
@@ -2188,6 +2189,50 @@ pub(crate) fn synthetic_text(n: u8) -> TextRef {
         TextId::from_raw(50_000 + u128::from(n)),
         ContentDigest::from_bytes([n; 32]),
     )
+}
+
+/// The `OpenCutOffRound` by `opener` of round `round` in call `call` of
+/// `programme`: `order` ranked, `nominated` nominated, no tie-break
+/// (R-EV-08, change D5). A world that opens its round with this core
+/// command, not through `POST /calls/{c}/cut-off-rounds`, takes it here.
+///
+/// The rationale is stored first in `cell`'s text store, as the API core
+/// stores the text of a round opened through its route: a confidential
+/// text of the call's programme, behind the 18-byte header of
+/// `fstp_cell::api::content`. The round names it with the SHA-256 digest
+/// of its body. So a `committee.round` read, which is cleared on the call,
+/// opens it. A synthetic reference that no store holds fails that read
+/// closed (CI run 45507712676). The text id is `2^91` plus the round id,
+/// apart from every other synthetic text id.
+///
+/// # Errors
+///
+/// Fails when the cell's text store does not take the rationale.
+pub fn cut_off_round(
+    cell: &CellHandle,
+    opener: AccountId,
+    round: DecisionId,
+    call: CallId,
+    programme: ProgrammeId,
+    order: Vec<ProposalId>,
+    nominated: u32,
+) -> Result<fstp_domain::Command, crate::world::WorldError> {
+    let text = format!("SYNTHETIC ROUND RATIONALE {}", round.raw());
+    let id = (1u128 << 91) | round.raw();
+    // Class 1 is confidential, owner kind 2 a programme.
+    let mut plain = vec![1u8, 2u8];
+    plain.extend_from_slice(&programme.raw().to_be_bytes());
+    plain.extend_from_slice(text.as_bytes());
+    cell.store_text(id.to_be_bytes(), &plain)?;
+    let rationale = TextRef::new(
+        TextId::from_raw(id),
+        ContentDigest::from_bytes(fstp_crypto::sha256(text.as_bytes())),
+    );
+    let mut cmd = life_model::open_round(opener, round, call, order, nominated, false).cmd;
+    if let fstp_domain::Command::OpenCutOffRound { rationale: r, .. } = &mut cmd {
+        *r = rationale;
+    }
+    Ok(cmd)
 }
 
 /// The `GrantRole` of `role` on P1 to `account` from `start`.

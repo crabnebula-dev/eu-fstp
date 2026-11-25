@@ -54,6 +54,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "declaration_record_decode"
+path = "fuzz_targets/declaration_record_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "declare_args_parse"
+path = "fuzz_targets/declare_args_parse.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

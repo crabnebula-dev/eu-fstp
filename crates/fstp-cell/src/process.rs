@@ -856,6 +856,7 @@ where
                 prober: tenant_prober,
                 rt: rt.clone(),
                 host_status,
+                findings: started.findings.clone(),
                 // Lane L6's shell facts, fresh in the request, as the
                 // cell's command route reads them (ADR-027, wave 2 merge).
                 facts: Some(Arc::new(crate::api::facts::FreshFacts(Arc::clone(

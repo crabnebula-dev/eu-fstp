@@ -226,7 +226,7 @@ pub const MAX_RECEIPT_KEYS: usize = 8;
 /// The longest encoded witness receipt key, in bytes.
 pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 
-const FILE_MEMBERS: [&str; 20] = [
+const FILE_MEMBERS: [&str; 21] = [
     "assets_dir",
     "cell",
     "checks",
@@ -242,6 +242,7 @@ const FILE_MEMBERS: [&str; 20] = [
     "mail",
     "mode",
     "object_store",
+    "object_stores",
     "registered_servers",
     "shell",
     "vault",
@@ -482,6 +483,9 @@ pub struct FileConfig {
     /// configured (ADR-012 record of lane L17), in the shape `fstp-backup`
     /// uses.
     pub object_store: Option<fstp_backup::s3::Endpoint>,
+    /// The further stores of `object_stores`, after the first, in order
+    /// (ADR-012 record of lane m10/backup-followups, row "Every store").
+    pub more_stores: Vec<fstp_backup::s3::Endpoint>,
 }
 
 fn file_limits() -> ParseLimits {
@@ -761,14 +765,18 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
             v.as_object().ok_or(ConfigError::Invalid("checks"))?,
         )?),
     };
-    let object_store = match o.get("object_store") {
-        None => None,
-        Some(v) => Some(
-            fstp_backup::config::decode_object_store(
-                v.as_object().ok_or(ConfigError::Invalid("object_store"))?,
-            )
-            .map_err(|_| ConfigError::Invalid("object_store"))?,
-        ),
+    // ADR-012 record of lane m10/backup-followups: `object_store`, or
+    // `object_stores` in order, never both.
+    let (object_store, more_stores) = match fstp_backup::config::decode_stores(o) {
+        Ok(None) => (None, Vec::new()),
+        Ok(Some(mut s)) => {
+            let first = s.remove(0);
+            (Some(first), s)
+        }
+        Err(_) if o.get("object_store").is_none() => {
+            return Err(ConfigError::Invalid("object_stores"));
+        }
+        Err(_) => return Err(ConfigError::Invalid("object_store")),
     };
     Ok(FileConfig {
         core,
@@ -787,6 +795,7 @@ pub fn decode_file(bytes: &[u8]) -> Result<FileConfig, ConfigError> {
         shell,
         checks,
         object_store,
+        more_stores,
     })
 }
 
@@ -931,6 +940,46 @@ mod file_tests {
             assert_eq!(
                 decode_file(file(bad).as_bytes()),
                 Err(ConfigError::Invalid("object_store")),
+                "{bad}"
+            );
+        }
+    }
+
+    /// Q25, ADR-012 record of lane m10/backup-followups, row "Every store":
+    /// `object_stores` lists one to three stores in order, the first in
+    /// `object_store`, the rest in `more_stores`. Both members together,
+    /// an empty list and four stores are refused by name.
+    #[test]
+    fn adr012_bf_cell_config_takes_a_list_of_stores() {
+        let one = r#"{"bucket":"fstp-pilot","endpoint":"s3.gra.io.cloud.ovh.net","region":"gra"}"#;
+        let two = r#"{"bucket":"fstp-copy","endpoint":"s3.fr-par.scw.cloud","region":"fr-par"}"#;
+        let c =
+            decode_file(file(&format!(r#","object_stores":[{one},{two}]"#)).as_bytes()).unwrap();
+        assert_eq!(c.object_store.unwrap().bucket, "fstp-pilot");
+        assert_eq!(c.more_stores.len(), 1);
+        assert_eq!(c.more_stores[0].bucket, "fstp-copy");
+        let single = decode_file(file(&format!(r#","object_store":{one}"#)).as_bytes()).unwrap();
+        assert!(single.more_stores.is_empty());
+        assert!(
+            decode_file(file("").as_bytes())
+                .unwrap()
+                .more_stores
+                .is_empty()
+        );
+        for (bad, rule) in [
+            (
+                format!(r#","object_store":{one},"object_stores":[{two}]"#),
+                "object_store",
+            ),
+            (r#","object_stores":[]"#.to_owned(), "object_stores"),
+            (
+                format!(r#","object_stores":[{one},{one},{one},{one}]"#),
+                "object_stores",
+            ),
+        ] {
+            assert_eq!(
+                decode_file(file(&bad).as_bytes()),
+                Err(ConfigError::Invalid(rule)),
                 "{bad}"
             );
         }

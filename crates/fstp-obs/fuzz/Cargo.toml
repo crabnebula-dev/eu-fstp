@@ -18,6 +18,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "drill_status_decode"
+path = "fuzz_targets/drill_status_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "witness_copy_status_decode"
+path = "fuzz_targets/witness_copy_status_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

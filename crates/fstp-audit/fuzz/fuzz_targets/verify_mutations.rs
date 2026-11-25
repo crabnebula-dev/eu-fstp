@@ -145,7 +145,9 @@ impl Parts {
         if witness {
             match self.witness.first_mut()? {
                 WitnessRecord::Prepare(p) => Some(p),
-                WitnessRecord::Abort { .. } | WitnessRecord::InDoubtAbsent { .. } => None,
+                WitnessRecord::Abort { .. }
+                | WitnessRecord::InDoubtAbsent { .. }
+                | WitnessRecord::RestoreDeclared(_) => None,
             }
         } else {
             self.anchors.first_mut()

@@ -185,6 +185,16 @@ pub fn preflight(layout: &Layout) -> Result<(), Fail> {
             &b.secret_key_file,
             "the object store secret key (backup.secret_key_file)",
         )?;
+        for c in &b.copies {
+            need_file(
+                &c.access_key_file,
+                "the access key id of a further object store (backup.copies)",
+            )?;
+            need_file(
+                &c.secret_key_file,
+                "the secret key of a further object store (backup.copies)",
+            )?;
+        }
     }
     Ok(())
 }
@@ -660,10 +670,21 @@ pub fn write_configs(layout: &Layout, f: &Facts) -> Result<(), Fail> {
         for (service, user) in [("cell", stack::CELL_USER), ("vault", stack::VAULT_USER)] {
             let dir = layout.creds(service);
             std::fs::create_dir_all(&dir).map_err(io(step))?;
-            for (from, to) in [
-                (&b.access_key_file, "s3-access-key-id"),
-                (&b.secret_key_file, "s3-secret-access-key"),
-            ] {
+            // ADR-028 record of lane `m10/backup-followups`: store `n` from
+            // 1 takes `s3-<n>-access-key-id` and `s3-<n>-secret-access-key`.
+            let mut files = vec![
+                (b.access_key_file.clone(), "s3-access-key-id".to_owned()),
+                (b.secret_key_file.clone(), "s3-secret-access-key".to_owned()),
+            ];
+            for (i, s) in b.copies.iter().enumerate() {
+                let n = i.saturating_add(1);
+                files.push((s.access_key_file.clone(), format!("s3-{n}-access-key-id")));
+                files.push((
+                    s.secret_key_file.clone(),
+                    format!("s3-{n}-secret-access-key"),
+                ));
+            }
+            for (from, to) in &files {
                 let bytes = std::fs::read(from).map_err(io(step))?;
                 let file = dir.join(to);
                 put(&file, &bytes, step)?;
@@ -932,6 +953,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         m.ensure(&stack::witness(layout))
             .map_err(|e| Fail::Step("witness", e.into()))?,
     );
+    restart_for_snapshot_upgrade(layout, &m, "vault", &stack::vault(layout))?;
     say_done(
         "vault running",
         m.ensure(&stack::vault(layout))
@@ -992,6 +1014,7 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         say_done("first admin invitation", true);
         crate::cellcmd::refresh_admins(layout, &mut state, false)?;
     }
+    restart_for_snapshot_upgrade(layout, &m, "cell", &stack::cell(layout))?;
     say_done(
         "cell running",
         m.ensure(&stack::cell(layout))
@@ -1105,4 +1128,103 @@ pub fn run(layout: &Layout) -> Result<(), Fail> {
         "Run fstp-admin status at any time to see what to do next.",
     )]);
     Ok(())
+}
+
+/// The magic of a version 1 snapshot key file of `service`, `cell` or
+/// `vault` (ADR-004 record of lane L17). `fstp-admin` reads only these 22
+/// bytes, so it reaches no custody (ADR-028 record of lane
+/// `m10/backup-followups`, row "Snapshot key upgrade").
+fn snapshot_v1_magic(service: &str) -> Option<(&'static str, &'static [u8; 22])> {
+    match service {
+        "cell" => Some(("cell-snapshot.key", b"fstp-cell-snapshots-v1")),
+        "vault" => Some(("vault-snapshot.key", b"fstp-vault-snapshot-v1")),
+        _ => None,
+    }
+}
+
+/// Whether the credentials directory of `service` holds a version 1
+/// snapshot key file, which the service upgrades at its next start
+/// (ADR-012 record of lane m10/backup-followups, row "Upgrade").
+#[must_use]
+pub fn snapshot_key_v1(layout: &Layout, service: &str) -> bool {
+    let Some((name, magic)) = snapshot_v1_magic(service) else {
+        return false;
+    };
+    std::fs::read(layout.creds(service).join(name))
+        .is_ok_and(|b| b.get(..magic.len()) == Some(&magic[..]))
+}
+
+/// Stops `s` when its snapshot key file is version 1, so the start that
+/// follows upgrades it and takes a fresh snapshot a minute later (ADR-028
+/// record of lane `m10/backup-followups`, row "Snapshot key upgrade").
+fn restart_for_snapshot_upgrade(
+    layout: &Layout,
+    m: &Manager,
+    service: &str,
+    s: &crate::svc::Service,
+) -> Result<(), Fail> {
+    if snapshot_key_v1(layout, service) {
+        m.stop(s)
+            .map_err(|e| Fail::Step("snapshot key", e.into()))?;
+        out(&[
+            Part::T("  note     the "),
+            Part::T(if service == "cell" { "cell" } else { "vault" }),
+            Part::T(" upgrades its snapshot key at this start"),
+        ]);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// ADR-028 record of lane `m10/backup-followups`, row "Snapshot key
+    /// upgrade": `setup` restarts the cell or the vault only while its
+    /// credentials directory holds a version 1 snapshot key file. A
+    /// version 2 file, a missing one and another service's magic do not
+    /// count.
+    #[test]
+    fn adr012_bf_setup_restarts_a_service_with_a_version_1_snapshot_key() {
+        let root = std::env::temp_dir().join(format!("fstp-admin-bf-{}", random_hex(8).unwrap()));
+        let text = format!(
+            r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{{"relay":"smtp.example.eu","username":"cell"}},
+            "services":"direct","paths":{{"etc":"{0}/etc","state":"{0}/state","bin":"{0}/bin","pg_bin":"/usr/lib/postgresql/16/bin"}}}}"#,
+            root.display()
+        );
+        let layout = Layout::new(crate::config::decode(text.as_bytes()).unwrap());
+        for (service, name, v1, v2) in [
+            (
+                "cell",
+                "cell-snapshot.key",
+                &b"fstp-cell-snapshots-v1"[..],
+                &b"fstp-cell-snapshots-v2"[..],
+            ),
+            (
+                "vault",
+                "vault-snapshot.key",
+                b"fstp-vault-snapshot-v1",
+                b"fstp-vault-snapshot-v2",
+            ),
+        ] {
+            let dir = layout.creds(service);
+            std::fs::create_dir_all(&dir).unwrap();
+            assert!(!snapshot_key_v1(&layout, service));
+            std::fs::write(dir.join(name), [v1, &[0; 40][..]].concat()).unwrap();
+            assert!(snapshot_key_v1(&layout, service));
+            std::fs::write(dir.join(name), [v2, &[0; 40][..]].concat()).unwrap();
+            assert!(!snapshot_key_v1(&layout, service));
+        }
+        std::fs::write(
+            layout.creds("cell").join("cell-snapshot.key"),
+            b"fstp-vault-snapshot-v1",
+        )
+        .unwrap();
+        assert!(!snapshot_key_v1(&layout, "cell"));
+        assert!(!snapshot_key_v1(&layout, "witness"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

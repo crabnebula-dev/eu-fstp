@@ -327,6 +327,19 @@ where
             .map_err(append_error)
     }
 
+    async fn append_events_with(
+        &mut self,
+        at: i64,
+        events: Vec<Vec<u8>>,
+        own: Vec<fstp_pgstore::OwnRow>,
+    ) -> Result<(), CellAppendError> {
+        self.inner
+            .append_events_with(at, events, &own)
+            .await
+            .map(|_| ())
+            .map_err(append_error)
+    }
+
     async fn stored_commit(&self, seq: Seq) -> Result<Option<StoredCommit>, StoreError> {
         let c = self
             .inner

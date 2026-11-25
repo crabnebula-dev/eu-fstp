@@ -179,7 +179,9 @@ jobs:
           - { part: celltest-sessions, packages: -p fstp-celltest --test r_lg_04_sessions_and_devices --test i78_stepup --test i38_egress --test r_nf_m3, timeout: 60 }
           # Every other binary, the unit tests and the doc tests: about
           # 1,160 s. slice_devstack runs in the devstack part. The skips
-          # leave the isolation tests to the isolation part.
+          # leave the isolation tests to the isolation part, and the backup
+          # and witness copy end-to-end tests to the devstack part, which
+          # builds their binaries.
           - part: celltest
             packages: >-
               -p fstp-celltest --lib --bins
@@ -204,7 +206,7 @@ jobs:
               --test sa11_display_names_pg --test adr007_erasure_log_pg
               --test l24_verification_request_pg
               ; -p fstp-celltest --doc
-            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross t_iso_public_rate_limit_keys_are_per_cell
+            skip: t_iso_i19_no_canary t_iso_i19_teeth t_iso_i20_ t_db_iso_ i80_root_canary_ i80_destroyed_epoch_seal_key_absent_from_process_memory i19_cell_process_serves_one_cell i87_two_cells_never_cross t_iso_public_rate_limit_keys_are_per_cell adr012_bh_backup_wal_archive_and_drill_over_real_postgres i24_adr012_wc_witness_copy_and_rebuild_over_real_postgres i24_adr012_wc_host_loss_restore_moves_a_diverged_store_aside adr012_declared_restore_starts_cell_and_vault_with_the_lost_window_as_a_finding
             timeout: 60
           # I-19, I-20, I-80, I-82, I-83, I-87: the isolation (multi-cell) job of
           # m3-design sections 14.4 and 14.8, as a part of its own. It runs
@@ -223,7 +225,7 @@ jobs:
           # the fstp-cell binary. Lane L9: i19_edge_binary_e2e too, which
           # also needs the fstp-edge binary. Lane L8: g12_vault_run_e2e as
           # well, after the same step builds the fstp-vault binary.
-          - { part: devstack, packages: -p fstp-celltest --test slice_devstack --test prod_mcp_e2e --test i19_edge_binary_e2e --test i19_route_feed_e2e --test g12_vault_run_e2e --test l19_admin_setup_e2e, timeout: 60 }
+          - { part: devstack, packages: -p fstp-celltest --test slice_devstack --test prod_mcp_e2e --test i19_edge_binary_e2e --test i19_route_feed_e2e --test g12_vault_run_e2e --test l19_admin_setup_e2e --test adr012_backup_health_e2e --test adr012_witness_copy_e2e --test adr012_declared_restore_e2e, timeout: 60 }
           - part: domain-testkit
             packages: -p fstp-domain-testkit
             timeout: 60
@@ -471,9 +473,15 @@ jobs:
       # Lane L19: l19_admin_setup_e2e runs fstp-admin setup over the
       # binaries of fstp-admin, fstp-witness and fstp-pgagent too; cargo test
       # builds fstp-custody-sim with its own package.
+      # Lane m10/backup-health: adr012_backup_health_e2e runs fstp-admin
+      # backup and drill over the fstp-backup binary and a fake S3.
+      # Lane m10/witness-copy: adr012_witness_copy_e2e copies the witness
+      # store and rebuilds it through fstp-admin restore, over the same.
+      # Lane m10/declared-restore: adr012_declared_restore_e2e runs fstp-admin
+      # restore --to over the same binaries and declares it at the witness.
       - name: Build the fstp-cell, fstp-edge and fstp-vault binaries for the devstack part
         if: matrix.part == 'devstack'
-        run: cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-edge --bin fstp-edge -p fstp-vault --bin fstp-vault -p fstp-control --bin fstp-control --bin fstp-pgagent -p fstp-admin --bin fstp-admin -p fstp-witness --bin fstp-witness
+        run: cargo build --locked -p fstp-cell --bin fstp-cell -p fstp-edge --bin fstp-edge -p fstp-vault --bin fstp-vault -p fstp-control --bin fstp-control --bin fstp-pgagent -p fstp-admin --bin fstp-admin -p fstp-witness --bin fstp-witness -p fstp-backup --bin fstp-backup
       # Some tests are red on purpose: each waits on a seam that a named
       # lane closes, and ci/known-red.txt lists it with that seam and lane.
       # The run itself may fail; test-gate decides. It fails on any red

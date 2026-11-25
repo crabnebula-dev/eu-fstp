@@ -34,6 +34,34 @@ doc = false
 bench = false
 
 [[bin]]
+name = "archiver_row_decode"
+path = "fuzz_targets/archiver_row_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "df_available_decode"
+path = "fuzz_targets/df_available_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "restore_time_parse"
+path = "fuzz_targets/restore_time_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chain_head_parse"
+path = "fuzz_targets/chain_head_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "guarded_copy_header_decode"
 path = "fuzz_targets/guarded_copy_header_decode.rs"
 test = false

@@ -13,16 +13,33 @@
 //   a word, so colour is never the only cue (R-NF-03). A row that is not
 //   green says who acts and what to tell them.
 //
+// - ADR-012 record of lane m10/declared-restore: each audit log finding,
+//   a window a declared restore lost or a possible deletion, has a red
+//   light and an Acknowledge button (`tenant.acknowledge_finding`). An
+//   acknowledged finding stays listed with a green light, and an open
+//   one makes the whole page red.
+//
 // No name, address or account number is shown: handles only (I-27).
 
 import { h, type Child } from "../../core/dom.js";
 import type { I18n, Label } from "../../core/i18n.js";
 import type { RouteDef } from "../../core/router.js";
-import { link, section } from "../../grant/kit.js";
+import { act, anyObject, link, section } from "../../grant/kit.js";
 import { readAdmins, type AdminRow } from "../../onboarding/model.js";
 import { frame, pageI18n, readOp, type Frame, type JudgingPage, type PageEnv } from "../../reviewer/kit.js";
 import { SYSTEM_LABELS } from "./messages.en.js";
-import { decodeSystem, hostNext, overall, rows, type Light, type Row, type SystemReply } from "./model.js";
+import {
+  acknowledgeBody,
+  decodeSystem,
+  hostNext,
+  openFindings,
+  overall,
+  rows,
+  type Finding,
+  type Light,
+  type Row,
+  type SystemReply,
+} from "./model.js";
 
 /** The paths of the page. */
 export const SYSTEM_PATHS = Object.freeze({
@@ -105,12 +122,53 @@ function adminsSection(t: I18n, admins: readonly AdminRow[] | null): HTMLElement
   return section("system-admins-section", t.label("system.admins.heading"), body);
 }
 
-/** The page body of one reply. */
-export function systemBody(t: I18n, r: SystemReply, admins: readonly AdminRow[] | null): Child[] {
+/** One finding: its light, its sentence, and an Acknowledge button while it is open. */
+function findingItem(t: I18n, f: Finding, acknowledge: ((id: string) => void) | null): HTMLElement {
+  const open = f.acknowledgedAt === null;
+  const parts: Child[] = [
+    h("span", { class: open ? BADGE.red : BADGE.green, "data-light": open ? "red" : "green" }, [
+      t.label(open ? "system.findings.open" : "system.findings.acknowledged"),
+    ]),
+    " ",
+    h("span", { class: "system-sentence" }, [
+      t.label(`system.findings.${f.kind}.${f.chain}`, { from: f.from.toString(), to: f.to.toString() }),
+    ]),
+  ];
+  if (open) {
+    const b = h("button", { type: "button", class: "system-acknowledge", "data-finding": f.id }, [
+      t.label("system.findings.acknowledge"),
+    ]);
+    if (acknowledge === null) {
+      b.setAttribute("disabled", "");
+    } else {
+      b.addEventListener("click", () => acknowledge(f.id));
+    }
+    parts.push(" ", b);
+  }
+  return h("li", { "data-finding": f.id, "data-kind": f.kind, "data-open": open ? "true" : "false" }, parts);
+}
+
+/** The audit log findings, when there are any (ADR-012 record of lane m10/declared-restore). */
+function findingsSection(t: I18n, r: SystemReply, acknowledge: ((id: string) => void) | null): HTMLElement | null {
+  if (r.findings.length === 0) return null;
+  return section("system-findings", t.label("system.findings.heading"), [
+    h("p", {}, [t.label("system.findings.intro")]),
+    h("ul", { id: "system-findings-rows" }, r.findings.map((f) => findingItem(t, f, acknowledge))),
+  ]);
+}
+
+/** The page body of one reply. `acknowledge` sends the acknowledgement of a finding; null renders the buttons disabled. */
+export function systemBody(
+  t: I18n,
+  r: SystemReply,
+  admins: readonly AdminRow[] | null,
+  acknowledge: ((id: string) => void) | null = null,
+): Child[] {
   const all = rows(r);
   const top = all.filter((x) => ["report", "cell", "vault", "services", "edge", "mail"].includes(x.id));
-  const care = all.filter((x) => ["backups", "keys", "snapshots", "certificates"].includes(x.id));
-  const light = overall(all);
+  const care = all.filter((x) => ["backups", "archive", "witness", "drill", "keys", "snapshots", "certificates"].includes(x.id));
+  // An open finding needs a tenant admin now (I-24, design risk R9).
+  const light: Light = openFindings(r).length > 0 ? "red" : overall(all);
   const out: Child[] = [
     h("p", {}, [t.label("system.intro")]),
     h("p", { id: "system-overall", class: "callout", "data-light": light }, [
@@ -119,6 +177,8 @@ export function systemBody(t: I18n, r: SystemReply, admins: readonly AdminRow[] 
       t.label(`system.overall.${light}`),
     ]),
   ];
+  const findings = findingsSection(t, r, acknowledge);
+  if (findings !== null) out.push(findings);
   const next = hostNext(r);
   if (next !== null) {
     out.push(
@@ -153,8 +213,19 @@ async function mountSystem(env: PageEnv): Promise<void> {
     }
     const a = await readOp(env, "tenant.list_admins", {}, isAdmins);
     const admins = a.ok ? readAdmins(a.data) : null;
+    const acknowledge = (id: string): void => {
+      void (async () => {
+        const done = await act(env, "tenant.acknowledge_finding", {}, acknowledgeBody(id), anyObject);
+        if (!done.ok) {
+          f.problem(done.problem);
+          return;
+        }
+        await load();
+        f.status(t.label("system.findings.done"));
+      })();
+    };
     f.clearAlert();
-    f.show([...systemBody(t, data, admins), h("p", {}, [refresh]), h("p", {}, [link(SYSTEM_PATHS.home, t.label("system.back"))])]);
+    f.show([...systemBody(t, data, admins, acknowledge), h("p", {}, [refresh]), h("p", {}, [link(SYSTEM_PATHS.home, t.label("system.back"))])]);
   };
   refresh.addEventListener("click", () => {
     void (async () => {

@@ -903,6 +903,7 @@ pub fn request_body(op: &str, state: StateProfile, ids: &BodyIds) -> Result<Obje
         "admin.approve_break_glass" => obj(vec![("approve", Value::Bool(true))]),
         "admin.request_erasure" => obj(vec![("cause", s("retention_expiry")), ("grant", s("41"))]),
         "admin.erase_document" => obj(vec![("reason", s("Synthetic matrix reason"))]),
+        "tenant.acknowledge_finding" => obj(vec![("finding", s("77"))]),
         "creator.invite" => obj(vec![
             ("email", s("invitee@matrix.invalid")),
             ("role", s("programme_manager")),

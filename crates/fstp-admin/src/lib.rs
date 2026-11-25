@@ -9,6 +9,9 @@
 //! fstp-admin start | stop               every service, in order
 //! fstp-admin renew                      certificates near their end, and the route pins
 //! fstp-admin backup | restore           base backups of both databases
+//! fstp-admin drill                      the monthly restore drill into a scratch copy
+//! fstp-admin witness-copy               copy the witness records off the host; a timer runs it
+//! fstp-admin restore --to <time>        both databases to a time, like 2026-11-24T10:00:00Z (UTC)
 //! fstp-admin backup-keys <dir>          the off-host copy of the custody entries and their passphrases
 //! fstp-admin pair-custodian <host>      pair the second custodian (once, on the pilot)
 //! fstp-admin custodian <file>           install the second custodian (on its machine)
@@ -22,13 +25,17 @@
 //! `--config <path>` or `FSTP_ADMIN_CONFIG` names another configuration
 //! file. Exit codes: [`fail`].
 
+pub mod archive;
 pub mod cellcmd;
 pub mod config;
 pub mod custodian;
+pub mod declare;
+pub mod drill;
 pub mod fail;
 pub mod layout;
 pub mod ops;
 pub mod pg;
+pub mod pitr;
 pub mod pki;
 pub mod render;
 pub mod route;
@@ -61,6 +68,9 @@ pub fn usage() {
         "  renew                      renew certificates near their end and update the route",
         "  backup                     back up both databases now",
         "  restore                    restore both databases from their newest backups",
+        "  drill                      test that the backups restore and open, in a scratch copy",
+        "  witness-copy               copy the new witness records to the object stores; a timer runs it every minute",
+        "  restore --to <time>        restore both databases to a time in UTC, like 2026-11-24T10:00:00Z",
         "  backup-keys <dir>          copy the sealed keys and their passphrases off the host, for example to a USB stick",
         "  pair-custodian <host>      pair this host with its second custodian (once)",
         "  custodian <file>           on the custodian machine: install it from the pairing file",
@@ -147,7 +157,14 @@ fn dispatch(config_path: &Path, args: &[String]) -> Result<u8, Fail> {
         ["stop"] => ops::stop(&need()?).map(|()| OK),
         ["renew"] => after(&need()?, ops::renew),
         ["backup"] => after(&need()?, ops::backup),
-        ["restore"] => ops::restore(&need()?).map(|()| OK),
+        ["drill"] => after(&need()?, drill::run),
+        ["witness-copy"] => witness::copy(&need()?).map(|()| OK),
+        ["restore"] => ops::restore(&need()?, None).map(|()| OK),
+        // ADR-028 record of lane `m10/backup-pitr`.
+        ["restore", "--to", time] => {
+            let t = pitr::parse_time(time).ok_or(Fail::Time(fail::TimeRefusal::Format))?;
+            ops::restore(&need()?, Some(t)).map(|()| OK)
+        }
         ["backup-keys", dest] => {
             let l = need()?;
             let mut st = state::State::load(&l.admin_dir().join("state"))

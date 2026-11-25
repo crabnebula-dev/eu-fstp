@@ -404,6 +404,19 @@ impl<R: Runtime> Client<R> {
         self.cancel.clone()
     }
 
+    /// Checks in one round trip that the server still serves this
+    /// connection, without running a statement. A connection the server
+    /// ended, by a restart for example, fails and is broken afterwards
+    /// (ADR-005 record of lane m10/store-reconnect).
+    ///
+    /// # Errors
+    ///
+    /// The server's FATAL error, a connection error, or
+    /// [`ErrorKind::Timeout`].
+    pub async fn ping(&mut self) -> Result<(), Error> {
+        timed!(self, self.session.ping())
+    }
+
     /// Sends Terminate and closes the connection.
     ///
     /// # Errors
