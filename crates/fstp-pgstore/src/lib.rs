@@ -101,7 +101,7 @@ pub use store::{
     OUTBOX_FINDING_ACK, OUTBOX_LOST_IN_RESTORE, OUTBOX_POSSIBLE_DELETION, OwnRow, PendingConfirm,
     PgRecordStore, SESSION_END_BY_RECORD, SESSION_END_CREDENTIAL_DISABLED, SessionEnd, SideEffects,
     StepUpUse, StoredCommit, finding_ack_idem, lost_in_restore_idem, outbox_written,
-    possible_deletion_idem, system_clock,
+    possible_deletion_idem, read_chain_rows_of, system_clock,
 };
 pub use stored::{
     MAX_SEALED_LEN, MIN_SEALED_LEN, STORED_ENTRY_FORMAT, StoredEntry, decode_stored_entry,

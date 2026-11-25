@@ -24,6 +24,10 @@
 //! - `check-keystore <port>`: the restore drill's check that the keystore
 //!   rows of a scratch cluster at `port` open; it writes nothing (ADR-012
 //!   record of lane m10/backup-health).
+//! - `check-chain <port> <dir> <out>`: the restore drill's check of the
+//!   App chain of a scratch cluster at `port` against the witness copy
+//!   in `<dir>`; it writes one check line to the new file `<out>` and
+//!   nothing else (ADR-012 record of lane m10/drill-chain).
 //!
 //! It writes typed events only (R-NF-02). A refused configuration or
 //! argument exits with status 2, any other failure with status 1.

@@ -547,6 +547,60 @@ pub fn check_keystore(cfg: &FileConfig, port: u16) -> Result<(), CellError> {
     })
 }
 
+/// `fstp-cell check-chain <port> <copy dir> <out>` (ADR-012 record of lane
+/// m10/drill-chain, row "Check-only commands"): the restore drill's check
+/// of the App chain of a scratch cluster at `port` against the witness
+/// copy that `fstp-backup witness-fetch` wrote to `copy`. It reads the
+/// chain over the writer login with the start-up reader, loads the copy
+/// with the witness file store reader, and runs
+/// `fstp_audit::verify::verify_restored` under the pinned witness receipt
+/// keys. It opens no key, writes no row, reaches no witness and serves
+/// nothing. On success it writes one check line
+/// ([`fstp_obs::drill_status::ChainCheck`]) to the new file `out`, mode
+/// 0600, since standard output belongs to the metric writer (R-NF-02).
+///
+/// # Errors
+///
+/// [`CellError::Config`] for a refused configuration or credential,
+/// [`CellError::Store`] when the scratch database does not answer, and
+/// [`CellError::ChainTamper`] for a copy that does not load or a chain
+/// that does not verify against it.
+pub fn check_chain(cfg: &FileConfig, port: u16, copy: &Path, out: &Path) -> Result<(), CellError> {
+    use fstp_audit::{CellId, ChainId};
+    use fstp_witness::drill::{Restored, check_restored, load_copy};
+    let cell = cfg.core.cell.0;
+    let witness_keys =
+        config::decode_receipt_keys(&read(&cfg.credentials_dir, "witness-receipt-keys")?)
+            .map_err(CellError::Config)?;
+    let copied = load_copy(copy, CellId(cell), ChainId::App).map_err(|_| CellError::ChainTamper)?;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    let line = rt.block_on(async move {
+        let mut scratch = cfg.clone();
+        scratch.database.port = port;
+        let writer = login(&scratch, fstp_pgstore::Role::Writer)?
+            .server_check(process::application_server_check(&registered_of(cfg)));
+        let pool = fstp_pgstore::Pool::open(task_rt, cell, fstp_pgstore::Role::Writer, writer, 1)
+            .await
+            .map_err(|_| CellError::Store(fstp_ledger::StoreError::Unavailable))?;
+        let chain = fstp_pgstore::read_chain_rows_of(&pool)
+            .await
+            .map_err(|_| CellError::Store(fstp_ledger::StoreError::Unavailable))?;
+        let restored = Restored {
+            cell: CellId(cell),
+            chain: ChainId::App,
+            rows: &chain.rows,
+            ledger: &chain.stored,
+            anchors: &chain.anchors,
+        };
+        check_restored(&restored, &copied, &witness_keys).map_err(|_| CellError::ChainTamper)
+    })?;
+    write_new(
+        out,
+        fstp_obs::drill_status::encode_chain_check(&line).as_bytes(),
+    )
+}
+
 /// Serves the cell of `cfg` until SIGTERM or SIGINT drains it (module
 /// documentation).
 ///
@@ -815,6 +869,18 @@ pub enum Command {
     /// scratch cluster at `port`, and write nothing (ADR-012 record of lane
     /// m10/backup-health).
     CheckKeystore(u16),
+    /// `check-chain <port> <copy dir> <out>`: check the App chain of a
+    /// restore drill's scratch cluster at `port` against the fetched
+    /// witness copy in `copy dir`, and write the check line to the new file
+    /// `out` (ADR-012 record of lane m10/drill-chain).
+    CheckChain {
+        /// The scratch cluster's port.
+        port: u16,
+        /// The fetched witness copy.
+        copy: PathBuf,
+        /// The new file for the check line.
+        out: PathBuf,
+    },
     /// `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
     /// (ADR-026 "Tenant provisioning").
     ProvisionTenant {
@@ -869,6 +935,11 @@ fn snapshot_id_arg(s: &str) -> Option<[u8; 16]> {
     u128::from_str_radix(s, 16).ok().map(u128::to_be_bytes)
 }
 
+/// A path argument: not empty and not an option.
+fn path_arg(s: &str) -> bool {
+    !s.is_empty() && !s.starts_with('-')
+}
+
 /// A port: a canonical decimal from 1 to 65535.
 fn port_arg(s: &str) -> Option<u16> {
     if s.is_empty() || s.len() > 5 || !s.bytes().all(|b| b.is_ascii_digit()) || s.starts_with('0') {
@@ -905,6 +976,13 @@ pub fn parse_args(args: &[String]) -> Result<Command, CellError> {
         ["check-keystore", port] => port_arg(port)
             .map(Command::CheckKeystore)
             .ok_or_else(|| cfg_err("arguments")),
+        ["check-chain", port, copy, out] if path_arg(copy) && path_arg(out) => port_arg(port)
+            .map(|port| Command::CheckChain {
+                port,
+                copy: PathBuf::from(copy),
+                out: PathBuf::from(out),
+            })
+            .ok_or_else(|| cfg_err("arguments")),
         ["provision-tenant"] => Ok(Command::ProvisionTenant { agreements: None }),
         ["provision-tenant", "--agreements", v] => Ok(Command::ProvisionTenant {
             agreements: Some(agreements_arg(v)?),
@@ -933,6 +1011,7 @@ pub fn run_command(command: &Command) -> Result<(), CellError> {
         Command::CopyKeyFile(out) => copy_key_file(&cfg, out),
         Command::RestoreKeystore(id) => restore_keystore(&cfg, *id),
         Command::CheckKeystore(port) => check_keystore(&cfg, *port),
+        Command::CheckChain { port, copy, out } => check_chain(&cfg, *port, copy, out),
         Command::RetireKeyFileCopy(id) => {
             crate::key_copy::retire(&cfg.credentials_dir, *id).map_err(|e| CellError::Keys(e.0))
         }
@@ -1056,6 +1135,43 @@ mod tests {
             &["check-keystore", "65536"],
             &["check-keystore", "+5546"],
             &["check-keystore", "5546", "x"],
+        ] {
+            assert!(parse_args(&s(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, row "Check-only commands":
+    /// `check-chain` takes exactly a port, a canonical decimal from 1 to
+    /// 65535, the directory of the fetched witness copy and the file for
+    /// the check line.
+    #[test]
+    fn adr012_dc_cell_check_chain_takes_a_port_and_a_directory() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(&s(&[
+                "check-chain",
+                "5546",
+                "/var/lib/fstp/drill/chain/witness",
+                "/var/lib/fstp/drill/chain/check"
+            ])),
+            Ok(Command::CheckChain {
+                port: 5546,
+                copy: PathBuf::from("/var/lib/fstp/drill/chain/witness"),
+                out: PathBuf::from("/var/lib/fstp/drill/chain/check"),
+            })
+        );
+        for bad in [
+            &["check-chain"][..],
+            &["check-chain", "5546"],
+            &["check-chain", "5546", "/d"],
+            &["check-chain", "0", "/d", "/o"],
+            &["check-chain", "05546", "/d", "/o"],
+            &["check-chain", "65536", "/d", "/o"],
+            &["check-chain", "5546", "", "/o"],
+            &["check-chain", "5546", "/d", ""],
+            &["check-chain", "5546", "--x", "/o"],
+            &["check-chain", "5546", "/d", "-o"],
+            &["check-chain", "5546", "/d", "/o", "x"],
         ] {
             assert!(parse_args(&s(bad)).is_err(), "{bad:?}");
         }
