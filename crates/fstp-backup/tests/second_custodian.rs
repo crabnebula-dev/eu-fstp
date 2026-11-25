@@ -633,3 +633,72 @@ fn adr012_publish_key_marks_the_copy() {
     );
     assert_eq!(fstp_backup::PUBLISHED_MARK, "key-published");
 }
+
+/// F-044, TH-51, ADR-012 record of lane m10/key-pin-reason, row
+/// "Legitimate changes": the second custodian's adoption of the published
+/// key file writes the pin in the same step, with no operator step, and
+/// creates the state directory when it is missing. A host with a version
+/// 2 key file adopts nothing and keeps its pin.
+#[test]
+fn f044_th51_adoption_writes_the_pin() {
+    let rt = rt();
+    let fake = FakeS3::start(&rt, AK, SK, REGION, BUCKET);
+    let (a, b) = (MemCustody::default(), MemCustody::default());
+    let u = upgraded(&rt, &a, &b);
+    let body = rt.block_on(custodian::publish(&a, &u.v2)).unwrap();
+    fake.state
+        .objects
+        .lock()
+        .unwrap()
+        .insert(custodian::published_name(CLUSTER), body);
+
+    let creds = temp_dir("pin-adopt-creds");
+    std::fs::write(creds.join("s3-access-key-id"), AK).unwrap();
+    std::fs::write(creds.join("s3-secret-access-key"), SK).unwrap();
+    std::fs::write(creds.join("s3-ca.pem"), fake_s3::CA_PEM).unwrap();
+    std::fs::write(creds.join(keyfile::KEY_FILE), &u.v1).unwrap();
+    std::fs::write(creds.join(custodian::ESCROW_FILE), &u.escrow).unwrap();
+    std::fs::write(creds.join(custodian::CUSTODIAN_KEY_FILE), &u.custodian_key).unwrap();
+    let state = temp_dir("pin-adopt-state").join("not-yet");
+    let cfg = fstp_backup::config::FileConfig {
+        cluster: CLUSTER,
+        credentials_dir: creds.clone(),
+        state_dir: state.clone(),
+        pg_bindir: PathBuf::from("/nonexistent/pg/bin"),
+        database: fstp_backup::config::DatabaseConfig {
+            host: std::net::IpAddr::from([127, 0, 0, 1]),
+            port: 5432,
+        },
+        object_store: Endpoint {
+            host: "localhost".to_owned(),
+            port: fake.port(),
+            region: REGION.to_owned(),
+            bucket: BUCKET.to_owned(),
+        },
+        more_stores: Vec::new(),
+        keyd_socket: None,
+        retention: None,
+    };
+    fstp_backup::adopt_key_file_with(&rt, Ok(&b), &cfg).unwrap();
+    assert_eq!(std::fs::read(creds.join(keyfile::KEY_FILE)).unwrap(), u.v2);
+    let pin_path = state.join(fstp_backup::keypin::PIN_FILE);
+    assert_eq!(
+        std::fs::read(&pin_path).unwrap(),
+        fstp_backup::keypin::encode(&u.v2).into_bytes()
+    );
+    fstp_backup::keypin::check(&state, &u.v2).unwrap();
+    // Adopted once: the next restore adopts nothing, and needs no custody.
+    fstp_backup::adopt_key_file_with::<MemCustody>(
+        &rt,
+        Err(BackupError::Config("keyd_socket")),
+        &cfg,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(&pin_path).unwrap(),
+        fstp_backup::keypin::encode(&u.v2).into_bytes()
+    );
+    let _ = std::fs::remove_dir_all(&creds);
+    let _ = std::fs::remove_dir_all(state.parent().unwrap());
+    fake.stop(&rt);
+}

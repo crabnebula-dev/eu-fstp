@@ -56,7 +56,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::anchor::{AnchorRow, anchor_signature_verifies, receipt_signature_verifies};
 use crate::chain::{ChainId, Link, RowKind, StoredEntry, StoredRow, genesis, link, stored_hash};
-use crate::witness::{Live, WitnessRecord, declaration_signature_verifies};
+use crate::witness::{Live, WitnessRecord, declaration_verifies};
 use crate::{AuditError, CellId, PUBLIC_KEY_LEN, SIGNATURE_LEN};
 
 /// A change the verifier found.
@@ -490,7 +490,7 @@ fn row_signed(view: &ChainView<'_>, row: &AnchorRow) -> bool {
 /// prepare of the witness log. The first copy that fails names its head.
 /// A witness copy equal to a checked `audit.anchor` row is skipped, since
 /// its outcome is the same.
-fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
+fn signatures(view: &ChainView<'_>, declaration_keys: &[Vec<u8>]) -> Result<(), AuditError> {
     let mut checked: BTreeMap<(u64, Link), &AnchorRow> = BTreeMap::new();
     for row in view.anchors {
         if !row_signed(view, row) {
@@ -504,7 +504,13 @@ fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
         let p = match w {
             WitnessRecord::Prepare(p) => p,
             WitnessRecord::RestoreDeclared(d) => {
-                if !declaration_signature_verifies(view.cell, view.chain, d, view.witness_keys) {
+                if !declaration_verifies(
+                    view.cell,
+                    view.chain,
+                    d,
+                    view.witness_keys,
+                    declaration_keys,
+                ) {
                     return tamper(Tamper::BadSignature { n: d.fields.head.0 });
                 }
                 continue;
@@ -535,6 +541,23 @@ fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
 /// [`AuditError::Tamper`] with the first change found, in the order of
 /// the module documentation.
 pub fn verify(view: &ChainView<'_>) -> Result<Verified, AuditError> {
+    verify_with_declaration_keys(view, &[])
+}
+
+/// [`verify`] for a verifier that pins the restore declaration keys of a
+/// SaaS control plane (ADR-012 record of lane m10/saas-declare). Every
+/// declaration of the witness log must then also carry a statement that
+/// verifies under one of `declaration_keys`, both halves (I-90), or the
+/// chain fails with `BadSignature { n: head n }`. With no key pinned it is
+/// [`verify`], the self-hosted rule.
+///
+/// # Errors
+///
+/// As [`verify`].
+pub fn verify_with_declaration_keys(
+    view: &ChainView<'_>,
+    declaration_keys: &[Vec<u8>],
+) -> Result<Verified, AuditError> {
     let entries = order_and_coverage(view)?;
     hashes_and_links(view, &entries)?;
     let link_at = |n: u64| -> Option<Link> {
@@ -544,11 +567,121 @@ pub fn verify(view: &ChainView<'_>) -> Result<Verified, AuditError> {
     anchor_rows(view, &link_at)?;
     let (lost, lost_in_restore) = restore_losses(view, &link_at);
     witness_log(view, &link_at, &lost)?;
-    signatures(view)?;
+    signatures(view, declaration_keys)?;
     Ok(Verified {
         rows: count(view.rows.len()),
         possible_deletions: possible_deletions(view),
         lost_in_restore,
+    })
+}
+
+/// A restored chain checked against fetched witness copies
+/// ([`verify_restored`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoredCopy {
+    /// The verified chain. Its `rows` counts every restored row.
+    pub verified: Verified,
+    /// The rows up to the common head, checked against the copies' log.
+    /// The rows beyond it are checked by their stored receipts.
+    pub checked: u64,
+    /// The receipted prepares of the copies after the common head.
+    pub later: u64,
+    /// The witness time, in UTC microseconds, of the oldest of them.
+    pub oldest_later: Option<i64>,
+    /// The witness time, in UTC microseconds, of the oldest stored
+    /// receipt beyond the common head.
+    pub oldest_newer: Option<i64>,
+}
+
+/// Verifies a restored chain offline against a fetched copy of its
+/// witness log (ADR-012 record of lane m10/drill-chain, row "Verdict").
+///
+/// The view holds the restored rows and anchor rows and the copies' log.
+/// The common head is the last receipted prepare of the log whose link
+/// the chain holds at its row. The log up to it is the witness log of the
+/// check. Each anchor row beyond the head joins that log as the prepare
+/// it records, since its receipt is the witness's own signed record. Then
+/// [`verify`] runs once over the whole chain. So the prepares receipted
+/// after the head (`later`) and the rows beyond the copies (`checked` to
+/// `verified.rows`) are expected tails, which the caller judges by their
+/// times.
+///
+/// # Errors
+///
+/// [`AuditError::Tamper`] with the first change found by [`verify`];
+/// `AbortedButPresent` for a withdrawal after the head of a link the chain
+/// holds; `Unwitnessed { n: 1 }` for a chain with rows and no common head;
+/// and `Truncated` for an empty chain beside receipted prepares.
+pub fn verify_restored(view: &ChainView<'_>) -> Result<RestoredCopy, AuditError> {
+    let have = count(view.rows.len());
+    let link_at = |n: u64| -> Option<Link> {
+        let i = usize::try_from(n.checked_sub(1)?).ok()?;
+        view.rows.get(i).map(|r| r.link)
+    };
+    let common = view
+        .witness
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, w)| match w {
+            WitnessRecord::Prepare(p) if link_at(p.anchor.n) == Some(p.anchor.link) => {
+                Some((i, p.anchor.n))
+            }
+            _ => None,
+        });
+    let (head, kept, after): (u64, &[WitnessRecord], &[WitnessRecord]) = match common {
+        Some((i, n)) => {
+            let (kept, after) = view.witness.split_at(i.saturating_add(1));
+            (n, kept, after)
+        }
+        None if have == 0 => {
+            let witnessed = view
+                .witness
+                .iter()
+                .filter_map(|w| match w {
+                    WitnessRecord::Prepare(p) => Some(p.anchor.n),
+                    _ => None,
+                })
+                .max();
+            if let Some(witnessed) = witnessed {
+                return tamper(Tamper::Truncated { witnessed, have: 0 });
+            }
+            (0, view.witness, &[])
+        }
+        None => return tamper(Tamper::Unwitnessed { n: 1 }),
+    };
+    let mut later: u64 = 0;
+    let mut oldest_later: Option<i64> = None;
+    for w in after {
+        match w {
+            WitnessRecord::Abort { n, link } | WitnessRecord::InDoubtAbsent { n, link } => {
+                if link_at(*n) == Some(*link) {
+                    return tamper(Tamper::AbortedButPresent { n: *n });
+                }
+            }
+            WitnessRecord::Prepare(p) => {
+                later = later.saturating_add(1);
+                let at = p.receipt.fields.received_at;
+                oldest_later = Some(oldest_later.map_or(at, |o| o.min(at)));
+            }
+            WitnessRecord::RestoreDeclared(_) => {}
+        }
+    }
+    let mut log: Vec<WitnessRecord> = kept.to_vec();
+    let mut tail: Vec<&AnchorRow> = view.anchors.iter().filter(|a| a.anchor.n > head).collect();
+    tail.sort_by_key(|a| a.anchor.n);
+    let oldest_newer = tail.iter().map(|a| a.receipt.fields.received_at).min();
+    log.extend(tail.into_iter().map(|a| WitnessRecord::Prepare(a.clone())));
+    let verified = verify(&ChainView {
+        witness: &log,
+        ..*view
+    })?;
+    Ok(RestoredCopy {
+        verified,
+        checked: head.min(have),
+        later,
+        oldest_later,
+        oldest_newer,
     })
 }
 
@@ -871,5 +1004,278 @@ mod tests {
         w.restore_to(0);
         w.declare(4);
         assert_eq!(w.verify().unwrap().lost_in_restore, vec![lost(1, 2, 4)]);
+    }
+
+    // ADR-012 record of lane m10/drill-chain: the restore drill's offline
+    // check of a restored chain against fetched witness copies.
+
+    impl World {
+        fn restored(&self) -> Result<RestoredCopy, AuditError> {
+            let anchor_keys = vec![self.anchor.public_key().to_bytes().to_vec()];
+            let witness_keys = vec![self.witness.public_key().to_bytes().to_vec()];
+            verify_restored(&ChainView {
+                cell: self.cell,
+                chain: ChainId::App,
+                rows: &self.rows,
+                ledger: &[],
+                anchors: &self.anchors,
+                witness: &self.log,
+                anchor_keys: &anchor_keys,
+                witness_keys: &witness_keys,
+            })
+        }
+
+        fn received_at(&self, n: u64) -> i64 {
+            self.log
+                .iter()
+                .find_map(|r| match r {
+                    WitnessRecord::Prepare(p) if p.anchor.n == n => {
+                        Some(p.receipt.fields.received_at)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        }
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, row "Verdict": a restored
+    /// copy equal to the witness copies is checked in full, with no tail.
+    #[test]
+    fn adr012_dc_restored_copy_equal_to_the_copies_is_clean() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(2);
+        let r = w.restored().unwrap();
+        assert_eq!(r.verified, w.verify().unwrap());
+        assert_eq!(r.verified.rows, 5);
+        assert_eq!(r.checked, 5);
+        assert_eq!((r.later, r.oldest_later, r.oldest_newer), (0, None, None));
+        let empty = World::new();
+        let r = empty.restored().unwrap();
+        assert_eq!((r.verified.rows, r.checked, r.later), (0, 0, 0));
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, row "Expected gap": receipts
+    /// after the restored head are counted as later, with the oldest one's
+    /// time, where the plain verifier reads `Truncated` (I-24).
+    #[test]
+    fn adr012_dc_restored_copy_behind_the_copies_counts_later_receipts() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(1);
+        w.commit(1);
+        let fourth = w.received_at(4);
+        w.restore_to(3);
+        assert!(matches!(
+            w.verify(),
+            Err(AuditError::Tamper(Tamper::Truncated { .. }))
+        ));
+        let r = w.restored().unwrap();
+        assert_eq!((r.verified.rows, r.checked), (3, 3));
+        assert_eq!((r.later, r.oldest_later), (2, Some(fourth)));
+        assert_eq!(r.oldest_newer, None);
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, row "Verdict": restored rows
+    /// beyond the copies are checked by the receipts their anchor rows
+    /// hold, and counted as newer, where the plain verifier reads an
+    /// anchor without its prepare (I-24).
+    #[test]
+    fn adr012_dc_restored_copy_ahead_of_the_copies_checks_stored_receipts() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(1);
+        let third = w.received_at(3);
+        w.log.truncate(1);
+        assert!(w.verify().is_err());
+        let r = w.restored().unwrap();
+        assert_eq!((r.verified.rows, r.checked), (4, 2));
+        assert_eq!((r.later, r.oldest_later), (0, None));
+        assert_eq!(r.oldest_newer, Some(third));
+        // A changed byte of a stored receipt beyond the copies fails.
+        let mut bad = World::new();
+        bad.commit(1);
+        bad.commit(1);
+        bad.log.truncate(1);
+        bad.anchors[1].receipt.signature[5] ^= 1;
+        assert_eq!(
+            bad.restored(),
+            Err(AuditError::Tamper(Tamper::BadSignature { n: 2 }))
+        );
+        // A row beyond the copies with no stored receipt fails.
+        let mut bare = World::new();
+        bare.commit(1);
+        bare.commit(1);
+        bare.log.truncate(1);
+        bare.anchors.truncate(1);
+        assert_eq!(
+            bare.restored(),
+            Err(AuditError::Tamper(Tamper::Unwitnessed { n: 2 }))
+        );
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, row "Findings": a changed
+    /// row, a deletion, a withdrawn link that is present, and a chain
+    /// with no head in common with the copies each fail (I-24).
+    #[test]
+    fn adr012_dc_restored_copy_findings_fail() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.restore_to(2);
+        if let RowKind::Event { body } = &mut w.rows[0].row.kind {
+            body[0] ^= 1;
+        }
+        assert_eq!(
+            w.restored(),
+            Err(AuditError::Tamper(Tamper::Changed { n: 1 }))
+        );
+        // The chain grew over a receipted row without a declaration.
+        let mut w = World::new();
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(1);
+        w.commit(1);
+        assert_eq!(
+            w.restored(),
+            Err(AuditError::Tamper(Tamper::Deleted { n: 2 }))
+        );
+        // An abort after the head of a row the chain holds.
+        let mut w = World::new();
+        w.commit(1);
+        w.commit(1);
+        let (n, link) = w.head();
+        w.log.push(WitnessRecord::Abort { n, link });
+        assert_eq!(
+            w.restored(),
+            Err(AuditError::Tamper(Tamper::AbortedButPresent { n: 2 }))
+        );
+        // Rows and no receipted prepare in common.
+        let mut w = World::new();
+        w.commit(2);
+        w.log.clear();
+        assert_eq!(
+            w.restored(),
+            Err(AuditError::Tamper(Tamper::Unwitnessed { n: 1 }))
+        );
+        // No row beside receipted prepares.
+        let mut w = World::new();
+        w.commit(2);
+        w.restore_to(0);
+        assert_eq!(
+            w.restored(),
+            Err(AuditError::Tamper(Tamper::Truncated {
+                witnessed: 2,
+                have: 0
+            }))
+        );
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, row "Findings": a declared
+    /// restore's lost window is listed, never a failure.
+    #[test]
+    fn adr012_dc_restored_copy_lists_declared_losses() {
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(1);
+        w.commit(1);
+        w.restore_to(3);
+        w.declare(9);
+        w.commit(1);
+        let r = w.restored().unwrap();
+        assert_eq!(r.verified.lost_in_restore, vec![lost(4, 5, 9)]);
+        assert_eq!((r.verified.rows, r.checked, r.later), (4, 4, 0));
+    }
+
+    /// The views of `w` under `declaration_keys`.
+    fn verify_saas(w: &World, declaration_keys: &[Vec<u8>]) -> Result<Verified, AuditError> {
+        let anchor_keys = vec![w.anchor.public_key().to_bytes().to_vec()];
+        let witness_keys = vec![w.witness.public_key().to_bytes().to_vec()];
+        verify_with_declaration_keys(
+            &ChainView {
+                cell: w.cell,
+                chain: ChainId::App,
+                rows: &w.rows,
+                ledger: &[],
+                anchors: &w.anchors,
+                witness: &w.log,
+                anchor_keys: &anchor_keys,
+                witness_keys: &witness_keys,
+            },
+            declaration_keys,
+        )
+    }
+
+    /// Adds the statement signature of `key` to the last declaration.
+    fn state_last(w: &mut World, key: &CompositeSigningKey) {
+        let cell = w.cell;
+        if let Some(WitnessRecord::RestoreDeclared(d)) = w.log.last_mut() {
+            let st = crate::witness::RestoreStatement::of(cell, ChainId::App, &d.fields);
+            d.statement = Some(crate::witness::sign_statement(key, &st).unwrap());
+        }
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare: a SaaS declaration,
+    /// with a statement under the restore declaration key, verifies under
+    /// the pinned key and lists the lost window. The same log verifies
+    /// with no key pinned, as a self-hosted one does.
+    #[test]
+    fn i24_saas_declared_restore_verifies_under_the_declaration_key() {
+        let control = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![control.public_key().to_bytes().to_vec()];
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(2);
+        w.restore_to(3);
+        w.declare(6);
+        state_last(&mut w, &control);
+        let v = verify_saas(&w, &keys).unwrap();
+        assert_eq!(v.lost_in_restore, vec![lost(4, 5, 6)]);
+        assert_eq!(w.verify().unwrap().lost_in_restore, vec![lost(4, 5, 6)]);
+    }
+
+    /// I-24, I-90, ADR-012 record of lane m10/saas-declare: with the
+    /// restore declaration key pinned, a declaration with no statement, a
+    /// statement signed by another key, or a changed statement byte is
+    /// `BadSignature` of its head. A forged declaration never names the
+    /// lost window.
+    #[test]
+    fn i24_saas_forged_or_wrongly_signed_declaration_is_refused() {
+        let control = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![control.public_key().to_bytes().to_vec()];
+        let other = fstp_crypto::composite::generate().unwrap();
+        let bad = Err(AuditError::Tamper(Tamper::BadSignature { n: 3 }));
+        let base = {
+            let mut w = World::new();
+            w.commit(3);
+            w.commit(1);
+            w.restore_to(3);
+            w.declare(2);
+            w
+        };
+        // The console form under a SaaS pin.
+        assert_eq!(verify_saas(&base, &keys), bad);
+        // Another key, as a forger without the declaration key would sign.
+        let mut w = base;
+        state_last(&mut w, &other);
+        assert_eq!(verify_saas(&w, &keys), bad);
+        // The witness's own key does not stand in for it.
+        let witness = fstp_crypto::composite::generate().unwrap();
+        state_last(&mut w, &witness);
+        assert_eq!(verify_saas(&w, &keys), bad);
+        // A changed statement byte.
+        state_last(&mut w, &control);
+        assert!(verify_saas(&w, &keys).is_ok());
+        if let Some(WitnessRecord::RestoreDeclared(d)) = w.log.last_mut()
+            && let Some(s) = d.statement.as_mut()
+        {
+            s[3000] ^= 1;
+        }
+        assert_eq!(verify_saas(&w, &keys), bad);
     }
 }

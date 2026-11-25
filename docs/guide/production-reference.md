@@ -442,7 +442,7 @@ Write one JSON file per cluster, for example `/etc/fstp/backup-app.json`. It hol
 
 - `database.host` must be a loopback address.
 - `object_stores` lists one to three stores in order. The older member `object_store`, one store, is still read. A store's `port` is optional and defaults to 443.
-- `retention` is optional. Without it the agent prunes nothing. The values 35 days and at least 5 base backups are interim, pending Daniel.
+- `retention` is optional. Without it the agent prunes nothing. The values 35 days and at least 5 base backups are decided by Daniel (2026-11-25, accepted as built).
 - `keyd_socket` is needed only for `init-keys` and the restore commands.
 
 The credentials directory holds these files:
@@ -458,6 +458,26 @@ The credentials directory holds these files:
 
 `archive_command` runs as the `postgres` OS user, and `base-backup` as the `fstp-backup` OS user. Give each user read access to the files of its commands only. The `fstp_repl` files stay readable by the `fstp-backup` user alone (ADR-005).
 
+### Add Hetzner Object Storage as the second store
+
+Daniel decided on 2026-11-25 that the second backup provider is Hetzner Object Storage (ADR-012, Q25). Its object lock, locations and S3 behaviour are not yet verified (ADR-005 verify items V19 to V24). Add it as a further store, and check those items before you rely on it.
+
+In `fstp.json`, add one entry to `backup.copies`. Fill the three placeholders from your Hetzner account. Nothing here is a default.
+
+```json
+"backup": {
+  "endpoint": "<primary endpoint>", "region": "<primary region>", "bucket": "<primary bucket>",
+  "copies": [
+    {"endpoint": "<hetzner endpoint>", "region": "<hetzner region>", "bucket": "<hetzner bucket>"}
+  ]
+}
+```
+
+- Put the Hetzner access key id and secret in `/etc/fstp/s3-1-access-key-id` and `/etc/fstp/s3-1-secret-access-key`, one line each, or name other files with `access_key_file` and `secret_key_file`.
+- Run `fstp-admin setup` again. It writes `object_stores` into each agent's configuration, with the primary store first and the copy after it.
+- Every container then goes to both stores, and a restore takes the first copy that verifies.
+- A lifecycle rule on either bucket must keep the `<cluster>/witness/` prefix. The witness copies are never pruned, and a rule that expires them breaks the rebuild of the witness after a host loss (ADR-012, record of lane m10/witness-copy).
+
 ### Create the key
 
 Once, as root:
@@ -467,6 +487,8 @@ FSTP_BACKUP_CONFIG=/etc/fstp/backup-app.json fstp-backup init-keys
 ```
 
 It creates the ClusterBackup root through the console socket and writes `cluster-backup.key` and `cluster-backup-writer.key` with mode 0600. It refuses to overwrite an existing key file. A key file made before 2026-11-24 has no writer key: `fstp-backup upgrade-keys`, as root, binds one to it, and a base backup should follow at once, since a restore reads only containers of the new form. `fstp-admin setup` does both.
+
+It also writes `key-pin` in the state directory: the SHA-256 of `cluster-backup.key` in hex and a line feed. `upgrade-keys` and the adoption on a second custodian write it too. Every command that seals or uploads refuses while the pin does not name the key file, with exit status 6, or while there is no pin, with exit status 7. So a replaced key file pair stops the backups instead of sealing them to keys someone else holds. On a host set up before 2026-11-25, `fstp-backup pin-key`, as root, pins a bound pair once. `fstp-admin setup` runs it. Only root should be able to replace `key-pin` (ADR-012 record of lane m10/key-pin-reason).
 
 The root of that key lives in this host's `fstp-keyd`. Decided by Daniel on 2026-11-21: a backup must still open after the loss of this host. Two measures carry that, and the pilot uses both. A second custodian on another machine holds its own custody of the ClusterBackup chain ("Second custodian" below). An off-host sealed copy of each `fstp-keyd` entry keeps the App and Vault roots ("Off-host copy of a custody entry" below). The rows inside a backup open only with those roots.
 
@@ -495,7 +517,7 @@ It runs `pg_basebackup` over loopback, cuts the tar stream into parts of 64 MiB,
 
 ### Restore drill
 
-`fstp-admin drill` tests the backups each month, by its timer `fstp-admin-drill` (ADR-012, record of lane m10/backup-health). For each database in turn it runs `fstp-backup restore` into `<state>/drill/<cluster>`, starts a throwaway PostgreSQL there on the cluster's port plus 100 (loopback and TLS only, no archive, no Unix socket), waits until recovery ends, and checks that the cell database answers. Then `fstp-cell check-keystore <port>` or `fstp-vault check-keystore <port>` opens the restored keys through the live custody entry, writing nothing. The server stops and the scratch copy is deleted, also after a failure. The result is in `<state>/admin/drill.status`. The server's log is `<state>/drill/<cluster>.log`.
+`fstp-admin drill` tests the backups each month, by its timer `fstp-admin-drill` (ADR-012, record of lane m10/backup-health). For each database in turn it runs `fstp-backup restore` into `<state>/drill/<cluster>`, starts a throwaway PostgreSQL there on the cluster's port plus 100 (loopback and TLS only, no archive, no Unix socket), waits until recovery ends, and checks that the cell database answers. Then `fstp-cell check-keystore <port>` or `fstp-vault check-keystore <port>` opens the restored keys through the live custody entry, writing nothing. Then the drill fetches the witness copies into `<state>/drill/chain/witness`, and `fstp-cell check-chain` or `fstp-vault check-chain` verifies the restored audit chain against them offline (ADR-012, record of lane m10/drill-chain). Receipts newer than the restored copy, and restored rows newer than the copies, are counted and printed; either fails the step `chain` once older than 10 minutes. The server stops and the scratch copy is deleted, also after a failure. The result is in `<state>/admin/drill.status`. The server's log is `<state>/drill/<cluster>.log`.
 
 ### Restore
 

@@ -45,7 +45,7 @@ Daniel accepted this ADR on 2026-10-28. The interim readings in it are built as 
 | Cell application | `fstp-cell` | Database `c_<cell>` on an application cluster | App chain root epochs in custody. App, ledger and text group keys in memory | Users through the edge. Its own vault. Its custody backend. The control plane through `CellToCp` |
 | Cell vault | `fstp-vault` | Database `v_<cell>` on a vault cluster | Vault chain root epochs in a separate custody entry with its own credential. Its own `Anchor` key | Its own cell over mTLS. Browsers on the vault origin, through the edge, with tickets only |
 | Control plane | `fstp-control`, and `fstp-pgagent` on each database host | Database `cp` on the control cluster | Cluster CAs, the control-plane CA, staff assertion and operator ticket keys | Staff with passkeys. Cells through `CellToCp` |
-| Witness | `fstp-witness` | Its own database on its own cluster, plus an object-lock bucket at a second provider | Witness receipt key (composite) | Cells and vaults, each with a chain-bound certificate. `fstp-control` for restore declarations only, with a control-plane CA certificate (ADR-012, interim, pending Daniel). Auditors for reads |
+| Witness | `fstp-witness` | Its own database on its own cluster, plus an object-lock bucket at a second provider | Witness receipt key (composite) | Cells and vaults, each with a chain-bound certificate. `fstp-control` for restore declarations only, with a control-plane CA certificate whose subject OU is `control-witness` (ADR-012, interim, pending Daniel; built by lane m10/saas-declare, which Daniel decided on 2026-11-25). Auditors for reads |
 | Edge | `fstp-edge` | None | Edge tunnel certificate from the control-plane CA | The public internet on port 443 |
 | CrabNebula release services | `fstp-licence-svc`, `fstp-update-svc` | Licence registry and release metadata | Licence signing key (Ed25519) | Self-hosted cells, through `fstp-release::egress` only |
 | Custody backend | OVHcloud KMS, `fstp-keyd`, or the test simulator | Provider-held, or the keyd file | Root epochs and CA signing keys | Only the process of the owning domain, each with its own credential |
@@ -361,7 +361,7 @@ Interim, pending Daniel (Q34). R-NF-09 is read as covering links between platfor
 | Cell and vault to the witness | mTLS, chain-bound certificates | Claimed |
 | Cell to control plane, `fstp-control` to `fstp-pgagent` | mTLS, control-plane CA | Claimed |
 | Edge to `fstp-control`, the route feed (lane L15) | mTLS, control-plane CA, the operator's tunnel CA on the pilot | Claimed |
-| `fstp-control` to the witness, for restore declarations | mTLS, control-plane CA (ADR-012, interim, pending Daniel) | Claimed once ADR-012's proposal is accepted |
+| `fstp-control` to the witness, for restore declarations | mTLS, control-plane CA (ADR-012, interim, pending Daniel) | Built by lane m10/saas-declare (ADR-012 record of that lane). The witness pins the control-plane CA as `control-ca.der` |
 | Cell and vault to object storage, for keystore snapshots | SigV4 over server-authenticated TLS (ADR-012, destinations accepted by Daniel on 2026-11-21) | Not claimed. Request credentials only |
 | Cell and vault to OKMS | Access certificate over mutual TLS on REST (Q11 A), otherwise KMIP with certificates (Q11 B) | Claimed once the verify item is settled. Whether REST accepts an access certificate as mutual TLS is a question to OVHcloud |
 | Control plane to its managed databases | SCRAM over server-authenticated TLS (Q3 C) | Not claimed. Request credentials only |
@@ -409,7 +409,7 @@ Each test names its ID, as `.claude/CLAUDE.md` requires. Design section 14.4 lis
 - **Self-hosted issuers.** The design names no issuer for the local edge's tunnel certificate or the local witness's server certificate. One option is an install-time CA in local custody, kept apart from the cell CA. Daniel decides before ADR-011 fixes the install.
 - **Root on hosts.** Settled by Daniel on 2026-10-28 (Q35 A). Confidential computing stays an L-15 evaluation item.
 - **Legal markers.** Two `TODO(legal)` markers in this ADR have no L- number: rate limiting on client addresses, and storing reviewers' relatives. Both are listed in `SPEC/10-open-questions.md` for Daniel to number.
-- **Keystore snapshot destinations.** Daniel accepted the two `KeystoreSnapshots` members on 2026-11-21 (ADR-012 record of lane L17). `fstp-control` as a witness client for restore declarations still waits for Daniel with ADR-012.
+- **Keystore snapshot destinations.** Daniel accepted the two `KeystoreSnapshots` members on 2026-11-21 (ADR-012 record of lane L17). `fstp-control` as a witness client for restore declarations was built by lane m10/saas-declare after Daniel decided on 2026-11-25 to build the SaaS path. Its formats stay interim, pending Daniel.
 - **Assessor egress.** The `AssessorDestination` members of ADR-019 for M7. Accepted by Daniel on 2026-11-07.
 - **Q34 wording.** A wording proposal for R-NF-09 is with Daniel (Q28).
 - **OVHcloud verify items.** Whether OKMS REST accepts an access certificate as mutual TLS. Whether the Public Cloud Load Balancer's TCP listener forwards the ClientHello unchanged and can pass the client address. Whether OVHcloud offers confidential computing for cell and vault hosts. None of these is assumed here.

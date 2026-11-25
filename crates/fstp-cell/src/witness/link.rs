@@ -178,9 +178,10 @@ impl<R: Runtime> WitnessLink for TlsWitnessLink<R> {
             WireReply::UnknownPrepare => Ok(WitnessReply::UnknownPrepare),
             // An answer that fits no message leaves the witness's state
             // unknown, so it reads as a lost answer.
-            WireReply::Outstanding(_) | WireReply::Log(_) | WireReply::Declarations(_) => {
-                Err(WitnessFault::Unreachable)
-            }
+            WireReply::Outstanding(_)
+            | WireReply::Log(_)
+            | WireReply::Declarations(_)
+            | WireReply::Declared(_) => Err(WitnessFault::Unreachable),
         }
     }
 

@@ -20,6 +20,15 @@
 //! snapshot key files, and a server certificate renewed after the base
 //! backup reaches the drill's restored copy before its server starts.
 //!
+//! Lane m10/drill-chain adds: the passing drill verifies each restored
+//! audit chain against freshly fetched witness copies at the step
+//! `chain`. A tampered witness copy, and a chain row changed by the
+//! database superuser and carried by the WAL archive, each fail the drill
+//! at that step.
+//! Lane m10/key-pin-reason adds: setup pins both backup key files, and a
+//! replaced key file pair stops the backups of its database in plain
+//! words until new keys are made (F-044, TH-51).
+//!
 //! The host runs in `direct` mode with the custody simulator in place of
 //! `fstp-keyd`, as in `l19_admin_setup_e2e.rs`. Every value is synthetic.
 
@@ -34,6 +43,8 @@
 
 #[path = "../../fstp-backup/tests/support/fake_s3.rs"]
 mod fake_s3;
+#[path = "../../fstp-backup/tests/support/mem_custody.rs"]
+mod mem_custody;
 
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -500,9 +511,25 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
         .map(str::to_owned);
     assert!(spki_after.is_some() && spki_after != spki_before);
 
+    // ADR-012 record of lane m10/drill-chain: the witness store leaves the
+    // host every minute by its timer, which direct mode does not run, so
+    // the test copies it once before the drill.
+    h.expect_ok(&["witness-copy"]);
+
     // The drill passes and records a duration.
     let drill = h.expect_ok(&["drill"]);
     assert!(drill.contains("The restore drill passed."), "{drill}");
+    // ADR-012 record of lane m10/drill-chain, I-24: the step `chain`
+    // verified each restored audit chain against the witness copies.
+    for c in ["app", "vault"] {
+        assert!(
+            drill.contains(&format!(
+                "done     checked the audit chain of the {c} copy against the witness copies: "
+            )),
+            "{c}: {drill}"
+        );
+    }
+    assert!(!fstp_admin::drill::root(&l).join("chain").exists());
     assert!(
         drill.contains("put the current TLS files into the restored app database"),
         "{drill}"
@@ -564,6 +591,82 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
     let rows = markers_of_a_restore(&h, &l, &h.root.join("check"));
     assert_eq!(rows, "after-backup-wal-only,before-backup");
 
+    // ADR-012 record of lane m10/drill-chain, I-24: a tampered witness
+    // copy fails the drill at the step `chain`, and no scratch copy stays.
+    let witness_copies: Vec<(String, Vec<u8>)> = {
+        let mut objects = s3.state.objects.lock().unwrap();
+        let mut saved = Vec::new();
+        for (key, bytes) in objects.iter_mut() {
+            if key.contains("/witness/") {
+                saved.push((key.clone(), bytes.clone()));
+                let mid = bytes.len() / 2;
+                bytes[mid] ^= 0x01;
+            }
+        }
+        saved
+    };
+    assert!(!witness_copies.is_empty(), "no witness copy was uploaded");
+    let failed = h.admin(&["drill"]);
+    let text = Host::text(&failed);
+    assert!(!failed.status.success(), "{text}");
+    assert!(text.contains("The restore drill FAILED"), "{text}");
+    assert_eq!(
+        drill_status::read(&l.admin_dir()).failed,
+        Some(Step::Chain),
+        "{text}"
+    );
+    for c in ["app", "vault", "chain"] {
+        assert!(!fstp_admin::drill::root(&l).join(c).exists(), "{c}");
+    }
+    {
+        let mut objects = s3.state.objects.lock().unwrap();
+        for (key, bytes) in witness_copies {
+            objects.insert(key, bytes);
+        }
+    }
+
+    // ADR-012 record of lane m10/drill-chain, I-24: a chain row changed
+    // behind the cell's back, by the database superuser, reaches the
+    // backup through the WAL archive, and the restored copy fails the
+    // drill at the step `chain`.
+    let cell: [u8; 16] = fstp_admin::state::State::load(&l.admin_dir().join("state"))
+        .unwrap()
+        .get("cell")
+        .and_then(fstp_admin::witness::unhex)
+        .and_then(|b| b.try_into().ok())
+        .unwrap();
+    let before = fstp_admin::archive::read(&l, Cluster::App)
+        .unwrap()
+        .archived;
+    let changed = fstp_admin::pg::psql(
+        &l,
+        Cluster::App,
+        &fstp_admin::pg::dbname(Cluster::App, &cell),
+        "SET session_replication_role = replica; \
+         UPDATE audit.chain SET at = at + 1 WHERE n = 1; \
+         SET session_replication_role = origin; \
+         SELECT count(*) FROM audit.chain WHERE n = 1;",
+        "the test",
+    )
+    .unwrap();
+    assert!(changed.ends_with('1'), "{changed}");
+    sql(&l, Cluster::App, "SELECT pg_switch_wal();");
+    archived_past(&l, Cluster::App, before);
+    let failed = h.admin(&["drill"]);
+    let text = Host::text(&failed);
+    assert!(!failed.status.success(), "{text}");
+    assert!(
+        text.contains("The restored app audit chain does not verify against the witness copies"),
+        "{text}"
+    );
+    assert_eq!(drill_status::read(&l.admin_dir()).failed, Some(Step::Chain));
+    let status = Host::text(&h.admin(&["status"]));
+    assert!(
+        status.contains("restore drill  FAILED: the restored audit chain does not match"),
+        "{status}"
+    );
+    assert_eq!(host_file(&l).drill_step, Some(Step::Chain));
+
     // A tampered base backup fails the drill at the step `restore`, and
     // status and the host status file say so.
     {
@@ -624,7 +727,97 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
         fstp_admin::status::next(&f),
         fstp_admin::status::Next::Nothing
     );
+
+    replaced_key_pair_stops_backups_until_new_keys(&h, &l, &rt, &s3);
     s3.stop(&rt);
+}
+
+/// F-044, TH-51, ADR-012 record of lane m10/key-pin-reason: setup pinned
+/// both backup key files. A party without custody replaces the app
+/// database's key file pair with a bound pair of its own. `fstp-admin
+/// backup` refuses in plain words before any upload of that database,
+/// and `status` and the host status file name it. The operator's way on,
+/// moving both files aside and running setup, makes new keys that back
+/// up again.
+fn replaced_key_pair_stops_backups_until_new_keys(
+    h: &Host,
+    l: &Layout,
+    rt: &TokioRuntime,
+    s3: &FakeS3,
+) {
+    use fstp_admin::ops::{KeyPin, key_pin};
+    use fstp_backup::keyfile;
+    for c in Cluster::ALL {
+        assert_eq!(key_pin(l, c), KeyPin::Pinned, "{c:?}");
+    }
+    let creds = l.creds("backup-app");
+    let writer = creds.join(fstp_backup::writer::WRITER_FILE);
+    let key = creds.join(keyfile::KEY_FILE);
+    let cluster = keyfile::decode(&std::fs::read(&key).unwrap())
+        .unwrap()
+        .cluster;
+    let theirs = rt
+        .block_on(keyfile::create(
+            &mem_custody::MemCustody::default(),
+            cluster,
+        ))
+        .unwrap();
+    std::fs::write(&key, &theirs.key_file).unwrap();
+    std::fs::write(&writer, &*theirs.writer_key).unwrap();
+    assert_eq!(key_pin(l, Cluster::App), KeyPin::Changed);
+    let prefix = format!("{}/", fstp_backup::sigv4::hex(&cluster));
+    let app_objects = || {
+        s3.state
+            .objects
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let before = app_objects();
+
+    let refused = h.admin(&["backup"]);
+    let text = Host::text(&refused);
+    assert!(!refused.status.success(), "{text}");
+    assert!(
+        text.contains("The backup key files of the app database are not the ones fstp-admin made"),
+        "{text}"
+    );
+    assert!(text.contains("Nothing was uploaded."), "{text}");
+    assert!(text.contains("Next: the backup key files"), "{text}");
+    assert_eq!(
+        app_objects(),
+        before,
+        "nothing of the app database uploaded"
+    );
+
+    let status = Host::text(&h.admin(&["status"]));
+    assert!(status.contains("backup key app CHANGED"), "{status}");
+    assert!(
+        status.contains("Next: the backup key files of a database changed"),
+        "{status}"
+    );
+    assert_eq!(host_file(l).next, host_status::Next::BackupKey);
+
+    // The operator's way on: both files aside, then setup and a backup.
+    let aside = h.root.join("replaced-app-keys");
+    std::fs::create_dir_all(&aside).unwrap();
+    std::fs::rename(&key, aside.join(keyfile::KEY_FILE)).unwrap();
+    std::fs::rename(&writer, aside.join(fstp_backup::writer::WRITER_FILE)).unwrap();
+    h.expect_ok(&["setup"]);
+    for c in Cluster::ALL {
+        assert_eq!(key_pin(l, c), KeyPin::Pinned, "{c:?}");
+    }
+    let backup = h.expect_ok(&["backup"]);
+    assert!(
+        backup.contains("done     base backup of the app database"),
+        "{backup}"
+    );
+    let status = Host::text(&h.admin(&["status"]));
+    assert!(!status.contains("backup key app"), "{status}");
+    assert_ne!(host_file(l).next, host_status::Next::BackupKey);
 }
 
 /// Restarts both PostgreSQL clusters the way `setup` does, with SIGINT

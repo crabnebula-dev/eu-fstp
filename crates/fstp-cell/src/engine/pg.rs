@@ -57,6 +57,9 @@ pub fn decode_cell_record(canonical: &[u8], schema: u16) -> Result<CellRecord, D
 /// it (design section 5.3).
 pub struct PgCellStore<R: Runtime, W> {
     inner: PgRecordStore<R, CellRecord, W>,
+    /// The pinned restore declaration keys of a SaaS control plane (ADR-012
+    /// record of lane m10/saas-declare). Empty for a self-hosted cell.
+    declaration_keys: Vec<Vec<u8>>,
 }
 
 impl<R: Runtime, W: PrepareWitness> std::fmt::Debug for PgCellStore<R, W> {
@@ -93,13 +96,31 @@ impl<R: Runtime, W: PrepareWitness> PgCellStore<R, W> {
             outbox_keys,
             decode_cell_record,
         )?;
-        Ok(PgCellStore { inner })
+        Ok(PgCellStore::from_store(inner))
     }
 
     /// A cell store over `inner`, a record store built with
     /// [`decode_cell_record`] or a decoder with the same results.
     pub fn from_store(inner: PgRecordStore<R, CellRecord, W>) -> PgCellStore<R, W> {
-        PgCellStore { inner }
+        PgCellStore {
+            inner,
+            declaration_keys: Vec::new(),
+        }
+    }
+
+    /// The store with `keys` as its pinned restore declaration keys
+    /// (ADR-012 record of lane m10/saas-declare). The start-up
+    /// verification then requires each declaration to carry a statement
+    /// under one of them.
+    #[must_use]
+    pub fn with_declaration_keys(mut self, keys: Vec<Vec<u8>>) -> PgCellStore<R, W> {
+        self.declaration_keys = keys;
+        self
+    }
+
+    /// The pinned restore declaration keys.
+    pub fn declaration_keys(&self) -> &[Vec<u8>] {
+        &self.declaration_keys
     }
 
     /// The record store.

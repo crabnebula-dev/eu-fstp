@@ -93,7 +93,7 @@ fn control_config(dir: &std::path::Path, extra: &str) -> PathBuf {
     }
     let cfg = format!(
         "{{\"cell_listen\":\"127.0.0.1:{}\",\"clusters\":[],\"credentials_dir\":\"{}\",\
-         \"operator_host\":\"control.example.test\",\"staff\":[]{extra}}}",
+         \"keyd_socket\":\"/run/fstp-keyd/control.sock\",\"operator_host\":\"control.example.test\",\"staff\":[]{extra}}}",
         free_port(),
         dir.display()
     );

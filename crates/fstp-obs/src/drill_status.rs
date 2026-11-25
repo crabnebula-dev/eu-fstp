@@ -8,7 +8,7 @@
 //! ```text
 //! file = "v1" SP last_try SP last_pass SP step SP seconds LF
 //! step = "none" / "space" / "restore" / "recovery" / "database"
-//!        / "keystore" / "cleanup" / "witness"
+//!        / "keystore" / "chain" / "cleanup" / "witness"
 //! ```
 //!
 //! `last_try` and `last_pass` are Unix seconds in decimal, with no sign
@@ -60,6 +60,10 @@ pub enum Step {
     Database,
     /// The restored keystore rows do not open.
     Keystore,
+    /// The restored audit chain does not verify against fetched witness
+    /// copies, or the copies did not fetch (ADR-012 record of lane
+    /// m10/drill-chain).
+    Chain,
     /// The throwaway server did not stop, or the scratch directory did
     /// not go.
     Cleanup,
@@ -70,12 +74,13 @@ pub enum Step {
 
 impl Step {
     /// Every step.
-    pub const ALL: [Step; 7] = [
+    pub const ALL: [Step; 8] = [
         Self::Space,
         Self::Restore,
         Self::Recovery,
         Self::Database,
         Self::Keystore,
+        Self::Chain,
         Self::Cleanup,
         Self::Witness,
     ];
@@ -89,6 +94,7 @@ impl Step {
             Self::Recovery => "recovery",
             Self::Database => "database",
             Self::Keystore => "keystore",
+            Self::Chain => "chain",
             Self::Cleanup => "cleanup",
             Self::Witness => "witness",
         }
@@ -260,6 +266,146 @@ pub fn write(dir: &Path, s: &DrillStatus) -> std::io::Result<()> {
     std::fs::rename(&tmp, dir.join(FILE))
 }
 
+/// The longest check line accepted, in bytes.
+pub const MAX_CHECK_LEN: usize = 160;
+
+/// The largest count a check line carries.
+pub const MAX_COUNT: u64 = 999_999_999_999_999;
+
+/// What `fstp-cell check-chain` and `fstp-vault check-chain` found
+/// (ADR-012 record of lane m10/drill-chain, row "Check line"). They print
+/// it as one line on standard output, and the drill reads it:
+///
+/// ```text
+/// line = "v1" SP rows SP checked SP later SP oldest_later SP oldest_newer
+///        SP lost SP doubt LF
+/// ```
+///
+/// Each field is a decimal without a leading zero. The times are Unix
+/// seconds, 0 exactly when their tail is empty. [`decode_chain_check`]
+/// admits exactly the lines [`encode_chain_check`] writes. Fuzzed
+/// (`drill_chain_check_decode`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChainCheck {
+    /// The restored rows.
+    pub rows: u64,
+    /// The rows up to the head in common with the witness copies.
+    pub checked: u64,
+    /// The receipts of the copies after the restored head.
+    pub later: u64,
+    /// The witness time of the oldest of them, Unix seconds.
+    pub oldest_later: Option<u64>,
+    /// The witness time of the oldest stored receipt of a row beyond the
+    /// copies, Unix seconds.
+    pub oldest_newer: Option<u64>,
+    /// The windows lost in declared restores.
+    pub lost: u64,
+    /// The possible deletions.
+    pub doubt: u64,
+}
+
+impl ChainCheck {
+    /// The rows beyond the copies.
+    #[must_use]
+    pub fn newer(&self) -> u64 {
+        self.rows.saturating_sub(self.checked)
+    }
+}
+
+/// The Unix seconds of a witness time in UTC microseconds, at least 1 so
+/// that 0 keeps meaning none, and at most [`MAX_INSTANT`].
+#[must_use]
+pub fn instant_of_micros(us: i64) -> u64 {
+    u64::try_from(us.div_euclid(1_000_000))
+        .unwrap_or(0)
+        .clamp(1, MAX_INSTANT)
+}
+
+/// Encodes a check line ([`ChainCheck`]).
+#[must_use]
+pub fn encode_chain_check(c: &ChainCheck) -> String {
+    let rows = c.rows.min(MAX_COUNT);
+    let checked = c.checked.min(rows);
+    let later = c.later.min(MAX_COUNT);
+    let time = |t: Option<u64>, some: bool| {
+        if some {
+            t.unwrap_or(1).clamp(1, MAX_INSTANT)
+        } else {
+            0
+        }
+    };
+    format!(
+        "v1 {rows} {checked} {later} {} {} {} {}\n",
+        time(c.oldest_later, later > 0),
+        time(c.oldest_newer, checked < rows),
+        c.lost.min(MAX_COUNT),
+        c.doubt.min(MAX_COUNT),
+    )
+}
+
+fn count_field(text: &str, max: u64) -> Result<u64, DrillStatusError> {
+    let bad = DrillStatusError("number");
+    if text.is_empty()
+        || text.len() > 15
+        || !text.bytes().all(|b| b.is_ascii_digit())
+        || (text.len() > 1 && text.starts_with('0'))
+    {
+        return Err(bad);
+    }
+    let n: u64 = text.parse().map_err(|_| bad)?;
+    if n > max {
+        return Err(bad);
+    }
+    Ok(n)
+}
+
+/// Decodes a check line ([`ChainCheck`]).
+///
+/// # Errors
+///
+/// [`DrillStatusError`] naming the rule broken, never a byte of the input
+/// (R-NF-02).
+pub fn decode_chain_check(bytes: &[u8]) -> Result<ChainCheck, DrillStatusError> {
+    if bytes.len() > MAX_CHECK_LEN {
+        return Err(DrillStatusError("length"));
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| DrillStatusError("text"))?;
+    let line = text
+        .strip_suffix('\n')
+        .ok_or(DrillStatusError("line end"))?;
+    let mut f = line.split(' ');
+    if f.next() != Some("v1") {
+        return Err(DrillStatusError("version"));
+    }
+    let mut next = || f.next().ok_or(DrillStatusError("fields"));
+    let rows = count_field(next()?, MAX_COUNT)?;
+    let checked = count_field(next()?, MAX_COUNT)?;
+    let later = count_field(next()?, MAX_COUNT)?;
+    let oldest_later = count_field(next()?, MAX_INSTANT)?;
+    let oldest_newer = count_field(next()?, MAX_INSTANT)?;
+    let lost = count_field(next()?, MAX_COUNT)?;
+    let doubt = count_field(next()?, MAX_COUNT)?;
+    if f.next().is_some() {
+        return Err(DrillStatusError("fields"));
+    }
+    let consistent = checked <= rows
+        && ((later > 0) == (oldest_later != 0))
+        && ((checked < rows) == (oldest_newer != 0));
+    if !consistent {
+        return Err(DrillStatusError("consistency"));
+    }
+    let opt = |n: u64| (n != 0).then_some(n);
+    Ok(ChainCheck {
+        rows,
+        checked,
+        later,
+        oldest_later: opt(oldest_later),
+        oldest_newer: opt(oldest_newer),
+        lost,
+        doubt,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "test code")]
@@ -321,6 +467,63 @@ mod tests {
         assert!(passed.due(1_795_000_000 + DUE_AFTER + 1));
         assert!(failed.due(1_797_000_000 + day));
         assert!(never.due(6));
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, rows "Check line" and
+    /// "Status": the check line round trips in one spelling, every other
+    /// spelling is refused, and the step `chain` has its word.
+    #[test]
+    fn adr012_dc_chain_check_line_round_trips_in_one_spelling() {
+        let clean = ChainCheck {
+            rows: 42,
+            checked: 42,
+            ..ChainCheck::default()
+        };
+        assert_eq!(encode_chain_check(&clean), "v1 42 42 0 0 0 0 0\n");
+        let tails = ChainCheck {
+            rows: 50,
+            checked: 47,
+            later: 2,
+            oldest_later: Some(1_795_000_100),
+            oldest_newer: Some(1_795_000_050),
+            lost: 1,
+            doubt: 3,
+        };
+        assert_eq!(
+            encode_chain_check(&tails),
+            "v1 50 47 2 1795000100 1795000050 1 3\n"
+        );
+        assert_eq!(tails.newer(), 3);
+        for c in [ChainCheck::default(), clean, tails] {
+            assert_eq!(decode_chain_check(encode_chain_check(&c).as_bytes()), Ok(c));
+        }
+        for bad in [
+            "",
+            "v1 1 1 0 0 0 0 0",
+            "v2 1 1 0 0 0 0 0\n",
+            "v1 1 1 0 0 0 0\n",
+            "v1 1 1 0 0 0 0 0 0\n",
+            "v1 01 1 0 0 0 0 0\n",
+            "v1 1 2 0 0 0 0 0\n",
+            "v1 2 1 0 0 0 0 0\n",
+            "v1 1 1 0 0 5 0 0\n",
+            "v1 1 1 1 0 0 0 0\n",
+            "v1 1 1 0 7 0 0 0\n",
+            "v1 1 1 0 253402300800 0 0 0\n",
+            "v1 1000000000000000 1 0 0 1 0 0\n",
+            "v1 -1 1 0 0 0 0 0\n",
+            "v1  1 1 0 0 0 0 0\n",
+            "v1 1 1 0 0 0 0 0\r\n",
+        ] {
+            assert!(decode_chain_check(bad.as_bytes()).is_err(), "{bad:?}");
+        }
+        assert_eq!(instant_of_micros(1_795_000_000_999_999), 1_795_000_000);
+        assert_eq!(instant_of_micros(0), 1);
+        assert_eq!(instant_of_micros(-5), 1);
+        assert_eq!(instant_of_micros(i64::MAX), MAX_INSTANT);
+        let s = DrillStatus::default().after_fail(9, Step::Chain);
+        assert_eq!(encode(&s), "v1 9 0 chain 0\n");
+        assert_eq!(decode(b"v1 9 0 chain 0\n"), Ok(s));
     }
 
     /// ADR-012 record of lane m10/backup-health: a written status reads

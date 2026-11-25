@@ -19,6 +19,9 @@ pub enum Next {
     RunSetup,
     /// A service is down.
     StartService,
+    /// A backup key file is not the one its pin names, so its backups
+    /// stopped (ADR-012 record of lane m10/key-pin-reason, F-044).
+    BackupKey,
     /// The second custodian does not answer, or a guard rotation is owed:
     /// erasures wait (ADR-028 record of lane `m10/guard-key`).
     Custodian,
@@ -120,6 +123,9 @@ pub struct Findings {
     /// owed: its `key-published` mark does not name the key file (ADR-012
     /// record of lane m10/backup-followups, row "Owed").
     pub custodian_key_owed: bool,
+    /// The pin of the backup key files, the worse of the two clusters
+    /// (ADR-012 record of lane m10/key-pin-reason).
+    pub backup_key: crate::ops::KeyPin,
 }
 
 /// Whether the newest key copy is older than the last vault erasure, so
@@ -138,6 +144,10 @@ pub fn next(f: &Findings) -> Next {
         Next::RunSetup
     } else if !f.all_running {
         Next::StartService
+    } else if f.backup_key == crate::ops::KeyPin::Changed {
+        Next::BackupKey
+    } else if f.backup_key == crate::ops::KeyPin::Missing {
+        Next::RunSetup
     } else if matches!(
         f.custodian,
         Some(crate::custodian::Link::Unreachable | crate::custodian::Link::Owed)
@@ -231,9 +241,14 @@ fn next_text(n: Next) -> &'static str {
         Next::CopyKeys => {
             "copy the keys off this host: fstp-admin backup-keys /media/usb/fstp-keys. The stick then holds the passphrases too, so keep it somewhere safe, away from this host and the custodian machine. After an erasure, a new copy replaces the old one."
         }
+        Next::BackupKey => BACKUP_KEY_NEXT,
         Next::Nothing => "nothing. Everything is in order.",
     }
 }
+
+/// The next step for a changed backup key file (ADR-012 record of lane
+/// m10/key-pin-reason, row "What the operator does").
+pub const BACKUP_KEY_NEXT: &str = "the backup key files of a database changed outside fstp-admin, so its backups stopped and nothing more was uploaded. If nobody here changed them, treat the host as broken into. To go on with new backup keys, move cluster-backup.key and cluster-backup-writer.key out of that database's backup credentials directory, named above, then run fstp-admin setup and fstp-admin backup.";
 
 fn min_days(layout: &Layout) -> Option<i64> {
     let now = crate::pki::now();
@@ -405,6 +420,13 @@ fn survey(layout: &Layout, state: &State) -> Survey {
             && Cluster::ALL
                 .iter()
                 .any(|c| crate::ops::key_copy_owed(layout, *c)),
+        backup_key: if layout.cfg.backup.is_some() {
+            Cluster::ALL.iter().fold(crate::ops::KeyPin::NoKey, |k, c| {
+                k.worse(crate::ops::key_pin(layout, *c))
+            })
+        } else {
+            crate::ops::KeyPin::NoKey
+        },
     };
     let last_key_copy = findings.keys_copied_at;
     Survey {
@@ -438,6 +460,7 @@ pub fn next_word(n: Next) -> HostNext {
     match n {
         Next::RunSetup => HostNext::RunSetup,
         Next::StartService => HostNext::StartService,
+        Next::BackupKey => HostNext::BackupKey,
         Next::Custodian => HostNext::Custodian,
         Next::PairCustodian => HostNext::PairCustodian,
         Next::RenewRoute => HostNext::RenewRoute,
@@ -488,8 +511,11 @@ pub fn host_status(
             .map(|t| t.clamp(0, host_status::MAX_INSTANT)),
         last_app_snapshot: secs(snapshots.app.last_verified),
         app_snapshot_failed: snapshots.app.failing(),
+        // ADR-012 record of lane m10/key-pin-reason: where it failed.
+        app_snapshot_step: snapshots.app.reason.filter(|_| snapshots.app.failing()),
         last_vault_snapshot: secs(snapshots.vault.last_verified),
         vault_snapshot_failed: snapshots.vault.failing(),
+        vault_snapshot_step: snapshots.vault.reason.filter(|_| snapshots.vault.failing()),
         certificate_days: f
             .min_days
             .map(|d| d.clamp(-host_status::MAX_DAYS, host_status::MAX_DAYS)),
@@ -755,6 +781,32 @@ pub fn run(layout: &Layout) -> u8 {
             }
         }
         let now = crate::pki::now();
+        // ADR-012 record of lane m10/key-pin-reason, row "Operator side".
+        for c in Cluster::ALL {
+            let dir = layout.creds(&format!("backup-{}", c.name()));
+            let head = [Part::T("  backup key "), Part::T(c.name()), Part::T(" ")];
+            match crate::ops::key_pin(layout, c) {
+                crate::ops::KeyPin::Changed => {
+                    let mut parts = head.to_vec();
+                    parts.extend_from_slice(&[
+                        Part::T("CHANGED: the key files in "),
+                        Part::P(&dir),
+                        Part::T(
+                            " are not the ones fstp-admin made; backups of this database stopped",
+                        ),
+                    ]);
+                    out(&parts);
+                }
+                crate::ops::KeyPin::Missing => {
+                    let mut parts = head.to_vec();
+                    parts.push(Part::T(
+                        "not pinned yet; backups of this database wait for fstp-admin setup",
+                    ));
+                    out(&parts);
+                }
+                crate::ops::KeyPin::Pinned | crate::ops::KeyPin::NoKey => {}
+            }
+        }
         for (c, a) in &s.archives {
             archive_line(*c, a.as_ref(), now);
         }
@@ -819,8 +871,10 @@ pub fn run(layout: &Layout) -> u8 {
             Part::P(&layout.host_status()),
         ]);
     }
-    let unhealthy =
-        !f.all_running || f.route_current == Some(false) || f.min_days.is_some_and(|d| d < 1);
+    let unhealthy = !f.all_running
+        || f.route_current == Some(false)
+        || f.min_days.is_some_and(|d| d < 1)
+        || f.backup_key == crate::ops::KeyPin::Changed;
     if f.setup_done && unhealthy {
         UNHEALTHY
     } else {
@@ -859,6 +913,7 @@ mod tests {
             drill: fstp_obs::drill_status::DrillStatus::default().after_pass(1_700_000_000, 300),
             drill_due: false,
             custodian_key_owed: false,
+            backup_key: crate::ops::KeyPin::Pinned,
         }
     }
 
@@ -893,6 +948,87 @@ mod tests {
             !host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2)
                 .guard_copy_owed
         );
+    }
+
+    /// F-044, TH-51, ADR-012 record of lane m10/key-pin-reason, row
+    /// "Operator side": a changed backup key file comes right after a
+    /// stopped service, before the WAL archive it stops, and reaches the
+    /// host status file as `backup_key`. A missing pin asks for setup.
+    #[test]
+    fn f044_status_names_a_changed_backup_key() {
+        use crate::ops::KeyPin;
+        let mut f = healthy();
+        f.backup_key = KeyPin::Changed;
+        f.wal_archive = WalArchive::Failing;
+        f.custodian = Some(crate::custodian::Link::Unreachable);
+        assert_eq!(next(&f), Next::BackupKey);
+        let t = next_text(Next::BackupKey);
+        assert!(t.contains("cluster-backup.key"), "{t}");
+        assert!(t.contains("fstp-admin setup"), "{t}");
+        let s = host_status(&f, Parts::RUNNING, Some(1), None, Snapshots::default(), 2);
+        assert_eq!(s.next, HostNext::BackupKey);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        f.all_running = false;
+        assert_eq!(next(&f), Next::StartService);
+        let mut f = healthy();
+        f.backup_key = KeyPin::Missing;
+        assert_eq!(next(&f), Next::RunSetup);
+        f.backup_key = KeyPin::NoKey;
+        assert_eq!(next(&f), Next::Nothing);
+        f.backup_key = KeyPin::Pinned;
+        assert_eq!(next(&f), Next::Nothing);
+    }
+
+    /// R-NF-02, ADR-012 record of lane m10/key-pin-reason, row "Snapshot
+    /// reason in the host status file": the step of a failed keystore
+    /// snapshot reaches the host status file, a verified one after a
+    /// failure leaves `none`, and so does a failure of unknown step.
+    #[test]
+    fn adr012_kpr_host_status_names_the_snapshot_step() {
+        use fstp_obs::SnapshotFailure;
+        use fstp_obs::snapshot_status::SnapshotStatus;
+        let failed = SnapshotStatus::default().after(Some(SnapshotFailure::Upload), 100);
+        let unknown = SnapshotStatus {
+            reason: None,
+            ..failed
+        };
+        let recovered = failed.after(None, 200);
+        assert!(failed.failing() && unknown.failing() && !recovered.failing());
+        let f = healthy();
+        let s = host_status(
+            &f,
+            Parts::RUNNING,
+            Some(1),
+            None,
+            Snapshots {
+                app: recovered,
+                vault: failed,
+            },
+            2,
+        );
+        assert_eq!(s.app_snapshot_step, None);
+        assert_eq!(s.vault_snapshot_step, Some(SnapshotFailure::Upload));
+        assert!(s.vault_snapshot_failed);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        let s = host_status(
+            &f,
+            Parts::RUNNING,
+            Some(1),
+            None,
+            Snapshots {
+                app: unknown,
+                vault: recovered,
+            },
+            2,
+        );
+        assert!(s.app_snapshot_failed);
+        assert_eq!(s.app_snapshot_step, None);
     }
 
     /// ADR-028 record of lane `m10/guard-key`, part 3 (decided by Daniel

@@ -497,6 +497,9 @@ fn run_scenario() -> Report {
     let cfg_path = creds.join("backup.json");
     std::fs::write(&cfg_path, cfg_text).unwrap();
     let cfg = config::load_from(&cfg_path).unwrap();
+    // As `fstp-admin setup` does through `fstp-backup pin-key` (F-044,
+    // ADR-012 record of lane m10/key-pin-reason).
+    fstp_backup::pin_key(&cfg).unwrap();
     let agent = Agent::from_config(rt.clone(), &cfg).unwrap();
 
     // The base backup, from the configuration, as the timer runs it.

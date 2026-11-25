@@ -144,10 +144,19 @@ pub fn check_store(layout: &Layout, dir: &Path) -> Result<(), WitnessFail> {
 ///
 /// [`WitnessFail::Rebuild`] when the copies do not fetch or open.
 pub fn fetch(layout: &Layout, dir: &Path) -> Result<(), WitnessFail> {
+    fetch_for(layout, dir, stack::WITNESS_USER)
+}
+
+/// `fstp-backup witness-fetch <dir>`, as [`fetch`], with `dir` owned by
+/// `user` afterwards: the drill's chain check reads it as the cell or
+/// the vault user (ADR-012 record of lane m10/drill-chain).
+///
+/// # Errors
+///
+/// [`WitnessFail::Rebuild`] when the copies do not fetch or open.
+pub fn fetch_for(layout: &Layout, dir: &Path, user: &str) -> Result<(), WitnessFail> {
     match backup_tool(layout, &["witness-fetch".as_ref(), dir.as_os_str()])? {
-        Some(0) => {
-            crate::setup::own_path(layout, dir, stack::WITNESS_USER).map_err(|_| WitnessFail::Io)
-        }
+        Some(0) => crate::setup::own_path(layout, dir, user).map_err(|_| WitnessFail::Io),
         code => Err(WitnessFail::Rebuild(code)),
     }
 }

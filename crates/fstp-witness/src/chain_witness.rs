@@ -550,6 +550,7 @@ mod tests {
                 WitnessRecord::RestoreDeclared(Declaration {
                     fields: DeclarationFields { lost_to: 0, ..d },
                     signature: Vec::new(),
+                    statement: None,
                 })
             })
             .collect();

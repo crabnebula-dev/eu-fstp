@@ -297,6 +297,8 @@ struct Setup {
     witness_key: Vec<u8>,
     anchor: Vec<u8>,
     sealer: ([u8; 32], [u8; 16], [u8; 32]),
+    /// The pinned restore declaration keys (lane m10/saas-declare).
+    declaration_keys: Vec<Vec<u8>>,
 }
 
 impl Setup {
@@ -320,6 +322,7 @@ impl Setup {
                 fstp_crypto::random_array::<16>().unwrap(),
                 fstp_crypto::random_array::<32>().unwrap(),
             ),
+            declaration_keys: Vec::new(),
         };
         s.start_witness();
         let w = s.witness.as_ref().unwrap();
@@ -418,6 +421,7 @@ impl Setup {
                     ca_digest: self.install_ca.spki_digest(),
                 },
                 witness_keys: vec![self.witness_public()],
+                declaration_keys: self.declaration_keys.clone(),
             }
         });
         let parts = VaultParts {
@@ -924,4 +928,62 @@ fn adr012_declared_restore_lets_the_vault_start_and_records_the_window() {
         "1:1,2:2,3:1",
         "a second start recorded the window again"
     );
+}
+
+/// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+/// 2026-11-25): a vault that pins a restore declaration key, as a
+/// `control_plane` vault does, refuses to start over a declaration that
+/// only the witness receipt key signed, the console form. The same store
+/// starts a vault that pins none, as a `witness_key` vault keeps the
+/// console rule.
+#[test]
+fn i24_control_plane_vault_rejects_a_declaration_signed_only_by_the_receipt_key() {
+    let mut s = Setup::new();
+    let v = s.vault(true).unwrap();
+    for seq in [5, 6] {
+        assert_eq!(
+            v.call("/v1/ask", &relationship(seq)),
+            (200, Some(VaultResponse::Acked))
+        );
+    }
+    v.stop();
+    s.psql(
+        "ALTER TABLE vault_audit.anchor DISABLE TRIGGER ALL;\n\
+         ALTER TABLE vault_audit.chain DISABLE TRIGGER ALL;\n\
+         DELETE FROM vault_audit.anchor WHERE n > 1;\n\
+         DELETE FROM vault_audit.chain WHERE n > 1;\n\
+         ALTER TABLE vault_audit.chain ENABLE TRIGGER ALL;\n\
+         ALTER TABLE vault_audit.anchor ENABLE TRIGGER ALL;",
+    );
+    let hex = s.psql("SELECT encode(link, 'hex') FROM vault_audit.chain WHERE n = 1");
+    let link: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    s.stop_witness();
+    let store = fstp_witness::file_store::FileStore::open(&s.store.0).unwrap();
+    let key = CompositeSigningKey::from_bytes(&s.witness_key).unwrap();
+    fstp_witness::declare::declare(
+        &store,
+        &key,
+        &fstp_witness::declare::DeclareArgs {
+            cell: CellId(s.cell),
+            chain: ChainId::Vault,
+            head: (1, fstp_audit::Link(link.try_into().unwrap())),
+            job: [0x5F; 16],
+        },
+        1,
+    )
+    .unwrap();
+    drop(store);
+    s.start_witness();
+    let control = fstp_crypto::composite::generate().unwrap();
+    s.declaration_keys = vec![control.public_key().to_bytes().to_vec()];
+    assert!(
+        s.vault(true).is_err(),
+        "a pinned vault took a receipt-key-only declaration"
+    );
+    s.declaration_keys = Vec::new();
+    let v = s.vault(true).unwrap();
+    v.stop();
 }

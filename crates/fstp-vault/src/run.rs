@@ -281,6 +281,37 @@ pub async fn lock_keystore<R: Runtime>(client: &mut Client<R>) -> Result<(), Vau
     }
 }
 
+/// The credentials file of the pinned restore declaration keys (ADR-012
+/// record of lane m10/saas-declare), one lowercase hex line per composite
+/// public key, as a witness reads it.
+pub const DECLARATION_KEYS_FILE: &str = "restore-declaration-keys";
+
+/// The pinned restore declaration keys of a vault that takes
+/// `control_plane` declarations, from [`DECLARATION_KEYS_FILE`] in its
+/// credentials directory. Such a vault fails closed without a decodable
+/// file of composite keys (lead answers of 2026-11-25, interim pending
+/// Daniel). A `witness_key` vault, such as the pilot, reads none.
+///
+/// # Errors
+///
+/// [`VaultError::Config`] naming the file.
+pub fn read_declaration_keys(cfg: &VaultConfig) -> Result<Vec<Vec<u8>>, VaultError> {
+    if !cfg.control_plane_declarations {
+        return Ok(Vec::new());
+    }
+    let bytes = std::fs::read(cfg.credentials_dir.join(DECLARATION_KEYS_FILE))
+        .map_err(|_| cfg_err(DECLARATION_KEYS_FILE))?;
+    let keys = fstp_witness::config::decode_declaration_keys(&bytes)
+        .map_err(|_| cfg_err(DECLARATION_KEYS_FILE))?;
+    if keys
+        .iter()
+        .any(|k| fstp_audit::CompositePublicKey::from_bytes(k).is_err())
+    {
+        return Err(cfg_err(DECLARATION_KEYS_FILE));
+    }
+    Ok(keys)
+}
+
 fn witness_of(cfg: &VaultConfig, creds: &Credentials) -> Result<VaultWitness, VaultError> {
     Ok(VaultWitness {
         addr: cfg.witness.address,
@@ -315,6 +346,7 @@ async fn erasure_journal<R: Runtime>(
         anchor_key,
         witness: witness_of(cfg, creds)?,
         witness_keys: cfg.witness.receipt_keys.clone(),
+        declaration_keys: read_declaration_keys(cfg)?,
     };
     let chain = VaultChain::open(rt.clone(), cfg.cell, parts, &mut client).await?;
     let vault =
@@ -592,6 +624,7 @@ pub fn parts(
             anchor_key,
             witness,
             witness_keys: cfg.witness.receipt_keys.clone(),
+            declaration_keys: read_declaration_keys(cfg)?,
         }),
         pages: match &cfg.assets_dir {
             Some(dir) => Some(Arc::new(crate::pages::VaultPages::load_installed(dir)?)),
@@ -851,6 +884,70 @@ pub fn check_keystore(cfg: &VaultConfig, port: u16) -> Result<(), VaultError> {
     })
 }
 
+/// `fstp-vault check-chain <port> <copy dir> <out>` (ADR-012 record of lane
+/// m10/drill-chain, row "Check-only commands"): the restore drill's check
+/// of the Vault chain of a scratch cluster at `port` against the witness
+/// copy that `fstp-backup witness-fetch` wrote to `copy`. It reads the
+/// chain over the vault login with the reader of [`VaultChain::open`],
+/// loads the copy with the witness file store reader, and runs
+/// `fstp_audit::verify::verify_restored` under the pinned witness receipt
+/// keys. It opens no key, writes no row, reaches no witness and serves
+/// nothing. On success it writes one check line
+/// ([`fstp_obs::drill_status::ChainCheck`]) to the new file `out`, mode
+/// 0600, since standard output belongs to the metric writer (R-NF-02).
+///
+/// # Errors
+///
+/// [`VaultError::Config`] for a refused configuration or credential,
+/// [`VaultError::Unavailable`] when the scratch database does not answer,
+/// and [`VaultError::Malformed`] for a copy that does not load or a chain
+/// that does not verify against it.
+pub fn check_chain(
+    cfg: &VaultConfig,
+    port: u16,
+    copy: &Path,
+    out: &Path,
+) -> Result<(), VaultError> {
+    use fstp_audit::{CellId, ChainId};
+    use fstp_witness::drill::{Restored, check_restored, load_copy};
+    const TAMPERED: VaultError =
+        VaultError::Malformed("the restored vault chain does not verify against the copy (I-24)");
+    let copied = load_copy(copy, CellId(cfg.cell), ChainId::Vault).map_err(|_| TAMPERED)?;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    let line = rt.block_on(async move {
+        let mut scratch = cfg.clone();
+        scratch.database.port = port;
+        let creds = Credentials::read(&cfg.credentials_dir)?;
+        let db = login(&scratch, &creds, Login::Vault)?;
+        let mut client: Client<TokioRuntime> = Client::connect(&task_rt, &db)
+            .await
+            .map_err(|e| connect_error(&e))?;
+        let read = crate::chain::read_restored(&mut client, cfg.cell).await;
+        let _ = client.close().await;
+        let (rows, ledger, anchors) = read?;
+        let restored = Restored {
+            cell: CellId(cfg.cell),
+            chain: ChainId::Vault,
+            rows: &rows,
+            ledger: &ledger,
+            anchors: &anchors,
+        };
+        check_restored(&restored, &copied, &cfg.witness.receipt_keys).map_err(|_| TAMPERED)
+    })?;
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(out)
+        .map_err(|_| cfg_err("output file"))?;
+    f.write_all(fstp_obs::drill_status::encode_chain_check(&line).as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|_| VaultError::Unavailable("the output file"))
+}
+
 /// `fstp-vault verify-first-admin <account> <identity file>` over
 /// `custody` (ADR-008 and ADR-004 record of lane L13b, decided by Daniel
 /// on 2026-11-21): records the verification of a first admin with the
@@ -950,6 +1047,18 @@ pub enum Command {
     /// scratch cluster at `port`, and write nothing (ADR-012 record of lane
     /// m10/backup-health).
     CheckKeystore(u16),
+    /// `check-chain <port> <copy dir> <out>`: check the Vault chain of a
+    /// restore drill's scratch cluster at `port` against the fetched
+    /// witness copy in `copy dir`, and write the check line to the new file
+    /// `out` (ADR-012 record of lane m10/drill-chain).
+    CheckChain {
+        /// The scratch cluster's port.
+        port: u16,
+        /// The fetched witness copy.
+        copy: PathBuf,
+        /// The new file for the check line.
+        out: PathBuf,
+    },
     /// `verify-first-admin <account> <identity file>`: the technical admin
     /// verifies a first admin on the host (ADR-008, Daniel, 2026-11-21).
     VerifyFirstAdmin(u128, PathBuf),
@@ -974,6 +1083,11 @@ fn account_of(text: &str) -> Option<u128> {
         return None;
     }
     u128::from_str_radix(&hex, 16).ok()
+}
+
+/// A path argument: not empty and not an option.
+fn path_of(s: &str) -> bool {
+    !s.is_empty() && !s.starts_with('-')
 }
 
 /// A port: a canonical decimal from 1 to 65535.
@@ -1004,6 +1118,15 @@ pub fn parse_args(args: &[String]) -> Result<Command, VaultError> {
         [cmd, port] if cmd == "check-keystore" => port_of(port)
             .map(Command::CheckKeystore)
             .ok_or(cfg_err("arguments")),
+        [cmd, port, copy, out] if cmd == "check-chain" && path_of(copy) && path_of(out) => {
+            port_of(port)
+                .map(|port| Command::CheckChain {
+                    port,
+                    copy: PathBuf::from(copy),
+                    out: PathBuf::from(out),
+                })
+                .ok_or(cfg_err("arguments"))
+        }
         [cmd, account, file] if cmd == "verify-first-admin" => account_of(account)
             .map(|a| Command::VerifyFirstAdmin(a, PathBuf::from(file)))
             .ok_or(cfg_err("arguments")),
@@ -1024,6 +1147,7 @@ pub fn run_command(command: &Command) -> Result<(), VaultError> {
         Command::EraseIdentity(account) => erase_identity(&cfg, *account),
         Command::RestoreKeystore(id) => restore_keystore(&cfg, *id),
         Command::CheckKeystore(port) => check_keystore(&cfg, *port),
+        Command::CheckChain { port, copy, out } => check_chain(&cfg, *port, copy, out),
         Command::VerifyFirstAdmin(account, file) => verify_first_admin(&cfg, *account, file),
     }
 }
@@ -1152,6 +1276,43 @@ mod tests {
         }
     }
 
+    /// ADR-012 record of lane m10/drill-chain, row "Check-only commands":
+    /// `check-chain` takes exactly a port, a canonical decimal from 1 to
+    /// 65535, and the directory of the fetched witness copy.
+    #[test]
+    fn adr012_dc_vault_check_chain_takes_a_port_and_a_directory() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(&s(&[
+                "check-chain",
+                "5547",
+                "/var/lib/fstp/drill/chain/witness",
+                "/var/lib/fstp/drill/chain/check"
+            ]))
+            .unwrap(),
+            Command::CheckChain {
+                port: 5547,
+                copy: PathBuf::from("/var/lib/fstp/drill/chain/witness"),
+                out: PathBuf::from("/var/lib/fstp/drill/chain/check"),
+            }
+        );
+        for bad in [
+            &["check-chain"][..],
+            &["check-chain", "5547"],
+            &["check-chain", "5547", "/d"],
+            &["check-chain", "0", "/d", "/o"],
+            &["check-chain", "05547", "/d", "/o"],
+            &["check-chain", "70000", "/d", "/o"],
+            &["check-chain", "5547", "", "/o"],
+            &["check-chain", "5547", "/d", ""],
+            &["check-chain", "5547", "--x", "/o"],
+            &["check-chain", "5547", "/d", "-o"],
+            &["check-chain", "5547", "/d", "/o", "x"],
+        ] {
+            assert!(parse_args(&s(bad)).is_err(), "{bad:?}");
+        }
+    }
+
     /// R-NF-02: a missing credential is named by its file, and the debug
     /// form of the credentials shows no byte.
     #[test]
@@ -1174,5 +1335,49 @@ mod tests {
         let c = Credentials::read(&dir).unwrap();
         assert!(!format!("{c:?}").contains("s3cr3t"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+    /// 2026-11-25): a vault that takes `control_plane` declarations refuses
+    /// to start without a pinned, decodable `restore-declaration-keys` file
+    /// of composite keys, with a plain refusal naming the file. A vault with
+    /// no member, as `fstp-admin` writes it for the pilot, reads none.
+    #[test]
+    fn i24_control_plane_vault_refuses_to_start_without_a_declaration_pin() {
+        let tag: String = fstp_crypto::random_array::<4>()
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let dir = std::env::temp_dir().join(format!("fstp-vault-pin-{tag}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg =
+            crate::config::decode_config(crate::config::tests::text(|s| s).as_bytes()).unwrap();
+        cfg.credentials_dir = dir.clone();
+        assert_eq!(read_declaration_keys(&cfg), Ok(Vec::new()), "witness_key");
+        cfg.control_plane_declarations = true;
+        let refused = Err(VaultError::Config(DECLARATION_KEYS_FILE));
+        assert_eq!(read_declaration_keys(&cfg), refused, "no file");
+        let file = dir.join(DECLARATION_KEYS_FILE);
+        std::fs::write(&file, b"zz\n").unwrap();
+        assert_eq!(read_declaration_keys(&cfg), refused, "no hex");
+        let not_a_key = vec![0xab; fstp_audit::PUBLIC_KEY_LEN];
+        std::fs::write(
+            &file,
+            fstp_witness::config::encode_declaration_keys(&[not_a_key]),
+        )
+        .unwrap();
+        let checked = read_declaration_keys(&cfg);
+        let key = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![key.public_key().to_bytes().to_vec()];
+        std::fs::write(&file, fstp_witness::config::encode_declaration_keys(&keys)).unwrap();
+        assert_eq!(read_declaration_keys(&cfg), Ok(keys));
+        // A key of the composite length that does not decode is refused,
+        // if the composite decoder refuses it.
+        if fstp_audit::CompositePublicKey::from_bytes(&[0xab; fstp_audit::PUBLIC_KEY_LEN]).is_err()
+        {
+            assert_eq!(checked, refused);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

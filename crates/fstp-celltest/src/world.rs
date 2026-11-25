@@ -2825,7 +2825,8 @@ fn provision_service(
                 "INSERT INTO fstp_meta.placement (cluster_id, kind) VALUES ('\\x{}'::bytea, 4);\n\
                  GRANT USAGE ON SCHEMA fstp_meta, witness TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON fstp_meta.placement TO {WITNESS_SERVICE_ROLE};\n\
-                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal \
+                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, \
+                 witness.declaration \
                  TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON witness.cell_ca, witness.anchor_key TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON witness.cell_revocation TO {WITNESS_SERVICE_ROLE};",
@@ -4218,6 +4219,9 @@ fn start_cell(
             ca_digest: witness.ca_digest,
         },
         witness_keys: vec![witness.handle.receipt_public_key()],
+        // ADR-012 record of lane m10/saas-declare: the seeded vault takes
+        // `witness_key` declarations and pins no key.
+        declaration_keys: Vec::new(),
     };
     let sealer = fstp_vault::service::AeadSealer::new(
         fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?,
@@ -4661,6 +4665,9 @@ fn start_cell(
         // (`RunningCell::payment_checks`), so its scripted runs stay
         // deterministic.
         checks: None,
+        // ADR-012 record of lane m10/saas-declare: a world cell takes
+        // `witness_key` declarations, as the pilot does, and pins no key.
+        declaration_keys: Vec::new(),
         // ADR-026 amendment of 2026-11-23 (M10 F-039, F-040): the world's
         // cycle, its model checks and the devstack scenario send their
         // commands through the test-only wide command route. A production

@@ -116,6 +116,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.drill.failed_cleanup": "The last restore test passed its checks, but its test copy could not be removed.",
   "system.row.drill.failed_witness":
     "The last restore test failed: the copies of the audit witness could not be fetched, did not load, or differ from the live witness.",
+  "system.row.drill.failed_chain":
+    "The last restore test failed: the restored audit records do not match the copies of the audit witness.",
   "system.row.keys.copied": "The keys were last copied off the host on {date}.",
   "system.row.keys.never":
     "The keys have never been copied off the host. Without a copy, the backups cannot be opened after a lost server.",
@@ -131,6 +133,22 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.snapshots.late": "A key store was last saved off the host {age} ago. This should run every day.",
   "system.row.snapshots.none": "A key store has not been saved off the host yet.",
   "system.row.snapshots.failed": "The last daily save of a key store off the host failed.",
+  "system.row.snapshots.failed_busy":
+    "The last daily save of a key store off the host did not run: an erasure was running at the time, or no backup store is set up.",
+  "system.row.snapshots.failed_image": "The last daily save of a key store off the host failed: the key store could not be read.",
+  "system.row.snapshots.failed_database":
+    "The last daily save of a key store off the host failed: the database did not accept a write.",
+  "system.row.snapshots.failed_custody":
+    "The last daily save of a key store off the host failed: the key custody refused, or the snapshot key did not open.",
+  "system.row.snapshots.failed_upload": "The last daily save of a key store off the host failed: the upload to the object store failed.",
+  "system.row.snapshots.failed_fetch":
+    "The last daily save of a key store off the host failed: the saved copy could not be read back from the object store.",
+  "system.row.snapshots.failed_open":
+    "The last daily save of a key store off the host failed: the saved copy did not check out or open when read back.",
+  "system.row.snapshots.failed_check":
+    "The last daily save of a key store off the host failed: the saved keys did not open under the current key.",
+  "system.row.snapshots.failed_pointer":
+    "The last daily save of a key store off the host failed: the object store did not take the note that names the newest copy.",
   "system.row.snapshots.off": "The key stores are saved off the host once backups are set up.",
   "system.row.snapshots.unknown": "Not known until the host reports.",
   "system.row.certificates.fine":
@@ -178,6 +196,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
 
   "system.next.run_setup": "The host admin finishes the set-up with fstp-admin setup.",
   "system.next.start_service": "The host admin starts what stopped with fstp-admin start.",
+  "system.next.backup_key":
+    "The host admin checks the backup keys: they changed outside the set-up, so backups stopped. If nobody changed them, the host may be broken into.",
   "system.next.custodian": "The host admin checks the second custodian: erasures wait until it answers.",
   "system.next.pair_custodian": "The host admin pairs the second custodian with fstp-admin pair-custodian.",
   "system.next.renew_route": "The host admin runs fstp-admin renew to update the public address.",

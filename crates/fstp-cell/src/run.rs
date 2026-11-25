@@ -54,6 +54,30 @@ fn read(dir: &Path, name: &'static str) -> Result<Vec<u8>, CellError> {
     std::fs::read(dir.join(name)).map_err(|_| cfg_err(name))
 }
 
+/// The pinned restore declaration keys of a control plane, from the
+/// credentials file `restore-declaration-keys`, in the form of
+/// `witness-receipt-keys` (ADR-012 record of lane m10/saas-declare). A
+/// cell that takes `control_plane` declarations fails closed without a
+/// decodable file of composite keys. A `witness_key` cell, such as the
+/// pilot, reads none and pins none.
+///
+/// # Errors
+///
+/// [`CellError::Config`] naming the file.
+pub(crate) fn read_declaration_keys(
+    dir: &Path,
+    declarations: config::RestoreDeclarations,
+) -> Result<Vec<Vec<u8>>, CellError> {
+    const FILE: &str = crate::engine::startup::DECLARATION_KEYS_FILE;
+    if declarations != config::RestoreDeclarations::ControlPlane {
+        return Ok(Vec::new());
+    }
+    let keys = config::decode_receipt_keys(&read(dir, FILE)?).map_err(|_| cfg_err(FILE))?;
+    crate::engine::startup::check_declaration_pin(declarations, true, &keys)
+        .map_err(|_| cfg_err(FILE))?;
+    Ok(keys)
+}
+
 /// Reads a one-line secret, without its line end.
 fn read_secret(dir: &Path, name: &'static str) -> Result<String, CellError> {
     let bytes = read(dir, name)?;
@@ -178,6 +202,7 @@ fn parts(
     };
     let witness_keys = config::decode_receipt_keys(&read(dir, "witness-receipt-keys")?)
         .map_err(CellError::Config)?;
+    let declaration_keys = read_declaration_keys(dir, cfg.core.restore_declarations)?;
     let vault = SharedVault(Arc::new(crate::vault::HttpVaultClient::new(
         rt.clone(),
         format!("https://{}", cfg.vault.address),
@@ -336,6 +361,7 @@ fn parts(
         // ADR-028 record of lane L20: the System page's host status file.
         host_status: cfg.host_status.clone(),
         checks: Some(forge),
+        declaration_keys,
         ..StartOptions::default()
     };
     Ok((parts, options))
@@ -545,6 +571,60 @@ pub fn check_keystore(cfg: &FileConfig, port: u16) -> Result<(), CellError> {
         }
         restore::check_rows(&custody, cell, rows).await
     })
+}
+
+/// `fstp-cell check-chain <port> <copy dir> <out>` (ADR-012 record of lane
+/// m10/drill-chain, row "Check-only commands"): the restore drill's check
+/// of the App chain of a scratch cluster at `port` against the witness
+/// copy that `fstp-backup witness-fetch` wrote to `copy`. It reads the
+/// chain over the writer login with the start-up reader, loads the copy
+/// with the witness file store reader, and runs
+/// `fstp_audit::verify::verify_restored` under the pinned witness receipt
+/// keys. It opens no key, writes no row, reaches no witness and serves
+/// nothing. On success it writes one check line
+/// ([`fstp_obs::drill_status::ChainCheck`]) to the new file `out`, mode
+/// 0600, since standard output belongs to the metric writer (R-NF-02).
+///
+/// # Errors
+///
+/// [`CellError::Config`] for a refused configuration or credential,
+/// [`CellError::Store`] when the scratch database does not answer, and
+/// [`CellError::ChainTamper`] for a copy that does not load or a chain
+/// that does not verify against it.
+pub fn check_chain(cfg: &FileConfig, port: u16, copy: &Path, out: &Path) -> Result<(), CellError> {
+    use fstp_audit::{CellId, ChainId};
+    use fstp_witness::drill::{Restored, check_restored, load_copy};
+    let cell = cfg.core.cell.0;
+    let witness_keys =
+        config::decode_receipt_keys(&read(&cfg.credentials_dir, "witness-receipt-keys")?)
+            .map_err(CellError::Config)?;
+    let copied = load_copy(copy, CellId(cell), ChainId::App).map_err(|_| CellError::ChainTamper)?;
+    let rt = runtime()?;
+    let task_rt = rt.clone();
+    let line = rt.block_on(async move {
+        let mut scratch = cfg.clone();
+        scratch.database.port = port;
+        let writer = login(&scratch, fstp_pgstore::Role::Writer)?
+            .server_check(process::application_server_check(&registered_of(cfg)));
+        let pool = fstp_pgstore::Pool::open(task_rt, cell, fstp_pgstore::Role::Writer, writer, 1)
+            .await
+            .map_err(|_| CellError::Store(fstp_ledger::StoreError::Unavailable))?;
+        let chain = fstp_pgstore::read_chain_rows_of(&pool)
+            .await
+            .map_err(|_| CellError::Store(fstp_ledger::StoreError::Unavailable))?;
+        let restored = Restored {
+            cell: CellId(cell),
+            chain: ChainId::App,
+            rows: &chain.rows,
+            ledger: &chain.stored,
+            anchors: &chain.anchors,
+        };
+        check_restored(&restored, &copied, &witness_keys).map_err(|_| CellError::ChainTamper)
+    })?;
+    write_new(
+        out,
+        fstp_obs::drill_status::encode_chain_check(&line).as_bytes(),
+    )
 }
 
 /// Serves the cell of `cfg` until SIGTERM or SIGINT drains it (module
@@ -815,6 +895,18 @@ pub enum Command {
     /// scratch cluster at `port`, and write nothing (ADR-012 record of lane
     /// m10/backup-health).
     CheckKeystore(u16),
+    /// `check-chain <port> <copy dir> <out>`: check the App chain of a
+    /// restore drill's scratch cluster at `port` against the fetched
+    /// witness copy in `copy dir`, and write the check line to the new file
+    /// `out` (ADR-012 record of lane m10/drill-chain).
+    CheckChain {
+        /// The scratch cluster's port.
+        port: u16,
+        /// The fetched witness copy.
+        copy: PathBuf,
+        /// The new file for the check line.
+        out: PathBuf,
+    },
     /// `provision-tenant [--agreements <saas_terms>,<dpa>,<sub_processors>]`
     /// (ADR-026 "Tenant provisioning").
     ProvisionTenant {
@@ -869,6 +961,11 @@ fn snapshot_id_arg(s: &str) -> Option<[u8; 16]> {
     u128::from_str_radix(s, 16).ok().map(u128::to_be_bytes)
 }
 
+/// A path argument: not empty and not an option.
+fn path_arg(s: &str) -> bool {
+    !s.is_empty() && !s.starts_with('-')
+}
+
 /// A port: a canonical decimal from 1 to 65535.
 fn port_arg(s: &str) -> Option<u16> {
     if s.is_empty() || s.len() > 5 || !s.bytes().all(|b| b.is_ascii_digit()) || s.starts_with('0') {
@@ -905,6 +1002,13 @@ pub fn parse_args(args: &[String]) -> Result<Command, CellError> {
         ["check-keystore", port] => port_arg(port)
             .map(Command::CheckKeystore)
             .ok_or_else(|| cfg_err("arguments")),
+        ["check-chain", port, copy, out] if path_arg(copy) && path_arg(out) => port_arg(port)
+            .map(|port| Command::CheckChain {
+                port,
+                copy: PathBuf::from(copy),
+                out: PathBuf::from(out),
+            })
+            .ok_or_else(|| cfg_err("arguments")),
         ["provision-tenant"] => Ok(Command::ProvisionTenant { agreements: None }),
         ["provision-tenant", "--agreements", v] => Ok(Command::ProvisionTenant {
             agreements: Some(agreements_arg(v)?),
@@ -933,6 +1037,7 @@ pub fn run_command(command: &Command) -> Result<(), CellError> {
         Command::CopyKeyFile(out) => copy_key_file(&cfg, out),
         Command::RestoreKeystore(id) => restore_keystore(&cfg, *id),
         Command::CheckKeystore(port) => check_keystore(&cfg, *port),
+        Command::CheckChain { port, copy, out } => check_chain(&cfg, *port, copy, out),
         Command::RetireKeyFileCopy(id) => {
             crate::key_copy::retire(&cfg.credentials_dir, *id).map_err(|e| CellError::Keys(e.0))
         }
@@ -1061,6 +1166,43 @@ mod tests {
         }
     }
 
+    /// ADR-012 record of lane m10/drill-chain, row "Check-only commands":
+    /// `check-chain` takes exactly a port, a canonical decimal from 1 to
+    /// 65535, the directory of the fetched witness copy and the file for
+    /// the check line.
+    #[test]
+    fn adr012_dc_cell_check_chain_takes_a_port_and_a_directory() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(&s(&[
+                "check-chain",
+                "5546",
+                "/var/lib/fstp/drill/chain/witness",
+                "/var/lib/fstp/drill/chain/check"
+            ])),
+            Ok(Command::CheckChain {
+                port: 5546,
+                copy: PathBuf::from("/var/lib/fstp/drill/chain/witness"),
+                out: PathBuf::from("/var/lib/fstp/drill/chain/check"),
+            })
+        );
+        for bad in [
+            &["check-chain"][..],
+            &["check-chain", "5546"],
+            &["check-chain", "5546", "/d"],
+            &["check-chain", "0", "/d", "/o"],
+            &["check-chain", "05546", "/d", "/o"],
+            &["check-chain", "65536", "/d", "/o"],
+            &["check-chain", "5546", "", "/o"],
+            &["check-chain", "5546", "/d", ""],
+            &["check-chain", "5546", "--x", "/o"],
+            &["check-chain", "5546", "/d", "-o"],
+            &["check-chain", "5546", "/d", "/o", "x"],
+        ] {
+            assert!(parse_args(&s(bad)).is_err(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn adr028_admins_command_and_account_number_form() {
         let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
@@ -1169,5 +1311,98 @@ mod tests {
             second: None,
         };
         assert_eq!(token_text(&own).as_str(), format!("{}\n", "cd".repeat(32)));
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+    /// 2026-11-25): a cell that takes `control_plane` declarations refuses
+    /// to start without a pinned, decodable `restore-declaration-keys` file
+    /// of composite keys, with a plain refusal that names the file. A
+    /// `witness_key` cell reads none.
+    #[test]
+    fn i24_control_plane_cell_refuses_to_start_without_a_declaration_pin() {
+        let tag: String = fstp_crypto::random_array::<4>()
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let dir = std::env::temp_dir().join(format!("fstp-cell-pin-{tag}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let refused = Err(CellError::Config(ConfigError::Invalid(
+            "restore-declaration-keys",
+        )));
+        let saas = config::RestoreDeclarations::ControlPlane;
+        assert_eq!(read_declaration_keys(&dir, saas), refused, "no file");
+        assert_eq!(
+            read_declaration_keys(&dir, config::RestoreDeclarations::WitnessKey),
+            Ok(Vec::new())
+        );
+        let file = dir.join("restore-declaration-keys");
+        std::fs::write(&file, b"zz\n").unwrap();
+        assert_eq!(read_declaration_keys(&dir, saas), refused, "no hex");
+        std::fs::write(&file, config::encode_receipt_keys(&[vec![1; 10]])).unwrap();
+        assert_eq!(
+            read_declaration_keys(&dir, saas),
+            refused,
+            "no composite key"
+        );
+        let key = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![key.public_key().to_bytes().to_vec()];
+        std::fs::write(&file, config::encode_receipt_keys(&keys)).unwrap();
+        assert_eq!(read_declaration_keys(&dir, saas), Ok(keys));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answers of
+    /// 2026-11-25): a configuration shaped like the one `fstp-admin`
+    /// renders for the pilot cell, `"mode":"saas"` with no
+    /// `restore_declarations`, takes `witness_key` declarations. Its start
+    /// needs no `restore-declaration-keys` file, as the pilot's local
+    /// witness signs declarations with its receipt key. The member decodes
+    /// both values and refuses any other by name.
+    #[test]
+    fn i24_pilot_shaped_cell_starts_without_restore_declaration_keys() {
+        let pilot = config::decode_file(config::file_tests::file("").as_bytes()).unwrap();
+        assert_eq!(pilot.core.mode, config::Mode::Saas);
+        assert_eq!(
+            pilot.core.restore_declarations,
+            config::RestoreDeclarations::WitnessKey
+        );
+        let empty = std::env::temp_dir().join("fstp-cell-pin-none-does-not-exist");
+        assert_eq!(
+            read_declaration_keys(&empty, pilot.core.restore_declarations),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            crate::engine::startup::check_declaration_pin(
+                pilot.core.restore_declarations,
+                true,
+                &[]
+            ),
+            Ok(())
+        );
+        let with = |v: &str| {
+            config::decode_file(
+                config::file_tests::file("")
+                    .replacen(
+                        "\"registered_servers\"",
+                        &format!("\"restore_declarations\":\"{v}\",\"registered_servers\""),
+                        1,
+                    )
+                    .as_bytes(),
+            )
+            .map(|c| c.core.restore_declarations)
+        };
+        assert_eq!(
+            with("control_plane"),
+            Ok(config::RestoreDeclarations::ControlPlane)
+        );
+        assert_eq!(
+            with("witness_key"),
+            Ok(config::RestoreDeclarations::WitnessKey)
+        );
+        assert_eq!(
+            with("receipt"),
+            Err(ConfigError::Invalid("restore_declarations"))
+        );
     }
 }

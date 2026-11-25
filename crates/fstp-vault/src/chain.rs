@@ -42,7 +42,7 @@ use std::time::Duration;
 use fstp_audit::anchor::{Anchor, AnchorRow, Receipt, decode_receipt, encode_receipt, sign_anchor};
 use fstp_audit::anchorer::{AfterCommit, Anchorer, CommitOutcome, Resolution, Step};
 use fstp_audit::chain::{ChainRow, ChainWriter, RowKind, StoredEntry, StoredRow, genesis};
-use fstp_audit::verify::{ChainView, verify};
+use fstp_audit::verify::{ChainView, verify_with_declaration_keys};
 use fstp_audit::witness::{Prepare, WitnessRecord};
 use fstp_audit::{CellId, ChainId, CompositeSigningKey, Link, LostInRestore};
 use fstp_pgwire::Client;
@@ -96,6 +96,11 @@ pub struct VaultChainParts {
     pub witness: VaultWitness,
     /// The pinned witness receipt keys, encoded.
     pub witness_keys: Vec<Vec<u8>>,
+    /// The pinned restore declaration keys of a SaaS control plane, encoded
+    /// (ADR-012 record of lane m10/saas-declare). With them, the start-up
+    /// verification takes a declaration only with a statement under one of
+    /// them. Empty for a self-hosted vault.
+    pub declaration_keys: Vec<Vec<u8>>,
 }
 
 impl std::fmt::Debug for VaultChainParts {
@@ -413,6 +418,24 @@ async fn read_chain<R: Runtime>(
     Ok(out)
 }
 
+/// The Vault chain of `cell` as `client` holds it: its rows, the entries
+/// its kind 1 rows carry, and its anchor rows, with the reader of
+/// [`VaultChain::open`]. The restore drill's `fstp-vault check-chain`
+/// reads a scratch cluster this way, with no key and no witness (ADR-012
+/// record of lane m10/drill-chain). It writes nothing.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] when the database does not answer, and
+/// [`VaultError::Malformed`] for a row outside the table rules.
+pub async fn read_restored<R: Runtime>(
+    client: &mut Client<R>,
+    cell: [u8; 16],
+) -> Result<(Vec<StoredRow>, Vec<StoredEntry>, Vec<AnchorRow>), VaultError> {
+    let s = read_chain(client, CellId(cell)).await?;
+    Ok((s.rows, s.entries, s.anchors))
+}
+
 /// The link of row `n`, read in a transaction that first waits for any
 /// transaction still finishing (the anchorer's `ReadChain`).
 async fn link_at<R: Runtime>(client: &mut Client<R>, n: u64) -> Result<Option<Link>, VaultError> {
@@ -493,7 +516,8 @@ impl<R: Runtime> VaultChain<R> {
             anchor_keys: &anchor_keys,
             witness_keys: &parts.witness_keys,
         };
-        let verified = verify(&view).map_err(|_| TAMPERED)?;
+        let verified =
+            verify_with_declaration_keys(&view, &parts.declaration_keys).map_err(|_| TAMPERED)?;
         let head = stored
             .rows
             .last()
