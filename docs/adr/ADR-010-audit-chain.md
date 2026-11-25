@@ -276,7 +276,7 @@ Decided by Daniel on 2026-11-20 (D7 of `docs/handoff/production-mcp-design.md` s
 - Every append costs one witness round trip while the cell's advisory lock is held. Record at first use: the latency budget measured in W2, in the M3 exit audit.
 - Writes depend on witness availability. A replicated witness in the same region, retries and event batching reduce the cost (design risk R8).
 - A lost COMMIT outcome with a missing row is always reported as `PossibleDeletion`, never resolved silently.
-- The monthly restore drill verifies every cell's chains against the witness (design section 3.8). Self-hosted, the drill fetches the witness copies and checks that they load and recompute. The check of the restored chains against them is still open (ADR-012 record of lane m10/witness-copy).
+- The monthly restore drill verifies every cell's chains against the witness (design section 3.8). Self-hosted, the drill fetches the witness copies and checks that they load and recompute. Since lane m10/drill-chain the drill also verifies each restored chain against those copies, offline (ADR-012 record of that lane).
 - Composite signing makes every anchor depend on moduletto. No anchor ships in a release until the I-74 confirmation for the pinned commit exists.
 - Production anchoring, and so every production write, waits on the moduletto ML-DSA-65 pull request. The M3 exit claim of I-24 with composite anchors depends on it (`SPEC/09-milestones.md` NOTE 2).
 
