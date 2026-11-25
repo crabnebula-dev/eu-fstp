@@ -381,6 +381,9 @@ pub fn step_text(step: Step) -> &'static str {
         }
         Step::Database => "the restored cell database is missing or does not answer",
         Step::Keystore => "the restored keys do not open with the live key custody",
+        Step::Chain => {
+            "the restored audit chain does not match the witness copies, or the copies could not be fetched"
+        }
         Step::Cleanup => "the scratch copy could not be stopped or deleted",
         Step::Witness => {
             "the witness copies could not be fetched, did not load, or differ from the live witness store"

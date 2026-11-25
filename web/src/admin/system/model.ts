@@ -55,7 +55,7 @@ const PARTS = ["cell", "vault", "witness", "edge", "databases", "keys"] as const
 type PartName = (typeof PARTS)[number];
 
 /** Where a restore drill failed (ADR-012 record of lane m10/backup-health). */
-export const DRILL_STEPS = ["none", "space", "restore", "recovery", "database", "keystore", "cleanup", "witness"] as const;
+export const DRILL_STEPS = ["none", "space", "restore", "recovery", "database", "keystore", "cleanup", "witness", "chain"] as const;
 /** One drill step. */
 export type DrillStep = (typeof DRILL_STEPS)[number];
 

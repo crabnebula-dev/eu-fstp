@@ -116,6 +116,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.drill.failed_cleanup": "The last restore test passed its checks, but its test copy could not be removed.",
   "system.row.drill.failed_witness":
     "The last restore test failed: the copies of the audit witness could not be fetched, did not load, or differ from the live witness.",
+  "system.row.drill.failed_chain":
+    "The last restore test failed: the restored audit records do not match the copies of the audit witness.",
   "system.row.keys.copied": "The keys were last copied off the host on {date}.",
   "system.row.keys.never":
     "The keys have never been copied off the host. Without a copy, the backups cannot be opened after a lost server.",
