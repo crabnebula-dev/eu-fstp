@@ -20,6 +20,12 @@
 //! snapshot key files, and a server certificate renewed after the base
 //! backup reaches the drill's restored copy before its server starts.
 //!
+//! Lane m10/drill-chain adds: the passing drill verifies each restored
+//! audit chain against freshly fetched witness copies at the step
+//! `chain`. A tampered witness copy, and a chain row changed by the
+//! database superuser and carried by the WAL archive, each fail the drill
+//! at that step.
+//!
 //! The host runs in `direct` mode with the custody simulator in place of
 //! `fstp-keyd`, as in `l19_admin_setup_e2e.rs`. Every value is synthetic.
 
@@ -500,9 +506,25 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
         .map(str::to_owned);
     assert!(spki_after.is_some() && spki_after != spki_before);
 
+    // ADR-012 record of lane m10/drill-chain: the witness store leaves the
+    // host every minute by its timer, which direct mode does not run, so
+    // the test copies it once before the drill.
+    h.expect_ok(&["witness-copy"]);
+
     // The drill passes and records a duration.
     let drill = h.expect_ok(&["drill"]);
     assert!(drill.contains("The restore drill passed."), "{drill}");
+    // ADR-012 record of lane m10/drill-chain, I-24: the step `chain`
+    // verified each restored audit chain against the witness copies.
+    for c in ["app", "vault"] {
+        assert!(
+            drill.contains(&format!(
+                "done     checked the audit chain of the {c} copy against the witness copies: "
+            )),
+            "{c}: {drill}"
+        );
+    }
+    assert!(!fstp_admin::drill::root(&l).join("chain").exists());
     assert!(
         drill.contains("put the current TLS files into the restored app database"),
         "{drill}"
@@ -563,6 +585,82 @@ fn adr012_bh_backup_wal_archive_and_drill_over_real_postgres() {
     // A restore along the drill's path holds the row only the WAL carried.
     let rows = markers_of_a_restore(&h, &l, &h.root.join("check"));
     assert_eq!(rows, "after-backup-wal-only,before-backup");
+
+    // ADR-012 record of lane m10/drill-chain, I-24: a tampered witness
+    // copy fails the drill at the step `chain`, and no scratch copy stays.
+    let witness_copies: Vec<(String, Vec<u8>)> = {
+        let mut objects = s3.state.objects.lock().unwrap();
+        let mut saved = Vec::new();
+        for (key, bytes) in objects.iter_mut() {
+            if key.contains("/witness/") {
+                saved.push((key.clone(), bytes.clone()));
+                let mid = bytes.len() / 2;
+                bytes[mid] ^= 0x01;
+            }
+        }
+        saved
+    };
+    assert!(!witness_copies.is_empty(), "no witness copy was uploaded");
+    let failed = h.admin(&["drill"]);
+    let text = Host::text(&failed);
+    assert!(!failed.status.success(), "{text}");
+    assert!(text.contains("The restore drill FAILED"), "{text}");
+    assert_eq!(
+        drill_status::read(&l.admin_dir()).failed,
+        Some(Step::Chain),
+        "{text}"
+    );
+    for c in ["app", "vault", "chain"] {
+        assert!(!fstp_admin::drill::root(&l).join(c).exists(), "{c}");
+    }
+    {
+        let mut objects = s3.state.objects.lock().unwrap();
+        for (key, bytes) in witness_copies {
+            objects.insert(key, bytes);
+        }
+    }
+
+    // ADR-012 record of lane m10/drill-chain, I-24: a chain row changed
+    // behind the cell's back, by the database superuser, reaches the
+    // backup through the WAL archive, and the restored copy fails the
+    // drill at the step `chain`.
+    let cell: [u8; 16] = fstp_admin::state::State::load(&l.admin_dir().join("state"))
+        .unwrap()
+        .get("cell")
+        .and_then(fstp_admin::witness::unhex)
+        .and_then(|b| b.try_into().ok())
+        .unwrap();
+    let before = fstp_admin::archive::read(&l, Cluster::App)
+        .unwrap()
+        .archived;
+    let changed = fstp_admin::pg::psql(
+        &l,
+        Cluster::App,
+        &fstp_admin::pg::dbname(Cluster::App, &cell),
+        "SET session_replication_role = replica; \
+         UPDATE audit.chain SET at = at + 1 WHERE n = 1; \
+         SET session_replication_role = origin; \
+         SELECT count(*) FROM audit.chain WHERE n = 1;",
+        "the test",
+    )
+    .unwrap();
+    assert!(changed.ends_with('1'), "{changed}");
+    sql(&l, Cluster::App, "SELECT pg_switch_wal();");
+    archived_past(&l, Cluster::App, before);
+    let failed = h.admin(&["drill"]);
+    let text = Host::text(&failed);
+    assert!(!failed.status.success(), "{text}");
+    assert!(
+        text.contains("The restored app audit chain does not verify against the witness copies"),
+        "{text}"
+    );
+    assert_eq!(drill_status::read(&l.admin_dir()).failed, Some(Step::Chain));
+    let status = Host::text(&h.admin(&["status"]));
+    assert!(
+        status.contains("restore drill  FAILED: the restored audit chain does not match"),
+        "{status}"
+    );
+    assert_eq!(host_file(&l).drill_step, Some(Step::Chain));
 
     // A tampered base backup fails the drill at the step `restore`, and
     // status and the host status file say so.
