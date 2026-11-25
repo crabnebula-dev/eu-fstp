@@ -361,7 +361,7 @@ Interim, pending Daniel (Q34). R-NF-09 is read as covering links between platfor
 | Cell and vault to the witness | mTLS, chain-bound certificates | Claimed |
 | Cell to control plane, `fstp-control` to `fstp-pgagent` | mTLS, control-plane CA | Claimed |
 | Edge to `fstp-control`, the route feed (lane L15) | mTLS, control-plane CA, the operator's tunnel CA on the pilot | Claimed |
-| `fstp-control` to the witness, for restore declarations | mTLS, control-plane CA (ADR-012, interim, pending Daniel) | Built by lane m10/saas-declare (ADR-012 record of that lane). The witness pins the control-plane CA as `control-ca.pem` |
+| `fstp-control` to the witness, for restore declarations | mTLS, control-plane CA (ADR-012, interim, pending Daniel) | Built by lane m10/saas-declare (ADR-012 record of that lane). The witness pins the control-plane CA as `control-ca.der` |
 | Cell and vault to object storage, for keystore snapshots | SigV4 over server-authenticated TLS (ADR-012, destinations accepted by Daniel on 2026-11-21) | Not claimed. Request credentials only |
 | Cell and vault to OKMS | Access certificate over mutual TLS on REST (Q11 A), otherwise KMIP with certificates (Q11 B) | Claimed once the verify item is settled. Whether REST accepts an access certificate as mutual TLS is a question to OVHcloud |
 | Control plane to its managed databases | SCRAM over server-authenticated TLS (Q3 C) | Not claimed. Request credentials only |

@@ -30,7 +30,6 @@
 //!   provider (ADR-010 "Witnesses"). The provider waits on Q25.
 //! - The receipt key's custody entry (ADR-010 "Keys", open point 6).
 //!   [`WitnessParts::receipt_key`] is handed in by the caller.
-//! - Restore declarations from the control plane (ADR-012, interim).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
