@@ -50,6 +50,20 @@ pub enum RelyingParty {
     Intermediary,
 }
 
+/// Who signs the restore declarations the cell accepts (ADR-012 record of
+/// lane m10/saas-declare, interim pending Daniel). The member
+/// `restore_declarations` names it, and absent means [`Self::WitnessKey`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreDeclarations {
+    /// `witness_key`: the witness receipt key alone, as the console of a
+    /// local witness signs them (the pilot, lane m10/declared-restore).
+    WitnessKey,
+    /// `control_plane`: `fstp-control` states each one under the restore
+    /// declaration key. The cell fails closed without a pinned,
+    /// decodable `restore-declaration-keys` file.
+    ControlPlane,
+}
+
 /// The configuration of one cell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellConfig {
@@ -63,6 +77,8 @@ pub struct CellConfig {
     pub licence: Option<LicenceId>,
     /// The running product version.
     pub version: ProductVersion,
+    /// Who signs the restore declarations the cell accepts.
+    pub restore_declarations: RestoreDeclarations,
 }
 
 /// Why a configuration was refused.
@@ -85,7 +101,14 @@ pub enum ConfigError {
     LicenceWhenSaas,
 }
 
-const MEMBERS: [&str; 5] = ["cell", "mode", "eudi_relying_party", "licence", "version"];
+const MEMBERS: [&str; 6] = [
+    "cell",
+    "mode",
+    "eudi_relying_party",
+    "licence",
+    "restore_declarations",
+    "version",
+];
 
 /// The largest configuration accepted, in bytes.
 pub const MAX_CONFIG_LEN: usize = 4096;
@@ -152,6 +175,11 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
     let licence = text("licence")?
         .map(|t| hex16(t, "licence").map(LicenceId))
         .transpose()?;
+    let restore_declarations = match text("restore_declarations")? {
+        None | Some("witness_key") => RestoreDeclarations::WitnessKey,
+        Some("control_plane") => RestoreDeclarations::ControlPlane,
+        Some(_) => return Err(ConfigError::Invalid("restore_declarations")),
+    };
     let version = text("version")?.ok_or(ConfigError::MissingMember("version"))?;
     let version =
         ProductVersion::parse(version.as_bytes()).ok_or(ConfigError::Invalid("version"))?;
@@ -166,6 +194,7 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
             relying_party,
             licence,
             version,
+            restore_declarations,
         }),
     }
 }
@@ -196,6 +225,7 @@ pub fn decode(bytes: &[u8]) -> Result<CellConfig, ConfigError> {
 //  "object_store": {"bucket": "fstp-pilot", "endpoint": "s3.gra.io.cloud.ovh.net",
 //                   "region": "gra"},                              optional
 //  "registered_servers": [{"kind": "application", "spki_sha256": "<64 hex>"}],
+//  "restore_declarations": "control_plane",                         optional
 //  "vault": {"address": "127.0.0.1:4100"},
 //  "version": "0.3.0",
 //  "witness": {"address": "10.0.0.5:7443", "ca_spki_sha256": "<64 hex>",
@@ -226,7 +256,7 @@ pub const MAX_RECEIPT_KEYS: usize = 8;
 /// The longest encoded witness receipt key, in bytes.
 pub const MAX_RECEIPT_KEY_LEN: usize = 4096;
 
-const FILE_MEMBERS: [&str; 21] = [
+const FILE_MEMBERS: [&str; 22] = [
     "assets_dir",
     "cell",
     "checks",
@@ -244,13 +274,21 @@ const FILE_MEMBERS: [&str; 21] = [
     "object_store",
     "object_stores",
     "registered_servers",
+    "restore_declarations",
     "shell",
     "vault",
     "version",
     "witness",
 ];
 
-const CORE_MEMBERS: [&str; 5] = ["cell", "mode", "eudi_relying_party", "licence", "version"];
+const CORE_MEMBERS: [&str; 6] = [
+    "cell",
+    "mode",
+    "eudi_relying_party",
+    "licence",
+    "restore_declarations",
+    "version",
+];
 
 /// The cluster kind a server key was registered for (`cp.cluster`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -904,7 +942,7 @@ mod tests {
 pub(crate) use file_tests::file as tests_file;
 
 #[cfg(test)]
-mod file_tests {
+pub(crate) mod file_tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
