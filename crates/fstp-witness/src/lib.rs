@@ -85,6 +85,8 @@ pub use crate::service::{LocalWitnessParts, WitnessHandle, WitnessParts, serve, 
 /// 4. `revocation`: `witness.cell_revocation`, the revocation record of a
 ///    cell erasure (R-SW-02, ADR-004 "Decided by Daniel, 2026-11-15
 ///    (late)"), and the triggers that refuse a revoked cell's records.
+/// 5. `declaration`: `witness.declaration`, the restore declarations of a
+///    SaaS witness (ADR-012 record of lane m10/saas-declare).
 pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
     fstp_migrate::Migration::new(
         1,
@@ -105,6 +107,11 @@ pub const MIGRATIONS: &[fstp_migrate::Migration] = &[
         4,
         "revocation",
         include_str!("../migrations/witness/0004_revocation.sql"),
+    ),
+    fstp_migrate::Migration::new(
+        5,
+        "declaration",
+        include_str!("../migrations/witness/0005_declaration.sql"),
     ),
 ];
 
@@ -265,6 +272,24 @@ pub const CATALOGUE: &[TableSpec] = &[
             col("revoked_at", ColumnClass::Time),
         ],
     },
+    TableSpec {
+        schema: "witness",
+        name: "declaration",
+        class: TableClass::AuditEvent,
+        columns: &[
+            col("cell_id", ColumnClass::RandomId),
+            col("chain", ColumnClass::Enum),
+            col("witness_seq", ColumnClass::Sequence),
+            col("head_n", ColumnClass::Sequence),
+            col("head_link", ColumnClass::PublicDigest),
+            col("lost_to", ColumnClass::Sequence),
+            col("job", ColumnClass::RandomId),
+            col("received_at", ColumnClass::Time),
+            col("witness_link", ColumnClass::PublicDigest),
+            col("signature", ColumnClass::Signature),
+            col("statement", ColumnClass::Signature),
+        ],
+    },
 ];
 
 /// The environment variable that names the configuration file.
@@ -342,6 +367,20 @@ pub fn run() -> Result<(), WitnessError> {
         }
         config::WitnessStore::Files { .. } => None,
     };
+    // ADR-012 record of lane m10/saas-declare: the control-plane CA and the
+    // restore declaration keys, both or neither, on a SaaS witness only.
+    let control = match &cfg.store {
+        config::WitnessStore::Database { .. } => {
+            let ca = std::fs::read(creds.join(config::CONTROL_CA_FILE)).ok();
+            let keys = std::fs::read(creds.join(config::DECLARATION_KEYS_FILE)).ok();
+            match (ca, keys) {
+                (Some(ca), Some(keys)) => Some((ca, config::decode_declaration_keys(&keys)?)),
+                (None, None) => None,
+                _ => return Err(WitnessError::Config(config::DECLARATION_KEYS_FILE)),
+            }
+        }
+        config::WitnessStore::Files { .. } => None,
+    };
     let task_rt = rt.clone();
     let copy_register = cfg.credentials_dir.join(key_copy::COPY_REGISTER);
     rt.block_on(async move {
@@ -360,7 +399,7 @@ pub fn run() -> Result<(), WitnessError> {
         drop(seal);
         let handle = match (db, &cfg.store) {
             (Some(db), _) => {
-                serve(
+                let handle = serve(
                     task_rt.clone(),
                     WitnessParts {
                         db,
@@ -370,7 +409,13 @@ pub fn run() -> Result<(), WitnessError> {
                         listen: cfg.listen,
                     },
                 )
-                .await?
+                .await?;
+                // ADR-012 record of lane m10/saas-declare: a SaaS witness
+                // takes declarations once both files are there.
+                if let Some((ca, keys)) = control {
+                    handle.accept_declarations(&ca, keys)?;
+                }
+                handle
             }
             (None, config::WitnessStore::Files { dir }) => {
                 serve_local(

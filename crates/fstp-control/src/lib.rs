@@ -32,6 +32,8 @@
 //! - [`operator`], the staff passkey login and step-up;
 //! - [`approval`], the two-operator check of destructive jobs (ADR-011);
 //! - [`erase`], the `erase-cell` job and its confirmation (R-SW-02);
+//! - [`declare`], the `declare-restore` job and the restore declaration
+//!   key (ADR-012 record of lane m10/saas-declare);
 //! - [`service`], the `CellToCp` listener and the `fstp-control` run loop.
 //! - [`routes`], the signed route table that edges poll, and
 //!   [`route_feed`], the pilot `fstp-control` that serves only that feed
@@ -49,6 +51,8 @@ pub mod api;
 pub mod approval;
 pub mod catalogue;
 pub mod config;
+// ADR-012 record of lane m10/saas-declare: the SaaS restore declaration.
+pub mod declare;
 pub mod erase;
 pub mod exchange;
 pub mod install;
@@ -80,6 +84,10 @@ pub struct ControlConfig {
     pub cell_listen: std::net::SocketAddr,
     /// The directory of the TLS files ([`config::CONTROL_FILES`]).
     pub credentials_dir: String,
+    /// The socket of `fstp-keyd` for the ControlPlane chain, through which
+    /// the restore declaration key is made and opened (ADR-012 record of
+    /// lane m10/saas-declare).
+    pub keyd_socket: String,
     /// The control-plane host, the relying party id of staff passkeys
     /// (ADR-008 "Control plane").
     pub operator_host: String,

@@ -72,3 +72,10 @@ bench = false
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[[bin]]
+name = "declaration_keys_decode"
+path = "fuzz_targets/declaration_keys_decode.rs"
+test = false
+doc = false
+bench = false

@@ -32,7 +32,8 @@
 //!
 //! ```json
 //! {"cell_listen": "10.0.0.2:7300", "clusters": [{"id": "<32 hex>", "kind": "vault"}],
-//!  "credentials_dir": "/etc/fstp-control", "operator_host": "control.example.eu",
+//!  "credentials_dir": "/etc/fstp-control", "keyd_socket": "/run/fstp-keyd/control.sock",
+//!  "operator_host": "control.example.eu",
 //!  "staff": [{"staff": "<32 hex>", "credential_id": "<hex>", "cose_key": "<hex>"}]}
 //! ```
 
@@ -76,10 +77,11 @@ pub const AGENT_MEMBERS: [&str; 6] = [
 pub const AGENT_APPROVALS: &str = "approvals";
 
 /// The members of a control plane configuration, in key order.
-pub const CONTROL_MEMBERS: [&str; 5] = [
+pub const CONTROL_MEMBERS: [&str; 6] = [
     "cell_listen",
     "clusters",
     "credentials_dir",
+    "keyd_socket",
     "operator_host",
     "staff",
 ];
@@ -386,6 +388,7 @@ pub fn decode_control_config(bytes: &[u8]) -> Result<ControlConfig, ControlError
         clusters,
         cell_listen: socket_addr(obj, "cell_listen", "cell_listen")?,
         credentials_dir: path(obj, "credentials_dir", "credentials_dir")?,
+        keyd_socket: path(obj, "keyd_socket", "keyd_socket")?,
         operator_host: operator_host.to_owned(),
         staff,
     })

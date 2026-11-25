@@ -209,7 +209,7 @@ fn witness_database() -> (
                  INSERT INTO fstp_meta.placement (cluster_id, kind) VALUES ('\\x{}'::bytea, 4);\n\
                  GRANT USAGE ON SCHEMA witness, fstp_meta TO {service};\n\
                  GRANT SELECT ON fstp_meta.placement TO {service};\n\
-                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, witness.cell_ca, witness.anchor_key TO {service};\n\
+                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, witness.declaration, witness.cell_ca, witness.anchor_key TO {service};\n\
                  GRANT SELECT ON witness.cell_revocation TO {service};",
                 "ab".repeat(16)
             ),
@@ -913,5 +913,308 @@ fn r_sw_02_witness_refuses_to_revoke_an_unknown_cell() {
                 &fstp_witness::store::revocation_sql(CellId([0x73; 16]), 1),
             )
             .is_err()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SaaS restore declarations (ADR-012 record of lane m10/saas-declare).
+
+use fstp_audit::witness::{
+    RestoreStatement, declaration_signature_verifies, declaration_verifies, sign_statement,
+};
+
+/// The control plane: its restore declaration key, pinned at the witness
+/// with the control-plane CA of the setup.
+struct Control {
+    key: CompositeSigningKey,
+}
+
+impl Control {
+    fn pin(s: &Setup, witness: &WitnessHandle<TokioRuntime>) -> Control {
+        let key = fstp_crypto::composite::generate().unwrap();
+        witness
+            .accept_declarations(
+                &s.control_ca.der,
+                vec![key.public_key().to_bytes().to_vec()],
+            )
+            .unwrap();
+        Control { key }
+    }
+
+    fn declare(&self, statement: RestoreStatement) -> WireRequest {
+        WireRequest::Declare {
+            statement,
+            signature: sign_statement(&self.key, &statement).unwrap(),
+        }
+    }
+}
+
+fn receipted(c: &mut Conn, s: &Setup, p: &Prepare) -> fstp_audit::Receipt {
+    match c
+        .ask(s, &WireRequest::Message(WitnessMessage::Prepare(p.clone())))
+        .unwrap()
+    {
+        WireReply::Receipt(r) => r,
+        other => panic!("no receipt: {other:?}"),
+    }
+}
+
+fn count(s: &Setup, table: &str) -> String {
+    s.server
+        .psql(&s.dbname, &format!("SELECT count(*) FROM {table}"))
+        .unwrap()
+}
+
+/// I-24, ADR-012 record of lane m10/saas-declare: `fstp-control`, with a
+/// `control-witness` certificate of the control-plane CA, declares a
+/// restore of a live receipted head. The witness stores the declaration in
+/// `witness.declaration` before it answers. The reply carries both
+/// signatures. A retransmit gets the same record and adds no row. The
+/// chain's next prepare must extend the declared head, so a prepare from
+/// the lost tail is refused. The log carries the declaration, and a
+/// restarted witness rebuilds the same chain from its rows.
+#[test]
+fn i24_saas_declaration_resets_the_head_and_refuses_the_lost_tail() {
+    let s = setup();
+    let control = Control::pin(&s, &s.witness);
+    let cell = Cell::new(0x71);
+    cell.register(&s);
+    let mut c = Conn::open(&s, &cell.ca, "cell-witness").unwrap();
+    let g = (0, genesis(cell.id, ChainId::App));
+    let p1 = prepare(&cell, g, [1; 32]);
+    let r1 = receipted(&mut c, &s, &p1);
+    let p2 = prepare(&cell, (r1.fields.n, r1.fields.link), [2; 32]);
+    let r2 = receipted(&mut c, &s, &p2);
+    let p3 = prepare(&cell, (r2.fields.n, r2.fields.link), [3; 32]);
+    let statement = RestoreStatement {
+        cell: cell.id,
+        chain: ChainId::App,
+        head: (r1.fields.n, r1.fields.link),
+        job: [0x4A; 16],
+    };
+    let mut cp = Conn::open(&s, &s.control_ca, "control-witness").unwrap();
+    let declare = control.declare(statement);
+    let WireReply::Declared(d) = cp.ask(&s, &declare).unwrap() else {
+        panic!("the declaration was refused");
+    };
+    assert_eq!(d.fields.head, statement.head);
+    assert_eq!(d.fields.lost(), Some((2, 2)));
+    assert_eq!(d.fields.witness_seq, 3);
+    let witness_keys = [s.receipt_key_public.clone()];
+    let declaration_keys = [control.key.public_key().to_bytes().to_vec()];
+    assert!(declaration_signature_verifies(
+        cell.id,
+        ChainId::App,
+        &d,
+        &witness_keys
+    ));
+    assert!(declaration_verifies(
+        cell.id,
+        ChainId::App,
+        &d,
+        &witness_keys,
+        &declaration_keys
+    ));
+    assert_eq!(count(&s, "witness.declaration"), "1");
+    assert_eq!(
+        cp.ask(&s, &declare).unwrap(),
+        WireReply::Declared(d.clone()),
+        "a retransmit gets the same record"
+    );
+    assert_eq!(count(&s, "witness.declaration"), "1");
+    assert_eq!(
+        c.ask(&s, &WireRequest::Message(WitnessMessage::Prepare(p3)))
+            .unwrap(),
+        WireReply::Refused,
+        "the lost tail extends nothing"
+    );
+    assert_eq!(
+        c.ask(
+            &s,
+            &WireRequest::Outstanding {
+                cell: cell.id,
+                chain: ChainId::App
+            }
+        )
+        .unwrap(),
+        WireReply::Outstanding(None)
+    );
+    let p4 = prepare(&cell, (r1.fields.n, r1.fields.link), [4; 32]);
+    let r4 = receipted(&mut c, &s, &p4);
+    assert_eq!((r4.fields.n, r4.fields.witness_seq), (2, 4));
+    let log = c
+        .ask(
+            &s,
+            &WireRequest::Log {
+                cell: cell.id,
+                chain: ChainId::App,
+            },
+        )
+        .unwrap();
+    let WireReply::Log(page) = &log else {
+        panic!("no log: {log:?}");
+    };
+    assert_eq!(page.records.len(), 4);
+    assert_eq!(
+        page.records[2],
+        WitnessRecord::RestoreDeclared(d.clone()),
+        "the log carries the declaration with its statement"
+    );
+    assert_eq!(
+        c.ask(&s, &WireRequest::Declarations { cell: cell.id })
+            .unwrap(),
+        WireReply::Declarations(vec![(ChainId::App, d)])
+    );
+    // A job declares a chain once.
+    let again = RestoreStatement {
+        head: (r4.fields.n, r4.fields.link),
+        ..statement
+    };
+    assert_eq!(
+        cp.ask(&s, &control.declare(again)).unwrap(),
+        WireReply::Refused
+    );
+    drop((c, cp));
+    s.rt.block_on(s.witness.shutdown(Duration::from_secs(10)))
+        .unwrap();
+    let key = fstp_crypto::composite::generate().unwrap();
+    let restarted = start(&s.rt, s.server, &s.dbname, &s.login, &s.control_ca, key);
+    let mut c = Conn::open_at(&s, restarted.local_addr(), &cell.ca, "cell-witness").unwrap();
+    assert_eq!(
+        c.ask(
+            &s,
+            &WireRequest::Log {
+                cell: cell.id,
+                chain: ChainId::App
+            }
+        )
+        .unwrap(),
+        log,
+        "the restarted witness rebuilds the chain with the declaration"
+    );
+}
+
+/// I-24, ADR-012 record of lane m10/saas-declare: the witness refuses a
+/// declaration from a cell's own certificate, from a control-plane
+/// certificate of another OU, under a statement that the restore
+/// declaration key did not sign, for a head it never receipted, for an
+/// aborted head, or before it pins the control plane at all. The control
+/// plane may not prepare or read a log. Nothing is stored.
+#[test]
+fn i24_saas_declaration_refused_from_a_foreign_peer_or_for_a_non_receipted_head() {
+    let s = setup();
+    let cell = Cell::new(0x72);
+    cell.register(&s);
+    let mut c = Conn::open(&s, &cell.ca, "cell-witness").unwrap();
+    let g = (0, genesis(cell.id, ChainId::App));
+    let p1 = prepare(&cell, g, [1; 32]);
+    let r1 = receipted(&mut c, &s, &p1);
+    let p2 = prepare(&cell, (r1.fields.n, r1.fields.link), [2; 32]);
+    let r2 = receipted(&mut c, &s, &p2);
+    let abort = WitnessMessage::Abort {
+        cell: cell.id,
+        chain: ChainId::App,
+        n: r2.fields.n,
+        link: r2.fields.link,
+    };
+    assert_eq!(
+        c.ask(&s, &WireRequest::Message(abort)).unwrap(),
+        WireReply::Recorded
+    );
+    let good = RestoreStatement {
+        cell: cell.id,
+        chain: ChainId::App,
+        head: (r1.fields.n, r1.fields.link),
+        job: [0x5B; 16],
+    };
+    // Before the witness pins the control plane, its CA is no root.
+    let early = Conn::open(&s, &s.control_ca, "control-witness").and_then(|mut cp| {
+        let throwaway = fstp_crypto::composite::generate().unwrap();
+        cp.ask(
+            &s,
+            &WireRequest::Declare {
+                statement: good,
+                signature: sign_statement(&throwaway, &good).unwrap(),
+            },
+        )
+    });
+    assert!(
+        !matches!(early, Ok(WireReply::Declared(_))),
+        "an unpinned control plane declared: {early:?}"
+    );
+    let control = Control::pin(&s, &s.witness);
+    // The cell's own certificate may not declare.
+    assert_eq!(
+        c.ask(&s, &control.declare(good)).unwrap(),
+        WireReply::Refused
+    );
+    // A control-plane certificate with a writer's OU names no sender.
+    let as_writer = Conn::open(&s, &s.control_ca, "cell-witness")
+        .and_then(|mut x| x.ask(&s, &control.declare(good)));
+    assert!(
+        as_writer.is_err(),
+        "a writer OU of the control CA: {as_writer:?}"
+    );
+    let mut cp = Conn::open(&s, &s.control_ca, "control-witness").unwrap();
+    // Another key's statement, and a statement changed after signing.
+    let forger = fstp_crypto::composite::generate().unwrap();
+    let forged = WireRequest::Declare {
+        statement: good,
+        signature: sign_statement(&forger, &good).unwrap(),
+    };
+    assert_eq!(cp.ask(&s, &forged).unwrap(), WireReply::Refused);
+    let WireRequest::Declare { signature, .. } = control.declare(good) else {
+        unreachable!()
+    };
+    let moved = WireRequest::Declare {
+        statement: RestoreStatement {
+            job: [0x5C; 16],
+            ..good
+        },
+        signature,
+    };
+    assert_eq!(cp.ask(&s, &moved).unwrap(), WireReply::Refused);
+    // A head never receipted, and an aborted one.
+    for head in [(1, Link([0xEE; 32])), (r2.fields.n, r2.fields.link)] {
+        let st = RestoreStatement { head, ..good };
+        assert_eq!(
+            cp.ask(&s, &control.declare(st)).unwrap(),
+            WireReply::Refused,
+            "{head:?}"
+        );
+    }
+    // An unregistered cell.
+    let st = RestoreStatement {
+        cell: CellId([0x7F; 16]),
+        head: (0, genesis(CellId([0x7F; 16]), ChainId::App)),
+        ..good
+    };
+    assert_eq!(
+        cp.ask(&s, &control.declare(st)).unwrap(),
+        WireReply::Refused
+    );
+    // The control plane writes and reads no chain.
+    let p3 = prepare(&cell, (r1.fields.n, r1.fields.link), [3; 32]);
+    for req in [
+        WireRequest::Message(WitnessMessage::Prepare(p3)),
+        WireRequest::Log {
+            cell: cell.id,
+            chain: ChainId::App,
+        },
+        WireRequest::Declarations { cell: cell.id },
+    ] {
+        assert_eq!(cp.ask(&s, &req).unwrap(), WireReply::Refused, "{req:?}");
+    }
+    assert_eq!(count(&s, "witness.declaration"), "0");
+    // The good declaration still goes through afterwards.
+    assert!(matches!(
+        cp.ask(&s, &control.declare(good)).unwrap(),
+        WireReply::Declared(_)
+    ));
+    assert!(
+        s.server
+            .psql(&s.dbname, "DELETE FROM witness.declaration")
+            .is_err(),
+        "a declaration is insert-only"
     );
 }

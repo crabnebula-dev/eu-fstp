@@ -154,12 +154,13 @@ impl std::fmt::Debug for FeedKeyFile {
 /// The AAD of both the custody wrap and the seal.
 #[must_use]
 pub fn key_aad(epoch: u64) -> Vec<u8> {
-    [
-        &KEY_MAGIC[..],
-        ROOT_CHAIN.name().as_bytes(),
-        &epoch.to_be_bytes(),
-    ]
-    .concat()
+    sealed_key_aad(KEY_MAGIC, epoch)
+}
+
+/// The AAD of a sealed ControlPlane key file of `magic`: the feed key's,
+/// or the restore declaration key's (lane m10/saas-declare).
+pub(crate) fn sealed_key_aad(magic: &[u8], epoch: u64) -> Vec<u8> {
+    [magic, ROOT_CHAIN.name().as_bytes(), &epoch.to_be_bytes()].concat()
 }
 
 fn put16(out: &mut Vec<u8>, field: &[u8]) -> Result<(), ControlError> {
@@ -179,10 +180,18 @@ fn put16(out: &mut Vec<u8>, field: &[u8]) -> Result<(), ControlError> {
 /// [`ControlError::Config`] for an empty or overlong field, or a sealed
 /// key of another length.
 pub fn encode_feed_key_file(f: &FeedKeyFile) -> Result<Vec<u8>, ControlError> {
+    encode_sealed_key_file(KEY_MAGIC, f)
+}
+
+/// [`encode_feed_key_file`] under `magic`.
+pub(crate) fn encode_sealed_key_file(
+    magic: &[u8],
+    f: &FeedKeyFile,
+) -> Result<Vec<u8>, ControlError> {
     if f.sealed.len() != SEALED_KEY_LEN {
         return Err(bad("sealed key length"));
     }
-    let mut out = KEY_MAGIC.to_vec();
+    let mut out = magic.to_vec();
     out.extend_from_slice(&f.epoch.to_be_bytes());
     put16(&mut out, &f.handle)?;
     put16(&mut out, &f.wrapped)?;
@@ -198,9 +207,17 @@ pub fn encode_feed_key_file(f: &FeedKeyFile) -> Result<Vec<u8>, ControlError> {
 /// [`ControlError::Config`] for a wrong magic, a cut or overlong field,
 /// or trailing bytes.
 pub fn decode_feed_key_file(bytes: &[u8]) -> Result<FeedKeyFile, ControlError> {
+    decode_sealed_key_file(KEY_MAGIC, bytes)
+}
+
+/// [`decode_feed_key_file`] under `magic`.
+pub(crate) fn decode_sealed_key_file(
+    magic: &[u8],
+    bytes: &[u8],
+) -> Result<FeedKeyFile, ControlError> {
     let mut r = fstp_audit::codec::Reader::new(bytes);
     let e = |_| bad("key file");
-    if r.take(KEY_MAGIC.len()).map_err(e)? != KEY_MAGIC {
+    if r.take(magic.len()).map_err(e)? != magic {
         return Err(bad("key file magic"));
     }
     let epoch = r.be64().map_err(e)?;
@@ -249,6 +266,15 @@ pub async fn create_feed_key<C: Custody>(
     custody: &C,
     key: &CompositeSigningKey,
 ) -> Result<Vec<u8>, ControlError> {
+    create_sealed_key(custody, KEY_MAGIC, key).await
+}
+
+/// [`create_feed_key`] for a key file of `magic`.
+pub(crate) async fn create_sealed_key<C: Custody>(
+    custody: &C,
+    magic: &[u8],
+    key: &CompositeSigningKey,
+) -> Result<Vec<u8>, ControlError> {
     let root = custody
         .create_root(RootLabel {
             cell: None,
@@ -258,22 +284,28 @@ pub async fn create_feed_key<C: Custody>(
         .await
         .map_err(ControlError::Custody)?;
     let seal = SealKey::generate().map_err(ControlError::Custody)?;
+    let aad = sealed_key_aad(magic, ROOT_EPOCH);
     let wrapped = custody
-        .wrap(&root, &seal, &Aad(key_aad(ROOT_EPOCH)))
+        .wrap(&root, &seal, &Aad(aad.clone()))
         .await
         .map_err(ControlError::Custody)?;
     let aead = fstp_crypto::aead::Key::from_bytes(seal.expose())
         .map_err(|_| ControlError::Job("seal key"))?;
-    let secret = key.to_bytes().map_err(|_| ControlError::Job("feed key"))?;
-    let sealed = fstp_crypto::aead::seal(&aead, &key_aad(ROOT_EPOCH), &secret[..])
-        .map_err(|_| ControlError::Job("seal"))?;
-    encode_feed_key_file(&FeedKeyFile {
-        epoch: ROOT_EPOCH,
-        handle: root.handle.0,
-        wrapped: wrapped.0,
-        nonce: sealed.nonce,
-        sealed: sealed.body,
-    })
+    let secret = key
+        .to_bytes()
+        .map_err(|_| ControlError::Job("sealed key"))?;
+    let sealed =
+        fstp_crypto::aead::seal(&aead, &aad, &secret[..]).map_err(|_| ControlError::Job("seal"))?;
+    encode_sealed_key_file(
+        magic,
+        &FeedKeyFile {
+            epoch: ROOT_EPOCH,
+            handle: root.handle.0,
+            wrapped: wrapped.0,
+            nonce: sealed.nonce,
+            sealed: sealed.body,
+        },
+    )
 }
 
 /// Opens the feed signing key of the key file `bytes` through `custody`.
@@ -286,18 +318,28 @@ pub async fn open_feed_key<C: Custody>(
     custody: &C,
     bytes: &[u8],
 ) -> Result<CompositeSigningKey, ControlError> {
-    let f = decode_feed_key_file(bytes)?;
+    open_sealed_key(custody, KEY_MAGIC, bytes).await
+}
+
+/// [`open_feed_key`] for a key file of `magic`.
+pub(crate) async fn open_sealed_key<C: Custody>(
+    custody: &C,
+    magic: &[u8],
+    bytes: &[u8],
+) -> Result<CompositeSigningKey, ControlError> {
+    let f = decode_sealed_key_file(magic, bytes)?;
+    let aad = sealed_key_aad(magic, f.epoch);
     let seal = custody
         .unwrap(
             &root_of(&f),
             &WrappedSealKey(f.wrapped.clone()),
-            &Aad(key_aad(f.epoch)),
+            &Aad(aad.clone()),
         )
         .await
         .map_err(ControlError::Custody)?;
     let aead = fstp_crypto::aead::Key::from_bytes(seal.expose()).map_err(|_| bad("key file"))?;
-    let secret = fstp_crypto::aead::open(&aead, &f.nonce, &key_aad(f.epoch), &f.sealed)
-        .map_err(|_| bad("key file"))?;
+    let secret =
+        fstp_crypto::aead::open(&aead, &f.nonce, &aad, &f.sealed).map_err(|_| bad("key file"))?;
     CompositeSigningKey::from_bytes(&secret).map_err(|_| bad("key file"))
 }
 

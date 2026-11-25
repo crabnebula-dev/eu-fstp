@@ -10,6 +10,7 @@
 //! the operation's fields. The encoding is a bijection, so each request
 //! has one frame.
 
+use fstp_audit::ChainId;
 use fstp_cp_proto::CellId;
 
 use crate::ControlError;
@@ -52,6 +53,22 @@ pub enum CpApiRequest {
         /// The cell.
         cell: CellId,
     },
+    /// `declare-restore`: declares at the witness that the chain of the
+    /// cell resumes from `head` after a restore, by the job `job` (ADR-012
+    /// record of lane m10/saas-declare). Destructive, so it needs two
+    /// operators (ADR-011). One request per chain.
+    DeclareRestore {
+        /// The cell.
+        cell: CellId,
+        /// The chain, by its code: 1 App, 2 Vault.
+        chain: ChainId,
+        /// The row number of the head the chain resumes from.
+        head_n: u64,
+        /// The link of that head.
+        head_link: [u8; 32],
+        /// The `DeclareRestore` job id that the declaration names.
+        job: [u8; 16],
+    },
 }
 
 /// The version octet that opens every request frame.
@@ -61,6 +78,7 @@ const OP_PROVISION_CELL: u8 = 1;
 const OP_ERASE_CELL: u8 = 2;
 const OP_PRIVILEGE_AUDIT: u8 = 3;
 const OP_ROTATE_NOTICE_KEY: u8 = 4;
+const OP_DECLARE_RESTORE: u8 = 5;
 
 /// Encodes a request.
 pub fn encode_cp_api(req: &CpApiRequest) -> Vec<u8> {
@@ -85,6 +103,20 @@ pub fn encode_cp_api(req: &CpApiRequest) -> Vec<u8> {
         CpApiRequest::RotateNoticeKey { cell } => {
             out.push(OP_ROTATE_NOTICE_KEY);
             out.extend_from_slice(&cell.0);
+        }
+        CpApiRequest::DeclareRestore {
+            cell,
+            chain,
+            head_n,
+            head_link,
+            job,
+        } => {
+            out.push(OP_DECLARE_RESTORE);
+            out.extend_from_slice(&cell.0);
+            out.push(chain.byte());
+            out.extend_from_slice(&head_n.to_be_bytes());
+            out.extend_from_slice(head_link);
+            out.extend_from_slice(job);
         }
     }
     out
@@ -128,6 +160,33 @@ pub fn decode_cp_api(bytes: &[u8]) -> Result<CpApiRequest, ControlError> {
         OP_ROTATE_NOTICE_KEY => CpApiRequest::RotateNoticeKey {
             cell: CellId(id16(body)?),
         },
+        OP_DECLARE_RESTORE => {
+            let body = body.unwrap_or_default();
+            let len = ControlError::Request("length");
+            let cell = id16(body.get(..16))?;
+            let chain = body
+                .get(16)
+                .copied()
+                .and_then(ChainId::from_byte)
+                .ok_or(ControlError::Request("chain"))?;
+            let head_n = body
+                .get(17..25)
+                .and_then(|b| <[u8; 8]>::try_from(b).ok())
+                .map(u64::from_be_bytes)
+                .ok_or(len)?;
+            let head_link = body
+                .get(25..57)
+                .and_then(|b| <[u8; 32]>::try_from(b).ok())
+                .ok_or(len)?;
+            let job = id16(body.get(57..))?;
+            CpApiRequest::DeclareRestore {
+                cell: CellId(cell),
+                chain,
+                head_n,
+                head_link,
+                job,
+            }
+        }
         _ => return Err(ControlError::Request("operation")),
     };
     if encode_cp_api(&req) != bytes {
@@ -157,6 +216,13 @@ mod tests {
             },
             CpApiRequest::RotateNoticeKey {
                 cell: CellId([10; 16]),
+            },
+            CpApiRequest::DeclareRestore {
+                cell: CellId([11; 16]),
+                chain: ChainId::Vault,
+                head_n: 0,
+                head_link: [12; 32],
+                job: [13; 16],
             },
         ] {
             let b = encode_cp_api(&req);

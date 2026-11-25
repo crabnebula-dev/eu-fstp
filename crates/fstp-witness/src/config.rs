@@ -360,6 +360,76 @@ pub fn open_receipt_key(
     fstp_crypto::composite::CompositeSigningKey::from_bytes(&secret).map_err(WitnessError::Signing)
 }
 
+// ---------------------------------------------------------------------------
+// SaaS restore declarations (ADR-012 record of lane m10/saas-declare).
+
+/// The file of the restore declaration public keys in the credentials
+/// directory of a SaaS witness: the current and the next key, each one
+/// lowercase hex line of an encoded composite public key, as
+/// `witness-receipt-keys` holds receipt keys for a cell.
+pub const DECLARATION_KEYS_FILE: &str = "restore-declaration-keys";
+
+/// The control-plane CA certificate, DER, in the credentials directory of
+/// a SaaS witness that takes declarations.
+pub const CONTROL_CA_FILE: &str = "control-ca.der";
+
+/// The most restore declaration keys a witness pins: the current and the
+/// next (ADR-004 "Restore declaration key").
+pub const MAX_DECLARATION_KEYS: usize = 2;
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => b.checked_sub(b'0'),
+        b'a'..=b'f' => b.checked_sub(b'a' - 10),
+        _ => None,
+    }
+}
+
+/// Decodes [`DECLARATION_KEYS_FILE`]: one to [`MAX_DECLARATION_KEYS`]
+/// lines, each the lowercase hex of a composite public key of
+/// `fstp_audit::PUBLIC_KEY_LEN` bytes, each ending in a newline. One
+/// spelling. Fuzzed (`declaration_keys_decode`).
+///
+/// # Errors
+///
+/// [`WitnessError::Config`] naming the file for any other input.
+pub fn decode_declaration_keys(bytes: &[u8]) -> Result<Vec<Vec<u8>>, WitnessError> {
+    const RULE: WitnessError = WitnessError::Config(DECLARATION_KEYS_FILE);
+    let body = bytes.strip_suffix(b"\n").ok_or(RULE)?;
+    let mut keys = Vec::new();
+    for line in body.split(|b| *b == b'\n') {
+        if keys.len() >= MAX_DECLARATION_KEYS
+            || line.len() != fstp_audit::PUBLIC_KEY_LEN.saturating_mul(2)
+        {
+            return Err(RULE);
+        }
+        let mut key = Vec::with_capacity(fstp_audit::PUBLIC_KEY_LEN);
+        for pair in line.chunks_exact(2) {
+            let hi = pair.first().copied().and_then(hex_nibble).ok_or(RULE)?;
+            let lo = pair.get(1).copied().and_then(hex_nibble).ok_or(RULE)?;
+            key.push((hi << 4) | lo);
+        }
+        keys.push(key);
+    }
+    Ok(keys)
+}
+
+/// Encodes `keys` in the form [`decode_declaration_keys`] reads.
+#[must_use]
+pub fn encode_declaration_keys(keys: &[Vec<u8>]) -> Vec<u8> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = Vec::new();
+    for k in keys {
+        for b in k {
+            for nibble in [b >> 4, b & 15] {
+                out.push(HEX.get(usize::from(nibble)).copied().unwrap_or(b'0'));
+            }
+        }
+        out.push(b'\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -417,5 +487,26 @@ mod tests {
         let mut longer = file.clone();
         longer.push(0);
         assert!(decode_receipt_key_file(&longer).is_err());
+    }
+
+    /// TH-26, ADR-012 record of lane m10/saas-declare: the restore
+    /// declaration key file holds one or two keys with one spelling, and
+    /// refuses upper case, a missing newline, a short key and a third key.
+    #[test]
+    fn adr012_saas_declaration_keys_file_has_one_spelling() {
+        let a = vec![0xab; fstp_audit::PUBLIC_KEY_LEN];
+        let b = vec![0x01; fstp_audit::PUBLIC_KEY_LEN];
+        for keys in [vec![a.clone()], vec![a.clone(), b.clone()]] {
+            let bytes = encode_declaration_keys(&keys);
+            assert_eq!(decode_declaration_keys(&bytes).unwrap(), keys);
+            assert!(decode_declaration_keys(&bytes[..bytes.len() - 1]).is_err());
+        }
+        let three = encode_declaration_keys(&[a.clone(), b.clone(), a.clone()]);
+        assert!(decode_declaration_keys(&three).is_err());
+        let upper = encode_declaration_keys(std::slice::from_ref(&a)).to_ascii_uppercase();
+        assert!(decode_declaration_keys(&upper).is_err());
+        assert!(decode_declaration_keys(&encode_declaration_keys(&[vec![1; 3]])).is_err());
+        assert!(decode_declaration_keys(b"\n").is_err());
+        assert!(decode_declaration_keys(b"").is_err());
     }
 }

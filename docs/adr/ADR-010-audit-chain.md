@@ -203,7 +203,7 @@ A batch of entries shares one prepare. Steps 1 to 6 can abort. The vault follows
 | `StoredHashMismatch { seq }` | A ledger entry's bytes differ from the hash its row holds |
 | `Deleted { n }` | A prepared link at the witness has no chain row, no `Abort` and no `InDoubtAbsent` |
 | `AbortedButPresent { n }` | An `Abort` exists for a link that is present in the chain |
-| `LostInRestore { from, to, job }` | Receipted links beyond the head of a declared restore, receipted before the declaration, with no chain row. Interim, pending Daniel, built by lane m10/declared-restore (ADR-012 record of that lane). It is listed in the verified result beside the possible deletions, never as an error, so the chain verifies and the cell and vault start. Each needs a tenant admin acknowledgement, and it never hides a finding |
+| `LostInRestore { from, to, job }` | Receipted links beyond the head of a declared restore, receipted before the declaration, with no chain row. Interim, pending Daniel, built by lane m10/declared-restore (ADR-012 record of that lane). It is listed in the verified result beside the possible deletions, never as an error, so the chain verifies and the cell and vault start. Each needs a tenant admin acknowledgement, and it never hides a finding. SaaS declarations, lane m10/saas-declare: `verify_with_declaration_keys` also requires a statement signed by a pinned restore declaration key, when one is pinned |
 
 ### Witnesses
 
@@ -211,7 +211,7 @@ A batch of entries shares one prepare. Steps 1 to 6 can abort. The vault follows
 
 - `fstp-witness` runs as its own process, with its own database `witness` on its own self-operated cluster. Under Daniel's Q3 answer the control-plane databases are managed, but the witness database stays self-operated. I-24 detection then does not rest on a provider's superuser.
 - `witness.anchor` is INSERT and SELECT only for `witness_service`.
-- The witness writes each prepare, abort, in-doubt record and receipt to its database. It also writes a copy to an object-lock bucket at a second provider. Restore declarations (ADR-012) are copied the same way, interim, pending Daniel. The provider follows Q25: Hetzner Object Storage (Daniel, 2026-11-25), subject to ADR-005 verify items V19 to V24 and the L-15 due diligence.
+- The witness writes each prepare, abort, in-doubt record and receipt to its database. It also writes a copy to an object-lock bucket at a second provider. Restore declarations (ADR-012) are copied the same way, interim, pending Daniel. The SaaS witness records a declaration in `witness.declaration` (ADR-012 record of lane m10/saas-declare). The self-hosted witness copies its file store to every backup object store (ADR-012 record of lane m10/witness-copy). The SaaS witness has no such copy yet. The provider follows Q25: Hetzner Object Storage (Daniel, 2026-11-25), subject to ADR-005 verify items V19 to V24 and the L-15 due diligence.
 - Cells and vaults reach the witness directly over mutual TLS. Anchors never pass through the control plane, and `CellToCp` has no anchor variant.
 - `fstp-control` reaches the witness only to send restore declarations, over mutual TLS with a control-plane CA certificate (ADR-012, ADR-009). Interim, pending Daniel. It never sends a prepare.
 - The witness pins each cell CA's public key, registered at provisioning. It accepts a `cell-witness` certificate only for the App chain of that cell, and a `vault-witness` certificate only for its Vault chain.

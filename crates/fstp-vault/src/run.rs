@@ -281,6 +281,36 @@ pub async fn lock_keystore<R: Runtime>(client: &mut Client<R>) -> Result<(), Vau
     }
 }
 
+/// The credentials file of the pinned restore declaration keys (ADR-012
+/// record of lane m10/saas-declare), one lowercase hex line per composite
+/// public key, as a witness reads it.
+pub const DECLARATION_KEYS_FILE: &str = "restore-declaration-keys";
+
+/// The pinned restore declaration keys of a SaaS vault, from
+/// [`DECLARATION_KEYS_FILE`] in its credentials directory. A SaaS vault
+/// fails closed without a decodable file of composite keys (lead answer of
+/// 2026-11-25, interim pending Daniel). A self-hosted vault reads none.
+///
+/// # Errors
+///
+/// [`VaultError::Config`] naming the file.
+pub fn read_declaration_keys(cfg: &VaultConfig) -> Result<Vec<Vec<u8>>, VaultError> {
+    if !cfg.saas {
+        return Ok(Vec::new());
+    }
+    let bytes = std::fs::read(cfg.credentials_dir.join(DECLARATION_KEYS_FILE))
+        .map_err(|_| cfg_err(DECLARATION_KEYS_FILE))?;
+    let keys = fstp_witness::config::decode_declaration_keys(&bytes)
+        .map_err(|_| cfg_err(DECLARATION_KEYS_FILE))?;
+    if keys
+        .iter()
+        .any(|k| fstp_audit::CompositePublicKey::from_bytes(k).is_err())
+    {
+        return Err(cfg_err(DECLARATION_KEYS_FILE));
+    }
+    Ok(keys)
+}
+
 fn witness_of(cfg: &VaultConfig, creds: &Credentials) -> Result<VaultWitness, VaultError> {
     Ok(VaultWitness {
         addr: cfg.witness.address,
@@ -315,6 +345,7 @@ async fn erasure_journal<R: Runtime>(
         anchor_key,
         witness: witness_of(cfg, creds)?,
         witness_keys: cfg.witness.receipt_keys.clone(),
+        declaration_keys: read_declaration_keys(cfg)?,
     };
     let chain = VaultChain::open(rt.clone(), cfg.cell, parts, &mut client).await?;
     let vault =
@@ -592,6 +623,7 @@ pub fn parts(
             anchor_key,
             witness,
             witness_keys: cfg.witness.receipt_keys.clone(),
+            declaration_keys: read_declaration_keys(cfg)?,
         }),
         pages: match &cfg.assets_dir {
             Some(dir) => Some(Arc::new(crate::pages::VaultPages::load_installed(dir)?)),
@@ -1302,5 +1334,48 @@ mod tests {
         let c = Credentials::read(&dir).unwrap();
         assert!(!format!("{c:?}").contains("s3cr3t"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
+    /// 2026-11-25): a SaaS vault refuses to start without a pinned,
+    /// decodable `restore-declaration-keys` file of composite keys, with a
+    /// plain refusal naming the file. A self-hosted vault reads none.
+    #[test]
+    fn i24_saas_vault_refuses_to_start_without_a_declaration_pin() {
+        let tag: String = fstp_crypto::random_array::<4>()
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let dir = std::env::temp_dir().join(format!("fstp-vault-pin-{tag}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg =
+            crate::config::decode_config(crate::config::tests::text(|s| s).as_bytes()).unwrap();
+        cfg.credentials_dir = dir.clone();
+        assert_eq!(read_declaration_keys(&cfg), Ok(Vec::new()), "self-hosted");
+        cfg.saas = true;
+        let refused = Err(VaultError::Config(DECLARATION_KEYS_FILE));
+        assert_eq!(read_declaration_keys(&cfg), refused, "no file");
+        let file = dir.join(DECLARATION_KEYS_FILE);
+        std::fs::write(&file, b"zz\n").unwrap();
+        assert_eq!(read_declaration_keys(&cfg), refused, "no hex");
+        let not_a_key = vec![0xab; fstp_audit::PUBLIC_KEY_LEN];
+        std::fs::write(
+            &file,
+            fstp_witness::config::encode_declaration_keys(&[not_a_key]),
+        )
+        .unwrap();
+        let checked = read_declaration_keys(&cfg);
+        let key = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![key.public_key().to_bytes().to_vec()];
+        std::fs::write(&file, fstp_witness::config::encode_declaration_keys(&keys)).unwrap();
+        assert_eq!(read_declaration_keys(&cfg), Ok(keys));
+        // A key of the composite length that does not decode is refused,
+        // if the composite decoder refuses it.
+        if fstp_audit::CompositePublicKey::from_bytes(&[0xab; fstp_audit::PUBLIC_KEY_LEN]).is_err()
+        {
+            assert_eq!(checked, refused);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -57,7 +57,7 @@ use std::net::SocketAddr;
 
 use fstp_audit::anchorer::Resolution;
 use fstp_audit::verify::ChainView;
-use fstp_audit::witness::{Declaration, WitnessRecord, declaration_signature_verifies};
+use fstp_audit::witness::{Declaration, WitnessRecord, declaration_verifies};
 use fstp_audit::{CellId, ChainId};
 use fstp_custody::Custody;
 use fstp_obs::LogEvent;
@@ -347,6 +347,14 @@ pub trait StartStore: CellStore {
     /// every stored receipt under the set the store checks new ones with.
     fn pinned_witness_keys(&self) -> Vec<Vec<u8>>;
 
+    /// The pinned restore declaration keys of a SaaS control plane (ADR-012
+    /// record of lane m10/saas-declare). None by default, as on a
+    /// self-hosted cell: each declaration is then read under the witness
+    /// keys alone.
+    fn pinned_declaration_keys(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
     /// Raises `PossibleDeletion` for each of `heads`, durably and keyed by
     /// `(n, link)`, so a head raised before changes nothing.
     fn raise_possible_deletions(
@@ -465,6 +473,10 @@ impl<R: Runtime, L: WitnessLink> StartStore for PgCellStore<R, WitnessClient<L>>
         self.inner().witness_keys().to_vec()
     }
 
+    fn pinned_declaration_keys(&self) -> Vec<Vec<u8>> {
+        self.declaration_keys().to_vec()
+    }
+
     async fn raise_possible_deletions(
         &mut self,
         heads: &[(u64, fstp_audit::Link)],
@@ -556,12 +568,47 @@ pub(crate) fn lost_in_restore_event(loss: &OwnRow) -> Option<Vec<u8>> {
         .map(String::into_bytes)
 }
 
+/// The credentials file of the pinned restore declaration keys (ADR-012
+/// record of lane m10/saas-declare).
+pub const DECLARATION_KEYS_FILE: &str = "restore-declaration-keys";
+
+/// Fails closed (ADR-012 record of lane m10/saas-declare, lead answer of
+/// 2026-11-25, interim pending Daniel): a SaaS cell process, over its
+/// cluster, starts only with one or more pinned restore declaration keys,
+/// each a composite public key. A self-hosted cell keeps the console rule
+/// and needs none. The in-memory store is a test path on no cluster.
+///
+/// # Errors
+///
+/// [`StartRefusal::Config`] naming [`DECLARATION_KEYS_FILE`].
+pub fn check_declaration_pin(
+    mode: Mode,
+    on_cluster: bool,
+    keys: &[Vec<u8>],
+) -> Result<(), StartRefusal> {
+    if mode != Mode::Saas || !on_cluster {
+        return Ok(());
+    }
+    if keys.is_empty()
+        || keys
+            .iter()
+            .any(|k| fstp_audit::CompositePublicKey::from_bytes(k).is_err())
+    {
+        return Err(StartRefusal::Config(crate::config::ConfigError::Invalid(
+            DECLARATION_KEYS_FILE,
+        )));
+    }
+    Ok(())
+}
+
 /// The lost windows a start records (ADR-012 record of lane
 /// m10/declared-restore): those the verifier listed for the App chain, and
 /// those the declarations of the Vault chain name. The vault has no
 /// outbox, so the cell raises its windows. A Vault declaration whose
 /// signature does not verify under the pinned witness keys refuses the
-/// start, so no window is taken on trust.
+/// start, so no window is taken on trust. With pinned restore declaration
+/// keys (ADR-012 record of lane m10/saas-declare), a Vault declaration
+/// must also carry a statement under one of them.
 ///
 /// # Errors
 ///
@@ -571,6 +618,7 @@ pub(crate) fn restore_losses(
     app: &[fstp_audit::LostInRestore],
     declarations: &[(ChainId, Declaration)],
     witness_keys: &[Vec<u8>],
+    declaration_keys: &[Vec<u8>],
 ) -> Result<Vec<OwnRow>, StartRefusal> {
     let mut out: Vec<OwnRow> = app
         .iter()
@@ -585,7 +633,7 @@ pub(crate) fn restore_losses(
         if *chain != ChainId::Vault {
             continue;
         }
-        if !declaration_signature_verifies(cell, ChainId::Vault, d, witness_keys) {
+        if !declaration_verifies(cell, ChainId::Vault, d, witness_keys, declaration_keys) {
             return Err(StartRefusal::Witness);
         }
         if let Some((from, to)) = d.fields.lost() {
@@ -801,6 +849,9 @@ where
         (None, h) => h.map(|h| h.token.licence),
     };
     report(StartPhase::ConfigDecoded);
+    // ADR-012 record of lane m10/saas-declare: a cell on a cluster is a
+    // process; the in-memory store is a test path.
+    let on_cluster = parts.database.is_some();
     if let Some(database) = &parts.database
         && !accepts_database(database)
     {
@@ -820,6 +871,8 @@ where
     let cell = config.cell.0;
     let mut store = open(cell)?;
     let witness_keys = store.pinned_witness_keys();
+    let declaration_keys = store.pinned_declaration_keys();
+    check_declaration_pin(config.mode, on_cluster, &declaration_keys)?;
     match crate::process::step(|| store.resolve_open_prepare()).await? {
         Resolved::Nothing => {}
         Resolved::Committed => report(StartPhase::InDoubtCommitted),
@@ -847,7 +900,7 @@ where
         anchor_keys: std::slice::from_ref(&anchor_key),
         witness_keys: &witness_keys,
     };
-    let verdict = fstp_audit::verify::verify(&view);
+    let verdict = fstp_audit::verify::verify_with_declaration_keys(&view, &declaration_keys);
     let findings = match &verdict {
         Ok(v) => {
             let losses = restore_losses(
@@ -855,6 +908,7 @@ where
                 &v.lost_in_restore,
                 &declarations,
                 &witness_keys,
+                &declaration_keys,
             )?;
             if !losses.is_empty() {
                 let at = (parts.clock)();
@@ -1003,7 +1057,7 @@ mod tests {
         let mut app_decl = declared(&key, 3, 6);
         app_decl.0 = ChainId::App;
         let decls = vec![declared(&key, 10, 12), declared(&key, 12, 12), app_decl];
-        let losses = restore_losses(CellId(CELL), &app, &decls, &keys).unwrap();
+        let losses = restore_losses(CellId(CELL), &app, &decls, &keys, &[]).unwrap();
         assert_eq!(
             losses,
             vec![
@@ -1043,8 +1097,66 @@ mod tests {
         let mut bad = declared(&key, 10, 12);
         bad.1.signature[3] ^= 1;
         assert_eq!(
-            restore_losses(CellId(CELL), &[], &[bad], &keys),
+            restore_losses(CellId(CELL), &[], &[bad], &keys, &[]),
             Err(StartRefusal::Witness)
         );
+    }
+
+    /// I-24, I-90, ADR-012 record of lane m10/saas-declare: with a restore
+    /// declaration key pinned, a Vault declaration counts only with a
+    /// statement under that key. A console declaration, or one stated by
+    /// another key, refuses the start. With no key pinned it counts, as on
+    /// a self-hosted cell.
+    #[test]
+    fn adr012_saas_vault_declaration_needs_the_pinned_declaration_key() {
+        let key = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![key.public_key().to_bytes().to_vec()];
+        let control = fstp_crypto::composite::generate().unwrap();
+        let pinned = vec![control.public_key().to_bytes().to_vec()];
+        let (chain, mut d) = declared(&key, 10, 12);
+        assert!(restore_losses(CellId(CELL), &[], &[(chain, d.clone())], &keys, &[]).is_ok());
+        assert_eq!(
+            restore_losses(CellId(CELL), &[], &[(chain, d.clone())], &keys, &pinned),
+            Err(StartRefusal::Witness)
+        );
+        let st = fstp_audit::witness::RestoreStatement::of(CellId(CELL), chain, &d.fields);
+        let other = fstp_crypto::composite::generate().unwrap();
+        d.statement = Some(fstp_audit::witness::sign_statement(&other, &st).unwrap());
+        assert_eq!(
+            restore_losses(CellId(CELL), &[], &[(chain, d.clone())], &keys, &pinned),
+            Err(StartRefusal::Witness)
+        );
+        d.statement = Some(fstp_audit::witness::sign_statement(&control, &st).unwrap());
+        let losses = restore_losses(CellId(CELL), &[], &[(chain, d)], &keys, &pinned).unwrap();
+        assert_eq!(
+            losses,
+            vec![OwnRow::LostInRestore {
+                chain: ChainId::Vault.byte(),
+                from: 11,
+                to: 12,
+                job: [8; 16]
+            }]
+        );
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
+    /// 2026-11-25): a SaaS cell on its cluster refuses to start without a
+    /// pinned composite declaration key. A self-hosted cell, and the
+    /// in-memory test path, need none.
+    #[test]
+    fn i24_saas_cell_start_fails_closed_without_a_declaration_pin() {
+        let refused = Err(StartRefusal::Config(crate::config::ConfigError::Invalid(
+            DECLARATION_KEYS_FILE,
+        )));
+        let key = fstp_crypto::composite::generate().unwrap();
+        let good = vec![key.public_key().to_bytes().to_vec()];
+        assert_eq!(check_declaration_pin(Mode::Saas, true, &[]), refused);
+        assert_eq!(
+            check_declaration_pin(Mode::Saas, true, &[vec![7; 32]]),
+            refused
+        );
+        assert_eq!(check_declaration_pin(Mode::Saas, true, &good), Ok(()));
+        assert_eq!(check_declaration_pin(Mode::SelfHosted, true, &[]), Ok(()));
+        assert_eq!(check_declaration_pin(Mode::Saas, false, &[]), Ok(()));
     }
 }

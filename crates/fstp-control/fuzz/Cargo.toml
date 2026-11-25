@@ -75,6 +75,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "declaration_key_file_decode"
+path = "fuzz_targets/declaration_key_file_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 [lints.rust]

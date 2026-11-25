@@ -54,6 +54,28 @@ fn read(dir: &Path, name: &'static str) -> Result<Vec<u8>, CellError> {
     std::fs::read(dir.join(name)).map_err(|_| cfg_err(name))
 }
 
+/// The pinned restore declaration keys of a SaaS control plane, from the
+/// credentials file `restore-declaration-keys`, in the form of
+/// `witness-receipt-keys` (ADR-012 record of lane m10/saas-declare). A
+/// SaaS cell fails closed without a decodable file of composite keys. A
+/// self-hosted cell reads none and pins none.
+///
+/// # Errors
+///
+/// [`CellError::Config`] naming the file.
+pub(crate) fn read_declaration_keys(
+    dir: &Path,
+    mode: config::Mode,
+) -> Result<Vec<Vec<u8>>, CellError> {
+    const FILE: &str = crate::engine::startup::DECLARATION_KEYS_FILE;
+    if mode != config::Mode::Saas {
+        return Ok(Vec::new());
+    }
+    let keys = config::decode_receipt_keys(&read(dir, FILE)?).map_err(|_| cfg_err(FILE))?;
+    crate::engine::startup::check_declaration_pin(mode, true, &keys).map_err(|_| cfg_err(FILE))?;
+    Ok(keys)
+}
+
 /// Reads a one-line secret, without its line end.
 fn read_secret(dir: &Path, name: &'static str) -> Result<String, CellError> {
     let bytes = read(dir, name)?;
@@ -178,6 +200,7 @@ fn parts(
     };
     let witness_keys = config::decode_receipt_keys(&read(dir, "witness-receipt-keys")?)
         .map_err(CellError::Config)?;
+    let declaration_keys = read_declaration_keys(dir, cfg.core.mode)?;
     let vault = SharedVault(Arc::new(crate::vault::HttpVaultClient::new(
         rt.clone(),
         format!("https://{}", cfg.vault.address),
@@ -336,6 +359,7 @@ fn parts(
         // ADR-028 record of lane L20: the System page's host status file.
         host_status: cfg.host_status.clone(),
         checks: Some(forge),
+        declaration_keys,
         ..StartOptions::default()
     };
     Ok((parts, options))
@@ -1285,5 +1309,43 @@ mod tests {
             second: None,
         };
         assert_eq!(token_text(&own).as_str(), format!("{}\n", "cd".repeat(32)));
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
+    /// 2026-11-25): a SaaS cell refuses to start without a pinned,
+    /// decodable `restore-declaration-keys` file of composite keys, with a
+    /// plain refusal that names the file. A self-hosted cell reads none.
+    #[test]
+    fn i24_saas_cell_refuses_to_start_without_a_declaration_pin() {
+        let tag: String = fstp_crypto::random_array::<4>()
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let dir = std::env::temp_dir().join(format!("fstp-cell-pin-{tag}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let refused = Err(CellError::Config(ConfigError::Invalid(
+            "restore-declaration-keys",
+        )));
+        let saas = config::Mode::Saas;
+        assert_eq!(read_declaration_keys(&dir, saas), refused, "no file");
+        assert_eq!(
+            read_declaration_keys(&dir, config::Mode::SelfHosted),
+            Ok(Vec::new())
+        );
+        let file = dir.join("restore-declaration-keys");
+        std::fs::write(&file, b"zz\n").unwrap();
+        assert_eq!(read_declaration_keys(&dir, saas), refused, "no hex");
+        std::fs::write(&file, config::encode_receipt_keys(&[vec![1; 10]])).unwrap();
+        assert_eq!(
+            read_declaration_keys(&dir, saas),
+            refused,
+            "no composite key"
+        );
+        let key = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![key.public_key().to_bytes().to_vec()];
+        std::fs::write(&file, config::encode_receipt_keys(&keys)).unwrap();
+        assert_eq!(read_declaration_keys(&dir, saas), Ok(keys));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

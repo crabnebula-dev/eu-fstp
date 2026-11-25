@@ -56,7 +56,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::anchor::{AnchorRow, anchor_signature_verifies, receipt_signature_verifies};
 use crate::chain::{ChainId, Link, RowKind, StoredEntry, StoredRow, genesis, link, stored_hash};
-use crate::witness::{Live, WitnessRecord, declaration_signature_verifies};
+use crate::witness::{Live, WitnessRecord, declaration_verifies};
 use crate::{AuditError, CellId, PUBLIC_KEY_LEN, SIGNATURE_LEN};
 
 /// A change the verifier found.
@@ -490,7 +490,7 @@ fn row_signed(view: &ChainView<'_>, row: &AnchorRow) -> bool {
 /// prepare of the witness log. The first copy that fails names its head.
 /// A witness copy equal to a checked `audit.anchor` row is skipped, since
 /// its outcome is the same.
-fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
+fn signatures(view: &ChainView<'_>, declaration_keys: &[Vec<u8>]) -> Result<(), AuditError> {
     let mut checked: BTreeMap<(u64, Link), &AnchorRow> = BTreeMap::new();
     for row in view.anchors {
         if !row_signed(view, row) {
@@ -504,7 +504,13 @@ fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
         let p = match w {
             WitnessRecord::Prepare(p) => p,
             WitnessRecord::RestoreDeclared(d) => {
-                if !declaration_signature_verifies(view.cell, view.chain, d, view.witness_keys) {
+                if !declaration_verifies(
+                    view.cell,
+                    view.chain,
+                    d,
+                    view.witness_keys,
+                    declaration_keys,
+                ) {
                     return tamper(Tamper::BadSignature { n: d.fields.head.0 });
                 }
                 continue;
@@ -535,6 +541,23 @@ fn signatures(view: &ChainView<'_>) -> Result<(), AuditError> {
 /// [`AuditError::Tamper`] with the first change found, in the order of
 /// the module documentation.
 pub fn verify(view: &ChainView<'_>) -> Result<Verified, AuditError> {
+    verify_with_declaration_keys(view, &[])
+}
+
+/// [`verify`] for a verifier that pins the restore declaration keys of a
+/// SaaS control plane (ADR-012 record of lane m10/saas-declare). Every
+/// declaration of the witness log must then also carry a statement that
+/// verifies under one of `declaration_keys`, both halves (I-90), or the
+/// chain fails with `BadSignature { n: head n }`. With no key pinned it is
+/// [`verify`], the self-hosted rule.
+///
+/// # Errors
+///
+/// As [`verify`].
+pub fn verify_with_declaration_keys(
+    view: &ChainView<'_>,
+    declaration_keys: &[Vec<u8>],
+) -> Result<Verified, AuditError> {
     let entries = order_and_coverage(view)?;
     hashes_and_links(view, &entries)?;
     let link_at = |n: u64| -> Option<Link> {
@@ -544,7 +567,7 @@ pub fn verify(view: &ChainView<'_>) -> Result<Verified, AuditError> {
     anchor_rows(view, &link_at)?;
     let (lost, lost_in_restore) = restore_losses(view, &link_at);
     witness_log(view, &link_at, &lost)?;
-    signatures(view)?;
+    signatures(view, declaration_keys)?;
     Ok(Verified {
         rows: count(view.rows.len()),
         possible_deletions: possible_deletions(view),
@@ -1166,5 +1189,93 @@ mod tests {
         let r = w.restored().unwrap();
         assert_eq!(r.verified.lost_in_restore, vec![lost(4, 5, 9)]);
         assert_eq!((r.verified.rows, r.checked, r.later), (4, 4, 0));
+    }
+
+    /// The views of `w` under `declaration_keys`.
+    fn verify_saas(w: &World, declaration_keys: &[Vec<u8>]) -> Result<Verified, AuditError> {
+        let anchor_keys = vec![w.anchor.public_key().to_bytes().to_vec()];
+        let witness_keys = vec![w.witness.public_key().to_bytes().to_vec()];
+        verify_with_declaration_keys(
+            &ChainView {
+                cell: w.cell,
+                chain: ChainId::App,
+                rows: &w.rows,
+                ledger: &[],
+                anchors: &w.anchors,
+                witness: &w.log,
+                anchor_keys: &anchor_keys,
+                witness_keys: &witness_keys,
+            },
+            declaration_keys,
+        )
+    }
+
+    /// Adds the statement signature of `key` to the last declaration.
+    fn state_last(w: &mut World, key: &CompositeSigningKey) {
+        let cell = w.cell;
+        if let Some(WitnessRecord::RestoreDeclared(d)) = w.log.last_mut() {
+            let st = crate::witness::RestoreStatement::of(cell, ChainId::App, &d.fields);
+            d.statement = Some(crate::witness::sign_statement(key, &st).unwrap());
+        }
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare: a SaaS declaration,
+    /// with a statement under the restore declaration key, verifies under
+    /// the pinned key and lists the lost window. The same log verifies
+    /// with no key pinned, as a self-hosted one does.
+    #[test]
+    fn i24_saas_declared_restore_verifies_under_the_declaration_key() {
+        let control = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![control.public_key().to_bytes().to_vec()];
+        let mut w = World::new();
+        w.commit(2);
+        w.commit(1);
+        w.commit(2);
+        w.restore_to(3);
+        w.declare(6);
+        state_last(&mut w, &control);
+        let v = verify_saas(&w, &keys).unwrap();
+        assert_eq!(v.lost_in_restore, vec![lost(4, 5, 6)]);
+        assert_eq!(w.verify().unwrap().lost_in_restore, vec![lost(4, 5, 6)]);
+    }
+
+    /// I-24, I-90, ADR-012 record of lane m10/saas-declare: with the
+    /// restore declaration key pinned, a declaration with no statement, a
+    /// statement signed by another key, or a changed statement byte is
+    /// `BadSignature` of its head. A forged declaration never names the
+    /// lost window.
+    #[test]
+    fn i24_saas_forged_or_wrongly_signed_declaration_is_refused() {
+        let control = fstp_crypto::composite::generate().unwrap();
+        let keys = vec![control.public_key().to_bytes().to_vec()];
+        let other = fstp_crypto::composite::generate().unwrap();
+        let bad = Err(AuditError::Tamper(Tamper::BadSignature { n: 3 }));
+        let base = {
+            let mut w = World::new();
+            w.commit(3);
+            w.commit(1);
+            w.restore_to(3);
+            w.declare(2);
+            w
+        };
+        // The console form under a SaaS pin.
+        assert_eq!(verify_saas(&base, &keys), bad);
+        // Another key, as a forger without the declaration key would sign.
+        let mut w = base;
+        state_last(&mut w, &other);
+        assert_eq!(verify_saas(&w, &keys), bad);
+        // The witness's own key does not stand in for it.
+        let witness = fstp_crypto::composite::generate().unwrap();
+        state_last(&mut w, &witness);
+        assert_eq!(verify_saas(&w, &keys), bad);
+        // A changed statement byte.
+        state_last(&mut w, &control);
+        assert!(verify_saas(&w, &keys).is_ok());
+        if let Some(WitnessRecord::RestoreDeclared(d)) = w.log.last_mut()
+            && let Some(s) = d.statement.as_mut()
+        {
+            s[3000] ^= 1;
+        }
+        assert_eq!(verify_saas(&w, &keys), bad);
     }
 }

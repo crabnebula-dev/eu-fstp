@@ -371,7 +371,11 @@ impl OperatorLogin {
     ) -> Result<StaffRef, ControlError> {
         let s = self.session(session, now)?;
         match request {
-            CpApiRequest::EraseCell { .. } => Err(ControlError::ApprovalRequired),
+            // ADR-012 record of lane m10/saas-declare: a restore
+            // declaration is destructive, as an erasure is.
+            CpApiRequest::EraseCell { .. } | CpApiRequest::DeclareRestore { .. } => {
+                Err(ControlError::ApprovalRequired)
+            }
             // ADR-004 (Daniel, 2026-11-15 late): the notice companion key
             // is rotated by hand, with a fresh step-up.
             CpApiRequest::ProvisionCell { .. } | CpApiRequest::RotateNoticeKey { .. } => {

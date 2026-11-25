@@ -2825,7 +2825,8 @@ fn provision_service(
                 "INSERT INTO fstp_meta.placement (cluster_id, kind) VALUES ('\\x{}'::bytea, 4);\n\
                  GRANT USAGE ON SCHEMA fstp_meta, witness TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON fstp_meta.placement TO {WITNESS_SERVICE_ROLE};\n\
-                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal \
+                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, \
+                 witness.declaration \
                  TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON witness.cell_ca, witness.anchor_key TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON witness.cell_revocation TO {WITNESS_SERVICE_ROLE};",
@@ -4218,6 +4219,9 @@ fn start_cell(
             ca_digest: witness.ca_digest,
         },
         witness_keys: vec![witness.handle.receipt_public_key()],
+        // ADR-012 record of lane m10/saas-declare: the seeded vault pins a
+        // world key, as a SaaS vault does. No declaration is made.
+        declaration_keys: world_declaration_keys()?,
     };
     let sealer = fstp_vault::service::AeadSealer::new(
         fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?,
@@ -4661,6 +4665,10 @@ fn start_cell(
         // (`RunningCell::payment_checks`), so its scripted runs stay
         // deterministic.
         checks: None,
+        // ADR-012 record of lane m10/saas-declare: a SaaS world cell fails
+        // closed without a pinned restore declaration key, so it pins one
+        // of the world. No declaration is made in a world.
+        declaration_keys: world_declaration_keys()?,
         // ADR-026 amendment of 2026-11-23 (M10 F-039, F-040): the world's
         // cycle, its model checks and the devstack scenario send their
         // commands through the test-only wide command route. A production
@@ -6188,4 +6196,13 @@ where
     F: std::future::Future<Output = T> + 'a,
 {
     Box::pin(make())
+}
+
+/// The restore declaration public key a world's SaaS cells pin (ADR-012
+/// record of lane m10/saas-declare). A fresh key per start: a world makes
+/// no declaration, and a SaaS cell refuses to start without a pin.
+fn world_declaration_keys() -> Result<Vec<Vec<u8>>, WorldError> {
+    let key = fstp_crypto::composite::generate()
+        .map_err(|_| WorldError::Store("the restore declaration key".to_owned()))?;
+    Ok(vec![key.public_key().to_bytes().to_vec()])
 }
