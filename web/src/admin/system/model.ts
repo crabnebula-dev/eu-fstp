@@ -31,6 +31,7 @@ export type PartState = (typeof PART_STATES)[number];
 export const HOST_NEXT = [
   "run_setup",
   "start_service",
+  "backup_key",
   "custodian",
   "pair_custodian",
   "renew_route",

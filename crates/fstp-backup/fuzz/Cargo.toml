@@ -34,6 +34,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "backup_key_pin_decode"
+path = "fuzz_targets/backup_key_pin_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "backup_key_file_decode"
 path = "fuzz_targets/backup_key_file_decode.rs"
 test = false

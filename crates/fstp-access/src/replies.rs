@@ -330,6 +330,7 @@ pub const PART_STATES: &[&str] = &["running", "unhealthy", "stopped"];
 pub const HOST_NEXT: &[&str] = &[
     "run_setup",
     "start_service",
+    "backup_key",
     "custodian",
     "pair_custodian",
     "renew_route",

@@ -46,6 +46,10 @@ pub enum Fail {
     Refused(&'static str, Option<i32>),
     /// A restore to a time was refused or stopped: why.
     Time(TimeRefusal),
+    /// `fstp-backup` refused to back up a database: its key file is not
+    /// the one the pin names, or has no pin (ADR-012 record of lane
+    /// m10/key-pin-reason). The database and the pin.
+    BackupKey(&'static str, crate::ops::KeyPin),
 }
 
 /// Why `fstp-admin restore --to` did not restore (ADR-028 record of lane
@@ -307,6 +311,24 @@ fn time_refusal(r: TimeRefusal) {
     }
 }
 
+/// What `fstp-admin` says of a refused key pin: what happened, and the
+/// next step (ADR-012 record of lane m10/key-pin-reason, row "What the
+/// operator does").
+#[must_use]
+pub fn backup_key_said(pin: crate::ops::KeyPin) -> (&'static str, &'static str) {
+    use crate::ops::KeyPin;
+    match pin {
+        KeyPin::Missing => (
+            "database has no pin yet, so fstp-backup refused to back it up. Nothing was uploaded.",
+            "run fstp-admin setup. It pins the backup key file once.",
+        ),
+        KeyPin::Changed | KeyPin::Pinned | KeyPin::NoKey => (
+            "database are not the ones fstp-admin made, so fstp-backup refused to back it up. Nothing was uploaded.",
+            crate::status::BACKUP_KEY_NEXT,
+        ),
+    }
+}
+
 /// Tells the admin what failed and what to do.
 pub fn report(f: &Fail) {
     match f {
@@ -365,6 +387,20 @@ pub fn report(f: &Fail) {
             err(&[Part::T("Not possible yet: "), Part::T(what), Part::T(".")]);
         }
         Fail::Time(r) => time_refusal(*r),
+        Fail::BackupKey(db, pin) => {
+            let (what, next) = backup_key_said(*pin);
+            err(&[
+                Part::T(if *pin == crate::ops::KeyPin::Missing {
+                    "The backup key file of the "
+                } else {
+                    "The backup key files of the "
+                }),
+                Part::T(db),
+                Part::T(" "),
+                Part::T(what),
+            ]);
+            err(&[Part::T("Next: "), Part::T(next)]);
+        }
         Fail::Refused(cmd, code) => {
             err(&[
                 Part::T(cmd),

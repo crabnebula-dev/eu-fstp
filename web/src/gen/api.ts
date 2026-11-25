@@ -5778,7 +5778,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "certificate_days": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
           "self_signed": { schema: { kind: "bool" }, optional: false },
           "route": { schema: { kind: "enum", values: ["current", "mismatch", "unknown"] }, optional: false },
-          "next": { schema: { kind: "enum", values: ["run_setup", "start_service", "custodian", "pair_custodian", "renew_route", "renew", "public_certificate", "configure_backups", "wal_archive", "witness_copy", "backup", "restore_drill", "custodian_copy", "keystore_snapshot", "web_admins", "verify_admins", "copy_keys", "nothing"] }, optional: false },
+          "next": { schema: { kind: "enum", values: ["run_setup", "start_service", "backup_key", "custodian", "pair_custodian", "renew_route", "renew", "public_certificate", "configure_backups", "wal_archive", "witness_copy", "backup", "restore_drill", "custodian_copy", "keystore_snapshot", "web_admins", "verify_admins", "copy_keys", "nothing"] }, optional: false },
           "custodian": { schema: { kind: "enum", values: ["linked", "unreachable", "unpaired", "not_used"] }, optional: false },
           "guard_owed": { schema: { kind: "bool" }, optional: false },
           "guard_copy_owed": { schema: { kind: "bool" }, optional: false },

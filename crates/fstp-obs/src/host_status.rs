@@ -222,6 +222,9 @@ pub enum Next {
     RunSetup,
     /// A service is down.
     StartService,
+    /// A backup key file is not the one its pin names, so its backups
+    /// stopped (ADR-012 record of lane m10/key-pin-reason, F-044).
+    BackupKey,
     /// The second custodian does not answer, or a guard rotation is owed.
     Custodian,
     /// No second custodian is paired, or its pairing nears its end.
@@ -263,9 +266,10 @@ pub enum Next {
 
 impl Next {
     /// Every value.
-    pub const ALL: [Next; 18] = [
+    pub const ALL: [Next; 19] = [
         Self::RunSetup,
         Self::StartService,
+        Self::BackupKey,
         Self::Custodian,
         Self::PairCustodian,
         Self::RenewRoute,
@@ -290,6 +294,7 @@ impl Next {
         match self {
             Self::RunSetup => "run_setup",
             Self::StartService => "start_service",
+            Self::BackupKey => "backup_key",
             Self::Custodian => "custodian",
             Self::PairCustodian => "pair_custodian",
             Self::CustodianCopy => "custodian_copy",

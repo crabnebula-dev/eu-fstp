@@ -178,6 +178,8 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
 
   "system.next.run_setup": "The host admin finishes the set-up with fstp-admin setup.",
   "system.next.start_service": "The host admin starts what stopped with fstp-admin start.",
+  "system.next.backup_key":
+    "The host admin checks the backup keys: they changed outside the set-up, so backups stopped. If nobody changed them, the host may be broken into.",
   "system.next.custodian": "The host admin checks the second custodian: erasures wait until it answers.",
   "system.next.pair_custodian": "The host admin pairs the second custodian with fstp-admin pair-custodian.",
   "system.next.renew_route": "The host admin runs fstp-admin renew to update the public address.",

@@ -146,6 +146,10 @@ pub fn setup_backups(
             fresh_base = true;
             did = true;
         }
+        // ADR-012 record of lane m10/key-pin-reason: `init-keys` and
+        // `upgrade-keys` pin the key file themselves. A host set up before
+        // the pin gets it here, once.
+        pin_key(layout, m, c);
         if layout.cfg.services == Services::Systemd {
             // archive_command runs as postgres and signs with the writer
             // key: both files are root:postgres, mode 0640.
@@ -271,7 +275,7 @@ pub fn backup(layout: &Layout) -> Result<(), Fail> {
         let mut cmd = Command::new(layout.bin("fstp-backup"));
         let (k, v) = backup_env(layout, c);
         cmd.env(k, v).arg("base-backup");
-        run_ok(&mut cmd, &m.log()).map_err(|e| Fail::Step("backup", e.into()))?;
+        run_ok(&mut cmd, &m.log()).map_err(|e| backup_fail(c, e))?;
         out(&[
             Part::T("  done     base backup of the "),
             Part::T(c.name()),
@@ -299,6 +303,96 @@ pub fn key_copy_owed(layout: &Layout, c: Cluster) -> bool {
     };
     let want = format!("{}\n", crate::pki::hex(&fstp_crypto::sha256(&key)));
     std::fs::read_to_string(layout.backup_state(c).join(PUBLISHED_MARK)).map_or(true, |m| m != want)
+}
+
+/// The pin of the backup key file, in the agent's state directory (ADR-012
+/// record of lane m10/key-pin-reason, row "Where the pin lives").
+const KEY_PIN: &str = "key-pin";
+
+/// What the pin of a cluster's backup key file says (ADR-012 record of
+/// lane m10/key-pin-reason, F-044, TH-51).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyPin {
+    /// No key file yet, or backups are not configured.
+    #[default]
+    NoKey,
+    /// The pin names the key file.
+    Pinned,
+    /// A key file without a pin: `fstp-admin setup` pins it.
+    Missing,
+    /// The pin names another file, or does not decode: `fstp-backup`
+    /// refuses to seal.
+    Changed,
+}
+
+impl KeyPin {
+    /// The worse of two.
+    #[must_use]
+    pub fn worse(self, other: KeyPin) -> KeyPin {
+        let rank = |k: KeyPin| match k {
+            KeyPin::NoKey => 0,
+            KeyPin::Pinned => 1,
+            KeyPin::Missing => 2,
+            KeyPin::Changed => 3,
+        };
+        if rank(other) > rank(self) {
+            other
+        } else {
+            self
+        }
+    }
+}
+
+/// What the pin of `c`'s backup key file says. `fstp-backup` writes the
+/// pin; this reads it as the agent does, as the SHA-256 of the key file
+/// in 64 lowercase hex digits and a line feed.
+#[must_use]
+pub fn key_pin(layout: &Layout, c: Cluster) -> KeyPin {
+    let Ok(key) = std::fs::read(layout.creds(&format!("backup-{}", c.name())).join(KEY_FILE))
+    else {
+        return KeyPin::NoKey;
+    };
+    let want = format!("{}\n", crate::pki::hex(&fstp_crypto::sha256(&key)));
+    match std::fs::read(layout.backup_state(c).join(KEY_PIN)) {
+        Ok(pin) if pin == want.as_bytes() => KeyPin::Pinned,
+        Ok(_) => KeyPin::Changed,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => KeyPin::Missing,
+        Err(_) => KeyPin::Changed,
+    }
+}
+
+/// The exit status of `fstp-backup` for a key file its pin does not name.
+pub const KEY_PIN_DIFFERS: i32 = 6;
+/// The exit status of `fstp-backup` for a key file without a pin.
+pub const KEY_PIN_MISSING: i32 = 7;
+
+/// The failure of a base backup of `c` that ended with `e`: status 6 and
+/// 7 are the plain refusals of the key pin (ADR-012 record of lane
+/// m10/key-pin-reason, row "Operator side").
+#[must_use]
+pub fn backup_fail(c: Cluster, e: RunFail) -> Fail {
+    match e {
+        RunFail::Exit(_, Some(KEY_PIN_DIFFERS)) => Fail::BackupKey(c.name(), KeyPin::Changed),
+        RunFail::Exit(_, Some(KEY_PIN_MISSING)) => Fail::BackupKey(c.name(), KeyPin::Missing),
+        e => Fail::Step("backup", e.into()),
+    }
+}
+
+/// Pins `c`'s backup key file with `fstp-backup pin-key` when no pin
+/// exists (ADR-012 record of lane m10/key-pin-reason, row "Hosts set up
+/// before this lane"). A refusal is reported and does not stop setup:
+/// the agent refuses to seal, and `status` names it.
+fn pin_key(layout: &Layout, m: &Manager, c: Cluster) {
+    let mut cmd = Command::new(layout.bin("fstp-backup"));
+    let (k, v) = backup_env(layout, c);
+    cmd.env(k, v).arg("pin-key");
+    match run_ok(&mut cmd, &m.log()) {
+        Ok(()) => {}
+        Err(RunFail::Exit(_, Some(KEY_PIN_DIFFERS))) => {
+            crate::fail::report(&Fail::BackupKey(c.name(), KeyPin::Changed));
+        }
+        Err(e) => crate::fail::report(&Fail::Step("backup key pin", e.into())),
+    }
 }
 
 /// Sends the copy of `c`'s backup key file for the second custodian with
@@ -1132,6 +1226,69 @@ mod tests {
             std::fs::remove_file(live.join("server.key")).unwrap();
             assert!(put_current_tls(&layout, c, &restored).is_err());
         }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// F-044, TH-51, ADR-012 record of lane m10/key-pin-reason, rows
+    /// "Refusals" and "Operator side": the pin of each cluster reads as
+    /// matching, missing or changed from the key file and the agent's
+    /// state directory, and `fstp-backup` exit status 6 and 7 become the
+    /// plain refusal of `fstp-admin backup`. Any other status stays a
+    /// failed step.
+    #[test]
+    fn f044_backup_says_a_changed_key_in_plain_words() {
+        let root = std::env::temp_dir().join(format!(
+            "fstp-admin-key-pin-{}",
+            crate::pki::random_hex(8).unwrap_or_default()
+        ));
+        let cfg = format!(
+            r#"{{"domain":"grants.example.eu","operator_email":"admin@example.eu",
+            "mail":{{"relay":"smtp.example.eu","username":"cell"}},
+            "services":"direct",
+            "paths":{{"state":"{0}/state","etc":"{0}/etc","bin":"{0}/bin"}}}}"#,
+            root.display()
+        );
+        let layout =
+            Layout::new(crate::config::decode(cfg.as_bytes()).unwrap_or_else(|_| panic!("config")));
+        let c = Cluster::App;
+        assert_eq!(key_pin(&layout, c), KeyPin::NoKey);
+        let creds = layout.creds("backup-app");
+        std::fs::create_dir_all(&creds).unwrap();
+        std::fs::create_dir_all(layout.backup_state(c)).unwrap();
+        std::fs::write(creds.join(KEY_FILE), b"synthetic key file").unwrap();
+        assert_eq!(key_pin(&layout, c), KeyPin::Missing);
+        let pin = format!(
+            "{}\n",
+            crate::pki::hex(&fstp_crypto::sha256(b"synthetic key file"))
+        );
+        std::fs::write(layout.backup_state(c).join(KEY_PIN), &pin).unwrap();
+        assert_eq!(key_pin(&layout, c), KeyPin::Pinned);
+        std::fs::write(creds.join(KEY_FILE), b"a replaced key file").unwrap();
+        assert_eq!(key_pin(&layout, c), KeyPin::Changed);
+        std::fs::write(layout.backup_state(c).join(KEY_PIN), "garbled").unwrap();
+        assert_eq!(key_pin(&layout, c), KeyPin::Changed);
+        let bin = PathBuf::from("/bin/fstp-backup");
+        assert_eq!(
+            backup_fail(c, RunFail::Exit(bin.clone(), Some(6))),
+            Fail::BackupKey("app", KeyPin::Changed)
+        );
+        assert_eq!(
+            backup_fail(c, RunFail::Exit(bin.clone(), Some(7))),
+            Fail::BackupKey("app", KeyPin::Missing)
+        );
+        assert_eq!(
+            backup_fail(c, RunFail::Exit(bin.clone(), Some(1))),
+            Fail::Step("backup", Cause::Run(RunFail::Exit(bin, Some(1))))
+        );
+        let (what, next) = crate::fail::backup_key_said(KeyPin::Changed);
+        assert!(what.contains("not the ones fstp-admin made"), "{what}");
+        assert!(what.contains("Nothing was uploaded"), "{what}");
+        assert!(next.contains("cluster-backup.key"), "{next}");
+        assert!(next.contains("fstp-admin setup"), "{next}");
+        let (what, next) = crate::fail::backup_key_said(KeyPin::Missing);
+        assert!(what.contains("no pin"), "{what}");
+        assert!(next.contains("fstp-admin setup"), "{next}");
+        assert_eq!(Fail::BackupKey("app", KeyPin::Changed).code(), 1);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

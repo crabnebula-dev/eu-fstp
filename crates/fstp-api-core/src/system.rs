@@ -81,9 +81,10 @@ impl RouteState {
 
 /// The wire words of the one next thing on the host, as `fstp-admin
 /// status` names it (ADR-028 "Status").
-pub const HOST_NEXT: [&str; 18] = [
+pub const HOST_NEXT: [&str; 19] = [
     "run_setup",
     "start_service",
+    "backup_key",
     "custodian",
     "pair_custodian",
     "renew_route",
