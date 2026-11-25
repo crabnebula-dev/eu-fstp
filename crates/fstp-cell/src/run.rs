@@ -178,6 +178,14 @@ fn parts(
     };
     let witness_keys = config::decode_receipt_keys(&read(dir, "witness-receipt-keys")?)
         .map_err(CellError::Config)?;
+    // ADR-012 record of lane m10/saas-declare: the restore declaration keys
+    // of a SaaS control plane, in the form of `witness-receipt-keys`. A
+    // self-hosted cell has no such file, and pins none.
+    let declaration_keys = match std::fs::read(dir.join("restore-declaration-keys")) {
+        Ok(b) => config::decode_receipt_keys(&b).map_err(CellError::Config)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => return Err(cfg_err("restore-declaration-keys")),
+    };
     let vault = SharedVault(Arc::new(crate::vault::HttpVaultClient::new(
         rt.clone(),
         format!("https://{}", cfg.vault.address),
@@ -336,6 +344,7 @@ fn parts(
         // ADR-028 record of lane L20: the System page's host status file.
         host_status: cfg.host_status.clone(),
         checks: Some(forge),
+        declaration_keys,
         ..StartOptions::default()
     };
     Ok((parts, options))

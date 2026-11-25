@@ -182,7 +182,6 @@ impl<R: Runtime> WitnessLink for TlsWitnessLink<R> {
             | WireReply::Log(_)
             | WireReply::Declarations(_)
             | WireReply::Declared(_) => Err(WitnessFault::Unreachable),
-            WireReply::Log(_) | WireReply::Declarations(_) => Err(WitnessFault::Unreachable),
         }
     }
 

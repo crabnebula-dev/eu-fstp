@@ -4662,6 +4662,9 @@ fn start_cell(
         // (`RunningCell::payment_checks`), so its scripted runs stay
         // deterministic.
         checks: None,
+        // ADR-012 record of lane m10/saas-declare: a world cell pins no
+        // restore declaration key, as a self-hosted cell.
+        declaration_keys: Vec::new(),
         // ADR-026 amendment of 2026-11-23 (M10 F-039, F-040): the world's
         // cycle, its model checks and the devstack scenario send their
         // commands through the test-only wide command route. A production

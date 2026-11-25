@@ -586,6 +586,13 @@ pub struct StartOptions {
     /// world keeps playing the payment port in process
     /// ([`RunningCell::payment_checks`]).
     pub checks: Option<crate::egress::SharedForge>,
+    /// The pinned restore declaration keys of a SaaS control plane, encoded
+    /// (ADR-012 record of lane m10/saas-declare). With them, the start-up
+    /// verification takes a restore declaration only with a statement
+    /// under one of them. `fstp_cell::run` reads them from the optional
+    /// credentials file `restore-declaration-keys`. The default is none,
+    /// as on a self-hosted cell.
+    pub declaration_keys: Vec<Vec<u8>>,
     /// Test only (ADR-026 amendment of 2026-11-23, M10 F-039, F-040):
     /// `true` serves the wide form of `POST /api/v1/commands`, as a test
     /// world drives its cycle through it. The field exists only with the
@@ -615,6 +622,7 @@ impl Default for StartOptions {
             tenant_prober: None,
             host_status: None,
             checks: None,
+            declaration_keys: Vec::new(),
             #[cfg(feature = "wide-commands")]
             wide_commands: false,
         }
@@ -679,6 +687,7 @@ where
         tenant_prober,
         host_status,
         checks,
+        declaration_keys,
         #[cfg(feature = "wide-commands")]
         wide_commands,
     } = options;
@@ -712,6 +721,7 @@ where
             clock: Arc::clone(&clock),
             fault_point,
             keystore_snapshots,
+            declaration_keys,
         },
     )
     .await?;
@@ -965,6 +975,7 @@ struct OpenInputs<C, V> {
     clock: crate::engine::CommitClock,
     fault_point: Option<fstp_pgstore::FaultPoint>,
     keystore_snapshots: Option<(fstp_backup::Snapshots, std::path::PathBuf)>,
+    declaration_keys: Vec<Vec<u8>>,
 }
 
 /// [`open_phase_inner`] as a [`Step`]: its future is built here and kept on
@@ -1006,6 +1017,7 @@ where
         clock,
         fault_point,
         keystore_snapshots,
+        declaration_keys,
     } = inputs;
     // I-83 first: nothing below runs against a database that fails it.
     // Every connection of the three pools, now and later, checks the
@@ -1065,7 +1077,7 @@ where
     if let Some(f) = fault_point {
         inner = inner.with_fault_point(f);
     }
-    let store = PgCellStore::from_store(inner);
+    let store = PgCellStore::from_store(inner).with_declaration_keys(declaration_keys);
     // ---- Lane L3 `prod/keystore-pg`: the keystore load (ADR-004, decided
     // by Daniel on 2026-11-20). The keystore lives in its tables and is
     // written through `c_<cell>_keys` only (I-82). A start loads it. Genesis
