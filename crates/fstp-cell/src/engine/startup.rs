@@ -568,6 +568,39 @@ pub(crate) fn lost_in_restore_event(loss: &OwnRow) -> Option<Vec<u8>> {
         .map(String::into_bytes)
 }
 
+/// The credentials file of the pinned restore declaration keys (ADR-012
+/// record of lane m10/saas-declare).
+pub const DECLARATION_KEYS_FILE: &str = "restore-declaration-keys";
+
+/// Fails closed (ADR-012 record of lane m10/saas-declare, lead answer of
+/// 2026-11-25, interim pending Daniel): a SaaS cell process, over its
+/// cluster, starts only with one or more pinned restore declaration keys,
+/// each a composite public key. A self-hosted cell keeps the console rule
+/// and needs none. The in-memory store is a test path on no cluster.
+///
+/// # Errors
+///
+/// [`StartRefusal::Config`] naming [`DECLARATION_KEYS_FILE`].
+pub fn check_declaration_pin(
+    mode: Mode,
+    on_cluster: bool,
+    keys: &[Vec<u8>],
+) -> Result<(), StartRefusal> {
+    if mode != Mode::Saas || !on_cluster {
+        return Ok(());
+    }
+    if keys.is_empty()
+        || keys
+            .iter()
+            .any(|k| fstp_audit::CompositePublicKey::from_bytes(k).is_err())
+    {
+        return Err(StartRefusal::Config(crate::config::ConfigError::Invalid(
+            DECLARATION_KEYS_FILE,
+        )));
+    }
+    Ok(())
+}
+
 /// The lost windows a start records (ADR-012 record of lane
 /// m10/declared-restore): those the verifier listed for the App chain, and
 /// those the declarations of the Vault chain name. The vault has no
@@ -816,6 +849,9 @@ where
         (None, h) => h.map(|h| h.token.licence),
     };
     report(StartPhase::ConfigDecoded);
+    // ADR-012 record of lane m10/saas-declare: a cell on a cluster is a
+    // process; the in-memory store is a test path.
+    let on_cluster = parts.database.is_some();
     if let Some(database) = &parts.database
         && !accepts_database(database)
     {
@@ -836,6 +872,7 @@ where
     let mut store = open(cell)?;
     let witness_keys = store.pinned_witness_keys();
     let declaration_keys = store.pinned_declaration_keys();
+    check_declaration_pin(config.mode, on_cluster, &declaration_keys)?;
     match crate::process::step(|| store.resolve_open_prepare()).await? {
         Resolved::Nothing => {}
         Resolved::Committed => report(StartPhase::InDoubtCommitted),
@@ -1100,5 +1137,26 @@ mod tests {
                 job: [8; 16]
             }]
         );
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare (lead answer of
+    /// 2026-11-25): a SaaS cell on its cluster refuses to start without a
+    /// pinned composite declaration key. A self-hosted cell, and the
+    /// in-memory test path, need none.
+    #[test]
+    fn i24_saas_cell_start_fails_closed_without_a_declaration_pin() {
+        let refused = Err(StartRefusal::Config(crate::config::ConfigError::Invalid(
+            DECLARATION_KEYS_FILE,
+        )));
+        let key = fstp_crypto::composite::generate().unwrap();
+        let good = vec![key.public_key().to_bytes().to_vec()];
+        assert_eq!(check_declaration_pin(Mode::Saas, true, &[]), refused);
+        assert_eq!(
+            check_declaration_pin(Mode::Saas, true, &[vec![7; 32]]),
+            refused
+        );
+        assert_eq!(check_declaration_pin(Mode::Saas, true, &good), Ok(()));
+        assert_eq!(check_declaration_pin(Mode::SelfHosted, true, &[]), Ok(()));
+        assert_eq!(check_declaration_pin(Mode::Saas, false, &[]), Ok(()));
     }
 }

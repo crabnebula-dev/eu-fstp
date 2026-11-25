@@ -4662,9 +4662,10 @@ fn start_cell(
         // (`RunningCell::payment_checks`), so its scripted runs stay
         // deterministic.
         checks: None,
-        // ADR-012 record of lane m10/saas-declare: a world cell pins no
-        // restore declaration key, as a self-hosted cell.
-        declaration_keys: Vec::new(),
+        // ADR-012 record of lane m10/saas-declare: a SaaS world cell fails
+        // closed without a pinned restore declaration key, so it pins one
+        // of the world. No declaration is made in a world.
+        declaration_keys: world_declaration_keys()?,
         // ADR-026 amendment of 2026-11-23 (M10 F-039, F-040): the world's
         // cycle, its model checks and the devstack scenario send their
         // commands through the test-only wide command route. A production
@@ -6192,4 +6193,13 @@ where
     F: std::future::Future<Output = T> + 'a,
 {
     Box::pin(make())
+}
+
+/// The restore declaration public key a world's SaaS cells pin (ADR-012
+/// record of lane m10/saas-declare). A fresh key per start: a world makes
+/// no declaration, and a SaaS cell refuses to start without a pin.
+fn world_declaration_keys() -> Result<Vec<Vec<u8>>, WorldError> {
+    let key = fstp_crypto::composite::generate()
+        .map_err(|_| WorldError::Store("the restore declaration key".to_owned()))?;
+    Ok(vec![key.public_key().to_bytes().to_vec()])
 }
