@@ -154,6 +154,28 @@ impl Running {
             "the restored server did not start: {}",
             std::fs::read_to_string(&log).unwrap_or_default()
         );
+        // Archive recovery runs with `hot_standby = off` (ADR-012 record of
+        // lane m10/backup-pitr). `pg_ctl -w` returns at the consistent
+        // point, so the server refuses connections until it promotes.
+        let deadline = std::time::Instant::now() + Duration::from_secs(180);
+        loop {
+            let ready = Command::new(bindir.join("pg_isready"))
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .args(["-h", "127.0.0.1", "-p", &r.port.to_string(), "-q"])
+                .stdin(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if ready {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the restored server did not promote: {}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
         r
     }
 
