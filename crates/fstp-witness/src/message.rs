@@ -284,6 +284,7 @@ mod tests {
                 received_at: -4,
             },
             signature: vec![0xA5; fstp_audit::SIGNATURE_LEN],
+            statement: None,
         }
     }
 

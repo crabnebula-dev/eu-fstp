@@ -228,6 +228,10 @@ pub struct Declaration {
     pub fields: DeclarationFields,
     /// The composite signature of the witness receipt key.
     pub signature: Vec<u8>,
+    /// The composite signature of the restore declaration key over the
+    /// [`RestoreStatement`] of a SaaS declaration (ADR-012 record of lane
+    /// m10/saas-declare). A self-hosted declaration has none.
+    pub statement: Option<Vec<u8>>,
 }
 
 /// The witness chain link after a declaration of `head`, losing up to
@@ -298,6 +302,7 @@ pub fn sign_declaration(
     Ok(Declaration {
         fields: *fields,
         signature: signature.to_bytes().to_vec(),
+        statement: None,
     })
 }
 
@@ -316,6 +321,131 @@ pub fn declaration_signature_verifies(
         RESTORE_CONTEXT,
         &d.signature,
     )
+}
+
+// ---------------------------------------------------------------------------
+// SaaS declarations (ADR-012 record of lane m10/saas-declare). Every layout
+// below is interim, pending Daniel.
+//
+// ```text
+// statement message = "fstp-restore-statement-v1" || cell || chain
+//                     || be64(head n) || head link || job
+// ```
+//
+// `fstp-control` signs the statement with the restore declaration key. The
+// witness checks it under its pinned keys, records the declaration, and
+// signs the recorded fields with its receipt key as for a console
+// declaration. The record keeps both signatures.
+
+/// The label and context of a signed restore statement.
+pub const STATEMENT_LABEL: &[u8] = b"fstp-restore-statement-v1";
+/// The draft 19 application context of a statement signature: the label.
+pub const STATEMENT_CONTEXT: &[u8] = STATEMENT_LABEL;
+/// The length of a statement message: 25 + 16 + 1 + 8 + 32 + 16.
+pub const STATEMENT_MESSAGE_LEN: usize = 98;
+
+/// What `fstp-control` states when it declares a restore: the chain, the
+/// head the restored chain resumes from, and the job. It names nothing
+/// the witness assigns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RestoreStatement {
+    /// The cell.
+    pub cell: CellId,
+    /// The chain.
+    pub chain: ChainId,
+    /// The head the restored chain resumes from.
+    pub head: (u64, Link),
+    /// The `DeclareRestore` job.
+    pub job: [u8; 16],
+}
+
+impl RestoreStatement {
+    /// The statement a recorded declaration of `cell`'s `chain` answers.
+    #[must_use]
+    pub const fn of(cell: CellId, chain: ChainId, f: &DeclarationFields) -> RestoreStatement {
+        RestoreStatement {
+            cell,
+            chain,
+            head: f.head,
+            job: f.job,
+        }
+    }
+
+    /// The message a statement signature covers.
+    #[must_use]
+    pub fn message(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(STATEMENT_MESSAGE_LEN);
+        out.extend_from_slice(STATEMENT_LABEL);
+        out.extend_from_slice(&self.cell.0);
+        out.push(self.chain.byte());
+        out.extend_from_slice(&self.head.0.to_be_bytes());
+        out.extend_from_slice(&self.head.1.0);
+        out.extend_from_slice(&self.job);
+        out
+    }
+}
+
+/// Signs `statement` with the restore declaration key `key`, under
+/// [`STATEMENT_CONTEXT`].
+///
+/// # Errors
+///
+/// [`AuditError::Signing`] when the composite signer gives no signature.
+pub fn sign_statement(
+    key: &CompositeSigningKey,
+    statement: &RestoreStatement,
+) -> Result<Vec<u8>, AuditError> {
+    key.sign_with_context(&statement.message(), STATEMENT_CONTEXT)
+        .map(|s| s.to_bytes().to_vec())
+        .map_err(AuditError::Signing)
+}
+
+/// Whether `signature` over `statement` verifies under one key of
+/// `declaration_keys`, both halves (I-90).
+#[must_use]
+pub fn statement_signature_verifies(
+    statement: &RestoreStatement,
+    signature: &[u8],
+    declaration_keys: &[Vec<u8>],
+) -> bool {
+    signed_by_any(
+        declaration_keys,
+        &statement.message(),
+        STATEMENT_CONTEXT,
+        signature,
+    )
+}
+
+/// Whether a recorded declaration of `cell`'s `chain` verifies (ADR-012
+/// record of lane m10/saas-declare):
+///
+/// - its witness signature under one of `witness_keys`, always;
+/// - with `declaration_keys` pinned, also a statement signature under one
+///   of them. A declaration without a statement then fails.
+///
+/// With no declaration key pinned the rule is that of the self-hosted
+/// console path, which is unchanged: the witness signature alone.
+#[must_use]
+pub fn declaration_verifies(
+    cell: CellId,
+    chain: ChainId,
+    d: &Declaration,
+    witness_keys: &[Vec<u8>],
+    declaration_keys: &[Vec<u8>],
+) -> bool {
+    if !declaration_signature_verifies(cell, chain, d, witness_keys) {
+        return false;
+    }
+    if declaration_keys.is_empty() {
+        return true;
+    }
+    d.statement.as_deref().is_some_and(|s| {
+        statement_signature_verifies(
+            &RestoreStatement::of(cell, chain, &d.fields),
+            s,
+            declaration_keys,
+        )
+    })
 }
 
 /// Writes the declaration body of the module layout.
@@ -363,7 +493,11 @@ pub fn read_declaration(r: &mut Reader<'_>) -> Result<Declaration, DecodeError> 
         received_at,
     };
     fields.check()?;
-    Ok(Declaration { fields, signature })
+    Ok(Declaration {
+        fields,
+        signature,
+        statement: None,
+    })
 }
 
 /// The live prepares of a witness log: receipted, not aborted, not in
@@ -485,6 +619,7 @@ mod tests {
                 received_at: 0,
             },
             signature: Vec::new(),
+            statement: None,
         })
     }
 
@@ -577,5 +712,87 @@ mod tests {
         let mut r = Reader::new(&body);
         assert_eq!(read_declaration(&mut r).unwrap(), d);
         r.finish().unwrap();
+    }
+
+    /// I-24, I-90, ADR-012 record of lane m10/saas-declare: a statement
+    /// signature binds the cell, the chain, the head and the job, under the
+    /// restore declaration key only. With a declaration key pinned, a
+    /// declaration verifies only with a statement under it and the witness
+    /// signature; with none pinned, the self-hosted rule is unchanged.
+    #[test]
+    fn i24_saas_declaration_needs_both_signatures_when_a_key_is_pinned() {
+        let witness = fstp_crypto::composite::generate().unwrap();
+        let control = fstp_crypto::composite::generate().unwrap();
+        let wk = vec![witness.public_key().to_bytes().to_vec()];
+        let ck = vec![control.public_key().to_bytes().to_vec()];
+        let fields = DeclarationFields {
+            head: (4, Link([4; 32])),
+            lost_to: 9,
+            job: [3; 16],
+            witness_seq: 12,
+            witness_link: Link([5; 32]),
+            received_at: 77,
+        };
+        let st = RestoreStatement::of(CELL, ChainId::App, &fields);
+        assert_eq!(st.message().len(), STATEMENT_MESSAGE_LEN);
+        let sig = sign_statement(&control, &st).unwrap();
+        assert!(statement_signature_verifies(&st, &sig, &ck));
+        assert!(!statement_signature_verifies(&st, &sig, &wk), "witness key");
+        for other in [
+            RestoreStatement {
+                cell: CellId([8; 16]),
+                ..st
+            },
+            RestoreStatement {
+                chain: ChainId::Vault,
+                ..st
+            },
+            RestoreStatement {
+                head: (5, st.head.1),
+                ..st
+            },
+            RestoreStatement {
+                head: (4, Link([6; 32])),
+                ..st
+            },
+            RestoreStatement { job: [4; 16], ..st },
+        ] {
+            assert!(
+                !statement_signature_verifies(&other, &sig, &ck),
+                "{other:?}"
+            );
+        }
+        let mut d = sign_declaration(&witness, CELL, ChainId::App, &fields).unwrap();
+        // Self-hosted: no statement, no pinned key.
+        assert!(declaration_verifies(CELL, ChainId::App, &d, &wk, &[]));
+        // A pinned key needs a statement.
+        assert!(!declaration_verifies(CELL, ChainId::App, &d, &wk, &ck));
+        d.statement = Some(sig.clone());
+        assert!(declaration_verifies(CELL, ChainId::App, &d, &wk, &ck));
+        assert!(declaration_verifies(CELL, ChainId::App, &d, &wk, &[]));
+        // A statement signed by the witness key, not the declaration key.
+        let forged = sign_statement(&witness, &st).unwrap();
+        let mut f = d.clone();
+        f.statement = Some(forged);
+        assert!(!declaration_verifies(CELL, ChainId::App, &f, &wk, &ck));
+        // A statement for another job does not cover this record.
+        let mut f = d.clone();
+        f.fields.job = [4; 16];
+        f.signature = sign_declaration(&witness, CELL, ChainId::App, &f.fields)
+            .unwrap()
+            .signature;
+        assert!(!declaration_verifies(CELL, ChainId::App, &f, &wk, &ck));
+        // A good statement does not stand in for the witness signature.
+        let mut f = d.clone();
+        f.signature = sign_declaration(&control, CELL, ChainId::App, &fields)
+            .unwrap()
+            .signature;
+        assert!(!declaration_verifies(CELL, ChainId::App, &f, &wk, &ck));
+        // A flipped statement byte fails.
+        let mut f = d;
+        if let Some(s) = f.statement.as_mut() {
+            s[10] ^= 1;
+        }
+        assert!(!declaration_verifies(CELL, ChainId::App, &f, &wk, &ck));
     }
 }
