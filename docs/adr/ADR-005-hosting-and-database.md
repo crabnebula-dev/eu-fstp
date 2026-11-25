@@ -144,9 +144,9 @@ The provider's role can also write `cp` rows. **Rule: no isolation invariant res
 ### Backups, retention and recovery objectives
 
 - Primary copy: OVHcloud Object Storage, S3-compatible, in an EU region, with object lock. ADR-012 sets the format, the client and the restore rule.
-- Second EU-owned provider: decided later with L-15 (Q25, Daniel, 2026-10-28). The options are Scaleway, Hetzner or IONOS, or an OVHcloud primary region pair inside the EU. The design prefers a provider with object lock. The ADR-005 exit row stays blocked until then.
-- The witness's object-lock copies at a second provider wait on the same decision.
-- Retention: decided later with L-15, together with Q25. This covers base backup frequency, WAL archive retention, and the object lock mode and period.
+- Second EU-owned provider: Hetzner Object Storage, decided by Daniel on 2026-11-25 (Q25). Its facts are verify items V19 to V24 below and are not yet checked. TODO(legal): the L-15 due diligence on the Hetzner entity, ownership and sub-processor terms is legal in nature. The ADR-005 exit row stays blocked until V19 to V24 and L-15 are resolved.
+- The witness's object-lock copies at a second provider follow the same decision (Hetzner Object Storage, verify items V19 to V24).
+- Retention: decided by Daniel on 2026-11-25 for the pilot: 35 days and at least 5 base backups (ADR-012). The object lock mode and period stay open until verify items V14 and V19 are answered.
 - Erasure never depends on retention. I-81, R-ID-03 and R-SW-02 hold through key destruction, whatever the retention (ADR-004, ADR-012).
 - Old backups are deleted only by bucket lifecycle rules, never by client DELETE calls.
 - TODO(legal): L-15. Daniel to confirm whether tenant DPAs must state the backup retention period and the backup provider.
@@ -200,10 +200,16 @@ Everything below is unverified. Each item is a question for OVHcloud or for the 
 | V16 | Does Object Storage verify a signed payload hash (`x-amz-content-sha256`)? What are the multipart part size and count limits? Are quotes in ETag values escaped as XML entities? | ADR-012 client |
 | V17 | Does a Load Balancer TCP listener forward the ClientHello byte for byte? Can it pass the client address? | Edge (ADR-009) |
 | V18 | Does OVHcloud offer confidential computing for cell and vault hosts? | Q35 root on hosts: evaluated in L-15 (Daniel, 2026-10-28) |
+| V19 | Does Hetzner Object Storage offer object lock, and in which mode (governance or compliance)? Can the account owner delete or overwrite an object during its retention period? | Second provider (Q25), ADR-012, ADR-010 open point 9 |
+| V20 | Which Hetzner Object Storage locations are inside the EU, and which of them offer object lock? Does any service we use run from a non-EU location? | R-HS-01, Q25 |
+| V21 | Does the Hetzner S3 API support the subset `fstp-backup` uses: PutObject, GetObject, HeadObject, DeleteObject and multipart upload? What are its multipart part size and count limits, its ETag form and its payload hash handling? | ADR-012 client (see V16) |
+| V22 | Does Hetzner Object Storage need versioning for object lock, must lock be set at bucket creation, and do lifecycle rules apply to locked objects? Can a rule keep the `<cluster>/witness/` prefix? | ADR-012 retention, witness copies |
+| V23 | Can credentials be scoped per bucket or per prefix? Which endpoint and region names does the account use? | ADR-012, B7 |
+| V24 | Which Hetzner entity contracts with CrabNebula for Object Storage, is it free of any non-EU parent, and which sub-processor and data-processing terms apply? TODO(legal): L-15 due diligence, for Daniel | R-HS-01, L-15 |
 
 The OKMS items K1 to K15 are kept in one list, in ADR-004 completion part 2 (Verify list). This ADR keeps no copy of them. They include K7, whether OKMS key material can be exported, on which the I-80 claim for OKMS-held epochs waits.
 
-The ADR-005 exit row of the M3 design closes once this section is accepted (Daniel, 2026-10-28), Q25 is decided, and this verify list and the ADR-004 OKMS items are resolved through L-15 (`m3-design.md` section 20).
+The ADR-005 exit row of the M3 design closes once this section is accepted (Daniel, 2026-10-28), Q25 is decided (Hetzner Object Storage, Daniel, 2026-11-25) and its facts are verified (V19 to V24), and this verify list and the ADR-004 OKMS items are resolved through L-15 (`m3-design.md` section 20).
 
 ### Open points for Daniel
 

@@ -442,7 +442,7 @@ Write one JSON file per cluster, for example `/etc/fstp/backup-app.json`. It hol
 
 - `database.host` must be a loopback address.
 - `object_stores` lists one to three stores in order. The older member `object_store`, one store, is still read. A store's `port` is optional and defaults to 443.
-- `retention` is optional. Without it the agent prunes nothing. The values 35 days and at least 5 base backups are interim, pending Daniel.
+- `retention` is optional. Without it the agent prunes nothing. The values 35 days and at least 5 base backups are decided by Daniel (2026-11-25, accepted as built).
 - `keyd_socket` is needed only for `init-keys` and the restore commands.
 
 The credentials directory holds these files:
@@ -457,6 +457,26 @@ The credentials directory holds these files:
 | `cluster-backup-writer.key` | The writer key that signs every container, made by `init-keys` | `wal-archive`, `base-backup` |
 
 `archive_command` runs as the `postgres` OS user, and `base-backup` as the `fstp-backup` OS user. Give each user read access to the files of its commands only. The `fstp_repl` files stay readable by the `fstp-backup` user alone (ADR-005).
+
+### Add Hetzner Object Storage as the second store
+
+Daniel decided on 2026-11-25 that the second backup provider is Hetzner Object Storage (ADR-012, Q25). Its object lock, locations and S3 behaviour are not yet verified (ADR-005 verify items V19 to V24). Add it as a further store, and check those items before you rely on it.
+
+In `fstp.json`, add one entry to `backup.copies`. Fill the three placeholders from your Hetzner account. Nothing here is a default.
+
+```json
+"backup": {
+  "endpoint": "<primary endpoint>", "region": "<primary region>", "bucket": "<primary bucket>",
+  "copies": [
+    {"endpoint": "<hetzner endpoint>", "region": "<hetzner region>", "bucket": "<hetzner bucket>"}
+  ]
+}
+```
+
+- Put the Hetzner access key id and secret in `/etc/fstp/s3-1-access-key-id` and `/etc/fstp/s3-1-secret-access-key`, one line each, or name other files with `access_key_file` and `secret_key_file`.
+- Run `fstp-admin setup` again. It writes `object_stores` into each agent's configuration, with the primary store first and the copy after it.
+- Every container then goes to both stores, and a restore takes the first copy that verifies.
+- A lifecycle rule on either bucket must keep the `<cluster>/witness/` prefix. The witness copies are never pruned, and a rule that expires them breaks the rebuild of the witness after a host loss (ADR-012, record of lane m10/witness-copy).
 
 ### Create the key
 
