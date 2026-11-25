@@ -7,8 +7,11 @@
 //! waits until recovery ends, and checks it: the cell database answers a
 //! query, and the restored keystore rows open through the live custody
 //! entry (`fstp-cell check-keystore` and `fstp-vault check-keystore`,
-//! which never write). Then it stops the server and deletes the scratch
-//! directory, also after a failure.
+//! which never write). Last it checks the restored audit chain against
+//! the witness copies, fetched into scratch after the restore
+//! (`fstp-cell check-chain` and `fstp-vault check-chain`, ADR-012 record
+//! of lane m10/drill-chain, and [`chain_verdict`]). Then it stops the
+//! server and deletes the scratch directory, also after a failure.
 //!
 //! The throwaway server takes command-line settings that win over the
 //! restored files ([`server_args`]): no archive, no Unix socket, and a
@@ -32,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use fstp_obs::drill_status::{self, DrillStatus, Step};
+use fstp_obs::drill_status::{self, ChainCheck, DrillStatus, Step};
 
 use crate::config::Services;
 use crate::fail::Fail;
@@ -247,6 +250,7 @@ fn chown_pg(layout: &Layout, m: &Manager, path: &Path) -> Result<(), ()> {
 fn one(s: &mut Scratch<'_>, c: Cluster, cell: &[u8; 16]) -> Result<u64, Step> {
     let layout = s.layout;
     let started = Instant::now();
+    let restore_at = now_secs();
     let mut restore = Command::new(layout.bin("fstp-backup"));
     restore
         .env(
@@ -333,31 +337,216 @@ fn one(s: &mut Scratch<'_>, c: Cluster, cell: &[u8; 16]) -> Result<u64, Step> {
         return Err(Step::Database);
     }
     step_done("checked the database of", c);
-    let (user, bin, env, service) = match c {
-        Cluster::App => (
-            crate::stack::CELL_USER,
-            "fstp-cell",
-            "FSTP_CELL_CONFIG",
-            "cell",
-        ),
-        Cluster::Vault => (
-            crate::stack::VAULT_USER,
-            "fstp-vault",
-            "FSTP_VAULT_CONFIG",
-            "vault",
-        ),
-    };
-    let mut check = crate::stack::as_user(layout, user, &layout.bin(bin));
-    check
-        .env(env, layout.config_file(service))
-        .arg("check-keystore")
-        .arg(port.to_string());
+    let svc = ServiceOf::of(c);
+    let mut check = svc.command(layout);
+    check.arg("check-keystore").arg(port.to_string());
     match run_logged(&mut check, &s.m.log()) {
         Ok(Some(0)) => {}
         _ => return Err(Step::Keystore),
     }
     step_done("opened the keys of", c);
-    Ok(started.elapsed().as_secs())
+    let seconds = started.elapsed().as_secs();
+    chain_step(layout, s.m, c, port, restore_at).map_err(|()| Step::Chain)?;
+    Ok(seconds)
+}
+
+/// The service that checks the copy of a cluster: its OS user, binary,
+/// configuration variable and configuration file.
+struct ServiceOf {
+    user: &'static str,
+    bin: &'static str,
+    env: &'static str,
+    service: &'static str,
+}
+
+impl ServiceOf {
+    fn of(c: Cluster) -> ServiceOf {
+        match c {
+            Cluster::App => ServiceOf {
+                user: crate::stack::CELL_USER,
+                bin: "fstp-cell",
+                env: "FSTP_CELL_CONFIG",
+                service: "cell",
+            },
+            Cluster::Vault => ServiceOf {
+                user: crate::stack::VAULT_USER,
+                bin: "fstp-vault",
+                env: "FSTP_VAULT_CONFIG",
+                service: "vault",
+            },
+        }
+    }
+
+    /// The binary run as the service's user with its own configuration.
+    fn command(&self, layout: &Layout) -> Command {
+        let mut c = crate::stack::as_user(layout, self.user, &layout.bin(self.bin));
+        c.env(self.env, layout.config_file(self.service));
+        c
+    }
+}
+
+/// The age beyond which a tail of the chain check is no longer expected:
+/// 10 minutes, the late rule of the WAL archive and of the witness copies
+/// (ADR-012 record of lane m10/drill-chain, row "Time rule"). Interim,
+/// pending Daniel.
+pub const TAIL_SLACK: u64 = 600;
+
+/// How the drill reads a check line (ADR-012 record of lane
+/// m10/drill-chain, rows "Expected gap" and "Time rule").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChainVerdict {
+    /// The chain verified, and each tail is younger than [`TAIL_SLACK`].
+    Pass,
+    /// The witness receipted a change more than [`TAIL_SLACK`] before the
+    /// restore started, and the restored copy lacks it.
+    BackupMisses,
+    /// A restored row's stored receipt is more than [`TAIL_SLACK`] older
+    /// than the fetch, and the witness copies lack it.
+    CopiesBehind,
+}
+
+/// Reads the check line `c` of a copy whose restore started at
+/// `restore_started` and whose witness copies were fetched at `fetched`,
+/// both Unix seconds.
+#[must_use]
+pub fn chain_verdict(c: &ChainCheck, restore_started: u64, fetched: u64) -> ChainVerdict {
+    if c.oldest_later
+        .is_some_and(|t| t.saturating_add(TAIL_SLACK) < restore_started)
+    {
+        ChainVerdict::BackupMisses
+    } else if c
+        .oldest_newer
+        .is_some_and(|t| t.saturating_add(TAIL_SLACK) < fetched)
+    {
+        ChainVerdict::CopiesBehind
+    } else {
+        ChainVerdict::Pass
+    }
+}
+
+/// The drill's step `chain` for `c`, served by the throwaway server at
+/// `port` (ADR-012 record of lane m10/drill-chain): fetches the witness
+/// copies into `<drill>/chain/witness`, runs `check-chain` as the
+/// service's user, and reads its line. The directory goes afterwards,
+/// also after a failure.
+fn chain_step(
+    layout: &Layout,
+    m: &Manager,
+    c: Cluster,
+    port: u16,
+    restore_started: u64,
+) -> Result<(), ()> {
+    let dir = root(layout).join("chain");
+    let _ = std::fs::remove_dir_all(&dir);
+    let checked = chain_check(layout, m, c, port, restore_started, &dir);
+    let gone = std::fs::remove_dir_all(&dir).is_ok() || !dir.exists();
+    checked.and(if gone { Ok(()) } else { Err(()) })
+}
+
+fn chain_check(
+    layout: &Layout,
+    m: &Manager,
+    c: Cluster,
+    port: u16,
+    restore_started: u64,
+    dir: &Path,
+) -> Result<(), ()> {
+    let svc = ServiceOf::of(c);
+    let copy = dir.join("witness");
+    let line = dir.join("check");
+    std::fs::create_dir_all(dir).map_err(|_| ())?;
+    let fetched = now_secs();
+    if crate::witness::fetch_for(layout, &copy, svc.user).is_err()
+        || crate::setup::own_path(layout, dir, svc.user).is_err()
+    {
+        out(&[
+            Part::T("  The witness copies could not be fetched for the chain check of the "),
+            Part::T(c.name()),
+            Part::T(" copy."),
+        ]);
+        return Err(());
+    }
+    let mut check = svc.command(layout);
+    check
+        .arg("check-chain")
+        .arg(port.to_string())
+        .arg(&copy)
+        .arg(&line);
+    let ran = matches!(run_logged(&mut check, &m.log()), Ok(Some(0)));
+    let read = std::fs::read(&line)
+        .ok()
+        .and_then(|b| drill_status::decode_chain_check(&b).ok());
+    let Some(check) = read.filter(|_| ran) else {
+        out(&[
+            Part::T("  The restored "),
+            Part::T(c.name()),
+            Part::T(
+                " audit chain does not verify against the witness copies, or one of them could not be read.",
+            ),
+        ]);
+        return Err(());
+    };
+    match chain_verdict(&check, restore_started, fetched) {
+        ChainVerdict::Pass => {}
+        ChainVerdict::BackupMisses => {
+            out(&[
+                Part::T("  The witness receipted changes to the "),
+                Part::T(c.name()),
+                Part::T(
+                    " chain more than 10 minutes before this restore, and the restored copy lacks them. The backup misses those changes: check the wal archive line of fstp-admin status.",
+                ),
+            ]);
+            return Err(());
+        }
+        ChainVerdict::CopiesBehind => {
+            out(&[
+                Part::T("  The witness copies are more than 10 minutes behind the restored "),
+                Part::T(c.name()),
+                Part::T(" copy. Run fstp-admin witness-copy: it says what failed."),
+            ]);
+            return Err(());
+        }
+    }
+    out(&[
+        Part::T("  done     checked the audit chain of the "),
+        Part::T(c.name()),
+        Part::T(" copy against the witness copies: "),
+        Part::N(check.rows),
+        Part::T(" rows"),
+    ]);
+    chain_notes(c, &check);
+    Ok(())
+}
+
+/// The counts of a passed chain check that the operator should see.
+fn chain_notes(c: Cluster, check: &ChainCheck) {
+    let note = |n: u64, what: &'static str| {
+        if n > 0 {
+            out(&[
+                Part::T("  note     "),
+                Part::N(n),
+                Part::T(what),
+                Part::T(c.name()),
+                Part::T(" chain"),
+            ]);
+        }
+    };
+    note(
+        check.later,
+        " receipts at the witness copies are newer than the restored copy, as expected after its last saved change, in the ",
+    );
+    note(
+        check.newer(),
+        " restored rows are newer than the witness copies and verify by their own stored receipts, in the ",
+    );
+    note(
+        check.lost,
+        " windows lost in declared restores, which tenant admins acknowledge on the System page, are listed in the ",
+    );
+    note(
+        check.doubt,
+        " possible deletions, which tenant admins see on the System page, are listed in the ",
+    );
 }
 
 fn step_done(what: &'static str, c: Cluster) {
@@ -640,6 +829,54 @@ mod tests {
         assert_eq!(drill_status::encode(&s), "v1 9 0 witness 0\n");
         assert_eq!(drill_status::decode(b"v1 9 0 witness 0\n"), Ok(s));
         assert!(step_text(Step::Witness).contains("witness copies"));
+    }
+
+    /// ADR-012 record of lane m10/drill-chain, rows "Expected gap", "Time
+    /// rule" and "Status": a check line passes with tails younger than 10
+    /// minutes and with findings that are only reported; a later receipt
+    /// older than 10 minutes before the restore, or a newer row whose
+    /// receipt is older than 10 minutes before the fetch, fails; the step
+    /// `chain` has its word and its plain words (I-24).
+    #[test]
+    fn adr012_dc_drill_reads_the_chain_check() {
+        let restore = 1_795_000_000;
+        let fetched = restore + 300;
+        let clean = ChainCheck {
+            rows: 40,
+            checked: 40,
+            ..ChainCheck::default()
+        };
+        assert_eq!(chain_verdict(&clean, restore, fetched), ChainVerdict::Pass);
+        let tails = ChainCheck {
+            rows: 40,
+            checked: 38,
+            later: 3,
+            oldest_later: Some(restore - TAIL_SLACK),
+            oldest_newer: Some(fetched - TAIL_SLACK),
+            lost: 1,
+            doubt: 1,
+        };
+        assert_eq!(chain_verdict(&tails, restore, fetched), ChainVerdict::Pass);
+        let missed = ChainCheck {
+            oldest_later: Some(restore - TAIL_SLACK - 1),
+            ..tails
+        };
+        assert_eq!(
+            chain_verdict(&missed, restore, fetched),
+            ChainVerdict::BackupMisses
+        );
+        let behind = ChainCheck {
+            oldest_newer: Some(fetched - TAIL_SLACK - 1),
+            ..tails
+        };
+        assert_eq!(
+            chain_verdict(&behind, restore, fetched),
+            ChainVerdict::CopiesBehind
+        );
+        assert_eq!(TAIL_SLACK, 10 * 60);
+        let s = DrillStatus::default().after_fail(9, Step::Chain);
+        assert_eq!(drill_status::encode(&s), "v1 9 0 chain 0\n");
+        assert!(step_text(Step::Chain).contains("audit chain"));
     }
 
     #[test]
