@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
+use fstp_obs::SnapshotFailure;
 use fstp_obs::drill_status::Step as DrillStep;
 use fstp_obs::host_status::{
     CustodianState, HostStatus, HostStatusError, MAX_LEN, Next, PartState, Parts, RouteState,
@@ -32,8 +33,10 @@ fn sample() -> HostStatus {
         last_vault_erasure: Some(1_794_980_000),
         last_app_snapshot: Some(1_794_995_000),
         app_snapshot_failed: false,
+        app_snapshot_step: None,
         last_vault_snapshot: None,
         vault_snapshot_failed: true,
+        vault_snapshot_step: Some(SnapshotFailure::Upload),
         certificate_days: Some(5),
         self_signed: false,
         route: RouteState::Mismatch,
@@ -70,6 +73,14 @@ fn opt_time(g: &mut Gen) -> Option<i64> {
     }
 }
 
+fn opt_step(g: &mut Gen) -> Option<SnapshotFailure> {
+    if g.bool() {
+        None
+    } else {
+        Some(pick(g, &SnapshotFailure::ALL))
+    }
+}
+
 fn arbitrary(g: &mut Gen) -> HostStatus {
     HostStatus {
         written_at: g.i64_in(0..=253_402_300_799),
@@ -88,8 +99,10 @@ fn arbitrary(g: &mut Gen) -> HostStatus {
         last_vault_erasure: opt_time(g),
         last_app_snapshot: opt_time(g),
         app_snapshot_failed: g.bool(),
+        app_snapshot_step: opt_step(g),
         last_vault_snapshot: opt_time(g),
         vault_snapshot_failed: g.bool(),
+        vault_snapshot_step: opt_step(g),
         certificate_days: if g.bool() {
             None
         } else {
@@ -308,6 +321,32 @@ fn r_nf_02_host_status_refuses_bad_input() {
             ),
             HostStatusError::Invalid("last_witness_copied"),
         ),
+        // ADR-012 record of lane m10/key-pin-reason: the snapshot steps.
+        (
+            swap(
+                "\"vault_snapshot_step\":\"upload\"",
+                "\"vault_snapshot_step\":\"the upload\"",
+            ),
+            HostStatusError::Invalid("vault_snapshot_step"),
+        ),
+        (
+            swap(
+                "\"vault_snapshot_step\":\"upload\"",
+                "\"vault_snapshot_step\":null",
+            ),
+            HostStatusError::Invalid("vault_snapshot_step"),
+        ),
+        (
+            swap(
+                "\"app_snapshot_step\":\"none\"",
+                "\"app_snapshot_step\":\"Upload\"",
+            ),
+            HostStatusError::Invalid("app_snapshot_step"),
+        ),
+        (
+            swap("\"app_snapshot_step\":\"none\",", ""),
+            HostStatusError::MissingMember("app_snapshot_step"),
+        ),
         (
             format!("{good}{}", " ".repeat(MAX_LEN)),
             HostStatusError::TooLong,
@@ -354,4 +393,43 @@ fn adr012_bh_wal_archive_takes_the_worse_cluster() {
         assert_eq!(a.worst(b), want, "{a:?} {b:?}");
         assert_eq!(b.worst(a), want, "{b:?} {a:?}");
     }
+}
+
+/// R-NF-02, ADR-012 record of lane m10/key-pin-reason, row "Snapshot
+/// reason in the host status file": each failed snapshot's step reaches
+/// the file in the words of `fstp_obs::SnapshotFailure`, `none` stands
+/// for no known step, and a file written before the two members is
+/// refused until the next report rewrites it. The next word `backup_key`
+/// round-trips (F-044).
+#[test]
+fn r_nf_02_host_status_names_the_snapshot_step() {
+    for step in SnapshotFailure::ALL {
+        let s = HostStatus {
+            app_snapshot_failed: true,
+            app_snapshot_step: Some(step),
+            vault_snapshot_step: None,
+            ..sample()
+        };
+        let text = encode(&s);
+        assert!(
+            text.contains(&format!("\"app_snapshot_step\":\"{}\"", step.as_str())),
+            "{text}"
+        );
+        assert!(text.contains("\"vault_snapshot_step\":\"none\""), "{text}");
+        assert_eq!(decode(text.as_bytes()), Ok(s));
+    }
+    let s = HostStatus {
+        next: Next::BackupKey,
+        ..sample()
+    };
+    let text = encode(&s);
+    assert!(text.contains("\"next\":\"backup_key\""), "{text}");
+    assert_eq!(decode(text.as_bytes()), Ok(s));
+    let old = encode(&sample())
+        .replace("\"app_snapshot_step\":\"none\",", "")
+        .replace("\"vault_snapshot_step\":\"upload\",", "");
+    assert_eq!(
+        decode(old.as_bytes()),
+        Err(HostStatusError::MissingMember("app_snapshot_step"))
+    );
 }

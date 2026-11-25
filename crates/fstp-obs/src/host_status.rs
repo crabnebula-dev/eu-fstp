@@ -7,7 +7,8 @@
 //! or a domain (R-NF-02).
 //!
 //! ```text
-//! {"app_snapshot_failed":false,"backups_configured":true,"certificate_days":5,
+//! {"app_snapshot_failed":false,"app_snapshot_step":"none",
+//!  "backups_configured":true,"certificate_days":5,
 //!  "custodian":"linked","drill_seconds":412,"drill_step":"none",
 //!  "guard_copy_owed":false,"guard_owed":false,
 //!  "last_app_snapshot":1795000000,"last_backup":1795000000,
@@ -19,7 +20,8 @@
 //!  "parts":{"cell":"running","databases":"running","edge":"running",
 //!           "keys":"running","vault":"running","witness":"running"},
 //!  "route":"current","self_signed":false,"setup_done":true,
-//!  "vault_snapshot_failed":false,"version":1,"wal_archive":"ok",
+//!  "vault_snapshot_failed":false,"vault_snapshot_step":"none",
+//!  "version":1,"wal_archive":"ok",
 //!  "witness_copy":"ok",
 //!  "written_at":1795000000}
 //! ```
@@ -33,6 +35,7 @@ use std::fmt;
 
 use fstp_json::{Object, ParseLimits, Value};
 
+use crate::SnapshotFailure;
 use crate::drill_status::{self, Step as DrillStep};
 
 /// The grammar version this module reads and writes.
@@ -339,10 +342,17 @@ pub struct HostStatus {
     pub last_app_snapshot: Option<i64>,
     /// The cell's last keystore snapshot try failed.
     pub app_snapshot_failed: bool,
+    /// The step where the cell's last keystore snapshot failed, `None`
+    /// when it did not fail or the step is unknown (ADR-012 record of lane
+    /// m10/key-pin-reason).
+    pub app_snapshot_step: Option<SnapshotFailure>,
     /// When the vault's keystore snapshot last verified, in Unix seconds.
     pub last_vault_snapshot: Option<i64>,
     /// The vault's last keystore snapshot try failed.
     pub vault_snapshot_failed: bool,
+    /// The step where the vault's last keystore snapshot failed, as
+    /// [`HostStatus::app_snapshot_step`].
+    pub vault_snapshot_step: Option<SnapshotFailure>,
     /// Whole days until the first host certificate ends.
     pub certificate_days: Option<i64>,
     /// The public origin certificate is self-signed.
@@ -412,8 +422,9 @@ impl fmt::Display for HostStatusError {
 
 impl std::error::Error for HostStatusError {}
 
-const MEMBERS: [&str; 26] = [
+const MEMBERS: [&str; 28] = [
     "app_snapshot_failed",
+    "app_snapshot_step",
     "backups_configured",
     "certificate_days",
     "custodian",
@@ -435,6 +446,7 @@ const MEMBERS: [&str; 26] = [
     "self_signed",
     "setup_done",
     "vault_snapshot_failed",
+    "vault_snapshot_step",
     "version",
     "wal_archive",
     "witness_copy",
@@ -453,7 +465,7 @@ fn opt(v: Option<i64>) -> String {
 pub fn encode(s: &HostStatus) -> String {
     let p = &s.parts;
     format!(
-        "{{\"app_snapshot_failed\":{},\"backups_configured\":{},\"certificate_days\":{},\
+        "{{\"app_snapshot_failed\":{},\"app_snapshot_step\":\"{}\",\"backups_configured\":{},\"certificate_days\":{},\
          \"custodian\":\"{}\",\"drill_seconds\":{},\"drill_step\":\"{}\",\
          \"guard_copy_owed\":{},\"guard_owed\":{},\
          \"last_app_snapshot\":{},\"last_backup\":{},\"last_drill_passed\":{},\"last_key_copy\":{},\
@@ -461,9 +473,10 @@ pub fn encode(s: &HostStatus) -> String {
          \"next\":\"{}\",\"parts\":{{\"cell\":\"{}\",\
          \"databases\":\"{}\",\"edge\":\"{}\",\"keys\":\"{}\",\"vault\":\"{}\",\
          \"witness\":\"{}\"}},\"route\":\"{}\",\"self_signed\":{},\"setup_done\":{},\
-         \"vault_snapshot_failed\":{},\"version\":{VERSION},\"wal_archive\":\"{}\",\
+         \"vault_snapshot_failed\":{},\"vault_snapshot_step\":\"{}\",\"version\":{VERSION},\"wal_archive\":\"{}\",\
          \"witness_copy\":\"{}\",\"written_at\":{}}}\n",
         s.app_snapshot_failed,
+        step_word(s.app_snapshot_step),
         s.backups_configured,
         opt(s.certificate_days),
         s.custodian.word(),
@@ -490,6 +503,7 @@ pub fn encode(s: &HostStatus) -> String {
         s.self_signed,
         s.setup_done,
         s.vault_snapshot_failed,
+        step_word(s.vault_snapshot_step),
         s.wal_archive.word(),
         s.witness_copy.word(),
         s.written_at,
@@ -546,6 +560,22 @@ fn word<T: Copy>(
         .ok_or(HostStatusError::Invalid(name))
 }
 
+/// The word of a snapshot step: `none`, or the failure's word.
+fn step_word(s: Option<SnapshotFailure>) -> &'static str {
+    s.map_or("none", SnapshotFailure::as_str)
+}
+
+fn snapshot_step(
+    o: &Object,
+    name: &'static str,
+) -> Result<Option<SnapshotFailure>, HostStatusError> {
+    let v = member(o, name)?;
+    if v.as_str() == Some("none") {
+        return Ok(None);
+    }
+    word(v, &SnapshotFailure::ALL, SnapshotFailure::as_str, name).map(Some)
+}
+
 fn part(o: &Object, name: &'static str, rule: &'static str) -> Result<PartState, HostStatusError> {
     word(member(o, name)?, &PartState::ALL, PartState::word, rule)
 }
@@ -594,8 +624,10 @@ pub fn decode(bytes: &[u8]) -> Result<HostStatus, HostStatusError> {
         last_vault_erasure: opt_int(o, "last_vault_erasure", 0, MAX_INSTANT)?,
         last_app_snapshot: opt_int(o, "last_app_snapshot", 0, MAX_INSTANT)?,
         app_snapshot_failed: flag(o, "app_snapshot_failed")?,
+        app_snapshot_step: snapshot_step(o, "app_snapshot_step")?,
         last_vault_snapshot: opt_int(o, "last_vault_snapshot", 0, MAX_INSTANT)?,
         vault_snapshot_failed: flag(o, "vault_snapshot_failed")?,
+        vault_snapshot_step: snapshot_step(o, "vault_snapshot_step")?,
         certificate_days: opt_int(o, "certificate_days", -MAX_DAYS, MAX_DAYS)?,
         self_signed: flag(o, "self_signed")?,
         route: word(

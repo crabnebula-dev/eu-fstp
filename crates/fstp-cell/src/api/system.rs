@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use fstp_api_core::system::{
     ArchiveState, CustodianState, DrillStep, HostFile, HostNext, HostParts, HostReport, PartState,
-    RouteState,
+    RouteState, SnapshotStep,
 };
 use fstp_domain::time::Timestamp;
 use fstp_obs::host_status::{self, HostStatus};
@@ -31,6 +31,24 @@ fn part(s: host_status::PartState) -> PartState {
         host_status::PartState::Running => PartState::Running,
         host_status::PartState::Unhealthy => PartState::Unhealthy,
         host_status::PartState::Stopped => PartState::Stopped,
+    }
+}
+
+/// The step of a failed keystore snapshot, in the reply's words (ADR-012
+/// record of lane m10/key-pin-reason).
+fn snapshot_step(s: Option<fstp_obs::SnapshotFailure>) -> SnapshotStep {
+    use fstp_obs::SnapshotFailure as F;
+    match s {
+        None => SnapshotStep::None,
+        Some(F::Busy) => SnapshotStep::Busy,
+        Some(F::Image) => SnapshotStep::Image,
+        Some(F::Database) => SnapshotStep::Database,
+        Some(F::Custody) => SnapshotStep::Custody,
+        Some(F::Upload) => SnapshotStep::Upload,
+        Some(F::Fetch) => SnapshotStep::Fetch,
+        Some(F::Open) => SnapshotStep::Open,
+        Some(F::Check) => SnapshotStep::Check,
+        Some(F::Pointer) => SnapshotStep::Pointer,
     }
 }
 
@@ -57,8 +75,10 @@ fn report(s: &HostStatus) -> Option<HostReport> {
         last_vault_erasure: s.last_vault_erasure.map(instant),
         last_app_snapshot: s.last_app_snapshot.map(instant),
         app_snapshot_failed: s.app_snapshot_failed,
+        app_snapshot_step: snapshot_step(s.app_snapshot_step),
         last_vault_snapshot: s.last_vault_snapshot.map(instant),
         vault_snapshot_failed: s.vault_snapshot_failed,
+        vault_snapshot_step: snapshot_step(s.vault_snapshot_step),
         certificate_days: s.certificate_days,
         self_signed: s.self_signed,
         route: match s.route {
@@ -151,8 +171,10 @@ mod tests {
             last_vault_erasure: Some(1_794_995_000),
             last_app_snapshot: Some(1_794_996_000),
             app_snapshot_failed: false,
+            app_snapshot_step: None,
             last_vault_snapshot: None,
             vault_snapshot_failed: true,
+            vault_snapshot_step: Some(fstp_obs::SnapshotFailure::Pointer),
             certificate_days: Some(4),
             self_signed: true,
             route: host_status::RouteState::Current,
@@ -211,6 +233,13 @@ mod tests {
         assert!(!r.app_snapshot_failed);
         assert_eq!(r.last_vault_snapshot, None);
         assert!(r.vault_snapshot_failed);
+        // ADR-012 record of lane m10/key-pin-reason: where each failed.
+        assert_eq!(r.app_snapshot_step, SnapshotStep::None);
+        assert_eq!(r.vault_snapshot_step, SnapshotStep::Pointer);
+        for f in fstp_obs::SnapshotFailure::ALL {
+            assert_eq!(snapshot_step(Some(f)).wire(), f.as_str());
+            assert_eq!(SnapshotStep::of(f.as_str()), Some(snapshot_step(Some(f))));
+        }
         assert_eq!(r.certificate_days, Some(4));
         assert!(r.self_signed);
         // ADR-028 record of lane `m10/backup-health`: the WAL archive.

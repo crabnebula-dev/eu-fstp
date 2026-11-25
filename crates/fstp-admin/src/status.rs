@@ -511,8 +511,11 @@ pub fn host_status(
             .map(|t| t.clamp(0, host_status::MAX_INSTANT)),
         last_app_snapshot: secs(snapshots.app.last_verified),
         app_snapshot_failed: snapshots.app.failing(),
+        // ADR-012 record of lane m10/key-pin-reason: where it failed.
+        app_snapshot_step: snapshots.app.reason.filter(|_| snapshots.app.failing()),
         last_vault_snapshot: secs(snapshots.vault.last_verified),
         vault_snapshot_failed: snapshots.vault.failing(),
+        vault_snapshot_step: snapshots.vault.reason.filter(|_| snapshots.vault.failing()),
         certificate_days: f
             .min_days
             .map(|d| d.clamp(-host_status::MAX_DAYS, host_status::MAX_DAYS)),
@@ -977,6 +980,55 @@ mod tests {
         assert_eq!(next(&f), Next::Nothing);
         f.backup_key = KeyPin::Pinned;
         assert_eq!(next(&f), Next::Nothing);
+    }
+
+    /// R-NF-02, ADR-012 record of lane m10/key-pin-reason, row "Snapshot
+    /// reason in the host status file": the step of a failed keystore
+    /// snapshot reaches the host status file, a verified one after a
+    /// failure leaves `none`, and so does a failure of unknown step.
+    #[test]
+    fn adr012_kpr_host_status_names_the_snapshot_step() {
+        use fstp_obs::SnapshotFailure;
+        use fstp_obs::snapshot_status::SnapshotStatus;
+        let failed = SnapshotStatus::default().after(Some(SnapshotFailure::Upload), 100);
+        let unknown = SnapshotStatus {
+            reason: None,
+            ..failed
+        };
+        let recovered = failed.after(None, 200);
+        assert!(failed.failing() && unknown.failing() && !recovered.failing());
+        let f = healthy();
+        let s = host_status(
+            &f,
+            Parts::RUNNING,
+            Some(1),
+            None,
+            Snapshots {
+                app: recovered,
+                vault: failed,
+            },
+            2,
+        );
+        assert_eq!(s.app_snapshot_step, None);
+        assert_eq!(s.vault_snapshot_step, Some(SnapshotFailure::Upload));
+        assert!(s.vault_snapshot_failed);
+        assert_eq!(
+            host_status::decode(host_status::encode(&s).as_bytes()),
+            Ok(s)
+        );
+        let s = host_status(
+            &f,
+            Parts::RUNNING,
+            Some(1),
+            None,
+            Snapshots {
+                app: unknown,
+                vault: recovered,
+            },
+            2,
+        );
+        assert!(s.app_snapshot_failed);
+        assert_eq!(s.app_snapshot_step, None);
     }
 
     /// ADR-028 record of lane `m10/guard-key`, part 3 (decided by Daniel

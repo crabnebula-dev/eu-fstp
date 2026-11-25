@@ -131,6 +131,22 @@ export const SYSTEM_LABELS: Readonly<Record<string, string>> = {
   "system.row.snapshots.late": "A key store was last saved off the host {age} ago. This should run every day.",
   "system.row.snapshots.none": "A key store has not been saved off the host yet.",
   "system.row.snapshots.failed": "The last daily save of a key store off the host failed.",
+  "system.row.snapshots.failed_busy":
+    "The last daily save of a key store off the host did not run: an erasure was running at the time, or no backup store is set up.",
+  "system.row.snapshots.failed_image": "The last daily save of a key store off the host failed: the key store could not be read.",
+  "system.row.snapshots.failed_database":
+    "The last daily save of a key store off the host failed: the database did not accept a write.",
+  "system.row.snapshots.failed_custody":
+    "The last daily save of a key store off the host failed: the key custody refused, or the snapshot key did not open.",
+  "system.row.snapshots.failed_upload": "The last daily save of a key store off the host failed: the upload to the object store failed.",
+  "system.row.snapshots.failed_fetch":
+    "The last daily save of a key store off the host failed: the saved copy could not be read back from the object store.",
+  "system.row.snapshots.failed_open":
+    "The last daily save of a key store off the host failed: the saved copy did not check out or open when read back.",
+  "system.row.snapshots.failed_check":
+    "The last daily save of a key store off the host failed: the saved keys did not open under the current key.",
+  "system.row.snapshots.failed_pointer":
+    "The last daily save of a key store off the host failed: the object store did not take the note that names the newest copy.",
   "system.row.snapshots.off": "The key stores are saved off the host once backups are set up.",
   "system.row.snapshots.unknown": "Not known until the host reports.",
   "system.row.certificates.fine":
