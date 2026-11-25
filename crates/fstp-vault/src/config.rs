@@ -42,7 +42,10 @@ pub const CONFIG_MEMBERS: [&str; 10] = [
 /// bucket of the keystore snapshots (ADR-012 record of lane L17), in the
 /// shape `fstp-backup` uses, or `object_stores` lists one to three
 /// (record of lane m10/backup-followups).
-pub const OPTIONAL_MEMBERS: [&str; 3] = ["assets_dir", "object_store", "object_stores"];
+/// `mode` is `saas` or `self_hosted`, and absent means self-hosted (ADR-012
+/// record of lane m10/saas-declare): a SaaS vault fails closed without its
+/// pinned restore declaration keys.
+pub const OPTIONAL_MEMBERS: [&str; 4] = ["assets_dir", "mode", "object_store", "object_stores"];
 
 /// The members of the database part, in key order.
 pub const DATABASE_MEMBERS: [&str; 3] = ["dbname", "host", "port"];
@@ -150,6 +153,10 @@ pub struct VaultConfig {
     /// The further stores of `object_stores`, after the first, in order
     /// (ADR-012 record of lane m10/backup-followups, row "Every store").
     pub more_stores: Vec<fstp_backup::s3::Endpoint>,
+    /// Whether the vault serves a SaaS cell (`"mode": "saas"`). It then
+    /// starts only with a pinned `restore-declaration-keys` file (ADR-012
+    /// record of lane m10/saas-declare). Absent means self-hosted.
+    pub saas: bool,
 }
 
 /// The vault database name of `cell`: `v_` and 32 lowercase hex digits.
@@ -302,6 +309,14 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
     }
     let internal_listen = addr(o, "internal_listen")?;
     let origin_listen = addr(o, "origin_listen")?;
+    let saas = match o.get("mode") {
+        None => false,
+        Some(_) => match string(o, "mode")? {
+            "saas" => true,
+            "self_hosted" => false,
+            _ => return Err(bad("mode")),
+        },
+    };
     let assets_dir = if has_assets {
         Some(path(o, "assets_dir")?)
     } else {
@@ -326,6 +341,7 @@ pub fn decode_config(bytes: &[u8]) -> Result<VaultConfig, VaultError> {
         witness: witness(o)?,
         object_store,
         more_stores,
+        saas,
     })
 }
 
@@ -595,5 +611,30 @@ pub(crate) mod tests {
             let shown = format!("{e:?} {e}");
             assert!(!shown.contains(marker), "R-NF-02: {shown}");
         }
+    }
+
+    /// ADR-012 record of lane m10/saas-declare: the optional `mode` is
+    /// `saas` or `self_hosted`, absent means self-hosted, and any other
+    /// value is refused by name.
+    #[test]
+    fn adr012_saas_vault_config_names_its_mode() {
+        let with = |member: &str| {
+            text(|s| s.replacen("\"origin_host\"", &format!("{member},\"origin_host\""), 1))
+        };
+        assert!(!decode_config(text(|s| s).as_bytes()).unwrap().saas);
+        assert!(
+            decode_config(with("\"mode\":\"saas\"").as_bytes())
+                .unwrap()
+                .saas
+        );
+        assert!(
+            !decode_config(with("\"mode\":\"self_hosted\"").as_bytes())
+                .unwrap()
+                .saas
+        );
+        assert_eq!(
+            decode_config(with("\"mode\":\"SaaS\"").as_bytes()),
+            Err(VaultError::Config("mode"))
+        );
     }
 }

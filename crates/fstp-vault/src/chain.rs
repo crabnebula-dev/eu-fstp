@@ -42,7 +42,7 @@ use std::time::Duration;
 use fstp_audit::anchor::{Anchor, AnchorRow, Receipt, decode_receipt, encode_receipt, sign_anchor};
 use fstp_audit::anchorer::{AfterCommit, Anchorer, CommitOutcome, Resolution, Step};
 use fstp_audit::chain::{ChainRow, ChainWriter, RowKind, StoredEntry, StoredRow, genesis};
-use fstp_audit::verify::{ChainView, verify};
+use fstp_audit::verify::{ChainView, verify_with_declaration_keys};
 use fstp_audit::witness::{Prepare, WitnessRecord};
 use fstp_audit::{CellId, ChainId, CompositeSigningKey, Link, LostInRestore};
 use fstp_pgwire::Client;
@@ -96,6 +96,11 @@ pub struct VaultChainParts {
     pub witness: VaultWitness,
     /// The pinned witness receipt keys, encoded.
     pub witness_keys: Vec<Vec<u8>>,
+    /// The pinned restore declaration keys of a SaaS control plane, encoded
+    /// (ADR-012 record of lane m10/saas-declare). With them, the start-up
+    /// verification takes a declaration only with a statement under one of
+    /// them. Empty for a self-hosted vault.
+    pub declaration_keys: Vec<Vec<u8>>,
 }
 
 impl std::fmt::Debug for VaultChainParts {
@@ -493,7 +498,8 @@ impl<R: Runtime> VaultChain<R> {
             anchor_keys: &anchor_keys,
             witness_keys: &parts.witness_keys,
         };
-        let verified = verify(&view).map_err(|_| TAMPERED)?;
+        let verified =
+            verify_with_declaration_keys(&view, &parts.declaration_keys).map_err(|_| TAMPERED)?;
         let head = stored
             .rows
             .last()

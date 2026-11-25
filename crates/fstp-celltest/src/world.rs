@@ -4219,6 +4219,9 @@ fn start_cell(
             ca_digest: witness.ca_digest,
         },
         witness_keys: vec![witness.handle.receipt_public_key()],
+        // ADR-012 record of lane m10/saas-declare: the seeded vault pins a
+        // world key, as a SaaS vault does. No declaration is made.
+        declaration_keys: world_declaration_keys()?,
     };
     let sealer = fstp_vault::service::AeadSealer::new(
         fstp_crypto::random_array::<16>().map_err(|e| fail("a key id", &e))?,
