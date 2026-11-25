@@ -368,7 +368,9 @@ pub(crate) enum Stored {
         witness_link: Link,
     },
     /// A declared restore (ADR-012 record of lane m10/declared-restore).
-    /// Only the file store of a self-hosted witness holds one.
+    /// The file store of a self-hosted witness holds console ones, and
+    /// `witness.declaration` SaaS ones with their statement (lane
+    /// m10/saas-declare).
     Declared {
         seq: u64,
         declaration: fstp_audit::witness::Declaration,
@@ -479,8 +481,100 @@ pub async fn load_chain<R: Runtime>(
             witness_link,
         });
     }
+    let declarations = client
+        .query(
+            "SELECT witness_seq, head_n, head_link, lost_to, job, received_at, witness_link, \
+             signature, statement FROM witness.declaration WHERE cell_id = $1 AND chain = $2",
+            &[&id, &code],
+        )
+        .await
+        .map_err(db("declarations"))?;
+    for row in &declarations {
+        let c = StoreError::Corrupt("declaration");
+        let seq = uint(row.get::<i64>(0).map_err(|_| c)?, "witness sequence")?;
+        let head_n = uint(row.get::<i64>(1).map_err(|_| c)?, "row number")?;
+        let head_link = Link(arr(&row.get::<Vec<u8>>(2).map_err(|_| c)?, "link")?);
+        let lost_to = uint(row.get::<i64>(3).map_err(|_| c)?, "row number")?;
+        let job = arr(&row.get::<Vec<u8>>(4).map_err(|_| c)?, "job")?;
+        let received_at: i64 = row.get(5).map_err(|_| c)?;
+        let witness_link = Link(arr(&row.get::<Vec<u8>>(6).map_err(|_| c)?, "witness link")?);
+        let signature: Vec<u8> = row.get(7).map_err(|_| c)?;
+        let statement: Vec<u8> = row.get(8).map_err(|_| c)?;
+        if signature.len() != fstp_audit::SIGNATURE_LEN
+            || statement.len() != fstp_audit::SIGNATURE_LEN
+        {
+            return Err(StoreError::Corrupt("signature length"));
+        }
+        stored.push(Stored::Declared {
+            seq,
+            declaration: fstp_audit::witness::Declaration {
+                fields: fstp_audit::witness::DeclarationFields {
+                    head: (head_n, head_link),
+                    lost_to,
+                    job,
+                    witness_seq: seq,
+                    witness_link,
+                    received_at,
+                },
+                signature,
+                statement: Some(statement),
+            },
+        });
+    }
     stored.sort_by_key(Stored::seq);
     replay(cell, chain, stored)
+}
+
+/// Stores a SaaS restore declaration of `cell`'s `chain` (ADR-012 record of
+/// lane m10/saas-declare): its fields, the witness signature and the
+/// statement signature, in one row.
+///
+/// # Errors
+///
+/// [`StoreError::Corrupt`] for a declaration without a statement, and
+/// [`StoreError::Unavailable`] when the row cannot be written. Nothing is
+/// stored then.
+pub async fn insert_declaration<R: Runtime>(
+    client: &mut Client<R>,
+    cell: CellId,
+    chain: ChainId,
+    d: &fstp_audit::witness::Declaration,
+) -> Result<(), StoreError> {
+    let f = &d.fields;
+    let statement = d
+        .statement
+        .clone()
+        .ok_or(StoreError::Corrupt("declaration without a statement"))?;
+    let id = cell.0.to_vec();
+    let code = chain_code(chain);
+    let seq = int(f.witness_seq, "witness sequence")?;
+    let head_n = int(f.head.0, "row number")?;
+    let head_link = f.head.1.0.to_vec();
+    let lost_to = int(f.lost_to, "row number")?;
+    let job = f.job.to_vec();
+    let witness_link = f.witness_link.0.to_vec();
+    client
+        .execute(
+            "INSERT INTO witness.declaration (cell_id, chain, witness_seq, head_n, head_link, \
+             lost_to, job, received_at, witness_link, signature, statement) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            &[
+                &id,
+                &code,
+                &seq,
+                &head_n,
+                &head_link,
+                &lost_to,
+                &job,
+                &f.received_at,
+                &witness_link,
+                &d.signature,
+                &statement,
+            ],
+        )
+        .await
+        .map(drop)
+        .map_err(db("declaration"))
 }
 
 /// Replays `stored`, in witness order, into the chain's state and log.

@@ -36,6 +36,11 @@ pub const OU_CELL_WITNESS: &str = "cell-witness";
 /// chain's writer.
 pub const OU_VAULT_WITNESS: &str = "vault-witness";
 
+/// The subject OU of the client certificate that `fstp-control` presents
+/// to declare a restore, issued by the control-plane CA (ADR-012 record of
+/// lane m10/saas-declare). It writes no chain.
+pub const OU_CONTROL_WITNESS: &str = "control-witness";
+
 /// The longest certificate the reader takes.
 pub const MAX_CERT_LEN: usize = 16 * 1024;
 
@@ -368,6 +373,39 @@ pub fn sender_of(leaf_der: &[u8], pins: &[PinnedCa]) -> Option<Sender> {
     }
 }
 
+/// The sender of a connection whose client certificate is `leaf_der`,
+/// among the pinned cell CAs `pins` and the pinned control-plane CA
+/// `control`, if the witness pins one (ADR-012 record of lane
+/// m10/saas-declare). A leaf that the control-plane CA alone signed, with
+/// its authorityKeyIdentifier and the OU [`OU_CONTROL_WITNESS`], is
+/// [`Sender::ControlPlane`]. A leaf that two pins verify, the control
+/// plane's among them, names no sender. Otherwise it is [`sender_of`].
+/// The cell of `control` is not read.
+pub fn sender_among(
+    leaf_der: &[u8],
+    pins: &[PinnedCa],
+    control: Option<&PinnedCa>,
+) -> Option<Sender> {
+    let Some(control) = control else {
+        return sender_of(leaf_der, pins);
+    };
+    let leaf = read_cert(leaf_der).ok()?;
+    if !control.signed(&leaf) {
+        return sender_of(leaf_der, pins);
+    }
+    // Fail closed: a cell CA that also verifies the leaf names neither.
+    if pins.iter().any(|p| p.signed(&leaf)) {
+        return None;
+    }
+    if leaf.names.authority_key_id.as_deref() != Some(control.key_id.as_slice()) {
+        return None;
+    }
+    match leaf.names.subject_ou.as_deref() {
+        Some(ou) if ou == OU_CONTROL_WITNESS.as_bytes() => Some(Sender::ControlPlane),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -541,5 +579,41 @@ mod tests {
         let last = leaf.len() - 1;
         leaf[last] ^= 1;
         assert_eq!(sender_of(&leaf, &[ca.pin(cell)]), None);
+    }
+
+    /// I-24, ADR-012 record of lane m10/saas-declare: a `control-witness`
+    /// leaf of the pinned control-plane CA is the control plane. A cell CA
+    /// leaf with that OU, a control-plane leaf with a chain writer's OU, a
+    /// control-plane CA that is also pinned as a cell CA, and any leaf with
+    /// no control pin name no control plane.
+    #[test]
+    fn i24_saas_control_plane_sender_is_its_own_ca_and_ou() {
+        let cell = CellId([0x42; 16]);
+        let ca = Ca::new("cell ca");
+        let control = Ca::new("control-plane ca");
+        let cpin = control.pin(CellId([0; 16]));
+        let pins = [ca.pin(cell)];
+        let leaf = control.leaf(Some(OU_CONTROL_WITNESS));
+        assert_eq!(
+            sender_among(&leaf, &pins, Some(&cpin)),
+            Some(Sender::ControlPlane)
+        );
+        assert_eq!(sender_among(&leaf, &pins, None), None, "no control pin");
+        assert_eq!(sender_of(&leaf, &pins), None);
+        for ou in [Some(OU_CELL_WITNESS), Some(OU_VAULT_WITNESS), None] {
+            let other = control.leaf(ou);
+            assert_eq!(sender_among(&other, &pins, Some(&cpin)), None, "{ou:?}");
+        }
+        let cell_leaf = ca.leaf(Some(OU_CONTROL_WITNESS));
+        assert_eq!(sender_among(&cell_leaf, &pins, Some(&cpin)), None);
+        let writer = ca.leaf(Some(OU_CELL_WITNESS));
+        assert_eq!(
+            sender_among(&writer, &pins, Some(&cpin)),
+            Some(Sender::CellWitness { cell })
+        );
+        let both = [ca.pin(cell), control.pin(CellId([0x43; 16]))];
+        assert_eq!(sender_among(&leaf, &both, Some(&cpin)), None);
+        let claims = control.leaf_as("control-plane ca", ca.key_id(), Some(OU_CONTROL_WITNESS));
+        assert_eq!(sender_among(&claims, &pins, Some(&cpin)), None);
     }
 }

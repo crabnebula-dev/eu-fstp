@@ -213,7 +213,7 @@ fn witness_database() -> (
                  INSERT INTO fstp_meta.placement (cluster_id, kind) VALUES ('\\x{}'::bytea, 4);\n\
                  GRANT USAGE ON SCHEMA witness, fstp_meta TO {service};\n\
                  GRANT SELECT ON fstp_meta.placement TO {service};\n\
-                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, witness.cell_ca, witness.anchor_key TO {service};\n\
+                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, witness.declaration, witness.cell_ca, witness.anchor_key TO {service};\n\
                  GRANT SELECT ON witness.cell_revocation TO {service};",
                 "ab".repeat(16)
             ),

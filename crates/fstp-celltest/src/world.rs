@@ -2825,7 +2825,8 @@ fn provision_service(
                 "INSERT INTO fstp_meta.placement (cluster_id, kind) VALUES ('\\x{}'::bytea, 4);\n\
                  GRANT USAGE ON SCHEMA fstp_meta, witness TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON fstp_meta.placement TO {WITNESS_SERVICE_ROLE};\n\
-                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal \
+                 GRANT SELECT, INSERT ON witness.anchor, witness.receipt, witness.withdrawal, \
+                 witness.declaration \
                  TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON witness.cell_ca, witness.anchor_key TO {WITNESS_SERVICE_ROLE};\n\
                  GRANT SELECT ON witness.cell_revocation TO {WITNESS_SERVICE_ROLE};",

@@ -13,7 +13,7 @@
 //!    and anchor key histories.
 //! 2. It binds its listener. Each connection runs a TLS 1.3 handshake
 //!    that requires a client certificate from a registered cell CA. The
-//!    sender is the certificate's issuing cell and its OU
+//!    sen.and_then(|der| sender_among(der, &shared.pins(), shared.control_pin().as_ref())) is the certificate's issuing cell and its OU
 //!    ([`crate::peer::sender_of`]). A connection whose certificate names
 //!    no chain writer is closed before it is read.
 //! 3. Each frame is one request ([`crate::wire`]). A prepare is checked
@@ -39,7 +39,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use fstp_audit::anchor::AnchorRow;
-use fstp_audit::witness::{Prepare, RecordKind, WitnessRecord};
+use fstp_audit::witness::{
+    Prepare, RecordKind, RestoreStatement, WitnessRecord, sign_declaration,
+    statement_signature_verifies,
+};
 use fstp_audit::{CellId, ChainId, CompositeSigningKey, Link};
 use fstp_pgwire::Client;
 use fstp_rt::{
@@ -51,7 +54,7 @@ use crate::chain_witness::{ChainWitness, Refusal, Sender, accepts_sender};
 use crate::file_store::FileStore;
 use crate::lock::AsyncMutex;
 use crate::message::WitnessMessage;
-use crate::peer::{PinnedCa, sender_of};
+use crate::peer::{PinnedCa, sender_among};
 use crate::receipt::{check_anchor_signature, sign_receipt};
 use crate::store::{self, LoadedChain, StoreError};
 use crate::wire::{
@@ -289,6 +292,15 @@ impl<R: Runtime> Default for Core<R> {
     }
 }
 
+/// The control-plane CA and the restore declaration keys that a SaaS
+/// witness pins (ADR-012 record of lane m10/saas-declare).
+#[derive(Clone)]
+struct ControlPin {
+    ca_pem: Vec<u8>,
+    pin: PinnedCa,
+    declaration_keys: Vec<Vec<u8>>,
+}
+
 /// One registered cell, as the service pins it.
 #[derive(Clone)]
 struct Registered {
@@ -308,6 +320,10 @@ struct Shared<R: Runtime> {
     /// undone, so this set only grows.
     revoked: Mutex<BTreeSet<CellId>>,
     tls: Mutex<Option<Arc<fstp_tls::ServerConfig>>>,
+    /// The control-plane CA and the restore declaration keys, once the
+    /// witness accepts SaaS declarations (ADR-012 record of lane
+    /// m10/saas-declare).
+    control: Mutex<Option<ControlPin>>,
 }
 
 fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -328,9 +344,16 @@ fn store_err(e: StoreError) -> WitnessError {
 }
 
 impl<R: Runtime> Shared<R> {
-    /// Rebuilds the TLS configuration over the registered cell CAs.
+    /// The pinned control-plane CA, if the witness accepts SaaS
+    /// declarations.
+    fn control_pin(&self) -> Option<PinnedCa> {
+        locked(&self.control).as_ref().map(|c| c.pin.clone())
+    }
+
+    /// Rebuilds the TLS configuration over the registered cell CAs, and
+    /// the control-plane CA once it is pinned (lane m10/saas-declare).
     fn rebuild_tls(&self) -> Result<(), WitnessError> {
-        let (roots, cells): (Vec<u8>, usize) = {
+        let (mut roots, mut cells): (Vec<u8>, usize) = {
             let cells = locked(&self.cells);
             (
                 cells
@@ -340,6 +363,10 @@ impl<R: Runtime> Shared<R> {
                 cells.len(),
             )
         };
+        if let Some(c) = locked(&self.control).as_ref() {
+            roots.extend_from_slice(&c.ca_pem);
+            cells = cells.saturating_add(1);
+        }
         let config = if roots.is_empty() {
             None
         } else {
@@ -656,6 +683,91 @@ impl<R: Runtime> Shared<R> {
         WireReply::Declarations(out)
     }
 
+    /// A SaaS restore declaration (ADR-012 record of lane m10/saas-declare).
+    /// Only the control plane may declare, only at a witness over its
+    /// database, only for a registered cell that is not revoked, and only
+    /// with a statement that verifies under a pinned restore declaration
+    /// key. The witness core then applies the console rules: genesis or a
+    /// live head, and the declaration limit. The record is stored before
+    /// the reply. A retransmit of the chain's last declaration gets it
+    /// again, and a job used before on the chain is refused.
+    async fn declare(
+        &self,
+        sender: Sender,
+        statement: RestoreStatement,
+        signature: &[u8],
+    ) -> WireReply {
+        if sender != Sender::ControlPlane {
+            return WireReply::Refused;
+        }
+        let keys = match locked(&self.control).as_ref() {
+            Some(c) => c.declaration_keys.clone(),
+            None => return WireReply::Refused,
+        };
+        // I-90: both halves under a pinned restore declaration key.
+        if !statement_signature_verifies(&statement, signature, &keys) {
+            return WireReply::Refused;
+        }
+        let RestoreStatement {
+            cell,
+            chain,
+            head,
+            job,
+        } = statement;
+        if !locked(&self.cells).contains_key(&cell)
+            || self.refuses(Sender::writer(cell, chain)).await
+        {
+            return WireReply::Refused;
+        }
+        let mut core = self.core.lock().await;
+        if !matches!(core.backend, Backend::Pg { .. }) {
+            // A self-hosted witness takes declarations from its console
+            // only (ADR-012 record of lane m10/declared-restore).
+            return WireReply::Refused;
+        }
+        let Ok(state) = self.chain(&mut core, cell, chain).await else {
+            return WireReply::Refused;
+        };
+        if let Some(WitnessRecord::RestoreDeclared(d)) = state.log.last()
+            && d.fields.head == head
+            && d.fields.job == job
+            && d.statement.is_some()
+        {
+            return WireReply::Declared(d.clone());
+        }
+        if state.log.iter().any(|r| match r {
+            WitnessRecord::RestoreDeclared(d) => d.fields.job == job,
+            _ => false,
+        }) {
+            return WireReply::Refused;
+        }
+        let mut next = state.core.clone();
+        let Ok(fields) = next.declare_restore(&state.log, head, job, now_us()) else {
+            return WireReply::Refused;
+        };
+        let Ok(mut d) = sign_declaration(&self.receipt_key, cell, chain, &fields) else {
+            return WireReply::Refused;
+        };
+        d.statement = Some(signature.to_vec());
+        let stored = match &mut core.backend {
+            Backend::Pg { db, client } => match Backend::client(&self.rt, db, client).await {
+                Ok(c) => store::insert_declaration(c, cell, chain, &d).await,
+                Err(e) => Err(e),
+            },
+            Backend::File(_) | Backend::Closed => Err(CLOSED),
+        };
+        if stored.is_err() {
+            core.backend.reset();
+            core.chains.remove(&(cell, chain.byte()));
+            return WireReply::Refused;
+        }
+        if let Some(state) = core.chains.get_mut(&(cell, chain.byte())) {
+            state.core = next;
+            state.log.push(WitnessRecord::RestoreDeclared(d.clone()));
+        }
+        WireReply::Declared(d)
+    }
+
     async fn handle(&self, sender: Sender, req: WireRequest) -> WireReply {
         if self.refuses(sender).await {
             return WireReply::Refused;
@@ -695,6 +807,10 @@ impl<R: Runtime> Shared<R> {
                 self.log_page(sender, cell, chain, after).await
             }
             WireRequest::Declarations { cell } => self.declarations(sender, cell).await,
+            WireRequest::Declare {
+                statement,
+                signature,
+            } => self.declare(sender, statement, &signature).await,
         }
     }
 }
@@ -820,6 +936,43 @@ impl<R: Runtime> WitnessHandle<R> {
             }
             self.shared.unpin(cell);
         }
+        self.shared.rebuild_tls()
+    }
+
+    /// Lets the witness take SaaS restore declarations (ADR-012 record of
+    /// lane m10/saas-declare): it pins the control-plane CA `control_ca_der`
+    /// beside the cell CAs, and `declaration_keys`, the current and the
+    /// next restore declaration public key. A `control-witness` client
+    /// certificate of that CA may then send `Declare` and nothing else. A
+    /// second call replaces both.
+    ///
+    /// # Errors
+    ///
+    /// [`WitnessError::Config`] for no key, more than two, or a key that is
+    /// not a composite public key. [`WitnessError::BadCa`] for a CA
+    /// certificate that does not read.
+    pub fn accept_declarations(
+        &self,
+        control_ca_der: &[u8],
+        declaration_keys: Vec<Vec<u8>>,
+    ) -> Result<(), WitnessError> {
+        if declaration_keys.is_empty()
+            || declaration_keys.len() > crate::config::MAX_DECLARATION_KEYS
+            || declaration_keys
+                .iter()
+                .any(|k| fstp_audit::CompositePublicKey::from_bytes(k).is_err())
+        {
+            return Err(WitnessError::Config(crate::config::DECLARATION_KEYS_FILE));
+        }
+        let pin = PinnedCa::from_ca_der(CellId([0; 16]), control_ca_der)
+            .map_err(|_| WitnessError::BadCa)?;
+        let pem = fstp_pki::pem::encode(fstp_pki::pem::PemLabel::Certificate, control_ca_der)
+            .map_err(|_| WitnessError::BadCa)?;
+        *locked(&self.shared.control) = Some(ControlPin {
+            ca_pem: pem.into_bytes(),
+            pin,
+            declaration_keys,
+        });
         self.shared.rebuild_tls()
     }
 
@@ -985,6 +1138,7 @@ async fn start<R: Runtime>(
         }),
         cells: Mutex::new(BTreeMap::new()),
         revoked: Mutex::new(BTreeSet::new()),
+        control: Mutex::new(None),
         tls: Mutex::new(None),
     });
     for r in &registry {
@@ -1051,7 +1205,7 @@ async fn connection<R: Runtime>(shared: Arc<Shared<R>>, tcp: R::Tcp, signal: Shu
     };
     let Some(sender) = stream
         .peer_end_entity_der()
-        .and_then(|der| sender_of(der, &shared.pins()))
+        .and_then(|der| sender_among(der, &shared.pins(), shared.control_pin().as_ref()))
     else {
         return;
     };
