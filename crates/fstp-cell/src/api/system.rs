@@ -92,6 +92,7 @@ fn report(s: &HostStatus) -> Option<HostReport> {
             Some(fstp_obs::drill_status::Step::Keystore) => DrillStep::Keystore,
             Some(fstp_obs::drill_status::Step::Cleanup) => DrillStep::Cleanup,
             Some(fstp_obs::drill_status::Step::Witness) => DrillStep::Witness,
+            Some(fstp_obs::drill_status::Step::Chain) => DrillStep::Chain,
         },
         drill_seconds: s.drill_seconds,
         witness_copy: match s.witness_copy {

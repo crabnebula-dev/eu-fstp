@@ -195,6 +195,9 @@ pub enum DrillStep {
     /// The witness copies did not fetch, load or match (ADR-028 record of
     /// lane `m10/witness-copy`).
     Witness,
+    /// The restored audit chain does not verify against the witness
+    /// copies (ADR-012 record of lane m10/drill-chain).
+    Chain,
 }
 
 impl DrillStep {
@@ -210,6 +213,7 @@ impl DrillStep {
             Self::Keystore => "keystore",
             Self::Cleanup => "cleanup",
             Self::Witness => "witness",
+            Self::Chain => "chain",
         }
     }
 }

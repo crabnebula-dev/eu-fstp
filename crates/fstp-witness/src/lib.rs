@@ -48,6 +48,9 @@ pub mod config;
 // ADR-012 record of lane m10/declared-restore: the root-only console
 // command that records a declared restore.
 pub mod declare;
+// ADR-012 record of lane m10/drill-chain: the restore drill's offline
+// check of a restored chain against fetched witness copies.
+pub mod drill;
 pub mod file_store;
 pub mod key_copy;
 pub mod lock;

@@ -413,6 +413,24 @@ async fn read_chain<R: Runtime>(
     Ok(out)
 }
 
+/// The Vault chain of `cell` as `client` holds it: its rows, the entries
+/// its kind 1 rows carry, and its anchor rows, with the reader of
+/// [`VaultChain::open`]. The restore drill's `fstp-vault check-chain`
+/// reads a scratch cluster this way, with no key and no witness (ADR-012
+/// record of lane m10/drill-chain). It writes nothing.
+///
+/// # Errors
+///
+/// [`VaultError::Unavailable`] when the database does not answer, and
+/// [`VaultError::Malformed`] for a row outside the table rules.
+pub async fn read_restored<R: Runtime>(
+    client: &mut Client<R>,
+    cell: [u8; 16],
+) -> Result<(Vec<StoredRow>, Vec<StoredEntry>, Vec<AnchorRow>), VaultError> {
+    let s = read_chain(client, CellId(cell)).await?;
+    Ok((s.rows, s.entries, s.anchors))
+}
+
 /// The link of row `n`, read in a transaction that first waits for any
 /// transaction still finishing (the anchorer's `ReadChain`).
 async fn link_at<R: Runtime>(client: &mut Client<R>, n: u64) -> Result<Option<Link>, VaultError> {

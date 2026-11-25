@@ -932,75 +932,7 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
     /// a row outside the table rules, such as a chain row whose kind and
     /// columns disagree or a receipt that does not decode.
     pub async fn read_chain_rows(&self) -> Result<ChainRows, StoreFault> {
-        let mut client = self.pool.get().await?;
-        let mut tx = client.transaction().await?;
-        tx.execute(LOCK_SQL, &[]).await?;
-        let mut out = ChainRows::default();
-        read_pages(&mut tx, CHAIN_ROWS_SQL, |row| {
-            let n: i64 = row.get(0)?;
-            let at: i64 = row.get(1)?;
-            let kind: i16 = row.get(2)?;
-            let ledger_seq: Option<i64> = row.get(3)?;
-            let stored_hash: Vec<u8> = row.get(4)?;
-            let body: Option<Vec<u8>> = row.get(5)?;
-            let link: Vec<u8> = row.get(6)?;
-            let kind = match (kind, ledger_seq, body) {
-                (1, Some(seq), None) => RowKind::Ledger { seq: u64_of(seq)? },
-                (2, None, Some(body)) => RowKind::Event { body },
-                _ => {
-                    return Err(StoreFault::Corrupt(
-                        "a chain row whose kind and columns differ",
-                    ));
-                }
-            };
-            let stored_hash = <[u8; 32]>::try_from(stored_hash.as_slice())
-                .map_err(|_| StoreFault::Corrupt("a stored hash that is not 32 bytes"))?;
-            out.rows.push(StoredRow {
-                row: ChainRow {
-                    n: u64_of(n)?,
-                    at,
-                    kind,
-                    stored_hash,
-                },
-                link: link_of(&link)?,
-            });
-            u64_of(n)
-        })
-        .await?;
-        read_pages(&mut tx, READ_SQL, |row| {
-            let bytes: Vec<u8> = row.get(0)?;
-            let e = decode_stored_entry(&bytes)?;
-            let seq = e.seq;
-            out.stored.push(e.to_audit());
-            Ok(seq)
-        })
-        .await?;
-        let cell = self.audit_cell();
-        read_pages(&mut tx, ANCHOR_ROWS_SQL, |row| {
-            let n: i64 = row.get(0)?;
-            let link: Vec<u8> = row.get(1)?;
-            let at: i64 = row.get(2)?;
-            let signature: Vec<u8> = row.get(3)?;
-            let receipt: Vec<u8> = row.get(4)?;
-            let receipt = decode_receipt(&receipt)
-                .map_err(|_| StoreFault::Corrupt("a stored receipt that does not decode"))?;
-            out.anchors.push(AnchorRow {
-                anchor: Anchor {
-                    cell,
-                    chain: ChainId::App,
-                    n: u64_of(n)?,
-                    link: link_of(&link)?,
-                    at,
-                    signature,
-                },
-                receipt,
-            });
-            u64_of(n)
-        })
-        .await?;
-        tx.commit().await?;
-        client.release();
-        Ok(out)
+        read_chain_rows_of(&self.pool).await
     }
 
     /// Drives every unfinished step of an earlier append to its end: an
@@ -2037,6 +1969,87 @@ impl<R: Runtime, T, W: PrepareWitness> PgRecordStore<R, T, W> {
         .map_err(outbox_fault)?;
         Ok(())
     }
+}
+
+/// The App chain of the cell of `pool` as `fstp_audit::verify` reads it,
+/// with the reads and the lock of [`PgRecordStore::read_chain_rows`]. The
+/// restore drill's `fstp-cell check-chain` reads a scratch cluster this
+/// way, with no store, key or witness (ADR-012 record of lane
+/// m10/drill-chain). It writes nothing.
+///
+/// # Errors
+///
+/// As [`PgRecordStore::read_chain_rows`].
+pub async fn read_chain_rows_of<R: Runtime>(pool: &Pool<R>) -> Result<ChainRows, StoreFault> {
+    let mut client = pool.get().await?;
+    let mut tx = client.transaction().await?;
+    tx.execute(LOCK_SQL, &[]).await?;
+    let mut out = ChainRows::default();
+    read_pages(&mut tx, CHAIN_ROWS_SQL, |row| {
+        let n: i64 = row.get(0)?;
+        let at: i64 = row.get(1)?;
+        let kind: i16 = row.get(2)?;
+        let ledger_seq: Option<i64> = row.get(3)?;
+        let stored_hash: Vec<u8> = row.get(4)?;
+        let body: Option<Vec<u8>> = row.get(5)?;
+        let link: Vec<u8> = row.get(6)?;
+        let kind = match (kind, ledger_seq, body) {
+            (1, Some(seq), None) => RowKind::Ledger { seq: u64_of(seq)? },
+            (2, None, Some(body)) => RowKind::Event { body },
+            _ => {
+                return Err(StoreFault::Corrupt(
+                    "a chain row whose kind and columns differ",
+                ));
+            }
+        };
+        let stored_hash = <[u8; 32]>::try_from(stored_hash.as_slice())
+            .map_err(|_| StoreFault::Corrupt("a stored hash that is not 32 bytes"))?;
+        out.rows.push(StoredRow {
+            row: ChainRow {
+                n: u64_of(n)?,
+                at,
+                kind,
+                stored_hash,
+            },
+            link: link_of(&link)?,
+        });
+        u64_of(n)
+    })
+    .await?;
+    read_pages(&mut tx, READ_SQL, |row| {
+        let bytes: Vec<u8> = row.get(0)?;
+        let e = decode_stored_entry(&bytes)?;
+        let seq = e.seq;
+        out.stored.push(e.to_audit());
+        Ok(seq)
+    })
+    .await?;
+    let cell = CellId(pool.cell());
+    read_pages(&mut tx, ANCHOR_ROWS_SQL, |row| {
+        let n: i64 = row.get(0)?;
+        let link: Vec<u8> = row.get(1)?;
+        let at: i64 = row.get(2)?;
+        let signature: Vec<u8> = row.get(3)?;
+        let receipt: Vec<u8> = row.get(4)?;
+        let receipt = decode_receipt(&receipt)
+            .map_err(|_| StoreFault::Corrupt("a stored receipt that does not decode"))?;
+        out.anchors.push(AnchorRow {
+            anchor: Anchor {
+                cell,
+                chain: ChainId::App,
+                n: u64_of(n)?,
+                link: link_of(&link)?,
+                at,
+                signature,
+            },
+            receipt,
+        });
+        u64_of(n)
+    })
+    .await?;
+    tx.commit().await?;
+    client.release();
+    Ok(out)
 }
 
 impl<R, T, W> AsyncRecordStore<T> for PgRecordStore<R, T, W>

@@ -39,7 +39,7 @@ pub use anchor::{Anchor, AnchorRow, Receipt, ReceiptFields};
 pub use chain::{ChainId, ChainRow, ChainWriter, Link, RowKind, StoredEntry, StoredRow};
 pub use fstp_crypto::CryptoError;
 pub use fstp_crypto::composite::{CompositePublicKey, CompositeSigningKey};
-pub use verify::{ChainView, LostInRestore, Tamper, Verified};
+pub use verify::{ChainView, LostInRestore, RestoredCopy, Tamper, Verified};
 pub use witness::{Declaration, DeclarationFields, Prepare, WitnessRecord};
 
 /// The composite signature length of draft 19: ML-DSA-65 then Ed25519

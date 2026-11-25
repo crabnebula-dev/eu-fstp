@@ -5785,7 +5785,7 @@ export const SCHEMAS: Readonly<Record<string, Schema>> = {
           "wal_archive": { schema: { kind: "enum", values: ["ok", "late", "failing", "unknown"] }, optional: false },
           "last_wal_archived": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
           "last_drill_passed": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
-          "drill_step": { schema: { kind: "enum", values: ["none", "space", "restore", "recovery", "database", "keystore", "cleanup", "witness"] }, optional: false },
+          "drill_step": { schema: { kind: "enum", values: ["none", "space", "restore", "recovery", "database", "keystore", "cleanup", "witness", "chain"] }, optional: false },
           "drill_seconds": { schema: { kind: "nullable", inner: { kind: "int" } }, optional: false },
           "witness_copy": { schema: { kind: "enum", values: ["ok", "late", "failing", "unknown"] }, optional: false },
           "last_witness_copied": { schema: { kind: "nullable", inner: { kind: "id" } }, optional: false },
