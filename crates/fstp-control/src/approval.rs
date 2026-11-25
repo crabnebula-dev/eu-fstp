@@ -67,6 +67,8 @@ const DIGEST_LABEL: &[u8] = b"fstp-cp-job-v1";
 const KIND_ERASE_CELL: u8 = 1;
 /// The job kind octet of a `fstp-pgagent` job.
 const KIND_PGAGENT: u8 = 2;
+/// The job kind octet of `declare-restore` (lane m10/saas-declare).
+const KIND_DECLARE_RESTORE: u8 = 3;
 
 /// The SHA-256 digest of a destructive job (ADR-011: "The digest covers
 /// the job kind, the cluster and every argument").
@@ -104,6 +106,18 @@ pub enum DestructiveJob {
     },
     /// A destructive `fstp-pgagent` job.
     Pgagent(AgentJob),
+    /// `declare-restore`: one chain's restore declaration at the witness
+    /// (ADR-012 record of lane m10/saas-declare).
+    DeclareRestore {
+        /// The cell.
+        cell: CellId,
+        /// The chain.
+        chain: fstp_audit::ChainId,
+        /// The head the restored chain resumes from: its row and link.
+        head: (u64, [u8; 32]),
+        /// The job id that the declaration names.
+        job: [u8; 16],
+    },
 }
 
 impl DestructiveJob {
@@ -140,6 +154,21 @@ pub fn job_digest(job: &DestructiveJob) -> JobDigest {
             m.push(KIND_PGAGENT);
             m.extend_from_slice(&a.cluster.0);
             m.extend_from_slice(&a.frame);
+        }
+        DestructiveJob::DeclareRestore {
+            cell,
+            chain,
+            head,
+            job,
+        } => {
+            m.push(KIND_DECLARE_RESTORE);
+            m.extend_from_slice(&encode_cp_api(&CpApiRequest::DeclareRestore {
+                cell: *cell,
+                chain: *chain,
+                head_n: head.0,
+                head_link: head.1,
+                job: *job,
+            }));
         }
     }
     JobDigest(fstp_crypto::sha256(&m))

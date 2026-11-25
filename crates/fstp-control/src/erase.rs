@@ -258,7 +258,9 @@ pub fn check_cell_keys(cell: CellId, keys: &CellKeys) -> Result<(), ControlError
 fn erased_cell(approved: &ApprovedJob) -> Result<CellId, ControlError> {
     match approved.job() {
         DestructiveJob::EraseCell { cell } => Ok(*cell),
-        DestructiveJob::Pgagent(_) => Err(ControlError::ApprovalRequired),
+        DestructiveJob::Pgagent(_) | DestructiveJob::DeclareRestore { .. } => {
+            Err(ControlError::ApprovalRequired)
+        }
     }
 }
 
@@ -654,7 +656,9 @@ where
                 PgagentJob::DropCellDatabase(d) => d.database(),
                 _ => return Err(ControlError::ApprovalRequired),
             },
-            DestructiveJob::EraseCell { .. } => return Err(ControlError::ApprovalRequired),
+            DestructiveJob::EraseCell { .. } | DestructiveJob::DeclareRestore { .. } => {
+                return Err(ControlError::ApprovalRequired);
+            }
         };
         agent_done(databases.run_approved(db_job).await?)?;
         report(ErasureEvent::Step(ErasureStep::DatabaseDropped {
